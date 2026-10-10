@@ -1,3 +1,13 @@
+//===- Entry.cpp - DOM entry initialization and local objects ---*- C++ -*-===//
+//
+// DOMSource members that reshape the code around the DOM entry: forwarding the
+// fields of function-local objects (forwardFields, dataObject,
+// resolveMethods), inlining a one-shot factory that builds the entry
+// (flattenEntryFactory), and turning the wrapper that publishes the entry into
+// a direct call of it (initializeEntry).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -36,15 +46,16 @@ bool DOMSource::forwardFields(ctjs::FuncOp function) {
             uses.insert(operation);
         }
         if (!confined) { continue; }
-        // The isolated DOM provider fixes the initial prototype. Only
-        // initialized own fields are read; the complete use census rules
-        // out aliases, identity observations, accessors and prototype edits.
-        // Unread fields are inert too. Keep every value producer for the
-        // subsequent complete DOM proof, including its effects and failures.
-        // Writes stay in the source block; nested reads see the fields at
-        // their enclosing branch/loop, which cannot mutate this object.
-        // ponytail: one charged function scan per local object; index stores
-        // if large straight-line entries exhaust the existing work budget.
+        // The isolated DOM provider fixes the initial prototype, and the use
+        // loop above allowed only roots and constant-key reads and writes, so
+        // there are no aliases, identity checks, accessors or prototype edits:
+        // each read sees the field's last write. Unread fields are inert. The
+        // operations producing the values stay for the DOM entry proof, which
+        // checks their effects. Writes are all in the object's block, and a
+        // nested read sees the fields as of its enclosing branch or loop,
+        // which cannot write this object.
+        // ponytail: one function walk per local object; index the stores if
+        // large straight-line entries exhaust the work budget.
         llvm::StringMap<mlir::Value> fields;
         const auto walked = function.walk([&](mlir::Operation * operation) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
@@ -66,10 +77,10 @@ bool DOMSource::forwardFields(ctjs::FuncOp function) {
 }
 
 bool DOMSource::dataObject(ctjs::CreateObjectOp object) {
-    // Preserve fresh data allocations for the complete DOM proof. Unlike
-    // callable holders, their constructors and uses must not be erased here.
-    // A record stored as a `set` payload also keeps its own field reads; the
-    // complete proof types that Map, its schema and every alias.
+    // Whether `object` is plain data that may stay for the DOM entry proof.
+    // Unlike callable holders, its creation and uses are not erased here. A
+    // record stored as a Map `set` value may also keep its own field reads;
+    // the DOM entry proof types that Map, its schema and every alias.
     const auto stored = [](mlir::OpOperand & operand) {
         auto call = llvm::dyn_cast<ctjs::CallOp>(operand.getOwner());
         auto method =
@@ -94,8 +105,9 @@ bool DOMSource::dataObject(ctjs::CreateObjectOp object) {
             store && operand.getOperandNumber() == 0 &&
             !store.getValue().getDefiningOp<ctjs::CreateClosureOp>() &&
             precedesInStructuredBody(object, store)) {
-            // Keep assignment order intact. Key/value semantics still need
-            // complete DOM proof; callable slots retain their separate proof.
+            // The store keeps its source order. The DOM entry proof checks
+            // keys and values; stores of closures are refused here because
+            // callable slots go through resolveMethods.
             continue;
         }
         if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(use);
@@ -188,9 +200,11 @@ bool DOMSource::flattenEntryFactory(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
                         static_cast<unsigned>(entry.getFunction()) != *functionIndex(target)) {
         return refuse("DOM entry factory must return its exact source entry");
     }
-    // The single invocation moves its local cells with the returned closure.
-    // Only unobserved creator operands change; full capture/source proof runs
-    // on the flattened candidate before any native code can be published.
+    // The factory runs once, so its local cells can move into the wrapper
+    // along with the returned closure. Only the factory's own implicit
+    // arguments, which checkBody showed are unobserved, are remapped; the
+    // capture and DOM entry proofs run on the flattened result before any
+    // native code is published.
     mlir::IRMapping mapping;
     mapping.map(body.getArgument(ctjs::arg_receiver), receiver);
     mapping.map(body.getArgument(ctjs::arg_new_target), receiver);
@@ -217,8 +231,9 @@ bool DOMSource::flattenEntryFactory(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
         auto object = mapping.lookup(table.getResult()).getDefiningOp<ctjs::CreateObjectOp>();
         llvm::DenseSet<mlir::Operation *> methods;
         if (!resolveMethods(object, methods)) { return false; }
-        // Selection removes only checked own slots. Every source callable,
-        // including unselected slots, still needs its invocation proof.
+        // resolveMethods removes only the slots it checked. Every callable,
+        // including ones in unselected slots, still has to be proved where it
+        // is invoked.
         if (!eraseRootedUses(object.getResult(), "DOM entry factory table has an unexpanded use")) {
             return false;
         }
@@ -278,9 +293,10 @@ bool DOMSource::initializeEntry(ctjs::FuncOp wrapper, ctjs::FuncOp target) {
     if (!publication || !result) {
         return refuse("DOM entry initialization lacks a complete source export");
     }
-    // Host calls follow the whole initialization, including assignments after
-    // publication. Replay is safe only if expansion eliminates every private
-    // cell/holder/callable and the complete DOM proof accepts the result.
+    // The host calls the entry only after the whole wrapper has run, including
+    // assignments after the global store. Running the wrapper on every call is
+    // therefore safe only if expansion removes every private cell, holder and
+    // closure and the DOM entry proof accepts the result.
     for (mlir::BlockArgument argument :
          target.getBody().front().getArguments().drop_front(ctjs::implicit_arguments)) {
         if (!step()) { return false; }

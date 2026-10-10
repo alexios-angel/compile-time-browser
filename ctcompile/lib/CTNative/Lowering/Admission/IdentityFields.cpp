@@ -1,9 +1,20 @@
+//===- Admission/IdentityFields.cpp - Owned identity field access ---------===//
+//
+// admission::identityField, which admits a field read or write on an object
+// whose identity the native lowering owns.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits a field read or write on an owned object identity: the receiver must
+/// be proved an object (by its type, an owned global, or an enclosing scf.if
+/// guard on that exact SSA value), and the field value must be a scalar or a
+/// string.
 bool admission::identityField(mlir::Operation * op) {
     const mlir::Value object = op->getOperand(0);
     const mlir::Type type = typeOf(object);
@@ -12,7 +23,9 @@ bool admission::identityField(mlir::Operation * op) {
         owned |= llvm::isa_and_nonnull<ObjectIdentityType>(typeOf(leaf.getResult()));
     }
     // Refine the exact SSA receiver inside a structured guard. Comparing a
-    // different lookup or a reloaded binding cannot establish this fact.
+    // different lookup or a reloaded binding cannot establish this fact. The
+    // limits of 256 enclosing ops and 16 condition wrappers only bound the
+    // walk on pathological IR; they are not semantic limits.
     unsigned ancestors = 0;
     for (auto * child = op; !owned && child && ancestors++ < 256; child = child->getParentOp()) {
         auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(child->getParentOp());

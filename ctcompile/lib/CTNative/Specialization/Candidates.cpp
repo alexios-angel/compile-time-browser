@@ -1,3 +1,9 @@
+//===- Candidates.cpp - Specialization candidates -------------------------===//
+//
+// Implements the helpers declared in Candidates.h.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Candidates.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -9,6 +15,7 @@
 
 namespace ctcompile::ctnative::specialization {
 namespace {
+/// Whether `function` can reach itself through direct calls.
 bool recursive(ctjs::FuncOp function) {
     llvm::SmallVector<ctjs::FuncOp> pending{function};
     llvm::SmallPtrSet<mlir::Operation *, 32> visited;
@@ -25,6 +32,8 @@ bool recursive(ctjs::FuncOp function) {
     return found;
 }
 
+/// Whether `attr` may be bound as a constant. Strings longer than 64 KiB are
+/// not, to keep cloned variants small.
 bool primitive(mlir::Attribute attr) {
     auto text = llvm::dyn_cast<ctjs::StringAttr>(attr);
     return text ? text.getValue().size() <= 65536 : ctjs::isPrimitiveAttr(attr);
@@ -52,8 +61,9 @@ llvm::SmallVector<mlir::Attribute> staticArguments(ctjs::CallDirectOp call, ctjs
     auto & entry = function.getBody().front();
     llvm::SmallVector<mlir::Attribute> known(entry.getNumArguments());
     if (call->getNumOperands() != known.size()) { return known; }
-    // An immediate closure participates in the closure lifter's target/signature
-    // proof. Do not redirect it to a different code identity in this slice.
+    // A callee produced by create_closure is handled by the closure lifter,
+    // which proves its target and signature. Only specialize calls through a
+    // global or constant callee, so that proof is not invalidated.
     auto callee = call.getCalleeValue().getDefiningOp();
     if (!llvm::isa_and_nonnull<ctjs::LoadGlobalOp, ctjs::ConstantOp>(callee)) { return known; }
     for (unsigned i = ctjs::implicit_arguments; i < known.size(); ++i) {

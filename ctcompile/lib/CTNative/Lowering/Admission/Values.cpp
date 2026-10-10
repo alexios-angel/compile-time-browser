@@ -1,4 +1,12 @@
-// Admission/Values.cpp - native lowering implementation.
+//===- Admission/Values.cpp - Value-level native admission predicates -----===//
+//
+// The small predicates admission uses to classify values: which closures and
+// cells lower to nothing, which arguments carry an object or a shared cell by
+// pointer, which keys can be C++ field names, and which array literals are
+// dense vectors.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Admission.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
@@ -14,7 +22,7 @@ bool admission::refuse(std::string reason) {
     return false;
 }
 
-// Scalar operands have an exact numeric conversion; equality keeps their tags.
+/// Scalar operands have an exact numeric conversion; equality keeps their tags.
 bool admission::numeric(mlir::Value v, llvm::StringRef where) {
     if (!isScalarCarrier(carrierOf(typeOf(v)))) {
         return refuse((where + " operand is " + printed(typeOf(v)) + ", not a number").str());
@@ -22,7 +30,7 @@ bool admission::numeric(mlir::Value v, llvm::StringRef where) {
     return true;
 }
 
-// An observation preserves the alternatives of a proved scalar carrier.
+/// An observation preserves the alternatives of a proved scalar carrier.
 bool admission::printable(mlir::Value v, llvm::StringRef where) {
     const auto stored = carrierOf(typeOf(v));
     if (!isPrimitiveCarrier(stored)) {
@@ -38,13 +46,12 @@ bool admission::isDeclarationStore(mlir::Operation * o) {
     return store && isDeclarationClosure(store.getValue().getDefiningOp());
 }
 
-// PHASE 59 SLICE 1. The lift above already moved this closure's captures
-// to the call sites and rewrote every call to a ctjs.call_direct; what is
-// left of it is the `$callee_value` operand, which the call arm drops -
-// so, exactly like a declaration closure, it lowers to nothing. The cell
-// it captured is the same story one step down: the box was proved
-// constant, every read of it is already the value, and what remains is the
-// capture operand of a closure that is about to go.
+/// A closure that closure lifting (kNativeLifted) already replaced: its
+/// captures moved to the call sites and every call became a ctjs.call_direct,
+/// so what is left is the `$callee_value` operand the call arm drops. Like a
+/// declaration closure, it lowers to nothing. isUnboxedCell is the same for the
+/// cell it captured: the cell was proved constant and every read of it is
+/// already the value.
 bool admission::isLiftedClosure(mlir::Operation * o) {
     return llvm::isa_and_nonnull<ctjs::CreateClosureOp>(o) && o->hasAttr(kNativeLifted);
 }
@@ -57,11 +64,10 @@ bool admission::closureLowersToNothing(mlir::Operation * o) {
     return isDeclarationClosure(o) || isLiftedClosure(o);
 }
 
-// WHY THIS CLOSURE IS NOT ONE OF THOSE, in the words the lift wrote onto
-// it. Spelled once because it is asked in two places that used to give
-// different answers: at the operation, and at the `%arg2` operand it takes
-// - and the operand's answer was "uses its own closure", which is a
-// sentence about the ENCLOSING function reading a value it never reads.
+/// Why this closure does not lower to nothing, in the words the lift wrote
+/// onto it. Both the operation itself and its use of the enclosing `%arg2`
+/// report this message, so the enclosing function is not wrongly refused as
+/// "uses its own closure".
 std::string admission::closureRefusal(mlir::Operation * o) {
     const llvm::StringRef what =
         o->hasAttr(kNativeMethodRefusal) ? "a method field" : "a closure used as a value";
@@ -69,11 +75,11 @@ std::string admission::closureRefusal(mlir::Operation * o) {
     return why ? (what + ": " + why.getValue()).str() : (what + " - Phase 59").str();
 }
 
-// THE CALLEE VALUE OF A DIRECT CALL lowers to nothing: the call names its
-// function by symbol, and the boxed closure the interpreter would have
-// called through is only carried so the boxed tier can still lower the
-// same op. A load_global whose every use is that operand is exempt from
-// the carrier check for exactly that reason.
+/// The callee value of a direct call lowers to nothing: the call names its
+/// function by symbol, and the boxed closure the interpreter would have called
+/// through is only carried so the boxed backend can still lower the same op.
+/// A load_global whose every use is that operand is exempt from the carrier
+/// check for that reason.
 bool admission::feedsOnlyDirectCallees(mlir::Value v) {
     if (v.use_empty()) { return false; }
     for (mlir::OpOperand & use : v.getUses()) {
@@ -83,9 +89,9 @@ bool admission::feedsOnlyDirectCallees(mlir::Value v) {
     return true;
 }
 
-// THE ENTRY-BLOCK INDICES THAT CARRY A `ctn_x *`, off a ctjs.func or off
-// one of its ctjs.call_directs - the same list on both, which is what lets
-// the caller and the callee be lowered in either order.
+/// The entry-block indices that carry a `ctn_x *` (an object struct pointer),
+/// read from a ctjs.func or one of its ctjs.call_directs. Both carry the same
+/// list, which lets the caller and the callee be lowered in either order.
 llvm::ArrayRef<int32_t> admission::objectArgsOf(mlir::Operation * o) {
     return listedSlots(o, kNativeObjectArgs);
 }
@@ -94,10 +100,10 @@ bool admission::isObjectArg(mlir::Operation * o, unsigned index) {
     return llvm::is_contained(objectArgsOf(o), static_cast<int32_t>(index));
 }
 
-// AND THE ONES THAT CARRY A `double *` - PHASE 59 SLICE 2 STEP 2. Same
-// shape, same two places, same reason: the shared binding's box is a
-// variable in the CALLER's frame and the callee reads and writes it
-// through a pointer.
+/// The entry-block indices that carry a `double *` (a shared binding passed by
+/// address), listed on both a ctjs.func and its ctjs.call_directs: the box is
+/// a variable in the caller's frame and the callee reads and writes it through
+/// the pointer.
 llvm::ArrayRef<int32_t> admission::cellArgsOf(mlir::Operation * o) {
     return listedSlots(o, kNativeCellArgs);
 }
@@ -106,13 +112,13 @@ bool admission::isCellArg(mlir::Operation * o, unsigned index) {
     return llvm::is_contained(cellArgsOf(o), static_cast<int32_t>(index));
 }
 
-// A `ctjs.create_cell` the lift made a frame-local variable.
+/// A `ctjs.create_cell` the lift made a frame-local variable.
 bool admission::isCarriedCell(mlir::Operation * o) {
     return llvm::isa_and_nonnull<ctjs::CreateCellOp>(o) && o->hasAttr(kNativeCarried);
 }
 
-// A capture parameter that arrived as one - an entry-block argument of a
-// ctjs.func whose `ctnative.cell_args` lists its number.
+/// A capture parameter that receives a shared cell: an entry-block argument of
+/// a ctjs.func whose `ctnative.cell_args` lists its number.
 bool admission::isCellParameter(mlir::Value v) {
     auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
     if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
@@ -120,9 +126,9 @@ bool admission::isCellParameter(mlir::Value v) {
     return fn && isCellArg(fn.getOperation(), arg.getArgNumber());
 }
 
-// WHERE A SHARED BINDING IS REACHED FROM: the variable in this frame, or
-// the pointer a lifted call handed this one. Both are lvalues after
-// lowering, and every rule below that asks about a cell asks about either.
+/// Where a shared binding is reached from: the variable in this frame, or the
+/// pointer a lifted call handed this one. Both are lvalues after lowering, and
+/// every rule that asks about a cell accepts either.
 bool admission::namesASharedCell(mlir::Value v) {
     return isCarriedCell(v.getDefiningOp()) || isCellParameter(v);
 }
@@ -132,18 +138,15 @@ bool admission::isCIdentifier(llvm::StringRef key) {
     return llvm::all_of(key, cpp::is_identifier_char);
 }
 
-// A KEY THAT IS A C IDENTIFIER AND STILL CANNOT BE A FIELD NAME. Field
-// names are emitted verbatim - `cIdentifier()` sanitises symbols, not
-// members - so `o.class = 3` emitted `double class;` and `o.NAN = 5`
-// emitted `double NAN;` under this file's own `#include <cmath>`. Both
-// were admitted with no refusal and both are hard -Werror build failures
-// on a program the tier had declared native. Refused rather than mangled:
-// a generated field keeps the JavaScript name a reader is looking for, and
-// mangling every field to buy this rare case is a trade Phase 56C should
-// make deliberately, not this fix.
+/// A key that is a valid C identifier but still cannot be a struct field name.
+/// Field names are emitted verbatim (cIdentifier() sanitises symbols, not
+/// members), so `o.class = 3` would emit `double class;` and `o.NAN = 5`
+/// `double NAN;`, which clashes with the macro from the generated file's
+/// `#include <cmath>`. Both fail to compile. Such keys are refused rather than
+/// mangled so generated fields keep the JavaScript name.
 bool admission::isReservedInCpp(llvm::StringRef key) {
     static constexpr llvm::StringLiteral kReserved[] = {
-        // keywords a member may not be named
+        // Keywords a member may not be named.
         "alignas",
         "alignof",
         "and",
@@ -236,7 +239,7 @@ bool admission::isReservedInCpp(llvm::StringRef key) {
         "while",
         "xor",
         "xor_eq",
-        // macros the two headers this file emits are allowed to define
+        // Macros that <cmath> and <cstdio>, included by the generated C++, may define.
         "NAN",
         "INFINITY",
         "HUGE_VAL",
@@ -270,13 +273,13 @@ bool admission::isReservedInCpp(llvm::StringRef key) {
     return llvm::is_contained(kReserved, key);
 }
 
-// NAMES OBJECT.PROTOTYPE ANSWERS FOR. A field that is only ever READ is
-// `undefined` for a plain key, which this tier preserves with a tag - but these
-// names are not undefined: the literal's prototype answers them, and the
-// interpreter finds a function where the generated struct finds undefined. So
-// `if (o.constructor)` took the else branch natively and the then branch
-// in the interpreter, with no refusal anywhere. A key that IS stored
-// shadows the inherited one and is fine; only a read-only key is refused.
+/// Names that Object.prototype answers for. A field that is only ever read is
+/// `undefined` for a plain key, which native lowering preserves with a tag, but
+/// these names are not undefined: the literal's prototype answers them, and the
+/// interpreter finds a function where the generated struct would find
+/// undefined (`if (o.constructor)` would take different branches). A key that
+/// is stored shadows the inherited one and is fine; only a read-only key is
+/// refused.
 bool admission::namesObjectPrototypeMember(llvm::StringRef key) {
     static constexpr llvm::StringLiteral kInherited[] = {
         "constructor",      "hasOwnProperty",   "isPrototypeOf",    "propertyIsEnumerable",
@@ -293,8 +296,8 @@ bool admission::stringConstantUsedOnlyAs(mlir::Operation * o,
            !constant.getResult().use_empty() && llvm::all_of(constant.getResult().getUses(), key);
 }
 
-// A string constant whose every use is a property key of a closed object
-// lowers to nothing: the key becomes a member name.
+/// A string constant whose every use is a property key of a closed object
+/// lowers to nothing: the key becomes a member name.
 bool admission::isKeyOnlyString(mlir::Operation * o) {
     return stringConstantUsedOnlyAs(o, [](mlir::OpOperand & use) {
         mlir::Operation * user = use.getOwner();
@@ -304,16 +307,16 @@ bool admission::isKeyOnlyString(mlir::Operation * o) {
     });
 }
 
-// PHASE 57A: A DENSE ARRAY IS A `std::vector<double>` BY VALUE.
-// TypeInference::isDenseVectorSite proves local lifetime and density for
-// appends, reads and complete current own-element overwrites.
+/// A dense array lowers to a `std::vector<double>` held by value.
+/// TypeInference::isDenseVectorSite proves local lifetime and density for
+/// appends, reads and complete current own-element overwrites.
 bool admission::isVectorSite(mlir::Value v) {
     return TypeInference::isDenseVectorSite(v);
 }
 
-// WHY AN ARRAY LITERAL IS NOT A DENSE VECTOR: the first use that is not an
-// append or a read after the complete density query failed. A write can
-// fail its current contents proof even when it looks locally bounded.
+/// Why an array literal is not a dense vector: the first use that is not an
+/// append or a read, asked after the complete density query failed. A write
+/// can fail its current contents proof even when it looks locally bounded.
 std::string admission::whyNotDense(mlir::Value array) {
     for (mlir::OpOperand & use : array.getUses()) {
         mlir::Operation * user = use.getOwner();
@@ -349,12 +352,12 @@ std::string admission::whyNotDense(mlir::Value array) {
     return "an array literal that is not a dense vector";
 }
 
-// A string constant whose every use is the `length` key of a dense array
-// lowers to nothing: reads become the size helper and shrinks become resize.
-//
-// The object-key predicate requires isClosedObject, which is false for
-// an array. Recognizing array keys separately keeps an erased `length`
-// name from requiring a runtime string carrier or its header.
+/// A string constant whose every use is the `length` key of a dense array
+/// lowers to nothing: reads become the size helper and shrinks become resize.
+///
+/// The object-key predicate requires isClosedObject, which is false for
+/// an array. Recognizing array keys separately keeps an erased `length`
+/// name from requiring a runtime string carrier or its header.
 bool admission::isVectorKeyString(mlir::Operation * o) {
     return stringConstantUsedOnlyAs(o, [](mlir::OpOperand & use) {
         mlir::Operation * user = use.getOwner();
@@ -363,12 +366,12 @@ bool admission::isVectorKeyString(mlir::Operation * o) {
     });
 }
 
-// A VALUE THAT LOWERS TO NOTHING NEEDS NO CARRIER, and these are the only
-// ones: the three implicit arguments (erased once their declaration
-// closures are gone), a declaration closure's result, the lift's poison
-// (replaced by NaN), a key constant (a member name) and a load_global
-// that only names a direct call's callee. function() exempts exactly this
-// list from the carrier check; retype() asks the same question.
+/// A value that lowers to nothing needs no carrier, and these are the only
+/// ones: the three implicit arguments (erased once their declaration closures
+/// are gone), a declaration or lifted closure's result, an unboxed cell, map
+/// bookkeeping, the lift's poison (replaced by NaN), a key constant (a member
+/// name) and a load_global that only names a direct call's callee. function()
+/// exempts this list from the carrier check; retype() asks the same question.
 bool admission::lowersToNothing(mlir::Value v) {
     if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(v)) {
         return arg.getOwner()->isEntryBlock() &&

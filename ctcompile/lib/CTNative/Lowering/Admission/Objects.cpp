@@ -1,4 +1,11 @@
-// Admission/Objects.cpp - native lowering implementation.
+//===- Admission/Objects.cpp - Object literal and owned global admission --===//
+//
+// Admission of owned globals and closed-shape object literals, and the
+// refusal messages that name why an object literal or a lifted receiver is
+// not closed.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
 
@@ -48,38 +55,33 @@ bool admission::ownedGlobalOperation(mlir::Operation * operation) {
     return true;
 }
 
-// PHASE 56: A CLOSED SHAPE IS A STRUCT BY VALUE. TypeInference::hasClosedShape
-// is the proof - every use is a get or set through a constant key, so the
-// object never reaches anything that could add or remove a field, and never
-// leaves the frame (a return, a store, a call would all be uses that open
-// it). Each key must be a C identifier, each field a number or a boolean.
+/// An object with a closed shape lowers to a struct held by value.
+/// TypeInference::hasClosedShape is the proof: every use is a get or set
+/// through a constant key, so the object never reaches anything that could add
+/// or remove a field, and never leaves the frame (a return, a store or a call
+/// would all be uses that open it). Each key must be a C identifier, each
+/// field a number or a boolean.
 bool admission::isClosedObject(mlir::Value v) {
     return TypeInference::hasClosedShape(v);
 }
 
-// WHY A LITERAL'S SHAPE IS OPEN: the first use that is not a get or a set
-// through a constant key on the literal itself, named by what it is. A
-// refusal that lists every route there is tells the reader nothing about
-// which one this program took; this one names it.
-//
-// THE LOOP-CARRIED ROW IS THE ONE OBLIGATION O-3 LEAVES. --ctjs-lift-to-scf
-// now replaces a loop header's argument for a variable assigned once
-// before the loop by the variable (a trivial phi), so a literal updated
-// inside a loop is one SSA value and one stack slot. What still reaches
-// the scf.while is a REAL phi: the variable is assigned again inside the
-// loop, or on only one path before it, and two literals - two shapes,
-// two slots - would have to become one value, which is a pointer.
-// THE SENTENCE THE ARGUMENT RULE LEFT ON THE LITERAL, or empty. Written by
-// `closureLifter::argumentCensus` before any rewrite ran, for the same
-// reason `ctnative.closure_reason` and `ctnative.cell_reason` are: every
-// condition that can fail is a property of the CALLEE, and a walk that
-// meets the escape has only the use.
+/// The reason the object-parameter rule recorded on `object`'s literal
+/// (ctnative.object_reason) when it refused the literal as a call argument, or
+/// empty. closureLifter::argumentCensus writes it before any rewrite, because
+/// the condition that failed belongs to the callee and the escape walk only
+/// sees the use.
 std::string admission::argumentReason(mlir::Value object) {
     mlir::Operation * literal = object.getDefiningOp();
     auto why = literal ? literal->getAttrOfType<mlir::StringAttr>(kNativeObjectReason) : nullptr;
     return why ? "an object literal that escapes - " + why.getValue().str() : std::string{};
 }
 
+/// Describes a use of a literal that stores, loop-carries or returns it, or
+/// returns nullopt for any other use. A loop-carried literal is a real phi:
+/// the variable is assigned again inside the loop, or on only one path before
+/// it. Two literals have two shapes and two stack slots, and merging them into
+/// one value would need a pointer. (--ctjs-lift-to-scf already removes the
+/// trivial phi of a variable assigned once before the loop.)
 std::optional<std::string> admission::escapeRoute(llvm::StringRef literal, mlir::OpOperand & use) {
     mlir::Operation * user = use.getOwner();
     if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 2) {
@@ -101,6 +103,10 @@ std::string admission::escapesTo(llvm::StringRef literal, mlir::Operation * user
     return (literal + " that escapes - it reaches `" + user->getName().getStringRef() + "`").str();
 }
 
+/// Describes, for a refusal message, the first use of an object literal that
+/// is not a get or set through a constant key on the literal itself. Naming
+/// the use this program actually has is more useful than listing every
+/// possible route.
 std::string admission::whyOpen(mlir::Value object) {
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
@@ -115,33 +121,32 @@ std::string admission::whyOpen(mlir::Value object) {
         }
         if (auto why = escapeRoute("an object literal", use)) { return *why; }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
-            // A METHOD CALL THE RECEIVER LIFT DID NOT TAKE. It is still a
-            // ctjs.call, so the object is passed to a dispatcher this tier
-            // cannot see through; the reason the lift gave is on the
-            // closure the field holds, and this points at it.
+            // A method call the receiver lift did not take. It is still a
+            // ctjs.call, so the object is passed to a dispatcher native
+            // lowering cannot see through; the reason the lift gave is on
+            // the closure the field holds, and this message points at it.
             if (use.getOperandNumber() == 1) {
                 return "an object literal whose method call was not lifted - it is still "
                        "dispatched through the callee value, so the object is passed to "
                        "something that could add or remove a field";
             }
-            // AN ARGUMENT THE OBJECT-PARAMETER RULE DID NOT TAKE, and the
-            // rule's own sentence rather than this one: `argumentCensus`
-            // wrote it onto the literal, because the condition that failed
-            // is a property of the CALLEE and this walk only has the use.
+            // An argument the object-parameter rule refused: report the
+            // rule's own reason, which `argumentCensus` wrote onto the
+            // literal because the condition that failed belongs to the
+            // callee and this walk only sees the use.
             if (const std::string why = argumentReason(object); !why.empty()) { return why; }
             return "an object literal that escapes - it is passed to a call";
         }
         if (llvm::isa<ctjs::CallDirectOp>(user)) {
-            // A DIRECT CALL CARRIES A RECEIVER AND ANY PARAMETER THE LIFT
-            // LISTED; anything else in an operand is still an escape.
+            // A direct call carries a receiver and any parameter the lift
+            // listed; anything else in an operand is still an escape.
             if (use.getOperandNumber() == 0 && user->hasAttr(kNativeReceiver)) { continue; }
             if (isObjectArg(user, use.getOperandNumber())) { continue; }
-            // AND THIS IS WHERE THE ARGUMENT REASON USUALLY LANDS, NOT THE
-            // ctjs.call ARM ABOVE. A callee whose parameter this rule
-            // refused is still a closure the PLAIN lift takes - its uses
-            // are all calls of it - so by the time admission asks, the
-            // call is a ctjs.call_direct and the ctjs.call is gone. The
-            // measured shape: all four negative programs reached here.
+            // The argument reason usually surfaces here rather than in the
+            // ctjs.call arm above: a callee whose parameter the rule refused
+            // is still a closure the plain lift takes (its uses are all
+            // calls of it), so by the time admission runs the call is a
+            // ctjs.call_direct.
             if (const std::string why = argumentReason(object); !why.empty()) { return why; }
             return "an object literal passed to a direct call as an argument - only a "
                    "receiver and a parameter the lift proved read-only are carried";
@@ -151,11 +156,11 @@ std::string admission::whyOpen(mlir::Value object) {
     return "an object literal whose shape is not closed";
 }
 
-// WHY A LIFTED METHOD'S `this` IS NO LONGER CLOSED: the first use of
-// `%arg0` that is not a constant-key access or a lifted method call, named
-// by what it is. In practice there is one route - a `this.other()` whose
-// callee was refused, so the call stayed a `ctjs.call` - and the sentence
-// has to say that rather than repeat the whole rule.
+/// Describes why a lifted method's `this` is no longer closed: the first use
+/// of `%arg0` that is not a constant-key access or a lifted method call. In
+/// practice there is one route, a `this.other()` whose callee was refused so
+/// the call stayed a `ctjs.call`, and the message says that rather than
+/// repeating the whole rule.
 std::string admission::whyOpenReceiver(mlir::Value self) {
     for (mlir::OpOperand & use : self.getUses()) {
         mlir::Operation * user = use.getOwner();

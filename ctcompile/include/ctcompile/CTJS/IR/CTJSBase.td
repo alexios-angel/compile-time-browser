@@ -1,9 +1,8 @@
 //===- CTJSBase.td - the CTJS dialect, its base classes -------------------===//
 //
-// TAKEN VERBATIM FROM THE MLIR DECLARATIVE DEFINITION POLICY, which quotes this
-// file in full. Where a line here looks arbitrary it is not: the policy states
-// what each one buys, and this file is the one place the project has agreed not
-// to improvise.
+// The CTJS dialect definition and the base classes every CTJS op, type and
+// attribute derives from. The comments below say why each setting is chosen;
+// change one only with that reason in mind.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTJS_BASE
@@ -32,22 +31,22 @@ def CTJS_Dialect : Dialect {
   // Free parsing and printing for every TypeDef and AttrDef in the dialect.
   let useDefaultTypePrinterParser = 1;
 
-  // BACK TO 1 IN PHASE 8, as the Phase 7 deviation said it would be. It was 0
-  // only because -gen-attrdef-defs emits an empty file when there are no
-  // AttrDefs, so the hooks the dialect declared had no definitions. There are
-  // six constant attributes now.
+  // Generated printing and parsing for the dialect's AttrDefs. This must be 0
+  // if the dialect ever has no AttrDefs, because -gen-attrdef-defs then emits
+  // an empty file and the declared hooks would have no definitions.
   let useDefaultAttributePrinterParser = 1;
 
-  // Inherent attributes stored as properties: cheaper and uniquified less.
+  // Inherent attributes are stored as properties (MLIR's default, so nothing
+  // is set here).
 
   // Required for the folder to rebuild constants.
   let hasConstantMaterializer = 1;
 
-  // REGISTRATION SPLIT ACROSS THE FILES THAT DEFINE THINGS, which is upstream
-  // MLIR's own layout. addTypes<> and addAttributes<> need the STORAGE classes
-  // complete, and those are emitted into CTJSTypes.cpp and CTJSAttrs.cpp by
-  // GET_TYPEDEF_CLASSES / GET_ATTRDEF_CLASSES - so a dialect that registers
-  // them from its own translation unit is registering incomplete types.
+  // Registration is split across the files that define things, as in upstream
+  // MLIR. addTypes<> and addAttributes<> need the storage classes complete, and
+  // GET_TYPEDEF_CLASSES / GET_ATTRDEF_CLASSES emit those into CTJSTypes.cpp and
+  // CTJSAttrs.cpp, so registering them from the dialect's own translation unit
+  // would register incomplete types.
   let extraClassDeclaration = [{
     void registerTypes();
     void registerAttributes();
@@ -78,41 +77,38 @@ class CTJS_NativeOpTrait<string name> : NativeOpTrait<name> {
   let cppNamespace = "::ctcompile::ctjs";
 }
 
-// THE FOUR SEMANTIC TRAITS. Their C++ templates are in CTJSTraits.h, in
-// ::ctcompile::ctjs rather than ::mlir::OpTrait, which is what
-// CTJS_NativeOpTrait below arranges.
+// The four semantic traits. Their C++ templates are in CTJSTraits.h, in
+// ::ctcompile::ctjs rather than ::mlir::OpTrait, which CTJS_NativeOpTrait
+// (above) arranges.
 def CTJS_MayThrow : CTJS_NativeOpTrait<"CTJSMayThrow">;
 def CTJS_MayReenterJS : CTJS_NativeOpTrait<"CTJSMayReenterJS">;
 def CTJS_Safepoint : CTJS_NativeOpTrait<"CTJSSafepoint">;
 def CTJS_MaySuspend : CTJS_NativeOpTrait<"CTJSMaySuspend">;
 
-// AND THE SHAPE CHECK, which is not a semantic trait but travels the same way.
-// CTJS_RuntimeOp attaches it below, so every operation naming a helper has its
+// The ABI shape check. Not a semantic trait, but attached the same way:
+// CTJS_RuntimeOp adds it, so every operation naming a helper has its
 // declaration compared against that helper's row. See CTJSABIShape.cpp.
 def CTJS_ABIShaped : CTJS_NativeOpTrait<"CTJSABIShaped">;
 
 // The common case for a generic JavaScript operation.
 //
-// EFFECTS ARE OPT-IN TO PURITY, NEVER OPT-OUT, which is the policy's heading
-// and its sharpest rule: "almost every JavaScript operation can re-enter
-// arbitrary JavaScript through a getter, a valueOf, a toString, or a proxy
-// trap. The default assumption must therefore be unknown effects." An
-// operation wrongly marked Pure "will be hoisted out of loops, CSE'd across a
-// side effect, or deleted as dead. The failure mode is a miscompile in a real
-// application, not a test failure."
+// Effects are opt-in to purity, never opt-out. Almost every JavaScript
+// operation can re-enter arbitrary JavaScript through a getter, a valueOf, a
+// toString or a proxy trap, so the default is unknown effects. An operation
+// wrongly marked Pure would be hoisted out of loops, CSE'd across a side effect
+// or deleted as dead: a miscompile in a real application, not a test failure.
 defvar CTJS_GenericEffects = [CTJS_MayThrow, CTJS_MayReenterJS, CTJS_Safepoint];
 
-// AN OPERATION THAT LOWERS TO ONE SHARED RUNTIME HELPER, which the policy calls
-// "the highest-leverage declarative decision in the project": roughly fifty
-// CTJS operations lower to "call a helper, check the status, branch to the
-// handler on thrown, otherwise continue". Written as fifty conversion patterns
-// that is fifty near-identical files and fifty chances to get the operand order
-// wrong; written as one interface plus one pattern it is one file.
+// An operation that lowers to one shared runtime helper. Roughly fifty CTJS
+// operations lower to "call a helper, check the status, branch to the handler
+// on thrown, otherwise continue"; one interface plus one conversion pattern
+// covers them all, instead of fifty near-identical patterns that could each get
+// the operand order wrong.
 //
-// `helper` NAMES AN ENUMERATOR of ctbrowser::aot::helper_id, which is generated
-// from aot_helpers.def - so a wrong name is a C++ compile error rather than a
-// lowering that calls the wrong thing. That is also what ties this dialect to
-// the ABI: an operation cannot claim a helper the runtime does not declare.
+// `helper` names an enumerator of ctbrowser::aot::helper_id, which is generated
+// from aot_helpers.def, so a wrong name is a C++ compile error rather than a
+// lowering that calls the wrong thing. This also ties the dialect to the ABI:
+// an operation cannot claim a helper the runtime does not declare.
 class CTJS_RuntimeOp<string mnemonic, string helper, list<Trait> traits = []>
     : CTJS_Op<mnemonic, traits # [
         DeclareOpInterfaceMethods<CTJS_RuntimeCallOpInterface>,

@@ -1,15 +1,20 @@
+//===- OpcodeMapping.hpp - CTJS kinds to bytecode opcodes -------*- C++ -*-===//
+//
+// Maps each CTJS operator kind to the bytecode opcode it means.
+//
+// `uint32_t op_kind` in the ABI is a `ctbrowser::script::op`:
+// aot_bridge/operators.cpp does `static_cast<op>(op_kind)` and dispatches the
+// interpreter's own switch on it. So this file decides whether compiled code
+// calls the right operator or whatever `op(5)` happens to be.
+//
+// Every opcode is spelled by name, never as a number: `enum class op` is
+// renumbered whenever opcodes are added or reordered, and a renumbering must
+// be a build error here rather than a silent change of meaning. A table of
+// integers would survive it and compile `**` into `%`.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
-// WHICH BYTECODE OPCODE A CTJS KIND MEANS.
-//
-// `uint32_t op_kind` in the ABI is a `ctbrowser::script::op` - aot_bridge/operators.cpp
-// does `static_cast<op>(op_kind)` and dispatches the interpreter's own switch on
-// it. So this file is the difference between a compiler that calls the right
-// operator and one that calls whatever `op(5)` happens to be.
-//
-// EVERY ANSWER IS SPELLED BY NAME. Not one numeric literal appears below, which
-// is the whole point: Phases 13 and 14 renumber `enum class op` deliberately,
-// and a renumbering must be a build error here rather than a silent change of
-// meaning. A table of integers would survive it and compile `**` into `%`.
 #include <ctbrowser/script/bytecode.hpp>
 
 #include "ctcompile/CTJS/IR/CTJSEnums.h"
@@ -19,8 +24,8 @@
 
 namespace ctcompile::ctjs {
 
-// EVERY OPCODE'S NAME, expanded from the same .def the VM decodes with, so the
-// table cannot be a second list that disagrees with the first.
+/// Every opcode's name, expanded from the same .def the VM decodes with, so the
+/// table cannot disagree with the enum.
 #define CT_OPCODE(name_, ...) #name_,
 inline constexpr std::string_view opcode_names[] = {
 #include <ctbrowser/script/bytecode_opcodes.def>
@@ -30,28 +35,34 @@ inline constexpr std::string_view opcode_names[] = {
 static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
               "the opcode-name table and `enum class op` disagree");
 
+/// The name of `code`, or "<unknown>" for a value outside the enum.
 [[nodiscard]] constexpr std::string_view opcode_name(ctbrowser::script::op code) {
     const auto index = static_cast<std::size_t>(code);
     return index < std::size(opcode_names) ? opcode_names[index] : "<unknown>";
 }
 
-// THE SAME KIND MEANS TWO DIFFERENT OPCODES, which is why this is two functions
-// rather than one table. `ctjs.binary add` is source `+` and compiles to
-// op::add_generic - which runs ToPrimitive and can call a user valueOf.
-// `ctjs.binary_static add` is op::add, which uses the static conversions and
-// cannot run user code at all; the runtime reaches it from `++` and three
-// internal counters. Folding them would make `x + y` and `x++` the same call.
-//
-// THE SIX BITWISE KINDS ARE IN BOTH, AND MEAN THE SAME OPCODE IN EACH. The
-// importer emits them as ctjs.binary, because the VM ToNumerics their operands
-// and context::binary_op does the same. ctjs.binary_static of one is still
-// valid IR, meaning "the operands are already numeric": binary_op_static
-// converts nothing, which is right only once something has proved that.
+/// Returns true for the six bitwise kinds.
+///
+/// The same kind can mean two different opcodes, which is why there are two
+/// mapping functions rather than one table. `ctjs.binary add` is source `+` and
+/// compiles to op::add_generic, which runs ToPrimitive and can call a user
+/// valueOf. `ctjs.binary_static add` is op::add, which uses the static
+/// conversions and cannot run user code; the runtime reaches it from `++` and
+/// three internal counters. Folding them would make `x + y` and `x++` the same
+/// call.
+///
+/// The six bitwise kinds are valid in both families and mean the same opcode in
+/// each. The importer emits them as ctjs.binary, because the VM ToNumerics
+/// their operands and context::binary_op does the same. ctjs.binary_static of
+/// one is still valid IR, meaning "the operands are already numeric":
+/// binary_op_static converts nothing, which is right only once something has
+/// proved that.
 [[nodiscard]] constexpr bool is_bitwise(BinaryKind kind) {
     return kind == BinaryKind::Shl || kind == BinaryKind::Shr || kind == BinaryKind::UShr ||
            kind == BinaryKind::BitAnd || kind == BinaryKind::BitOr || kind == BinaryKind::BitXor;
 }
 
+/// The opcode a `ctjs.binary` of `kind` lowers to (op::halt if none).
 [[nodiscard]] constexpr ctbrowser::script::op opcode_for_binary(BinaryKind kind) {
     using op = ctbrowser::script::op;
     switch (kind) {
@@ -69,13 +80,14 @@ static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
     case BinaryKind::BitOr: return op::bit_or;
     case BinaryKind::BitXor: return op::bit_xor;
     }
-    return op::halt; // never valid as a binary operator; see is_valid_binary
+    return op::halt; // Never valid as a binary operator; see is_valid_binary.
 }
 
-// THE SIX RE-ENTERING-ONLY KINDS ARE NOT VALID HERE. binary_op_static's switch
-// has no arm for them, so passing one would fall through to a default that
-// returns undefined - an answer, silently wrong. The caller checks this rather
-// than the callee guessing.
+/// The opcode a `ctjs.binary_static` of `kind` lowers to, or op::halt for the
+/// six kinds that exist only in the re-entering family. binary_op_static's
+/// switch has no arm for those, so passing one would fall through to a default
+/// that silently returns undefined. The caller checks for op::halt rather than
+/// the callee guessing.
 [[nodiscard]] constexpr ctbrowser::script::op opcode_for_binary_static(BinaryKind kind) {
     if (kind == BinaryKind::Add) { return ctbrowser::script::op::add; }
     return is_bitwise(kind) ? opcode_for_binary(kind) : ctbrowser::script::op::halt;
@@ -89,18 +101,13 @@ static_assert(std::size(opcode_names) == ctbrowser::script::opcode_count,
     return opcode_for_binary_static(kind) != ctbrowser::script::op::halt;
 }
 
-// THE ASSERTIONS ARE THE TEST, and deliberately: "Invariants become tests under
-// tests/lint/ or ctcompile/test/, or static_asserts. PREFER A BUILD ERROR TO A
-// TEST." Every claim below is decidable at compile time, so it is decided at
-// compile time, in every translation unit that includes this - which is every
-// one that could get it wrong.
-//
-// It also keeps the claim where the mapping is. A runtime test would have to
-// live in a file that links MLIR, because BinaryKind is generated from the ODS;
-// the assertions cost nothing and travel with the header.
+// These static_asserts are the test for this mapping: every claim is
+// decidable at compile time, so it is checked in every translation unit that
+// includes this header. A runtime test would need to link MLIR, because
+// BinaryKind is generated from ODS.
 
-// THE ONE KIND THE TWO FAMILIES ANSWER DIFFERENTLY. This is the pair that would
-// be invisible in a table of integers.
+// Add is the one kind the two families map differently, the pair that would be
+// invisible in a table of integers.
 static_assert(opcode_for_binary(BinaryKind::Add) == ctbrowser::script::op::add_generic,
               "source `+` is add_generic - it runs ToPrimitive and can call a user valueOf");
 static_assert(opcode_for_binary_static(BinaryKind::Add) == ctbrowser::script::op::add,
@@ -108,10 +115,10 @@ static_assert(opcode_for_binary_static(BinaryKind::Add) == ctbrowser::script::op
 static_assert(opcode_for_binary(BinaryKind::Add) != opcode_for_binary_static(BinaryKind::Add),
               "so folding the two families would make `x + y` and `x++` the same call");
 
-// AND EVERY OTHER KIND, so a renumbering of `enum class op` - which Phases 13
-// and 14 do deliberately - cannot quietly change what any of them means. The
-// bitwise six are the same opcode in both families - only the helper, and so
-// whether the operands are converted first, differs.
+// Every other kind is pinned too, so renumbering `enum class op` cannot
+// quietly change what any of them means. The six bitwise kinds map to the
+// same opcode in both families; only the helper, and so whether operands are
+// converted first, differs.
 struct pinned_opcode {
     BinaryKind kind;
     ctbrowser::script::op code;
@@ -143,9 +150,9 @@ constexpr bool every_opcode_pinned() {
 // specification's edge cases and C's do not agree.
 static_assert(every_opcode_pinned());
 
-// A KIND THE FAMILY DOES NOT SERVE IS REFUSED rather than guessed:
+// A kind the family does not serve is refused rather than guessed:
 // binary_op_static's switch has no arm for concat, so passing one would
-// return undefined - an answer, silently wrong.
+// silently return undefined.
 static_assert(is_valid_binary(BinaryKind::BitAnd),
               "the bitwise kinds re-enter: context::binary_op ToNumerics them");
 static_assert(!is_valid_binary_static(BinaryKind::Concat),

@@ -1,3 +1,10 @@
+//===- Operations.cpp - Binding-time transfer for single operations -------===//
+//
+// The per-operation step of the binding-time analysis: scalar operators,
+// direct calls, and dispatch of heap operations to memory() in Memory.cpp.
+// Records each operation's decision and its results' facts.
+//
+//===----------------------------------------------------------------------===//
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -6,6 +13,8 @@
 #include "llvm/ADT/STLExtras.h"
 
 namespace ctcompile::ctnative {
+// Binding time of a scalar operation: static when every operand is static and
+// the operation is one this analysis can evaluate without running user code.
 BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::scalar(mlir::Operation * op,
                                                                   flow & state) {
     using kind = fact::kind;
@@ -44,6 +53,9 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::scalar(mlir::Operatio
     return supported ? fact::staticPrimitive() : fact{};
 }
 
+// Analyses one non-region operation, updating `state`. Returns whether it can
+// be evaluated at compile time; `control` is false when runtime control flow
+// decides whether it executes.
 bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bool control) {
     using kind = fact::kind;
     fact result;
@@ -51,7 +63,7 @@ bool BindingTimeAnalysis::Impl::operation(mlir::Operation * op, flow & state, bo
     std::string reason;
     if (op->getName().getStringRef() == "ub.poison") {
         result.time = BindingTime::Unknown;
-        eligible = true; // inert unknown slot; consumers still require a known value
+        eligible = true; // Inert unknown slot; consumers still require a known value.
     } else if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(op)) {
         eligible = true;
         result = {kind::bookkeeping, BindingTime::Static, {}, {}};

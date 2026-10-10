@@ -1,3 +1,13 @@
+//===- Entry.cpp - prove a DOM entry function -----------------------------===//
+//
+// The DOMEntryAnalysis constructor and its queries. The analysis checks that a
+// DOM entry function (and its filter callbacks) uses only operations the native
+// host can run without script: it validates the host contract, runs
+// dom_entry_detail::Body over every function body, then proves Style origins and
+// JSON snapshot ordering. Lowering reads the result through the query methods.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Analysis.h"
 #include "Entry/Body.hpp"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -19,14 +29,12 @@ namespace ctcompile::ctnative {
 
 DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & contract,
                                    unsigned maxSteps) {
-    // THE CENSUS FIRST, AND IT IS CHARGED. The fingerprint below prints the
-    // whole module, which is work proportional to its size, and it used to run
-    // before the first charged step - so maxSteps bounded the structural walk
-    // and nothing else, and a zero budget still paid for a full print. This is
-    // normalizeDOMURI's rule: one step per operation plus one per operand,
-    // refused as exhausted if it does not fit, and the same cost reserved
-    // again for the fingerprint's own pass over the module. workSteps carries
-    // both, so steps() is still the exact budget that reproduces the proof.
+    // Charge for the module walk before anything else: one step per operation
+    // plus one per operand (the same cost rule normalizeDOMURI uses), and the
+    // same amount again for the fingerprint, which prints the whole module.
+    // A budget too small for both refuses before any work, and workSteps
+    // records both charges, so steps() is the exact budget that reproduces
+    // the proof.
     WorkBudget budget{maxSteps};
     const llvm::scope_exit recordSteps(
         [&] { workSteps = static_cast<unsigned>(maxSteps - budget.remaining); });
@@ -216,9 +224,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     for (ctjs::FuncOp function : functions) {
         const bool callbackBody = function != target;
         auto & block = function.getBody().front();
-        // Both arms are checked. Transport preserves invariant kinds and
-        // element owner/id pairs. Every admitted effect preserves node lifetime;
-        // escaping handles, structural mutation and script reentry still refuse.
+        // The entry function and every filter callback get the same check.
+        // Values passed through block arguments keep their proved kind and
+        // element identity. Accepted operations never end a node's lifetime;
+        // escaping handles, tree mutation and calls back into script are
+        // refused.
         dom_entry_detail::Body visitor{refusal,
                                        budgetExhausted,
                                        proved,
@@ -281,9 +291,11 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
     for (auto & call : proved.calls) {
         if (!spend()) { return; }
         if (!call.usesStyle()) { continue; }
-        // Follow every incoming edge, including zero-trip initialization and
-        // backedges. Cycles grant no authority: the closure must reach exactly
-        // original parameters. Different inputs keep distinct Style engines.
+        // Walk every incoming edge back to its source, including zero-trip
+        // loop initialization and backedges. A cycle proves nothing by itself:
+        // every path must end at an original entry parameter. Selectors whose
+        // element comes from several parameters keep one Style engine per
+        // parameter.
         llvm::SmallVector<mlir::Value> pending{call.element};
         llvm::DenseSet<mlir::Value> visited;
         llvm::SmallVector<mlir::BlockArgument> roots;
@@ -352,11 +364,12 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             "intrinsic entry permits only primitive values and proved Symbol/String operations";
         return;
     }
-    // Joins and source spreads copy trees by value. A mutable target must
-    // finish every write before any such observation can snapshot it. No
-    // member/identity observation or descendant mutation passed the census,
-    // so the final single owning result cannot distinguish shallow aliases.
-    // Roots, further writes into the target and typeof observe no member.
+    // JSON-like objects are copied by value at joins and spreads, so a
+    // mutable target must finish every write before anything can read and
+    // snapshot it. The body check above already refused member reads,
+    // identity tests and nested mutation, so the single owning result cannot
+    // tell shallow aliases apart. Roots, later writes into the target and
+    // `typeof` read no member and are allowed anywhere.
     const auto inertJsonUse = [](mlir::OpOperand & use) {
         auto * user = use.getOwner();
         auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
@@ -380,9 +393,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
             if (!spend()) { return; }
             if (inertJsonUse(use)) { continue; }
             auto * user = use.getOwner();
-            // A copy in the same loop would retain a JavaScript alias that a
-            // later iteration can mutate. Only observations after the entire
-            // loop may snapshot the owning tree.
+            // A copy in the same loop would keep a JavaScript alias that a
+            // later iteration can mutate. Only reads after the whole loop may
+            // snapshot the owning tree.
             auto * ordered = write.getOperation();
             for (auto * parent = ordered->getParentOp(); parent && !llvm::isa<ctjs::FuncOp>(parent);
                  parent = parent->getParentOp()) {
@@ -392,8 +405,8 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
                     return;
                 }
             }
-            // Conditional and repeated writes need not execute, but their
-            // entire source region must finish before an owning observation.
+            // Conditional and repeated writes may not run at all, but the
+            // whole region holding them must finish before a snapshotting read.
             while (!dominance.properlyDominates(ordered, user) && ordered->getParentOp() &&
                    !llvm::isa<ctjs::FuncOp>(ordered->getParentOp())) {
                 if (!spend()) { return; }

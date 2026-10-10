@@ -1,33 +1,24 @@
 //===- CTJSTypes.td - the five CTJS types ---------------------------------===//
 //
-// FIVE, AND THE SMALLNESS IS THE DESIGN. The plan: "Most JavaScript values
-// remain generic. This is a deliberate, permanent design choice, not a
-// temporary simplification." A large CTJS type lattice would contradict both
-// Principle 3 - AOT is a backend of the runtime - and Extra Phase 23, which
-// says analysis facts must not become unconditional MLIR types.
+// Five opaque types, kept few on purpose: almost every value is a generic
+// boxed !ctjs.value, because AOT code is a backend of the same runtime and
+// analysis facts are attached as guarded operations or attributes, never
+// baked into unconditional MLIR types.
 //
 // None of them carries a parameter, so none needs an assemblyFormat: the
 // dialect sets useDefaultTypePrinterParser and they print as `!ctjs.value` and
 // its four siblings.
 //
 //===----------------------------------------------------------------------===//
-// THE POLICY'S PHASE 7 ACTION ITEM, ANSWERED. It says: "Verify TypeDef
-// usability as a direct type constraint against the pinned MLIR version. If the
-// pinned version does not accept a TypeDef record where a Type constraint is
-// expected, add explicit Type<CPred<...>> aliases in CTJSTypes.td and use those
-// in operand lists. Do not scatter AnyType as a workaround - that silently
-// disables verification."
-//
-// VERIFIED AGAINST MLIR 22.1.8, the pinned version, by generating an operation
-// that uses CTJS_ValueType directly in `arguments` and reading what came out:
+// A TypeDef works directly as an operand constraint: the generated verifier is
+// a real isa<> check that prints the type's summary, for example
 //
 //     if (!((::llvm::isa<::ctcompile::ctjs::ValueType>(type)))) {
 //       return op->emitOpError(valueKind) << " must be A generic, boxed
 //           ECMAScript value, but got " << type;
 //
-// A real isa<> check with the summary in the diagnostic. So Phase 8 uses the
-// TypeDefs directly and needs no Type<CPred<...>> aliases, and the AnyType
-// workaround the policy warns about is not needed either.
+// So operands use these TypeDefs directly, with no Type<CPred<...>> aliases,
+// and never AnyType, which would silently disable verification.
 #ifndef CTCOMPILE_CTJS_TYPES
 #define CTCOMPILE_CTJS_TYPES
 
@@ -45,10 +36,9 @@ def CTJS_ValueType : CTJS_Type<"Value", "value"> {
   }];
 }
 
-// THE SUMMARIES ON THE OTHER FOUR ARE INFERRED, and are marked as such because
-// the plan gives text for `value` only. Each is read from what the runtime
-// calls the thing and from where the plan uses the name elsewhere; none of
-// them changes what the type IS, which is an opaque handle with no parameters.
+// The summaries of the other four are marked (inferred): they are taken from
+// what the runtime calls each thing. None of them changes what the type is, an
+// opaque handle with no parameters.
 def CTJS_ContextType : CTJS_Type<"Context", "context"> {
   let summary = "The script::context a compiled body runs against (inferred)";
 }

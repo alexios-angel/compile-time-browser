@@ -1,3 +1,14 @@
+//===- Pass.cpp - Snapshot deforestation ----------------------------------===//
+//
+// The ctnative-deforest pass over lowered EmitC. A `ctnative::map_keys` or
+// `ctnative::map_values` snapshot that is only measured or indexed once is
+// replaced by a direct `ctnative::map_size` or `ctnative::map_snapshot_at`
+// call on the Map, so the vector is never built. Strategies.cpp decides which
+// snapshots qualify; a refused snapshot is tagged `ctnative.deforest_reason`.
+// See ctcompile/docs/native-deforestation.md.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Strategies.h"
 
 #include "../Lowering/EmitC/Runtime.h"
@@ -30,10 +41,11 @@ struct CTNativeDeforestPass : impl::CTNativeDeforestBase<CTNativeDeforestPass> {
             }
         });
         // Reserved helper names alone are not a proof. Require the exact
-        // runtime contract emitted after native Map admission - the runtime
-        // include with the ordered-storage define in front of it; an
+        // runtime contract emitted after native Map admission: the runtime
+        // include, with the ordered-storage define in front of it. An
         // arbitrary opaque call with a familiar name does not license this
         // rewrite.
+
         bool runtime = false;
         bool orderedStorage = false;
         for (mlir::Operation & op : module.getBody()->getOperations()) {

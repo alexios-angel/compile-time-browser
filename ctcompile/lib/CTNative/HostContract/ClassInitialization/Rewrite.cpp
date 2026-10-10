@@ -1,11 +1,22 @@
+//===- Rewrite.cpp - Apply a proved class initialization ------------------===//
+//
+// The mutating half of the class-initialization proof. Once prove() has
+// accepted a module's class setup, rewrite() replaces its holder objects,
+// getters, captured Maps and calls with direct calls and erases the setup
+// code. transportHelperMaps() turns Maps that helpers read through captures
+// into ordinary parameters.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 
 namespace {
 
-// Replace a call with a direct call of `function`: undefined receiver, new.target
-// and callee, its arguments padded with undefined, then `extra` as the last formals.
+/// Replaces `call` with a direct call of `function`: undefined receiver,
+/// new.target and callee, the original arguments padded with undefined, then
+/// `extra` as the last parameters.
 ctjs::CallDirectOp callDirect(mlir::Operation * call, ctjs::FuncOp function,
                               mlir::ValueRange extra = {}) {
     mlir::OpBuilder at(call);
@@ -26,8 +37,8 @@ ctjs::CallDirectOp callDirect(mlir::Operation * call, ctjs::FuncOp function,
     return replacement;
 }
 
-// Replace every call of `read`'s result with a direct call of `function`.
-// Other users stay: they are inert roots their callers remove.
+/// Replaces every call of `read`'s result with a direct call of `function`.
+/// Other users stay: they are inert ctjs.root uses the caller removes.
 void callDirectUsers(mlir::Operation * read, ctjs::FuncOp function) {
     for (mlir::Operation * user : llvm::make_early_inc_range(read->getUsers())) {
         if (llvm::isa<ctjs::CallOp>(user)) { callDirect(user, function); }
@@ -36,11 +47,15 @@ void callDirectUsers(mlir::Operation * read, ctjs::FuncOp function) {
 
 } // namespace
 
+/// Passes each Map a helper function reads through a capture as an extra
+/// trailing parameter instead, and adds that argument at every call. Callers
+/// that do not own the Map forward it too (fixpoint below). Returns false
+/// when the work budget runs out or the rewrite is refused (`reason`).
 bool classInitialization::transportHelperMaps() {
     if (mapClosures.empty()) { return true; }
-    // Keep helper bodies and frames, passing their exact Maps as ordinary
-    // parameters. Only real class closures retain capture slots; no closure
-    // is synthesized at a cross-frame call or duplicated for another caller.
+    // Helper bodies and frames are kept; only their Map captures become
+    // parameters. Class constructors and methods keep capture slots, and no
+    // new closure is created or duplicated for any caller.
     llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> closures;
     llvm::MapVector<mlir::Operation *, llvm::SmallVector<mlir::Value>> needed;
     llvm::MapVector<mlir::Operation *, ctjs::FuncOp> edges;
@@ -71,8 +86,9 @@ bool classInitialization::transportHelperMaps() {
         })) {
         return false;
     }
-    // A caller either owns the original Map or carries the same identity.
-    // The bounded fixpoint includes helpers which only forward another helper.
+    // A caller either creates the Map itself or must receive it too, so
+    // propagate the needed Maps up the call edges until nothing changes. This
+    // covers helpers that only forward a Map to another helper.
     bool changed = true;
     while (changed) {
         changed = false;
@@ -91,8 +107,9 @@ bool classInitialization::transportHelperMaps() {
             }
         }
     }
-    // A changed signature must cover every caller and cannot remain externally
-    // observable. Check both symbol-attribute locations as well as value aliases.
+    // The new signature must reach every caller, so every symbol reference to
+    // a changed helper must be one of the recorded direct calls. Value uses
+    // are checked next.
     llvm::DenseSet<mlir::Operation *> referencedCalls;
     if (auto stop = host_detail::forEachSymbolUse(
             module, true, [&] { return step(); },
@@ -121,10 +138,13 @@ bool classInitialization::transportHelperMaps() {
             if (!step()) { return false; }
             auto * owner = use->getOwner();
             if (llvm::isa<ctjs::RootOp>(owner)) { continue; }
+            // The closure is the callee: operand 2 of ctjs.call_direct,
+            // operand 0 of ctjs.call.
             if (edges.lookup(owner) == operation &&
                 use->getOperandNumber() == (llvm::isa<ctjs::CallDirectOp>(owner) ? 2U : 0U)) {
                 continue;
             }
+            // Operands from kFirstCapture (2) on are captures.
             if (auto captured = llvm::dyn_cast<ctjs::CreateClosureOp>(owner);
                 captured && use->getOperandNumber() >= 2 &&
                 llvm::is_contained(capturedClosures, captured)) {
@@ -238,8 +258,9 @@ bool classInitialization::transportHelperMaps() {
                 maps.push_back(available[caller].lookup(map));
             }
         }
-        // This replacement already discards the proved inert callee. Do not
-        // retain its old call pointer for the later DOM helper rewrite.
+        // callDirect() replaces this call, so drop it from inertCalleeCalls,
+        // which rewrite() visits later. The spend() pays for the linear scans
+        // in llvm::erase and retargetCells.
         if (!spend(inertCalleeCalls.size() + cells.size())) { return false; }
         llvm::erase(inertCalleeCalls, op);
         const auto previous = op->getResult(0);
@@ -283,8 +304,9 @@ void classInitialization::retireHelper(ctjs::CreateClosureOp closure, ctjs::Func
 
 llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
     // Every alias and implicit-argument use was checked before mutation.
-    // Local DOM slots remain as functions until the complete invocation/type
-    // proof; no unused body may disappear merely because its holder does.
+    // Slot functions are kept, even unused ones, and only made private: DOM
+    // slots still need the typed invocation proof, and rewrite() erases the
+    // others once nothing names them.
     llvm::SmallVector<ctjs::FuncOp> targets;
     const auto expand = [&](mlir::Operation * owner, CallableObject & holder) {
         auto publication = llvm::dyn_cast<ctjs::StoreGlobalOp>(owner);
@@ -314,13 +336,15 @@ llvm::SmallVector<ctjs::FuncOp> classInitialization::expandHolders() {
 }
 
 void classInitialization::rewrite() {
-    // Complete current-IR checks precede setup erasure. Normalized super
-    // bodies exist only on the private candidate; reports grant no authority.
+    // Every check has already run on the current IR, so the rewrite may now
+    // erase setup code. Strip the `ctnative.*` report attributes first: they
+    // are diagnostics only and later passes must not treat them as proofs.
     module.walk([](mlir::Operation * op) { removeAttrsWithPrefix(op, "ctnative."); });
     for (auto [operation, answer] : instanceOfResults) {
         auto test = llvm::cast<ctjs::InstanceOfOp>(operation);
         mlir::OpBuilder at(test);
-        // The importer boxes the i1 before JavaScript value operations.
+        // The importer boxes the i1 result (ctjs.from_bool) before JavaScript
+        // value operations use it; replace those boxes with Boolean constants.
         for (auto * user : llvm::make_early_inc_range(test.getResult().getUsers())) {
             if (auto boxed = llvm::dyn_cast<ctjs::FromBoolOp>(user)) {
                 at.setInsertionPoint(boxed);
@@ -335,13 +359,13 @@ void classInitialization::rewrite() {
             auto value = mlir::arith::ConstantIntOp::create(at, test.getLoc(), answer, 1);
             test.getResult().replaceAllUsesWith(value.getResult());
         }
-        test.erase(); // Keep both original operand producers and their effects.
+        test.erase(); // The operand producers stay, with their effects.
     }
-    // The complete source census proved these immutable callable identities.
-    // Reuse them on each constructed leaf's already unobservable prototype;
-    // ordinary method lowering still proves every call and borrowed receiver.
-    // Base completion precedes heritage, so every inherited key and closure
-    // dominates this point even if the leaf prototype was allocated earlier.
+    // The census proved these inherited methods never change. Copy them onto
+    // each constructed subclass's prototype, which nothing has observed yet;
+    // ordinary method lowering still checks every call and receiver. The base
+    // class is complete before the `extends` call, so every inherited key and
+    // closure dominates this point even if the prototype was allocated earlier.
     llvm::StringSet<> readKeys;
     bool dynamicRead = false;
     module.walk([&](ctjs::GetPropertyOp read) {
@@ -350,8 +374,8 @@ void classInitialization::rewrite() {
         readKeys.insert(key);
     });
     for (auto [inherited, definition] : inheritedSlots) {
-        // A lexical call may have consumed the only lookup. All original
-        // bodies passed the source census; retain slots for ordinary reads.
+        // Copy only methods some read can still reach: a key that no constant
+        // read names (and no computed read exists) is never looked up.
         if (!dynamicRead && !readKeys.contains(ctjs::constantKey(definition.getKey()))) {
             continue;
         }
@@ -367,15 +391,17 @@ void classInitialization::rewrite() {
         mlir::OpBuilder at(closure);
         closure.getEnclosingThisMutable().assign(undefinedAt(at, closure.getLoc()));
     }
-    // Holder expansion erases its slot closures. Clear their proved capture
-    // metadata first; the retained bodies still own all recorded reads.
+    // expandHolders() erases the slot closures. Clear their captures first;
+    // the kept function bodies still contain the recorded capture reads,
+    // which are rewritten below.
     for (ctjs::CreateClosureOp closure : capturedClosures) {
         if (!mapClosures.contains(closure)) { setCaptures(closure, target(closure), {}); }
     }
     const auto holderTargets = expandHolders();
     for (auto [read, function] : staticMethodReads) {
-        // Getter/capture expansion removes the proved implicit uses.
-        // Keep the original body and frame rather than cloning its code.
+        // Call the static method's original function directly instead of
+        // cloning its body; getter and capture expansion below removes its
+        // implicit-argument uses.
         callDirectUsers(read, function);
         eraseRooted(read);
     }
@@ -388,10 +414,10 @@ void classInitialization::rewrite() {
         for (ctjs::GetPropertyOp read : reads[target]) {
             mlir::OpBuilder at(read);
             if (throwingGetters.contains(target)) {
-                // Keep the throw in its original function. A direct call
-                // preserves abrupt completion without cloning a terminator
-                // into the middle of the reader's block. Native completion
-                // and Error representation remain separate admission proofs.
+                // Keep the throw in its original function: a direct call
+                // propagates the exception without cloning a terminator into
+                // the middle of the reader's block. Native lowering checks
+                // exceptions and Error values separately.
                 auto undefined =
                     ctjs::ConstantOp::create(at, read.getLoc(), read.getType(),
                                              ctjs::UndefinedAttr::get(module.getContext()));
@@ -410,10 +436,10 @@ void classInitialization::rewrite() {
                 continue;
             }
             mlir::IRMapping mapping;
-            // Dependencies have already been expanded. This closed body
-            // has no remaining implicit-argument or external-value uses.
-            // Clone at each original read, preserving evaluation order and
-            // fresh object identity, including through getter dependencies.
+            // Getters this one depends on were expanded first (getterOrder),
+            // so the body uses no implicit arguments or outside values. Clone
+            // it at each read, which keeps evaluation order and gives each read
+            // its own fresh objects.
             for (mlir::Operation & op : target.getBody().front()) {
                 if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp>(op)) { continue; }
                 if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
@@ -428,14 +454,14 @@ void classInitialization::rewrite() {
     for (ctjs::GetPropertyOp read : constructorReads) {
         if (!seenReads.insert(read).second) { continue; }
         for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
-            root->erase(); // Only inert roots remain after getter expansion.
+            root->erase(); // Only ctjs.root uses remain after getter expansion.
         }
         read.erase();
     }
     for (ctjs::LoadUpvalueOp read : captureReads) {
         if (auto helper = callableCaptures.lookup(read)) { callDirectUsers(read, helper); }
         for (mlir::Operation * root : llvm::make_early_inc_range(read->getUsers())) {
-            root->erase(); // Only roots remain after captured getter expansion.
+            root->erase(); // Only ctjs.root uses remain after getter expansion.
         }
         read.erase();
     }
@@ -447,8 +473,8 @@ void classInitialization::rewrite() {
             indices.push_back(static_cast<unsigned>(retained.size()));
             if (mapCells.contains(cell)) { retained.push_back(cell); }
         }
-        // Other captured reads were consumed above. Preserve the original
-        // Map cells for the ordinary closure lifter and its call-site proof.
+        // Other capture reads were rewritten above. Keep only the Map cells,
+        // renumbering the reads, for the ordinary closure lifter.
         target(closure).walk([&](ctjs::LoadUpvalueOp read) {
             read.setIndex(indices[static_cast<size_t>(read.getIndex())]);
         });
@@ -462,22 +488,22 @@ void classInitialization::rewrite() {
         (void)initial;
         if (mapCells.contains(value)) { continue; }
         for (mlir::Operation * use : llvm::make_early_inc_range(value.getUsers())) {
-            use->erase(); // Proved identical stores and inert cell roots.
+            use->erase(); // Stores proved to write the same value, and roots.
         }
         value.getDefiningOp()->erase();
     }
-    // Captured holders remain alive until all proved cell/capture transport
-    // is gone. Slot calls and closures were removed by expandHolders.
+    // Holder objects can be erased only now that the cells and capture reads
+    // carrying them are gone. expandHolders() already removed slot calls and
+    // closures.
     for (auto & [object, holder] : localHolders) {
         (void)holder;
         eraseRooted(object);
     }
-    // The original capture proof checked every implicit argument before any
-    // mutation. Only an unobserved sibling closure can disappear here; a
-    // remaining entry call still goes through the ordinary closure lift.
+    // Calls whose callee closure is otherwise unused: drop the closure value.
+    // The capture proof checked every implicit argument before any mutation.
     for (mlir::Operation * operation : inertCalleeCalls) {
-        // Entry-local calls survive method normalization. Their original
-        // callee uses were proved to be only inert callback enclosures.
+        // A direct call already names its target; its callee value was proved
+        // unused, so pass undefined instead.
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(operation)) {
             mlir::OpBuilder at(operation);
             direct.getCalleeValueMutable().assign(undefinedAt(at, operation->getLoc()));
@@ -492,8 +518,9 @@ void classInitialization::rewrite() {
                                                mlir::SymbolTable::Visibility::Private);
         eraseIfRooted(closure);
     }
-    // Captured reads have now been rewritten, including in unused slots.
-    // DOM slots still need the complete typed invocation/effect proof.
+    // Capture reads have now been rewritten, including in unused slots. Erase
+    // slot functions nothing names, except DOM entry helpers, which still need
+    // the typed invocation proof.
     for (ctjs::FuncOp function : holderTargets) {
         if (!domEntryHelpers.contains(function) &&
             mlir::SymbolTable::symbolKnownUseEmpty(function, module.getOperation()) &&
@@ -514,24 +541,26 @@ void classInitialization::rewrite() {
     }
     for (ctjs::CreateClosureOp closure : getterClosures) {
         for (mlir::Operation * root : llvm::make_early_inc_range(closure->getUsers())) {
-            root->erase(); // Only inert roots remain after descriptor removal.
+            root->erase(); // Only ctjs.root uses remain after descriptor removal.
         }
         closure.erase();
     }
-    // Original getter closures are gone; every new numeric closure has a
-    // matching direct symbol call. Remove callers before their dependencies
-    // so unused throwing chains disappear in one pass.
-    // ponytail: one symbol scan per getter; index uses if large classes need it.
+    // The original getter closures are gone. A throwing getter is still called
+    // directly by symbol, so keep it while referenced. Visit getters in
+    // reverse dependency order so a chain of unused throwing getters is erased
+    // in one pass.
+    // ponytail: one symbol scan per getter; index the uses if large classes
+    // make this slow.
     for (ctjs::FuncOp getter : llvm::reverse(getterOrder)) {
         if (!throwingGetters.contains(getter) ||
             mlir::SymbolTable::symbolKnownUseEmpty(getter, &module.getBodyRegion())) {
             getter.erase();
         }
     }
-    // Unconstructed classes and shadowed methods can lose their last setup
-    // use. Complete original bodies passed the census before this check;
-    // a remaining callable or symbol reference keeps them alive.
-    // Erase all closures before bodies that might contain another closure.
+    // Never-constructed classes and shadowed methods may have lost their last
+    // use with the setup code. Erase those no closure use or symbol reference
+    // keeps alive. Erase all closures before bodies that might contain
+    // another closure.
     llvm::SmallVector<std::pair<ctjs::CreateClosureOp, ctjs::FuncOp>> unusedCallables;
     module.walk([&](ctjs::CreateClosureOp closure) {
         auto function = target(closure);
@@ -546,9 +575,10 @@ void classInitialization::rewrite() {
     });
     for (auto & callable : unusedCallables) { eraseRooted(callable.first); }
     for (auto & callable : unusedCallables) { callable.second.erase(); }
-    // These bodies skipped the census and never run. Erase each once the
-    // leafBuilt originals and uncalled callers that named it are gone; native
-    // admission checks any that remain like every other body.
+    // `uncalledHelpers` are functions the proof skipped because nothing calls
+    // them. Erase each once no closure or symbol names it any more (repeat
+    // until no more are erased); native admission checks any that remain like
+    // every other body.
     for (bool erased = true; erased;) {
         erased = false;
         for (auto function : llvm::make_early_inc_range(module.getOps<ctjs::FuncOp>())) {

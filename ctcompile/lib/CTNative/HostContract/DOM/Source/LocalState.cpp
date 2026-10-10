@@ -1,3 +1,12 @@
+//===- LocalState.cpp - Boolean cells shared with helpers -------*- C++ -*-===//
+//
+// DOMSource::normalizeBooleanCell, which removes a local cell holding a
+// Boolean flag that a function passes by reference to private helpers (the
+// `!0`/`!1` flags in minified Bootstrap): it inlines the helpers and carries
+// the flag through scf.if results as a plain SSA value.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -5,8 +14,8 @@ namespace ctcompile::ctnative::dom_source_detail {
 bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
     auto & block = function.getBody().front();
     ctjs::CreateCellOp cell;
-    // Only the borrowed-cell seam needs this normalization. Other cells keep
-    // their existing fixed-capture proof, including its refusal boundaries.
+    // Only a cell passed to a direct call is rewritten here. Other cells go
+    // through the ordinary captured-cell proof (resolveCell) and its refusals.
     for (auto local : block.getOps<ctjs::CreateCellOp>()) {
         if (!step()) { return false; }
         for (mlir::Operation * user : local.getResult().getUsers()) {
@@ -23,9 +32,9 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         auto number = ctjs::constantAttr<ctjs::NumberAttr>(value);
         return number && (number.getDouble() == 0.0 || number.getDouble() == 1.0);
     };
-    // Bootstrap spells Boolean literals !0 and !1. Prove that exact origin,
-    // retaining the original numeric constant and not operation for typed
-    // lowering. Other computed stores keep their existing refusal boundary.
+    // Minified Bootstrap writes true and false as !0 and !1. Accept exactly
+    // that form and keep the numeric constant and its `!` for typed lowering.
+    // Any other computed store is refused.
     const auto booleanOrigin = [&](mlir::Value value) {
         if (!step()) { return false; }
         if (ctjs::constantAttr<ctjs::BooleanAttr>(value)) { return true; }
@@ -38,9 +47,10 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
     if (!initiallyBoolean && !undefined(cell.getInitial())) {
         return refuse("DOM Boolean state requires a literal or !0/!1 initialization");
     }
-    // An undefined owner cell may have its entire initialized lifetime inside
-    // one arm. Select the common block of every non-root use, including writes;
-    // the ordered census below must still prove initialization in that block.
+    // A cell that starts undefined may be initialized and used entirely inside
+    // one scf.if arm. Use the innermost block that contains every non-root
+    // use, including writes; `collect` below still has to prove
+    // initialization in that block.
     mlir::Block * scope = initiallyBoolean ? &block : nullptr;
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
         if (!step()) { return false; }
@@ -164,9 +174,10 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         }
         selectedCalls.insert(call);
         if (!helpers.insert(target).second) { continue; }
-        // Keep the ordinary frame, dominance, completion and implicit-argument
-        // proof. The extra census below narrows these bodies to conditional
-        // Boolean leaves; it does not trust native annotations.
+        // checkBody runs the ordinary frame, dominance, completion and
+        // implicit-argument checks. The walk below additionally requires each
+        // helper to contain only Boolean logic under scf.if. It reads the IR
+        // itself and ignores any ctnative.* annotations.
         if (!checkBody(target, false)) { return false; }
         auto & body = target.getBody().front();
         const auto formal = body.getArgument(ctjs::implicit_arguments);
@@ -207,9 +218,9 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
                         if (region.empty()) { continue; }
                         if (!self(self, region.front(), nesting + 1)) { return false; }
                     }
-                    // checkBody proved complete arm/result correspondence and
-                    // dominance. Every yielded value must now be Boolean before
-                    // any result is used as a fact by a later operation.
+                    // checkBody proved the arms' yields match the results and
+                    // dominate. The yield case below requires every yielded
+                    // value to be Boolean, so the results are Boolean too.
                     booleans.insert(branch.getResults().begin(), branch.getResults().end());
                     continue;
                 }
@@ -266,8 +277,9 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         };
         if (!proveLeaf(proveLeaf, body, 0)) { return false; }
     }
-    // Both symbol scopes matter: a second owner or an attribute naming a
-    // borrower is not made safe by the calls found through this cell's uses.
+    // Check every symbol use of each helper in the module: a call from another
+    // function, or an attribute naming the helper, is not covered by the calls
+    // found through this cell's uses.
     auto module = function->getParentOfType<mlir::ModuleOp>();
     if (!step(2 * uint64_t(operationCount))) { return false; }
     if (auto stopped = host_detail::forEachSymbolUse(
@@ -283,8 +295,10 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
             })) {
         return refuse("DOM Boolean borrower has an unproved symbolic user");
     }
-    // Reserve every nested operation and result use before erasing any call.
-    // Count even branches without cell uses toward the combined nesting limit.
+    // Charge the step budget for everything inlining will clone before erasing
+    // any call, so running out of budget cannot leave the function half
+    // rewritten. Branches without cell uses still count toward the 64-level
+    // nesting limit.
     const auto reserveClone = [&](auto && self, mlir::Block & source, unsigned nesting) -> bool {
         if (nesting == 64) {
             return refuse("DOM Boolean borrower combined conditional depth exhausted");
@@ -329,21 +343,21 @@ bool DOMSource::normalizeBooleanCell(ctjs::FuncOp function, unsigned depth) {
         callDepth.erase(call);
         call.erase();
     }
-    // Inlining introduces fresh If operations. Rebuild their ancestry from the
-    // actual cell uses, then prove initialization and every state edge again.
+    // Inlining adds new scf.if operations. Recompute stateBranches from the
+    // cell's actual uses, then check initialization and every store again.
     calls.clear();
     if (!findBranches(true) || !collect(collect, *scope, initiallyBoolean, 0)) { return false; }
-    // Each read snapshots the current value at its original source position.
-    // Keep every producer and unrelated effect for the complete DOM reproof;
-    // only the already-proved local storage operations disappear.
+    // Replace each read with the value current at its position. Every value
+    // producer and unrelated effect stays for the DOM entry proof; only the
+    // cell's own reads and writes are removed.
     const auto scalarize = [&](auto && self, mlir::Block & source, mlir::Value & current,
                                unsigned nesting) -> bool {
         if (nesting == 64) { return refuse("DOM Boolean state conditional depth exhausted"); }
         for (auto & operation : llvm::make_early_inc_range(source)) {
             if (!step()) { return false; }
             if (stateBranches.contains(&operation)) {
-                // Retain the original result prefix and arm bodies. Only the
-                // private Boolean state becomes one additional value per edge.
+                // Rebuild the scf.if with one extra result carrying the flag;
+                // the original results and arm bodies are unchanged.
                 if (!step(operationWork(&operation, true) + 1)) { return false; }
                 for (auto result : operation.getResults()) {
                     for (auto & use : result.getUses()) {

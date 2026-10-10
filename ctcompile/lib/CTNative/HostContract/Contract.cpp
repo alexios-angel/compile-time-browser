@@ -1,3 +1,12 @@
+//===- Contract.cpp - Host contract manifests -----------------------------===//
+//
+// Parses and validates the JSON host contract that tells the native compiler
+// what the embedding host provides (bindings, intrinsics, DOM parameters) for
+// one module, fingerprints the module the contract was written against, and
+// checks that the source cannot replace or leak the declared intrinsics.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -25,6 +34,8 @@ llvm::Error error(llvm::StringRef message) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
 }
 
+/// Reads `object[field]` into `output`: an array of distinct nonempty strings,
+/// which may be empty only when `allowEmpty`.
 llvm::Error names(const llvm::json::Object & object, llvm::StringRef field,
                   std::vector<std::string> & output, bool allowEmpty) {
     const auto * values = object.getArray(field);
@@ -42,7 +53,7 @@ llvm::Error names(const llvm::json::Object & object, llvm::StringRef field,
     return llvm::Error::success();
 }
 
-// A JSON integer in [0, bound), or nullopt.
+/// A JSON integer in [0, bound), or nullopt.
 std::optional<unsigned> indexBelow(const llvm::json::Value & value, std::uint64_t bound) {
     const auto index = value.getAsInteger();
     if (!index || *index < 0 || static_cast<std::uint64_t>(*index) >= bound) {
@@ -51,18 +62,22 @@ std::optional<unsigned> indexBelow(const llvm::json::Value & value, std::uint64_
     return static_cast<unsigned>(*index);
 }
 
+/// Whether every member of `object` is named in `allowed`.
 bool keys(const llvm::json::Object & object, llvm::ArrayRef<llvm::StringRef> allowed) {
     return llvm::all_of(object, [&](const auto & member) {
         return llvm::is_contained(allowed, member.first.str());
     });
 }
 
+/// Whether a closed-source contract may declare `name` as an initial intrinsic.
 bool closedSourceIntrinsic(llvm::StringRef name) {
     static const llvm::StringSet<> names{"Map", "Array", "Error", "Object", "Function"};
     return names.contains(name) || host_detail::classIntrinsicArity(name) ||
            host_detail::iteratorIntrinsicArity(name) || host_detail::sourceHelperArity(name);
 }
 
+/// Why the contract's realm own-data properties are invalid, or empty when
+/// they are valid.
 std::string realmReceiverProblem(const HostContract & contract) {
     if (!contract.classicScriptRealm && !contract.realmOwnDataProperties.empty()) {
         return "realm own-data properties require the classic-script-realm entry receiver";
@@ -103,9 +118,9 @@ const llvm::StringSet<> & host_detail::domInitialIntrinsics() {
         "__ctbrowser_to_property_key",
         "__ctbrowser_set_function_name",
         // Compiler source helpers a bare context installs. Object literals
-        // DEFINE data (define_own) rather than assign, `in` checks the object
-        // before ToPropertyKey, computed accessors go through one native, and
-        // an empty object pattern needs RequireObjectCoercible.
+        // define data properties (define_own) rather than assign them, `in`
+        // checks the object before ToPropertyKey, computed accessors go through
+        // one native, and an empty object pattern needs RequireObjectCoercible.
         "__ctbrowser_define_own",
         "__ctbrowser_define_accessor",
         "__ctbrowser_in_object",
@@ -248,8 +263,9 @@ llvm::Expected<HostContract> parseHostContract(llvm::StringRef text) {
                         names(*object, "initial_intrinsics", result.initialIntrinsics, true)) {
                     return std::move(failure);
                 }
-                // Class preparation consumes only its own identities. The DOM
-                // declarations survive for every method probe and final proof.
+                // When the class helper intrinsic is declared, the class
+                // helpers and Error are also allowed here; every other name
+                // must be a DOM intrinsic.
                 const bool hasClasses = llvm::is_contained(result.initialIntrinsics,
                                                            host_detail::classDefinedIntrinsic);
                 if (llvm::any_of(result.initialIntrinsics, [&](const auto & name) {
@@ -359,7 +375,9 @@ std::string hostContractFingerprint(mlir::ModuleOp module) {
         }
         return mlir::WalkResult::advance();
     });
-    // Report-free source needs no copy. Each call still hashes the complete current IR.
+    // Hash the module without its `ctnative.host_*` report attributes, so the
+    // fingerprint does not depend on earlier analysis runs. Copy the module only
+    // when such attributes are present.
     mlir::OwningOpRef<mlir::ModuleOp> copy;
     if (reports.wasInterrupted()) {
         copy = module.clone();
@@ -376,8 +394,11 @@ std::string hostContractFingerprint(mlir::ModuleOp module) {
 
 namespace ctcompile::ctnative::host_detail {
 
-// Only this complete local declaration may be omitted by a native entry provider.
-// The caller must also exclude every source reference to the published binding.
+/// True when `wrapper` is the top-level script function (index 0) that does
+/// nothing except create `target`'s closure and store it in the global named
+/// after it (the symbol name before '$'), then return undefined. Such a
+/// wrapper can be skipped by a native entry point. The caller must separately
+/// check that no other source reads that global.
 bool isInertEntryDeclaration(ctjs::FuncOp wrapper, ctjs::FuncOp target,
                              llvm::function_ref<bool()> spend) {
     if (!spend() || wrapper == target || functionIndex(wrapper) != 0 ||
@@ -492,9 +513,11 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
     module.walk([&](mlir::Operation * operation) {
         if (!reason.empty()) { return; }
         if (!contract.realmOwnDataProperties.empty()) {
-            // This narrow contract provides no descriptor/prototype mutation
-            // model. Refuse possible changes anywhere, including a suffix or
-            // alias not reached by prefix interpretation.
+            // The contract does not model property-descriptor or prototype
+            // changes, so refuse any operation that could make one anywhere in
+            // the module, even one the analysis would otherwise never reach.
+            // The size check skips the set lookup for longer keys: 16 is the
+            // length of the longest name in descriptorMutations.
             const auto key = ctjs::propertyKey(operation);
             const auto name = key ? ctjs::constantKey(key) : llvm::StringRef{};
             static const llvm::StringSet<> descriptorMutations{
@@ -550,8 +573,9 @@ std::string initialBindingProblem(mlir::ModuleOp module, const HostContract & co
                     continue;
                 }
             } else if (load.getName() == "Array" || load.getName() == "Object") {
-                // Object.entries, like getOwnPropertyNames, is one closed own-key
-                // read of its argument. The class proof folds or refuses each call.
+                // Only Array.from, Object.getOwnPropertyNames and Object.entries
+                // are allowed; the latter two read only their argument's own
+                // keys. The class proof evaluates or refuses each call.
                 const auto member = [&](llvm::StringRef key) {
                     return load.getName() == "Array"
                                ? key == "from"

@@ -1,3 +1,11 @@
+//===- BrowserOperations.cpp - DOM entry browser calls --------------------===//
+//
+// Body::browserOperation: the allow-list of DOM, String, Symbol, Number and JSON
+// reads and calls a DOM entry function may use, and the proof each one needs
+// before the native host may run it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.hpp"
 
 #include "llvm/ADT/StringMap.h"
@@ -39,8 +47,9 @@ const llvm::StringMap<std::pair<Kind, HostDOMMethod>> tokenMethods{
     {"add", {Kind::addClass, HostDOMMethod::addClass}},
     {"remove", {Kind::removeClass, HostDOMMethod::removeClass}},
 };
-// Trivial members: receiver kind, constant key and the original intrinsic
-// they need, if any. Each row's read is a proved method of that receiver.
+/// Members proved by a table lookup alone: the receiver kind, the constant
+/// key and the original intrinsic they need, if any. Reading `key` from a
+/// value of kind `receiver` gives a proved method of that receiver.
 struct MemberRow {
     Kind receiver;
     llvm::StringRef key, needs;
@@ -60,6 +69,9 @@ const MemberRow memberRows[]{
     {Kind::number, "toString", "Number", Kind::numberToString, HostDOMMethod::numberToString},
 };
 
+/// The Number a String index literal evaluates to: a Number constant (not
+/// NaN), or null, a Boolean or a Number under one or two unary minus signs.
+/// std::nullopt for anything else.
 std::optional<double> numericIndexLiteral(mlir::Value value) {
     bool negative = false;
     unsigned negations = 0;
@@ -71,8 +83,9 @@ std::optional<double> numericIndexLiteral(mlir::Value value) {
         value = unary.getOperand();
     }
     auto literal = value.getDefiningOp<ctjs::ConstantOp>();
-    // Negation has already converted these exact primitives to Numbers.
-    // Bare null/Boolean arithmetic still needs a separate coercion proof.
+    // Negation converts null and Booleans to Numbers without running user
+    // code. Unnegated null or Boolean arithmetic is refused; it would need
+    // its own coercion proof.
     if (negations && literal) {
         if (llvm::isa<ctjs::NullAttr>(literal.getValue())) { return negative ? -0.0 : 0.0; }
         if (auto flag = llvm::dyn_cast<ctjs::BooleanAttr>(literal.getValue())) {
@@ -90,6 +103,9 @@ bool emptyString(mlir::Value value) {
     return string && string.getValue().empty();
 }
 
+/// Evaluates a String index expression at compile time: numericIndexLiteral
+/// operands combined by at most \p arithmeticDepth levels of / - * % + or **.
+/// std::nullopt when the expression has any other shape.
 std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 2) {
     if (auto binary = value.getDefiningOp<ctjs::BinaryOp>();
         binary &&
@@ -102,14 +118,15 @@ std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 
         const auto lhs = stringIndex(binary.getLhs(), arithmeticDepth - 1);
         const auto rhs = stringIndex(binary.getRhs(), arithmeticDepth - 1);
         if (!lhs || !rhs) { return std::nullopt; }
-        // Both operands are already Numbers; no coercion or user code can run.
-        // Globals and coercing operands still need their own origin proof.
+        // Both operands are already Numbers, so no coercion or user code can
+        // run. Any other operand makes the recursion return std::nullopt.
         if (binary.getKind() == ctjs::BinaryKind::Div) { return *lhs / *rhs; }
         if (binary.getKind() == ctjs::BinaryKind::Sub) { return *lhs - *rhs; }
         if (binary.getKind() == ctjs::BinaryKind::Add) { return *lhs + *rhs; }
         if (binary.getKind() == ctjs::BinaryKind::Mod) { return std::fmod(*lhs, *rhs); }
         if (binary.getKind() == ctjs::BinaryKind::Pow) {
-            // Number::exponentiate differs from pow for |base|=1 and infinite exponent.
+            // JavaScript (Number::exponentiate) gives NaN for |base| == 1 with
+            // an infinite exponent, where std::pow gives 1.
             if (std::abs(*lhs) == 1 && !std::isfinite(*rhs)) {
                 return std::numeric_limits<double>::quiet_NaN();
             }
@@ -124,8 +141,9 @@ std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 
             return offset ? std::optional<double>{-*offset} : std::nullopt;
         }
     }
-    // Size and infinity clamp before unsigned conversion in lowering. NaN has
-    // no Number-literal source spelling; only the arithmetic above proves its origin.
+    // Lowering clamps large and infinite indices before converting them to
+    // unsigned. NaN has no Number-literal spelling, so it can only come from
+    // the arithmetic above.
     return numericIndexLiteral(value);
 }
 } // namespace
@@ -133,8 +151,9 @@ std::optional<double> stringIndex(mlir::Value value, unsigned arithmeticDepth = 
 std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     auto unary = llvm::dyn_cast<ctjs::UnaryOp>(operation);
     auto binary = llvm::dyn_cast<ctjs::BinaryOp>(operation);
-    // Exact Number operands cannot coerce or reenter. Their scalar arithmetic
-    // also supplies attribute text; String-index consumers retain their own bounds proof.
+    // Arithmetic on proved Numbers cannot coerce or call back into script.
+    // Its result may also become attribute text; String-index uses still
+    // need their own bounds proof below.
     const auto numericBinary = [&](auto op) {
         return op && op.getKind() != ctjs::BinaryKind::Concat &&
                hasKind(op.getLhs(), Kind::number) && hasKind(op.getRhs(), Kind::number);
@@ -174,7 +193,7 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 if (auto arithmetic = llvm::dyn_cast<ctjs::BinaryOp>(use.getOwner());
                     arithmetic && stringIndex(arithmetic.getResult())) {
                     // Follow all intermediate uses, including Add: ordinary
-                    // scalar Add has its own path and does not run this census.
+                    // scalar Add takes its own path and skips this use scan.
                     pending.push_back(arithmetic.getResult());
                     ++bounds;
                     continue;
@@ -208,8 +227,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             proved.documentLoads.insert(load);
             return true;
         }
-        // The DOM provider fixes this initial binding. The complete
-        // source census admits no replacement or script reentry.
+        // The DOM provider supplies the initial `undefined` binding, and the
+        // whole-module scan of every operation has already ruled out
+        // reassignment and script reentry.
         if (load.getName() == "undefined") {
             values[load.getResult()] = Kind::undefined;
             return true;
@@ -246,7 +266,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 return true;
             }
         }
-        // Bound catalog lookup work by the longest standard property name.
+        // Bound lookup work by the longest well-known symbol name (18,
+        // isConcatSpreadable).
         if (hasKind(read.getObject(), Kind::symbolIntrinsic) && key.size() <= 18 &&
             wellKnownSymbols.contains(key)) {
             values[read.getResult()] = Kind::symbol;
@@ -321,8 +342,10 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                         number.getDouble() == double(1U << 24) && yes && no &&
                         yes.getNumOperands() == 1 && no.getNumOperands() == 1 &&
                         yes.getOperand(0) == less.getLhs() && no.getOperand(0) == less.getRhs()) {
-                        // min(snapshot.length, spread cap) is also an upper
-                        // bound for accesses to that immutable snapshot.
+                        // min(snapshot.length, 2^24) also bounds accesses to
+                        // the snapshot. 2^24 is the VM's spread
+                        // materialisation cap (see cappedLength in
+                        // DOM/Snapshot/Bounds.h).
                         bound = less.getLhs();
                     }
                 }
@@ -352,7 +375,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
                 return true;
             }
         }
-        // Bound hashing by the longest supported String member.
+        // Bound hashing by the longest supported String member (11,
+        // toLowerCase).
         if (supplied("String") && hasKind(read.getObject(), Kind::string) && key.size() <= 11) {
             if (auto method = stringMethods.find(key); method != stringMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
@@ -377,8 +401,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (!spend() || !spend() || !spend()) { return false; }
             const auto origin = keyOrigins.find(read.getKey());
             auto dataset = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
-            // ponytail: only direct snapshot members carry presence.
-            // Joined or transformed keys need a separate provenance proof.
+            // ponytail: accepts only keys read directly from a dataset
+            // snapshot of the same element; refuses joined or transformed
+            // keys until a separate provenance proof exists.
             if (!dataset || origin == keyOrigins.end() ||
                 origin->second.element != dataset.getObject() ||
                 origin->second.epoch != mutationEpoch ||
@@ -396,8 +421,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             proved.tokenLists.push_back(read);
             return true;
         }
-        // Bound hashing by the longest supported member, as literal comparisons
-        // did before the name tables. Unknown long keys must not bypass the work budget.
+        // Skip keys longer than the longest supported member (16,
+        // querySelectorAll) so unknown long keys cannot be hashed outside the
+        // work budget.
         if (hasKind(read.getObject(), Kind::element) && key.size() <= 16) {
             if (auto method = elementMethods.find(key); method != elementMethods.end()) {
                 const auto [kind, hostMethod] = method->second;
@@ -418,6 +444,10 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
     }
     if (auto invoke = llvm::dyn_cast<ctjs::CallOp>(operation)) {
         auto arguments = invoke.getArgs();
+        // Only two RegExps are supported, both matching Bootstrap's source:
+        // /^bs/ with no flags (stripping the `bs` prefix of data-bs-* keys) and
+        // /[A-Z]/g (one uppercase unit replaced by a callback, for camelCase
+        // to kebab-case).
         if (hasKind(invoke.getCallee(), Kind::regexpFactory)) {
             const bool uppercase = arguments.size() == 2 &&
                                    ctjs::constantKey(arguments[0]) == "[A-Z]" &&
@@ -468,8 +498,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::symbolIntrinsic)) {
-            // No ToPrimitive/ToString hook can run for these exact input kinds.
-            // Broader descriptions need their coercion and exception proof.
+            // No ToPrimitive/ToString hook can run for a String or undefined
+            // description. Other descriptions are refused; they would need a
+            // coercion and exception proof.
             if (!hasKind(invoke.getReceiver(), Kind::undefined) || arguments.size() > 1 ||
                 (!arguments.empty() && !hasKind(arguments[0], {Kind::string, Kind::undefined}))) {
                 return fail("Symbol call requires its initial builtin, undefined receiver "
@@ -514,9 +545,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             return true;
         }
         if (hasKind(invoke.getCallee(), Kind::selectorCall)) {
-            // The selector's checked js_element_t construction stays at this
-            // call. A root read may be absent; it grants no presence fact to
-            // other uses, and preceding source effects must still run.
+            // The selector call itself does the checked js_element_t
+            // construction. A documentElement read may be absent; it proves
+            // nothing about other uses, and earlier source effects still run.
             const bool checkedRoot =
                 arguments.size() == 2 && hasKind(arguments[0], Kind::nullableElement) &&
                 proved.documentRoots.contains(arguments[0].getDefiningOp<ctjs::GetPropertyOp>());
@@ -575,8 +606,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             hasKind(arguments[1], Kind::replacementCallback)) {
             auto closure = arguments[1].getDefiningOp<ctjs::CreateClosureOp>();
             auto callback = indexedCallbacks.lookup(static_cast<unsigned>(closure.getFunction()));
-            // Every callback use is this exact pattern; its argument is
-            // one ASCII uppercase unit, never an arbitrary String.
+            // The /[A-Z]/g pattern hands the callback exactly one ASCII
+            // uppercase character, never an arbitrary String.
             proved.calls.push_back(
                 {invoke, HostDOMMethod::replaceUppercase, invoke.getReceiver(), callback});
             values[invoke.getResult()] = Kind::string;
@@ -584,11 +615,12 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::replacePrefix) && arguments.size() == 2 &&
             hasKind(arguments[0], Kind::prefixRegExp) && emptyString(arguments[1])) {
-            // ponytail: the exact ASCII /^bs/ with no flags needs no
-            // regex engine. Broader patterns require their own proof.
-            // Initial String/RegExp/factory identities fix @@replace,
-            // exec and flag accessors; the census excludes mutation
-            // and reentry, and the literal has no observable state.
+            // ponytail: accepts only the ASCII /^bs/ with no flags, which needs
+            // no regex engine; other patterns are refused until they have
+            // their own proof. The original String, RegExp and factory fix
+            // @@replace, exec and the flag accessors; the whole-module scan
+            // has ruled out mutation and reentry, and the literal has no
+            // observable state.
             proved.calls.push_back(
                 {invoke, HostDOMMethod::removeStringPrefix, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::string;
@@ -596,9 +628,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             if (!spend() || !spend()) { return false; }
             if (key && keyOrigins.contains(key.getResult()) &&
                 prefixSnapshots.contains(key.getObject())) {
-                // Removing a guaranteed prefix is injective. Keep this
-                // authority separate from dataset membership: the new
-                // key does not name the original dataset property.
+                // Removing a prefix every key is known to have keeps keys
+                // distinct. This is not dataset membership: the new key does
+                // not name the original dataset property.
                 strippedAssignmentKeys[invoke.getResult()] = key;
             }
             return true;
@@ -626,8 +658,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         }
         if (hasKind(invoke.getCallee(), Kind::startsWith) && arguments.size() == 1) {
             llvm::SmallVector<std::pair<mlir::Value, unsigned>, 4> pieces{{arguments[0], 0}};
-            // ponytail: two concatenation levels keep the ASCII proof bounded.
-            // General prefixes need separate origin and UTF-16 proofs.
+            // ponytail: accepts ASCII literal prefixes with at most two
+            // concatenation levels, which keeps the proof bounded; refuses
+            // other prefixes until they have origin and UTF-16 proofs.
             while (!pieces.empty()) {
                 const auto [piece, depth] = pieces.pop_back_val();
                 if (!spend()) { return false; }
@@ -650,7 +683,9 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
             proved.calls.push_back({invoke, HostDOMMethod::startsWith, invoke.getReceiver()});
             values[invoke.getResult()] = Kind::boolean;
             auto text = ctjs::constantAttr<ctjs::StringAttr>(arguments[0]);
-            // Computed prefixes gain no dataset membership or key-transform authority.
+            // Only a literal "bs..." test on the callback's input marks the
+            // result as requiring Bootstrap's data-bs-* prefix; computed
+            // prefixes prove nothing about dataset keys.
             if (callbackBody && text &&
                 invoke.getReceiver() == block.getArgument(ctjs::implicit_arguments) &&
                 text.getValue().starts_with("bs")) {
@@ -734,7 +769,8 @@ std::optional<bool> Body::browserOperation(mlir::Operation & operation) {
         if (hasKind(invoke.getCallee(), Kind::getAttribute) && arguments.size() == 1 &&
             hasKind(arguments[0], Kind::string)) {
             proved.calls.push_back({invoke, HostDOMMethod::getAttribute, invoke.getReceiver()});
-            // Own String or null, with no prototype fallback.
+            // getAttribute returns the attribute's String or null; it never
+            // falls back to a prototype.
             values[invoke.getResult()] = Kind::optionalString;
             return true;
         }

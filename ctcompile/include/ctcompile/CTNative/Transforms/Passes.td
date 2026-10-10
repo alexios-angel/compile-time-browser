@@ -1,7 +1,8 @@
 //===- Passes.td - ctnative passes ---------------------------*- tablegen -*-===//
 //
-// THE NATIVE TIER'S PASSES. Part 24 §1.2: the output links neither the
-// interpreter nor its collector, and anything unproved is a diagnostic.
+// Passes for the native C++ target. Its output links neither the interpreter
+// nor its garbage collector; anything the passes cannot prove is reported as a
+// diagnostic rather than boxed at run time.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD

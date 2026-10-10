@@ -1,10 +1,12 @@
-// recovery - the normal and catch tails: collecting an acyclic, handler-balanced
-// tail and cloning it into a try region with completion terminators.
+//===- Tails.cpp - Normal and catch tails -----------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
-// 2026-09-08. All are member functions of `recovery`, the disposable-clone
-// transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
-// header the rest of the lowering sees, did not change.
+// Collects an acyclic, handler-balanced normal or catch tail and clones it
+// into a try region ending in completion terminators.
+//
+// Member functions of `recovery`, the disposable-clone transaction declared in
+// Attempt.h; the rest of the lowering uses only Exceptions/Recovery.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Attempt.h"
 
@@ -162,6 +164,8 @@ bool recovery::cloneTail(const tail & plan, mlir::Region & destination, bool isC
                 // JS boolean, normal result, thrown payload, saved state.
                 // Convert the boolean only after leaving the invocation;
                 // try_exit's i1 never crosses a CTJS value region edge.
+                // A conservative charge for the ops built below: a fixed cost
+                // for the invoke and its three regions, plus four per slot.
                 if (!spend(uint64_t(20) + width * uint64_t(4))) { return false; }
                 mlir::OperationState state(operation.getLoc(), "ctjs.invoke");
                 llvm::SmallVector<mlir::Type> types(width + 3, type);

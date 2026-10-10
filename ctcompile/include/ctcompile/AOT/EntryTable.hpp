@@ -1,3 +1,36 @@
+//===- EntryTable.hpp - Install compiled entry points -----------*- C++ -*-===//
+//
+// Connects each generated translation unit's compiled bodies to the right
+// `function_proto` in a loaded program.
+//
+// The runtime enters a compiled body only when `function_proto::aot_entry` is
+// set. A generated application has no driver to set it by hand, so the mapping
+// is carried in the symbol name. `BytecodeImport.cpp` names every imported
+// function `<sanitised>$<index>`, where `index` is its position in
+// `program::functions` and the sanitiser maps every character that is not
+// `[A-Za-z0-9_]` to `_`; `EmitC/Support.cpp` (`c_identifier`) then maps `$` to
+// `_`, because `$` is not in C++'s basic character set. So the emitted symbol
+// `stepShip_4` says it is the compiled body of function 4, named `stepShip`.
+// No side file or serialized metadata is needed.
+//
+// This file restates that naming rule in entry_symbol(). The duplication is
+// safe because drift is loud: install() refuses a symbol that matches no
+// function, and install_strict() refuses a function that matches no symbol, so
+// together they enforce a bijection. A changed sanitiser turns every generated
+// application into a startup refusal naming the symbol, never into one that
+// silently falls back to the interpreter (still correct, so nothing reports it).
+//
+// Not detected: a table generated from a different program whose functions
+// happen to have the same names at the same indices. The defence is the build
+// graph: the generator and the program compiler read one fixture, as
+// ctcompile/test/Support/embed-js.cmake enforces.
+//
+// This header should eventually move to ctbrowser together with the launcher,
+// so a shipped application never links a compiler-side header (see
+// ctcompile/docs/plans/launcher.md). It stays header-only here until then.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include <ctbrowser/aot/aot_entry.h>
@@ -11,121 +44,70 @@
 #include <unordered_map>
 #include <vector>
 
-// HOW A GENERATED TRANSLATION UNIT REACHES THE RIGHT `function_proto`.
-//
-// The runtime enters a compiled body only when `function_proto::aot_entry` is
-// set, and nothing sets it. Every test that has run compiled code so far did it
-// by hand: Differential.cpp holds a table of {name, ordinal, &symbol} written
-// out in its own source, walks `program::functions` looking for each name, and
-// assigns the field. That is right for a driver whose job is to install
-// forty-six named bodies one case at a time, and it is not a mechanism - a
-// generated application has no driver, and a table somebody types is a table
-// that disagrees with the code the moment either moves.
-//
-// THE MAPPING IS CARRIED IN THE SYMBOL NAME, and it was already there.
-// `BytecodeImport.cpp` names every imported function `<sanitised>$<index>`,
-// where `index` is its position in `program::functions` and the sanitiser maps
-// every character that is not `[A-Za-z0-9_]` to `_`; `CTJSToEmitC.cpp` then
-// maps `$` to `_`, because `$` is not in C++'s basic character set. So the
-// emitted symbol `stepShip_4` states, in the one place both sides can read,
-// that it is the compiled body of function 4 and that function 4 was called
-// `stepShip`. Nothing else has to be transported: no side file, no serialized
-// metadata, no ordinal anybody counted twice.
-//
-// THIS FILE RESTATES THAT NAMING RULE - the sanitiser is the shared
-// `cpp::identifier`, the `_<index>` suffix is spelled here again - and that
-// cost is paid deliberately. The alternative is a build-time tool that compiles the source a
-// third time to emit a metadata table - a third copy plus a build edge. What
-// makes the duplication safe is that a drift is LOUD RATHER THAN SILENT:
-// `install` refuses when a symbol in the table matches no function, and
-// `install_strict` refuses when a function matches no symbol, so the two
-// together are a BIJECTION. A change to either sanitiser turns every generated
-// application into a startup refusal naming the symbol, not into an application
-// that quietly interprets everything - and a silent fall back to the
-// interpreter is the failure this project treats as worst, because the answer
-// is still right and nothing reports it.
-//
-// WHAT THE BIJECTION CANNOT SEE, stated rather than discovered: a table
-// generated from a DIFFERENT program whose functions happen to have the same
-// names at the same indices. Nothing here would notice, and the compiled bodies
-// would be wrong. The defence is the build graph rather than a check - one
-// fixture, read by the generator and by whatever compiles the program, which is
-// the discipline `embed-js.cmake` exists to enforce and which this project has
-// already been bitten by ignoring.
-//
-// IT IS HEADER-ONLY AND LIVES IN ctcompile, WHICH IS NOT WHERE IT BELONGS.
-// Phase 18 says the launcher is a fixed precompiled library in ctbrowser
-// (`ctbrowser/lib/Application/`) so that a shipped application never links a
-// compiler-side header. This is the installer rather than the launcher, and it
-// moves there with it; see `ctcompile/docs/plans/launcher.md`. Header-only
-// until then, because a new library is a new CMake target in a file three other
-// branches are editing at the same time.
 namespace ctcompile::aot {
 
-// ONE COMPILED BODY, AS THE GENERATED TABLE SPELLS IT.
-//
-// The symbol TEXT rather than an index, because the index is already in the
-// symbol and a generator writing both could write them inconsistently. One
-// fact, one place.
+/// One compiled body, as the generated table spells it.
+///
+/// The table stores the symbol text rather than an index, because the index is
+/// already in the symbol and a generator writing both could write them
+/// inconsistently.
 struct entry_binding {
     const char * symbol = nullptr;
     ctbrowser::aot::ct_aot_entry_fn entry = nullptr;
 };
 
-// EVERYTHING ONE GENERATED TRANSLATION UNIT CONTRIBUTES. `source_name` is
-// carried for diagnostics only - a refusal that cannot say which application it
-// is about is a refusal somebody has to bisect.
+/// Everything one generated translation unit contributes. `source_name` is
+/// carried only so a refusal can say which application it is about.
 struct entry_table {
     const char * source_name = nullptr;
     const entry_binding * bindings = nullptr;
     std::size_t binding_count = 0;
 };
 
-// WHAT INSTALLING DID, in numbers a test can assert on rather than in a bool.
-//
-// `interpreted` is the number this exists for. An application that installed
-// nothing and one that installed everything both run and both print the right
-// answer; from outside, the only difference is this count and the dispatch
-// counters. That is why strict mode below is a rule about a number and not a
-// flag somebody sets.
+/// What install() did, as counts a test can assert on.
+///
+/// `interpreted` is the important one: an application that installed nothing
+/// and one that installed everything both run and print the right answer, and
+/// only this count (and the dispatch counters) tells them apart. That is why
+/// install_strict() is a rule about this number rather than a flag.
 struct install_report {
-    std::size_t functions = 0;   // program::functions.size()
-    std::size_t installed = 0;   // protos that now have a compiled body
-    std::size_t interpreted = 0; // and the ones that do not
-    std::string error;           // non-empty means NOTHING was installed
+    std::size_t functions = 0;   ///< Size of program::functions.
+    std::size_t installed = 0;   ///< Protos that now have a compiled body.
+    std::size_t interpreted = 0; ///< Protos that still run interpreted.
+    std::string error;           ///< Non-empty means nothing was installed.
 
     [[nodiscard]] bool ok() const noexcept { return error.empty(); }
 };
 
-// THE IMPORTER'S NAMING RULE, restated. See the header comment for why this
-// is a copy and what stops it drifting quietly.
-//
-// `BytecodeImport.cpp` names each `ctjs.func` `cpp::identifier(name or "fn")`
-// + `$` + index, and `EmitC/Support.cpp::c_identifier` then maps `$` to `_`.
-// The two together cannot collide: the sanitised part contains no `$` and the
-// index is decimal, so `a$1` becomes `a_1` and `a_1$2` becomes `a_1_2`.
+/// Returns the C++ symbol the backend emits for function `index` named `name`.
+///
+/// This restates the importer's naming rule (see the file header for why the
+/// copy is safe). `BytecodeImport.cpp` names each `ctjs.func`
+/// `cpp::identifier(name or "fn")` + `$` + index, and
+/// `EmitC/Support.cpp::c_identifier` then maps `$` to `_`. The two cannot
+/// collide: the sanitised part contains no `$` and the index is decimal, so
+/// `a$1` becomes `a_1` and `a_1$2` becomes `a_1_2`.
 [[nodiscard]] inline std::string entry_symbol(std::string_view name, std::size_t index) {
     return cpp::identifier(name.empty() ? std::string_view{"fn"} : name) + "_" +
            std::to_string(index);
 }
 
-// STAMP A GENERATED TABLE ONTO A PROGRAM.
-//
-// ALL OR NOTHING. A table with one bad row installs none of it, because a
-// partially installed program is a program running an unknown mixture: the
-// answer is still right, the counters still move, and nothing distinguishes it
-// from the build that was intended. So everything is resolved before anything
-// is written.
+/// Sets `aot_entry` on each function named by `table`.
+///
+/// All or nothing: if any row is empty, names no function, or claims a
+/// function twice, nothing is installed and `report.error` says why. A
+/// partially installed program would still answer correctly, but with an
+/// unknown mix of compiled and interpreted code that nothing reports, so every
+/// row is resolved before anything is written.
 [[nodiscard]] inline install_report install(ctbrowser::script::program & into,
                                             const entry_table & table) {
     install_report report;
     report.functions = into.functions.size();
     report.interpreted = report.functions;
 
-    // EVERY PROTO'S SYMBOL, COMPUTED ONCE. Resolving each binding by rebuilding
-    // the names would be quadratic on a real program - Phaser is 7,725
-    // functions - and the resolution has to happen before any assignment
-    // anyway.
+    // Compute every proto's symbol once. Rebuilding the names per binding would
+    // be quadratic on a real program (Phaser has 7,725 functions), and every
+    // row must be resolved before any assignment anyway.
     std::unordered_map<std::string, std::size_t> symbols;
     symbols.reserve(into.functions.size());
     for (std::size_t index = 0; index < into.functions.size(); ++index) {
@@ -143,10 +125,10 @@ struct install_report {
         const std::string_view wanted{binding.symbol};
         const auto hit = symbols.find(std::string{wanted});
         const std::size_t found = hit == symbols.end() ? into.functions.size() : hit->second;
-        // THE REFUSAL THIS FILE IS FOR. A symbol matching nothing means the two
-        // naming rules have drifted, or the table is not this program's - and
-        // in both cases the application would otherwise start, interpret
-        // everything, and report a clean and truthful zero.
+        // A symbol matching nothing means the two naming rules have drifted or
+        // the table belongs to another program. Without this refusal the
+        // application would start, interpret everything, and report zero
+        // compiled functions without complaint.
         if (found == into.functions.size()) {
             report.error = "no function in this program is named " + std::string{wanted} +
                            " - the generated bodies and the runtime disagree about how a "
@@ -169,30 +151,22 @@ struct install_report {
     return report;
 }
 
-// STRICT AOT-ONLY, AS A RULE ABOUT A NUMBER.
-//
-// Phase 19 describes strict mode as a policy over dynamic source processing -
-// no `eval`, no `new Function`, no `innerHTML`, no runtime CSS text. This is
-// the half of it that the JavaScript backend can be held to, and it is stated
-// in the one way a test can check without reading the compiler's mind: an
-// application whose program still holds a function with no compiled body is not
-// an AOT-only application, and it REFUSES TO START rather than falling back.
-//
-// A refusal and not a warning, for the shape of this project's failure mode: a
-// build where the backend quietly stopped lowering one function produces an
-// application that starts, renders, answers correctly and is slower - which is
-// invisible, and stays invisible until somebody profiles it.
-//
-// It is also the other half of the bijection. `install` refuses a symbol that
-// matches no function; this refuses a function that matches no symbol.
+/// Like install(), but refuses unless every function in the program receives a
+/// compiled body.
+///
+/// Strict AOT-only mode forbids dynamic source processing (no `eval`, no
+/// `new Function`, no `innerHTML`, no runtime CSS text). This checks the part
+/// the JavaScript backend controls: a program that still holds an uncompiled
+/// function refuses to start instead of falling back to the interpreter, which
+/// would be correct but silently slower. Together with install() this makes
+/// the symbol-to-function mapping a bijection.
 [[nodiscard]] inline install_report install_strict(ctbrowser::script::program & into,
                                                    const entry_table & table) {
     install_report report = install(into, table);
     if (!report.ok()) { return report; }
     if (report.interpreted != 0) {
-        // NAMED, NOT COUNTED. "3 functions are not compiled" sends whoever
-        // reads it back to the backend with no idea which three, and the answer
-        // is one loop away.
+        // List the uncompiled functions by name, so the error says which ones
+        // to look at in the backend.
         std::string names;
         for (std::size_t index = 0; index < into.functions.size(); ++index) {
             if (into.functions[index].aot_entry != nullptr) { continue; }
@@ -202,9 +176,8 @@ struct install_report {
         report.error = "strict AOT-only: " + std::to_string(report.interpreted) + " of " +
                        std::to_string(report.functions) + " functions have no compiled body (" +
                        names + ")";
-        // AND THE ENTRIES COME BACK OFF. A refusal that left half a program
-        // stamped is a refusal the caller can ignore into exactly the mixed
-        // build this exists to forbid.
+        // Remove the entries again, so a caller that ignores the refusal still
+        // cannot run a partially compiled program.
         for (ctbrowser::script::function_proto & proto : into.functions) {
             proto.aot_entry = nullptr;
         }

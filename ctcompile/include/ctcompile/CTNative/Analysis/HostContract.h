@@ -1,3 +1,22 @@
+//===- HostContract.h - Embedding promises for native code ------*- C++ -*-===//
+//
+// A host contract is a JSON manifest in which the embedding (the program that
+// runs the compiled script) promises facts about the script's starting
+// environment: which globals exist, which standard bindings are unmodified,
+// and how the entry function is called. HostContractAnalysis and
+// DOMEntryAnalysis then check, against the current module, that the source
+// never breaks those promises, and record what they proved.
+//
+// Vocabulary used below:
+//  - proof: a fact checked against the current module's IR. Proofs are never
+//    read back from printed attributes; changing the module invalidates them.
+//  - census: an enumeration of every use of a value in the current module,
+//    so a fact holds for all uses, not only the ones a pattern matched.
+//  - reprove: run the analysis again on a rewritten (normalized) clone.
+//  - family: one captured Map plus every closure that shares its slot.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -18,11 +37,15 @@
 
 namespace ctcompile::ctnative {
 
+/// A manifest `roots` entry: the global `binding` and the property path under
+/// it that the host reads after the entry returns.
 struct HostRootRequest {
     std::string binding;
     std::vector<std::string> properties;
 };
 
+/// The primitive category a native caller passes for one explicit parameter
+/// of a ctbrowser-intrinsics-v1 entry.
 enum class HostIntrinsicParameter {
     boolean,
     number,
@@ -30,160 +53,204 @@ enum class HostIntrinsicParameter {
     symbol
 };
 
-// Driver input, never an IR proof annotation. closed-source-v1 starts with
-// ordinary own global bindings and unmodified intrinsic prototypes; all
-// subsequent source mutations/calls still require the analysis below.
+/// The host contract a driver reads from a manifest: what the embedding
+/// promises about the program's initial globals and entry point. It is input
+/// to the analysis, never an IR proof annotation. closed-source-v1, for
+/// example, promises ordinary own global bindings and unmodified intrinsic
+/// prototypes; every later mutation or call in the source is still checked by
+/// the analyses below.
 struct HostContract {
+    /// Who embeds the program; the manifest spells it as hostProviderName().
     enum class Provider {
+        /// closed-source-v1: all code comes from the supplied source.
         closedSource,
-        // The same closed source proof, with a captured method table whose
-        // generated methods remain attached to their nonmovable owner.
-        // This does not authorize DOM keys or externally retained callbacks.
+        /// The closed-source proof plus a captured method table whose
+        /// generated methods stay attached to their non-movable owner. It does
+        /// not allow DOM keys or callbacks retained outside the program.
         closedSourceSession,
-        // Isolated initial Object/String/RegExp prototype chains and reserved
-        // regexp literal factory. Complete source reproof excludes mutation
-        // and external script reentry.
+        /// ctbrowser-dom-v1: isolated initial Object/String/RegExp prototype
+        /// chains and a reserved regexp-literal factory. The source proof rules
+        /// out mutating them and reentry from external scripts.
         ctbrowserDOM,
-        // The same synchronous source proof with a nonmovable native owner
-        // of the atom table, document and (when needed) selector engine.
-        // Data retention and browser callbacks still require separate proofs.
+        /// ctbrowser-dom-session-v1: the same synchronous proof, plus a
+        /// non-movable native owner of the atom table, the document and (when
+        /// needed) the selector engine. Retaining data and browser callbacks
+        /// still need separate proofs.
         ctbrowserDOMSession,
-        // Explicit DOM inputs may be retained only as outer Data Map keys.
-        // The host proof establishes provenance, not document lifetime;
-        // native ownership refuses until storage is confined to that owner.
+        /// ctbrowser-dom-data-session-v1: explicit DOM inputs may be retained
+        /// only as outer keys of the Data Map. The proof establishes where the
+        /// elements came from, not how long the document lives, so native
+        /// ownership refuses until storage is confined to that owner.
         ctbrowserDOMDataSession,
-        // A named native export in an isolated standard realm, with exact
-        // primitive parameter categories supplied by its native caller.
-        // Symbol, optional String and undefined are fixed; the source proof permits
-        // primitive operations and proved Symbol/String calls, without browser inputs,
-        // arbitrary calls, global publication or external script reentry.
+        /// ctbrowser-intrinsics-v1: a named native export in an isolated
+        /// standard realm, whose native caller fixes each parameter's primitive
+        /// category. Symbol, optional String and undefined are fixed. The
+        /// source may use primitive operations and proved Symbol/String calls,
+        /// but no browser inputs, arbitrary calls, global publication or
+        /// external script reentry.
         ctbrowserIntrinsics
     };
     Provider provider = Provider::closedSource;
-    // The two DOM entry providers: ctbrowserDOM and ctbrowserDOMSession.
+    /// True for the two DOM entry providers: ctbrowserDOM and ctbrowserDOMSession.
     [[nodiscard]] bool domProvider() const {
         return provider == Provider::ctbrowserDOM || provider == Provider::ctbrowserDOMSession;
     }
-    // Any provider with DOM inputs: the two above and ctbrowserDOMDataSession.
+    /// True for any provider with DOM inputs: the two above and
+    /// ctbrowserDOMDataSession.
     [[nodiscard]] bool isDOM() const {
         return domProvider() || provider == Provider::ctbrowserDOMDataSession;
     }
+    /// hostContractFingerprint() of the module the manifest was written for; a
+    /// mismatch means the manifest is stale.
     std::string moduleSha256;
+    /// Name of the entry function the embedding calls.
     std::string entry;
-    // DOM providers invoke one ordinary function with borrowed elements.
-    // Indices name explicit JS parameters, excluding the three implicit ones.
-    // The document owns each node and must outlive this synchronous invocation;
-    // ctbrowser-dom-session-v1 generates that nonmovable document owner.
-    // The Data provider proves only complete-family outer-key uses for now;
-    // these declarations cannot authorize its retained native storage.
-    // identity includes the document, not just the node_id's bits.
-    // The provider starts with the standard undefined binding. The complete
-    // source proof excludes replacement and external script reentry.
+    /// Indices of the explicit JS parameters (not counting the three implicit
+    /// ones) that receive borrowed DOM elements. DOM providers call the entry
+    /// once, synchronously; the document owns each node and must outlive the
+    /// call (ctbrowser-dom-session-v1 generates that non-movable owner). An
+    /// element's identity includes its document, not just its node_id. For
+    /// ctbrowserDOMDataSession these elements may only be used as outer Map
+    /// keys; this field does not authorize retaining them in native storage.
     std::vector<unsigned> elementParameters;
-    // DOM entry/session only: the source document binding is this input's
-    // owning document, with original root/query access and live Style.
+    /// DOM entry and session providers only: the parameter whose owning
+    /// document the source's `document` binding names, with the original root
+    /// and query access and live style.
     std::optional<unsigned> currentDocumentParameter;
-    // Explicit subset whose namespace is HTML or SVG, checked at native entry.
-    // Other namespaces need public namespace URI ownership before admission.
+    /// The element parameters whose namespace is HTML or SVG (checked at native
+    /// entry), so `dataset` is available. Other namespaces would need namespace
+    /// URI ownership first.
     std::vector<unsigned> datasetParameters;
-    // ctbrowser-intrinsics-v1 only: one exact category per explicit parameter.
-    // Values remain runtime inputs; no identity, description or truth is promised.
+    /// ctbrowser-intrinsics-v1 only: one exact category per explicit parameter.
+    /// The values stay run-time inputs; nothing is promised about identity,
+    /// description or truthiness.
     std::vector<HostIntrinsicParameter> intrinsicParameters;
+    /// Global objects and properties the host reads after the entry returns.
     std::vector<HostRootRequest> roots;
+    /// Global names the host observes after the entry returns.
     std::vector<std::string> observations;
+    /// Globals that do not exist. Absence can answer `typeof`, but does not
+    /// justify a bare identifier read.
     std::vector<std::string> absentBindings;
+    /// Globals that exist and hold `undefined`.
     std::vector<std::string> undefinedBindings;
-    // Explicit identities supplied by the embedding, not effect summaries.
-    // Closed-source providers accept Map/Array and the class helper. DOM entry
-    // providers accept Object, Number, decodeURIComponent, JSON, Array and String
-    // as standard own global data bindings, including Number.prototype.toString,
-    // Object.keys, JSON.parse, Array.prototype.filter, String.prototype.startsWith
-    // and the default Array constructor/species chain. Array also promises
-    // original Array.prototype.concat, with no spreadability hooks on the fresh
-    // empty receiver. Element includes inert query-result wrappers and their
-    // complete prototype chains, with no Symbol.isConcatSpreadable hooks.
-    // These guarantees permit confined spread/concat lengths and bounded
-    // element observations, preserving the proxy materialization limit.
-    // Array also promises
-    // original Array iteration, including its Symbol.iterator/values method
-    // and iterator-prototype chain, with no custom next or return hooks. Element
-    // promises its original own prototype and querySelector/querySelectorAll
-    // methods. Function additionally promises those methods' original prototype
-    // chains and Function.prototype.call, without own call shadows or accessors.
-    // For ordinary class instanceof, Function also promises its original prototype
-    // and inherited Symbol.hasInstance method. Symbol promises its standard
-    // constructor, well-known keys and Symbol.prototype toString/valueOf methods,
-    // with no replacement or accessor on those lookup paths.
-    // DOM iteration additionally requires
-    // the original __ctbrowser_for_of_open,
-    // __ctbrowser_iter_next and __ctbrowser_iter_close source-helper bindings. Source
-    // replacement/escape and external script reentry still refuse the complete live proof.
-    // Computed custom methods additionally declare the original
-    // __ctbrowser_to_property_key and __ctbrowser_set_function_name bindings.
-    // Their recognition requires the exact well-known Symbol key and an
-    // unobserved private closure: key conversion preserves that Symbol, and
-    // naming changes only the closure's own name. These declarations authorize
-    // neither arbitrary conversions nor observable function-name mutation.
-    // Compiler source helpers a bare context installs may also be declared:
-    // __ctbrowser_define_own (4 arguments), __ctbrowser_define_accessor (4),
-    // __ctbrowser_in_object (1) and __ctbrowser_require_object (1). A declared
-    // identity stays closed only as a direct call with an undefined receiver
-    // and that arity; reflecting or storing the binding still refuses.
+    /// Global names the embedding promises are the original, unmodified
+    /// standard bindings. This is an identity promise, not an effect summary;
+    /// source replacement, escape and external script reentry are still
+    /// checked and refuse the proof.
+    ///
+    /// Closed-source providers accept Map, Array and the class helper. DOM
+    /// entry providers accept:
+    ///  - Object, Number, decodeURIComponent, JSON, Array and String as
+    ///    standard own global data bindings, including Number.prototype.toString,
+    ///    Object.keys, JSON.parse, Array.prototype.filter,
+    ///    String.prototype.startsWith and the default Array constructor and
+    ///    species chain;
+    ///  - Array: also the original Array.prototype.concat with no spreadability
+    ///    hooks on the fresh empty receiver, and the original Array iteration
+    ///    (Symbol.iterator/values and the iterator prototype chain, with no
+    ///    custom next or return hooks);
+    ///  - Element: inert query-result wrappers and their whole prototype chains
+    ///    with no Symbol.isConcatSpreadable hooks, the original own prototype
+    ///    and querySelector/querySelectorAll. Together with the Array promises
+    ///    this allows confined spread/concat lengths and bounded element reads
+    ///    without exceeding the proxy materialization limit;
+    ///  - Function: those methods' original prototype chains and
+    ///    Function.prototype.call with no own call shadows or accessors, and,
+    ///    for ordinary class `instanceof`, its original prototype and inherited
+    ///    Symbol.hasInstance;
+    ///  - Symbol: the standard constructor, well-known keys and
+    ///    Symbol.prototype toString/valueOf, with no replacement or accessor on
+    ///    those lookup paths.
+    ///
+    /// DOM iteration also requires the original __ctbrowser_for_of_open,
+    /// __ctbrowser_iter_next and __ctbrowser_iter_close source helpers.
+    /// Computed custom methods also declare __ctbrowser_to_property_key and
+    /// __ctbrowser_set_function_name; they are recognized only with the exact
+    /// well-known Symbol key and an unobserved private closure, so key
+    /// conversion keeps that Symbol and naming changes only the closure's own
+    /// name. Neither allows arbitrary conversions or observable renaming.
+    ///
+    /// Compiler source helpers a bare context installs may also be declared:
+    /// __ctbrowser_define_own (4 arguments), __ctbrowser_define_accessor (4),
+    /// __ctbrowser_in_object (1) and __ctbrowser_require_object (1). Each stays
+    /// trusted only as a direct call with an undefined receiver and exactly that
+    /// arity; reflecting or storing the binding refuses.
     std::vector<std::string> initialIntrinsics;
+    /// A load of `globalThis` names the realm's global object.
     bool realmGlobalThis = false;
-    // The embedding invokes this entry as a classic script, with its stable
-    // realm receiver. This does not characterize an ordinary call's `this`.
-    // Listed realm properties initially exist as writable own data slots;
-    // reading/writing them cannot call JS. Their values remain unknown.
+    /// The embedding invokes this entry as a classic script with a stable realm
+    /// receiver. This says nothing about an ordinary call's `this`.
     bool classicScriptRealm = false;
+    /// Realm properties that start as writable own data slots: reading or
+    /// writing them cannot call JS, but their values stay unknown.
     std::vector<std::string> realmOwnDataProperties;
 };
 
+/// Parses a host-contract manifest (JSON) and validates its fields.
 llvm::Expected<HostContract> parseHostContract(llvm::StringRef json);
-// The manifest at `path`; an unreadable file fails as `unreadable` + the system reason.
+/// Reads and parses the manifest at `path`. An unreadable file fails with the
+/// message `unreadable` followed by the system's reason.
 llvm::Expected<HostContract> readHostContract(llvm::StringRef path, llvm::StringRef unreadable);
-// The manifest spelling of `provider`.
+/// The manifest spelling of `provider`, such as "closed-source-v1".
 llvm::StringRef hostProviderName(HostContract::Provider provider);
-// Includes the whole driver/program IR. Presentation locations and previous
-// host-contract reports are excluded; all semantic operations remain bound.
+/// A SHA-256 fingerprint of the whole driver and program IR. Locations and
+/// earlier host-contract reports are excluded; every semantic operation is
+/// included.
 std::string hostContractFingerprint(mlir::ModuleOp module);
+/// Removes the report attributes earlier host-contract analyses printed.
 void clearHostContractReports(mlir::ModuleOp module);
-// Remove every attribute of `op` whose name starts with `prefix` - the
-// analyses' reports and proof markers, which a clone must never inherit.
+/// Removes every attribute of `op` whose name starts with `prefix`: the
+/// analyses' reports and proof markers, which a clone must never inherit.
 void removeAttrsWithPrefix(mlir::Operation * op, llvm::StringRef prefix);
-// Only on a private, fingerprint-checked clone. The caller must reprove its
-// complete typed DOM or intrinsic entry after this bounded local-call normalization.
+/// Inlines local helper calls in `entry`, within `maxSteps` of work. Use only
+/// on a private clone whose fingerprint was checked; the caller must reprove
+/// the typed DOM or intrinsic entry afterwards.
 llvm::Error expandDOMHelpers(mlir::ModuleOp candidate, llvm::StringRef entry, unsigned maxSteps,
                              unsigned * workSteps = nullptr,
                              llvm::ArrayRef<mlir::Value> inactiveFillers = {});
+/// Folds truthiness and `=== undefined` guards on the entry's element
+/// parameters, which are never null, to constants. Only the parameters' own
+/// SSA values count; nullable `closest` results, cells and joins do not.
+/// Private candidate only; reprove afterwards.
 llvm::Error normalizeDOMElementGuards(mlir::ModuleOp candidate, const HostContract & contract,
                                       unsigned maxSteps);
+/// Rewrites for-of loops over DOM query snapshots (__ctbrowser_for_of_open
+/// and its helpers) into indexed loops. Private candidate only; reprove
+/// afterwards, since the DOM proof must still reject writes, reentry, escaped
+/// snapshots and unknown calls.
 llvm::Error normalizeDOMIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                   unsigned maxSteps);
-// Confined custom protocols become ordinary calls and scalar completion state.
-// Only a private candidate may change; complete helper and DOM proofs follow.
-// Optional filler provenance belongs to this exact candidate, never source
-// attributes. Pass it directly to helper expansion without cloning the module.
+/// Rewrites confined custom iteration protocols into ordinary calls and
+/// scalar completion state. Only a private candidate may change; the helper
+/// and DOM proofs are run again afterwards. `inactiveFillers`, when given,
+/// receives placeholder values that belong to this exact candidate (never to
+/// source attributes); pass it straight to expandDOMHelpers() without cloning
+/// the module in between.
 llvm::Error normalizeDOMCustomIteration(mlir::ModuleOp candidate, const HostContract & contract,
                                         unsigned maxSteps,
                                         std::vector<mlir::Value> * inactiveFillers = nullptr);
-// Represent one original iterator-close suppression handler with an invoke:
-// both close outcomes resume the same saved throw. False means no applicable
-// suppression handler, including observing catches; the candidate is untouched.
-// Failure also leaves the candidate untouched. This is structural proof,
-// not permission to inline the close or emit the remaining abrupt completion.
-// Use only on a private candidate; initial lookup moves outside suppression,
-// so publication still requires complete prefix/global/reentry and DOM reproof.
+/// Replaces one original iterator-close suppression handler with an invoke
+/// whose two close outcomes both resume the same saved throw. Returns false
+/// when there is no such handler (including when a catch observes the error);
+/// false and failure both leave the candidate untouched. This is a structural
+/// rewrite, not permission to inline the close or emit the remaining abrupt
+/// completion. Use only on a private candidate: the initial lookup moves out of
+/// the suppressed region, so the prefix, global, reentry and DOM proofs must
+/// all run again before the result is used.
 llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
                                                const HostContract & contract,
                                                unsigned maxSteps = 100000);
 
-// Replace confined query-result spread/empty-concat observations.
-// Reprove on a private clone; refusal leaves the original module unchanged.
+/// Replaces confined spreads of query results, and concatenations onto an
+/// empty array, with their lengths. Run on a private clone and reprove; a
+/// refusal leaves the original module unchanged.
 llvm::Error normalizeDOMSnapshotLengths(mlir::ModuleOp candidate, const HostContract & contract,
                                         unsigned maxSteps, mlir::IRMapping * mapping = nullptr,
                                         unsigned * workSteps = nullptr);
 
+/// A browser or standard-library method that DOMEntryAnalysis recognizes and
+/// lowers to a typed native call.
 enum class HostDOMMethod {
     toggleClass,
     containsClass,
@@ -218,7 +285,7 @@ enum class HostDOMMethod {
     stringLowercaseUnit
 };
 
-// What a HostDOMMethod call produces.
+/// What a HostDOMMethod call produces.
 enum class HostDOMResult {
     none,
     boolean,
@@ -232,8 +299,8 @@ enum class HostDOMResult {
     string
 };
 
-// What a call of `method` produces. Every method is listed, so a new one is a
-// -Wswitch error rather than a silent Boolean.
+/// What a call of `method` produces. Every method is listed, so a new one is a
+/// -Wswitch error rather than a silent Boolean.
 [[nodiscard]] inline HostDOMResult resultOf(HostDOMMethod method) {
     switch (method) {
     case HostDOMMethod::addClass:
@@ -271,17 +338,21 @@ enum class HostDOMResult {
     llvm_unreachable("unknown HostDOMMethod");
 }
 
+/// One proved call of a HostDOMMethod in the entry.
 struct HostDOMCall {
     ctjs::CallOp operation;
     HostDOMMethod kind;
-    // Browser receiver, or the original scalar input for number/numberToString.
+    /// The browser receiver, or the original scalar input for number and
+    /// numberToString.
     mlir::Value element;
     ctjs::FuncOp callback{};
-    // Function.prototype.call supplies the browser receiver as argument zero.
+    /// True when Function.prototype.call supplies the receiver as argument zero.
     bool explicitReceiver = false;
-    // Unique original document/Style input, after complete transport proof.
+    /// The single original document/style input, once the analysis has proved
+    /// how it reaches this call.
     mlir::BlockArgument styleParameter{};
-    // Mixed inputs retain their selected association through the same SSA edges.
+    /// When several inputs can reach the call, each keeps its association
+    /// through the same SSA edges.
     llvm::SmallVector<mlir::BlockArgument> styleParameters{};
     [[nodiscard]] HostDOMResult result() const { return resultOf(kind); }
     [[nodiscard]] bool returnsElement() const { return result() == HostDOMResult::element; }
@@ -296,7 +367,7 @@ struct HostDOMCall {
     }
     [[nodiscard]] bool returnsNumber() const { return result() == HostDOMResult::number; }
     [[nodiscard]] bool returnsSymbol() const { return result() == HostDOMResult::symbol; }
-    // An owning ctbrowser::json_value tree, from the shared public Core parser.
+    /// An owning ctbrowser::json_value tree, from the shared public Core parser.
     [[nodiscard]] bool returnsJSON() const { return result() == HostDOMResult::json; }
     [[nodiscard]] bool returnsString() const { return result() == HostDOMResult::string; }
     [[nodiscard]] bool returnsBoolean() const { return result() == HostDOMResult::boolean; }
@@ -305,32 +376,36 @@ struct HostDOMCall {
     }
 };
 
+/// One operand position that reads a refined string.
 struct HostDOMStringUse {
     mlir::Operation * operation;
     unsigned operandIndex;
 };
 
-// One exact optional snapshot, observed as String only in this selected arm.
-// Uses retain their source identities; the producer and sibling stay optional.
+/// An optional string that is known to be a String inside one branch (`block`).
+/// The uses listed keep their source identities; the producer and the other
+/// branch still see it as optional.
 struct HostDOMStringRefinement {
     mlir::Block * block;
     mlir::Value optional;
     std::vector<HostDOMStringUse> uses;
 };
 
-// Inert values for the structural yield of a proved nonreturning arm.
+/// Placeholder values for the structural yield at the end of a branch proved
+/// never to return.
 struct HostDOMUnreachableYield {
     mlir::Operation * operation;
     std::vector<mlir::Attribute> values;
 };
 
-// Live evidence for one synchronous typed DOM entry. Only the checked source
-// declaration wrapper may be omitted. No source invocation, retained handle,
-// receiver/capture observation, or arbitrary property dispatch is authorized.
-// Mutating the module invalidates this query; printed attributes are ignored.
+/// Proves that one synchronous DOM entry can be compiled with typed browser
+/// calls, and records the evidence. Only the checked source-declaration wrapper
+/// may be dropped. The proof allows no source invocation, retained handle,
+/// observation of the receiver or captures, or arbitrary property dispatch.
+/// Mutating the module invalidates the result; printed attributes are ignored.
 class DOMEntryAnalysis {
 public:
-    // Everything the proof establishes, published whole once every check passes.
+    /// Everything the proof establishes, published whole once every check passes.
     struct Evidence {
         ctjs::FuncOp entry, wrapper;
         bool undefinedReturn = false;
@@ -345,7 +420,7 @@ public:
         llvm::DenseSet<ctjs::GetPropertyOp> elementPrototypes, documentRoots, symbolDescriptions;
         mlir::BlockArgument document;
         std::vector<mlir::Value> styles;
-        // Initial intrinsic loads, of every supported name.
+        /// Loads of the initial intrinsics, for every supported name.
         llvm::DenseSet<ctjs::LoadGlobalOp> documentLoads, intrinsics;
         llvm::DenseMap<ctjs::GetPropertyOp, llvm::StringRef> symbols;
         llvm::DenseMap<ctjs::GetPropertyOp, mlir::Value> datasetValues;
@@ -359,7 +434,7 @@ public:
         llvm::DenseMap<ctjs::GetPropertyOp, HostDOMMethod> methods;
         std::vector<HostDOMCall> calls;
         std::vector<ctjs::CreateObjectOp> jsonObjects;
-        // Scalar-field records a local Map stores; they keep their identity.
+        /// Scalar-field records a local Map stores; they keep their identity.
         std::vector<ctjs::CreateObjectOp> records;
         std::vector<ctjs::CopyPropsOp> jsonCopies;
         std::vector<ctjs::SetPropertyOp> jsonAssignments, snapshotAssignments;
@@ -380,7 +455,8 @@ public:
     [[nodiscard]] std::optional<HostIntrinsicParameter> intrinsicParameter(mlir::Value value) const;
     [[nodiscard]] llvm::ArrayRef<mlir::BlockArgument> parameters() const { return proof.elements; }
     [[nodiscard]] bool isElement(mlir::Value value) const;
-    // Validated parameters or nullable closest results, for equality only.
+    /// Validated element parameters or nullable `closest` results, usable only
+    /// in equality tests.
     [[nodiscard]] bool isElementIdentity(mlir::Value value) const;
     [[nodiscard]] bool isTokenList(mlir::Value value) const;
     [[nodiscard]] bool isDataset(mlir::Value value) const;
@@ -394,18 +470,20 @@ public:
     [[nodiscard]] bool isStringVectorIndex(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isElementVectorLength(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isElementVectorIndex(ctjs::GetPropertyOp read) const;
-    // Present own member from this element's immutable, uninvalidated key snapshot.
+    /// The element whose `dataset` `read` reads, when the member is present in
+    /// that element's immutable key snapshot; null otherwise.
     [[nodiscard]] mlir::Value datasetValueElement(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isStringPrefixRegExp(ctjs::CallOp call) const;
     [[nodiscard]] bool isNumberIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] bool isInitialIntrinsic(ctjs::LoadGlobalOp load) const;
     [[nodiscard]] llvm::StringRef wellKnownSymbol(ctjs::GetPropertyOp read) const;
     [[nodiscard]] bool isSymbolDescription(ctjs::GetPropertyOp read) const;
-    // One URI or JSON.parse call with owning String/json_value continuations;
-    // the implicit error payload is proved unused. A parse invoke may nest in
-    // the decode success continuation. This is fresh provider evidence.
+    /// True for a decodeURIComponent or JSON.parse invoke whose continuations
+    /// own a String or json_value and never use the implicit error payload. A
+    /// parse invoke may nest in the decode's success continuation.
     [[nodiscard]] bool invocation(ctjs::InvokeOp operation) const;
-    // Exact nonreturning regions with owning Number, Boolean or String payloads.
+    /// Throws whose payload is an owned Number, Boolean or String, in regions
+    /// proved never to return.
     [[nodiscard]] llvm::ArrayRef<ctjs::ThrowOp> savedThrows() const { return proof.throws; }
     [[nodiscard]] llvm::ArrayRef<HostDOMUnreachableYield> unreachableYields() const {
         return proof.throwYields;
@@ -416,27 +494,29 @@ public:
     [[nodiscard]] llvm::ArrayRef<HostDOMStringRefinement> stringRefinements() const {
         return proof.refinements;
     }
-    // Complete String-only branch/invocation yields, independently of the
-    // producer-wide lattice. This never narrows a getAttribute result.
+    /// Branch and invoke results that are a String on every path, regardless of
+    /// the producer's own type. This never narrows a getAttribute result.
     [[nodiscard]] llvm::ArrayRef<mlir::Value> stringResults() const { return proof.strings; }
-    // Exact undefined tests and their truth conversions, after every arm is proved.
+    /// Tests against `undefined` (and their truth conversions) whose outcome is
+    /// constant once every branch is proved, with that outcome.
     [[nodiscard]] llvm::ArrayRef<std::pair<mlir::Value, bool>> constantBooleans() const {
         return proof.booleans;
     }
     [[nodiscard]] std::optional<HostDOMMethod> method(ctjs::GetPropertyOp read) const;
     [[nodiscard]] const HostDOMCall * call(ctjs::CallOp operation) const;
-    // Fresh owning data objects and guarded spreads, after the complete use
-    // census excludes observable aliases and mutation after a value copy.
+    /// Fresh owned data objects and guarded spreads, once every use has been
+    /// checked for observable aliases and mutation after a value copy.
     [[nodiscard]] bool jsonObject(ctjs::CreateObjectOp operation) const;
     [[nodiscard]] bool jsonCopy(ctjs::CopyPropsOp operation) const;
     [[nodiscard]] bool jsonAssignment(ctjs::SetPropertyOp operation) const;
-    // Sole writer over unique direct snapshot keys; only final own data is observed.
+    /// The only writer of unique direct snapshot keys; readers see only the
+    /// final own data.
     [[nodiscard]] bool jsonSnapshotAssignment(ctjs::SetPropertyOp operation) const;
-    // A fresh scalar-field record stored as a local Map payload.
+    /// A fresh scalar-field record stored as a local Map payload.
     [[nodiscard]] bool recordObject(ctjs::CreateObjectOp operation) const;
-    // Typed browser calls and invocations, initial intrinsic and document
-    // reads: none rebinds a standard constructor, writes a prototype or
-    // reenters script.
+    /// True for typed browser calls and invokes and for reads of initial
+    /// intrinsics and the document: none of them rebinds a standard
+    /// constructor, writes a prototype or reenters script.
     [[nodiscard]] bool typedOperation(mlir::Operation * operation) const;
 
 private:
@@ -446,16 +526,19 @@ private:
     bool budgetExhausted = false;
 };
 
+/// A write to a host slot and a read that is proved to see that write.
 struct HostSlotEdge {
     ctjs::SetPropertyOp write;
     ctjs::GetPropertyOp read;
 };
 
-// Finite primitive categories or caller object arguments, proved over the
-// complete current call census. Positions that may receive objects have no primitive alternatives;
-// their actual allocation and allowed uses are checked independently. The
-// captured Map may retain source leaves as keys or payloads; their own fields
-// contain only scalars. Explicit DOM inputs require the narrower outer-key proof.
+/// What each parameter of `function` can receive, over every call in the
+/// current module: a finite set of primitive kinds, or caller objects. A
+/// position that may receive objects has no primitive alternatives; the
+/// actual allocations and their uses are checked separately. The captured Map
+/// may keep those source objects ("leaves", whose own fields hold only
+/// scalars) as keys or payloads. Explicit DOM inputs need the narrower
+/// outer-key proof (see HostCapturedMapFamily::outerKeyInputs).
 struct HostMethodParameters {
     ctjs::FuncOp function;
     std::vector<PrimitiveAlternatives> alternatives;
@@ -463,24 +546,27 @@ struct HostMethodParameters {
     bool operator==(const HostMethodParameters &) const = default;
 };
 
+/// One actual argument of a call into a captured method.
 struct HostMethodArgument {
     mlir::BlockArgument parameter;
     mlir::Value actual;
     PrimitiveAlternatives alternatives;
     ctjs::CreateObjectOp object{};
-    // Exact external entry input, never an owning source allocation. Distinct
-    // inputs may denote the same element; only identity with itself is known.
+    /// An external entry input, never an owned source allocation. Two distinct
+    /// inputs may be the same element; only identity with itself is known.
     mlir::BlockArgument element{};
 };
 
+/// A key every child Map holds, and the primitive kinds of its value.
 struct HostChildMapEntry {
     mlir::Value key;
     PrimitiveAlternatives alternatives;
     bool operator==(const HostChildMapEntry &) const = default;
 };
 
-// A Number category invariant over one initialized source global and every
-// subsequent write. Values and effects remain live across future invocations.
+/// A source global that holds a Number from its initialization through every
+/// later write. The values and effects still happen at run time, across
+/// future invocations.
 struct HostMutableScalarGlobal {
     ctjs::StoreGlobalOp initialization;
     std::vector<ctjs::StoreGlobalOp> writes;
@@ -488,9 +574,9 @@ struct HostMutableScalarGlobal {
     bool operator==(const HostMutableScalarGlobal &) const = default;
 };
 
-// A fixed own callable slot, with a complete scalar-only body/effect census.
-// This source callback cannot reach the captured Map or its caller's objects.
-// Its calls are distinct from exported methods and pure snapshot operations.
+/// A callback stored in a fixed own slot whose body only touches scalars, on
+/// every path. It cannot reach the captured Map or its caller's objects, and
+/// its calls are distinct from exported methods and pure snapshot operations.
 struct HostScalarCallback {
     ctjs::CreateObjectOp owner;
     ctjs::StoreGlobalOp initialization;
@@ -505,36 +591,38 @@ struct HostScalarCallback {
     bool operator==(const HostScalarCallback &) const = default;
 };
 
-// Exact caller allocation returned by one checked entry invocation. Neither
-// the reusable method's result ABI nor another invocation is narrowed.
+/// The caller allocation one checked entry call returns. This narrows neither
+/// the reusable method's result type nor any other call.
 struct HostReturnedLeaf {
     mlir::Operation * call = nullptr;
     ctjs::CreateObjectOp object;
     bool operator==(const HostReturnedLeaf &) const = default;
 };
 
-// Primitive alternatives of one checked entry invocation, independent of the
-// reusable method's result and parameter categories.
+/// The primitive kinds one checked entry call returns, independent of the
+/// reusable method's result and parameter kinds.
 struct HostReturnedScalar {
     mlir::Operation * call = nullptr;
     PrimitiveAlternatives alternatives;
     bool operator==(const HostReturnedScalar &) const = default;
 };
 
-// One immutable environment slot owns this exact standard Map, constructed
-// empty. The complete live census of every closure sharing that slot permits
-// primitive contents, fresh method-local leaves with fixed scalar fields, or
-// checked scalar-field caller leaves, fresh child Maps, and standard
-// size/set/get/has/delete/clear effects and confined immediate key snapshots.
-// Child Maps cannot retain Maps.
-// Caller formals permit only key/payload uses; method-local leaves cannot be keys.
-// Only checked owning leaves may leave a method through its result. Fields
-// and unchecked uses cannot publish objects. Effects remain runtime; the
-// family promises no startup value or invocation result. Optional cell operations describe
-// the original binding; after lifting, the call reads its environment value.
-// Every handle is rederived from the current module, never from native markers.
-// Every fact of a captured Map family - everything but the actual call's own
-// argument - so two edges of one family compare equal.
+/// Every fact about a captured Map family except the actual call's own
+/// argument, so two call edges into one family compare equal.
+///
+/// The family is one standard Map, constructed empty and held in one
+/// immutable closure slot, plus every closure sharing that slot. Checking all
+/// their uses allows only: primitive contents; fresh method-local leaves with
+/// fixed scalar fields, or checked scalar-field leaves from the caller; fresh
+/// child Maps (which cannot hold Maps); the standard
+/// size/set/get/has/delete/clear calls; and confined immediate key snapshots.
+/// Caller parameters may only be used as keys or payloads, and method-local
+/// leaves cannot be keys. Only checked owned leaves may leave a method through
+/// its result; fields and unchecked uses cannot publish objects. The effects
+/// still happen at run time: the family promises no startup value or call
+/// result. The optional cell operations describe the original binding; after
+/// lambda lifting the call reads its environment value instead. Every handle
+/// is recomputed from the current module, never read from native attributes.
 struct HostCapturedMapFamily {
     ctjs::LoadGlobalOp intrinsic;
     ctjs::ConstructOp allocation;
@@ -542,7 +630,8 @@ struct HostCapturedMapFamily {
     ctjs::CellSetOp initialization;
     std::vector<ctjs::CreateClosureOp> closures;
     std::vector<HostMethodParameters> parameters;
-    // Complete family effects; HostCapturedMap::argument belongs to this actual call.
+    // Effects of the whole family; HostCapturedMap::argument belongs to the
+    // actual call.
     std::vector<ctjs::LoadUpvalueOp> upvalues;
     std::vector<ctjs::GetPropertyOp> reads;
     std::vector<ctjs::CallOp> calls;
@@ -550,54 +639,60 @@ struct HostCapturedMapFamily {
     std::vector<ctjs::SetPropertyOp> leafWrites;
     std::vector<ctjs::GetPropertyOp> leafReads;
     std::vector<ctjs::ConstructOp> childMaps{};
-    // Every outer set stores a checked fresh child, across the complete family.
-    // This promises neither a returned child's identity nor its contents.
+    /// Every `set` on the outer Map, across the family, stores a checked fresh
+    /// child Map. Says nothing about a returned child's identity or contents.
     bool childMapContents = false;
     std::vector<mlir::Value> returnedChildMaps{};
-    // Initialized before every publication and preserved by every child write.
-    // This says nothing about identity, other keys, cardinality or startup values.
+    /// Entries set before every publication of a child and kept by every child
+    /// write. Says nothing about identity, other keys, size or startup values.
     std::vector<HostChildMapEntry> childEntries{};
-    // Every child write has this scalar category, independently of membership.
-    // Empty publication, delete and clear preserve it; reads may be Undefined.
+    /// The scalar kinds of every child write, whatever the key. Publishing an
+    /// empty child, delete and clear keep it; reads may still be Undefined.
     PrimitiveAlternatives childScalarContents{};
-    // Every child write is a supported scalar or a checked scalar-field leaf.
-    // Reads may be Undefined; this gives no primitive, field or identity facts.
+    /// Every child write is a supported scalar or a checked scalar-field leaf.
+    /// Reads may be Undefined; this gives no primitive, field or identity facts.
     bool childLeafContents = false;
-    // Independent complete insertion censuses, including all sibling methods.
-    // Neither fact implies nonempty snapshots or permits object-key coercion.
+    /// Every insertion, in every sibling method, uses a String key (into the
+    /// outer Map, or into a child Map). Neither implies a non-empty snapshot or
+    /// allows converting object keys.
     bool outerStringKeys = false;
     bool childStringKeys = false;
-    // Confined immediate key copies and read-only length/index observations.
-    // Element reads permit equality; String-key facts also permit checked Concat.
+    /// Confined immediate key copies and read-only length/index reads. Element
+    /// reads allow equality tests; with String keys, checked Concat too.
     std::vector<mlir::Operation *> snapshotOperations{};
     std::vector<HostScalarCallback> scalarCallbacks{};
     std::vector<HostReturnedLeaf> returnedLeaves{};
     std::vector<HostReturnedScalar> returnedScalars{};
-    // Object-capable formals used only as direct keys of this captured outer
-    // Map. Recomputed over the complete family; outer snapshots withhold all
-    // roles. This describes uses, not actual origins, distinct identities or
-    // permission to retain a borrowed DOM input. Caller field/payload uses may
-    // exclude an allocation below without changing its callee's formal role.
+    /// Parameters that may receive objects and are used only as direct keys of
+    /// the outer Map, across the whole family; a snapshot of the outer keys
+    /// disqualifies them. This describes uses, not where the objects come from,
+    /// whether they are distinct, or permission to retain a borrowed DOM input.
+    /// A caller's field or payload use can exclude an allocation from
+    /// outerKeyObjects without changing the callee parameter's role here.
     std::vector<mlir::BlockArgument> outerKeyParameters{};
-    // Caller allocations used only as outer Map keys across every family call.
-    // Payloads, child keys, parameter transport and outer key snapshots exclude
-    // an allocation. This is source-use evidence, not DOM provenance or permission
-    // to borrow an external object; objectKeys retains its ordinary owning contract.
+    /// Caller allocations used only as outer Map keys across every family call.
+    /// Use as a payload, a child key, an argument passed on, or in an outer key
+    /// snapshot excludes an allocation. This says how the source uses it, not
+    /// where a DOM object came from or that an external object may be
+    /// borrowed; HostMethodParameters::objectKeys keeps its owning meaning.
     std::vector<ctjs::CreateObjectOp> outerKeyObjects{};
-    // Explicit DOM entry inputs used exclusively through the outer-key formals
-    // above. Complete source/use evidence only; no retained lifetime authority.
+    /// Explicit DOM entry inputs used only through outerKeyParameters. This is
+    /// evidence about uses only; it does not allow retaining the inputs.
     std::vector<mlir::BlockArgument> outerKeyInputs{};
     bool operator==(const HostCapturedMapFamily &) const = default;
 };
 
+/// A captured Map family as seen from one actual call.
 struct HostCapturedMap : HostCapturedMapFamily {
-    // This actual call's argument, which differs between edges of one family.
+    /// This call's argument, which differs between edges of one family.
     ctjs::LoadUpvalueOp argument;
 };
 
-// Evidence for this actual call, not a promise about future exported callers
-// or private visibility. The current own-data initializer stores this exact
-// source closure. The original receiver and arguments remain live.
+/// A call of a source closure read from a host slot. This is evidence about
+/// this call only, not a promise about future exported callers or private
+/// visibility: the slot's current own-data initializer stores exactly this
+/// closure. The original receiver and arguments are still evaluated at run
+/// time.
 struct HostCallableEdge {
     mlir::Operation * call = nullptr;
     ctjs::GetPropertyOp read;
@@ -608,12 +703,13 @@ struct HostCallableEdge {
     std::vector<HostMethodArgument> arguments;
 };
 
-// A proved Number, Boolean or String origin in an ordinary source global. Each read has
-// one earlier entry store; dependencies are completed published results or owned field reads
-// encountered in its value expression, in traversal order (possibly repeated).
-// The list is empty for constant-only scalar expressions; their source scope,
-// initialization and complete environment proof remain mandatory.
-// These are live source edges, not constant values or a native type promise.
+/// A read of an ordinary source global proved to hold a Number, Boolean or
+/// String. Each read has exactly one earlier store in the entry.
+/// `dependencies` lists the published results and owned field reads met while
+/// walking the stored value's expression, in traversal order (possibly
+/// repeated); it is empty for an expression built only from constants, which
+/// still needs its scope, initialization and environment proofs. These are
+/// run-time source edges, not constant values or a native type promise.
 struct HostScalarGlobalRead {
     ctjs::StoreGlobalOp initialization;
     ctjs::LoadGlobalOp read;
@@ -622,27 +718,31 @@ struct HostScalarGlobalRead {
     std::vector<mlir::Value> dependencies;
 };
 
-// A fresh scalar-field object stored once in an ordinary entry global, or an alias
-// reached through a complete acyclic chain of those bindings. Initialization
-// belongs to this read's binding; object remains the original allocation.
-// Every read follows its store, and all uses are checked initializations or
-// scalar own-field operations, strict identity tests or key/payload arguments in the
-// completed captured-Map family. Loads/stores remain live.
+/// A read of an ordinary entry global that holds a fresh scalar-field object,
+/// stored once, or an alias of one reached through an acyclic chain of such
+/// globals. `initialization` is the store to this read's own binding;
+/// `object` is the original allocation. Every read follows its store, and
+/// every use is a checked initialization, a scalar own-field operation, a
+/// strict identity test, or a key or payload argument into the captured-Map
+/// family. The loads and stores still happen at run time.
 struct HostObjectGlobalRead {
     ctjs::StoreGlobalOp initialization;
     ctjs::LoadGlobalOp read;
     ctjs::CreateObjectOp object;
 };
 
-// Exact entry-local constructor/Map source graph. Every record and Map alias
-// has a complete use census; field categories alone confer no native lifetime.
-// Unknown field stores remain valid provider source but fail primitiveFields.
+/// The entry-local constructors and Maps, and the operations on them. Every
+/// use of every record and Map alias was checked; field kinds alone do not
+/// give a native lifetime. A store of an unknown field is still valid source
+/// but makes primitiveFields false.
 struct HostLocalRecords {
     llvm::SmallVector<ctjs::FuncOp> constructors;
     llvm::SmallVector<mlir::Operation *> operations;
     bool primitiveFields = false;
 };
 
+/// What the analysis found for one host slot (`binding`.`property`): its
+/// owner, writes, reads and proved edges, or why it was refused in `reason`.
 struct HostSlotReport {
     std::string binding;
     std::string property;
@@ -653,20 +753,21 @@ struct HostSlotReport {
     std::string reason;
 };
 
-// A live, module-specific result. Diagnostic slot reports may expose partial
-// evidence; property() returns a proof only when every contract obligation
-// passed. Mutating the module invalidates this object. No native pass consumes
-// the printed report attributes as authority.
+/// Checks a closed-source host contract against `module` and records what it
+/// proved. Slot reports are diagnostics and may hold partial evidence;
+/// property() returns a proof only when every obligation of the contract
+/// passed. Mutating the module invalidates this object, and no native pass
+/// trusts the printed report attributes.
 class HostContractAnalysis {
 public:
     HostContractAnalysis(mlir::ModuleOp module, const HostContract & contract,
                          unsigned maxSteps = 100000);
 
-    // Exact inert source declaration, available only after complete live proof.
+    /// The inert source-declaration wrapper; null unless the whole proof passed.
     [[nodiscard]] ctjs::FuncOp wrapper() const { return checkedWrapper; }
     [[nodiscard]] bool proved() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
-    // Bounded proof work, available to consumers sharing one analysis budget.
+    /// Work spent, for callers that share one budget across analyses.
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
     [[nodiscard]] llvm::ArrayRef<HostSlotReport> slots() const { return reports; }

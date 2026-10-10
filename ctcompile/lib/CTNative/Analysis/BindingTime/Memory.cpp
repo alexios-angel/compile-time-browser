@@ -1,3 +1,10 @@
+//===- Memory.cpp - Binding-time transfer for heap operations ---*- C++ -*-===//
+//
+// The fact join and heap invalidation helpers, and the transfer function for
+// operations that allocate or touch the heap: objects, native Maps, cells,
+// closures, global loads and property reads and writes.
+//
+//===----------------------------------------------------------------------===//
 #include "Analysis.h"
 #include "ctcompile/CTNative/Analysis/ImmutableCaptures.h"
 #include "llvm/ADT/STLExtras.h"
@@ -39,6 +46,10 @@ bool clean(const fact & value, const flow & state) {
 }
 } // namespace binding_time_detail
 
+/// Binding-time transfer function for heap operations (objects, Maps, cells,
+/// closures). Returns the fact for `op`'s result, updates the abstract heap in
+/// `state`, and sets `eligible` when `op` can be evaluated at compile time.
+/// `control` is false under control flow whose path is not known statically.
 BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operation * op,
                                                                   flow & state, bool control,
                                                                   bool & eligible) {
@@ -115,6 +126,8 @@ BindingTimeAnalysis::Impl::fact BindingTimeAnalysis::Impl::memory(mlir::Operatio
         const fact object = get(set.getObject()), key = get(set.getKey()),
                    data = get(set.getValue());
         auto text = llvm::dyn_cast_or_null<ctjs::StringAttr>(key.literal);
+        // Writes to __proto__, prototype or constructor can change lookup
+        // behaviour for other objects, so they are never treated as static.
         eligible = control && clean(object) && object.domain == kind::object && text &&
                    data.time == BindingTime::Static && text.getValue() != "__proto__" &&
                    text.getValue() != "prototype" && text.getValue() != "constructor";

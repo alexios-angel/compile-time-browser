@@ -1,17 +1,33 @@
+//===- MethodTables.cpp - Returned method tables -------------- -*- C++ -*-===//
+//
+// Proves which returned object literals are method tables (objects whose
+// fields are closures created and stored only there) so emission can lower
+// them to C++ structs, and prepares the method table owned by a proved global
+// root for native lowering.
+//
+//===----------------------------------------------------------------------===//
 #include "../../Analysis/ClosedValueFlow.h"
 #include "ClosureLifter.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
+/// True when `key` can be a C++ struct member name.
 bool fieldKey(llvm::StringRef key) {
     return !key.empty() && key != "__proto__" && llvm::all_of(key, cpp::is_identifier_char);
 }
 } // namespace
 
+/// Finds object literals that are returned from a function and whose fields
+/// are closures created and stored only there (a "method table"), and proves
+/// that every read of a field is either a direct call on the same receiver or
+/// a known boundary. A proved table gets ctnative.method_table and
+/// ctnative.table_field attributes so emission can lower it to a C++ struct;
+/// a refused one gets ctnative.object_reason.
 void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) {
-    // A later local lift can expose more flow. Re-derive the table proof;
-    // a previous round's successful prefix must not survive a later refusal.
+    // A later closure lift can expose more data flow, so re-derive the proof
+    // from scratch: attributes from an earlier run must not survive if this run
+    // refuses.
     module.walk([](mlir::Operation * op) {
         if (!methodTableName(op).empty() && llvm::isa<ctjs::GetPropertyOp>(op)) {
             op->removeAttr(kNativeEnvironment);
@@ -65,8 +81,8 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
         };
         for (mlir::Value value : family) {
             if (value == object.getResult()) {
-                // The only concrete producer. Schema equality never equates
-                // distinct runtime instances created by different calls.
+                // The only concrete producer. Two calls create distinct
+                // instances; sharing a schema does not make them the same.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
                 if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
@@ -86,9 +102,9 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 }
             } else if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
                        read && (slots.lookup(read) || globalSlot(read))) {
-                // The field is a fixed own-data slot on a confined local
-                // owner. Its complete incoming table family is checked here;
-                // the slot query by itself does not prove a table carrier.
+                // A fixed own-data field of a confined local (or proved global)
+                // owner. The slot query alone does not prove the value is a
+                // table; the rest of this family's checks do.
             } else {
                 reject("flow contains another object or a non-table producer");
             }
@@ -127,7 +143,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
                     auto fn = call.getTarget();
                     if (use.getOperandNumber() == 0 && globalCalls.contains(call)) {
-                        continue; // the live host edge checks this exact receiver
+                        continue; // The host call edge checks this receiver.
                     }
                     if (use.getOperandNumber() >= 3 && closedValueFlow::closed(fn) &&
                         call->getNumOperands() == fn.getBody().front().getNumArguments()) {
@@ -138,7 +154,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
                     auto get = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
                     if (use.getOperandNumber() == 1 && get && get.getObject() == value) {
-                        continue; // checked with every use of the property read below
+                        continue; // Checked with the property read's uses below.
                     }
                 }
                 reject(("escapes or is inspected through `" + user->getName().getStringRef() + "`")
@@ -149,7 +165,7 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                 auto set = field.second;
                 return set.getValue().template getDefiningOp<ctjs::CreateClosureOp>();
             })) {
-            continue; // Ordinary returned data objects keep their existing proof and diagnostic.
+            continue; // Not a method table: an ordinary returned data object.
         }
         llvm::DenseMap<mlir::Operation *, returnedClosure> plans;
         for (auto & field : fields) {
@@ -191,8 +207,8 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
                     plans[made].calls.push_back(call);
                     continue;
                 }
-                // Synthetic capture reads exist only for the solver's call
-                // signature. Emission invokes the stored callable directly.
+                // Synthetic capture reads exist only to give the solver the
+                // call signature; emission invokes the stored callable directly.
                 if (use.getOwner()->hasAttr(kNativeStoredRead)) { continue; }
                 reject("field is detached, inspected or called with another receiver");
             }
@@ -234,18 +250,24 @@ void closureLifter::returnedMethodTableCensus(const OwnedGlobalRoots * globals) 
     }
 }
 
+/// Removes every ctnative.* attribute from operations (not from the module)
+/// so the census rebuilds them from scratch. Called on a speculative clone
+/// after the original host contract was checked. Leftover local-lifting
+/// markers such as ctnative.method would otherwise make the emitter drop a
+/// real field initialization or observation store.
 void closureLifter::discardNativeSourceFacts() {
-    // Called on a speculative clone after the original manifest passed.
-    // Reconstruct all native source-operation facts before the census. Old
-    // local-lifting markers such as ctnative.method would otherwise erase a
-    // real field initialization or observation store in the generic emitter.
-    // Module reports and presentation locations are not operation authority.
     module.walk([](mlir::Operation * op) {
         if (llvm::isa<mlir::ModuleOp>(op)) { return; }
         removeAttrsWithPrefix(op, "ctnative.");
     });
 }
 
+/// Rewrites the module so the method table owned by a proved global root can
+/// be lowered natively: drops unused wrapper parameters, lifts the factory,
+/// wrapper and method closures, unboxes the shared Map cell and, for the DOM
+/// data-session host, lifts local constructors. Returns std::nullopt, leaving
+/// the caller to discard this speculative clone, if any proof fails or
+/// `maxSteps` runs out.
 std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     const OwnedGlobalRoots & globals, const HostContract & contract, unsigned maxSteps) {
     if (!globals.proved() || globals.steps() > maxSteps || globals.roots().empty() ||
@@ -256,8 +278,9 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
     const auto sourceTable = *globals.roots().front().methodTable;
     liftReport out;
     if (sourceTable.capturedMap) {
-        // The complete owner proof supplies this sole exact wrapper call.
-        // Drop only unobserved explicit slots; their evaluated producers stay.
+        // The owner proof identified the single call to the wrapper. Drop the
+        // wrapper's unused JavaScript parameters; the argument values passed
+        // for them are still evaluated.
         auto wrapper = sourceTable.wrapper;
         auto & block = wrapper.getBody().front();
         llvm::BitVector unused(block.getNumArguments());
@@ -273,9 +296,9 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
                 llvm::report_fatal_error("ctnative: could not erase unused proved wrapper slots");
             }
         }
-        // The input proof follows the factory through one call-only wrapper
-        // parameter. Reuse that parameter's checked removal and the ordinary
-        // local closure lift, retaining the source wrapper/factory calls.
+        // The owner proof follows the factory through one wrapper parameter
+        // that is only called. Bind it directly with the ordinary callback
+        // specialization, keeping the wrapper and factory calls.
         indexAndNewTargets();
         specializeCallbacks(out);
     }
@@ -291,9 +314,9 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
             if (sites.size() != 1 || whyNotLiftable(sites.front())) { return std::nullopt; }
             lift(function, sites, out);
         }
-        // Reconstruct the source-owner graph after callback transport changes.
-        // The original manifest has already passed; this derived fingerprint
-        // cannot rescue stale input, and an incomplete query discards the clone.
+        // Rebuild the owner graph, since the lifts above changed the module.
+        // The original host contract was already checked; the new fingerprint
+        // only describes this clone, and a failed proof discards the clone.
         HostContract transformed = contract;
         transformed.moduleSha256 = hostContractFingerprint(module);
         prepared.emplace(module, transformed, maxSteps);
@@ -321,10 +344,11 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
             return std::nullopt;
         }
     }
-    // Preserve the actual source receiver for the post-rewrite callable proof.
-    // Each capture becomes a leading typed argument and an owning environment
-    // slot. Validate the entire family before changing any method, and unbox
-    // the shared cell only after every closure has acquired its own Map owner.
+    // Every method was validated above, before any is changed. Keep the real
+    // receiver (the `true` argument) for the callable proof that runs after
+    // the rewrite. Each capture becomes a leading typed argument and an owning
+    // environment slot; the shared cell is unboxed only after every closure
+    // has its own Map owner.
     for (const auto & method : table.methods) {
         if (table.capturedMap) {
             lift(method.function, {method.closure}, out, true);
@@ -342,9 +366,10 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
         eraseUnusedUnboxedCells();
     }
     if (contract.provider == HostContract::Provider::ctbrowserDOMDataSession) {
-        // The ordinary constructor guard cannot prove instances retained in
-        // local Maps. Use only this complete live graph, then let the caller
-        // reprove ownership of the rewritten allocations and initializer calls.
+        // The ordinary constructor rule cannot prove instances kept in local
+        // Maps, so use the host analysis's local records instead; the caller
+        // re-proves ownership of the rewritten allocations and initializer
+        // calls.
         HostContract transformed = contract;
         transformed.moduleSha256 = hostContractFingerprint(module);
         const HostContractAnalysis host(module, transformed, maxSteps);
@@ -359,8 +384,8 @@ std::optional<liftReport> closureLifter::prepareOwnedGlobalMethodTables(
         for (ctjs::FuncOp function : records.constructors) {
             if (!remaining) { return std::nullopt; }
             --remaining;
-            // A previously lifted initializer already has its exact direct
-            // calls. Only original construction sites need this rewrite.
+            // An initializer lifted earlier already has its direct calls; only
+            // functions still reached through ctjs.construct need the lift.
             if (!locals.constructsOfTarget.contains(function)) { continue; }
             auto closure = locals.uniqueClosureByTarget.lookup(function);
             if (!closure || locals.whyTargetIsNotLiftable(closure)) { return std::nullopt; }

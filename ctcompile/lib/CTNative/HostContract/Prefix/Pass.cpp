@@ -1,3 +1,12 @@
+//===- Pass.cpp - Specialize the host-entry prefix --------------*- C++ -*-===//
+//
+// The ctnative-specialize-host-prefix pass. It inlines each branch arm that
+// HostEntryPrefixAnalysis proved is taken and turns each proved dynamic call
+// into ctjs.call_direct. With --output it also writes a JSON report of the
+// proof, built before any rewrite.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/Analysis/HostPrefix.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 
@@ -13,6 +22,8 @@ namespace ctcompile::ctnative {
 #include "ctcompile/CTNative/Transforms/Passes.h.inc"
 namespace {
 
+/// True when the proved arm of `proof` can be spliced in place: a single
+/// argument-free block whose yield matches the branch's results.
 bool selectable(HostPrefixBranch proof) {
     auto & region = proof.operation->getRegion(proof.selected ? 0u : 1u);
     if (region.empty()) { return proof.operation.getNumResults() == 0; }
@@ -21,6 +32,7 @@ bool selectable(HostPrefixBranch proof) {
     return yield && yield.getNumOperands() == proof.operation.getNumResults();
 }
 
+/// A provider result attribute printed as text, or JSON null when absent.
 llvm::json::Value providerResult(mlir::Attribute value) {
     if (!value) { return nullptr; }
     std::string text;
@@ -29,6 +41,7 @@ llvm::json::Value providerResult(mlir::Attribute value) {
     return text;
 }
 
+/// Replaces the branch with the operations of its proved arm.
 void select(HostPrefixBranch proof) {
     auto branch = proof.operation;
     auto & region = branch->getRegion(proof.selected ? 0u : 1u);
@@ -45,7 +58,8 @@ void select(HostPrefixBranch proof) {
     branch.erase();
 }
 
-// The --output document; read before any rewrite, so it matches the plan.
+/// Builds the JSON report written by --output. It is built before any
+/// rewrite, so it describes what the analysis proved.
 llvm::json::Object prefixReport(mlir::ModuleOp module, const HostEntryPrefixAnalysis & analysis,
                                 llvm::StringRef moduleSha256) {
     const auto factoryOf = [&](mlir::Operation * operation) {
@@ -220,8 +234,8 @@ struct CTNativeSpecializeHostPrefixPass
                                          followProviderReads, followProviderMutations,
                                          followProviderDiagnostics, followProviderCallbacks,
                                          followProviderObjects);
-        // Snapshot a checked plan before making the first semantic mutation.
-        // No analysis query runs against partially rewritten IR.
+        // Copy the proved branches and calls before the first rewrite, so no
+        // analysis query runs against partially rewritten IR.
         std::vector<HostPrefixBranch> branches(analysis.branches().begin(),
                                                analysis.branches().end());
         std::vector<HostPrefixCall> calls(analysis.calls().begin(), analysis.calls().end());
@@ -247,9 +261,10 @@ struct CTNativeSpecializeHostPrefixPass
             signalPassFailure();
             return;
         }
-        // Splice only the proved arms. Generic SCF canonicalization can form
-        // arith.select with !ctjs.value operands, which LLVM's scalar folder
-        // does not support. Selected nested operations retain their identity.
+        // Splice in each proved arm by hand instead of running SCF
+        // canonicalization: canonicalization can turn the branch into
+        // arith.select on !ctjs.value operands, which the scalar folder does
+        // not support. Spliced operations keep their identity.
         for (auto proof : branches) { select(proof); }
         for (auto proof : calls) {
             auto call = proof.operation;

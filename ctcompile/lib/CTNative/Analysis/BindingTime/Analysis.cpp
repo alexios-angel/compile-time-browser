@@ -1,3 +1,11 @@
+//===- Analysis.cpp - Binding-time analysis driver --------------*- C++ -*-===//
+//
+// Constructs BindingTimeAnalysis: seeds arguments that every direct caller
+// passes as the same constant, solves function summaries callees-first, and
+// answers the public queries. Per-operation transfer functions live in
+// Operations.cpp, Memory.cpp and Flow.cpp.
+//
+//===----------------------------------------------------------------------===//
 #include "Analysis.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
@@ -91,12 +99,14 @@ void BindingTimeAnalysis::Impl::seedArguments() {
             !closedCallableProblem(fn, module).empty()) {
             return;
         }
-        // Native variants retain the original callee value for boxed dispatch.
+        // Native variants retain the original callee value for boxed
+        // dispatch.
         // The symbol-only caller set is then incomplete for this original body:
         // freezing it to its remaining generic arguments would change calls
         // that dispatch through the value. Keep its parameters dynamic; this
         // does not prevent evaluation of argument-independent heap prefixes.
         if (hasAlternateCalleeCalls(fn, module)) { return; }
+        // Skip the three implicit arguments (receiver, new.target, callee).
         for (unsigned i = 3; i < known.size(); ++i) {
             mlir::Attribute common;
             bool matches = true;

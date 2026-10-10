@@ -1,3 +1,12 @@
+//===- Body.cpp - DOM entry body walk -------------------------------------===//
+//
+// Body::visit, the per-operation walk of one DOM entry function body. It handles
+// constants, JSON objects, comparisons and String joins itself and hands control
+// flow, browser calls and Maps to ControlFlow.cpp, BrowserOperations.cpp and
+// Maps.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.hpp"
 
 namespace ctcompile::ctnative::dom_entry_detail {
@@ -19,14 +28,19 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
     bool entered = false, returned = false, structuralTail = false;
     for (mlir::Operation & operation : body) {
         if (!spend()) { return false; }
-        // Pure callbacks observe only their String argument. No implicit
-        // receiver, allocation, global, capture, callback or browser effect.
+        // Filter callbacks are pure: they read only their String argument and
+        // touch no implicit receiver, allocation, global, capture, callback
+        // or browser effect.
         if (callbackBody && !(replacementBody && llvm::isa<ctjs::BinaryOp>(operation)) &&
             !llvm::isa<ctjs::ConstantOp, ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp,
                        ctjs::ReturnOp, ctjs::GetPropertyOp, ctjs::CallOp, ctjs::TruthyOp,
                        ctjs::UnaryOp, mlir::scf::IfOp, mlir::scf::YieldOp>(operation)) {
             return fail("DOM filter callback contains an unsupported source effect");
         }
+        // After an scf.if whose arms all throw (a block in `nonReturning`), the
+        // rest of the block cannot run. Its constants, frame exits, property
+        // reads and calls are still admitted and checked by the ordinary proof;
+        // the emitted throw runs before them. Other abrupt regions are refused.
         if ((operation.getNumRegions() != 0 &&
              !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
                         ctjs::InvokeOp>(operation)) ||
@@ -37,9 +51,6 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                    operation)))) {
             return fail("DOM entry does not admit nested control flow or a source continuation");
         }
-        // A fully proved throwing branch makes its suffix unreachable. Retain
-        // and check each remaining DOM read/call with the ordinary proof below;
-        // the emitted throw still precedes it. Direct abrupt regions stay strict.
         for (mlir::OpOperand & use : operation.getOpOperands()) {
             const mlir::Value operand = use.get();
             if (!spend()) { return false; }
@@ -79,7 +90,8 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             }
             continue;
         }
-        // Maps and their records first: a stored record is not JSON data.
+        // Check Maps and their records before JSON objects: a record stored in
+        // a Map is not JSON data.
         if (const auto handled = mapOperation(operation)) {
             if (!*handled) { return false; }
             continue;
@@ -110,10 +122,14 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                 return fail("DOM JSON assignment requires a fresh target and an owning value");
             }
             if (!name || name.getValue() == "__proto__") {
-                // The proved transforms have only one __proto__ preimage.
-                // This permits one inherited setter invocation, whose
-                // prototype is unobservable under the final owning data
-                // contract. Ordinary collisions retain ordered overwrites.
+                // A computed key (or a literal "__proto__") is admitted only
+                // when it comes from one snapshot loop over increasing
+                // indices, whose key transform lets at most one source key
+                // become "__proto__". Writing it then calls the inherited
+                // __proto__ setter at most once, and the resulting prototype
+                // is never seen because the object is converted to plain
+                // owned data. Any other key collision keeps ordinary
+                // last-write-wins order.
                 auto key = write.getKey().getDefiningOp<ctjs::GetPropertyOp>();
                 if (!key) {
                     if (!spend()) { return false; }
@@ -246,10 +262,13 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
             if (original && stringTails.lookup(binary.getRhs()) == original) {
                 if (!spend()) { return false; }
                 if (auto key = strippedAssignmentKeys.lookup(original)) {
-                    // Full lowercase may expand or collide, but only '_'
-                    // lowers to '_'. With the unchanged tail, __proto__
-                    // still has exactly one original bs__proto__ preimage.
-                    // This never grants membership in the source dataset.
+                    // The key is a Bootstrap dataset key with its "bs"
+                    // prefix removed and its first character lowercased.
+                    // Lowercasing can merge distinct keys, but the only
+                    // character that lowers to '_' is '_', so with the tail
+                    // unchanged only the source key "bs__proto__" can become
+                    // "__proto__". This tracks where the key came from; it
+                    // does not prove the key exists in the dataset.
                     strippedAssignmentKeys[binary.getResult()] = key;
                 }
             }
@@ -262,8 +281,9 @@ bool Body::visit(mlir::Block & body, unsigned depth, mlir::Value & frame) {
                      Kind::json, Kind::jsonAggregate, Kind::symbol})) {
             if (!spend()) { return false; }
             values[unary.getResult()] = Kind::string;
-            // JSON's object tag includes null and arrays, never member
-            // authority. It permits only their own-data spread.
+            // For a JSON value, typeof gives "object" for null and arrays
+            // too, so a typeof test proves only that an own-data spread is
+            // safe, not that its members may be read.
             if (hasKind(unary.getOperand(),
                         {Kind::optionalString, Kind::undefinedString, Kind::json})) {
                 typeQueries[unary.getResult()] = unary.getOperand();

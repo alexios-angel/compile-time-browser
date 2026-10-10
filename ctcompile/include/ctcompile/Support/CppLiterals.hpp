@@ -1,3 +1,9 @@
+//===- CppLiterals.hpp - C++ literal spelling -------------------*- C++ -*-===//
+//
+// Spells arbitrary bytes as C++ identifiers and string literals for the code
+// the backends emit, with compile-time checks of the tricky escapes.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include <algorithm>
@@ -5,48 +11,32 @@
 #include <string_view>
 
 namespace ctcompile::cpp {
-// ONE CHARACTER OF A C++ IDENTIFIER, [A-Za-z0-9_]. ASCII by hand rather than
-// `std::isalnum`, which is locale-sensitive: a symbol that depends on `LC_ALL`
-// is a symbol the linker resolves on one machine and not on another.
+/// Whether `ch` may appear in a C++ identifier: [A-Za-z0-9_]. ASCII by hand
+/// rather than `std::isalnum`, which is locale-sensitive: a symbol that depends
+/// on `LC_ALL` is one the linker resolves on one machine and not on another.
 [[nodiscard]] constexpr bool is_identifier_char(char ch) {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
            ch == '_';
 }
 
-// `text` WITH EVERY CHARACTER OUTSIDE [A-Za-z0-9_] REPLACED BY `_`.
+/// `text` with every character outside [A-Za-z0-9_] replaced by `_`.
 [[nodiscard]] inline std::string identifier(std::string_view text) {
     std::string spelled{text};
     std::ranges::replace_if(spelled, [](char ch) { return !is_identifier_char(ch); }, '_');
     return spelled;
 }
 
-// A C++ STRING LITERAL FOR ARBITRARY BYTES.
-//
-// OCTAL ESCAPES, NOT HEX, and the difference is a real bug rather than a taste.
-// A hex escape in C++ consumes as many hex digits as follow it, so a name
-// containing byte 0x01 followed by the character 'F' becomes "\x01F" - one
-// character, 0x1F - and the emitted program looks up a global nobody named. An
-// octal escape is exactly three digits and cannot run on.
-//
-// A GLOBAL'S NAME IS NOT ALWAYS AN IDENTIFIER, which is why this escapes at all
-// rather than trusting the input: `globalThis["\u0000"] = 1` is legal
-// JavaScript, and the importer carries whatever the source said.
-// WHETHER A RAW STRING LITERAL WOULD BE BETTER THAN ESCAPING.
-//
-// R"(...)" is not a general answer and cannot be the only path: a raw string's
-// content is the LITERAL BYTES of the generated source file, so a name
-// containing a zero byte or a control character would have to have that byte
-// written into the .cpp - and a NUL truncates the file for most tooling. It
-// also cannot contain its own terminator.
-//
-// AND FOR AN ORDINARY IDENTIFIER IT IS WORSE, not better: `R"(Math)"` says
-// nothing that `"Math"` does not, with five more characters. The escaped form
-// IS the plain form whenever nothing needs escaping.
-//
-// So the raw form is used exactly where escaping is the noisy one - a name
-// containing a quote or a backslash, where `"a\"b\\c"` becomes `R"(a"b\c)"`.
-// That is a narrow win and it is taken because the emitted code is read by
-// people when something has gone wrong.
+/// Whether `bytes` reads better as a raw string R"(...)" than escaped: true
+/// only for printable ASCII that contains a quote or backslash and not the
+/// `)"` terminator.
+///
+/// A raw string cannot be the only path: its content is the literal bytes of
+/// the generated source file, so a zero byte or control character would be
+/// written into the .cpp (and a NUL truncates the file for most tooling). For
+/// an ordinary identifier it is worse, not better: `R"(Math)"` says nothing
+/// `"Math"` does not. So the raw form is used exactly where escaping is noisy,
+/// a name containing a quote or backslash, where `"a\"b\\c"` becomes
+/// `R"(a"b\c)"`; the emitted code is read by people when something goes wrong.
 inline constexpr bool raw_string_is_clearer(std::string_view bytes) {
     bool noisy = false;
     for (const char raw : bytes) {
@@ -60,6 +50,12 @@ inline constexpr bool raw_string_is_clearer(std::string_view bytes) {
     return noisy && bytes.find(")\"") == std::string_view::npos;
 }
 
+/// A C++ string literal for arbitrary bytes. Non-printable bytes become
+/// three-digit octal escapes, not hex: a hex escape absorbs every following
+/// hex digit, so byte 0x01 then 'F' would become "\x01F" (one char, 0x1F) and
+/// the emitted program would look up a global nobody named. A global's name
+/// need not be an identifier (`globalThis["\u0000"] = 1`), so every name goes
+/// through here.
 inline constexpr std::string c_string_literal(std::string_view bytes) {
     if (raw_string_is_clearer(bytes)) { return "R\"(" + std::string(bytes) + ")\""; }
     std::string spelled = "\"";
@@ -88,35 +84,30 @@ inline constexpr std::string c_string_literal(std::string_view bytes) {
     return spelled;
 }
 
-// THE ESCAPE, CHECKED AT COMPILE TIME rather than by reading an emitted file.
-// "Prefer a build error to a test", and these are decidable here.
+// The escaping is checked at compile time, since these cases are decidable
+// here and a build error is found sooner than a failing test.
 static_assert(c_string_literal("Math") == "\"Math\"");
-// THE ONE THAT WOULD BREAK UNDER A HEX ESCAPE: `od`, byte 0x01, `Fd`.
-//
-// THE INPUT IS SPELLED OCTALLY HERE FOR THE SAME REASON THE OUTPUT IS, and the
-// first attempt at this assertion proved it: written "od\x01Fd" the C++
-// compiler refused the source with "hex escape sequence out of range", because
-// it read the escape as \x01F followed by `d`. The hazard is real enough to
-// have bitten the test written to demonstrate it.
+// The case that would break under a hex escape: `od`, byte 0x01, `Fd`.
+// The input is spelled in octal for the same reason: "od\x01Fd" would itself
+// parse as \x01F followed by `d`.
 static_assert(c_string_literal("od\001Fd") == "\"od\\001Fd\"");
 static_assert(c_string_literal("od\001Fd").size() == 5 + 2 + 3,
               "five source bytes, two quotes, and three extra characters for the one escape");
-// QUOTES AND BACKSLASHES TAKE THE RAW FORM, because escaping them is exactly
-// the case where the escaped spelling is harder to read than the name.
+// Quotes and backslashes take the raw form, because that is exactly where the
+// escaped spelling is harder to read than the name.
 static_assert(c_string_literal("a\"b") == "R\"(a\"b)\"");
 static_assert(c_string_literal("a\\b") == "R\"(a\\b)\"");
-// AND A ZERO BYTE SURVIVES, which is why the length is emitted beside the
-// pointer: strlen would stop here. It also forces the escaped path - a raw
-// string cannot carry a NUL, because a NUL in the generated source truncates
-// the file for most tooling.
+// A zero byte survives, which is why the length is emitted beside the
+// pointer: strlen would stop here. It also forces the escaped path, since a
+// raw string cannot carry a NUL.
 static_assert(c_string_literal(std::string_view("a\0b", 3)) == "\"a\\000b\"");
 static_assert(!raw_string_is_clearer(std::string_view("a\0b", 3)));
 
-// THE RAW FORM IS TAKEN ONLY WHERE ESCAPING IS THE NOISY ONE.
+// The raw form is taken only where escaping is the noisy one.
 static_assert(!raw_string_is_clearer("Math"), "nothing to escape - the plain form is clearer");
 static_assert(raw_string_is_clearer("a\"b"));
 static_assert(c_string_literal("a\"b\\c") == "R\"(a\"b\\c)\"");
-// AND NEVER WHERE THE CONTENT WOULD CLOSE IT.
+// It is never taken where the content would close it.
 static_assert(!raw_string_is_clearer("a)\"b"), "the content contains the terminator");
 static_assert(c_string_literal("a)\"b") == "\"a)\\\"b\"");
 static_assert(c_string_literal("?"

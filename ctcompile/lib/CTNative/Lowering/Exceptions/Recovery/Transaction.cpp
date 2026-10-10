@@ -1,10 +1,13 @@
-// recovery - the transaction: run() proves and rebuilds on the clone, and the
-// entry point adopts the recovered body or leaves the original untouched.
+//===- Transaction.cpp - Recovery transaction -------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
-// 2026-09-08. All are member functions of `recovery`, the disposable-clone
-// transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
-// header the rest of the lowering sees, did not change.
+// run() proves and rebuilds the handler on the clone, and
+// recoverPrimitiveExceptionRegion() adopts the recovered body or leaves the
+// original untouched.
+//
+// Member functions of `recovery`, the disposable-clone transaction declared in
+// Attempt.h; the rest of the lowering uses only Exceptions/Recovery.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Attempt.h"
 
@@ -73,9 +76,9 @@ bool recovery::run() {
 
 ExceptionRecoveryResult recoverPrimitiveExceptionRegion(ctjs::FuncOp function, unsigned maxSteps,
                                                         ExceptionRecoveryMode mode) {
-    // Bound the source scan and reserve another scan's cost for the initial
-    // clone before allocating it. The caller selects handler-containing
-    // functions; no rewrite is visible until every stage succeeds.
+    // Bound the source scan, then reserve the same cost again for the initial
+    // clone before allocating it. The caller only passes functions that contain
+    // a handler; no rewrite is visible until every stage succeeds.
     recovery attempt{function, maxSteps, mode};
     if (!attempt.inspect() || !attempt.spend(maxSteps - attempt.remaining)) {
         return {false, std::move(attempt.refusal), {}, maxSteps - attempt.remaining};

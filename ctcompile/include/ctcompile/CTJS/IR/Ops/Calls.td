@@ -13,15 +13,15 @@ def CTJS_CallOp
     compiled body, or a native built-in, and which of those it is is decided
     at run time by the one place that reads function_proto::aot_entry.
   }];
-  // PHASE 55 (may_reenter 1: call, call_method, call_computed,
-  // call_receiver). ALL SINK(passed): invoke copies every argument into the
-  // callee's register window (context::invoke, vm/call/invoke.cpp; a root
-  // through each_root) and the receiver into call_frame::receiver (invoke; a
-  // root through each_root) or current_this_ for a native (invoke's native
-  // arm; a root through each_root); a native gets a std::vector copy
-  // (run_loop.cpp:648-650)
-  // and may retain anything - Map.set, Promise.then, addEventListener. The
-  // MVP has no callee summaries, so `a.push(i)` is NOT proved confined.
+  // Escape effects (may_reenter 1: call, call_method, call_computed,
+  // call_receiver): every operand is SINK(passed). context::invoke
+  // (vm/call/invoke.cpp) copies each argument into the callee's register window
+  // and the receiver into call_frame::receiver, or into current_this_ for a
+  // native; all of these are GC roots through each_root. A native callee gets
+  // its own std::vector copy of the arguments (execute_call in
+  // vm/run_loop/call.cpp) and may retain any of them (Map.set, Promise.then,
+  // addEventListener). There are no callee summaries yet, so `a.push(i)` is not
+  // proved confined.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
                        Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$receiver,
                        Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkPassed]>:$args);
@@ -32,11 +32,12 @@ def CTJS_CallOp
 def CTJS_ConstructOp
     : CTJS_RuntimeOp<"construct", "ct_aot_construct", CTJS_GenericEffects # [CTJS_MaySuspend]> {
   let summary = "`new callee(...)`";
-  // PHASE 55 (may_reenter 1: construct). ALL SINK(passed): new_target is a
-  // root (through each_root), the arguments go through invoke. The instance is
-  // made at run_loop.cpp:1099 / make_instance in vm/call/construct.cpp under
-  // this operation's pc -
-  // an UNCLAIMED site by design, not a boxed-site claim.
+  // Escape effects (may_reenter 1: construct): every operand is SINK(passed).
+  // new_target is a GC root and the arguments go through context::invoke as
+  // for ctjs.call. The new instance is allocated by make_instance
+  // (vm/call/construct.cpp) under this operation's pc; that site is
+  // deliberately left unclaimed by escape analysis rather than claimed as a
+  // boxed allocation.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$callee,
                        Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$new_target,
                        Arg<Variadic<CTJS_ValueType>, "", [CTJS_SinkPassed]>:$args);
@@ -87,10 +88,10 @@ def CTJS_CallDirectOp
     by coincidence and failing the day a second attribute is added. The plain
     form keeps the trait honest; the boxed lowering names ct_aot_call itself.
   }];
-  // PHASE 55: the same row as ctjs.call - ALL SINK(passed), for ctjs.call's
-  // reasons (context::invoke copies every argument into the callee window, the
-  // receiver is call_frame::receiver, a root). Knowing the callee does not
-  // change where its arguments go; a callee summary is a later phase's.
+  // Escape effects are the same as ctjs.call: every operand is SINK(passed).
+  // Knowing the callee does not change where its arguments go; proving less
+  // from the callee's body would need callee summaries, which do not exist
+  // yet.
   let arguments = (ins FlatSymbolRefAttr:$callee,
                        Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$receiver,
                        Arg<CTJS_ValueType, "", [CTJS_SinkPassed]>:$new_target,
@@ -102,7 +103,7 @@ def CTJS_CallDirectOp
   let assemblyFormat = [{
     $callee `(` $receiver `,` $new_target `,` $callee_value (`,` $args^)? `)` attr-dict
   }];
-  // THE FOUR CallOpInterface HOOKS, inline as func.call spells them. Every
+  // The four CallOpInterface hooks, inline as func.call spells them. Every
   // operand is an argument, in the callee's block-argument order.
   let extraClassDeclaration = [{
     /// The ctjs.func the symbol names, or null when it names nothing.

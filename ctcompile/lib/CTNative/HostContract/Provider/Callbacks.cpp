@@ -1,3 +1,10 @@
+//===- Callbacks.cpp - Provider callback interpretation ---------*- C++ -*-===//
+//
+// Implements providerCallback: symbolic execution of a scalar-only callback
+// that a provider method calls, recording the primitive globals it writes.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Callbacks.h"
 #include "Paths.h"
 
@@ -7,16 +14,23 @@
 namespace ctcompile::ctnative::host_detail {
 namespace {
 
+/// Interprets a callback body. Only constants, Number arithmetic, comparisons,
+/// unary operators, truthiness and reads and writes of primitive globals are
+/// modeled.
 struct callbackReader {
     prefixAnalysis & prefix;
     llvm::StringMap<prefixValue> & globals;
     HostPrefixProviderCallback proof;
     using environment = prefixAnalysis::environment;
 
+    /// `value` when it is a primitive literal, with 0/1 bits as Booleans;
+    /// unknown otherwise.
     prefixValue primitive(prefixValue value) {
         if (value.kind != prefixValue::Kind::primitive || !value.literal) { return {}; }
         value.literal = booleanFromBit(value.literal);
         if (!value.literal) { return {}; }
+        // Refuse strings over 64 KiB and charge one step per byte of the
+        // rest, so one value cannot use up the analysis budget unnoticed.
         if (auto string = llvm::dyn_cast<ctjs::StringAttr>(value.literal)) {
             if (string.getValue().size() > 65536 ||
                 !prefix.spend(static_cast<unsigned>(string.getValue().size()))) {
@@ -26,6 +40,9 @@ struct callbackReader {
         return ctjs::isPrimitiveAttr(value.literal) ? value : prefixValue{};
     }
 
+    /// True when the callback may write global `name`: an ordinary,
+    /// unreserved binding that is not a contract intrinsic or realm property
+    /// and already holds a primitive.
     bool writable(llvm::StringRef name) {
         if (!prefix.spendText(name) || !ctjs::ordinaryKey(name) || reservedCallbackBinding(name) ||
             !unreservedBinding(
@@ -112,8 +129,8 @@ struct callbackReader {
             proof.writes.push_back({store, store.getName().str(), value.literal});
             return value;
         }
-        // No calls, properties, allocation, upvalues, raw arguments, exception
-        // paths or identity inspection can cross this callback proof.
+        // Calls, property access, allocation, upvalues, implicit arguments,
+        // exceptions and identity checks are not modeled.
         return {};
     }
 };
@@ -124,8 +141,9 @@ prefixValue providerCallback(prefixAnalysis & prefix, ctjs::CallOp sourceCall, p
                              prefixValue receiver, llvm::ArrayRef<prefixValue> arguments,
                              llvm::StringMap<prefixValue> & globals,
                              HostPrefixProviderSummary & proof) {
-    // The raw receiver remains a runtime operand. Requiring unused implicit
-    // arguments avoids assuming sloppy/strict/lexical effective-this behavior.
+    // The receiver is not interpreted. Requiring the callback to leave its
+    // implicit arguments unused avoids modeling how `this` is bound
+    // (sloppy, strict or lexical).
     (void)receiver;
     auto function = prefix.target(callee);
     if (!prefix.followProviderCallbacks || !prefix.step() || !function ||
@@ -135,6 +153,8 @@ prefixValue providerCallback(prefixAnalysis & prefix, ctjs::CallOp sourceCall, p
         prefix.pendingNewTarget.contains(sourceCall->getParentOfType<ctjs::FuncOp>())) {
         return {};
     }
+    // The entry block starts with three implicit arguments (receiver,
+    // new.target, callee); only ctjs.root may use them.
     const auto parameters = function.getBody().front().getArguments();
     if (parameters.size() != arguments.size() + 3) { return {}; }
     for (auto implicit : parameters.take_front(3)) {

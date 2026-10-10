@@ -1,8 +1,9 @@
-//===- CTNativeOps.td - the ctnative dialect's TableGen entry point -------===//
+//===- CTNativeOps.td - The ctnative dialect's TableGen entry point -------===//
 //
-// Typed native operations and the type lattice share the dialect's existing
-// TableGen entry point. The C++ exception operations preserve structured
-// unwind boundaries after CTJS admission and lowering to EmitC value types.
+// The single TableGen entry point for the dialect: it includes the types and
+// enums and defines the native operations. The C++ exception operations below
+// keep structured try/catch boundaries after a function has been accepted
+// for native compilation and lowered to EmitC value types.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_OPS

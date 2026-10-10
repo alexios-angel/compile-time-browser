@@ -1,13 +1,20 @@
-// ClosureLifting/Captures.cpp - native lowering implementation.
+//===- ClosureLifting/Captures.cpp - Closure capture admission --*- C++ -*-===//
+//
+// The checks that decide whether a closure can be lifted: whether its target
+// is liftable, which value each capture slot passes at a call, whether those
+// values reach every call site, and whyNotLiftable, which combines them into
+// one refusal reason per closure.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// THE CAPTURE CLAUSES, SHARED WITH THE RECEIVER LIFT. A method IS a closure
-// in the IR - `{ f: function () {} }` compiles to a `closure` opcode and a
-// `set_prop` - so a method that also captures a binding has to satisfy
-// exactly these, and factoring them is what makes the two rules compose
-// rather than diverge.
+/// The capture checks shared with the receiver lift. A method is a closure in
+/// the IR (`{ f: function () {} }` compiles to a `closure` opcode and a
+/// `set_prop`), so a method that also captures a binding has to satisfy the
+/// same checks, and sharing them keeps the two rules consistent.
 std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClosureOp c) {
     ctjs::FuncOp target = targetOf(c);
     if (!target) {
@@ -21,36 +28,38 @@ std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClo
     if (captures != static_cast<unsigned>(target.getUpvalueCount())) {
         return "its capture list disagrees with the descriptors of the function it names";
     }
-    // AN ARROW'S `this` IS LEXICAL, and after the importer's correction the
-    // presence of a non-undefined $enclosing_this is the only place the IR
-    // says a target is one. A lifted call passes the CALL's receiver as
-    // %arg0, which for an arrow is not what the interpreter reads - so an
-    // arrow may be lifted only when it never looks.
+    // An arrow's `this` is lexical, and after the importer's correction a
+    // non-undefined $enclosing_this is the only place the IR says a target is
+    // an arrow. A lifted call passes the call's receiver as %arg0, which for
+    // an arrow is not what the interpreter reads, so an arrow may be lifted
+    // only when it never reads `this`.
     //
-    // THIS IS THE GUARD THAT KEEPS AN ARROW OUT OF THE RECEIVER LIFT, and
-    // it is the one whose removal gives a WRONG ANSWER rather than a
-    // refusal: `{ f: () => this.x }` reads the ENCLOSING `this`, every use
-    // of it is a constant-key read that condition 3 admits, and lifting it
-    // would silently rebind `this` to the literal. It is asked FIRST for
-    // that reason, before any rule that admits a `this` use.
+    // This guard keeps arrows out of the receiver lift, and removing it would
+    // give a wrong answer rather than a refusal: `{ f: () => this.x }` reads
+    // the enclosing `this`, every use of it is a constant-key read the
+    // receiver rule admits, and lifting it would silently rebind `this` to
+    // the literal. It is checked first for that reason, before any rule that
+    // admits a `this` use.
     if (!ctjs::isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
         return "it is an arrow function that reads its lexical `this` - Stage 59B";
     }
     return std::nullopt;
 }
 
-// WHICH UPVALUE OF THE ENCLOSING CLOSURE FILLS CAPTURE SLOT i, or -1 when
-// the operand beside it is the binding and nothing is filled. The list is
-// optional and, when present, exactly as long as the capture list -
-// ctjs.create_closure's own description, and its verifier - so a missing
-// attribute means every slot is from_parent_local, which is most closures.
+/// Which upvalue of the enclosing closure fills capture slot i, or -1 when the
+/// operand beside it is the binding itself. The `enclosing_indices` list is
+/// optional and, when present, exactly as long as the capture list (see
+/// ctjs.create_closure's description and verifier), so a missing attribute
+/// means every slot is from_parent_local, which is most closures.
 std::int32_t closureLifter::enclosingIndex(ctjs::CreateClosureOp c, unsigned i) {
     const mlir::DenseI32ArrayAttr indices = c.getEnclosingIndicesAttr();
     if (!indices || i >= static_cast<unsigned>(indices.size())) { return -1; }
     return indices[i];
 }
 
-// Match cell identity, never its current value or its source spelling.
+/// The slot of `holder` that captures the same cell as slot `index` of
+/// `closure`, when both are made in the same function. Matches cell identity,
+/// never its current value or its source spelling.
 // ponytail: only existing direct sibling captures; deeper relays or missing
 // capture slots need an explicit environment propagation proof.
 std::optional<unsigned> closureLifter::siblingCaptureSlot(ctjs::CreateClosureOp closure,
@@ -70,6 +79,9 @@ std::optional<unsigned> closureLifter::siblingCaptureSlot(ctjs::CreateClosureOp 
     return std::nullopt;
 }
 
+/// The lifted capture parameter of sibling caller `holder` that already holds
+/// the cell slot `index` of `closure` captures, or null when there is none or
+/// it is carried differently.
 mlir::Value closureLifter::siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
                                                 ctjs::CreateClosureOp holder) {
     if (!lifted.contains(holder.getOperation())) { return {}; }
@@ -90,38 +102,35 @@ mlir::Value closureLifter::siblingCapturedValue(ctjs::CreateClosureOp closure, u
     return target.getBody().front().getArgument(argument);
 }
 
-// THE VALUE A LIFTED CALL PASSES FOR CAPTURE SLOT i, or null when the slot
-// is neither shape a lift carries. Two shapes, and both hold the VALUE of a
-// binding, never the box:
-//
-//   * the operand is a ctjs.create_cell of this frame: its initial. A read
-//     of the capture in the target is a read of that value, because
-//     ctjs.load_upvalue reads THROUGH the cell (run_loop.cpp, get_upvalue:
-//     `reg = cell->slot`), and isConstantCell has to prove nothing ever
-//     wrote it.
-//   * PHASE 59 SLICE 1b: `enclosing_indices[i]` is a k >= 0 - the slot is
-//     filled from the ENCLOSING closure's upvalue k - and the enclosing
-//     ctjs.func has already lifted, so `ctnative.captures` is on it and
-//     k is inside that range. lift() made its upvalue k an entry-block
-//     argument at 3 + k, holding the initial of a cell an outer frame
-//     proved constant. The index names a CELL there and the argument holds
-//     what every read of that cell yields, which is what a capture is read
-//     for; passing it on is passing the same value. The capture OPERAND at
-//     i is the importer's `undefined` placeholder and is never consulted -
-//     ct_aot_make_closure does not consult it either.
-//
-// NOTHING ELSE. A parameter of the enclosing function (index at or past
-// 3 + captures) is not a capture and no index names it - a captured
-// parameter is boxed, so its slot is from_parent_local and its operand is
-// the cell; %arg0-2 are never captures; and a k the enclosing function's
-// capture range does not cover names an upvalue the lift did not carry.
+/// The value a lifted call passes for capture slot i, or null when the slot
+/// is neither shape a lift carries:
+///
+///   * The operand is a ctjs.create_cell of this frame: the cell's constant
+///     value (or the cell itself when it is carried by pointer). A read of
+///     the capture in the target is a read of that value, because
+///     ctjs.load_upvalue reads through the cell (VM_CASE(get_upvalue) in
+///     ctbrowser/lib/Script/vm/run_loop.cpp), and isConstantCell has to prove
+///     the value never changes.
+///   * A capture relayed from the enclosing closure: `enclosing_indices[i]`
+///     is k >= 0, so the slot is filled from the enclosing closure's upvalue
+///     k. The enclosing ctjs.func has already been lifted, so it carries
+///     `ctnative.captures` and lift() made its upvalue k the entry-block
+///     argument 3 + k, holding the value of that cell. Passing that argument
+///     on passes the same value. The capture operand at i is the importer's
+///     `undefined` placeholder and is never read (nor does
+///     ct_aot_make_closure read it).
+///
+/// Nothing else qualifies. A parameter of the enclosing function (index at or
+/// past 3 + captures) is not a capture and no index names it (a captured
+/// parameter is boxed, so its slot is from_parent_local and its operand is
+/// the cell); %arg0-2 are never captures; and a k outside the enclosing
+/// function's capture range names an upvalue the lift did not carry.
 mlir::Value closureLifter::capturedValue(ctjs::CreateClosureOp c, unsigned i) {
     if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
-        // PHASE 59 SLICE 2 STEP 2: THE BOX ITSELF, when it is carried. The
-        // call site takes its ADDRESS - `replace()` does that, from the
-        // `ctnative.cell_args` index, through the same `asPointer` the
-        // receiver uses - so what has to be in scope and dominating at the
-        // call is the variable, and that is what this hands back.
+        // A cell carried by pointer: return the cell itself. The call site
+        // takes its address (replace() does this from the
+        // `ctnative.cell_args` index, through asPointer, as for a receiver),
+        // so what must dominate the call is the cell variable, not its value.
         if (isCarried(cell)) { return cell.getResult(); }
         return constantValueOf(cell);
     }
@@ -131,16 +140,16 @@ mlir::Value closureLifter::capturedValue(ctjs::CreateClosureOp c, unsigned i) {
     if (!enclosing || enclosing.getBody().empty()) { return {}; }
     const auto captures = enclosing->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures);
     if (!captures || k >= captures.getInt()) { return {}; }
-    // 3 + captures ARGUMENTS AT LEAST, which lift() guarantees by inserting
-    // them into a block that already had three. Asked anyway, because this
-    // reads an argument by number and the claim costs one comparison.
+    // lift() guarantees at least 3 + captures arguments by inserting them
+    // into a block that already had three. Checked anyway, because this reads
+    // an argument by number and the check costs one comparison.
     mlir::Block & entry = enclosing.getBody().front();
     if (entry.getNumArguments() <= captureArgument(static_cast<unsigned>(k))) { return {}; }
     return entry.getArgument(captureArgument(static_cast<unsigned>(k)));
 }
 
-// The same, after admission: anything else here is a rule that let one
-// through, which this file reports as a named fatal and never as a number.
+/// capturedValue() after admission, where a null value means a rule let a
+/// capture through; that is reported as a named fatal error.
 mlir::Value closureLifter::liftedCapture(ctjs::CreateClosureOp c, unsigned i) {
     if (const mlir::Value value = capturedValue(c, i)) { return value; }
     llvm::report_fatal_error(
@@ -193,26 +202,18 @@ ctjs::CallDirectOp closureLifter::directCall(mlir::OpBuilder & at, mlir::Locatio
                                       /*arg_attrs=*/nullptr, /*res_attrs=*/nullptr);
 }
 
-// CONDITION 3 OF THE SINGLE-WRITE RULE, AND THE AVAILABILITY OF EVERY OTHER
-// CAPTURE, ASKED AT ONE CALL SITE.
-//
-// lift() prepends `capturedValue(c, i)` at each call it rewrites, and the
-// interpreter reads the box when the closure RUNS - so the point that has
-// to come after the single write, and the point at which the value has to
-// be in scope at all, is the CALL and not the ctjs.create_closure. Both
-// halves are one dominance question and this asks it.
-//
-// IT IS NOT A THEOREM FOR ANY OF THE THREE RULES, and it used to look like
-// one for two of them. A plain closure's sites are uses of `c`'s result, so
-// `c` dominates them - but `c` is HOISTED for a function declaration and
-// the store is not, so the value need not dominate `c` at all and the chain
-// through it proves nothing. A method's sites are `obj.m()` calls reached
-// through the OBJECT, which nothing orders after the ctjs.set_property that
-// bound the field; a receiver that is another method's `%arg0` is not even
-// in the same ctjs.func, and there a bare `properlyDominates` answers "yes"
-// because builtin.module's body is a GRAPH region in which every operation
-// dominates every other. So the function is compared before the dominance
-// is, and every rule asks.
+/// Returns why the captured values of `c` are not available at call site
+/// `at`, or nullopt when they are. lift() passes each captured value at the
+/// call, and the interpreter reads the box when the closure runs, so each
+/// value must be defined in the caller's function and dominate the call, and
+/// a single-write cell's store must dominate it too (condition 3 of rule 1 in
+/// ClosureLifter.h).
+///
+/// This is not implied by `c` dominating the call: a function declaration's
+/// closure is hoisted above its store, a method is reached through an object
+/// that nothing orders after the ctjs.set_property that bound it, and in a
+/// graph region (builtin.module) every op dominates every other, so the
+/// function is compared before dominance is asked.
 std::optional<std::string> closureLifter::whyCapturesDoNotReach(ctjs::CreateClosureOp c,
                                                                 mlir::Operation * at) {
     auto here = at->getParentOfType<ctjs::FuncOp>();
@@ -232,41 +233,24 @@ std::optional<std::string> closureLifter::whyCapturesDoNotReach(ctjs::CreateClos
                    "assignment does not dominate the call, so the interpreter reads the "
                    "undefined the binding was hoisted with";
         }
-        // AND THE WRITE ITSELF, NOT ONLY THE VALUE IT STORES. These are two
-        // different questions and only one of them was being asked.
-        //
-        // The clause above proves the value is IN SCOPE at the call. It
-        // does not prove the write has HAPPENED. store-dominates-call
-        // implies value-dominates-call, because the operand dominates its
-        // own store; the CONVERSE does not hold, and the gap is exactly the
-        // shape this rule exists to admit. In
+        // The single assignment itself must also dominate the call, not just
+        // the value it stores. Store-dominates-call implies
+        // value-dominates-call, but not the other way round. A value computed
+        // before a branch dominates the call even when the store is inside
+        // the branch:
         //
         //     function pick(k) { var v; var t = k * 2;
         //                        if (k > 0) { v = t; }
         //                        function get() { return v; } return get(); }
         //
-        // `t` is computed before the branch, so it dominates every call
-        // while the `ctjs.cell_set` inside the `scf.if` dominates none.
-        // With only the value asked, `pick(-1)` compiled to -2 where the
-        // interpreter says `undefined`: `unboxCells` had replaced the read
-        // with `t` and the conditional store was erased. Three independent
-        // reviews found this within one program each, through the plain,
-        // method and constructor rules alike, and the same hole ate a
-        // `while` whose body stores a value computed above the loop.
+        // Here pick(-1) must return undefined, not -2. Native lowering may
+        // refuse a program but must never compile it to a different answer.
         //
-        // A wrong answer is the one thing this tier may not produce, so the
-        // question the comment above and the refusal below both describe -
-        // does the ASSIGNMENT dominate the call - is now the question the
-        // code asks.
-        // AND NOT OF A CARRIED ONE - PHASE 59 SLICE 2 STEP 2. This
-        // question is the by-VALUE path's: it asks whether the one value a
-        // copy would carry has been stored by the time the call runs. A
-        // binding carried BY POINTER copies nothing; the callee reads the
-        // variable when it runs, and on a path where nothing was stored it
-        // reads the NaN the variable was initialised with, which is the
-        // `undefined` the interpreter reads. `writtenOnce` still holds
-        // such a cell - it has one ctjs.cell_set - so the test is on the
-        // path and not on the map.
+        // A cell carried by pointer is exempt: the callee reads the variable
+        // when it runs, and on a path with no store it reads the NaN-boxed
+        // `undefined` the variable was initialised with, which matches the
+        // interpreter. `writtenOnce` still holds such a cell (it has one
+        // ctjs.cell_set), so the test is on isCarried, not on the map.
         if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>();
             cell && !isCarried(cell)) {
             if (ctjs::CellSetOp write = writtenOnce.lookup(cell.getOperation())) {
@@ -303,27 +287,18 @@ std::optional<std::string> closureLifter::whyCapturesDoNotLift(ctjs::CreateClosu
     if (const std::optional<std::string> why = whyTargetIsNotLiftable(c)) { return why; }
     const auto captures = static_cast<unsigned>(c.getUpvalues().size());
     auto enclosing = c->getParentOfType<ctjs::FuncOp>();
-    // A capture is a constant box in this frame, or a lifted capture
-    // parameter of the enclosing function, or it is not liftable.
+    // A capture must be a constant or carried cell in this frame, or a lifted
+    // capture parameter of the enclosing function.
     for (unsigned i = 0; i < captures; ++i) {
         const mlir::Value operand = c.getUpvalues()[i];
         if (auto cell = operand.getDefiningOp<ctjs::CreateCellOp>()) {
-            // PHASE 59 SLICE 2 STEP 2, ASKED SECOND. A cell the
-            // immutability proof takes is copied into a parameter; one it
-            // does not is a frame-local variable this call passes a
-            // POINTER to. Only when neither holds is the capture refused,
-            // and then the box itself is the problem.
+            // A cell proved constant is copied into a parameter; a cell that
+            // is not constant but can be carried is passed by pointer to a
+            // frame-local variable. Only a cell that is neither is refused.
             if (isConstantCell(cell) || isCarried(cell)) { continue; }
-            // THREE SENTENCES WERE HERE AND TWO ARE GONE. "a binding that
-            // is reassigned - a shared cell is Phase 59 slice 2" and "its
-            // one assignment does not dominate every read" were slice 1's
-            // and step 1's refusals for exactly the shapes step 2 carries;
-            // both now lift, and native-shared-cell-fixture.js runs them
-            // against the interpreter. What is left is the one clause
-            // sharedCellCensus can fail, and it has a sentence for every
-            // cell isConstantCell refused - so an absent one is a rule
-            // that let a cell past both censuses, which is a fatal here
-            // and not a number anywhere.
+            // sharedCellCensus records a reason for every cell isConstantCell
+            // refuses, so a cell with no recorded reason means the two
+            // analyses disagree; that is a fatal error, not a refusal.
             const auto shared = whyNotCarried.find(cell.getOperation());
             if (shared == whyNotCarried.end()) {
                 llvm::report_fatal_error(
@@ -348,12 +323,11 @@ std::optional<std::string> closureLifter::whyCapturesDoNotLift(ctjs::CreateClosu
     return std::nullopt;
 }
 
-// THE TARGET'S OWN CLOSURE FEEDS NOTHING BUT NESTED CLOSURES AND UPVALUE
-// READS, which is ResolveGlobals' clause 4 word for word and is here for
-// its reason: the lift marks the target `private`, and `private` is the
-// claim that EVERY caller is visible. A target that leaks its own closure
-// value can be called through that value by something this IR cannot see,
-// and the claim would be false.
+/// Refuses a target whose own closure value is used for anything other than
+/// nested closures and upvalue reads (the same test ResolveGlobals applies,
+/// via ctjs::ownClosureEscape). Lifting marks the target `private`, which
+/// claims every caller is visible; a leaked closure value could be called
+/// from somewhere this IR cannot see.
 std::optional<std::string> closureLifter::whyOwnClosureEscapes(ctjs::FuncOp target) {
     if (mlir::Operation * user = ctjs::ownClosureEscape(target)) {
         return ("its target's own closure escapes into `" + user->getName().getStringRef() +
@@ -363,29 +337,19 @@ std::optional<std::string> closureLifter::whyOwnClosureEscapes(ctjs::FuncOp targ
     return std::nullopt;
 }
 
-// The target's own upvalue reads have to be the shape the rewrite replaces,
-// or a load would be left naming a closure that is gone.
-//
-// AND ITS WRITES, WHICH IS WHERE SLICE 2 STEP 2 RELAXES EXACTLY ONE
-// CLAUSE AND NOT A LINE MORE. This refused ANY `ctjs.store_upvalue`,
-// unconditionally - "its target reassigns a captured binding". A write is
-// now admitted when, and only when, the SLOT it names is one this closure
-// carries by pointer: `slotIsCarried(c, k)`, which is true for a carried
-// cell of the creating frame and for a slot filled from an enclosing
-// capture that is already a pointer. A write to any other slot is still
-// refused, and by name - a by-value capture of a mutated binding would
-// give every call its own copy, which is the wrong answer COUNTER in
-// closure-refusals.mlir was pinned for.
-//
-// THE CLOSURE IS A PARAMETER NOW, AND IT HAS TO BE: "is this slot
-// carried" is a question about the CREATION SITE's operands, not about
-// the target, and the target is what the three callers share.
-//
-// THE INDEX CHECK IS THE SAME ONE THE READ GETS, and it was not there for
-// writes at all. A store naming something other than `%arg2`, or an index
-// past the capture list, is a write this rewrite cannot place - and
-// leaving it would put a ctjs.store_upvalue in a function whose closure
-// operand is about to be erased.
+/// The target's own upvalue reads have to be the shape the rewrite replaces,
+/// or a load would be left naming a closure that is gone.
+///
+/// Writes are checked too. A ctjs.store_upvalue is admitted only when the
+/// slot it writes is carried by pointer (`slotIsCarried(c, k)`, true for a
+/// carried cell of the creating frame and for a slot filled from an enclosing
+/// capture that is already a pointer). A by-value copy of a mutated binding
+/// would give every call its own copy, which is wrong (see the counter case
+/// in test/CTNative/Fixtures/Closures/shared-cell.js). The closure is a parameter
+/// because "is this slot carried" depends on the creation site's operands,
+/// not on the target. A read or store that names something other than
+/// `%arg2`, or an index past the capture list, is refused because the
+/// closure operand it names is about to be erased.
 std::optional<std::string> closureLifter::whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
                                                                    ctjs::FuncOp target) {
     mlir::Block & entry = target.getBody().front();
@@ -413,9 +377,10 @@ std::optional<std::string> closureLifter::whyUpvalueReadsDoNotLift(ctjs::CreateC
     return bad;
 }
 
-// The four admission conditions of slice 1, as one sentence each. The
-// reason is written onto the closure so that the function containing it is
-// refused by NAME rather than by "`ctjs.create_closure` is not native yet".
+/// Returns why closure `c` cannot be lifted to direct calls with its captures
+/// passed as arguments, or nullopt when it can. The reason is attached to the
+/// closure so that the enclosing function is refused with that reason rather
+/// than with the generic "`ctjs.create_closure` is not native yet".
 std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c) {
     if (const std::optional<std::string> why = whyCapturesDoNotLift(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
@@ -432,36 +397,24 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
     }
     mlir::Block & entry = target.getBody().front();
     const unsigned parameters = entry.getNumArguments() - ctjs::implicit_arguments;
-    // CONDITION 4: every use of the closure VALUE is a call this lowers.
+    // Condition 4: every use of the closure value is a call this lowers.
     //
-    // A NAME'S CLOSURE MAY HAVE NO USES AT ALL - PHASE 59 SLICE 2 STEP 4.
-    // A local binding read only from inside another function has every one
-    // of its calls written as a `ctjs.call_direct` in that other frame, and
-    // such a site carries `undefined` as its callee value because the
-    // closure is not in scope there. So the closure value can be used by
-    // nothing and still be called by several things, and
-    // `bindLocalFunctions` has already proved at least one call exists
-    // ("nothing calls it" is one of its own refusals).
+    // A closure bound to a local name may have no uses at all: when the name
+    // is only called from inside other functions, each of those calls is a
+    // ctjs.call_direct with `undefined` as its callee value, because the
+    // closure is not in scope there. bindLocalFunctions has already proved at
+    // least one such call exists ("nothing calls it" is one of its refusals).
     if (c.getResult().use_empty() && !bindingClosures.contains(c.getOperation())) {
         return "nothing calls it";
     }
-    // A NAME FIRST, WHATEVER ELSE THE VALUE REACHES - PHASE 59 SLICE 2
-    // STEP 4. A closure put into a local binding IS that binding, and the
-    // sentence a reader can act on is the one saying which clause of the
-    // binding rule failed. "it reaches `ctjs.cell_set`" named the mechanism
-    // and was the terminal of 9 of the 19 chains a ctjs.call_direct reaches
-    // on bootstrap; the clause is the next lever.
-    //
-    // ASKED BEFORE THE LOOP, AND THAT IS NOT TIDINESS. A binding step 4
-    // refused keeps its box, the capture of that box is then read as a
-    // constant cell and lifted BY VALUE, and the closure acquires a SECOND
-    // use - a `ctjs.call_direct` argument. Left to the loop, which returns
-    // on the first refusing use, the answer would depend on the order of
-    // the use list and would usually be "it is passed as an argument": a
-    // true sentence about a consequence, and no help at all about the
-    // obstacle. Measured on three of the witnesses in closure-refusals.mlir
-    // (BOUNDVALUE, BOUNDDATA and BOUNDDEEP), which named that instead of
-    // their own clause until this moved.
+    // Check the local-binding store first, before the use loop below. A
+    // binding the local-function rule refused keeps its cell; that cell is
+    // then lifted by value and gives the closure a second use as a
+    // ctjs.call_direct argument. If the loop ran first, the reported reason
+    // would depend on use-list order and would usually be "it is passed as an
+    // argument", which is true but not the actual obstacle. The BOUNDVALUE
+    // and BOUNDDATA cases in test/CTNative/Lowering/Closures/refusals.mlir
+    // check this.
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         if (auto into = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
             into && use.getOperandNumber() == 1) {
@@ -470,22 +423,13 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
     }
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
-        // A CALL THE CLOSED WORLD ALREADY NAMED, WHICH IS THE SAME CALL
-        // SITE ONE OPERAND ALONG.
-        //
-        // --ctjs-resolve-globals rewrites a ctjs.call whose callee is a
-        // ctjs.create_closure result into a ctjs.call_direct, where the
-        // closure is `$callee_value` at operand 2 rather than the callee at
-        // operand 0. Without this arm that use falls to the "it is passed
-        // as an argument" refusal below and the lift is LOST on exactly the
-        // closures the closed world just proved - measured, before this arm
-        // existed, as 3 lifted closures on bootstrap, 27 on p5 and 3 on
-        // phaser going to zero.
-        //
-        // THE ARITY NEEDS NO CHECK HERE. CallDirectOp::verifySymbolUses
-        // holds the operand count equal to the entry block's, so a
-        // call_direct that verifies passes exactly `parameters` arguments -
-        // the resolver padded a short call and refused a long one.
+        // A direct call that --ctjs-resolve-globals made from a ctjs.call
+        // whose callee was this closure. The closure is now operand 2
+        // ($callee_value), not operand 0, so without this case the use would
+        // be refused as "passed as an argument". No arity check is needed:
+        // CallDirectOp's verifier requires the operand count to match the
+        // target's entry block (the resolver padded a short call and refused
+        // a long one).
         if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
             direct && use.getOperandNumber() == 2 && direct.getCallee() == target.getSymName()) {
             if (auto why = whyCallSiteDoesNotLift(direct, 0, parameters, "a call")) { return why; }
@@ -497,11 +441,11 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
                 return "it is stored to a global - Phase 59 slice 2";
             }
             if (llvm::isa<ctjs::ReturnOp>(user)) { return "it is returned - Phase 59 slice 2"; }
-            // A METHOD FIELD THE RECEIVER LIFT DID NOT TAKE. Saying "it is
-            // stored into an object" for `{f: function(){}}` names the
-            // mechanism and not the obstacle, and the obstacle is always
-            // one of two things - the shape is not closed, or the key is
-            // written twice - which is exactly what a reader needs.
+            // A method field the receiver lift did not take. "It is stored
+            // into an object" for `{f: function(){}}` names the mechanism,
+            // not the obstacle; the obstacle is always either that the shape
+            // is not closed or that the key is written twice, and
+            // whyNotAMethodField says which.
             if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
                 set && use.getOperandNumber() == 2) {
                 return whyNotAMethodField(set);
@@ -510,21 +454,15 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
                           ctjs::CreateArrayOp>(user)) {
                 return "it is stored into an object or an array - Phase 59 slice 2";
             }
-            // A REFUSAL WAS HERE AND IS GONE: "it is used as a constructor
-            // - Phase 60 owns `new`". Every closure a `ctjs.construct`
-            // names is now in `constructorClosures` and dispatches to
-            // whyNotLiftableConstructor, so this arm was unreachable - and
-            // it was pinned by no test, which is how it stayed reachable-
-            // looking. The mixed case it used to describe is named there
-            // instead, where the clause that actually failed can be said.
+            // A closure used with `new` is not refused here: every closure a
+            // `ctjs.construct` names is in `constructorClosures` and is
+            // handled by whyNotLiftableConstructor.
             if (call || llvm::isa<ctjs::CallDirectOp, ctjs::ConstructOp>(user)) {
-                // PASSING A CLOSURE IS NOT A LIFT, and this is the one
-                // place the brief for this work asked for something the
-                // mechanism cannot give. Lifting moves captures to the
-                // CALL SITE; a callee that receives a function value has
-                // no call site to move them to, and lowering it needs the
-                // callee specialised per closure - Phase 63's monomorphism
-                // proof, not this.
+                // Passing a closure as an argument cannot be lifted: lifting
+                // moves the captures to the call site, and a callee that
+                // receives a function value has no fixed call site to move
+                // them to. Supporting it needs the callee specialised per
+                // closure (a monomorphisation pass), not a lift.
                 return "it is passed as an argument - lifting has no call site to move the "
                        "captures to, so this needs a specialised callee (Phase 63), not a "
                        "lift";
@@ -538,8 +476,8 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
             return why;
         }
     }
-    // AND THE CAPTURED VALUES REACH EVERY ONE OF THOSE SITES. The loop above
-    // has just established that every use of the closure value IS a call
+    // The captured values must also reach every one of those sites. The loop
+    // above has established that every use of the closure value is a call
     // this rewrite lowers, so its users are exactly the sites lift() will
     // prepend the captures at.
     return whyLiftTailFails(c, target, c.getResult().getUsers());

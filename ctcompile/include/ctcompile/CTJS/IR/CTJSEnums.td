@@ -1,16 +1,15 @@
 //===- CTJSEnums.td - the kinds that fold variants into one operation -----===//
 //
-// "Folding six comparison operations into one op carrying a CompareKind is
-// preferred over six separate operations whenever the operands, results,
-// effects, and lowering are identical. It collapses six ODS records, six
-// lowering patterns, and six test files into one of each. Split into distinct
-// operations only when they differ in traits, effects, arity, or verification."
+// Variants that share operands, results, effects and lowering are folded into
+// one operation carrying a kind enum: one ODS record, one lowering pattern and
+// one test file instead of six. They become separate operations only when
+// traits, effects, arity or verification differ.
 //
-// EVERY ONE OF THESE IS A DISTINCTION THE RUNTIME ALREADY MAKES. The binary
-// kinds are the fourteen `op::` enumerators context::binary_op and
-// binary_op_static dispatch on; the compare kinds are what the four relational
-// opcodes and the two equality families reduce to. Inventing a different
-// vocabulary here would mean a translation step that can be wrong.
+// Every kind is a distinction the runtime already makes. The binary kinds are
+// the `op::` enumerators context::binary_op and binary_op_static dispatch on;
+// the compare kinds are what the four relational opcodes and the two equality
+// families reduce to. A different vocabulary here would need a translation
+// step that could be wrong.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTJS_ENUMS
@@ -24,9 +23,9 @@ class CTJS_I32Enum<string name, string summary, list<I32EnumAttrCase> cases>
   let genSpecializedAttr = 1;
 }
 
-// THE TWO FAMILIES ARE ONE ENUM AND TWO OPERATIONS, not one operation with a
-// flag: `add` and `add_generic` differ in whether they can run user code, which
-// is a difference in TRAITS, and the policy says to split on exactly that.
+// One enum, two operations (not one operation with a flag): `add` and
+// `add_generic` differ in whether they can run user code, which is a
+// difference in traits, and a trait difference is the reason to split.
 def CTJS_BinaryKind : CTJS_I32Enum<"BinaryKind", "JavaScript binary operator", [
     I32EnumAttrCase<"Add",    0,  "add">,
     I32EnumAttrCase<"Sub",    1,  "sub">,
@@ -40,10 +39,10 @@ def CTJS_BinaryKind : CTJS_I32Enum<"BinaryKind", "JavaScript binary operator", [
     I32EnumAttrCase<"BitAnd", 9,  "bitand">,
     I32EnumAttrCase<"BitOr",  10, "bitor">,
     I32EnumAttrCase<"BitXor", 11, "bitxor">,
-    // CONCAT IS NOT `add`, and the runtime is emphatic about it: it is emitted
-    // only by template literals, ToStrings both sides unconditionally, and must
-    // never reach the BigInt arm - `${1n}` would throw "BigInts have no
-    // unsigned right shift" from a switch with no case for it.
+    // Concat is not `add`. Only template literals emit it; it calls ToString
+    // on both sides unconditionally and must never reach the BigInt arm, where
+    // `${1n}` would throw "BigInts have no unsigned right shift" from a switch
+    // with no case for it.
     I32EnumAttrCase<"Concat", 12, "concat">,
   ]>;
 

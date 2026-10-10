@@ -1,3 +1,9 @@
+//===- ctcompile/lib/CTJS/IR/CTJSTypes.cpp - ctjs type definitions --------===//
+//
+// Expands the generated storage, parsers and printers for the ctjs types and
+// registers them with the dialect.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSTypes.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"

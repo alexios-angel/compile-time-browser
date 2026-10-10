@@ -1,7 +1,18 @@
+//===- ConditionalCells.cpp - Branch-stored cell scalarization --*- C++ -*-===//
+//
+// Part of the class-initialization proof: removes entry-function cells that
+// start undefined and are assigned inside exactly one scf.if arm.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 
+/// Removes each entry-block cell that starts undefined and is written exactly
+/// once, inside an scf.if arm: every read after that store is replaced with the
+/// stored value. Refuses the class proof if such a cell has several stores,
+/// escapes, or has a read the store does not dominate.
 bool classInitialization::scalarizeConditionalCells(ctjs::FuncOp entry) {
     auto & block = entry.getBody().front();
     llvm::SmallVector<ctjs::CreateCellOp> candidates;
@@ -61,14 +72,15 @@ bool classInitialization::scalarizeConditionalCells(ctjs::FuncOp entry) {
             reads.push_back(read);
         }
         if (!spend(2 + reads.size() + roots.size())) { return false; }
-        // Every read sees this exact stored SSA value in the same arm.
-        // Keep its original computation, surrounding effects and branch;
-        // the later native body proof still checks all of them.
+        // Every read sits after the store in the same arm, so it sees exactly the
+        // stored value. The value's computation, the surrounding effects and the
+        // branch stay in place; the native body proof that runs later checks them.
         for (auto read : reads) {
             read.getResult().replaceAllUsesWith(assignment.getValue());
             read.erase();
         }
-        // Leave frame/context validation to the original complete body proof.
+        // Roots keep their positions; the body proof still validates their frame
+        // and context.
         for (auto root : roots) { root.getValueMutable().assign(cell.getInitial()); }
         assignment.erase();
         cell.erase();

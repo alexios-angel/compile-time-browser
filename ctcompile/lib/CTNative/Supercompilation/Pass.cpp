@@ -1,3 +1,12 @@
+//===- Pass.cpp - The supercompilation pass -------------------------------===//
+//
+// --ctnative-supercompile: finds self-recursive kernels with at least two
+// callers in source functions, and runs a Driver (Driver.h) for each, under
+// budgets shared across the module. A kernel that is refused or not improved
+// gets a ctnative.supercompile_reason attribute.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Driver.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -23,10 +32,10 @@ struct CTNativeSupercompilePass : impl::CTNativeSupercompileBase<CTNativeSuperco
         module.walk([&](ctjs::CallDirectOp call) {
             auto target = call.getTarget();
             auto caller = call->getParentOfType<ctjs::FuncOp>();
-            // Seed only original indexed source functions, not generated
-            // variants. Generic whistle boundaries cannot restart a fresh
-            // expansion on the next pass invocation. This is selection policy,
-            // not a proof inferred from optimization annotations.
+            // Seed only calls from original source functions (those with a
+            // function index), never from variants this pass generated.
+            // Otherwise rerunning the pass would start a fresh expansion where
+            // the whistle stopped the last one.
             if (target && caller && caller != target && functionIndex(caller)) {
                 callers[target].push_back(call);
             }
@@ -49,7 +58,8 @@ struct CTNativeSupercompilePass : impl::CTNativeSupercompileBase<CTNativeSuperco
             supercompilation::Driver driver(
                 module, function,
                 {maxContexts - contexts, maxSteps - steps, maxResidualOps - operations, maxGrowth});
-            // Keep one real generic call as inference evidence for the source.
+            // Keep the first call on the generic function, as type-inference
+            // evidence for the source.
             const bool selected =
                 driver.build(llvm::ArrayRef<ctjs::CallDirectOp>(callers[operation]).drop_front());
             steps += driver.statistics().steps;

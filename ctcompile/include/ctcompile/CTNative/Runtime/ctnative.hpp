@@ -1,24 +1,28 @@
-// ctnative.hpp - the runtime a native program includes.
+//===- ctnative.hpp - Runtime for generated native code ---------*- C++ -*-===//
 //
-// THE ONE HEADER EVERY GENERATED TRANSLATION UNIT INCLUDES. Until 2026-09-15
-// these helpers lived in nine C++ files as STRING LITERALS, each emitted as an
-// emitc.verbatim behind its own `needs*` flag, and nothing compiled them until
-// a generated program did. This is the same text as a real header: the build
-// compiles it under -Werror (test/Runtime/NativeRuntime.cpp), clang-format
-// formats it, and a generated program spells one `#include`.
+// The runtime every generated native translation unit includes: value
+// carriers for optional scalars, strings and unions, dense arrays, Maps,
+// method tables and (with CTNATIVE_DOM) the DOM entry helpers. It is compiled
+// on its own under -Werror by ctcompile/test/Runtime/NativeRuntime.cpp, so
+// errors in a helper show up before any generated program uses it.
 //
-// TWO SWITCHES, both set by the emitter BEFORE the include, because they are
-// the two things a program decides and a header cannot:
+// Two switches, both defined by the emitter before the include, because they
+// are the two things a program decides and a header cannot:
 //
 //   CTNATIVE_ORDERED_MAPS  every Map keeps insertion order (a snapshot is
 //                          observable somewhere in the program); otherwise
 //                          lookup is `std::map` with SameValueZero keys
 //   CTNATIVE_DOM           the program is a DOM entry and ctbrowser's public
 //                          DOM headers are on its include path. Primitive String
-//                          conversion/formatting also links public Core without it.
+//                          conversion/formatting links ctbrowser's public Core
+//                          library even without it.
 //
-// NO ctbrowser::script SYMBOL, ever: Script/ is the interpreter, a dev-time
-// oracle and never a dependency of a native program.
+// Never reference a ctbrowser::script symbol here. Script/ is the interpreter,
+// used only as a development-time reference to compare against, and a native
+// program must not depend on it.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTNative/Runtime/Number.hpp"
@@ -62,30 +66,37 @@
 #include <ctbrowser/style/css/parser.hpp>
 #endif
 
-// Compatibility for arithmetic/signatures not yet migrated to ctnative::js_num.
+/// A plain double, for generated arithmetic and signatures that do not yet use
+/// the ctnative::js_num class.
 using js_num = double;
 
 namespace ctnative {
 
+/// JavaScript string concatenation of two WTF-8 strings (joins surrogate halves
+/// split across the boundary).
 inline std::string string_concat(std::string left, std::string_view right) {
     return (js_string{std::move(left)} + js_string{right}).value();
 }
 
 // --- exceptions --------------------------------------------------------------
 
+/// What a native `throw` of a primitive of type T throws, so a native catch
+/// can match JavaScript exceptions without catching foreign C++ ones.
 template <class T> struct js_exception {
     T value;
 };
 
 // --- optional scalars --------------------------------------------------------
 //
-// Opt and scalar-only Variant types share a carrier; the runtime tag preserves
-// which JavaScript value arrived. A present NaN is never an absence sentinel.
+// Optional scalars and scalar-only unions share one carrier, nullable_scalar,
+// whose run-time tag records which JavaScript value arrived. A present NaN is
+// never used to mean absence.
 
 struct undefined_t {};
 struct js_null_t {};
 
-// JavaScript Boolean values cross into C++ conditions and numbers explicitly.
+/// A JavaScript Boolean. Conversion to a C++ `bool` or to a number is
+/// explicit, so a Boolean never silently becomes 0 or 1.
 class js_boolean_t {
     bool value = false;
 
@@ -102,7 +113,8 @@ inline constexpr js_num to_number(js_boolean_t value) {
     return value.to_number();
 }
 
-// ctcompile: optional scalar values preserve null, undefined and present NaN
+/// An optional Number or Boolean that keeps null, undefined and a present NaN
+/// distinct.
 struct nullable_scalar {
     enum class kind {
         undefined,
@@ -140,8 +152,8 @@ inline js_num to_number(nullable_scalar value) {
     if (value.tag == nullable_scalar::kind::null) { return js_num{}; }
     return js_num{value.value};
 }
-// Numeric global admission is a proof about the stored tag. Check it at the
-// observation boundary so a missing generated store cannot imitate a NaN.
+/// The Number in a global the compiler proved holds one. Terminates on any
+/// other tag, so a missing generated store cannot pass for NaN.
 inline js_num global_number(nullable_scalar value) {
     if (value.tag != nullable_scalar::kind::number) { std::terminate(); }
     return js_num{value.value};
@@ -193,7 +205,7 @@ inline std::string scalar_typeof(nullable_scalar value) {
 
 // --- owning strings ----------------------------------------------------------
 
-// ctcompile: owning strings retain separate null and undefined tags
+/// An optional owned string that keeps null and undefined distinct.
 struct nullable_string {
     enum class kind {
         undefined,
@@ -227,7 +239,8 @@ inline nullable_string to_nullable_string(nullable_scalar value) {
     if (value.tag == nullable_scalar::kind::null) {
         out.tag = nullable_string::kind::null_value;
     } else if (value.tag != nullable_scalar::kind::undefined) {
-        // Admission only permits an absent scalar to widen into this carrier.
+        // The admission check only lets an absent scalar widen into this
+        // carrier.
         std::terminate();
     }
     return out;
@@ -245,8 +258,9 @@ inline std::string string_text(const nullable_string & value) {
            : value.tag == nullable_string::kind::null_value ? "null"
                                                             : value.value;
 }
-// Observation never coerces a missing store or a wrong tag into String text.
-// Return an owning copy so subsequent stores cannot change the saved value.
+/// The String in a global the compiler proved holds one. Terminates on any
+/// other tag rather than printing it, and returns a copy so later stores
+/// cannot change the saved value.
 inline std::string global_string(const nullable_string & value) {
     if (value.tag != nullable_string::kind::string) { std::terminate(); }
     return value.value;
@@ -287,9 +301,9 @@ template <class L, class R> js_boolean_t string_equal(const L & left, const R & 
     }
     return string_strict_equal(a, b);
 }
-// Only nullable String key schemas need these comparisons. Both storage
-// layouts preserve the tag before comparing owned text; absent keys neither
-// coerce to their spelling nor alias the empty String.
+// Only Maps keyed by nullable strings need these comparisons. Both compare the
+// tag before the text, so null and undefined keys never equal their spelling
+// or the empty string.
 inline bool operator==(const nullable_string & a, const nullable_string & b) {
     return a.tag == b.tag && (a.tag != nullable_string::kind::string || a.value == b.value);
 }
@@ -300,9 +314,10 @@ inline bool operator<(const nullable_string & a, const nullable_string & b) {
 
 // --- Boolean/Number/String variant carriers ----------------------------------
 //
-// An alternative is either String text or a scalar nullable_scalar carries.
-// Each observation is written once over any such variant; the named helpers
-// below are the spellings generated code calls.
+// Each alternative is either string text or a scalar nullable_scalar can
+// carry. Each operation (text, truthiness, typeof, ToNumber, print) is written
+// once in `detail` over any such variant; the named helpers below are the
+// spellings generated code calls.
 namespace detail {
 template <class T, class... U>
 concept one_of = (std::is_same_v<T, U> || ...);
@@ -358,8 +373,9 @@ template <class R> R widen(const nullable_string & value) {
     }
     std::terminate();
 }
-// Global observation is a proof about the stored alternative: absence is a
-// missing generated store, never a value to coerce.
+// The alternative A of a global the compiler proved holds one; terminates
+// otherwise. Absence here means a missing generated store, never a value to
+// coerce.
 template <class A, class... T> const A & present(const std::variant<T...> & value) {
     if (const auto * alternative = std::get_if<A>(&value)) { return *alternative; }
     std::terminate();
@@ -387,7 +403,7 @@ inline js_num to_number(const std::variant<js_boolean_t, std::string> & value) {
     return detail::variant_number(value);
 }
 
-// A proved Number/String union owns exactly those two alternatives.
+/// A value proved to be a Number or a String.
 using number_string = std::variant<js_num, js_string>;
 
 inline constexpr js_num to_number(js_num value) {
@@ -413,7 +429,8 @@ inline bool number_string_truthy(const number_string & value) {
 inline std::string number_string_typeof(const number_string & value) {
     return std::holds_alternative<js_num>(value) ? "number" : "string";
 }
-// Compatibility for callers of the earlier optional global storage.
+/// Unwraps a global stored as std::optional<number_string>. Terminates if the
+/// global was never stored, because the compiler proved it present.
 inline number_string global_number_string(const std::optional<number_string> & value) {
     if (!value) { std::terminate(); }
     return *value;
@@ -422,8 +439,9 @@ inline void print_number_string(const char * name, const number_string & value) 
     detail::print_variant(name, value);
 }
 
-// Source optional unions preserve absence as values, including reads before
-// a global store. Neither absence alternative uses NaN or an empty String.
+/// A Number or String that may also be null or undefined (for example a global
+/// read before its store). Absence is its own alternative, never NaN or an
+/// empty string.
 using nullable_number_string = std::variant<undefined_t, js_null_t, js_num, js_string>;
 
 inline nullable_number_string to_nullable_number_string(const number_string & value) {
@@ -583,8 +601,8 @@ concept primitive_equality_operand =
     detail::primitive_union<T>;
 
 namespace detail {
-// Borrow String storage only for this comparison; other leaves retain the
-// existing scalar tags. No combined value carrier or String copy is needed.
+// Borrows the string storage just for this comparison; other alternatives
+// keep their scalar tags. No combined carrier or string copy is needed.
 template <primitive_equality_operand T, class F>
 js_boolean_t visit_equality_operand(const T & value, F && visitor) {
     if constexpr (std::is_same_v<T, js_string>) {
@@ -652,20 +670,18 @@ js_boolean_t primitive_equal(const L & left, const R & right) {
     });
 }
 
-// --- dense arrays - part 24 Phase 57A ----------------------------------------
+// --- dense arrays ------------------------------------------------------------
 //
-// THREE OF THEM AND NO MORE. `push` and `size` are what the plan's rule names;
-// `at` is the one that has to exist rather than being `v[i]`, because `a[7]` on
-// a three-element array is `undefined` in JavaScript and undefined behaviour in
-// C++, and undefined is this tier's NaN. Every out-of-range, fractional or
-// negative index therefore answers NaN, which is EXACTLY what the element type
-// says it may be - the join starts from `undefined` for this reason
-// (TypeInference::elementTypeOf).
+// Three helpers: vec_push, vec_length and vec_at. vec_at exists instead of
+// plain `v[i]` because `a[7]` on a three-element array is `undefined` in
+// JavaScript but undefined behaviour in C++. Any out-of-range, fractional or
+// negative index returns an absent (undefined-tagged) carrier, which is why
+// TypeInference::elementTypeOf starts its element join from `undefined`.
 
-// A Number key selects an element only when it is an integral index below
-// `size`; -0 names "0". Any other Number names a property ("0.5", "-1") that a
-// proved array or snapshot does not have, as in the VM and Node.
-// ctcompile: the element a Number key selects, if any
+/// Sets `index` to the element a Number key selects and returns true, if any.
+/// A key selects an element only when it is an integral index below `size`;
+/// -0 names "0". Any other Number names a property ("0.5", "-1") that a proved
+/// array or snapshot does not have, as in the VM and Node.
 inline bool element_index(nullable_scalar key, std::size_t size, std::size_t & index) {
     if (key.tag != nullable_scalar::kind::number || !(key.value >= 0.0) ||
         key.value >= static_cast<double>(size) || std::trunc(key.value) != key.value) {
@@ -674,7 +690,8 @@ inline bool element_index(nullable_scalar key, std::size_t size, std::size_t & i
     index = static_cast<std::size_t>(key.value);
     return true;
 }
-// The carrier a read of stored V answers with: absent is its default value.
+/// The carrier a read of a stored V returns; a default-constructed carrier
+/// means absent (undefined).
 template <class V> struct read_carrier {};
 template <> struct read_carrier<double> {
     using type = nullable_scalar;
@@ -691,30 +708,31 @@ template <> struct read_carrier<std::string> {
 template <> struct read_carrier<nullable_string> {
     using type = nullable_string;
 };
-// ctcompile: `a[i]`, whose out-of-range answer is undefined, which is NaN here;
-// also confined owning Map string-key snapshots
+/// `a[i]`. Out of range returns the carrier's undefined value (never NaN).
+/// Also used for owning snapshots of Map string keys.
 template <class T>
 typename read_carrier<T>::type vec_at(const std::vector<T> & values, nullable_scalar key) {
     std::size_t index = 0;
     if (!element_index(key, values.size(), index)) { return {}; }
     return values[index];
 }
-// ctcompile: `a.length`, which is `size()` exactly - the site proof is what
-// rules out a hole
+/// `a.length`, which is exactly `size()` because the dense-array proof rules
+/// out holes.
 template <class T> js_num vec_length(const std::vector<T> & v) {
     return js_num{static_cast<double>(v.size())};
 }
-// ctcompile: one element of an array literal, in source order
+/// Appends one element of an array literal, in source order.
 inline void vec_push(std::vector<double> & v, js_num x) {
     v.push_back(x.value());
 }
 
 // --- object values -----------------------------------------------------------
 
-// The program defines it: its fields are the program's proved scalar fields.
+/// Defined by each generated program; its fields are the program's proved
+/// scalar fields.
 struct identity_object;
 
-// ctcompile: an owning property-free identity or an exact tagged scalar
+/// Either a shared owning object identity or an exact tagged scalar.
 struct object_value {
     nullable_scalar scalar;
     std::shared_ptr<identity_object> object;
@@ -747,7 +765,8 @@ inline js_boolean_t object_strict_equal(const object_value & left, const object_
     return scalar_strict_equal(left.scalar, right.scalar);
 }
 inline js_boolean_t object_equal(const object_value & left, const object_value & right) {
-    // Admission excludes any pair that could invoke object-to-primitive conversion.
+    // The admission check excludes any pair that could invoke an
+    // object-to-primitive conversion.
     if (left.object || right.object) { return js_boolean_t{left.object == right.object}; }
     return scalar_equal(left.scalar, right.scalar);
 }
@@ -757,12 +776,14 @@ inline std::string object_typeof(const object_value & value) {
 
 // --- Map storage -------------------------------------------------------------
 //
-// TWO REPRESENTATIONS, one alias. A module with any snapshot keeps insertion
-// order for all Map schemas: the vector-backed storage gives the shared helpers
-// the same operations as std::map, with linear lookup. Without iteration, key
-// order is unobservable and lookup is std::map - but numeric equivalence still
-// needs SameValueZero: std::less<double> alone is not valid for NaN keys.
+// Two representations behind one alias, map_storage. A module with any Map
+// snapshot keeps insertion order for every Map: the vector-backed storage
+// gives the shared helpers the same operations as std::map, with linear
+// lookup. Without iteration, key order is unobservable and lookup uses
+// std::map, but numeric keys still need SameValueZero: std::less<double> alone
+// is not a valid ordering for NaN keys.
 
+/// SameValueZero key equality: NaN equals NaN, and 0 equals -0.
 template <class K> bool map_key_equal(const K & a, const K & b) {
     return a == b;
 }
@@ -787,7 +808,7 @@ bool map_key_equal(const std::variant<T...> & a, const std::variant<T...> & b) {
         },
         a, b);
 }
-// ctcompile: insertion order is observable through Map snapshots
+/// Map storage that keeps insertion order, used when a snapshot can observe it.
 template <class K, class V> struct ordered_map_storage {
     using key_type = K;
     std::vector<std::pair<K, V>> entries;
@@ -815,7 +836,8 @@ template <class K, class V> struct ordered_map_storage {
     void clear() { entries.clear(); }
     std::size_t size() const { return entries.size(); }
 };
-// ctcompile: no Map iteration; ordered lookup with SameValueZero keys
+/// Key ordering for std::map storage that agrees with SameValueZero: all NaNs
+/// are equivalent and sort first.
 template <class K> struct map_key_less {
     bool operator()(const K & a, const K & b) const { return std::less<K>{}(a, b); }
 };
@@ -858,7 +880,9 @@ template <class K, class V> using map_storage = std::map<K, V, map_key_less<K>>;
 #endif
 
 // --- Map helpers -------------------------------------------------------------
-// ctcompile: primitive keys, acyclic primitive/Map payloads, owning identity
+//
+// Keys are primitives; payloads are primitives, owned object identities or
+// other Maps (no cycles).
 
 template <class K> using number_map = map_storage<K, double>;
 using string_to_number_map = number_map<std::string>;
@@ -874,9 +898,8 @@ inline std::shared_ptr<string_to_number_map> make_string_to_number_map() {
 template <class Map, class K> js_boolean_t map_has(const Map & map, const K & key) {
     return js_boolean_t{map->find(key) != map->end()};
 }
-// Nullable Strings also own payload storage and object values keep their
-// owner: every read returns a copy and never borrows Map storage; an absent
-// lookup is undefined.
+/// `map.get(key)`. Every read returns a copy (owned strings and object owners
+/// included) and never borrows Map storage; a missing key gives undefined.
 template <class K, class V>
 typename read_carrier<V>::type map_get(map_storage<K, V> * map, const K & key) {
     const auto found = map->find(key);
@@ -888,8 +911,8 @@ typename read_carrier<V>::type map_get(const std::shared_ptr<map_storage<K, V>> 
                                        const K & key) {
     return map_get(map.get(), key);
 }
-// The payload of a key the compiler proved present. Reaching absence
-// contradicts the compiler's dominance/identity proof.
+/// The payload of a key the compiler proved present. Terminates if it is
+/// missing, since that contradicts the compiler's proof.
 template <class Map, class K> const auto & present_entry(const Map & map, const K & key) {
     const auto found = map->find(key);
     if (found == map->end()) { std::terminate(); }
@@ -898,8 +921,10 @@ template <class Map, class K> const auto & present_entry(const Map & map, const 
 template <class Map, class K> auto map_get_present(const Map & map, const K & key) {
     return present_entry(map, key);
 }
-// T is selected only by a rederived present, exact-payload proof. Return
-// by value so an owning string survives overwrite, deletion and Map lifetime.
+/// The alternative T of a present key's variant payload; the compiler picks T
+/// only from a proof of that exact payload, and the call terminates otherwise.
+/// Returns by value so an owned string survives overwrite, deletion and the
+/// Map's lifetime.
 template <class T, class K, class... V>
 T map_get_present_as(map_storage<K, std::variant<V...>> * map, const K & key) {
     return std::visit(
@@ -917,7 +942,8 @@ T map_get_present_as(const std::shared_ptr<map_storage<K, std::variant<V...>>> &
                      const K & key) {
     return map_get_present_as<T>(map.get(), key);
 }
-// Map keys use CanonicalizeKeyedCollectionKey; payloads retain their sign.
+/// Keys are normalized like ECMA-262 CanonicalizeKeyedCollectionKey (-0
+/// becomes +0); payloads keep their sign.
 template <class K> const K & map_normalize_key(const K & key) {
     return key;
 }
@@ -968,8 +994,9 @@ template <class T> T map_nullable_payload_as(nullable_scalar value) {
         std::terminate();
     }
 }
-// The compiler supplies T only from an independent present payload fact.
-// The storage schema itself never selects a narrower alternative.
+/// Like map_get_present_as for nullable payloads: the compiler supplies T only
+/// from a separate proof about this payload; the storage schema alone never
+/// selects a narrower alternative.
 template <class T, class K, class V>
 T map_get_present_nullable_as(map_storage<K, V> * map, const K & key) {
     const V & payload = present_entry(map, key);
@@ -1011,10 +1038,10 @@ std::shared_ptr<identity_object> map_get_present_identity(
 
 // --- Map snapshots -----------------------------------------------------------
 //
-// ONLY THE ORDERED STORAGE HAS `entries`, so a lookup-only module that reaches
-// one of these fails to compile rather than acquiring an iteration API whose
+// Only the ordered storage has `entries`, so a lookup-only module that reaches
+// one of these fails to compile rather than gaining an iteration API whose
 // sorted order would differ from JavaScript insertion order. Every snapshot is
-// an owning copy: it survives overwrite, deletion and the Map's lifetime.
+// an owned copy: it survives overwrite, deletion and the Map's lifetime.
 
 template <class K, class V> std::vector<V> map_values(map_storage<K, V> * map) {
     std::vector<V> out;
@@ -1033,9 +1060,9 @@ template <class Map> auto map_keys(const Map & map) {
     for (const auto & entry : map->entries) { out.push_back(entry.first); }
     return out;
 }
-// The numeric snapshot indexing contract is vec_at's element_index: -0.5 names
-// the property "-0.5", not element zero.
-// ctcompile: scalar consumer of a proved unmodified Map snapshot
+/// Element `key` of a keys (`Keys`) or values snapshot of a Map proved
+/// unmodified since the snapshot. Indexing follows element_index, so -0.5
+/// names the property "-0.5", not element zero.
 template <bool Keys, class K, class V>
 nullable_scalar map_snapshot_at(const std::shared_ptr<map_storage<K, V>> & map,
                                 nullable_scalar key) {
@@ -1051,35 +1078,36 @@ nullable_scalar map_snapshot_at(const std::shared_ptr<map_storage<K, V>> & map,
 
 // --- owned globals -----------------------------------------------------------
 
-// ctcompile: read a field of a source-proved owned global (shared or raw)
+/// Reads a field of a proved owned global (through a shared or raw pointer).
 template <auto Field, class P> auto owned_global_get(const P & object) {
     return std::to_address(object)->*Field;
 }
-// ctcompile: write a field of a source-proved owned global (shared or raw)
+/// Writes a field of a proved owned global (through a shared or raw pointer).
 template <auto Field, class P, class V> void owned_global_set(const P & object, V value) {
     std::to_address(object)->*Field = value;
 }
+/// The table's captured Data Map.
 template <class Table> auto data_map(Table * table) {
     return &table->captured_map;
 }
 
 // --- method tables -----------------------------------------------------------
 
-// ctcompile: initialize a proved immutable owning callable field
+/// Initializes a method-table field the compiler proved is set once.
 template <auto Member, class Table, class Callable>
 void method_set(const std::shared_ptr<Table> & table, Callable callable) {
     table.get()->*Member = std::move(callable);
 }
-// ctcompile: copy the owning callable from its proved initialized field
+/// Copies the callable out of a method-table field proved initialized.
 template <auto Member, class Table> auto method_get(const std::shared_ptr<Table> & table) {
     return table.get()->*Member;
 }
-// ctcompile: invoke a stored callable with its concrete argument signature
+/// Calls a stored callable with its concrete argument types.
 template <class Callable, class... Args>
 auto invoke_callable(const Callable & callable, Args... args) {
     return callable(args...);
 }
-// ctcompile: invoke a fixed member without extracting an owning callable
+/// Calls a fixed member of the table without copying the callable out.
 template <auto Member, class Table, class... Args>
 auto invoke_session(const std::shared_ptr<Table> & table, Args... args) {
     return (table.get()->*Member)(std::move(args)...);
@@ -1088,7 +1116,8 @@ auto invoke_session(const std::shared_ptr<Table> & table, Args... args) {
 #ifdef CTNATIVE_DOM
 // --- the DOM entry -----------------------------------------------------------
 
-// ECMAScript array-index keys precede ordinary keys.
+/// The array index `key` names, or UINT32_MAX for an ordinary key. ECMAScript
+/// orders array-index keys before ordinary keys.
 inline std::uint32_t json_property_index(std::string_view key) {
     constexpr auto ordinary = std::numeric_limits<std::uint32_t>::max();
     if (key.empty() || (key.size() > 1 && key.front() == '0')) { return ordinary; }
@@ -1097,8 +1126,11 @@ inline std::uint32_t json_property_index(std::string_view key) {
     return error == std::errc{} && end == key.data() + key.size() ? value : ordinary;
 }
 
-// Only proved own-data writes use this. Assignment additionally excludes the
-// inherited __proto__ setter; spread defines that name as an own data property.
+/// Defines or overwrites an own data property of a JSON object, keeping
+/// ECMAScript key order. Used only for proved own-data writes. Assignment also
+/// excludes the inherited __proto__ setter (see
+/// assign_json_snapshot_property); spread defines `__proto__` as an own data
+/// property.
 inline void set_json_property(ctbrowser::json_value & target, std::string key,
                               ctbrowser::json_value value) {
     auto & members = std::get<ctbrowser::json_value::object>(target.data);
@@ -1119,16 +1151,18 @@ inline void set_json_property(ctbrowser::json_value & target, std::string key,
     members.insert(position, {std::move(key), std::move(value)});
 }
 
-// One fresh target, one traversal of unique keys, and only final own data
-// observations. The single __proto__ setter changes no own property. Its
-// value has already been evaluated, including any URI/JSON failure path.
+/// Assignment of one snapshot key into a fresh target, visiting each unique
+/// key once; only the final own data is observed. Assigning `__proto__` calls
+/// the inherited setter, which changes no own property, so it is skipped; its
+/// value was already evaluated, including any URI/JSON failure.
 inline void assign_json_snapshot_property(ctbrowser::json_value & target, std::string key,
                                           ctbrowser::json_value value) {
     if (key != "__proto__") { set_json_property(target, std::move(key), std::move(value)); }
 }
 
-// Source is null/array/object, target is a distinct fresh object, and no
-// shallow alias can be observed. Both paths retain first key/last value order.
+/// Object spread `{...source}` into a distinct fresh object: `source` is null,
+/// an array or an object, and no shallow alias can be observed. Keys keep the
+/// order of their first definition and the value of their last.
 inline void copy_json_properties(ctbrowser::json_value & target,
                                  const ctbrowser::json_value & source) {
     if (const auto * object = std::get_if<ctbrowser::json_value::object>(&source.data)) {
@@ -1143,14 +1177,14 @@ inline void copy_json_properties(ctbrowser::json_value & target,
 inline void require_element(ctbrowser::element_ref element) {
     ctbrowser::validate_element(element).value();
 }
-// A DOM entry's element input. The host contract supplies no HTML form: a form
-// answers its controls by index and by any name ahead of every member
-// ([LegacyOverrideBuiltIns], HTML 4.10.3), so a control named `getAttribute`
-// or `jquery` changes what the typed DOM proof and the element facts read,
-// and the past names map behind that lives in the page's wrapper, not here.
-// A Data session's inputs are only keys. ponytail: a form a query returns
-// still reads as an ordinary element; refuse it at its member reads too if a
-// compiled program must match the VM there.
+/// Checks a DOM entry's element input. The host contract never supplies an
+/// HTML form: a form exposes its controls by index and by name ahead of every
+/// member ([LegacyOverrideBuiltIns], HTML 4.10.3), so a control named
+/// `getAttribute` or `jquery` would change what the typed DOM proof and the
+/// element facts read, and the past-names map behind that lives in the page's
+/// wrapper, not here. A Data session's inputs are only used as keys.
+/// ponytail: a form a query returns still reads as an ordinary element; refuse
+/// it at its member reads too if a compiled program must match the VM there.
 inline void require_entry_element(ctbrowser::element_ref element) {
     require_element(element);
     const auto view = element.owner->read();
@@ -1167,8 +1201,9 @@ inline void require_dataset_element(ctbrowser::element_ref element) {
         throw std::invalid_argument("DOM dataset requires a contracted HTML or SVG element");
     }
 }
-// The source proof fixes /[A-Z]/g and the complete callback. ASCII matches
-// occupy one byte even in WTF-8; every unmatched byte is preserved unchanged.
+/// `text.replace(/[A-Z]/g, Replacement)`; the source proof fixed the pattern
+/// and the callback. ASCII matches are one byte even in WTF-8, and every
+/// unmatched byte is kept unchanged.
 template <auto Replacement> js_string replace_uppercase(const js_string & text) {
     std::string result;
     for (char c : text.value()) {
@@ -1278,7 +1313,7 @@ inline js_boolean_t contains(ctbrowser::element_ref element, ctbrowser::element_
     return js_boolean_t{element.owner == other.owner &&
                         element.owner->read().is_ancestor_of(element.id, other.id)};
 }
-// THE SELECTOR ENGINE IS NOT INCLUDED HERE. ctbrowser/style/engine.hpp costs
+// The selector engine is not included here. ctbrowser/style/engine.hpp costs
 // about as much to parse as the rest of a DOM program put together, so a
 // program that takes a `ctbrowser::style::engine &` includes it itself, after
 // this header, and the selector helpers instantiate against it there.
@@ -1301,9 +1336,10 @@ inline ctbrowser::style::css::stylesheet parse_selector(ctbrowser::element_ref e
                                                         std::string_view selector) {
     return parse_selector(*element.owner, selector);
 }
-// Named method objects keep generated calls close to their source spelling.
-// They hold no state: each call borrows its explicit element and Style engine.
-// Browser.hpp adds checked borrowed views for receiver-only calls.
+// Named method objects keep generated calls close to their source spelling
+// (`Element.prototype.matches.call(...)`). They hold no state: each call
+// borrows its explicit element and style engine. Browser.hpp adds the
+// overloads that take checked borrowed views.
 class js_element_t;
 struct matches_method {
     js_boolean_t call(const js_element_t & element, const js_string & selector) const;
@@ -1365,7 +1401,8 @@ struct element_constructor {
 };
 inline constexpr element_constructor Element{};
 
-// Browser.hpp binds this facade to a borrowed document for one native invocation.
+/// The global `document`. Browser.hpp's document_scope binds it to a borrowed
+/// document for one native invocation.
 struct document_object {
     std::optional<js_element_t> documentElement() const;
     std::optional<js_element_t> querySelector(const js_string & selector) const;
@@ -1373,13 +1410,16 @@ struct document_object {
 };
 inline constexpr document_object document{};
 
-// Existing callers retain the same method objects while emission migrates.
+// Bare-name aliases for the Element.prototype method objects, used by
+// generated code that calls `matches(...)` instead of
+// `Element.prototype.matches.call(...)`.
 inline constexpr const auto & matches = Element.prototype.matches;
 inline constexpr const auto & closest = Element.prototype.closest;
 inline constexpr const auto & querySelector = Element.prototype.querySelector;
 inline constexpr const auto & querySelectorAll = Element.prototype.querySelectorAll;
-// Comparison never resolves either borrowed owner; both slot and generation
-// belong to identity.
+// Orders element keys by document address, then node id, without
+// dereferencing either document. Both the node's slot and its generation are
+// part of its identity.
 template <> struct map_key_less<ctbrowser::element_ref> {
     bool operator()(ctbrowser::element_ref a, ctbrowser::element_ref b) const noexcept {
         return a.owner == b.owner ? a.id < b.id

@@ -1,3 +1,11 @@
+//===- Fields.cpp - Scalar object field checks ------------------*- C++ -*-===//
+//
+// Checks that property reads and writes on plain objects cannot run user code
+// (no getters, setters or prototype changes), and answers whether a given
+// field read definitely sees a field its function initialised earlier
+// (queryNativeObjectFieldPresence).
+//
+//===----------------------------------------------------------------------===//
 #include "Fields.h"
 #include "../OwnedGlobalRoots.h"
 #include "../PrimitiveMapKey.h"
@@ -19,10 +27,13 @@ int64_t nativeObjectFieldGroup(mlir::Operation * op) {
 }
 
 namespace object_detail {
+/// Whether `op` cannot reach a getter, setter or prototype change: it is not a
+/// prototype, accessor, deletion, key-enumeration, iteration, suspension or
+/// throw operation, and any property key it uses is an ordinary one.
 bool scalarFieldOperation(mlir::Operation * op) {
     // Native Map recognition already excludes unknown calls, constructors,
-    // globals and module imports. Reject the direct prototype/accessor routes
-    // too, including writes to an otherwise unrelated object's __proto__.
+    // globals and module imports. Also reject the direct prototype and
+    // accessor routes, including writes to an unrelated object's __proto__.
     if (llvm::isa<ctjs::GetProtoOp, ctjs::SetProtoOp, ctjs::DefineAccessorOp, ctjs::DeleteNamedOp,
                   ctjs::DeletePropertyOp, ctjs::LoadHomeOp, ctjs::OwnKeysOp, ctjs::IterableOp,
                   ctjs::WrapPromiseOp, ctjs::SuspendOp, ctjs::ThrowOp, ctjs::ResumeThrowOp>(op)) {
@@ -43,8 +54,9 @@ bool scalarFieldEnvironment(mlir::ModuleOp module, const OwnedGlobalRoots * glob
         }
     }
     bool safe = true;
-    // Only completed source ownership authorizes these snapshot reads. Numeric
-    // property keys elsewhere still need the ordinary prototype/accessor guard.
+    // Reads of a captured Map snapshot are allowed only when OwnedGlobalRoots
+    // has proved ownership of the global. Every other operation must pass
+    // scalarFieldOperation's prototype/accessor check.
     module.walk([&](mlir::Operation * op) {
         safe &= snapshotReads.contains(op) || scalarFieldOperation(op);
     });
@@ -60,14 +72,19 @@ bool scalarFieldUse(mlir::OpOperand & use) {
 
 namespace {
 
+/// The facts known at one program point of queryNativeObjectFieldPresence.
 struct fieldState {
-    // Unknown effects can change the prototype environment used by later
-    // allocations too. Losing local aliases must never restore that authority.
+    /// Set after an unknown effect. Such an effect can also change the
+    /// prototypes later allocations get, so once set, no later fact counts,
+    /// even after the local aliases are forgotten.
     bool blocked = false;
-    // A schema may describe many allocations; only these live SSA edges say
-    // that two names denote the very same allocation in this invocation.
+    /// The allocation each value is known to be in this invocation. A schema
+    /// may describe many allocations; only these SSA edges prove that two
+    /// values are the very same object.
     llvm::DenseMap<mlir::Value, mlir::Value> origins{};
+    /// (allocation, key) pairs whose field has been written.
     llvm::DenseSet<std::pair<mlir::Value, mlir::Attribute>> assigned{};
+    /// An object stored in a native Map under `key`.
     struct entry {
         mlir::Value map, key, object;
     };
@@ -82,6 +99,9 @@ struct fieldState {
     }
 };
 
+/// Walks `owner` forward until it reaches `read`, then reports whether the
+/// field it reads was definitely assigned on its object. Every step spends
+/// from `limit`; running out reports `exhausted` and not assigned.
 struct fieldPresenceQuery {
     mlir::Operation * read;
     ctjs::FuncOp owner;
@@ -101,6 +121,7 @@ struct fieldPresenceQuery {
         return true;
     }
 
+    /// The literal String of an ordinary constant key, else null.
     mlir::Attribute key(mlir::Value value) const {
         return ctjs::ordinaryKey(value) ? ctjs::constantAttr<ctjs::StringAttr>(value)
                                         : mlir::Attribute{};
@@ -111,6 +132,7 @@ struct fieldPresenceQuery {
         return state.origins.lookup(value);
     }
 
+    /// Follows `set` results (which return their receiver) back to the Map.
     mlir::Value mapInstance(mlir::Value map) {
         while (auto call = map.getDefiningOp<ctjs::CallOp>()) {
             if (!spend()) { return {}; }
@@ -120,6 +142,7 @@ struct fieldPresenceQuery {
         return map;
     }
 
+    /// Merges two branch states into `left`, keeping only common facts.
     void intersect(fieldState & left, const fieldState & right) {
         if (!spend(left.size() + right.size())) { return; }
         if (left.blocked || right.blocked) {
@@ -204,8 +227,8 @@ struct fieldPresenceQuery {
             intersect(state, other);
             return;
         }
-        // No loop invariant, cross-call result or foreign region is presumed.
-        // Effects there may also invalidate later fresh-object initialization.
+        // Nothing is assumed about loops or other region-holding operations:
+        // their effects may also break later fresh-object initialisation.
         if (op->getNumRegions() != 0) {
             state.invalidate();
             return;
@@ -245,9 +268,9 @@ struct fieldPresenceQuery {
             } else if (name != "has") {
                 const auto value =
                     name == "set" ? origin(call.getArgs()[1], op, state) : mlir::Value{};
-                // Without a separate disjointness proof, even different Map
-                // SSA receivers might alias. Invalidate every possibly equal
-                // entry. Saved get aliases are independent of this table.
+                // Without a proof that they differ, even different Map SSA
+                // receivers might alias, so drop every entry whose key may be
+                // equal. Earlier `get` results keep their origins.
                 if (!spend(state.entries.size())) { return; }
                 llvm::erase_if(state.entries, [&](const fieldState::entry & entry) {
                     return name == "clear" ||
@@ -259,8 +282,8 @@ struct fieldPresenceQuery {
             return;
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-            // An own initialized field on a fresh ordinary object cannot call
-            // a getter. Neither can a recognized standard Map method/size.
+            // An own initialised field on a fresh ordinary object cannot call
+            // a getter. Neither can a recognised standard Map method or size.
             const auto object = origin(get.getObject(), op, state);
             const auto name = key(get.getKey());
             if (object && name && state.assigned.contains({object, name})) { return; }
@@ -284,8 +307,8 @@ struct fieldPresenceQuery {
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             if (load.getName() == "Map" && load->hasAttr(kNativeMapConstructor)) { return; }
         }
-        // Imported frame/root bookkeeping cannot invoke source property code.
-        // Native lowering erases it; it is not an unknown JavaScript effect.
+        // Frame and root bookkeeping from the importer cannot run JavaScript
+        // property code; native lowering erases it.
         if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, mlir::arith::ConstantOp>(
                 op)) {
             return;
@@ -308,8 +331,9 @@ NativeObjectFieldPresence queryNativeObjectFieldPresence(mlir::Operation * read,
     fieldPresenceQuery query{read, owner, maxWork, {}, {}, false};
     auto module = owner->getParentOfType<mlir::ModuleOp>();
     if (!module) { return {}; }
-    // Recheck the existing ordinary-field environment without trusting stale
-    // field annotations. This is part of the same bounded query.
+    // Recheck that no operation in the module can reach an accessor, without
+    // trusting field attributes from earlier runs. This spends from the same
+    // budget.
     auto checked = module.walk([&](mlir::Operation * op) {
         return query.spend() && object_detail::scalarFieldOperation(op)
                    ? mlir::WalkResult::advance()

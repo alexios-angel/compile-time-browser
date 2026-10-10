@@ -1,8 +1,16 @@
-// ClosureLifting/Calls.cpp - native lowering implementation.
+//===- ClosureLifting/Calls.cpp - Call sites and the lifter census --------===//
+//
+// Call-site helpers shared by the closure-lifting rules, and census(), which
+// records every closure, object, call and constructor site and computes the
+// cell verdicts before any rewrite runs.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// The ctjs.func that closure `c` creates, or null if it is not in this module.
 ctjs::FuncOp closureLifter::targetOf(ctjs::CreateClosureOp c) {
     return byIndex.lookup(static_cast<unsigned>(c.getFunction()));
 }
@@ -14,10 +22,10 @@ closureLifter::closureCall closureLifter::callSiteOf(mlir::OpOperand & use, ctjs
         return {user, call.getArgs(), call.getReceiver()};
     }
     if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
-        // THE SYMBOL MUST BE THIS CLOSURE'S OWN TARGET. A call_direct whose
+        // The symbol must be this closure's own target. A call_direct whose
         // callee value is this closure but whose symbol is another function
-        // is not a call of it, and the resolver never builds one - asking
-        // is what keeps that an invariant rather than an assumption.
+        // is not a call of it. The resolver never builds one; checking keeps
+        // that an enforced invariant rather than an assumption.
         if (use.getOperandNumber() != 2 || !target || direct.getCallee() != target.getSymName()) {
             return {};
         }
@@ -26,7 +34,7 @@ closureLifter::closureCall closureLifter::callSiteOf(mlir::OpOperand & use, ctjs
     return {};
 }
 
-// The closure a call site dispatches on, in either shape, or null.
+/// The closure a call site dispatches on, in either shape, or null.
 ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
     if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
         return call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
@@ -57,16 +65,14 @@ ctjs::CreateClosureOp closureLifter::closureCalledBy(mlir::Operation * user) {
     return {};
 }
 
-// Its arguments, and the operand number argument 0 sits at.
+/// The JavaScript arguments of a ctjs.call or ctjs.call_direct site.
 mlir::ValueRange closureLifter::argsOfCallSite(mlir::Operation * user) {
     if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) { return call.getArgs(); }
     return llvm::cast<ctjs::CallDirectOp>(user).getArgs();
 }
 
-// THE TWO WALKS BOTH RULES NEED. `targetOf` reads `byIndex` and the
-// local-function rule asks `passesNewTarget` of every call site it writes,
-// and it runs before census() - so the two are here rather than inline, and
-// census() calls this rather than repeating it.
+/// Builds `byIndex` and `passesNewTarget`. The local-function rule needs both
+/// before census() runs, so they live here and census() calls this too.
 void closureLifter::indexAndNewTargets() {
     module.walk([&](ctjs::FuncOp fn) {
         if (const std::optional<unsigned> index = functionIndex(fn)) {
@@ -80,6 +86,9 @@ void closureLifter::indexAndNewTargets() {
     });
 }
 
+/// Records every closure, object literal, call and `new` site, computes
+/// `mutatesUpvalue`, and runs the single-write and shared-cell censuses. Runs
+/// before any rewrite.
 void closureLifter::census() {
     indexAndNewTargets();
     module.walk([&](mlir::Operation * o) {
@@ -93,10 +102,10 @@ void closureLifter::census() {
         } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(o)) {
             allCalls.push_back(call);
         } else if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(o)) {
-            // THE SITES --ctjs-resolve-globals ALREADY NAMED, kept beside
-            // the unnamed ones because the object-argument census has to
-            // reach both: a literal handed to a named call is in exactly
-            // the position a literal handed to an unnamed one is.
+            // Sites --ctjs-resolve-globals already named are kept beside the
+            // unnamed ones because the object-argument census has to reach
+            // both: a literal passed to a named call is in the same position
+            // as one passed to an unnamed call.
             allDirectCalls.push_back(direct);
         } else if (auto built = llvm::dyn_cast<ctjs::ConstructOp>(o)) {
             allConstructs.push_back(built);
@@ -108,7 +117,8 @@ void closureLifter::census() {
             if (!unique) { at->second = {}; }
         }
     }
-    // The fixpoint over the closure-target graph.
+    // The fixpoint over the closure-target graph: the maker of a closure whose
+    // target writes an upvalue may write one of its own slots too.
     for (bool changed = true; changed;) {
         changed = false;
         for (ctjs::CreateClosureOp c : closures) {
@@ -119,11 +129,12 @@ void closureLifter::census() {
             changed |= mutatesUpvalue.insert(maker.getOperation()).second;
         }
     }
-    // AND THE CELLS WITH ONE DOMINATING WRITE, LAST, because condition 4
-    // asks `mutatesUpvalue` and the fixpoint above is what settles it.
+    // Cells with one dominating write are censused after the fixpoint, because
+    // singleWriteCensus skips targets in `mutatesUpvalue` and the fixpoint
+    // above is what completes that set.
     singleWriteCensus();
-    // AND THE SHARED ONES AFTER THAT, because the by-value path has first
-    // refusal: a cell singleWriteCensus took is copied into a parameter,
+    // Shared cells come after that, because the by-value path has first
+    // choice: a cell singleWriteCensus took is copied into a parameter,
     // which costs no pointer and no indirection.
     sharedCellCensus();
 }

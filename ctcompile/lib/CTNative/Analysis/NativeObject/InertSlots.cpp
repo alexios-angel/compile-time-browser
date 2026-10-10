@@ -1,3 +1,10 @@
+//===- InertSlots.cpp - Unobservable poison slots ---------------*- C++ -*-===//
+//
+// Implements inertPoison(): recognises the ub.poison placeholders that loop
+// lifting puts in register slots no path ever reads, so the object analyses
+// can ignore them instead of treating them as unknown values.
+//
+//===----------------------------------------------------------------------===//
 #include "ValueFlow.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -7,10 +14,13 @@
 
 namespace ctcompile::ctnative::object_detail {
 namespace {
-// The loop lifter yields a continuation flag alongside register slots. A
-// poison exit slot cannot reach the loop's next iteration when that same arm
-// yields false. Resolve only integer constants and truncation through this
-// particular branch; no source predicate or arbitrary expression is assumed.
+/// The constant boolean `value` has when `branch` takes `arm`, if known.
+///
+/// The loop lifter yields a continue flag alongside the register slots. A
+/// poison slot yielded by an arm that also yields false for that flag cannot
+/// reach the loop's next iteration. Only integer constants and truncations
+/// through this one branch are resolved; no source predicate or other
+/// expression is evaluated.
 std::optional<bool> conditionOnArm(mlir::Value value, mlir::scf::IfOp branch,
                                    mlir::scf::YieldOp arm, unsigned depth = 0) {
     if (depth > 8) { return std::nullopt; }
@@ -36,6 +46,7 @@ bool inertPoison(mlir::Value value) {
     if (!producer || producer->getName().getStringRef() != "ub.poison") { return false; }
     llvm::SmallVector<mlir::Value> pending{value};
     llvm::DenseSet<mlir::Value> visited;
+    // Give up after 4096 visited values and uses.
     unsigned steps = 0;
     while (!pending.empty()) {
         value = pending.pop_back_val();
@@ -49,10 +60,12 @@ bool inertPoison(mlir::Value value) {
             if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(owner)) {
                 pending.push_back(loop.getBeforeArguments()[index]);
             } else if (auto loop = llvm::dyn_cast<mlir::scf::ForOp>(owner)) {
+                // Operands 0-2 are the lower bound, upper bound and step.
                 if (index < 3) { return false; }
                 pending.push_back(loop.getRegionIterArgs()[index - 3]);
                 pending.push_back(loop.getResult(index - 3));
             } else if (auto condition = llvm::dyn_cast<mlir::scf::ConditionOp>(owner)) {
+                // Operand 0 is the loop condition itself.
                 if (index == 0) { return false; }
                 auto loop = llvm::cast<mlir::scf::WhileOp>(condition->getParentOp());
                 pending.push_back(loop.getAfterArguments()[index - 1]);

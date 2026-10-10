@@ -1,12 +1,21 @@
+//===- Objects.cpp - Objects seen by provider methods -----------*- C++ -*-===//
+//
+// Implements providerObjectState and the publication helpers declared in
+// Objects.h.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Objects.h"
 
 namespace ctcompile::ctnative::host_detail {
 
+/// True when `value` is a known JS primitive literal.
 bool prefixPrimitive(prefixValue value) {
     return value.kind == prefixValue::Kind::primitive && value.literal &&
            ctjs::isPrimitiveAttr(value.literal);
 }
 
+/// prefixCompare extended with `===` on objects, which compares identity.
 prefixValue prefixObjectCompare(ctjs::CompareKind kind, prefixValue left, prefixValue right,
                                 mlir::MLIRContext * context) {
     if (kind != ctjs::CompareKind::StrictEq ||
@@ -30,6 +39,8 @@ bool providerPublicationOwner(prefixAnalysis & prefix, prefixValue owner) {
         return true;
     }
     for (const auto & root : prefix.contract.roots) {
+        // Out of budget: answer "published" so callers refuse the object
+        // rather than assume it is private.
         if (!prefix.step()) { return true; }
         const auto value = prefix.globals.lookup(root.binding);
         if (value.kind == prefixValue::Kind::object && value.object == owner.object) {
@@ -81,8 +92,10 @@ bool providerObjectState::accepts(unsigned id) {
         providerPublicationOwner(prefix, prefixValue::of(prefixValue::Kind::object, id))) {
         return false;
     }
-    // Scalar own contents exclude object/Map/callable backedges and coercion.
-    // Missing fields stay absent: no assumed prototype or undefined fallback.
+    // Only primitive fields: an object, Map or closure field could point back
+    // into provider state, and only primitives avoid coercion. A missing
+    // field stays missing; it is never assumed undefined or read from a
+    // prototype.
     for (const auto & field : object.fields) {
         if (!prefix.step() || !prefix.spendText(field.first()) ||
             !ctjs::ordinaryKey(field.first()) || !prefixPrimitive(field.second)) {

@@ -1,3 +1,4 @@
+# Binding-time analysis sources, compiled into CTNativeAnalysis.
 target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Analysis.cpp
   Effects.cpp

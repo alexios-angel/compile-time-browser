@@ -1,22 +1,22 @@
-// WHAT THE BACKEND COULD NOT COMPILE IS LEFT BEHIND, AND THEN REMOVED.
+//===- DropUncompiled.cpp - Drop refused functions ------------------------===//
 //
-// The lowering refuses a function it does not understand and records why on it,
-// which is the work list. But a module still holding CTJS operations cannot be
-// translated to C++ at all - mlir-translate has never heard of the dialect -
-// so a file where anything is refused produces nothing rather than the parts
-// that did compile.
+// The --ctjs-drop-uncompiled pass: erases every ctjs.func the EmitC lowering
+// refused (marked ctjs.not_lowered), so the rest of the module can be
+// translated to C++.
 //
-// THAT IS WHAT A REAL COMPILER DOES WITH THIS: emit the functions it can and
-// leave the rest to the interpreter. Nothing is lost by dropping them, because
-// the runtime only calls a compiled body when function_proto::aot_entry is set,
-// and a function that was never emitted never sets one.
+// A module still holding ctjs operations cannot be translated at all, since
+// mlir-translate does not know the dialect, so one refusal would otherwise
+// produce no output. Dropping a refused function loses nothing: the runtime
+// calls a compiled body only when function_proto::aot_entry is set, and a
+// function that was never emitted never sets one, so it runs in the
+// interpreter.
 //
-// IT IS A SEPARATE PASS FOR ONE REASON. Erasing inside the lowering would
-// destroy the refusals before anybody could read them, and the refusals are the
-// point - refusals.mlir asserts them one by one and the work list is how the
-// next operation gets chosen. Running this pass is the caller saying "I want a
-// translation unit now", which is a different question from "what can you
-// compile".
+// It is a separate pass so the lowering does not destroy the refusals before
+// they can be read: refusals.mlir checks them one by one. Running this pass
+// means "I want a translation unit now", a different question from "what can
+// you compile".
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
@@ -39,14 +39,14 @@ struct CTJSDropUncompiledPass : impl::CTJSDropUncompiledBase<CTJSDropUncompiledP
                 refused.push_back(op);
             }
         });
-        // COLLECTED FIRST, because erasing during a walk invalidates the
+        // Collected first, because erasing during a walk invalidates the
         // iterator doing the walking.
         for (mlir::Operation * op : refused) { op->erase(); }
 
-        // AND ANY CTJS FUNCTION WITHOUT A REASON IS NOT THIS PASS'S BUSINESS.
-        // It means the lowering never ran, which is the pass-order mistake
-        // --emitc-eliminate-block-arguments refuses for the same reason: this
-        // pass would quietly delete every function in the module.
+        // A remaining ctjs.func without a reason means the lowering never ran,
+        // the same pass-order mistake --emitc-eliminate-block-arguments
+        // refuses. Continuing would quietly delete every function in the
+        // module.
         if (mlir::WalkResult left = getOperation().walk([](mlir::Operation * op) {
                 return op->getName().getStringRef() == "ctjs.func" ? mlir::WalkResult::interrupt()
                                                                    : mlir::WalkResult::advance();

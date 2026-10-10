@@ -1,7 +1,19 @@
+//===- Environments.cpp - Closure environment lowering -------- -*- C++ -*-===//
+//
+// Chooses and emits the C++ representation of each admitted closure's
+// captured environment, and rewrites the closure creations and capture reads
+// that use it.
+//
+//===----------------------------------------------------------------------===//
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// Picks a C++ representation for each admitted closure's captured
+// environment: a direct call for session-owned Map members, the stored-callable
+// ABI when the signature is concrete, otherwise a std::tuple alias emitted into
+// `environments`. Marks the matching reads and direct calls so
+// replaceEnvironment() can rewrite them.
 void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     llvm::StringMap<unsigned> callables;
     for (ctjs::FuncOp fn : accepted) {
@@ -36,7 +48,8 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
                         continue;
                     }
                 }
-                // The stored-callable carriers, less nullable Strings and Elements.
+                // A tuple element may use any stored-callable carrier except a
+                // nullable String or an Element.
                 const auto type = typeOf(captured);
                 const auto c = carrierOf(type);
                 if (!isCallableCarrier(c) || c == carrier::nullableString ||
@@ -76,6 +89,9 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     }
 }
 
+// Replaces a closure creation with its binder or std::make_tuple call, and a
+// marked capture read with std::get<index>. Returns false when `op` is not an
+// environment operation.
 bool lowering::replaceEnvironment(mlir::Operation * op) {
     if (op->hasAttr(kNativeStoredRead)) { return true; }
     const auto target = environmentTarget(op);

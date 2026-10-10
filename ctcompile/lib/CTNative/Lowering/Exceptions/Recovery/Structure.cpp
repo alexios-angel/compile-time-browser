@@ -1,10 +1,12 @@
-// recovery - structuring the cloned regions with LLVM's CFG-to-SCF lifting, and
-// the two normalisations its output needs before the native emitter sees it.
+//===- Structure.cpp - Structuring recovered regions ------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
-// 2026-09-08. All are member functions of `recovery`, the disposable-clone
-// transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
-// header the rest of the lowering sees, did not change.
+// Structures the cloned regions with MLIR's transformCFGToSCF and applies the
+// two normalisations its output needs before the native emitter sees it.
+//
+// Member functions of `recovery`, the disposable-clone transaction declared in
+// Attempt.h; the rest of the lowering uses only Exceptions/Recovery.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Attempt.h"
 
@@ -71,7 +73,7 @@ bool recovery::structure(mlir::Region & region) {
 }
 
 bool recovery::normalizeIndexSwitches(mlir::Operation * guarded) {
-    // LLVM may use an index_switch to dispatch merged completion exits.
+    // transformCFGToSCF may emit an scf.index_switch to dispatch merged exits.
     // Expose that dispatch as comparisons and nested ifs, retaining each
     // selected region and its exact yields. No case body is evaluated or
     // cloned, and the default body remains the final else region.

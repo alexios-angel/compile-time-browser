@@ -1,3 +1,11 @@
+//===- ClosureProof.cpp - Closure heap facts for partial evaluation -------===//
+//
+// Implements prepareClosureHeapFacts (see ClosureProof.h). Each operation of
+// the private copy gets a NameLoc naming its original, so facts proved on the
+// copy can be mapped back after lifting rewrites it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClosureProof.h"
 
 #include "../Lowering/ClosureLifting/ClosureLifter.h"
@@ -11,6 +19,10 @@
 namespace ctcompile::ctnative::partial_eval {
 namespace {
 
+/// Whether the closure lifter's proof is worth attempting: function indices
+/// are unique, every function has its implicit arguments, every closure is
+/// created exactly once with immutable captures, and at least one closure
+/// captures something.
 bool canInspect(mlir::ModuleOp module) {
     const auto indexed = uniqueFunctionIndex(module);
     const auto functions = indexed.value_or(llvm::DenseMap<unsigned, ctjs::FuncOp>{});
@@ -42,8 +54,8 @@ bool canInspect(mlir::ModuleOp module) {
             if (!cell || !immutableCaptureCell(cell, module)) { valid = false; }
         }
     });
-    // These operations require inherited environments or mutable shared cells,
-    // whose native lifter assumptions are outside this private proof attempt.
+    // A store to an upvalue needs an inherited environment or a mutable shared
+    // cell, which this private proof attempt does not model.
     module.walk([&](ctjs::StoreUpvalueOp) { valid = false; });
     return valid && captured;
 }

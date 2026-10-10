@@ -1,3 +1,11 @@
+//===- Walk.cpp - Map body walk -------------------------------------------===//
+//
+// The per-operation part of the captured-Map body proof: Walk::walk, the
+// branch join in Walk::walkIf, and the Map method rules in Walk::mapCall. Any
+// operation outside the supported subset refuses the whole body.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Walk.hpp"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -9,9 +17,15 @@
 
 namespace ctcompile::ctnative::host_detail::captured_map_detail {
 
-// SSA scalar facts and the complete use census are immutable across paths.
-// Mutable contents are copied for each arm and intersected only after both
-// arms finish. An observed startup condition never selects a future path.
+/// Walks one block of a captured-Map method body, recording Map, field and
+/// scalar facts, and returns false (refusing the proof) on any operation
+/// outside the supported subset or when the step budget runs out. Nesting
+/// deeper than 32 scf regions is refused to bound recursion.
+///
+/// SSA scalar facts and the collected uses are the same on every path.
+/// Mutable contents are copied for each arm and intersected only after both
+/// arms finish. A condition observed in one invocation never selects the path
+/// of a later one.
 bool Walk::walk(mlir::Block & block, unsigned depth) {
     if (depth > 32 || !owner.step()) { return false; }
     for (mlir::Operation & operation : block) {
@@ -35,8 +49,9 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                                             mlir::TypeID::get<ctjs::StringAttr>()) {
                     return false;
                 }
-                // The separate complete scalar effect proof excludes Map
-                // access/reentry, so this call preserves current Map facts.
+                // The separate scalar-callback effect proof excludes Map
+                // access and re-entry, so this call preserves current Map
+                // facts.
                 scalar<ctjs::UndefinedAttr>(operation.getResult(0));
             }
             continue;
@@ -160,6 +175,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
                 if (key == "length") {
                     scalar<ctjs::NumberAttr>(read.getResult());
                 } else {
+                    // Only a valid array index (an integer in [0, 2^32 - 2])
+                    // reads a snapshot element.
                     auto number = ctjs::constantAttr<ctjs::NumberAttr>(read.getKey());
                     if (!number || !std::isfinite(number.getDouble()) || number.getDouble() < 0 ||
                         number.getDouble() >= 4294967295.0 ||
@@ -259,8 +276,8 @@ bool Walk::walk(mlir::Block & block, unsigned depth) {
     return true;
 }
 
-// A two-armed scalar branch: path-local Map, field and scalar facts per arm,
-// joined after both finish.
+/// A two-armed scalar branch: path-local Map, field and scalar facts per arm,
+/// joined after both finish.
 bool Walk::walkIf(mlir::scf::IfOp branch, unsigned depth) {
     const bool hasElse = !branch.getElseRegion().empty();
     if (!flags.contains(branch.getCondition()) || !branch.getThenRegion().hasOneBlock() ||
@@ -280,11 +297,11 @@ bool Walk::walkIf(mlir::scf::IfOp branch, unsigned depth) {
         return false;
     }
     if (invocation) {
-        // The generic pass has already checked both arms and every
-        // use. This optional transfer records only a proved actual
-        // path, never a reusable method's effects or result ABI.
-        // ponytail: unknown branches discard invocation facts; add
-        // path intersections only when a source witness needs them.
+        // The generic walk has already checked both arms and every use.
+        // This optional transfer records only the path actually taken,
+        // never a reusable method's effects or result ABI.
+        // ponytail: an undecided branch discards the invocation facts; add
+        // path intersections only when a source program needs them.
         const auto selected = knownTruth(branch.getCondition());
         if (!selected) { return false; }
         auto & region = *selected ? branch.getThenRegion() : branch.getElseRegion();
@@ -451,7 +468,7 @@ bool Walk::walkIf(mlir::scf::IfOp branch, unsigned depth) {
     return true;
 }
 
-// A checked method call on a walked Map alias, or a snapshot copy call.
+/// A checked method call on a walked Map alias, or a snapshot copy call.
 bool Walk::mapCall(ctjs::CallOp invoke) {
     if (copies && copies->calls.contains(invoke)) {
         auto iterator = invoke.getArgs().front().getDefiningOp<ctjs::CallOp>();
@@ -479,8 +496,8 @@ bool Walk::mapCall(ctjs::CallOp invoke) {
             (index == 0 || (key == "set" && index == 1))) {
             continue;
         }
-        // ponytail: one nested level; deeper retention needs a checked
-        // acyclic ownership graph before child Maps can retain Maps.
+        // ponytail: one nested level only. Letting child Maps retain Maps
+        // would need a checked acyclic ownership graph.
         if (key == "set" && index == 1 && origin == capturedOrigin && maps.contains(argument) &&
             maps.lookup(argument) != capturedOrigin) {
             mapStores.insert(invoke);
@@ -564,10 +581,11 @@ bool Walk::mapCall(ctjs::CallOp invoke) {
                         }
                     } else if (entry.present && origin == capturedOrigin &&
                                result.childMapContents) {
-                        // The actual returned owner is an SSA origin,
-                        // not a constructor from an earlier call. Only
-                        // independently proved family invariants can
+                        // The returned child Map is identified by this SSA
+                        // result, not by a constructor from an earlier call.
+                        // Only family invariants proved separately can
                         // describe its unknown prior contents.
+
                         entry.map = {invoke.getResult(), invocation ? invocation->call : nullptr};
                         maps.try_emplace(invoke.getResult(), entry.map);
                         result.returnedChildMaps.push_back(invoke.getResult());

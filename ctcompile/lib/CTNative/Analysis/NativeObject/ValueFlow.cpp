@@ -1,9 +1,17 @@
+//===- ValueFlow.cpp - Object schema value flow -----------------*- C++ -*-===//
+//
+// Value-flow helpers for the native object analyses: joining values that
+// must share one object schema, and classifying primitive producers and
+// operations that only observe a value.
+//
+//===----------------------------------------------------------------------===//
 #include "ValueFlow.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 namespace ctcompile::ctnative::object_detail {
 
+// Operand 3 of a call is its second argument (callee, receiver, key, value).
 bool mapPayloadUse(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     return call && nativeMapAction(call) == "set" && use.getOperandNumber() == 3;
@@ -17,8 +25,8 @@ void connectValues(closedValueFlow & flow, mlir::ModuleOp module) {
         return at->second;
     };
     const auto join = [&](mlir::Value left, mlir::Value right) {
-        // One poison can stand for unrelated, unobserved register slots.
-        // It has no schema and must not unify the live incoming families.
+        // One inert poison can stand for several unrelated, unread register
+        // slots. It has no schema and must not join the families it meets.
         if (!skip(left) && !skip(right)) { flow.join(left, right); }
     };
     llvm::DenseMap<int64_t, mlir::Value> payloads;
@@ -79,8 +87,9 @@ bool primitiveProducer(mlir::Value value) {
     }
     if (llvm::isa_and_nonnull<ctjs::TruthyOp, ctjs::CompareOp, ctjs::BinaryOp, ctjs::BinaryStaticOp,
                               ctjs::UnaryOp>(value.getDefiningOp())) {
-        // These produce primitives if they return. Their own operands/effects
-        // still pass normal native admission; this is not a purity claim.
+        // These produce primitives if they return. Their own operands and
+        // effects still go through normal native admission; this is not a
+        // claim that they are pure.
         return true;
     }
     const auto action = nativeMapAction(value.getDefiningOp());

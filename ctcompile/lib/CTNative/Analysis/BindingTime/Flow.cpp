@@ -1,3 +1,10 @@
+//===- Flow.cpp - Binding-time analysis over regions ------------*- C++ -*-===//
+//
+// Walks a region block by block for the binding-time analysis. A statically
+// decided scf.if analyses both arms and merges them; loops and other
+// region-bearing operations make the heap dynamic.
+//
+//===----------------------------------------------------------------------===//
 #include "Analysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/STLExtras.h"
@@ -6,6 +13,9 @@ namespace ctcompile::ctnative {
 namespace {
 using binding_time_detail::fact;
 using binding_time_detail::flow;
+// Joins the heap facts of two control-flow arms. With `control` false (the
+// branch is not statically decided) every merged heap becomes dynamic.
+// A field known on only one side is dropped.
 flow merge(flow left, const flow & right, bool control) {
     for (const auto & item : right.heaps) {
         auto found = left.heaps.find(item.first);
@@ -32,7 +42,7 @@ flow merge(flow left, const flow & right, bool control) {
     }
     return left;
 }
-// An scf.if arm's yielded facts; none for an absent else.
+// The facts an scf.if arm yields; empty for an absent else region.
 llvm::SmallVector<fact> yielded(mlir::Region & region, const flow & state) {
     llvm::SmallVector<fact> result;
     if (region.empty()) { return result; }

@@ -1,7 +1,26 @@
+//===- BooleanCaptures.cpp - Boolean captures -----------------------------===//
+//
+// classInitialization::retainBooleanCaptures: lets a class method keep one
+// mutable local cell (typically a Boolean flag) that small callbacks read and
+// write, instead of refusing the method.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 
+/// Lets a class method keep one mutable local (a cell) that small callbacks
+/// read and write, typically a Boolean flag. Proves that the cell is the only
+/// local written by a nested closure, that every use sits inside fewer than 64
+/// nested `if`s after the cell is created and initialized, and that each
+/// callback is a leaf whose only effect is writing that cell, called
+/// synchronously with no arguments.
+
+/// On success it rewires each callback's mutable capture to the cell, replaces
+/// its other captures with their constant values, and marks the callbacks as
+/// DOM entry helpers for the later DOM proof. Returns false after refuse() on
+/// a failed proof, or when the work budget runs out.
 bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
     auto & block = owner.getBody().front();
     ctjs::CreateCellOp cell;
@@ -42,6 +61,8 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         unsigned nesting = 0;
         while (position->getBlock() != scope) {
             if (!step()) { return false; }
+            // 64 bounds the walk up through nested ifs; deeper nests are
+            // refused rather than followed.
             auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(position->getParentOp());
             if (!branch || ++nesting == 64) {
                 return refuse("class Boolean state requires bounded local conditional uses");
@@ -63,8 +84,8 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
             roots.push_back(root);
             continue;
         }
-        // Like the later DOM state proof, include every write and capture in
-        // the common scope. Roots keep their frame obligation, not a lifetime.
+        // As in the later DOM state proof, the common scope must contain every
+        // write and capture. Roots keep their frame obligation, not a lifetime.
         if (!stateScope) { stateScope = user->getBlock(); }
         while (!ancestors.contains(stateScope)) {
             if (!step()) { return false; }
@@ -116,8 +137,9 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
                 return refuse("class Boolean leaf observes its callee identity");
             }
         }
-        // This transports non-reentrant primitive leaves. The later DOM proof
-        // establishes actual Boolean conditions, stores and result types.
+        // This accepts only non-reentrant leaves over primitives. The later DOM
+        // proof establishes the actual Boolean conditions, stores and result
+        // types.
         const auto proveLeaf = [&](auto && self, mlir::Block & source, unsigned nesting) -> bool {
             if (nesting == 64) { return refuse("class Boolean leaf conditional depth exhausted"); }
             for (auto & operation : source) {
@@ -226,8 +248,9 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
             return refuse("class Boolean state is used before its scope initialization");
         }
     }
-    // The module's initial census already enforces unique closure creators.
-    // Reject symbolic callers/attributes not selected through those creators.
+    // The module's initial checks already require unique closure creators.
+    // Reject symbolic callers or attributes not reached through those
+    // creators.
     if (!spendWalk(module, declarationCost)) { return false; }
     if (auto stopped = host_detail::forEachSymbolUse(
             module, true, [&] { return step(); },
@@ -243,9 +266,10 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         return refuse("class Boolean leaf has an unproved symbolic caller");
     }
     if (!spend(uint64_t(3) * (roots.size() + leaves.size()) + 1)) { return false; }
-    // Complete the original mutable-cell/body/caller census before invoking
-    // callbackPrimitive: its owner-cell proof must never freeze this cell.
-    // Failure still discards the complete disposable module and proof state.
+    // Finish checking the cell, the callback bodies and their callers before
+    // calling callbackPrimitive: its owner-cell proof must never freeze this
+    // cell. A later failure still discards the whole disposable module and
+    // proof state.
     booleanCells.insert(cell.getResult());
     llvm::SmallVector<llvm::SmallVector<ctjs::ConstantOp>> fixed;
     for (auto [closure, mutableSlot] : callbacks) {
@@ -281,9 +305,11 @@ bool classInitialization::retainBooleanCaptures(ctjs::FuncOp owner) {
         }
         setCaptures(closure, function, cell.getResult());
     }
-    // Roots of cell/closure/implicit-callee identities would otherwise obstruct
-    // lifting or disappear with a lifted closure. Preserve every original
-    // position and context for the later complete frame proof.
+    // Roots of the cell, closure or implicit callee would otherwise block
+    // lifting or disappear with a lifted closure. Keep every original root
+    // position and context (rooting undefined instead) for the later frame
+    // proof.
+
     for (auto root : roots) {
         mlir::OpBuilder at(root);
         root.getValueMutable().assign(undefinedAt(at, root.getLoc()).getResult());

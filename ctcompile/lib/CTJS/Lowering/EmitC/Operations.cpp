@@ -1,4 +1,9 @@
-// Boxed EmitC operations lowering.
+//===- Operations.cpp - Per-operation dispatch ----------------------------===//
+//
+// lowering::convert: dispatches one ctjs operation to the value or runtime
+// converter, and aborts loudly if neither handles it.
+//
+//===----------------------------------------------------------------------===//
 #include "Lowering.h"
 
 namespace ctcompile::ctjs::emitc_detail {
@@ -8,14 +13,9 @@ void lowering::convert(mlir::Operation & op, mlir::OpBuilder & build, mlir::IRMa
     if (convertValues(op, build, mapping, scope) || convertRuntime(op, build, mapping, scope)) {
         return;
     }
-    // NOT llvm_unreachable, WHICH IS SILENT IN RELEASE. Under -DNDEBUG it
-    // is __builtin_unreachable(), so an operation reaching here does not
-    // abort - it produces whatever the compiler decided the impossible
-    // branch should do. That happened: ctjs.create_closure was added to
-    // body_is_supported and not to this switch, and instead of the loud
-    // failure this line was written to give, the operation survived into
-    // the output with its operands rewritten, and the module failed to
-    // verify somewhere else entirely.
+    // Not llvm_unreachable: under NDEBUG that is __builtin_unreachable(), and
+    // an operation body_is_supported admits but convert() does not handle
+    // would pass through silently and fail verification somewhere else.
     llvm::report_fatal_error(llvm::Twine("ctcompile: body_is_supported admits ") +
                              op.getName().getStringRef() + " and convert() does not emit it");
 }

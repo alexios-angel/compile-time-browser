@@ -1,3 +1,10 @@
+//===- Effects.cpp - Function effect summaries ------------------*- C++ -*-===//
+//
+// Builds an effectSummary for each straight-line, private, closed function:
+// the object fields and Maps it reads or writes, as paths from its arguments.
+// Callees are summarized first and their accesses are mapped into callers.
+//
+//===----------------------------------------------------------------------===//
 #include "Effects.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -9,7 +16,11 @@
 
 namespace ctcompile::ctnative::binding_time_detail {
 namespace {
+// Bounds on summary construction: total operations visited across the
+// module, distinct accesses per summary, and property-path depth. Exceeding
+// any of them makes the function unsummarized (unknown), which is safe.
 constexpr unsigned maxSteps = 100000, maxAccesses = 64, maxPath = 8;
+// What summarize() knows about one SSA value in the body being summarized.
 struct operand {
     enum class kind {
         unknown,
@@ -20,6 +31,7 @@ struct operand {
     effectPath path;
     llvm::StringRef method;
 };
+// The constant, safe property key `value` names, or null.
 mlir::StringAttr propertyKey(mlir::Value value) {
     auto key = ctjs::constantAttr<ctjs::StringAttr>(value);
     return key && safeEffectKey(key.getValue())
@@ -67,11 +79,14 @@ effectQueries::effectQueries(mlir::ModuleOp input) : module(input) {
         summaries[function] = std::move(result);
         return true;
     });
-    // Unknown callees never bootstrap a recursive SCC. Exhaustion invalidates
-    // the entire attempt instead of exposing a partially solved query graph.
+    // Summaries start unknown, so a recursive cycle can never be summarized from
+    // an assumption about itself. If the step budget or the fixpoint visit limit
+    // runs out, drop every summary rather than keep a partial solution.
     if (!solved || steps >= maxSteps) { summaries.clear(); }
 }
 
+/// Summarizes one function, or returns an unknown summary when its body is not
+/// a single straight-line block of supported operations.
 effectSummary effectQueries::summarize(ctjs::FuncOp function, unsigned & steps) const {
     if (!llvm::hasSingleElement(function.getBody()) || function->getParentOp() != module ||
         function.getUpvalueCount() != 0 || !function.isPrivate() ||

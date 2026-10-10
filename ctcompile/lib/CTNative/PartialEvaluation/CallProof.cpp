@@ -1,3 +1,11 @@
+//===- CallProof.cpp - Heap equivalence of two call results ---------------===//
+//
+// Implements equivalentCallState (see CallProof.h): a graph-isomorphism check
+// between two heap snapshots, anchored on the nodes that existed before the
+// call.
+//
+//===----------------------------------------------------------------------===//
+
 #include "CallProof.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -5,6 +13,9 @@
 
 namespace ctcompile::ctnative::partial_eval {
 namespace {
+/// One comparison of two snapshots. `forward` and `reverse` hold the node
+/// bijection built so far; `pending` holds matched node pairs whose contents
+/// are still to be compared.
 class equivalence {
 public:
     equivalence(const snapshot & left, const snapshot & right, unsigned anchored, unsigned & steps,
@@ -15,8 +26,8 @@ public:
         if (left.heap.size() < anchored || right.heap.size() < anchored) {
             return callProofResult::different;
         }
-        // All allocations that existed before the call retain their exact
-        // identities, including aliases not used as explicit call operands.
+        // Every allocation that existed before the call must keep its exact
+        // identity, including aliases not passed as explicit call operands.
         for (unsigned id = 0; id < anchored; ++id) {
             if (!values(value::reference(id), value::reference(id))) { return outcome(); }
         }
@@ -53,8 +64,9 @@ private:
         switch (a.tag) {
         case value::kind::unknown: return false;
         case value::kind::constant:
-            // Exact attributes preserve tags, signed zero and NaN bit patterns.
-            // JavaScript equality/SameValueZero is too weak for this proof.
+            // Compare the exact attributes, which preserve type tags, signed
+            // zero and NaN bit patterns. JavaScript equality and SameValueZero
+            // are too weak for this proof.
             return a.constant && a.constant == b.constant;
         case value::kind::mapConstructor: return true;
         case value::kind::method:
@@ -91,8 +103,9 @@ private:
                 if (!values(capture, other)) { return false; }
             }
         }
-        // Ordered entries also preserve Map insertion order and object own-key
-        // order; a key reference participates in the same alias bijection.
+        // Entries are compared in order, which also checks Map insertion
+        // order and object own-key order; a key that is a reference joins the
+        // same alias bijection.
         for (auto [entry, other] : llvm::zip(a.entries, b.entries)) {
             if (!values(entry.first, other.first) || !values(entry.second, other.second)) {
                 return false;

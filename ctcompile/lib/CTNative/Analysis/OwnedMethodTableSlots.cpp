@@ -1,3 +1,10 @@
+//===- OwnedMethodTableSlots.cpp - Method table slots -----------*- C++ -*-===//
+//
+// Finds object fields that are written exactly once, right after the object
+// is created, and then only read, by an object that never leaves its
+// function. These are candidate slots of a method table.
+//
+//===----------------------------------------------------------------------===//
 #include "OwnedMethodTableSlots.h"
 
 #include "NativeObject/Fields.h"
@@ -9,6 +16,7 @@
 
 namespace ctcompile::ctnative {
 namespace {
+/// The writes and reads of one field of one object.
 struct accesses {
     llvm::SmallVector<ctjs::SetPropertyOp> writes;
     llvm::SmallVector<ctjs::GetPropertyOp> reads;
@@ -26,10 +34,10 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
         return mlir::WalkResult::advance();
     });
     if (budget.exhausted || owners.empty()) { return; }
-    // Reuse the existing ordinary-field boundary. Descriptor/prototype changes,
-    // dynamic property access and reflective operations anywhere in the source
-    // cannot be hidden by keeping the particular owner local. This is not an
-    // effect summary for calls: normal callable/Map/native admission still runs.
+    // Refuse the whole module if any operation could change a descriptor or
+    // prototype, access a property by a dynamic key, or reflect: keeping one
+    // object local does not protect it from those. This does not summarise
+    // what calls do; the normal callable, Map and native admission still runs.
     if (!budget.spend(operations) || !object_detail::scalarFieldEnvironment(module)) { return; }
 
     mlir::DominanceInfo dominance(module);
@@ -46,8 +54,9 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
                 break;
             }
             if (llvm::isa<ctjs::RootOp>(operation)) { continue; }
-            // SSA moves preserve the same value. A real phi, cell, parameter,
-            // capture or object/global store is an escape, not another owner.
+            // Only field accesses with ordinary keys are allowed. A block
+            // argument, cell, call argument, capture or store of the object
+            // itself is an escape.
             if (!object_detail::scalarFieldUse(use)) {
                 confined = false;
                 break;
@@ -66,9 +75,10 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
             if (!budget.spend()) { break; }
             if (uses.writes.size() != 1) { continue; }
             auto initialization = uses.writes.front();
-            // A source initializer executes once per fresh owner. A store in a
-            // child conditional/loop is not initialization of this fixed slot,
-            // even when a later read happens to be in the same selected arm.
+            // The initialising store must run exactly once per new object, so
+            // it must sit in the object's own block. A store inside a nested
+            // conditional or loop does not count, even when a later read is
+            // in the same arm.
             if (initialization->getBlock() != owner->getBlock() ||
                 !owner->isBeforeInBlock(initialization.getOperation())) {
                 continue;
@@ -88,7 +98,7 @@ OwnedMethodTableSlots::OwnedMethodTableSlots(mlir::ModuleOp module, unsigned max
         }
         if (budget.exhausted) { break; }
     }
-    // Exhaustion cannot expose a successful prefix of an unfinished census.
+    // Running out of budget publishes nothing, not the slots found so far.
     if (budget.exhausted) {
         checked.clear();
         return;

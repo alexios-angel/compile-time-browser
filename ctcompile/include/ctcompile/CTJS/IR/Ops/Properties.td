@@ -61,9 +61,9 @@ def CTJS_DeletePropertyOp
     yields true in every case this runtime can reach. A front end that wants
     the value materialises it; the call does not carry one.
   }];
-  // PHASE 55 (may_reenter 1: delete_index). $object NEITHER: delete_index is
-  // an `erase` (delete_index -> delete_own_property, vm/objects/descriptors.cpp).
-  // $key SINK(converted): to_string.
+  // Escape effects (may_reenter 1: delete_index): $object NEITHER, because
+  // delete_index only erases an own property (delete_own_property,
+  // vm/objects/descriptors.cpp); $key SINK(converted), through to_string.
   let arguments = (ins CTJS_ValueType:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let assemblyFormat = "$object `[` $key `]` attr-dict";
@@ -72,10 +72,11 @@ def CTJS_DeletePropertyOp
 def CTJS_HasPropertyOp
     : CTJS_RuntimeOp<"has_property", "ct_aot_has_property", CTJS_GenericEffects> {
   let summary = "`key in obj`";
-  // PHASE 55 (may_reenter 1: has_property). $object NEITHER: the proxy arm
-  // (has_property, vm/objects/chain.cpp) is unreachable for a site and the
-  // chain walk makes no call. $key SINK(converted): to_string. The result is a
-  // boolean, not an object.
+  // Escape effects (may_reenter 1: has_property): $object NEITHER, because the
+  // prototype-chain walk (has_property, vm/objects/chain.cpp) makes no call
+  // and its proxy branch cannot be reached for a tracked site; $key
+  // SINK(converted), through to_string. The result is a boolean, not an
+  // object.
   let arguments = (ins CTJS_ValueType:$object,
                        Arg<CTJS_ValueType, "", [CTJS_SinkConverted]>:$key);
   let results = (outs CTJS_ValueType:$result);

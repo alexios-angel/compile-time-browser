@@ -1,3 +1,10 @@
+//===- Pass.cpp - Remove unreachable private functions --------------------===//
+//
+// --ctnative-prune-unreachable: erases the functions reachability::analyze
+// proved dead, and records a summary (and any refusal reason) on the module.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -19,8 +26,9 @@ struct CTNativePruneUnreachablePass
         module->removeAttr("ctnative.reachability_reason");
         const auto proof = reachability::analyze(module, maxSteps);
         const auto removed = static_cast<int64_t>(proof.dead.size());
-        // Commit only after the complete graph is proved. No executable
-        // operation inside a surviving function is changed or reordered.
+        // analyze() returns dead functions only after proving the complete
+        // graph. No operation inside a surviving function is changed or
+        // reordered.
         for (ctjs::FuncOp function : proof.dead) { function.erase(); }
         mlir::Builder at(&getContext());
         module->setAttr("ctnative.reachability_summary",

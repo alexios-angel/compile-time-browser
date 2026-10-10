@@ -1,3 +1,12 @@
+//===- Strategies.cpp - Fusion strategies ---------------------------------===//
+//
+// Finds, for one Map snapshot call in lowered EmitC, the single scalar consumer
+// (`vec_length` or `vec_at`) it flows to through fresh local slots, and proves
+// that nothing between the two can write the Map. Any doubt leaves the
+// snapshot as it is.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Strategies.h"
 
 #include "../Lowering/LoweringSupport.h"
@@ -56,6 +65,8 @@ bool readOnlyCall(ec::CallOpaqueOp call) {
         .Default(false);
 }
 
+/// Whether `op` can sit between the producer and the consumer: it has no
+/// regions or successors and cannot write a Map or run JavaScript.
 bool readOnly(mlir::Operation * op) {
     if (op->getNumRegions() || op->getNumSuccessors()) { return false; }
     if (auto call = llvm::dyn_cast<ec::CallOpaqueOp>(op)) { return readOnlyCall(call); }
@@ -95,6 +106,8 @@ bool readOnly(mlir::Operation * op) {
     return false;
 }
 
+/// The flow of one snapshot through local slots and loads to its consumers,
+/// collected under a step budget. Any failure sets `reason`.
 struct constraints {
     ec::CallOpaqueOp producer;
     WorkBudget budget;
@@ -221,8 +234,10 @@ std::optional<strategy> inferStrategy(ec::CallOpaqueOp producer, unsigned maxSca
                                       std::string & reason) {
     constraints flow{producer, {maxScan}, reason, {}, {}, {}, {}, {}};
     if (!flow.collect()) { return std::nullopt; }
-    // Lumberhack §5.4: conflicting consumer upper bounds yield identity.
-    // No producer duplication or eager evaluation of consumer code is used.
+    // As in Lumberhack §5.4 (see ctcompile/docs/native-deforestation.md),
+    // conflicting consumer bounds leave the snapshot unfused. The producer is
+    // never duplicated and consumer code is never evaluated early.
+
     if (flow.consumers.size() != 1) {
         reason = flow.consumers.empty() ? "snapshot has no scalar consumer strategy"
                                         : "snapshot has conflicting consumer strategies";

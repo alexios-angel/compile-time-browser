@@ -1,3 +1,13 @@
+//===- Completion.cpp - Path-by-path completion normalization ---*- C++ -*-===//
+//
+// DOMSource::normalizeCompletion, which rewrites a helper whose returns and
+// throws are routed through completion tags (scf.index_switch dispatch,
+// poison padding, conditions tested twice) into one body in which every path
+// carries its exact values, and DOMSource::repairInactiveCompletion, which
+// later swaps the undefined padding it inserted for real values.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/Verifier.h"
@@ -17,6 +27,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         }
         return false;
     };
+    // Normalize only when the body has a completion dispatch: an
+    // scf.index_switch, a poison value (inactive padding), or an scf.if whose
+    // condition is tested again later. Otherwise there is nothing to do.
     bool dispatch = false;
     const auto walked = function.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
@@ -29,12 +42,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     if (walked.wasInterrupted()) { return false; }
     if (!dispatch) { return true; }
 
-    // Inactive poison slots need completion proof even without a switch.
-    // Use the same exact continuation proof before helper expansion.
-
-    // Keep the original body until every completion path has been copied.
-    // A yield supplies the exact values for its continuation; inactive
-    // poison slots may be forwarded but must never be observed.
+    // Build the new body in `normalized` and keep the original until every
+    // completion path has been copied. A yield supplies the exact values for
+    // its continuation; inactive poison slots may be forwarded but must never
+    // be observed.
     struct Continuation {
         mlir::Block * block;
         mlir::Block::iterator next;
@@ -102,7 +113,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
         }
         return true;
     };
-    // Recorded undefined padding for a slot no selected path observes.
+    // Creates undefined padding for a slot no selected path observes and
+    // records it in inactiveFillers.
     const auto undefinedFiller = [&](mlir::OpBuilder & builder, mlir::Location where) {
         auto filler = ctjs::ConstantOp::create(builder, where,
                                                ctjs::UndefinedAttr::get(function.getContext()));
@@ -233,8 +245,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                         selectedExit = selected;
                         if (terminal.exit.effectful) {
-                            // Keep only Boolean facts shared by every path to
-                            // this exit, before padding any inactive tuple slots.
+                            // Keep only the Boolean constants shared by every
+                            // path to this exit, before padding inactive slots.
                             auto [facts, first] = terminal.exit.booleans.try_emplace(selected);
                             for (auto [index, value] : llvm::enumerate(arguments)) {
                                 if (!step()) { return {}; }
@@ -341,9 +353,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                             replacement.getDefiningOp<mlir::ub::PoisonOp>()) {
                             return fail("DOM helper completion observes an inactive value");
                         }
-                        // The predicate selects a destination with no use of
-                        // this slot. Its existing state keeps the SCF tuple
-                        // defined and preserves the carried representation.
+                        // The chosen destination never uses this slot, so any
+                        // defined value of the right type keeps the scf tuple
+                        // well-formed without changing what is observed.
                         value = replacement;
                     }
                     result.push_back(value);
@@ -387,16 +399,20 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     }
                     before.inactiveAfter.push_back(inactive);
                 }
-                // Pure projections join live exit values inside the loop.
-                // Effectful two-arm dispatches instead carry a Boolean choice;
-                // their reads, IteratorClose and frame exits stay after the loop.
+                // Recognize the exit dispatch right after the loop. If every
+                // arm only yields loop results, the live values are selected
+                // inside the loop. If an arm has effects, the loop instead
+                // carries which arm to take (a Boolean, or a number when there
+                // are more arms), and the arm's reads, IteratorClose and frame
+                // exits stay after the loop.
                 const auto exitProjection = [&]() -> ExitProjection {
                     ExitProjection exit;
                     auto * next = loop->getNextNode();
                     if (!next || !step()) { return {}; }
-                    // The structured throw path spells the same two-way exit
-                    // as an exact integer equality instead of index_switch.
-                    // Share its selector and complete selected-arm use census.
+                    // The structured throw path writes the same two-way exit
+                    // as an integer equality feeding scf.if instead of an
+                    // index_switch; the selector and use checks below are
+                    // shared by both forms.
                     mlir::Value selectorValue;
                     exit.literal = llvm::dyn_cast<mlir::arith::ConstantOp>(next);
                     if (exit.literal) { next = next->getNextNode(); }
@@ -470,7 +486,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                         exit.effectful |= !llvm::hasSingleElement(region.front());
                     }
-                    // Each effectful case adds a branch to the bounded exit tree.
+                    // Each effectful case adds one nesting level to the exit
+                    // tree, which must stay within the 64-level depth limit.
                     if (exit.effectful && (exit.cases.empty() || exit.cases.size() >= 64 - depth)) {
                         return {};
                     }
@@ -508,8 +525,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         }
                     }
                     if (exit.effectful) { return exit; }
-                    // Reuse only slots whose complete use census belongs to
-                    // this dispatch. Each output needs its own compatible slot.
+                    // Reuse only slots whose every use is in this dispatch.
+                    // Each output needs its own slot of the same type.
                     for (mlir::Type type : exit.dispatch->getResultTypes()) {
                         if (!step()) { return {}; }
                         std::optional<unsigned> output;
@@ -586,8 +603,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     };
                     if (before.exit.effectful && before.exit.cases.size() > 1) {
                         // Keep each exit's exact tuple until its continuation has
-                        // selected the live payload. Joining here would expose
-                        // the sibling return/throw slot's poison or integer tag.
+                        // chosen the live payload. Joining here would expose the
+                        // other arm's return/throw slot, which is poison or an
+                        // integer tag.
                         Continuation tail{&body, std::next(dispatch->getIterator()),
                                           dispatch->getResults(), continuation};
                         const auto emitExit = [&](auto && exitSelf, unsigned index,
@@ -706,8 +724,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 if (!yield || yield.getOperandTypes() != body.getParentOp()->getResultTypes()) {
                     return fail("DOM helper abrupt completion lacks its unreachable yield");
                 }
-                // Only structural padding may follow this non-returning region.
-                // Do not visit the shared continuation on the throwing path.
+                // Only poison padding and the yield may follow this throwing
+                // region; the shared continuation is not visited on this path.
                 for (auto tail = std::next(cursor); tail != body.end(); ++tail) {
                     if (!step()) { return {}; }
                     if (&*tail != yield && !llvm::isa<mlir::ub::PoisonOp>(*tail)) {
@@ -724,8 +742,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 llvm::SmallVector<mlir::Value> padding;
                 for (mlir::Type type : terminal.types) {
                     if (!step()) { return {}; }
-                    // ponytail: scalar source result slots only; abrupt loop
-                    // conditions need a separate non-returning tuple proof.
+                    // ponytail: accepts only JavaScript-value result slots;
+                    // refuses throws inside a loop condition (i1 slot) until a
+                    // proof for that tuple exists.
                     if (!llvm::isa<ctjs::ValueType>(type)) {
                         return fail("DOM helper abrupt completion requires source result slots");
                     }
@@ -745,9 +764,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (!step()) { return {}; }
                     protectedValues &= llvm::isa<ctjs::ValueType>(type);
                 }
-                // Retain source effects behind a proved constant guard. Both
-                // value-only arms can normalize to the protected terminal;
-                // integer completion selectors still require exact selection.
+                // A constant condition selects one arm, and only that arm is
+                // copied. Inside a try whose results are all JavaScript values
+                // both arms are copied instead, since either can reach the
+                // protected terminal.
                 if (integer && integer.getType().isInteger(1) && !protectedValues) {
                     auto & selected = integer.getValue().isZero() ? branch.getElseRegion()
                                                                   : branch.getThenRegion();
@@ -758,18 +778,19 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     if (!selected.hasOneBlock() || selected.front().getNumArguments()) {
                         return fail("DOM helper completion has an incomplete selected arm");
                     }
-                    // Like a switch, select only a proved completion arm.
-                    // The original-body census still requires every operation
-                    // to be visited on some source path before publication.
+                    // As with a switch, follow only the selected arm. The
+                    // `visited` check after emit still requires every source
+                    // operation to be reached on some path.
                     return self(self, selected.front(), selected.front().begin(), values, at, &tail,
                                 terminal, depth + 1);
                 }
-                // Defined JavaScript results can join before their common
-                // continuation. Completion tags and inactive slots still need
-                // path expansion so their selectors retain exact values.
-                // A later test of this exact SSA condition may close an iterator
-                // and throw before observing the saved result. Keep that result
-                // on its source path until the shared continuation is proved.
+                // Arms whose results are all defined JavaScript values are
+                // joined by an scf.if before their common continuation.
+                // Completion tags and poison slots are not joined: the
+                // continuation is copied into each arm so tags stay exact.
+                // Nor is a condition tested again later, which may close an
+                // iterator and throw before the saved result is observed; its
+                // later test is folded to a constant in each copy.
                 const bool repeated = repeatedCondition(branch);
                 bool join = !repeated;
                 for (mlir::Type type : branch.getResultTypes()) {
@@ -793,8 +814,10 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 joined.kind = Terminal::yielded;
                 if (join && !carryAll(joined, branch.getResultTypes())) { return {}; }
                 auto & armTerminal = join ? joined : terminal;
-                // ponytail: other continuations are duplicated within the
-                // existing work budget; general completion joins need proof.
+                // ponytail: any other continuation is copied into each arm,
+                // which the work budget bounds. Merging arms at a common
+                // continuation is left for when a proof of the general join
+                // exists.
                 auto copied =
                     mlir::scf::IfOp::create(at, branch.getLoc(), armTerminal.types,
                                             values.lookupOrDefault(branch.getCondition()));
@@ -867,8 +890,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     return mlir::WalkResult::advance();
                 });
                 if (inputs.wasInterrupted()) { return {}; }
-                // Preserve suppression and both continuations verbatim. The
-                // complete DOM admission still proves their host effects.
+                // Copy the invocation, its error suppression and both
+                // continuations verbatim. The DOM entry proof checks their
+                // host effects later.
                 const auto checked = invocation->walk([&](mlir::Operation * nested) {
                     // Charge verification and cloning before either traverses
                     // this opaque region without a work callback.
@@ -914,8 +938,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                     auto invoke = llvm::dyn_cast<ctjs::InvokeOp>(operation);
                     const auto types = attempt ? mlir::TypeRange(operation.getResultTypes())
                                                : mlir::TypeRange(terminal.types);
-                    // ponytail: protected continuation results are JavaScript
-                    // values; loop-condition terminals need a separate proof.
+                    // ponytail: accepts only JavaScript-value results; refuses a
+                    // protected call ending in a loop condition until that
+                    // tuple has its own proof.
                     for (auto type : types) {
                         if (!step()) { return {}; }
                         if (!llvm::isa<ctjs::ValueType>(type)) {
@@ -930,9 +955,9 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                         if (!step()) { return {}; }
                         built.addRegion();
                     }
-                    // Saved poison is padding only if the original unwind
-                    // argument stays poison throughout its exact continuation.
-                    // Keep every live saved value and the original slot count.
+                    // A poison saved-state value is padding only if the matching
+                    // unwind argument is never used in the continuation. Keep
+                    // every live saved value and the original slot count.
                     llvm::SmallVector<mlir::Value> saved;
                     if (invoke) {
                         auto exit = llvm::cast<ctjs::InvokeExitOp>(invoke.getBody().front().back());
@@ -1057,8 +1082,8 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
                 if (inactiveFillers.contains(from)) { inactiveFillers.insert(to); }
             }
             if (llvm::isa<mlir::arith::IndexCastUIOp, mlir::arith::CmpIOp>(operation)) {
-                // Two-way completion switches lower to index casts and
-                // integer comparisons. Reuse MLIR's exact arithmetic folds.
+                // Two-way completion switches are lowered to index casts and
+                // integer comparisons; fold them with MLIR's own folders.
                 llvm::SmallVector<mlir::Value> folded;
                 if (mlir::succeeded(at.tryFold(copied, folded)) && !folded.empty()) {
                     values.map(operation.getResults(), folded);
@@ -1090,14 +1115,15 @@ bool DOMSource::normalizeCompletion(ctjs::FuncOp function) {
     });
     if (complete.wasInterrupted()) { return false; }
     if (terminalThrow) {
-        // Join the saved payload exactly like a return, retaining each path's
-        // effects. Only the separate iterator-close proof may suppress it.
+        // Rethrow the saved payload where the original threw, keeping each
+        // path's effects. Only the iterator-close rewrite (DOM/Iteration)
+        // may suppress it.
         ctjs::ThrowOp::create(at, function.getLoc(), result->front());
     } else {
         ctjs::ReturnOp::create(at, function.getLoc(), result->front());
     }
-    // Only inert completion arithmetic is removed. Source effects remain
-    // for the unchanged complete DOM/frame proof below.
+    // Remove only completion arithmetic left unused. Every source effect
+    // stays for checkBody, which the caller runs next.
     if (!eraseUnusedArithmetic(normalized)) { return false; }
     for (mlir::BlockArgument argument : body.getArguments()) {
         if (!step()) { return false; }
@@ -1122,9 +1148,10 @@ bool DOMSource::repairInactiveCompletion(ctjs::FuncOp function) {
     if (collected.wasInterrupted()) { return false; }
     mlir::DominanceInfo dominance(function);
     for (auto filler : fillers) {
-        // Expansion can reveal an existing element behind an iterator call.
-        // Change only our privately recorded, proved-unobserved padding. Follow
-        // the same SCF slot to an available value; never hoist its producer.
+        // Inlining can make a real value available for a slot that was padded
+        // (for example an element behind an iterator call). Only fillers this
+        // DOMSource recorded are changed. Follow the same scf.if result slot to
+        // a value that already dominates the filler; never move its producer.
         llvm::SmallVector<mlir::Value> pending{filler.getResult()};
         llvm::DenseSet<mlir::Value> seen;
         while (!pending.empty()) {

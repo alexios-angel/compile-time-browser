@@ -1,3 +1,9 @@
+//===- CTNativeDialect.cpp - The ctnative dialect ---------------*- C++ -*-===//
+//
+// Registers the ctnative dialect's operations and types.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "ctcompile/CTNative/IR/CTNativeOps.h"

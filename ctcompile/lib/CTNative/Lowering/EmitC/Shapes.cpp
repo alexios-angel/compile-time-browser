@@ -1,12 +1,18 @@
-// EmitC/Shapes.cpp - native lowering implementation.
+//===- Shapes.cpp - Object-literal shapes -----------------------*- C++ -*-===//
+//
+// Object-literal shapes for the EmitC lowering: the census that groups
+// closed-shape literals into C++ class families, their names and template
+// parameters, and the C++ spelling of field and receiver types.
+//
+//===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
-// The C++ spelling of an admitted field carrier. Scalars retain their tags;
-// a checked method-table slot carries the existing owning shared pointer.
-// A template argument needs text where a field's type is an mlir::Type.
+/// The C++ spelling of an admitted field carrier. Scalars retain their tags;
+/// a checked method-table slot carries the existing owning shared pointer.
+/// A template argument needs text where a field's type is an mlir::Type.
 std::string lowering::spelled(mlir::Type type) {
     if (auto pointer = llvm::dyn_cast_or_null<ec::PointerType>(type)) {
         return spelled(pointer.getPointee()) + " *";
@@ -22,9 +28,9 @@ std::string lowering::spelled(mlir::Type type) {
     llvm::report_fatal_error("ctnative lowering: a struct field has no admitted C++ carrier");
 }
 
-// THE TYPE OF ONE SITE. A family that agrees everywhere is spelled by its
-// name alone; one that does not is that name with an argument for each
-// position it disagrees on, in field order.
+/// The C++ type name of one object-literal site. A family whose sites agree on
+/// every field type is spelled by its name alone; otherwise the name takes a
+/// template argument for each position the sites disagree on, in field order.
 std::string lowering::spelling(const siteShape & site) const {
     const family & f = families[site.family];
     if (!f.varies.any()) { return f.name; }
@@ -35,41 +41,32 @@ std::string lowering::spelling(const siteShape & site) const {
     return f.name + "<" + llvm::join(arguments, ", ") + ">";
 }
 
+/// The site's class type, as an lvalue (the type of an `emitc.variable`).
 mlir::Type lowering::classType(const siteShape & site) {
     return ec::LValueType::get(ec::OpaqueType::get(context, spelling(site)));
 }
 
-// THE RECEIVER CARRIER, AND WHY IT IS A POINTER RATHER THAN A `&`.
-//
-// The answer this slice wanted is `ctn_x & self`, and EmitC has no spelling
-// for it. `emitc.func` REJECTS an lvalue argument type outright - "cannot
-// have lvalue type as argument" is in the dialect, and it is the check that
-// makes a C++ reference parameter unrepresentable - so a parameter is
-// always a value type. `emitc.member` on a value-typed operand gives a
-// value-typed result, which can be read and not assigned, so `this.x = 5`
-// would have no lowering. `emitc.dereference` does give an lvalue, but the
-// emitter caches it as the string `*v0` and `emitc.member` then prints
-// `*v0.x` - the wrong expression, with no diagnostic anywhere.
-//
-// `emitc.member_of_ptr` on an lvalue HOLDING a pointer is the one member
-// access that survives a parameter, so the receiver is `ctn_x *`, the
-// method opens with one `ctn_x * self;` `self = v0;` pair, and every
-// access is `self->x`. That is a REFERENCE in every sense this tier cares
-// about - non-owning, no allocation, the caller's frame, dead after the
-// call - and `-O2` emits the same instructions. It is a pointer only in
-// the spelling, and the spelling is the backend's, not this slice's.
+/// The type of a lifted method's receiver parameter: a pointer to the site's
+/// class (`ctn_x * self`), not a reference.
+///
+/// EmitC cannot express a reference parameter: `emitc.func` rejects lvalue
+/// argument types ("cannot have lvalue type as argument"). `emitc.member` on a
+/// value-typed parameter gives a read-only result, so `this.x = 5` would have
+/// no lowering, and `emitc.dereference` prints as `*v0`, which `emitc.member`
+/// then turns into the wrong expression `*v0.x` without a diagnostic.
+/// `emitc.member_of_ptr` on an lvalue holding a pointer works, so each method
+/// opens with `ctn_x * self; self = v0;` and every access is `self->x`. The
+/// pointer is non-owning and does not outlive the call, so it behaves exactly
+/// like a reference and compiles to the same code at -O2.
 mlir::Type lowering::receiverType(const siteShape & site) {
     return ec::PointerType::get(ec::OpaqueType::get(context, spelling(site)));
 }
 
-// THE MEMBER NAME OF ONE ACCESS, and a named fatal rather than
-// `accessKey.at(o)`. `at` on a key that is not there THROWS, and this
-// process cannot catch it: an access whose object never went through the
-// shape census would have been an uncaught exception with no message
-// naming the invariant. The invariant does hold - fieldsOf() records every
-// get and set on a literal that passed the closed-shape proof, and
-// admission refuses a property access on anything else - but it held by an
-// argument and not by a check, which is the difference this makes.
+/// The member name of one property access, recorded by fieldsOf(). A missing
+/// entry is a fatal error that names the broken invariant, rather than
+/// `accessKey.at()`, whose uncaught exception would say nothing: fieldsOf()
+/// records every get and set on a closed-shape literal, and admission refuses
+/// a property access on anything else.
 llvm::StringRef lowering::memberName(mlir::Operation * access) const {
     const auto entry = accessKey.find(access);
     if (entry == accessKey.end()) {
@@ -83,6 +80,7 @@ llvm::StringRef lowering::memberName(mlir::Operation * access) const {
     return entry->second;
 }
 
+/// The shape censusShapes() recorded for `object`; fatal if there is none.
 const lowering::siteShape & lowering::shapeAt(mlir::Value object) const {
     const auto entry = shapeOf.find(object);
     if (entry == shapeOf.end()) {
@@ -93,16 +91,16 @@ const lowering::siteShape & lowering::shapeAt(mlir::Value object) const {
     return entry->second;
 }
 
-// Every field is sorted by name and joins the carriers of its writes and
-// reads. Mixed scalar stores use the tagged carrier. An optional read widens
-// even definite stores because it can precede them.
-// A field only ever read therefore preserves undefined. Collect both sides
-// before choosing so SSA use-list ordering cannot change a shape's key.
-//
-// AND IT READS THE LATTICE, NOT THE IR. This ran inside retype(), after
-// every value in the function had already taken its carrier, so it could
-// read `get.getResult().getType()`. The census runs before any of that and
-// asks the solver the question retype() would have asked.
+/// The fields of a closed object literal, sorted by name, each with the join
+/// of the carriers of its writes and reads. Mixed scalar stores use the
+/// tagged carrier. An optional read widens even definite stores because it
+/// can precede them, so a field that is only ever read preserves undefined.
+/// Both sides are collected before choosing, so SSA use-list ordering cannot
+/// change a shape's key. Also records each access's member name (accessKey)
+/// and field type (accessType).
+///
+/// Carriers come from the type lattice (typeOf), not from the IR's types: the
+/// shape census runs before retype() has given any value its carrier.
 llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::Value object) {
     const auto carried = [&](mlir::Value v) {
         auto type = typeOf(v);
@@ -120,11 +118,10 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
         auto [at, fresh] = into.try_emplace(key, type);
         if (!fresh && at->second != type) { at->second = carrierType(context, carrier::nullable); }
     };
-    // OVER THE GROUP. A lifted method's `this.x` is a read of this shape
-    // made through a different value in a different function, and a field
-    // only that method touches is still a field. Collecting them here is
-    // also what records the member name for the access, so replace() can
-    // spell `self->x` without asking the census a second time.
+    // Walk every alias in the group: a lifted method's `this.x` reads this
+    // shape through a different value in a different function, and a field
+    // only that method touches is still a field. This walk also records each
+    // access's member name, so replace() can spell `self->x` directly.
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             // The method field takes no member: the closure it holds is a
@@ -167,11 +164,11 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     return fields;
 }
 
-// THE SHAPE CENSUS, over the whole accepted set and BEFORE any function is
-// lowered - for the same reason the global census in runOnOperation() runs
-// there. A site's TYPE is `ctn_at_hit<bool>`, and WHICH positions are
-// template parameters is a property of every site in the program, so no
-// site can be spelled until all of them have been seen.
+/// Groups every closed object literal in the accepted functions into shape
+/// families, before any function is lowered. A site's type is something like
+/// `ctn_at_hit<bool>`, and which positions are template parameters depends on
+/// every site in the program, so no site can be spelled until all of them
+/// have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
@@ -211,14 +208,11 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             }
             families[site.family].where.push_back(siteOf(object.getLoc()));
             keys[site.family].insert(typeKey);
-            // EVERY VALUE IN THE GROUP GETS THE SHAPE, which is what makes
-            // a receiver parameter spellable: `%arg0` of the lifted method
-            // has the same class as the literal it is called on, because
-            // it IS that literal. Two literals of one shape calling one
-            // method put the same answer here twice; a disagreement would
-            // be two literals whose fields differ, and the group has
-            // already joined those into ONE shape - which is correct, and
-            // is why "two objects of the same shape share one method" needs
+            // Every value in the alias group gets the shape, which is what
+            // makes a receiver parameter spellable: `%arg0` of a lifted method
+            // has the class of the literal it is called on, because it is that
+            // literal. Literals whose fields differ were already joined into
+            // one shape by the group, so two objects sharing one method need
             // no separate check.
             for (mlir::Value alias : aliasesOf(groups, object.getResult())) {
                 shapeOf[alias] = site;
@@ -231,41 +225,39 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     nameFamilies();
 }
 
-// THE NAME IS THE SHAPE, so the same fields name the same type wherever
-// they are written: `{x, y}` is `ctn_x_y` in every function in the program.
+/// Names each family after its fields, so the same fields name the same type
+/// wherever they are written: `{x, y}` is `ctn_x_y` in every function. Also
+/// picks the template parameter names.
 void lowering::nameFamilies() {
     llvm::StringSet<> taken;
     for (family & f : families) {
         std::string joined = "ctn";
         for (const std::string & field : f.fields) { joined += "_" + field; }
-        // A LITERAL WITH NO FIELDS STILL NEEDS A NAME, and `ctn_` is not
-        // one. `var e = {};` is admitted today - hasClosedShape's loop over
-        // the uses of a literal with none is vacuously true - so this arm
-        // is reachable and is what keeps the empty shape a plain class.
+        // A literal with no fields still needs a name, and `ctn_` is not
+        // one. `var e = {};` is admitted (hasClosedShape's loop over the uses
+        // of a literal with none is vacuously true), so this arm is reachable.
         if (f.fields.empty()) { joined += "_empty"; }
-        // A DOUBLE UNDERSCORE IS RESERVED TO THE IMPLEMENTATION IN EVERY
-        // SCOPE, and a JavaScript field named `_x` would put one here.
+        // A double underscore is reserved to the C++ implementation in every
+        // scope, and a JavaScript field named `_x` would put one here.
         std::string squeezed;
         for (char ch : joined) {
             if (ch == '_' && !squeezed.empty() && squeezed.back() == '_') { continue; }
             squeezed.push_back(ch);
         }
-        // TWO FAMILIES CAN STILL WANT ONE NAME. `{a_b}` and `{a, b}` both
-        // join to `ctn_a_b`, because every character a field name may
-        // contain is also the character the separator is; and the squeeze
-        // above makes `{a, _b}` a third. The second family to ask gets
-        // `_2`. Without this the module holds two `emitc.class @ctn_a_b`
-        // and the symbol-table verifier rejects it - which is how the guard
-        // is proved.
+        // Two families can still want one name: `{a_b}` and `{a, b}` both
+        // join to `ctn_a_b` because the separator is also a legal field-name
+        // character, and the squeeze above makes `{a, _b}` a third. The second
+        // family to ask gets `_2`. Without this the module would hold two
+        // `emitc.class @ctn_a_b` and the symbol-table verifier would reject it.
         f.name = squeezed;
         for (unsigned n = 2; !taken.insert(f.name).second; ++n) {
             f.name = squeezed + "_" + std::to_string(n);
         }
-        // THE TEMPLATE PARAMETERS, one per position the family disagrees on
-        // and none at all where it agrees. A parameter may NOT be named for
-        // a field: `template <class T0> class C { double T0; };` is
-        // "declaration of 'T0' shadows template parameter", and `{T0: 1}`
-        // is a perfectly ordinary JavaScript object.
+        // Template parameters: one per position the family disagrees on, none
+        // where it agrees. A parameter may not share a field's name:
+        // `template <class T0> class C { double T0; };` is "declaration of
+        // 'T0' shadows template parameter", and `{T0: 1}` is an ordinary
+        // JavaScript object.
         f.parameters.assign(f.fields.size(), std::string{});
         for (unsigned i = 0, next = 0; i < f.fields.size(); ++i) {
             if (!f.varies[i]) { continue; }
@@ -278,13 +270,11 @@ void lowering::nameFamilies() {
     }
 }
 
-// PART 24 PHASE 63 STEP 7, WITH ONE DEFINITION FOR MANY SITES. Every
-// generated definition sits under a comment naming its JavaScript site;
-// a shape written at eleven places has eleven of them, so the comment
-// names the first three, says how many there are, and says how many
-// instantiations a template has. A reader who arrives at the class from a
-// C++ diagnostic gets somewhere to start AND the fact that there are
-// others - which a single site silently chosen from the eleven would hide.
+/// Builds the provenance comment printed above a generated class. A shape
+/// used at many object literals gets one class, so the comment names the first
+/// three sites, says how many there are in total, and for a template how many
+/// instantiations it has. A reader arriving from a C++ diagnostic gets a place
+/// to start and learns that other sites exist.
 std::string lowering::provenanceOf(const family & f) const {
     std::string out = "object literal at ";
     const size_t shown = std::min<size_t>(3, f.where.size());
@@ -300,9 +290,10 @@ std::string lowering::provenanceOf(const family & f) const {
     return out;
 }
 
-// The proved accesses of one dense array, sorted before retyping. Keys are
-// still lowered: a constant can also be used as ordinary string data.
-// A key used only by erased accesses is removed by the final sweep.
+/// Sorts the proved accesses of one dense array into length/index reads and
+/// writes, before retyping. Keys are still lowered: a constant can also be
+/// used as ordinary string data. A key used only by erased accesses is
+/// removed by the final sweep.
 void lowering::collectVector(mlir::Value array) {
     for (mlir::Operation * user : array.getUsers()) {
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {

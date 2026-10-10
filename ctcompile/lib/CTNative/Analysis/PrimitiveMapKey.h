@@ -1,3 +1,9 @@
+//===- PrimitiveMapKey.h - Compile-time Map key comparison ------*- C++ -*-===//
+//
+// Compares two primitive native Map keys at compile time (same, distinct or
+// unknown), using literal values and facts about `size` reads.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -10,26 +16,34 @@
 
 namespace ctcompile::ctnative {
 
+/// How two Map keys relate at runtime, as far as the compiler can prove.
 enum class PrimitiveMapKeyRelation {
     Unknown,
     Same,
     Distinct
 };
 
+/// Facts about a key value that may help compare it.
 struct PrimitiveMapKeyEvidence {
+    /// The key's primitive type (a ctjs attribute TypeID), if known.
     std::optional<mlir::TypeID> tag;
-    // Derived at the actual size read from definite presence in that runtime
-    // instance. It describes the immutable numeric snapshot, not later contents.
+    /// For a key that is the result of a `size` read: the number of keys known
+    /// to be present at that read, so the Number is at least this. It
+    /// describes the value read, not the Map's later contents.
     unsigned sizeLowerBound = 0;
-    // The complete possible-key upper bound also agrees at this read. A
-    // positive lower bound alone never establishes an exact cardinality.
+    /// For a `size` result: its exact value, known when the Map's possible
+    /// keys are exactly its present keys at that read. A positive lower bound
+    /// alone never proves an exact size.
     std::optional<unsigned> exactSize;
 };
 
-// A deterministic subset is sufficient for a lower bound. Limit candidates,
-// not just accepted witnesses, so possibly aliasing keys also bound the work.
+/// The most keys examined when computing a size bound. Any subset gives a
+/// valid lower bound, so the cap counts every key looked at, not only the
+/// ones found distinct, to bound the work.
 inline constexpr unsigned kMaxPrimitiveMapSizeCandidates = 64;
 
+/// The value of `value` as a small non-negative integer size: a Number literal
+/// up to kMaxPrimitiveMapSizeCandidates, else `evidence.exactSize`.
 inline std::optional<unsigned> primitiveMapSize(mlir::Value value,
                                                 PrimitiveMapKeyEvidence evidence = {}) {
     if (auto constant = value.getDefiningOp<ctjs::ConstantOp>()) {
@@ -44,10 +58,10 @@ inline std::optional<unsigned> primitiveMapSize(mlir::Value value,
     return evidence.exactSize;
 }
 
-// Only live literal/SSA identity and independently proved facts are evidence.
-// Different SSA names alone never prove different runtime keys.
-// Both values belong to the same IR context, so string attributes are interned
-// and comparing them requires no unbounded scan of their bytes.
+/// Compares two keys using only SSA identity, literal values and the proved
+/// facts in the evidence. Different SSA values alone never prove different
+/// runtime keys. Both values belong to the same IR context, so string
+/// attributes are interned and comparing them needs no scan of their bytes.
 inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::Value right,
                                                        PrimitiveMapKeyEvidence leftEvidence = {},
                                                        PrimitiveMapKeyEvidence rightEvidence = {}) {
@@ -84,8 +98,8 @@ inline PrimitiveMapKeyRelation comparePrimitiveMapKeys(mlir::Value left, mlir::V
     bool same = lhs == rhs;
     if (auto number = llvm::dyn_cast<ctjs::NumberAttr>(lhs)) {
         auto other = llvm::cast<ctjs::NumberAttr>(rhs);
-        // Bitwise inequality must never preserve a fact across an aliasing
-        // mutation.
+        // Compare numbers with SameValueZero (Map key equality), not bit
+        // patterns: +0/-0 and distinct NaN payloads are the same key.
         same = ctjs::sameValueZero(number.getDouble(), other.getDouble());
     }
     return same ? PrimitiveMapKeyRelation::Same : PrimitiveMapKeyRelation::Distinct;

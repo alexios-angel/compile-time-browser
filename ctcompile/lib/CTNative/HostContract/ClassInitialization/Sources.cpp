@@ -1,3 +1,14 @@
+//===- Sources.cpp - Trace class-setup values back to their producers -----===//
+//
+// Part of the class-initialization proof. These functions show that the
+// values a class setup uses (captured local cells, captured Maps, closure
+// upvalues, own fields and static getters) have one fixed source and cannot
+// be observed or changed from outside. Every walk is charged to a work budget
+// (step/spend), and the first failure is kept in `reason`. Proof.hpp defines
+// the terms leaf, fold, census and transport.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 #include "llvm/ADT/StringMap.h"
 
@@ -36,10 +47,14 @@ ctjs::FuncOp classInitialization::target(ctjs::CreateClosureOp closure) {
     return closure ? host_detail::closureTarget(closure, functions) : ctjs::FuncOp{};
 }
 
+/// Proves that every captured local cell in `entry` is written at most once,
+/// with one value, before it is read, and is used only by in-order reads and
+/// closure captures. Records each cell's fixed value in `cells`.
 bool classInitialization::proveCells(ctjs::FuncOp entry) {
     if (!selectParameterDefaults(entry) || !scalarizeConditionalCells(entry)) { return false; }
-    // The importer boxes entry locals when one is captured. Only fixed,
-    // ordered bindings are transport; their original producers stay live.
+    // The importer puts an entry-function local in a cell when a closure
+    // captures it. Only cells with one fixed, ordered value are accepted; the
+    // operations producing that value stay in place.
     for (ctjs::CreateCellOp cell : entry.getBody().front().getOps<ctjs::CreateCellOp>()) {
         if (!step()) { return false; }
         if (cells.count(cell.getResult()) || booleanCells.contains(cell.getResult())) { continue; }
@@ -49,8 +64,8 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                 return positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
                     op, cell->getBlock());
             }
-            // A conditional capture is ordered by its enclosing branch.
-            // Writes still require their original ordered block.
+            // A capture inside an scf.if is ordered by the enclosing branch;
+            // writes must be directly in the cell's block.
             return llvm::isa<ctjs::CreateClosureOp>(op)
                        ? positionIn<mlir::scf::IfOp>(op, cell->getBlock())
                        : op;
@@ -78,8 +93,9 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                     return refuse("class local cell has an invalid root operand");
                 }
                 if (!spend(3)) { return false; }
-                // Both fixed-cell retirement paths erase its remaining users.
-                // Keep the original root position/context for frame validation.
+                // The root's cell operand becomes undefined; every path that
+                // later erases the cell also erases its remaining users. Keep
+                // the root itself, in place, for frame validation.
                 mlir::OpBuilder at(root);
                 root.getValueMutable().assign(undefinedAt(at, root.getLoc()));
                 continue;
@@ -88,11 +104,11 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                 cellOperations.insert(op);
                 continue;
             }
-            // Reads and conditional captures follow the fixed assignment;
-            // writes still belong to the cell's original ordered block.
+            // Reads and captures must come after the first write.
             if (first && !first->isBeforeInBlock(usePosition(op))) {
-                // Capturing the cell does not read it. Only the exact publication
-                // helper normalization can discharge this deferred obligation.
+                // Capturing the cell does not read it, so an early capture is
+                // recorded rather than refused. Only normalizePublicationHelper()
+                // can accept such a closure; everything else refuses it.
                 if (!llvm::isa<ctjs::CreateClosureOp>(op)) {
                     return refuse("class local cell is observed before initialization");
                 }
@@ -105,14 +121,14 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
                 continue;
             }
             auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
-            // A parameter initializes its cell directly. The later capture
-            // proof must still establish its value and every consumer.
+            // A cell initialized from a parameter needs no write. The capture
+            // proof later checks its value and every consumer.
             if ((!first && !llvm::isa<mlir::BlockArgument>(cell.getInitial())) || !closure ||
                 use.getOperandNumber() < 2) {
                 return refuse("class local cell escapes its fixed reads and captures");
             }
-            // The exact class method and every captured read are checked
-            // below. No general immutable-capture rule is widened here.
+            // The capturing class method and its capture reads are checked
+            // elsewhere (methodCaptures).
         }
         cells[cell.getResult()] = first ? first.getValue() : cell.getInitial();
         cellOperations.insert(cell);
@@ -124,6 +140,9 @@ bool classInitialization::proveCells(ctjs::FuncOp entry) {
     return reason.empty();
 }
 
+/// Returns the value that `value` really stands for. Captured Map and holder
+/// reads map to their originals, and reads of proven fixed cells are followed
+/// to the value the cell was written with.
 mlir::Value classInitialization::sourceValue(mlir::Value value) {
     if (auto map = mapCaptures.lookup(value)) { return map; }
     if (auto holder = holderCaptures.lookup(value)) { return holder; }
@@ -136,6 +155,9 @@ mlir::Value classInitialization::sourceValue(mlir::Value value) {
     return value;
 }
 
+/// Returns every use of `value` and of its aliases: reads of fixed cells it was
+/// stored into, and captured Map or holder reads that stand for it. Cell writes
+/// themselves are not reported. Returns empty when the budget runs out.
 llvm::SmallVector<mlir::OpOperand *> classInitialization::sourceUses(mlir::Value value) {
     llvm::SmallVector<mlir::OpOperand *> result;
     llvm::SmallVector<mlir::Value> pending{value};
@@ -173,9 +195,10 @@ llvm::SmallVector<mlir::OpOperand *> classInitialization::sourceUses(mlir::Value
 }
 
 bool classInitialization::proveMaps() {
-    // Map keys and payloads are not coerced by these operations. Keep every
-    // body and call for native type/ownership admission; this proof establishes
-    // only that class setup cannot be observed or changed through the Map.
+    // Map methods do not coerce their keys or values, so they run no user code.
+    // Every body and call is kept for native type and ownership checks; this
+    // proof only shows that nothing can observe or change class setup through
+    // the Map: each use must be `map.size` or a call of a known Map method.
     for (mlir::Value map : maps) {
         for (mlir::OpOperand * use : sourceUses(map)) {
             if (!step()) { return false; }
@@ -224,8 +247,9 @@ bool classInitialization::copyPrimitiveCapture(ctjs::LoadUpvalueOp load, ctjs::C
         if (!step()) { return false; }
     }
     if (!spend(cloneCost(literal))) { return false; }
-    // Preserve the exact primitive before super/method bodies are copied.
-    // The complete source or typed DOM proof still checks every consumer.
+    // Replace the capture read with a local copy of the primitive before
+    // super and method bodies are copied. The source census or typed DOM proof
+    // still checks every consumer.
     mlir::OpBuilder at(load);
     auto local = ctjs::ConstantOp::create(at, load.getLoc(), literal.getValue());
     load.getResult().replaceAllUsesWith(local.getResult());
@@ -233,12 +257,16 @@ bool classInitialization::copyPrimitiveCapture(ctjs::LoadUpvalueOp load, ctjs::C
     return true;
 }
 
+/// Proves that capture `slot` of `closure` is never stored to inside the
+/// function, nor in any nested closure that forwards it.
 bool classInitialization::fixedCaptureSlot(ctjs::CreateClosureOp closure, unsigned slot,
                                            unsigned depth) {
     if (!step()) { return false; }
-    // The class census has already required one creator per source function.
-    // Follow every forwarding edge, including unused sibling writers.
-    // ponytail: bound recursion; use a worklist if deeper source chains matter.
+    // An earlier check guarantees each source function has exactly one closure
+    // creation site. Follow every nested closure that forwards this slot,
+    // including unused ones, and refuse any that store to it.
+    // ponytail: recursion is capped at 64 levels; switch to a worklist if
+    // deeper chains appear.
     if (depth >= 64) { return refuse("class callback forwarding depth limit exceeded"); }
     auto function = target(closure);
     auto parent = closure->getParentOfType<ctjs::FuncOp>();
@@ -284,6 +312,8 @@ bool classInitialization::fixedCaptureSlot(ctjs::CreateClosureOp closure, unsign
     return true;
 }
 
+/// Proves that a callback's captured cell is written at most once and every
+/// closure capturing it keeps it in a fixed slot.
 bool classInitialization::fixedCallbackCell(ctjs::CreateCellOp cell) {
     unsigned writes = 0;
     for (mlir::OpOperand & use : cell.getResult().getUses()) {
@@ -307,6 +337,9 @@ bool classInitialization::fixedCallbackCell(ctjs::CreateCellOp cell) {
     return true;
 }
 
+/// The primitive constant captured in `slot` of `closure`, following forwarded
+/// enclosing slots back to the local cell that holds it; null (with `reason`
+/// set) when it is not a fixed primitive initialized before the capture.
 ctjs::ConstantOp classInitialization::callbackPrimitive(ctjs::CreateClosureOp closure,
                                                         unsigned slot, unsigned depth) {
     if (!step()) { return {}; }
@@ -331,8 +364,8 @@ ctjs::ConstantOp classInitialization::callbackPrimitive(ctjs::CreateClosureOp cl
             return {};
         }
         ctjs::CreateClosureOp creator;
-        // Resolve the actual creator after normalization. Its local cell and
-        // initialization order, not the forwarded placeholder, carry the proof.
+        // The slot is forwarded from the enclosing function, so find the one
+        // closure that creates that function and check its slot instead.
         if (!walkSteps(module, [&](mlir::Operation * op) {
                 if (auto candidate = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
                     candidate && target(candidate) == parent) {
@@ -372,6 +405,8 @@ ctjs::ConstantOp classInitialization::callbackPrimitive(ctjs::CreateClosureOp cl
     return literal;
 }
 
+/// Replaces every capture read in a callback with its fixed primitive value
+/// and removes the callback's captures.
 bool classInitialization::fixedCallbackCaptures(ctjs::CreateClosureOp callback,
                                                 ctjs::FuncOp function) {
     if (callback.getUpvalues().empty()) { return function.getUpvalueCount() == 0; }
@@ -392,17 +427,20 @@ bool classInitialization::fixedCallbackCaptures(ctjs::CreateClosureOp callback,
             return false;
         }
     }
-    // This proof runs on a disposable module. Clear the consumed slots before
-    // method normalization can replace the operation with a private copy.
+    // This proof runs on a candidate copy of the module. Clear the now unused
+    // slots before method normalization can replace the closure with a copy.
     setCaptures(callback, function, {});
     return true;
 }
 
+/// Proves that a callback a helper creates is used only by local calls, or as
+/// the callback of String.prototype.replace or Array.prototype.filter.
 bool classInitialization::helperCallback(mlir::OpOperand & use) {
     auto callback = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
     auto function = target(callback);
-    // The separate state proof retains the exact slot and all original
-    // operations for closure lifting and DOM reproof, never a literal copy.
+    // Callbacks over shared Boolean cells (booleanLeaves) are proved
+    // separately; their slots and operations stay as they are for closure
+    // lifting and the DOM proof.
     if (callback && use.getOperandNumber() == 0 && booleanLeaves.contains(function)) {
         return true;
     }
@@ -415,8 +453,9 @@ bool classInitialization::helperCallback(mlir::OpOperand & use) {
     for (mlir::OpOperand & callbackUse : callback.getResult().getUses()) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(callbackUse.getOwner())) { continue; }
-        // A synchronous leaf cannot retain its enclosing helper. Keep its body
-        // for the complete source/DOM proof and bind actuals during expansion.
+        // A direct local call after the callback is created cannot keep the
+        // enclosing helper alive. Keep the body for the census or DOM proof;
+        // the arguments are bound during expansion.
         auto local = host_detail::jsCallOf(callbackUse.getOwner());
         auto * position =
             local ? positionIn<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::IndexSwitchOp>(
@@ -446,8 +485,8 @@ bool classInitialization::helperCallback(mlir::OpOperand & use) {
             return refuse("captured helper callback escapes its intrinsic call");
         }
     }
-    // Retain the original callback for local expansion, the shared no-match
-    // or typed Array filter proof, including its complete body and uses.
+    // Keep the original callback, body and uses for local expansion and for
+    // the replace and filter proofs.
     helpers.insert(function);
     domEntryHelpers.insert(function);
     return true;
@@ -460,6 +499,10 @@ bool classInitialization::helperCallbacks(ctjs::FuncOp helper) {
     return true;
 }
 
+/// Proves the captures of class method (or helper) `method`: each must be the
+/// constructor itself, an ordered local primitive, Map, holder object or
+/// helper closure, and each capture read must be used in a known way. Getter
+/// reads through a captured class identity are appended to `reads`.
 bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                                          ctjs::CreateClosureOp constructor,
                                          llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads,
@@ -468,7 +511,8 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
     if (earlyCaptures.contains(method)) {
         return refuse("class local cell is observed before initialization");
     }
-    // ponytail: bound the proof stack; use an explicit worklist for deeper chains.
+    // ponytail: recursion is capped at 64 levels; use an explicit worklist for
+    // deeper chains.
     if (depth >= 64) { return refuse("class helper capture nesting limit exceeded"); }
     auto fn = target(method);
     if (domEntry && !retainBooleanCaptures(fn)) { return false; }
@@ -504,8 +548,8 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
             if (object->getBlock() != method->getBlock() || !object->isBeforeInBlock(method)) {
                 return refuse("captured holder lacks ordered local initialization");
             }
-            // The shared holder census checks every slot and alias below.
-            // All original slots must already exist at closure creation.
+            // The holder analysis checks every slot and alias later. Here,
+            // every slot must already be written when the closure is created.
             for (mlir::Operation * use : object->getUsers()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::SetPropertyOp>(use) &&
@@ -527,14 +571,14 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
                                         : llvm::StringRef("block argument")))
                     .str());
         }
-        // Every edge keeps its fixed cell and source order. Shared helpers
-        // record their reads once, only after their entire capture proof succeeds.
+        // A helper captured by several methods is proved once; it is recorded
+        // in capturedHelpers only after its whole capture proof succeeds.
         if (capturedHelpers.contains(closure)) { continue; }
         auto & body = helper.getBody().front();
         if (closure.getUpvalues().empty()) {
             if (helper.getUpvalueCount() != 0 || !helperCallbacks(helper)) { return false; }
         } else {
-            // A nested helper receives no constructor or holder authority.
+            // A nested helper may not capture the constructor or a holder.
             llvm::SmallVector<ctjs::GetPropertyOp> unusedReads;
             if (!methodCaptures(closure, {}, unusedReads, domEntry, depth + 1)) { return false; }
         }
@@ -543,8 +587,8 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         }
         helpers.insert(helper);
         capturedHelpers.insert(closure);
-        // Closed-source helpers retain the complete strict effect census.
-        // Only the DOM provider can defer their bodies to its typed proof.
+        // Closed-source helper bodies still go through the census. Only DOM
+        // entries leave them to the typed DOM proof.
         if (domEntry) {
             domEntryHelpers.insert(helper);
             needsDOMMethodProof = true;
@@ -555,9 +599,9 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
         if (domEntry && llvm::isa<ctjs::CreateClosureOp>(use.getOwner())) {
-            // Captures and callback enclosures share this original callee.
-            // Prove each use separately; retain the callback's body and
-            // identity for the complete typed DOM proof after rewriting.
+            // A nested callback closure uses this callee as its enclosing
+            // closure. Prove it separately and keep its body for the typed
+            // DOM proof after rewriting.
             if (!helperCallback(use)) { return false; }
             needsDOMMethodProof = true;
             continue;
@@ -581,7 +625,7 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
         if (value.getDefiningOp<ctjs::CreateObjectOp>()) {
             holderCaptures[load.getResult()] = value;
             captureReads.push_back(load);
-            continue; // Every original use goes through the shared holder census.
+            continue; // The holder analysis checks every use of the read.
         }
         auto helper = value != constructorValue
                           ? target(value.getDefiningOp<ctjs::CreateClosureOp>())
@@ -616,6 +660,9 @@ bool classInitialization::methodCaptures(ctjs::CreateClosureOp method,
     return true;
 }
 
+/// The closure `value` calls: a closure itself, a read of a proved holder
+/// object slot (local, or published in a global), or a closed global function
+/// declaration. Null when there is no single proved closure.
 ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool entryAliases,
                                                          bool domEntry) {
     if (auto closure = value.getDefiningOp<ctjs::CreateClosureOp>()) { return closure; }
@@ -647,8 +694,8 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
                 if (closure.getUpvalues().empty()) {
                     if (fn.getUpvalueCount() != 0 || !helperCallbacks(fn)) { return {}; }
                 } else {
-                    // Reuse the exact sibling-function proof. A holder has
-                    // no constructor identity or authority for object captures.
+                    // Prove its captures like a method's, with no constructor:
+                    // a holder slot may not capture the class or a holder.
                     llvm::SmallVector<ctjs::GetPropertyOp> unusedReads;
                     if (!methodCaptures(closure, {}, unusedReads, domEntry)) { return {}; }
                 }
@@ -698,16 +745,16 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
             }
             if (loaded == read) { selected = closure; }
         }
-        // Identity and receiver proof only. DOM slots retain the typed body
-        // proof; ordinary holders keep the strict source effect census,
-        // including every unused slot.
+        // So far only the slots' identities and receivers are proved. DOM slot
+        // bodies still go through the typed DOM proof, and ordinary holder
+        // slots, used or not, through the census.
         for (ctjs::SetPropertyOp store : proof->stores) {
             auto fn = target(store.getValue().getDefiningOp<ctjs::CreateClosureOp>());
             helpers.insert(fn);
             if (localHolder && domEntry) {
-                // Keep every original local slot for DOM helper expansion.
-                // That proof refuses a slot without a source invocation;
-                // only actual calls can supply its argument authority.
+                // Keep every local slot for DOM helper expansion. That proof
+                // refuses a slot no source call invokes, because only a call
+                // supplies its argument types.
                 domEntryHelpers.insert(fn);
                 needsDOMMethodProof = true;
             }
@@ -734,19 +781,22 @@ ctjs::CreateClosureOp classInitialization::sourceClosure(mlir::Value value, bool
     if (!fn) { return {}; }
     auto [cached, fresh] = closedGlobals.try_emplace(load.getName(), false);
     if (fresh) {
-        // Charge the existing declaration proof's operation/use scans once
-        // per binding. Its hoisting and closed-callee rules also cover reads
-        // in other functions without trusting resolver annotations.
+        // Run closedDeclaration() (and charge for its scans) once per binding.
+        // Its hoisting and closed-callee rules also cover reads in other
+        // functions without trusting the resolver's annotations.
         cached->second = spendWalk(module, declarationCost) && closedDeclaration(store, fn, module);
     }
     return cached->second ? closure : ctjs::CreateClosureOp{};
 }
 
+/// Whether `fn` never reads its receiver, except to pass it as the lexical
+/// `this` of a recorded helper closure.
 bool classInitialization::unusedReceiver(ctjs::FuncOp fn) {
     for (mlir::OpOperand & use : fn.getBody().front().getArgument(ctjs::arg_receiver).getUses()) {
         if (!step()) { return false; }
         auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
-        // Saving lexical this is inert when the exact helper never reads it.
+        // Passing `this` as a nested helper's lexical this is harmless when
+        // that helper never reads it.
         if (!closure || use.getOperandNumber() != 1 || !helpers.contains(target(closure))) {
             return false;
         }
@@ -754,6 +804,10 @@ bool classInitialization::unusedReceiver(ctjs::FuncOp fn) {
     return true;
 }
 
+/// Whether `use` passes a receiver to a helper call that only reads ordinary
+/// own fields from it (directly or through further helper calls). Appends
+/// those reads to `reads` so the caller can check them against the fields
+/// that exist at that point.
 bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
                                               const llvm::StringSet<> & methodKeys,
                                               llvm::SmallVectorImpl<ctjs::GetPropertyOp> & reads,
@@ -762,7 +816,8 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     if ((!direct && !call) || use.getOperandNumber() < (direct ? 3u : 2u)) { return false; }
     if (!step()) { return false; }
-    // ponytail: bound recursive proof depth; use a worklist for deeper chains.
+    // ponytail: recursion is capped at 64 levels; use a worklist for deeper
+    // chains.
     if (depth >= 64) { return refuse("class construction helper proof exceeds its depth bound"); }
     const auto callee = direct ? direct.getCalleeValue() : call.getCallee();
     auto fn = callableCaptures.lookup(callee.getDefiningOp());
@@ -783,9 +838,10 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     const unsigned index = use.getOperandNumber() + (direct ? 0u : 1u);
     auto & body = fn.getBody().front();
     if (index >= body.getNumArguments()) { return false; }
-    // Every forwarding edge repeats the exact target and borrowed-use proof.
-    // The caller checks all leaf reads against its current construction fields.
-    // Writes and method/getter dispatch still need separate receiver proofs.
+    // A helper that forwards the receiver to another helper repeats this proof
+    // for that call. The caller checks every collected read against the fields
+    // present at that point. Writes and method or getter dispatch through the
+    // receiver are refused here.
     for (mlir::OpOperand * selected : sourceUses(body.getArgument(index))) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(selected->getOwner())) { continue; }
@@ -804,6 +860,9 @@ bool classInitialization::borrowedHelperReads(mlir::OpOperand & use,
     return true;
 }
 
+/// Handles `Object.getOwnPropertyNames(this)` calls ("own-key snapshots") on
+/// instances of `constructor`: proves the constructor creates a fixed, ordered
+/// list of own fields and replaces each snapshot with that constant list.
 bool classInitialization::ownFieldSnapshots(
     ctjs::CreateClosureOp constructor, llvm::ArrayRef<ctjs::ConstructOp> instances,
     llvm::ArrayRef<ctjs::SetPropertyOp> definitions, const llvm::StringSet<> & methodKeys,
@@ -816,7 +875,8 @@ bool classInitialization::ownFieldSnapshots(
         auto call = heritage.lookup(derived);
         return call ? sourceValue(call.getArgs()[1]) : mlir::Value{};
     };
-    // A deferred ancestor's fields are fixed by the first leaf that folded it.
+    // A deferred ancestor's fields were fixed by the first subclass that
+    // inlined its constructor; look up the chain for them.
     auto required = snapshotFields.find(base);
     for (auto ancestor = base;
          required == snapshotFields.end() && deferredSnapshots.contains(ancestor);) {
@@ -827,8 +887,9 @@ bool classInitialization::ownFieldSnapshots(
     llvm::SetVector<mlir::Value> receivers;
     for (ctjs::ConstructOp made : instances) {
         receivers.insert(made.getResult());
-        // Saved Map reads retain the same records across replacement/deletion.
-        // Include all their snapshots and writes before folding any own keys.
+        // An instance stored in a Map and read back is the same object, so
+        // include those aliases as receivers too before replacing any
+        // snapshot.
         for (mlir::OpOperand * use : sourceUses(made.getResult())) {
             if (!step()) { return false; }
             llvm::SmallVector<mlir::Value> aliases;
@@ -877,13 +938,14 @@ bool classInitialization::ownFieldSnapshots(
     if (contract.provider != HostContract::Provider::closedSource && !dom) {
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
-    // A base whose only constructions are its leaves' super calls (exact
-    // `new` sites are the only ones admitted) has no shape of its own: each
-    // leaf proves the snapshot after super normalization, where the leaf's
-    // actuals can decide the base's arms. Until then fieldsOnly admits the
-    // snapshot and its loop writes; the folding leaf rechecks the body.
-    // ponytail: the first leaf to fold a shared body fixes its fields for
-    // every sibling; per-leaf fields need bodies that only copies reach.
+    // A base constructed only through its subclasses' super() calls has no
+    // field list of its own: each subclass proves the snapshot after inlining
+    // the base constructor, where its arguments can decide the base's branches.
+    // Until then fieldsOnly() accepts the snapshot and its loop writes, and the
+    // subclass rechecks the body.
+    // ponytail: the first subclass to inline a shared base constructor fixes
+    // its field list for all sibling subclasses. Per-subclass fields would
+    // need per-subclass copies of the base body.
     if (instances.empty() && baseClasses.contains(constructor.getResult()) &&
         required == snapshotFields.end()) {
         deferredSnapshots.insert(constructor.getResult());
@@ -893,8 +955,9 @@ bool classInitialization::ownFieldSnapshots(
         }
         return true;
     }
-    // ponytail: fixed named fields, with one ordered shape across an inherited
-    // snapshot's receivers. Variable presence needs a separate proof.
+    // ponytail: only fixed named fields, in one order shared by every receiver
+    // of an inherited snapshot. Fields that are only sometimes present need a
+    // separate proof.
     if (!function.getBody().hasOneBlock()) {
         return refuse("class own-key snapshot requires fixed constructor fields");
     }
@@ -918,16 +981,17 @@ bool classInitialization::ownFieldSnapshots(
         }
         return true;
     };
-    // A construction-time call keeps its body and arguments. Only its receiver
-    // uses need a stricter proof here: the eventual field shape is not present yet.
+    // A method called during construction keeps its body and arguments, but
+    // its receiver uses must only read fields that already exist, because the
+    // final field list is not complete yet.
     const auto inspectMethod = [&](auto && visit, ctjs::FuncOp fn,
                                    llvm::ArrayRef<llvm::StringRef> ordered,
                                    unsigned depth) -> bool {
         if (!step() || depth == 64) {
             return refuse("class construction method proof exceeds its depth bound");
         }
-        // A base's snapshot may already have folded. Keep its original identity
-        // so a descendant cannot call it with a partially initialized receiver.
+        // A method that takes a snapshot itself would see a partly built
+        // receiver if called during construction, so refuse it.
         if (!fn || snapshotMethods.contains(fn)) {
             return refuse("class construction method observes an own-key snapshot");
         }
@@ -952,9 +1016,9 @@ bool classInitialization::ownFieldSnapshots(
             }
             const auto key = ctjs::propertyKey(op);
             if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-                // The fresh prototype's constructor backedge exists before
-                // any own field. fieldsOnly/staticGetters still prove every
-                // use and exact target; inherited target changes remain refused.
+                // `this.constructor` comes from the prototype and exists
+                // before any own field. fieldsOnly() and staticGetters() still
+                // check every use and target.
                 if (use->getOperandNumber() == 0 && ctjs::constantKey(key) == "constructor") {
                     continue;
                 }
@@ -973,12 +1037,14 @@ bool classInitialization::ownFieldSnapshots(
         }
         return reason.empty();
     };
-    // An exact class's `this.constructor.K` reads this class, and a static read
-    // of K on it runs K's getter with this class as receiver. When that getter
-    // always throws, nothing after the read on that path runs: its receiver
-    // uses and fields never reach a completed instance.
-    // ponytail: exact classes and single-block getters whose first effect is
-    // the throwing receiver read; an extended class needs per-leaf getters.
+    // For a class with no subclasses, `this.constructor.K` reads this class,
+    // and a static read of K on it runs K's getter with this class as
+    // receiver. When that getter always throws, nothing after the read on
+    // that path runs, so its receiver uses and fields never reach a completed
+    // instance.
+    // ponytail: only classes without subclasses, and single-block getters
+    // whose first effect is the throwing read. A base class would need
+    // per-subclass getters.
     const auto staticGetter = [&](llvm::StringRef key) -> ctjs::FuncOp {
         if (staticMethods.contains(key)) { return {}; }
         auto definition = staticDefinitions.lookup(key);
@@ -988,7 +1054,8 @@ bool classInitialization::ownFieldSnapshots(
                 definition = environment->second.lookup(key);
             }
         }
-        // A copy made for this receiver answers instead of the shared body.
+        // A getter copy made for this class (receiverGetters) takes precedence
+        // over the shared body.
         if (auto copies = receiverGetters.find(constructor.getResult());
             definition && copies != receiverGetters.end()) {
             if (auto clone = copies->second.lookup(key)) { return clone; }
@@ -1105,8 +1172,8 @@ bool classInitialization::ownFieldSnapshots(
                     }
                     continue;
                 }
-                // Retain helper computations for the complete callable/body
-                // census. Receiver arguments may read only fields present here.
+                // Other loads and calls stay for the census. If one receives
+                // `this`, it may read only fields that already exist here.
                 for (mlir::OpOperand & operand : op.getOpOperands()) {
                     if (!step()) { return false; }
                     if (sourceValue(operand.get()) == self && !borrowedFields(operand, ordered)) {
@@ -1174,9 +1241,10 @@ bool classInitialization::ownFieldSnapshots(
             replacements[read.getResult()] = value;
         }
     }
-    // Every receiver still passes fieldsOnly after these exact key reads fold.
-    // In addition, no method or external instance use may create a new field.
-    // Construction-time calls separately proved the fields present at that point.
+    // Every receiver still passes fieldsOnly() once these key reads become
+    // constants. In addition, no method or outside use of an instance may
+    // create a field outside the list. Methods called during construction
+    // were checked against the fields present at that point.
     for (mlir::Value receiver : receivers) {
         for (mlir::OpOperand * use : sourceUses(receiver)) {
             if (!step()) { return false; }
@@ -1193,8 +1261,9 @@ bool classInitialization::ownFieldSnapshots(
             }
         }
     }
-    // Check the original Object binding, member and all aliases before erasing
-    // any snapshot. Other calls/effects remain for the complete module census.
+    // Check that the Object binding and getOwnPropertyNames are the standard
+    // ones (initialBindingProblem) before erasing any snapshot. Other calls and
+    // effects are left for the module census.
     if (!spendWalk(module, [](mlir::Operation * op) {
             return uint64_t(2) + 2 * uint64_t(op->getNumOperands());
         })) {
@@ -1202,8 +1271,8 @@ bool classInitialization::ownFieldSnapshots(
     }
     auto binding = dom ? classBindingContract(contract) : contract;
     if (dom) {
-        // Recheck every intrinsic consumed by the snapshot and its optional
-        // clearing loop. DOM values still owe the complete typed body proof.
+        // Also check the intrinsics the snapshot and its optional clearing loop
+        // use. DOM values still go through the typed DOM proof.
         for (const auto & name : contract.initialIntrinsics) {
             if (name == "Object" || name == "Array" || host_detail::iteratorIntrinsicArity(name)) {
                 binding.initialIntrinsics.push_back(name);
@@ -1217,8 +1286,8 @@ bool classInitialization::ownFieldSnapshots(
         auto * read = result.getDefiningOp();
         mlir::OpBuilder at(read);
         auto constant = ctjs::ConstantOp::create(at, read->getLoc(), value);
-        // Entry locals can already have fixed-cell proofs. Preserve their
-        // cached producers as well as SSA uses before removing a snapshot read.
+        // A fixed cell may record this read as its value; point it at the
+        // constant too before erasing the read.
         for (auto & cell : cells) {
             if (!step()) { return false; }
             if (cell.second == result) { cell.second = constant; }
@@ -1238,8 +1307,8 @@ bool classInitialization::ownFieldSnapshots(
     }
     for (mlir::Operation * operation : selections) { eraseIfRooted(operation); }
     for (mlir::Operation * operation : loads) { eraseIfRooted(operation); }
-    // An empty snapshot is a requirement too. Descendants must recheck every
-    // inherited body and field write even after its snapshot has been folded.
+    // Record the field list even when no snapshot remains: subclasses must
+    // match it when they recheck inherited bodies and field writes.
     for (auto ancestor = base; deferredSnapshots.contains(ancestor); ancestor = parent(ancestor)) {
         if (!step()) { return false; }
         snapshotFields.try_emplace(ancestor, fields);
@@ -1248,6 +1317,9 @@ bool classInitialization::ownFieldSnapshots(
     return true;
 }
 
+/// When `use` stores an instance in a captured Map (`map.set(key, instance)`),
+/// collects into `reads` every `map.get(key)` that returns a stored instance,
+/// by replaying the Map's set, get, delete and clear calls in its block.
 bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
                                              llvm::SmallVectorImpl<mlir::Value> & reads) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
@@ -1264,8 +1336,9 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
         return refuse("class retained Map requires completed entry-block record owners");
     }
     if (!proveMaps()) { return false; }
-    // Keep the existing full Map identity/use proof. This narrower source proof
-    // cannot capture or transport the Map, so every operation shares its owner.
+    // proveMaps() has checked every Map use. In addition, the Map must not be
+    // captured or passed through cells, so every operation on it is in its
+    // own block.
     for (auto [cell, initial] : cells) {
         if (!step()) { return false; }
         if (sourceValue(initial) != map.getResult()) { continue; }
@@ -1284,8 +1357,8 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
             return refuse("class retained Map requires direct entry-block operations");
         }
     }
-    // ponytail: literal string keys in one block; branch/capture transport
-    // needs the shared native Map presence and owner proof before widening.
+    // ponytail: only literal String keys, in one block. Maps used across
+    // branches or captures need a native proof of key presence and ownership.
     llvm::StringMap<mlir::Value> entries;
     for (mlir::Operation & op : *map->getBlock()) {
         if (!step()) { return false; }
@@ -1324,13 +1397,17 @@ bool classInitialization::retainedMapAliases(mlir::OpOperand & use,
     return reason.empty();
 }
 
+/// Like retainedMapAliases(), then checks that every instance read back from
+/// the Map is used only as fieldsOnly() allows.
 bool classInitialization::retainedMapReads(
     mlir::OpOperand & use, const llvm::StringSet<> & methodKeys,
     llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads) {
     llvm::SmallVector<mlir::Value> reads;
     if (!retainedMapAliases(use, reads)) { return false; }
-    // Recheck saved aliases for every receiver census: inherited method keys
-    // can change. The native stage still owes the typed carrier/lifetime proof.
+    // Recheck the aliases on every receiver check, because inherited method
+    // keys can change. This proves only that the aliases are used as plain
+    // field reads; native lowering still has to prove their types and
+    // lifetimes.
     for (mlir::Value read : reads) {
         for (mlir::OpOperand * selected : sourceUses(read)) {
             if (!step()) { return false; }
@@ -1344,6 +1421,10 @@ bool classInitialization::retainedMapReads(
     return reason.empty();
 }
 
+/// Whether every use of `object` (an instance or receiver) is a plain own-field
+/// read or write: no escape, no prototype or descriptor access, and method keys
+/// only as direct method calls when `methodsAvailable`. Static getter reads
+/// through `this.constructor` are appended to `staticReads`.
 bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<> & methodKeys,
                                      llvm::SmallVectorImpl<ctjs::GetPropertyOp> & staticReads,
                                      bool methodsAvailable, bool unconstructed) {
@@ -1353,19 +1434,20 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         auto * op = use.getOwner();
         if (llvm::isa<ctjs::RootOp>(op)) { continue; }
         if (llvm::isa<ctjs::InstanceOfOp>(op) && use.getOperandNumber() == 0) {
-            continue; // The complete instance/constructor proof runs after class setup.
+            continue; // proveInstanceOf() checks instanceof after class setup.
         }
         if (use.getOperandNumber() == 3 &&
             deferredPublications.lookup(op->getParentOfType<ctjs::FuncOp>()) == op) {
-            continue; // Only the sole leaf can discharge this exact base receiver edge.
+            continue; // A deferred base-class publication; its one subclass proves it.
         }
         if (retainedMapReads(use, methodKeys, staticReads)) { continue; }
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(op)) {
             llvm::SmallVector<ctjs::GetPropertyOp> reads;
             if (borrowedHelperReads(use, methodKeys, reads)) { continue; }
         }
-        // A deferred snapshot and its loop's computed null writes wait for the
-        // leaf that folds them; it rechecks this body once they are fields.
+        // A deferred snapshot, and its loop's computed writes of null, are left
+        // to the subclass that inlines this base; it rechecks the body once the
+        // field list is known.
         if (pendingSnapshotMethods.contains(op->getParentOfType<ctjs::FuncOp>())) {
             auto write = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
             auto value =
@@ -1380,16 +1462,16 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
         if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
             closure && use.getOperandNumber() == 1 && helpers.contains(target(closure)) &&
             target(closure).getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
-            // The confined helper was checked before this receiver census.
-            // Saving lexical this is inert when its body never reads it.
+            // The helper was checked earlier. Passing `this` as its lexical this
+            // is harmless when its body never reads it.
             inertReceiverClosures.push_back(closure);
             continue;
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
             read && use.getOperandNumber() == 0 &&
             ctjs::constantKey(read.getKey()) == "constructor") {
-            // The exact fresh prototype owns this backedge. Its identity
-            // may only select a proved local getter; no write or escape.
+            // `this.constructor` comes from the class's own prototype. It may
+            // only be used to read a static getter; no write or escape.
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 if (!step()) { return false; }
                 if (llvm::isa<ctjs::RootOp>(selected.getOwner())) { continue; }
@@ -1415,8 +1497,8 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
             }
         }
         const auto key = ctjs::propertyKey(op);
-        // A body that never runs keeps its records for the census; the uses
-        // themselves are proved on every copy that does run.
+        // A body that never runs (`unconstructed`) is not checked here; every
+        // inlined copy of it that does run is checked.
         if (unconstructed) { continue; }
         if (use.getOperandNumber() != 0 || !key || !ctjs::ordinaryKey(key)) {
             return refuse("class receiver escapes or observes a prototype/descriptor");
@@ -1435,6 +1517,7 @@ bool classInitialization::fieldsOnly(mlir::Value object, const llvm::StringSet<>
     return reason.empty();
 }
 
+/// Sets `next` to one past the highest source function index in the module.
 bool classInitialization::freshFunctionIndex(unsigned & next) {
     next = 0;
     for (auto function : module.getOps<ctjs::FuncOp>()) {
@@ -1451,24 +1534,28 @@ ctjs::FuncOp classInitialization::cloneFunction(ctjs::FuncOp fn, unsigned index)
     return functions[index] = copy;
 }
 
+/// Copies inherited methods in `selected` that read a static getter through
+/// `this.constructor` which subclass `leaf` overrides or copies (or every one
+/// when `perLeaf`) onto `prototype`, and appends the new definitions to
+/// `definitions`. Methods not copied stay in `selected`. With `proofOnly` the
+/// copies get private keys and exist only for the DOM method proof.
 bool classInitialization::cloneReceiverMethods(
     ctjs::CreateClosureOp leaf, ctjs::CreateObjectOp prototype, ctjs::CallOp helper,
     const llvm::StringSet<> & shadowed, llvm::SmallVectorImpl<ctjs::SetPropertyOp> & selected,
     llvm::SmallVectorImpl<ctjs::SetPropertyOp> & definitions, bool perLeaf, bool proofOnly) {
-    // An inherited method reading an overridden or copied getter through
-    // this.constructor selects other getters for this class's instances. Put a
-    // copy on this class's prototype, as if the source overrode it with the
+    // An inherited method that reads an overridden or copied getter through
+    // this.constructor runs different getters for this class's instances. Put
+    // a copy on this class's prototype, as if the source overrode it with the
     // same body: the own-method proof checks it in this class's environment,
-    // and base instances keep the original. DOM entries use the same copies
-    // for every inherited body, so each leaf gets its own typed method probes.
+    // and base instances keep the original. DOM entries copy every inherited
+    // body, so each subclass gets its own typed method probes.
     const auto copies = receiverGetters.lookup(leaf.getResult());
     llvm::SmallVector<ctjs::SetPropertyOp> kept;
     for (ctjs::SetPropertyOp definition : selected) {
         if (!step()) { return false; }
         auto closure = definition.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);
-        // Parameter observations are checked with all other method probes;
-        // an unused formal supplies no argument or type authority.
+        // Parameter uses are checked with the other method probes.
         if (!fn) { return refuse("inherited method lacks a source body"); }
         bool reads = perLeaf;
         if (fn) {
@@ -1500,8 +1587,9 @@ bool classInitialization::cloneReceiverMethods(
         mlir::OpBuilder at(helper);
         mlir::Value key = definition.getKey();
         if (proofOnly) {
-            // Keep ordinary dispatch unchanged, including calls from this
-            // body back to the overridden key. Avoid all source string keys.
+            // Store the copy under a fresh key that no source string uses, so
+            // ordinary dispatch, including calls from this body back to the
+            // overridden key, is unchanged.
             llvm::StringSet<> keys;
             if (!walkSteps(module, [&](ctjs::ConstantOp constant) {
                     if (auto text = llvm::dyn_cast<ctjs::StringAttr>(constant.getValue())) {
@@ -1538,12 +1626,15 @@ bool classInitialization::cloneReceiverMethods(
     return true;
 }
 
+/// Copies, for subclass `leaf`, every inherited static getter in `environment`
+/// whose receiver reads (directly or through other inherited getters) reach a
+/// key in `shadowed`. The copies are recorded in receiverGetters.
 bool classInitialization::cloneReceiverGetters(
     mlir::Value leaf, const llvm::StringMap<ctjs::DefineAccessorOp> & environment,
     const llvm::StringSet<> & shadowed) {
     // An inherited getter whose receiver reads reach a key this class shadows
-    // selects different bodies when this class is the receiver. Give the class
-    // its own copy; every other inherited body resolves as in its base.
+    // runs different code when this class is the receiver, so give the class
+    // its own copy. Every other inherited getter behaves as in the base.
     auto & clones = receiverGetters[leaf];
     llvm::DenseMap<mlir::Operation *, bool> reaches;
     const auto inherited = [&](llvm::StringRef key) -> ctjs::FuncOp {
@@ -1556,14 +1647,14 @@ bool classInitialization::cloneReceiverGetters(
         if (depth == 64) { return refuse("static getter dependency cycle"); }
         if (shadowed.contains(key)) { return true; }
         auto fn = inherited(key);
-        if (!fn) { return false; } // Own getters are proved in this environment.
+        if (!fn) { return false; } // Own getters are proved in this class anyway.
         if (auto known = reaches.find(fn); known != reaches.end()) { return known->second; }
-        reaches[fn] = false; // A cycle is refused by the dependency fixpoint.
+        reaches[fn] = false; // staticGetters() refuses a cycle later.
         bool result = false;
         for (mlir::OpOperand & use :
              fn.getBody().front().getArgument(ctjs::arg_receiver).getUses()) {
             auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
-            if (!read || !ctjs::ordinaryKey(read.getKey())) { continue; } // Body proof refuses.
+            if (!read || !ctjs::ordinaryKey(read.getKey())) { continue; } // proveBody refuses.
             result |= self(self, ctjs::constantKey(read.getKey()), depth + 1);
             if (!reason.empty()) { return false; }
         }
@@ -1583,6 +1674,10 @@ bool classInitialization::cloneReceiverGetters(
     return true;
 }
 
+/// Proves the static getters in `definitions` (each a closed expression over
+/// other getters of the same class) and the constructor `reads` of them, and
+/// orders them for expansion (getterOrder) with each one's cost
+/// (getterExpansion).
 bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccessorOp> & definitions,
                                         llvm::ArrayRef<ctjs::GetPropertyOp> reads,
                                         ctjs::CallOp helper) {
@@ -1640,16 +1735,16 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
         return true;
     };
     for (const auto & item : definitions) {
-        // Closure metadata and the compiler's home field precede accessors
-        // in the interpreter. Keep their source reads until that boundary
-        // has one semantics across the interpreter and native output.
+        // The interpreter resolves closure metadata keys and the compiler's
+        // `__home` field before accessors, so a getter with such a key may not
+        // behave the same natively. Refuse it.
         const auto key = item.first();
         if (closureMetadataKey(key)) { return refuse("static getter shadows closure metadata"); }
         auto definition = item.second;
         auto closure = definition.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
         auto fn = target(closure);
-        // An inherited environment contains the exact already-proved
-        // definitions. Its source bodies and dependency targets stay unchanged.
+        // Getters inherited from a base were already proved and expanded with
+        // it; skip them.
         if (setup.contains(definition) && getters.contains(fn) && getterExpansion.contains(fn)) {
             continue;
         }
@@ -1675,20 +1770,22 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
             }
             getterHome = write;
         }
-        // The body census below forbids observing this metadata. Keep the
-        // exact source assignment in the setup proof before erasing it.
+        // proveBody() forbids reading `__home`. Record the assignment as setup
+        // code so it is erased with the rest.
         if (getterHome) { setup.insert(getterHome); }
         if (!proveBody(fn)) { return false; }
         getterClosures.push_back(closure);
         setup.insert(definition);
     }
-    // A receiver-specific copy is proved like an own getter, in this class's
-    // environment, and has no definition, closure or home of its own.
+    // A per-class getter copy is proved like an own getter but has no
+    // definition, closure or `__home` of its own.
     for (const auto & item : clones) {
         if (!step() || !proveBody(item.second)) { return false; }
     }
-    // ponytail: bounded fixpoint over fixed getter environments; overrides
-    // require separate receiver-specific bodies before widening.
+    // Order getters so each comes after the getters it reads, and compute each
+    // one's inlined size. A round that completes nothing means a cycle.
+    // ponytail: getters are fixed per class; overriding at run time would need
+    // per-receiver bodies.
     llvm::DenseSet<mlir::Operation *> completed;
     while (completed.size() != dependencies.size()) {
         const auto before = completed.size();
@@ -1701,9 +1798,10 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
                 ready &= getterExpansion.contains(callee);
             }
             if (!ready) { continue; }
-            // A dependency call uses this function's closure argument.
-            // Keep its callers too, so no such argument is copied into a
-            // different function when expanding a getter chain.
+            // A throwing getter is expanded as a direct call that uses the
+            // caller's closure argument, so a getter that reads one is treated
+            // as throwing too; otherwise its inlined copy would move that call
+            // into a different function.
             if (llvm::any_of(required, [&](mlir::Operation * callee) {
                     return throwingGetters.contains(callee);
                 })) {
@@ -1734,8 +1832,8 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
         }
         if (completed.size() == before) { return refuse("static getter dependency cycle"); }
     }
-    // ponytail: a throwing copy would need its own closure transport in the
-    // throwing expansion; only returning copies are expanded inline.
+    // ponytail: only per-class getter copies that return are supported; a
+    // throwing copy would need its own closure for the direct-call expansion.
     for (const auto & item : clones) {
         if (!step()) { return false; }
         if (throwingGetters.contains(item.second)) {
@@ -1748,8 +1846,8 @@ bool classInitialization::staticGetters(const llvm::StringMap<ctjs::DefineAccess
         if (!callee) { return refuse("constructor read lacks an exact local static getter"); }
         getterReads.emplace_back(read, callee);
     }
-    // Charge every clone before any mutation, including repeated reads and
-    // the transitive expansion copied from already-expanded getter bodies.
+    // Charge for every inlined copy before any mutation, including repeated
+    // reads and the getters each copy inlines in turn.
     for (const auto & item : llvm::drop_begin(getterReads, firstRead)) {
         if (!spend(getterExpansion.lookup(item.second))) { return false; }
     }

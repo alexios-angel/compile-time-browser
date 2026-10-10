@@ -1,4 +1,10 @@
-// Boxed EmitC values lowering.
+//===- Values.cpp - Boxed EmitC lowering of value operations ----*- C++ -*-===//
+//
+// Lowers value operations to EmitC: constants, ToBoolean, unary, binary and
+// comparison operators, global reads and writes, and property reads. Each
+// becomes a call to a ct_aot_* runtime helper declared in aot.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include "Lowering.h"
 
 namespace ctcompile::ctjs::emitc_detail {
@@ -16,28 +22,24 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     if (mlir::isa<FrameExitOp>(op)) { return true; }
 
     if (auto constant = mlir::dyn_cast<ConstantOp>(op)) {
-        // A STRING LITERAL IS A CALL, not a spelling. It allocates, so it
-        // needs the frame - and it is MEMOISED by (site, slot), which the
-        // row insists is part of the ABI rather than an optimisation:
-        // without it a literal in a loop allocates once per iteration and
-        // reaches the process-lifetime allocation ceiling on a program the
-        // interpreter runs forever.
+        // A string literal is a call, not a spelling. It allocates, so it
+        // needs the frame, and it is memoised by (site, slot), which
+        // ct_aot_new_string's entry in aot/helpers/values-and-properties.def
+        // documents as part of the ABI rather than an optimisation: without it a literal in a loop
+        // allocates once per iteration and reaches the process-lifetime
+        // allocation ceiling on a program the interpreter runs forever.
         //
-        // `site` IS THE ENTRY'S OWN, which is the function_proto the
-        // interpreter keys the same cache by - so a literal shared between
-        // a compiled body and an interpreted one is one object, not two.
-        //
-        // A BIGINT LITERAL IS THE SOURCE TEXT, PARSED AT RUN TIME, and
-        // that is deliberate: bigint_from_literal owns `0x1fn`, `0b..n` and
-        // the 1.5n-to-0n substitution, and parsing here would be a second
+        // A BigInt literal is passed as source text and parsed at run time on
+        // purpose: bigint_from_literal owns `0x1fn`, `0b..n` and the
+        // 1.5n-to-0n substitution, and parsing here would be a second
         // implementation of all three.
         //
-        // MEMOISED UNDER scope.memo_site, NOT scope.entry_site, for the
-        // reason ct_aot_new_string is: the entry's site IS the
-        // function_proto, the interpreter keys the same cache by that proto
-        // with the CONSTANT-POOL index as the slot, and this backend numbers
-        // its slots in walk order. Sharing the key lets a compiled body read
-        // a slot the interpreter filled with a different literal.
+        // Both are memoised under scope.memo_site, not scope.entry_site. The
+        // entry's site is the function_proto, which the interpreter keys the
+        // same cache by with the constant-pool index as the slot, while this
+        // backend numbers its slots in walk order. Sharing the key would let a
+        // compiled body read a slot the interpreter filled with a different
+        // literal.
         auto text = mlir::dyn_cast<StringAttr>(constant.getValue());
         auto digits = mlir::dyn_cast<BigIntAttr>(constant.getValue());
         if (text || digits) {
@@ -54,12 +56,10 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // ToBoolean, AND THE COMPARISON IS PART OF IT. ct_aot_truthy answers
-    // with a uint32_t that is 0 or 1 - the ABI has no bool - while
-    // ctjs.truthy's result is an i1, because that is what cf.cond_br takes.
-    // Testing it against zero is the conversion, and doing it here rather
-    // than trusting C++'s implicit narrowing keeps the emitted code saying
-    // what it means.
+    // ToBoolean. ct_aot_truthy answers with a uint32_t that is 0 or 1 (the
+    // ABI has no bool), while ctjs.truthy's result is an i1 because that is
+    // what cf.cond_br takes. The explicit test against zero is the
+    // conversion, rather than C++'s implicit narrowing.
     if (auto truthy = mlir::dyn_cast<TruthyOp>(op)) {
         const mlir::Value answered =
             opaque_call(build, where, opaque(build.getContext(), "uint32_t"), "ct_aot_truthy",
@@ -68,14 +68,14 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // THE TWO BINARY FAMILIES, WHICH ARE TWO HELPERS AND TWO OPCODE
-    // TABLES. `ctjs.binary add` is source `+` and must reach
-    // op::add_generic, which runs ToPrimitive and can call a user valueOf;
-    // `ctjs.binary_static add` is op::add and cannot run user code at all.
-    // Folding them would make `x + y` and `x++` the same call, which is
-    // what OpcodeMapping.hpp exists to prevent - and the opcode is spelled
-    // as an ENUMERATOR, so the renumbering Phases 13 and 14 perform becomes
-    // a build error in the generated code rather than a different operator.
+    // The two binary families use two helpers and two opcode tables.
+    // `ctjs.binary add` is source `+` and must reach op::add_generic, which
+    // runs ToPrimitive and can call a user valueOf; `ctjs.binary_static add`
+    // is op::add and cannot run user code at all. Folding them would make
+    // `x + y` and `x++` the same call, which is what OpcodeMapping.hpp exists
+    // to prevent. The opcode is emitted as an enumerator name rather than a
+    // number, so if the VM's opcode enum is renumbered the generated code
+    // still names the right operator, and a removed opcode is a build error.
     if (mlir::isa<BinaryOp, BinaryStaticOp>(op)) {
         auto binary = mlir::dyn_cast<BinaryOp>(op);
         const mlir::Value kind =
@@ -92,9 +92,9 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // THE UNARY OPERATORS, WHICH REACH FOUR DIFFERENT HELPERS AND ONE
-    // NONE AT ALL - which is why ctjs.unary is not a CTJS_RuntimeOp and
-    // why this switches on the kind.
+    // The unary operators reach four different helpers, and `void` reaches
+    // none, which is why ctjs.unary is not a CTJS_RuntimeOp and this switches
+    // on the kind.
     if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
         const mlir::Value operand = mapping.lookup(unary.getOperand());
         switch (unary.getKind()) {
@@ -108,8 +108,8 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
                                     {scope.frame, operand}, value));
             return true;
         case UnaryKind::Plus: {
-            // `+x` IS ToNumber, AND ITS OUT-PARAMETER IS A double, not a
-            // value - so the result is boxed rather than used directly.
+            // `+x` is ToNumber, whose out-parameter is a double rather than a
+            // value, so the result is boxed.
             const mlir::Value number =
                 status_call(scope, build, where, callee("ct_aot_to_number"), {scope.frame, operand},
                             opaque(build.getContext(), "double"));
@@ -117,9 +117,10 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             return true;
         }
         case UnaryKind::Not: {
-            // `!x` IS ToBoolean NEGATED, and ToBoolean cannot fail - the
-            // row is (0, 0, 0) and takes no frame - so there is no status
-            // and no edge. Testing the uint32_t against zero IS the
+            // `!x` is ToBoolean negated, and ToBoolean cannot fail
+            // (ct_aot_truthy has may_throw, may_reenter and is_safepoint all
+            // 0, and takes no frame), so there is no status and no exception
+            // edge. Testing the uint32_t for zero is the
             // negation.
             const mlir::Value answered = opaque_call(
                 build, where, opaque(build.getContext(), "uint32_t"), "ct_aot_truthy", {operand});
@@ -129,24 +130,22 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             return true;
         }
         case UnaryKind::Void:
-            // `void x` EVALUATES ITS OPERAND AND YIELDS undefined. The
-            // operand is already evaluated - it is an SSA value - so there
-            // is nothing to emit but the answer.
+            // `void x` evaluates its operand and yields undefined. The operand
+            // is already an SSA value, so only the result is emitted.
             mapping.map(unary.getResult(), undefined(build, where, value));
             return true;
         case UnaryKind::TypeOf: {
-            // TWO CALLS, and the second is the point. ct_aot_type_of_name
-            // is INFALLIBLE and answers with a LENGTH plus a pointer to
-            // STATIC storage - "the return slot carries a LENGTH, and under
-            // the return-type rule an unsigned return is data, never a
-            // status" - so there is no edge. What it needs is a string.
+            // Two calls. ct_aot_type_of_name is infallible and answers with a
+            // length plus a pointer to static storage ("the return slot
+            // carries a LENGTH, and under the return-type rule an unsigned
+            // return is data, never a status"), so there is no exception
+            // edge. ct_aot_new_string then makes the string.
             //
-            // THE SITE IS nullptr, MEANING DO NOT MEMOISE, and
-            // ct_aot_new_string's row names this exact case: it "lets
-            // ct_aot_type_of_name's companion allocation stay at parity",
-            // because VM_CASE(type_of) has no cache at all. Memoising here
-            // would allocate FEWER times than the interpreter - a
-            // divergence in the same raise tier the memo exists to protect.
+            // The site is nullptr, meaning do not memoise: ct_aot_new_string's
+            // entry in aot/helpers/values-and-properties.def names this case, because the
+            // interpreter's VM_CASE(type_of) has no cache. Memoising here would
+            // allocate fewer times than the interpreter, which is exactly the
+            // allocation-count divergence the memo exists to prevent.
             const auto u32 = opaque(build.getContext(), "uint32_t");
             const auto text_ptr = pointer_to(build.getContext(), "const char");
             auto slot = ec::VariableOp::create(build, where, ec::LValueType::get(text_ptr),
@@ -170,7 +169,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         llvm_unreachable("body_is_supported admitted a unary kind convert cannot emit");
     }
 
-    // THE COMPARISONS, WHICH ARE THREE HELPERS AND THREE EFFECT PROFILES.
+    // Comparisons use three helpers with three different effect profiles.
     if (auto compare = mlir::dyn_cast<CompareOp>(op)) {
         const mlir::Value lhs = mapping.lookup(compare.getLhs());
         const mlir::Value rhs = mapping.lookup(compare.getRhs());
@@ -179,9 +178,10 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         const auto bit = mlir::IntegerType::get(build.getContext(), 1);
 
         if (compare.getKind() == CompareKind::StrictEq) {
-            // STRICT EQUALITY CANNOT THROW AND TAKES NO FRAME: its row is
-            // (0, 0, 0) and it answers with a uint32_t directly, so there
-            // is no out-parameter, no status and no exception edge.
+            // Strict equality cannot throw and takes no frame (may_throw,
+            // may_reenter and is_safepoint are all 0), and it answers with a
+            // uint32_t directly, so there is no out-parameter, no status and
+            // no exception edge.
             const mlir::Value answered =
                 opaque_call(build, where, u32, "ct_aot_strict_equals", {lhs, rhs});
             mapping.map(compare.getResult(),
@@ -189,7 +189,7 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             return true;
         }
         if (compare.getKind() == CompareKind::Eq) {
-            // LOOSE EQUALITY CAN, because it converts - and its
+            // Loose equality can throw, because it converts operands. Its
             // out-parameter is a uint32_t boolean, not a value.
             const mlir::Value answered = status_call(
                 scope, build, where, callee("ct_aot_loose_equals"), {scope.frame, lhs, rhs}, u32);
@@ -198,15 +198,15 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
             return true;
         }
 
-        // THE FOUR RELATIONAL KINDS SHARE ONE HELPER AND AN ORDERING, and
-        // they are NOT negations of one another. ct_aot_compare answers
-        // with less/equivalent/greater/UNORDERED, and unordered - a NaN on
-        // either side - makes all four false, including `>=`. Lowering `>=`
-        // as `!(<)` would make `NaN >= NaN` true.
+        // The four relational kinds share one helper and an ordering, and
+        // they are not negations of one another. ct_aot_compare answers with
+        // less, equivalent, greater or unordered, and unordered (a NaN on
+        // either side) makes all four false, including `>=`. Lowering `>=` as
+        // `!(<)` would make `NaN >= NaN` true.
         //
-        // THE ORDERING'S NUMBERS ARE CONTRACTUAL, unlike the status enum's -
-        // aot.hpp says so in as many words - but they are still spelled as
-        // enumerators, because a name that is checked costs nothing.
+        // The ordering's numeric values are contractual (aot.hpp says so),
+        // unlike the status enum's, but they are still emitted as enumerator
+        // names because a checked name costs nothing.
         const mlir::Value ordering = status_call(scope, build, where, callee("ct_aot_compare"),
                                                  {scope.frame, lhs, rhs}, i32);
         const auto is = [&](llvm::StringRef named) {
@@ -236,16 +236,12 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // THE GLOBALS. Only the source's typeof IdentifierReference may answer
+    // Globals. Only the source's typeof IdentifierReference may answer
     // undefined for an unresolvable name. A saved ordinary read forwarded
     // into typeof still throws, so the opcode-derived mode decides the helper.
     // Both forms can run a throwing global getter. The soft helper returns
     // its value directly, so classify its status before using that value.
-    //
-    // THE NAME IS BYTES AND A LENGTH, not a NUL-terminated string, which is
-    // why the length is emitted rather than left to strlen: a global whose
-    // name contains a zero byte is legal JavaScript and strlen would stop
-    // at it.
+    // Names are passed as bytes and a length (see bytes_and_length()).
     if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
         const auto [text, length] = bytes_and_length(build, where, global.getName());
         if (global.getTypeofLookup()) {
@@ -267,13 +263,12 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
         return true;
     }
 
-    // A PROPERTY READ. Its helper's inline-cache parameter is nullptr and
-    // has to be: ct_aot_ic is FORWARD-DECLARED ONLY, so nothing can
-    // allocate one, and the implementation says the parameter is "taken and
-    // ignored, because the signature is the thing two code generators are
-    // written against and a parameter added later is a break". Phase 26
-    // attaches real storage; until then this is not a shortcut but the only
-    // spelling available.
+    // A property read. Its helper's inline-cache parameter must be nullptr:
+    // ct_aot_ic is only forward-declared, so nothing can allocate one, and the
+    // implementation says the parameter is "taken and ignored, because the
+    // signature is the thing two code generators are written against and a
+    // parameter added later is a break". Until the inline cache gets real
+    // storage, nullptr is the only value that can be passed.
     if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
         const mlir::Value no_cache = literal(
             build, where, pointer_to(build.getContext(), "ctbrowser::aot::ct_aot_ic"), "nullptr");

@@ -1,3 +1,9 @@
+//===- CTNativeOps.h - ctnative operations ----------------------*- C++ -*-===//
+//
+// The generated ctnative operation classes, from CTNativeOps.td.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"

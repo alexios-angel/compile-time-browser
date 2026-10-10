@@ -1,3 +1,11 @@
+//===- CapturedMap.cpp - Captured-Map method families -----------*- C++ -*-===//
+//
+// Implements analyzer::capturedMap, which proves that the methods sharing one
+// captured `new Map()` keep its contents to the types the native lowering
+// relies on.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Arguments.hpp"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -11,6 +19,13 @@
 
 namespace ctcompile::ctnative::host_detail {
 
+/// Proves that `call` invokes a method of a captured-Map family: closures
+/// created once in a single-invocation factory that all capture one plain
+/// `new Map()` (as an upvalue or, once prepared, as a leading parameter) and
+/// are each stored into one property of the same object literal. On success,
+/// returns the allocation, the family's closures and the per-method parameter
+/// and content facts the native lowering may rely on. Returns nullopt when any
+/// check fails or the analyzer's step budget runs out.
 std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closure,
                                                      ctjs::FuncOp function, mlir::Operation * call,
                                                      ctjs::GetPropertyOp read) {
@@ -31,7 +46,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     auto capture = closure.getUpvalues().front();
     result.cell = capture.getDefiningOp<ctjs::CreateCellOp>();
     const bool prepared = !result.cell;
-    // A prepared member takes its captured Map as a leading formal.
+    // A prepared member takes its captured Map as a leading formal, after the
+    // three implicit entry arguments.
     const unsigned formals = prepared ? 4u : 3u;
     auto & body = function.getBody().front();
     if (prepared) {
@@ -39,6 +55,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             direct.getArgs().size() != body.getNumArguments() - ctjs::implicit_arguments) {
             return {};
         }
+        // The call's first explicit argument (operand 3, after receiver,
+        // new.target and callee) is the prepared Map parameter.
         result.argument = direct.getArgs().front().getDefiningOp<ctjs::LoadUpvalueOp>();
         if (!result.argument || result.argument.getIndex() != 0 ||
             result.argument.getClosure() != read.getResult() || !before(read, result.argument) ||
@@ -55,9 +73,10 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         return {};
     }
 
-    // A normalized capture may leave the original dead cell bookkeeping in
-    // its factory. Recover that cell from the allocation uses and check it as
-    // strictly as the source binding; markers never authorize extra writes.
+    // After normalization the factory may still contain the original, now
+    // dead, cell. Recover it from the allocation's uses and check it as
+    // strictly as the source binding. The ctnative.* attributes never permit
+    // extra writes.
     mlir::Value resource = capture;
     llvm::DenseSet<mlir::Operation *> captures;
     const auto collectCapture = [&](mlir::OpOperand & use) {
@@ -87,6 +106,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         return {};
     }
     result.intrinsic = result.allocation.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+    // `Map` must still be the initial intrinsic: no script stores to it.
     if (!globals["Map"].empty() || !before(result.intrinsic, result.allocation)) { return {}; }
     if (prepared) {
         for (mlir::OpOperand & use : resource.getUses()) {
@@ -145,10 +165,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         return {};
     }
 
-    // A selected getter cannot close the Map contents by itself. Every
-    // closure that can reach the same immutable slot must have a checked body
-    // and exactly one fixed-field publication in this factory's same table.
-    // Walk source order so separate current calls derive identical families.
+    // One method alone cannot prove what the Map contains: every closure that
+    // captures the same Map must be checked too. Each must be stored exactly
+    // once, under a constant key, into the same object literal (the family's
+    // "table") in this factory. Walk in source order so separate calls derive
+    // the same family.
     ctjs::CreateObjectOp table;
     llvm::DenseSet<mlir::Operation *> familyFunctions;
     llvm::DenseSet<llvm::StringRef> fields;
@@ -202,8 +223,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     for (mlir::Operation * member : familyFunctions) {
         if (!step() || creations.lookup(member) != 1) { return {}; }
     }
-    // Discover all call identities before inspecting arguments or bodies.
-    // No propertyCall recursion may supply this family's own type authority.
+    // Find every call site of every family method before inspecting arguments
+    // or bodies, so no recursive propertyCall analysis can use this family's
+    // own unproved types as evidence.
     llvm::SmallVector<llvm::SmallVector<mlir::Operation *>> familyCalls(publications.size());
     for (ctjs::SetPropertyOp publication : publications) {
         auto member = callable(publication.getValue());
@@ -214,10 +236,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         result.parameters.push_back({member, {}});
     }
     if (!scalarCallbacks(result.parameters, result)) { return {}; }
-    // Once any sibling can store a local or caller-owned object, unknown Map
-    // reads cannot inherit the primitive-only contents guarantee. Inspect the
-    // complete family before proving even one invocation result. This only
-    // removes authority; the parameter/body proofs still check every use.
+    // If any method can store an object (made locally or passed by a caller)
+    // into a Map, reads of unknown entries are no longer guaranteed to be
+    // primitive. Scan the whole family before proving any call's result. This
+    // can only withdraw the guarantee; the parameter and body proofs still
+    // check every use.
     bool primitiveContents = true;
     for (unsigned index = 0; index < result.parameters.size(); ++index) {
         auto member = result.parameters[index].function;
@@ -252,10 +275,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         });
         if (census.wasInterrupted() || exhausted) { return {}; }
     }
-    // Positive child-kind authority is independent of invocation results. Only
-    // a complete census of outer writes can establish it; membership and the
-    // mere presence of a constructor cannot. The body proof below still checks
-    // every operation/use, including aliases and all structural continuations.
+    // Facts about the child Maps stored in the outer Map (childMapContents,
+    // key kinds, entry types) do not depend on any call's result. Only a scan
+    // of every `set` in every family method can establish them; neither family
+    // membership nor a constructor call alone is enough. The body proof below
+    // still checks every operation and use, including aliases.
     llvm::DenseSet<mlir::Operation *> familyInvocations;
     for (const auto & invocations : familyCalls) {
         for (mlir::Operation * invocation : invocations) {
@@ -274,9 +298,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     for (auto [index, parameters] : llvm::enumerate(result.parameters)) {
         auto member = parameters.function;
         auto & memberBody = member.getBody().front();
+        // The outer Map: the prepared parameter (argument 3), or the callee
+        // (argument 2) whose upvalue 0 holds it.
         const auto outer = memberBody.getArgument(prepared ? 3 : 2);
-        // An invariant may not use the result of the invocation it authorizes.
-        // All actual categories must close with no family results available.
+        // A fact must not depend on the result of a call it is used to prove,
+        // so argument types are derived here with no family results available.
         HostMethodParameters independent{member, {}};
         if ((childEntryProved || childScalarProved || childLeafProved || result.outerStringKeys ||
              result.childStringKeys) &&
@@ -303,6 +329,10 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                    independent.alternatives[position].tag() ==
                        mlir::TypeID::get<ctjs::StringAttr>();
         };
+        // Traces a value back to the Map it came from: the captured outer Map,
+        // a fresh `new Map()`, `map.set(...)` (which returns its receiver), or
+        // `outer.get(k)` (a child Map). The depth limit of 32 bounds `set`
+        // chains.
         const auto mapOrigin = [&](auto && self, mlir::Value value,
                                    unsigned depth = 0) -> mlir::Value {
             if (!value || depth > 32 || !step()) { return {}; }
@@ -325,15 +355,18 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             const auto receiver = self(self, invoke.getReceiver(), depth + 1);
             const auto action = ctjs::constantKey(read.getKey());
             if (action == "set" && invoke.getArgs().size() == 2) { return receiver; }
-            // This role may be used only as a child receiver, never as evidence
-            // that an outer payload is a fresh constructor. The completed write
-            // census and body-use proof together exclude a root stored in itself.
+            // A child Map found by `outer.get(k)` only counts as the receiver
+            // of a child write, never as proof that a value stored into the
+            // outer Map is a fresh `new Map()`. The scan of every write and the
+            // body proof together rule out the outer Map being stored in
+            // itself.
             if (action == "get" && invoke.getArgs().size() == 1 && receiver == outer) {
                 return value;
             }
             return {};
         };
         llvm::SmallVector<std::pair<ctjs::CallOp, mlir::Value>> publications, childWrites;
+        // Scan every set/delete/clear on a Map in this method.
         const auto census = member.getBody().walk([&](ctjs::CallOp invoke) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
             auto read = invoke.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
@@ -378,8 +411,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                     leaf |= llvm::is_contained(independent.objectKeys, argument);
                 }
                 childLeafProved &= leaf || alternatives.known;
-                // Category closure does not require initialization or a fixed key.
-                // Deletion and empty publication cannot introduce another category.
+                // The type of child values needs neither initialization nor a
+                // fixed key: deleting entries or publishing an empty child Map
+                // cannot add another type.
                 if (!alternatives.tag()) {
                     childScalarProved = false;
                 } else if (!childScalar.known) {
@@ -387,8 +421,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
                 } else if (!(childScalar == alternatives.categories())) {
                     childScalarProved = false;
                 }
-                // ponytail: one literal String key and one scalar category; generalize only
-                // with a per-key mutation proof when a real family needs more keys.
+                // ponytail: one literal String key and one scalar type; generalize
+                // only with a per-key mutation proof when a real family needs more
+                // keys.
                 if (!key || !llvm::isa<ctjs::StringAttr>(key.getValue()) || !alternatives.tag()) {
                     childEntryProved = false;
                 } else if (!childEntry.key) {
@@ -426,15 +461,16 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     }
     result.childLeafContents = result.childMapContents && childLeafProved && childPublished;
     result.childStringKeys &= result.childMapContents;
-    // Establish invocation results before joining the complete method census.
-    // Two calls to one method may have an acyclic result dependency even when
-    // a method-level worklist would wait for its own unpublished result. Each
-    // edge must independently pass the entire body/effect proof, starting with
-    // unknown Map contents and generalized input categories. Only a completed
-    // invocation supplies result evidence; cycles cannot authorize themselves.
+    // Prove call results one call at a time, before the whole-method check
+    // below. Two calls to one method may depend on each other's results
+    // without a cycle, which a per-method worklist would wrongly treat as the
+    // method waiting on itself. Each call must pass the full body proof on its
+    // own, starting from unknown Map contents. Only a call proved this way
+    // contributes its result type, so a cycle can never prove itself.
     llvm::DenseMap<mlir::Value, PrimitiveAlternatives> completedResults;
     llvm::DenseSet<mlir::Operation *> completed;
-    // Provisional reads/calls never escape into the family plan.
+    // A scratch copy of the family facts, so reads and calls recorded while
+    // proving one call never reach `result`.
     const auto provisional = [&] {
         HostCapturedMap scratch;
         scratch.childMapContents = result.childMapContents;
@@ -474,11 +510,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         if (!progress || exhausted) { return {}; }
     }
-    // Invocation evidence does not authorize a published method or its sibling
-    // family. Recheck every body with ALL actual categories, including later
-    // calls and uncalled zero-argument siblings. Only this final census records
-    // the owning plan. No result is evaluated or substituted, and every getter
-    // and mutation remains in runtime order.
+    // Proving individual calls does not prove the methods themselves. Recheck
+    // every body with the argument types of all its calls, including later
+    // calls and zero-argument methods nobody calls. Only this final pass
+    // records into `result`. No result is evaluated or substituted, and every
+    // getter and mutation stays in run-time order.
     for (unsigned index = 0; index < result.parameters.size(); ++index) {
         if (!step()) { return {}; }
         auto & parameters = result.parameters[index];
@@ -490,12 +526,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             return {};
         }
     }
-    // A strict identity guard can give one returned SSA value the caller's
-    // initialized own fields on that arm. The payload schema and return carrier
-    // alone supply neither identity nor presence; every family effect and caller
-    // leaf write above must have closed before this read is published.
-    // Whether a caller-leaf write to `made` initializes `read`'s field first, one
-    // step per write examined; nullopt when the budget runs out.
+    // Whether a caller write to `made` initializes `read`'s field before the
+    // read. Costs one step per write; nullopt when the budget runs out.
     const auto initializedRead = [&](ctjs::CreateObjectOp made,
                                      ctjs::GetPropertyOp read) -> std::optional<bool> {
         for (ctjs::SetPropertyOp write : result.leafWrites) {
@@ -508,6 +540,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
         return false;
     };
+    // Whether `read` reads a field of a family call's result inside an arm
+    // guarded by `result === obj`, where `obj` is an entry object whose field
+    // the caller initialized before the read. On that arm the result is `obj`,
+    // so the field is present. The returned value's type alone proves neither
+    // identity nor presence.
     const auto guardedLeafRead = [&](ctjs::GetPropertyOp read) {
         const auto receiver = read.getObject();
         if (!familyInvocations.contains(receiver.getDefiningOp()) ||
@@ -522,6 +559,7 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             if (!branch) { return false; }
             bool positive = child->getParentRegion() == &branch.getThenRegion();
             mlir::Value condition = branch.getCondition();
+            // Strip up to 16 truthiness conversions and `!` negations.
             for (unsigned depth = 0; depth < 16; ++depth) {
                 if (!step() || !dominance.dominates(condition, branch)) { return false; }
                 if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
@@ -578,7 +616,8 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
     if (unguarded.empty()) {
         const auto stores = entry.getBody().walk([&](ctjs::StoreGlobalOp store) {
             if (!step()) { return mlir::WalkResult::interrupt(); }
-            // An already scalar generalized result needs no entry refinement.
+            // A result already proved scalar needs no refinement from
+            // entry-function order.
             scalarStore |= familyInvocations.contains(store.getValue().getDefiningOp()) &&
                            !completedResults.lookup(store.getValue()).tag();
             return mlir::WalkResult::advance();
@@ -586,9 +625,11 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         if (stores.wasInterrupted()) { return {}; }
     }
     if (!unguarded.empty() || scalarStore) {
-        // Complete reusable effects above remain independent of these optional
-        // entry-order facts. Never carry mutable state through the category DAG:
-        // its iteration order groups calls by method, not by execution order.
+        // The proofs above do not depend on these optional facts about
+        // entry-function order. Do not reuse the per-method results
+        // (completedResults) for mutable state: they group calls by method,
+        // not by execution order, so this replays the entry block in source
+        // order instead.
         llvm::SmallVector<mlir::Value> inputs;
         llvm::SmallVector<unsigned> partition;
         for (mlir::BlockArgument argument : entry.getBody().front().getArguments()) {
@@ -602,11 +643,13 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         std::vector<HostReturnedScalar> scalars;
         bool complete = true;
         bool firstPartition = true;
-        // Every equality partition of the stable inputs denotes possible callers.
-        // Intersect exact identities and join scalar alternatives across all of
-        // them. No partition's branch choice narrows the reusable method body.
-        // ponytail: Bell-number replay uses the shared work budget; symbolic
-        // joins can replace enumeration if measured input counts outgrow it.
+        // Any partition of the element inputs into equal groups is possible.
+        // Replay the entry once per partition, keep a returned object only if
+        // every replay returns the same one, and join the scalar types. No
+        // single partition's branch choice narrows the shared method body.
+        // ponytail: the replay count is the Bell number of the input count,
+        // paid from the shared work budget; replace the enumeration with
+        // symbolic joins if real input counts outgrow it.
         while (true) {
             if (!step()) { return {}; }
             CapturedMapInvocation invocation;
@@ -677,8 +720,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
             complete &= visited == familyInvocations.size();
             if (!complete) { break; }
             firstPartition = false;
-            // Restricted-growth strings enumerate canonical partitions without
-            // recursion or retaining every case. The first class stays zero.
+            // Advance to the next partition as a restricted-growth string, with
+            // no recursion and without keeping earlier partitions. The first
+            // element's group stays zero.
             bool next = false;
             for (std::size_t end = partition.size(); end > 1; --end) {
                 if (!step()) { return {}; }
@@ -729,9 +773,9 @@ std::optional<HostCapturedMap> analyzer::capturedMap(ctjs::CreateClosureOp closu
         }
     }
     if (exhausted || !capturedMapOuterKeys(prepared, familyCalls, result)) { return {}; }
-    // Only the completed whole-family proof supplies entry expression facts.
-    // The invocation worklist above uses its own map, so provisional or cyclic
-    // dependencies cannot borrow these published facts to prove themselves.
+    // Publish call result types only now that the whole family is proved.
+    // The per-call worklist above used its own map, so provisional or cyclic
+    // dependencies could not use these facts to prove themselves.
     for (const auto & [value, alternatives] : completedResults) {
         if (!step()) { return {}; }
         capturedResults[value] = alternatives.categories();

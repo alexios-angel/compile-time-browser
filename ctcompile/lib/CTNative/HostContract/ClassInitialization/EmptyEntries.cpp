@@ -1,3 +1,11 @@
+//===- EmptyEntries.cpp - Empty entry evaluation ----------------*- C++ -*-===//
+//
+// Part of the class-initialization proof: folds methods that loop over
+// Object.entries() of a fresh empty object. Such a for-of never runs, so a
+// method whose only path returns one constant is replaced by that constant.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../PartialEvaluation/Heap.h"
 #include "Proof.hpp"
 
@@ -10,7 +18,8 @@ constexpr llvm::StringLiteral freshObject =
 constexpr llvm::StringLiteral closedPath =
     "class Object.entries requires a proved method with a closed effect-free path";
 
-// Every evaluation of `getter` allocates a new object and returns it untouched.
+/// True if every evaluation of `getter` allocates a new object and returns it
+/// untouched.
 bool freshEmptyGetter(ctjs::FuncOp getter) {
     if (!getter || !getter.getBody().hasOneBlock()) { return false; }
     ctjs::CreateObjectOp made;
@@ -27,10 +36,11 @@ bool freshEmptyGetter(ctjs::FuncOp getter) {
     return false;
 }
 
-// The most arguments any invocation passes `fn`, or nullopt when an invocation
-// is not an ordinary call of a key `fn` is installed under. The complete class
-// census runs after the fold and refuses every dynamic key that survives it; a
-// folded body's own dynamic keys were on paths that never run.
+/// Returns the most arguments any invocation passes `fn`, or nullopt when an
+/// invocation is not an ordinary call through a key `fn` is installed under.
+/// Dynamic keys are not handled here: the check of every class operation runs
+/// after the fold and refuses any dynamic key that survives it, and a folded
+/// body's own dynamic keys were on paths that never run.
 std::optional<size_t> passedArguments(classInitialization & proof, ctjs::FuncOp fn) {
     llvm::StringSet<> keys;
     const auto installed = proof.module.walk([&](ctjs::CreateClosureOp closure) {
@@ -80,15 +90,19 @@ std::optional<size_t> passedArguments(classInitialization & proof, ctjs::FuncOp 
     return most;
 }
 
-// Run `fn` on the only path its invocations can take. Formals no call passes
-// are undefined; receiver reads are the proved constructor/getter records.
-// Returns the constant it always returns, or refuses.
-// ponytail: control-flow bodies (the exception-carrying for-of) only; a lifted
-// scf body needs clearOwnFieldLoop's region evaluator.
+/// Runs `fn` on the only path its invocations can take and returns the
+/// constant it always returns, or refuses (nullopt). Formals that no call
+/// passes are undefined; receiver reads resolve to the proved constructor and
+/// getter records.
+// ponytail: only cf-dialect bodies (a for-of that can throw keeps its
+// branches); an scf body would need clearOwnFieldLoop's region evaluator.
 std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncOp fn,
                                         const HostContract & contract) {
     using partial_eval::value;
     auto * context = proof.module.getContext();
+    // Abstract heap references: fixed tokens for the globals this evaluator
+    // understands, then one fresh number per allocated object or entries
+    // array. A reference with node 0 is an unknown object and fails the proof.
     enum : unsigned {
         objectToken = 1,
         entriesToken,
@@ -127,8 +141,9 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
     const auto absent = [&](value input) {
         return input.tag == value::kind::constant && input.constant == undefined.constant;
     };
-    // An unproved operation that sees the fresh object or its entries could
-    // add, keep or observe a property; anything else leaves the path open.
+    // Refuses at `op`. If `op` sees the fresh object or its entries array, it
+    // could add, keep or observe a property (freshObject); otherwise the path
+    // simply could not be decided (closedPath).
     const auto fail = [&](mlir::Operation & op) -> std::optional<mlir::Attribute> {
         const bool touched = llvm::any_of(op.getOperands(), [&](mlir::Value operand) {
             return in(get(operand), fresh) || in(get(operand), arrays);
@@ -141,7 +156,8 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
                                                "__ctbrowser_iter_next", "__ctbrowser_iter_close"},
         [&](llvm::StringRef name) { return llvm::is_contained(contract.initialIntrinsics, name); });
     mlir::Operation * op = &entry.front();
-    // ponytail: a fixed bound on the executed path; loops over entries never run.
+    // ponytail: at most 4096 executed operations. Loops over the empty entries
+    // never run, so a real path is short; a longer one refuses.
     for (unsigned executed = 0; executed != 4096; ++executed) {
         if (!proof.step()) { return std::nullopt; }
         mlir::Operation * following = op->getNextNode();
@@ -271,12 +287,16 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
     return std::nullopt;
 }
 
+/// Replaces the body of method `fn` with `return <constant>` when evaluate()
+/// proves it always returns that constant, and drops the records other proofs
+/// kept for the erased operations.
 bool foldMethod(classInitialization & proof, ctjs::FuncOp fn, const HostContract & contract) {
     if (!proof.methods.contains(fn) || fn.getBody().empty()) { return proof.refuse(closedPath); }
     const auto answer = evaluate(proof, fn, contract);
     if (!answer) { return false; }
-    // The body goes. Operations other proofs still hold, or that carry
-    // captures and publications of their own, keep it instead.
+    // The whole body is erased, unless it holds an operation another proof
+    // still records, or one that creates closures, cells, globals or accessors;
+    // then the method refuses.
     llvm::DenseSet<mlir::Operation *> erased;
     bool held = false;
     const auto scanned = fn.getBody().walk([&](mlir::Operation * op) {
@@ -331,10 +351,11 @@ bool foldMethod(classInitialization & proof, ctjs::FuncOp fn, const HostContract
 
 bool classInitialization::foldEmptyEntries(const HostContract & contract) {
     // Object.entries of a fresh empty object is empty, so a for-of over it
-    // never runs. Fold each method that evaluates to one constant that way,
-    // after every class has recorded its getter and constructor reads.
-    // ponytail: whole methods; effects around the empty loop need a segment
-    // fold that keeps them.
+    // never runs. Fold each method that reads Object.entries to the constant it
+    // returns. This runs after every class has recorded its getter and
+    // constructor reads.
+    // ponytail: folds whole methods only; keeping effects around the empty
+    // loop would need a fold of just the loop segment.
     if (!llvm::is_contained(contract.initialIntrinsics, "Object")) { return true; }
     llvm::SetVector<mlir::Operation *> scopes;
     if (!walkSteps(module, [&](ctjs::GetPropertyOp read) {

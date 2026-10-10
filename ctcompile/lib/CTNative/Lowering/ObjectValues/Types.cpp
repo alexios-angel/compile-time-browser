@@ -1,7 +1,18 @@
+//===- Types.cpp - Object-value type predicates ---------------------------===//
+//
+// Lattice-type predicates for values that may hold an object identity: which
+// types lower to the object_value carrier (an identity mixed with scalars),
+// and which are an identity or only null/undefined.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../LoweringSupport.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
+/// Whether every alternative of `type` is an object identity, a number, a
+/// Boolean or absent (null/undefined). Sets `object` when one of them is an
+/// identity.
 bool alternatives(mlir::Type type, bool & object) {
     if (!type) { return false; }
     if (llvm::isa<ObjectIdentityType>(type)) {
@@ -20,6 +31,8 @@ bool alternatives(mlir::Type type, bool & object) {
 }
 } // namespace
 
+/// Whether `type` mixes an object identity with only scalars and absence,
+/// which is what the object_value carrier holds.
 bool isObjectValueType(mlir::Type type) {
     bool object = false;
     return alternatives(type, object) && object;

@@ -1,3 +1,11 @@
+//===- Instructions.cpp - Per-opcode import -------------------------------===//
+//
+// importInstruction: translates one ctbrowser bytecode instruction into ctjs
+// operations, or gives up on the function when it cannot do so exactly.
+// Operand fields are the VM's: `a` is usually the destination register and
+// `b`/`c` the sources, with per-opcode exceptions noted at each case.
+//
+//===----------------------------------------------------------------------===//
 #include "OperatorTables.h"
 
 #include "llvm/ADT/Sequence.h"
@@ -15,7 +23,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         return slot < state.registers.size() ? state.registers[slot] : mlir::Value{};
     };
     const auto set = [&](std::uint16_t slot, mlir::Value v) { state.write(slot, v); };
-    // THE `in.b` ARGUMENTS ARE THE REGISTERS ABOVE THE CALLEE, which is the
+    // The `in.b` arguments are the registers above the callee, the
     // interpreter's own layout: `arg_base = base + in.a + 1`. The callee's
     // frame starts where its arguments already are, which is why the bytecode
     // puts them there. False after giving up on one outside the frame.
@@ -31,7 +39,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         return true;
     };
 
-    // THE OPERATOR TABLES FIRST: each row is one CTJS operation over b and c.
+    // The operator tables first: each row is one ctjs operation over b and c.
     for (const binary_row & row : binary_rows) {
         if (row.code != in.code) { continue; }
         const auto kind = ctjs::BinaryKindAttr::get(context, row.kind);
@@ -94,9 +102,9 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         } else if (k.is_null()) {
             set(in.a, state.constant(where, ctjs::NullAttr::get(context)));
         } else {
-            // A CONSTANT POOL ENTRY THIS CUT CANNOT NAME. Abandoning is
-            // the whole point: guessing would produce a function that
-            // runs and computes something else.
+            // A constant-pool entry kind the importer does not support. Give
+            // up rather than guess: a guess would produce a function that
+            // runs and computes the wrong thing.
             state.give_up(at, in.code,
                           "constant is not a number, boolean, null or "
                           "undefined");
@@ -107,75 +115,55 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::load_this: set(in.a, entry->getArgument(arg_receiver)); break;
     case op::load_new_target: set(in.a, entry->getArgument(arg_new_target)); break;
     case op::load_callee: set(in.a, entry->getArgument(arg_callee)); break;
-    // NOT arg_callee AND THEN A LOOKUP. The callee is a block argument
-    // because the ABI hands it to the entry; __home is a property ON
-    // that closure, and reading it is the helper's job rather than two
-    // operations here - the row's flags are all zero precisely because
-    // closure_object::find touches no accessors.
+    // One operation, not arg_callee and then a lookup. The callee is a block
+    // argument because the ABI hands it to the entry; __home is a property on
+    // that closure, and reading it is the helper's job. The helper's ABI entry
+    // has no throw, re-entry or safepoint flag because closure_object::find
+    // touches no accessors.
     case op::load_home: set(in.a, ctjs::LoadHomeOp::create(into, where, value_type)); break;
     case op::pass_new_target: ctjs::PassNewTargetOp::create(into, where); break;
     case op::get_proto:
         set(in.a, ctjs::GetProtoOp::create(into, where, value_type, reg(in.b)));
         break;
     case op::set_proto:
-        // a IS THE TARGET, b THE NEW LINK, and nothing is written back.
+        // `a` is the target, `b` the new prototype, and nothing is written
+        // back.
         ctjs::SetProtoOp::create(into, where, reg(in.a), reg(in.b));
         break;
     case op::closure: {
-        // THE OPCODE THAT MADE EVERY DECLARING FUNCTION UNIMPORTABLE.
-        // ctjs.create_closure's first operand was a !ctjs.program that
-        // nothing produced, so this case did not exist and any function
-        // declaring another was skipped whole - which is every top
-        // level in a real file.
+        // Creates a closure for nested function `bx` of this program.
         if (in.bx() >= state.prog.functions.size()) {
             state.give_up(at, in.code, "closure function index out of range");
             break;
         }
         const function_proto & target = state.prog.functions[in.bx()];
-        // IN PARALLEL WITH THE DESCRIPTORS, NOT PACKED. Only the
-        // entries the compiler marked from_parent_local are read by the
-        // helper; the rest it fills from the enclosing closure, and
-        // undefined here is a placeholder that is never looked at. A
-        // packed list would silently capture the wrong bindings.
+        // Capture operands run in parallel with the target's upvalue
+        // descriptors, not packed. The helper reads only the entries the
+        // compiler marked from_parent_local; it fills the rest from the
+        // enclosing closure, and undefined here is a placeholder that is never
+        // read. A packed list would silently capture the wrong bindings.
         //
-        // AND WHICH UPVALUE FILLS SUCH A SLOT GOES ON THE ATTRIBUTE
-        // BESIDE THE LIST, `enclosing_indices`: the descriptor's
-        // `up.index` where the placeholder stands, -1 where the operand
-        // is the cell. The VM copies `enclosing->upvalues[up.index]` -
-        // the CELL - into the slot (context::make_closure,
-        // vm/call/coroutines.cpp), and every read of the slot goes through
-        // op::get_upvalue, which yields `cell->slot`, the VALUE
-        // (run_loop.cpp). ct_aot_make_closure reads neither the
-        // placeholder nor the attribute, because it walks the same
-        // descriptors and fills the slot itself. What reads the
-        // attribute is the native tier's closure lift: once THIS
-        // function is lifted, its upvalue `up.index` IS its capture
-        // parameter, holding the initial of a cell an outer frame
-        // proved constant, and the nested closure captures that same
-        // constant - Phase 59 slice 1b.
+        // The `enclosing_indices` attribute records which upvalue of the
+        // enclosing closure fills each placeholder slot: the descriptor's
+        // `up.index`, or -1 where the operand itself is the cell. The VM
+        // copies that cell into the slot (context::make_closure in
+        // ctbrowser/lib/Script/vm/call/coroutines.cpp), and op::get_upvalue
+        // reads the cell's value. ct_aot_make_closure ignores both placeholder
+        // and attribute because it walks the same descriptors. Native closure
+        // lifting reads the attribute: once this function is lifted, upvalue
+        // `up.index` is one of its capture parameters, holding a cell value
+        // an outer frame proved constant, and the nested closure captures that
+        // same constant.
         //
-        // AN ATTRIBUTE RATHER THAN AN OPERAND, and the difference is
-        // what the boxed tier is charged. Writing the index as a live
-        // `ctjs.load_upvalue` of this frame's own closure said the same
-        // thing, but CTJSToEmitC parks EVERY capture operand into
-        // ct_aot_make_closure's argument window - so each one became a
-        // runtime upvalue read, parked, and then ignored. Measured on
-        // bootstrap: 219 of the 1,021 capture operands, 12,371 more
-        // bytes of emitted C++, and no gain anywhere, the native tier
-        // included.
+        // An attribute, not a live ctjs.load_upvalue operand: CTJSToEmitC
+        // passes every capture operand to ct_aot_make_closure, so an operand
+        // would cost a runtime upvalue read that is then ignored (on the
+        // Bootstrap workload, about a fifth of all capture operands; recount
+        // with tools/check/capture-census.py).
         //
-        // AND BOTH FIGURES HAVE A COMMAND. tools/check/capture-census.py
-        // is the census of the operands - point it at the module this
-        // function writes - and the bytes are the boxed pipeline
-        // (compile-js-to-cpp.cmake) over bootstrap at 0bf7501,
-        // 10,988,521, against 69ea710 and this encoding, both
-        // 10,976,150. A number in a comment nobody can re-run is a
-        // number that quietly stops being true.
-        //
-        // OUT OF RANGE IS -1 AND THE PLACEHOLDER STANDS ALONE, exactly
-        // as the VM has it (`up.index < enclosing->upvalues.size()`,
-        // else undefined): the enclosing frame holds no such cell, so
-        // there is no index to name and nothing for the lift to carry.
+        // An out-of-range index becomes -1 with the placeholder alone, as in
+        // the VM (`up.index < enclosing->upvalues.size()`, else undefined):
+        // the enclosing frame holds no such cell, so there is nothing to name.
         llvm::SmallVector<mlir::Value> captured;
         llvm::SmallVector<std::int32_t> from_enclosing;
         captured.reserve(target.upvalues.size());
@@ -199,33 +187,25 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
             from_enclosing.push_back(-1);
         }
         if (!reachable) { break; }
-        // `this` ONLY WHEN THE TARGET IS AN ARROW, and that is a
-        // correction with a measured cost. The VM reads
-        // $enclosing_this at exactly one line - make_closure in
-        // vm/call/coroutines.cpp,
-        // `if (target.is_arrow) { made->captured_this = ... }` - so
-        // for every ordinary function this operand was DEAD, and a
-        // dead operand is still a USE. The receiver arrives as %arg0,
-        // and admission::function refuses any function that reads it:
-        // so `function outer() { function inner() {} }` was refused
-        // for "uses `this`" when nothing in it mentions `this` at all.
-        // Measured over bootstrap, p5 and phaser, that artefact is
-        // 1,866 of the 8,600 `uses \`this\`` refusals.
+        // Pass the receiver only when the target is an arrow function. The VM
+        // reads the enclosing `this` only for arrows (make_closure in
+        // vm/call/coroutines.cpp: `if (target.is_arrow) { made->captured_this
+        // = ... }`). Passing it for ordinary functions would be a use of
+        // %arg0, which makes admission refuse the enclosing function for
+        // "uses `this`" even when its source never mentions `this`.
         //
-        // AND THE UNDEFINED IS A MARKER, not only a smaller graph:
-        // it is now the ONLY place the IR says whether a target is an
-        // arrow, which is what lets the native tier lift an ordinary
-        // closure and refuse an arrow that reads its lexical `this`
-        // (LowerToEmitC.cpp, the Phase 59 lift).
+        // The undefined operand is also the only place the IR records whether
+        // the target is an arrow; native closure lifting
+        // (CTNative/Lowering/ClosureLifting/) relies on it to refuse arrows
+        // that read their lexical `this`.
         set(in.a, ctjs::CreateClosureOp::create(
                       into, where, value_type, entry->getArgument(arg_callee),
                       target.is_arrow ? entry->getArgument(arg_receiver) : state.undefined(where),
                       into.getI32IntegerAttr(static_cast<std::int32_t>(in.bx())), captured,
-                      // ABSENT WHEN NO SLOT IS FILLED FROM THE ENCLOSING
-                      // CLOSURE, which is most closures: an all -1 list says
-                      // nothing the missing attribute does not, and printing
-                      // one on every create_closure in a bundle is noise a
-                      // reader has to check.
+                      // Absent when no slot is filled from the enclosing
+                      // closure, which is most closures: an all -1 list says
+                      // nothing the missing attribute does not, and would be
+                      // noise on every create_closure in a bundle.
                       any_from_enclosing ? into.getDenseI32ArrayAttr(from_enclosing)
                                          : mlir::DenseI32ArrayAttr{}));
         break;
@@ -259,19 +239,18 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         set(in.a, ctjs::GetPropertyOp::create(into, where, value_type, reg(in.b), reg(in.c)));
         break;
     case op::has_property:
-        // b IS THE KEY AND c IS THE TARGET, which is the reverse of
-        // both the operation's operand order and the reading order of
-        // `key in obj`. Swapping them answers about the wrong object.
+        // `b` is the key and `c` the target, the reverse of the operation's
+        // operand order. Swapping them answers about the wrong object.
         set(in.a, ctjs::HasPropertyOp::create(into, where, value_type, reg(in.c), reg(in.b)));
         break;
     case op::instance_of:
-        // BOXED HERE, because ctjs.instanceof answers an i1 on purpose.
+        // Boxed here, because ctjs.instanceof deliberately returns an i1.
         set(in.a, ctjs::FromBoolOp::create(into, where, value_type,
                                            ctjs::InstanceOfOp::create(into, where, into.getI1Type(),
                                                                       reg(in.b), reg(in.c))));
         break;
     case op::delete_index:
-        // a IS THE TARGET HERE, not the destination - delete_index
+        // `a` is the target here, not the destination: delete_index
         // produces nothing and writes no register.
         ctjs::DeletePropertyOp::create(into, where, reg(in.a), reg(in.b));
         break;
@@ -279,27 +258,14 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         const auto targets = state.branch_targets(at, in, "handler target is not a block leader");
         if (!targets) { break; }
         const auto [pad, body] = *targets;
-        // AND THE PAD MUST BE REACHABLE ONLY BY THROWING.
-        //
-        // ct_aot_catch_land reads back what the unwinder wrote and then
-        // CLEARS the pad marker; its row says it is "called exactly
-        // once, only after CT_AOT_CAUGHT". Reached on a normal path it
-        // clears a bit nothing set and binds a thrown value that was
-        // never thrown.
-        //
-        // `try { f(); } catch (e) {}` IS THAT SHAPE. With an empty catch
-        // the compiler emits no jump over it, so the try body falls
-        // straight into the pad. A non-empty catch is preceded by that
-        // jump, which is why this tests the instruction before the pad
-        // rather than the catch clause itself.
-        //
-        // TWO WAYS IN, AND BOTH HAVE TO BE CLOSED. The pad can be fallen
-        // into from the instruction above it, and it can be JUMPED to -
-        // which is not exotic: jumping over an EMPTY catch clause lands
-        // exactly on the pad, because the clause it is skipping has no
-        // instructions. `try { f(); } catch (e) {}` is that shape, and a
-        // test that only looked at the instruction above it let that
-        // through.
+        // The catch pad must be reachable only by throwing. ct_aot_catch_land
+        // reads what the unwinder wrote and then clears the pad marker (its
+        // ABI entry says "called exactly once, only after CT_AOT_CAUGHT");
+        // reached on a normal path it would bind a value that was never
+        // thrown. A pad can be reached normally by falling through from the
+        // instruction above it or by a jump that skips an empty catch clause
+        // (`try { f(); } catch (e) {}`), so give up if any instruction in the
+        // function has the pad as a successor.
         const std::int64_t landing = jump_target(at, in);
         const bool reachable_without_throwing =
             llvm::any_of(llvm::seq<std::size_t>(0, proto.code.size()), [&](std::size_t other) {
@@ -311,24 +277,23 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
                           "run ct_aot_catch_land on a normal path");
             break;
         }
-        // A TERMINATOR WITH TWO SUCCESSORS, and the handler edge here
-        // exists only to keep the pad reachable - the edge the emitted
-        // code takes is ctjs.check's, at the throw site, because that
-        // is the only place the live register vector exists.
+        // A terminator with two successors. The handler edge exists only to
+        // keep the pad reachable; the edge the emitted code takes is
+        // ctjs.check's, at the throw site, because only there does the live
+        // register vector exist.
         ctjs::PushHandlerOp::create(into, where, state.outgoing(), state.outgoing(), body, pad);
         state.handlers.push_back(function_importer::open_handler{pad, in.a});
-        // AND THE WALK MOVES ON BY ITSELF. push_handler ends a block, so
-        // `body` is a leader and the next iteration's enter_block enters
-        // it and rebinds the registers - doing it here too made
-        // enter_block see `previous == body` and emit a branch from the
-        // block to ITSELF, which is a cf.br that does not terminate its
-        // parent and the only symptom is "the imported function did not
-        // verify".
+        // Do not enter `body` here. push_handler ends a block, so `body` is a
+        // leader and the next iteration's enter_block enters it and rebinds
+        // the registers. Entering it here too would make enter_block see
+        // `previous == body` and emit a self-branch, which fails
+        // verification.
         break;
     }
     case op::pop_handler:
-        // NOTHING OPEN MEANS UNREACHED: import_program's handler dataflow
-        // refused every reachable pop with no open handler. The usual one is
+        // An empty handler stack means this pop is unreachable:
+        // import_program's handler dataflow refused every reachable pop with
+        // no open handler. The usual one is
         // the normal-path pop after a try body that always returns through a
         // finally, whose return popped the handler first.
         ctjs::PopHandlerOp::create(into, where);
@@ -338,11 +303,10 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         set(in.a, ctjs::MakeArgumentsOp::create(into, where, value_type));
         break;
     case op::gather_rest:
-        // b IS A COUNT - how many parameters were declared before the
-        // rest one - not a register. The emitter spells it
-        // `{gather_rest, i, i}` with both fields equal, which makes a
-        // mutation from b to a invisible; that is recorded in
-        // docs/plans/arguments-and-rest.md rather than papered over.
+        // `b` is a count (how many parameters were declared before the rest
+        // one), not a register. The emitter spells it `{gather_rest, i, i}`
+        // with both fields equal, which makes a mutation from b to a
+        // invisible to tests; see ctcompile/docs/plans/arguments-and-rest.md.
         set(in.a,
             ctjs::GatherRestOp::create(into, where, value_type, static_cast<std::uint32_t>(in.b)));
         break;
@@ -358,25 +322,25 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         break;
     // ---- ES modules ---------------------------------------------
     //
-    // THREE OF THESE FOUR ONLY EXIST IN functions[0] OF A MODULE
-    // PROGRAM. compile_program emits load_import, bind_export and
+    // Three of these four exist only in functions[0] of a module program.
+    // compile_program emits load_import, bind_export and
     // load_namespace from its `if (module_scope_)` arm and from
     // nowhere else, so a classic script cannot contain one and a
     // fixture that means to reach them has to be compiled with
     // script_kind::module. dyn_import is the exception: `import(x)` is
     // an expression and appears in ordinary functions.
     case op::load_import:
-        // b IS THE EXPORT NAME AND c IS THE SPECIFIER, which is the
-        // reverse of the reading order and makes this the only opcode
-        // that reads c as a standalone index. bytecode.hpp says the
+        // `b` is the export name and `c` the specifier, the reverse of the
+        // reading order; this is the only opcode that reads c as a
+        // standalone index. bytecode.hpp says the
         // same thing from the other side: "a = the cell exported as
         // names[b] by the module at specifier names[c]". Filling the
         // operation in reading order compiles and raises `module
         // `count` was not loaded` at run time.
         //
-        // WHAT LANDS HERE IS A CELL, and it must NOT be boxed again -
-        // the compiler marked this local boxed and deliberately emitted
-        // no new_cell, so every later read is already a ctjs.cell_get.
+        // The result is a cell and must not be boxed again: the compiler
+        // marked this local boxed and emitted no new_cell, so every later
+        // read is already a ctjs.cell_get.
         if (const std::string *exported = state.name_at(at, in.code, in.b),
             *specifier = state.name_at(at, in.code, in.c);
             exported != nullptr && specifier != nullptr) {
@@ -386,12 +350,11 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         }
         break;
     case op::bind_export:
-        // bx(), NOT b. b is the HIGH half of the pair, so it is 0 for
-        // every module with fewer than 65,536 names - which is all of
-        // them - and a decoder that reads b alone publishes name 0
-        // under this name, silently.
+        // bx(), not b. b is the high half of the pair, so it is 0 for every
+        // module with fewer than 65,536 names, and a decoder that reads b
+        // alone would silently publish name 0 under this name.
         //
-        // reg(in.a) IS A SOURCE AS WELL AS THE DESTINATION. The write
+        // reg(in.a) is a source as well as the destination. The write
         // is conditional on a module being evaluated, and outside one
         // the register keeps the local being exported - so the
         // operation carries that value and answers it back rather than
@@ -402,21 +365,21 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         }
         break;
     case op::load_namespace:
-        // A PLAIN 16-BIT b HERE, where bind_export uses the bx pair:
-        // three module opcodes, two encodings for one name table.
+        // A plain 16-bit b here, where bind_export uses the bx pair: three
+        // module opcodes, two encodings for one name table.
         if (const std::string * name = state.name_at(at, in.code, in.b)) {
             set(in.a, ctjs::ModuleNamespaceOp::create(into, where, value_type,
                                                       into.getStringAttr(*name)));
         }
         break;
     case op::dyn_import:
-        // b IS A REGISTER, not a name index - the specifier is computed,
-        // which is the whole difference between this and load_namespace.
+        // `b` is a register, not a name index: the specifier is computed,
+        // which is the whole difference from load_namespace.
         set(in.a, ctjs::DynamicImportOp::create(into, where, value_type, reg(in.b)));
         break;
     case op::delete_prop:
-        // a IS THE TARGET, b NAMES THE PROPERTY, and nothing is
-        // written back - the delete produces no value.
+        // `a` is the target, `b` names the property, and nothing is written
+        // back: the delete produces no value.
         if (const std::string * name = state.name_at(at, in.code, in.b)) {
             ctjs::DeleteNamedOp::create(into, where, reg(in.a), into.getStringAttr(*name));
         }
@@ -424,19 +387,17 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::own_keys:
         set(in.a, ctjs::OwnKeysOp::create(into, where, value_type, reg(in.b)));
         break;
-    // AN ASYNC FUNCTION'S `return`, AND `a` IS BOTH SOURCE AND
-    // DESTINATION. The compiler emits `{op::wrap_promise, r}` over the
-    // register the return value is already in - b and c are unused, and
-    // the opcode row says so - so reading a and writing a is the whole
-    // encoding rather than a coincidence to be careful about.
+    // An async function's `return`; `a` is both source and destination. The
+    // compiler emits `{op::wrap_promise, r}` over the register the return
+    // value is already in, and b and c are unused.
     case op::wrap_promise:
         set(in.a, ctjs::WrapPromiseOp::create(into, where, value_type, reg(in.a)));
         break;
     case op::define_getter:
     case op::define_setter: {
-        // a IS THE TARGET, b NAMES THE PROPERTY and c IS THE FUNCTION -
-        // which half it is comes from the OPCODE and from nowhere else,
-        // so it is resolved here and the operation carries both.
+        // `a` is the target, `b` names the property and `c` is the function.
+        // Only the opcode says whether it is the getter or the setter, so
+        // that is resolved here and the operation carries both slots.
         const std::string * name = state.name_at(at, in.code, in.b);
         if (name == nullptr) { break; }
         const bool getter = in.code == op::define_getter;
@@ -446,14 +407,13 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         break;
     }
     case op::copy_props:
-        // a IS THE TARGET and is NOT written back - the object is
-        // mutated in place, so this produces no value.
+        // `a` is the target and is not written back: the object is mutated
+        // in place, so this produces no value.
         ctjs::CopyPropsOp::create(into, where, reg(in.a), reg(in.b));
         break;
     case op::apply:
-        // a IS BOTH THE CALLEE AND THE DESTINATION, b the argument
-        // array, c the receiver - and the destination being an operand
-        // is why this reads all three before writing.
+        // `a` is both the callee and the destination, `b` the argument array
+        // and `c` the receiver, so all three are read before writing.
         set(in.a,
             ctjs::CallSpreadOp::create(into, where, value_type, reg(in.a), reg(in.b), reg(in.c)));
         break;
@@ -461,23 +421,24 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         set(in.a, ctjs::ConstructSpreadOp::create(into, where, value_type, reg(in.a), reg(in.b)));
         break;
     case op::iterable:
-        // b IN, a OUT, and the row warns that both emitters spell it
-        // `{iterable, source, source}` with a and b ALIASED - which
-        // reading b and writing a handles without needing to know.
+        // `b` in, `a` out. Both bytecode emitters spell it
+        // `{iterable, source, source}` with a and b aliased, which reading b
+        // and then writing a handles.
         set(in.a, ctjs::IterableOp::create(into, where, value_type, reg(in.b)));
         break;
     case op::set_index:
         ctjs::SetPropertyOp::create(into, where, reg(in.a), reg(in.b), reg(in.c));
         break;
     case op::define_data:
-        // A LITERAL'S OWN PROPERTY: the store every native proof reads, marked
-        // so the boxed tier defines it rather than assigning it.
+        // An object literal's own property. It is marked so the VM-backed C++
+        // backend defines the property (no setter lookup) instead of
+        // assigning it; the native analyses also rely on this marker.
         ctjs::SetPropertyOp::create(into, where, reg(in.a), reg(in.b), reg(in.c))
             ->setAttr(ctjs::defineOwnMarker, into.getUnitAttr());
         break;
     case op::new_object: set(in.a, ctjs::CreateObjectOp::create(into, where, value_type)); break;
     case op::new_cell:
-        // IN PLACE: the bytecode boxes the register's current value and
+        // In place: the bytecode boxes the register's current value and
         // leaves the box where the value was.
         set(in.a, ctjs::CreateCellOp::create(into, where, value_type, reg(in.a)));
         break;
@@ -486,8 +447,8 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         break;
     case op::cell_set: ctjs::CellSetOp::create(into, where, reg(in.a), reg(in.b)); break;
     case op::get_upvalue:
-        // THE FRAME'S OWN CLOSURE, which arrives as the third implicit
-        // argument. The interpreter reads vm_frame->closure; a compiled
+        // Reads through the frame's own closure, which arrives as the third
+        // implicit argument. The interpreter reads vm_frame->closure; a compiled
         // body is handed the same thing.
         set(in.a,
             ctjs::LoadUpvalueOp::create(into, where, value_type, entry->getArgument(arg_callee),
@@ -513,8 +474,8 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         } else if (in.code == op::call_method) {
             const std::string * name = state.name_at(at, in.code, in.c);
             if (name == nullptr) { break; }
-            // THROUGH THE SAME LOOKUP AS get_prop, which the
-            // interpreter is explicit about: `s.split(...)` and
+            // Through the same lookup as get_prop, as the interpreter
+            // requires: `s.split(...)` and
             // `var f = s.split; f(...)` must find the same function.
             receiver = reg(in.a);
             const mlir::Value key = state.key(where, *name);
@@ -531,7 +492,7 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::construct: {
         llvm::SmallVector<mlir::Value> args;
         if (!arguments_above(args)) { break; }
-        // NEW.TARGET IS THE CALLEE for a plain `new C()`. A super() call
+        // new.target is the callee for a plain `new C()`. A super() call
         // hands a different one along, and that is op::pass_new_target's
         // business rather than this opcode's.
         set(in.a, ctjs::ConstructOp::create(into, where, value_type, reg(in.a), reg(in.a), args));
@@ -542,12 +503,11 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         const auto targets = state.branch_targets(at, in, "branch target is not a block leader");
         if (!targets) { break; }
         const auto [taken, fallthrough] = *targets;
-        // NOT TRUTHINESS. `jump_if_defined` branches when the value is
-        // not `undefined` - which 0, "" and false all are not - and
-        // `jump_if_not_nullish` when it is neither null nor undefined.
-        // Lowering either through ctjs.truthy would send `x ?? y` down
-        // the wrong arm for every falsy x, which is exactly the bug
-        // optional chaining exists to avoid.
+        // Not truthiness. `jump_if_defined` branches when the value is not
+        // `undefined` (0, "" and false all qualify), and `jump_if_not_nullish`
+        // when it is neither null nor undefined. Lowering either through
+        // ctjs.truthy would send `x ?? y` down the wrong arm for every falsy
+        // x.
         const mlir::Value sentinel = in.code == op::jump_if_defined
                                          ? state.undefined(where)
                                          : state.constant(where, ctjs::NullAttr::get(context));
@@ -558,8 +518,8 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
                                     ctjs::CompareKindAttr::get(context, kind), reg(in.a), sentinel);
         const mlir::Value bit = ctjs::TruthyOp::create(into, where, into.getI1Type(), matches);
         const auto operands = state.outgoing();
-        // The comparison is TRUE when the value IS the sentinel, and
-        // both opcodes jump when it is NOT - so the arms are swapped.
+        // The comparison is true when the value is the sentinel, and both
+        // opcodes jump when it is not, so the arms are swapped.
         mlir::cf::CondBranchOp::create(into, where, bit, fallthrough, operands, taken, operands);
         break;
     }
@@ -577,9 +537,9 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
         const auto targets = state.branch_targets(at, in, "branch target is not a block leader");
         if (!targets) { break; }
         const auto [taken, fallthrough] = *targets;
-        // THE ONLY BRIDGE FROM A VALUE TO A BRANCH. cf.cond_br takes an
-        // i1; ctjs.convert to_boolean would produce a JavaScript
-        // boolean, which is a different thing.
+        // ctjs.truthy is the only bridge from a value to a branch: cf.cond_br
+        // takes an i1, and ctjs.convert to_boolean would produce a
+        // JavaScript boolean instead.
         const mlir::Value bit = ctjs::TruthyOp::create(into, where, into.getI1Type(), reg(in.a));
         const auto operands = state.outgoing();
         const bool jumps_on_true = in.code == op::jump_if_true;

@@ -1,9 +1,9 @@
-//===- CTNativeTypes.td - the ctnative type lattice, as TypeDefs ----------===//
+//===- CTNativeTypes.td - The ctnative type lattice, as TypeDefs ----------===//
 //
-// EIGHTEEN TYPES AND NO HAND-WRITTEN C++ TYPE CLASS. Part 24's Stage 53A:
-// "every one a TypeDef, no C++."
+// Every ctnative type is declared here as a TypeDef; there is no hand-written
+// C++ type class.
 //
-// THE ORDER OF THE FILE IS THE ORDER OF THE LATTICE, bottom to top:
+// The scalar types form this lattice, bottom to top:
 //
 //     bottom
 //       |
@@ -15,18 +15,20 @@
 //                        |
 //                      boxed  (top)
 //
-// The containers - vec, map, set, owned, shared, weak - are not RUNGS on that
-// ladder. They meet structurally with their own kind and widen to a variant
-// against anything else, which is what makes the ladder finite.
+// strview sits below str of the same encoding. The containers (vec, map, set,
+// owned, shared, weak) are not rungs on that ladder: they meet structurally
+// with their own kind and widen to a variant against anything else, which
+// keeps the ladder finite. symbol, dom_element, object_identity,
+// global_object, method_table and closure are proof-gated nominal types
+// outside the chain: they meet only with themselves and widen to a variant
+// against anything else.
 //
-// ONE TYPE FROM PART 24's TABLE IS DELIBERATELY ABSENT: `!ctnative.struct<name,
-// fields>`. Its parameter is a proved-closed shape, and Stage 56A is the proof:
-// "no dynamic key write, no delete, no Object.keys/for-in/JSON.stringify/spread
-// over it, no Object.assign into it, and it never flows into a parameter whose
-// shape is TOP." A TypeDef written before that analysis exists would have to
-// take a field list on trust, and a shape taken on trust is precisely the
-// structification bug part 24 §1.1 lists. Phase 56 owns it; the space it will
-// occupy in the lattice is documented at the bottom of this file.
+// `!ctnative.struct<name, fields>` is deliberately absent. A struct needs a
+// proof that the object's shape is closed (no dynamic key write, no delete, no
+// Object.keys/for-in/JSON.stringify/spread over it, no Object.assign into it,
+// never passed where the shape is unknown). Without that analysis a field list
+// would be taken on trust, which miscompiles. Where it will sit in the lattice
+// is noted at the bottom of this file.
 //
 //===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_TYPES
@@ -35,7 +37,7 @@
 include "ctcompile/CTNative/IR/CTNativeBase.td"
 include "ctcompile/CTNative/IR/CTNativeEnums.td"
 
-// A TYPE OF ONE PARAMETER, spelled `<parameter>`.
+// A type with one parameter, spelled `<parameter>`.
 class CTNative_WrapperType<string name, string typeMnemonic, dag parameter>
     : CTNative_Type<name, typeMnemonic> {
   let parameters = parameter;
@@ -297,8 +299,8 @@ def CTNative_VariantType : CTNative_Type<"Variant", "variant"> {
 }
 
 //===----------------------------------------------------------------------===//
-// The containers. Phase 57 and part 24 §8 own their operations; the types are
-// here because the lattice has to be able to name them.
+// The containers. Their operations are lowered elsewhere; the types are here
+// because the lattice has to be able to name them.
 //===----------------------------------------------------------------------===//
 
 def CTNative_VecType : CTNative_WrapperType<"Vec", "vec", (ins "::mlir::Type":$elementType)> {
@@ -402,8 +404,8 @@ def CTNative_ClosureType
 }
 
 //===----------------------------------------------------------------------===//
-// The three smart pointers. Phase 55 owns the escape analysis that CHOOSES
-// between them; these are the vocabulary that analysis will speak in.
+// The three smart pointers. Escape analysis
+// (ctcompile/CTNative/Analysis/EscapeAnalysis.h) chooses between them.
 //===----------------------------------------------------------------------===//
 
 def CTNative_OwnedType : CTNative_WrapperType<"Owned", "owned", (ins "::mlir::Type":$pointeeType)> {
@@ -450,11 +452,11 @@ def CTNative_WeakType : CTNative_WrapperType<"Weak", "weak", (ins "::mlir::Type"
   }];
 }
 
-// WHERE `!ctnative.struct<name, fields>` WILL GO, when Phase 56 has the proof
-// that lets it be written: beside `map` in the lattice and strictly below it,
-// since a closed shape is an open one that something was proved about. Meeting
-// two DIFFERENT closed shapes gives `map<str, variant<...>>` - never a third
-// struct, because JavaScript's `{a: 1}` and `{a: 1, b: 2}` are two shapes and
-// not a base class and a derived one.
+// Where `!ctnative.struct<name, fields>` will go once a closed-shape proof can
+// introduce it: beside `map` in the lattice and strictly below it, since a
+// closed shape is an open one that something was proved about. Meeting two
+// different closed shapes gives `map<str, variant<...>>`, never a third
+// struct, because JavaScript's `{a: 1}` and `{a: 1, b: 2}` are two shapes, not
+// a base class and a derived one.
 
 #endif // CTCOMPILE_CTNATIVE_TYPES

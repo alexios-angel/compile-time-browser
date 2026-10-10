@@ -1,3 +1,11 @@
+//===- Reads.cpp - Provider methods that read empty Maps --------*- C++ -*-===//
+//
+// Implements prefixAnalysis::providerRead and summarizedOwner: symbolic
+// execution of a provider method call whose captured Maps are still empty,
+// so has/get/size have known answers.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Provider/Paths.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -5,9 +13,11 @@
 namespace ctcompile::ctnative::host_detail {
 namespace {
 
-// A separate path interpreter deliberately has no rewrite/heap-publication
-// hooks. It may follow one actual invocation, never specialize its reusable
-// body. A failed path commits no facts, including any reads before a write.
+/// Interprets one invocation of a provider method whose captured Maps are
+/// still empty: only `size`, `has` and `get` are modeled. It has no hooks to
+/// rewrite IR or publish heap facts, because it follows one call and never
+/// specializes the method's shared body. A failed path commits nothing, not
+/// even the reads it made before failing.
 struct emptyMapReader {
     prefixAnalysis & prefix;
     const HostPrefixFactory & factory;
@@ -35,9 +45,9 @@ struct emptyMapReader {
                 owner.object >= factory.resources.size()) {
                 return {};
             }
-            // closed-source-v1 supplies unmodified intrinsic prototypes.
-            // Fresh, unescaped Map receivers have no own overrides; the
-            // selected path has performed no property/provider mutation.
+            // The closed-source-v1 host contract guarantees unmodified
+            // intrinsic prototypes. A fresh, unescaped Map has no own
+            // overrides, and this path has mutated no property or provider.
             if (key == "size") {
                 proof.reads.push_back({read, factory.resources[owner.object], key.str()});
                 return prefixValue::constant(ctjs::NumberAttr::get(context, 0.0));
@@ -60,9 +70,9 @@ struct emptyMapReader {
                 return {};
             }
             const auto key = llvm::cast<ctjs::StringAttr>(method.literal).getValue();
-            // Map keys are not coerced. Once source argument evaluation has
-            // completed, has/get on this empty Map cannot call JS or mutate
-            // another retained resource, even for an unknown key value.
+            // Map keys are not coerced. Once the argument is evaluated,
+            // has/get on this empty Map cannot run script or mutate another
+            // retained Map, whatever the key is.
             proof.reads.push_back({call, factory.resources[receiver.object], key.str()});
             return prefixValue::constant(
                 key == "has" ? mlir::Attribute(ctjs::BooleanAttr::get(context, false))
@@ -75,14 +85,19 @@ struct emptyMapReader {
             return prefixCompare(compare.getKind(), values.lookup(compare.getLhs()),
                                  values.lookup(compare.getRhs()), context);
         }
-        // No writes, allocations, object reads, arbitrary calls, globals,
-        // exceptions or resource escape are supported by this provider slice.
+        // Any other operation (writes, allocations, object reads, arbitrary
+        // calls, globals, exceptions, resource escape) is unsupported and ends
+        // the path.
         return {};
     }
 };
 
 } // namespace
 
+/// The summarized factory whose invocation produced `closure`, when `call` is
+/// in the entry function, `function` has one block, `Map` is the initial
+/// intrinsic and `closure` is one of the factory's capturing closures. Null
+/// otherwise. `charged` charges the capture scan to the step budget.
 const HostPrefixFactory * prefixAnalysis::summarizedOwner(ctjs::CallOp call, ctjs::FuncOp function,
                                                           prefixValue closure, bool charged) {
     if (closure.invocation == 0 || closure.invocation > factories.size() ||
@@ -100,18 +115,23 @@ const HostPrefixFactory * prefixAnalysis::summarizedOwner(ctjs::CallOp call, ctj
     return &owner;
 }
 
+/// Symbolically runs a provider method that only reads its factory's still
+/// empty Maps. Records a read summary and returns the primitive result, or
+/// unknown on refusal.
 prefixValue prefixAnalysis::providerRead(ctjs::CallOp call, ctjs::FuncOp function,
                                          prefixValue closure, environment & arguments) {
     if (!followProviderReads || !followPublication) { return {}; }
     const auto * summarized = summarizedOwner(call, function, closure, false);
     if (!summarized) { return {}; }
     const auto & owner = *summarized;
-    // The factory independently checked target/cell immutability and resource
-    // retention. No unsupported operation has been crossed since its return;
-    // accepted summaries never mutate or leak a Map, so it is still empty.
+    // The factory summary already proved the target and cells immutable and
+    // the Maps retained. No unsupported operation ran since the factory
+    // returned, and accepted summaries never mutate or leak a Map, so each
+    // Map is still empty.
     emptyMapReader reader{
         *this, owner, closure, function, {call, function, owner.operation, {}, {}}};
     environment values;
+    // Skip the three implicit entry arguments (receiver, new.target, callee).
     for (auto [argument, value] :
          llvm::zip(function.getBody().front().getArguments().drop_front(3), call.getArgs())) {
         values[argument] = arguments.lookup(value);

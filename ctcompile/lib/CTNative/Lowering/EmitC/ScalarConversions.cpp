@@ -1,8 +1,18 @@
+//===- ScalarConversions.cpp - Scalar carrier conversions -------*- C++ -*-===//
+//
+// Conversions between the native scalar carriers (Number, Boolean, String and
+// their nullable and union forms), the module-wide census that chooses the
+// carrier of each global, parameter and result, and the pass that inserts
+// conversions at every region and call boundary.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Returns the nullable-scalar constant for `null` or, by default, `undefined`.
 mlir::Value lowering::absentConstant(mlir::OpBuilder & b, mlir::Location where, bool isNull) {
     return ec::ConstantOp::create(
         b, where, carrierType(context, carrier::nullable),
@@ -15,6 +25,9 @@ mlir::Value lowering::number(mlir::OpBuilder & b, mlir::Location where, mlir::Va
     return convertScalar(b, where, value, carrierType(context, carrier::number));
 }
 
+/// Converts `value` to the `target` carrier type, inserting the cast or
+/// ctnative:: helper call the pair needs; reports a fatal error for a pair
+/// admission should have refused. An lvalue is loaded first.
 mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, mlir::Value value,
                                     mlir::Type target) {
     if (auto lvalue = llvm::dyn_cast<ec::LValueType>(value.getType())) {
@@ -184,12 +197,15 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     return resultType == target ? result : convertScalar(b, where, result, target);
 }
 
+/// The lattice meet of every value `fn` returns.
 mlir::Type lowering::joinedReturnType(ctjs::FuncOp fn) const {
     mlir::Type result = BottomType::get(context);
     fn.getBody().walk([&](ctjs::ReturnOp ret) { result = meet(result, typeOf(ret.getValue())); });
     return result;
 }
 
+/// Chooses the native carrier of every global, function result and parameter
+/// in the accepted functions, before any of them is lowered.
 void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                              const OwnedGlobalRoots * roots) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
@@ -244,9 +260,9 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
     }
 }
 
-// SCF preserves JavaScript values through typed region edges. Materialize the
-// scalar widening at each edge, including initial loop operands and backedges.
-// Calls use the callee's joined parameter type, not the actual argument type.
+/// SCF preserves JavaScript values through typed region edges. Materialize the
+/// scalar widening at each edge, including initial loop operands and backedges.
+/// Calls use the callee's joined parameter type, not the actual argument type.
 void lowering::convertBoundaries(ctjs::FuncOp fn) {
     llvm::SmallVector<mlir::Operation *> ops;
     fn.getBody().walk([&](mlir::Operation * op) { ops.push_back(op); });
@@ -263,6 +279,8 @@ void lowering::convertBoundaries(ctjs::FuncOp fn) {
         };
         if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op)) {
             const auto & params = parameterTypes[call.getCallee()];
+            // Operands 0-2 are the importer's three implicit arguments, which
+            // have no parameter carrier; convert only the source arguments.
             for (unsigned i = 3; i < params.size() && i < op->getNumOperands(); ++i) {
                 if (!llvm::isa<ec::PointerType, ec::LValueType>(op->getOperand(i).getType())) {
                     convert(i, params[i]);

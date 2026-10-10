@@ -1,3 +1,11 @@
+//===- Admission.cpp - try/catch admission ----------------------*- C++ -*-===//
+//
+// admission::exceptionRegion(): decides whether a ctjs.try can be lowered to
+// native C++ try/catch, by proving every protected operation other than an
+// explicit throw cannot throw.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Admission/Admission.h"
 
 #include "mlir/IR/SymbolTable.h"
@@ -6,11 +14,12 @@
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
 
-// This is a live effect proof, separate from the ordinary result-carrier
-// check. A closed call returning a number can still throw, access a property,
-// mutate a global or reenter through another call. Inspect the actual private
-// bodies and every transitive call, keeping no proof across IR mutations.
-// The finite operation/depth bounds refuse large or recursive components.
+/// Proves operations cannot throw, separately from the ordinary result-carrier
+/// check: a closed call returning a number can still throw, access a property,
+/// mutate a global or reenter through another call. It inspects the actual
+/// private callee bodies and every transitive call, and keeps no proof across
+/// IR mutations. An operation budget (`remaining`) and a call depth of 32
+/// refuse large or recursive call graphs.
 struct nonthrowingPrimitives {
     admission & admitted;
     unsigned remaining = 4096;
@@ -27,6 +36,9 @@ struct nonthrowingPrimitives {
             target.getUpvalueCount() != 0 ||
             mlir::SymbolTable::getSymbolVisibility(target) !=
                 mlir::SymbolTable::Visibility::Private ||
+            // Operands 0-2 are the implicit receiver, new.target and callee
+            // (ctjs::implicit_arguments); only the declared arguments must be
+            // primitive.
             direct.getNumOperands() < 3 ||
             direct.getNumOperands() != target.getBody().front().getNumArguments() ||
             !llvm::all_of(direct.getArgOperands().drop_front(3),
@@ -76,10 +88,12 @@ struct nonthrowingPrimitives {
 
 } // namespace
 
+/// Admits `attempt` for native try/catch lowering, or refuses with a reason.
 bool admission::exceptionRegion(ctjs::TryOp attempt) {
     // Recovery preserves explicit throws. Every other protected operation must
-    // be proved unable to throw a JavaScript value before its old status edge
-    // can disappear. A successful normal-result type alone is not that proof.
+    // be proved unable to throw a JavaScript value before its exception edge
+    // (the importer's ctjs.check) can be dropped. A successful normal-result
+    // type alone is not that proof.
     auto & caught = attempt.getCatchBody().front();
     if (!isPrimitive(typeOf(caught.getArgument(0)))) {
         return refuse("native try/catch requires a homogeneous number, boolean or string payload");

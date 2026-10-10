@@ -1,3 +1,15 @@
+//===- Pass.cpp - The partial evaluation pass -----------------------------===//
+//
+// --ctnative-partial-evaluate. For each private function whose callers all
+// pass the same constant arguments (per BindingTimeAnalysis), runs the
+// function in the abstract evaluator (Heap.h). If the whole call evaluates,
+// its body is replaced by IR that rebuilds the resulting heap and result
+// (Residualize.cpp); otherwise the static initialization prefix of the entry
+// block may be evaluated and replaced instead (Prefix.cpp). A function that
+// cannot be evaluated gets a `ctnative.partial_eval_reason` attribute.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Analysis/BindingTime/Effects.h"
 #include "ClosureProof.h"
 #include "Heap.h"
@@ -15,9 +27,11 @@ namespace ctcompile::ctnative {
 
 namespace {
 
-// Pure fresh-object writes still require that no user prototype setters can
-// intervene. This first slice excludes every route to shared prototypes or
-// host state, including dynamic property names and the top-level receiver.
+/// Why `module` cannot be partially evaluated at all, or an empty string if it
+/// can. Writes to fresh objects are only pure if no user prototype setter can
+/// run, so any route to shared prototypes or host state refuses the whole
+/// module, including dynamic property names, the receiver and unknown calls.
+/// `proof`, when given, admits the calls prepareClosureHeapFacts proved closed.
 std::string environmentProblem(mlir::ModuleOp module,
                                const partial_eval::closureHeapProof * proof = nullptr) {
     std::string reason;
@@ -43,9 +57,9 @@ std::string environmentProblem(mlir::ModuleOp module,
             }
         }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-            // prepareClosureHeapFacts freshly proves these standard builtins,
+            // prepareClosureHeapFacts proves these standard builtins afresh,
             // including each iterator's single immediate Array.from consumer.
-            // Materialization itself stays runtime work in the evaluator.
+            // The evaluator materializes them when it runs.
             if (load->hasAttr(kNativeMapConstructor) || load->hasAttr(kNativeMapSnapshotBuiltin)) {
                 return;
             }
@@ -71,9 +85,10 @@ std::string environmentProblem(mlir::ModuleOp module,
             op->getName().getStringRef().starts_with("ctjs.module_")) {
             reason = "module has dynamic invocation or prototype effects";
         }
-        // These operations can expose or invoke callbacks without a CallOp:
-        // accessors through property reads, iterators, promise assimilation,
-        // and exception formatting. Their effects are outside this slice.
+        // These operations can run callbacks without a CallOp: accessors
+        // through property reads, iterators, promise resolution and exception
+        // formatting. The evaluator does not model those effects, so it
+        // refuses them.
         if (llvm::isa<ctjs::DefineAccessorOp, ctjs::GetProtoOp, ctjs::SetProtoOp, ctjs::LoadHomeOp,
                       ctjs::OwnKeysOp, ctjs::IterableOp, ctjs::WrapPromiseOp, ctjs::SuspendOp,
                       ctjs::ThrowOp, ctjs::ResumeThrowOp>(op)) {
@@ -156,8 +171,9 @@ struct CTNativePartialEvaluatePass
                 state = engine.run(fn, args);
                 if (!state) { wholeProblem = engine.reason(); }
             }
-            // Resource exhaustion always rolls back. Otherwise a dynamic or
-            // effectful suffix can remain after a separately evaluated prefix.
+            // A whole-function failure falls back to evaluating only the
+            // static prefix, leaving the dynamic or effectful rest in place.
+            // Running out of budget never falls back; it always rolls back.
             if (!state && !llvm::StringRef(wholeProblem).contains("budget exhausted")) {
                 partial_eval::evaluator engine(module, maxSteps, maxNodes, maxDepth);
                 state = engine.runPrefix(
@@ -181,13 +197,14 @@ struct CTNativePartialEvaluatePass
             ++evaluated;
             nodes += static_cast<unsigned>(live->size());
         }
-        // Evaluate against one unchanged module. Rewriting an earlier caller
-        // must not invalidate another candidate's recorded call sites.
+        // Every function was evaluated against the same unchanged module;
+        // rewrite only now, so rewriting one function cannot invalidate
+        // another candidate's recorded call sites.
         for (auto & rewrite : rewrites) {
             partial_eval::residualize(rewrite.function, rewrite.state, rewrite.live);
         }
-        // New residual operations carry no input proofs. Recompute Map facts
-        // for consumers that run before native lowering's own proof pass.
+        // New residual operations carry no Map proofs. Recompute the Map
+        // facts for passes that run before native lowering's own proof.
         prepareNativeMaps(module);
         if (report) {
             module.emitRemark() << "partial evaluation: " << evaluated << " function(s), " << nodes

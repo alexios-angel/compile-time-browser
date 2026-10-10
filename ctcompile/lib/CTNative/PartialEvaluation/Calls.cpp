@@ -1,3 +1,12 @@
+//===- Calls.cpp - Evaluate direct calls ----------------------------------===//
+//
+// evaluator::directCall. A ctjs.call_direct may target a specialised clone of
+// the function its callee value names. When the target differs from that
+// original, both are evaluated and their results and heap effects are proved
+// equivalent (CallProof.h) before the target's result is used.
+//
+//===----------------------------------------------------------------------===//
+
 #include "CallProof.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -5,6 +14,9 @@
 
 namespace ctcompile::ctnative::partial_eval {
 namespace {
+/// The function the callee value of `invoked` actually names: the closure's
+/// function for a heap closure, or the unique closed declaration for a global
+/// load. Null when it cannot be proved.
 ctjs::FuncOp actualCallee(ctjs::CallDirectOp invoked, value callee, const snapshot & state,
                           mlir::ModuleOp module) {
     if (callee.tag == value::kind::reference && callee.node < state.heap.size()) {
@@ -12,9 +24,9 @@ ctjs::FuncOp actualCallee(ctjs::CallDirectOp invoked, value callee, const snapsh
         return item.tag == node::kind::closure ? ctjs::uniqueFunction(module, item.function)
                                                : ctjs::FuncOp{};
     }
-    // A global load is normally only bookkeeping in the evaluator. Recover
-    // its callable identity only from the same closed declaration contract
-    // used by source specialization, never from a provenance annotation.
+    // The evaluator normally treats a global load as bookkeeping. Recover its
+    // callable identity only from the same closed-declaration rule that
+    // source specialization uses, never from a provenance annotation.
     auto load = invoked.getCalleeValue().getDefiningOp<ctjs::LoadGlobalOp>();
     if (!load) { return {}; }
     auto declaration = ctjs::uniqueGlobalStore(module, load.getName());
@@ -40,9 +52,9 @@ value evaluator::directCall(ctjs::CallDirectOp invoked, environment & env, unsig
     }
     auto original = actualCallee(invoked, args[ctjs::arg_callee], state, module);
     if (!original) {
-        // Existing handwritten native-only IR uses an inert undefined callee
-        // slot for symbols without a bytecode identity. Actual callable values
-        // and indexed source functions never qualify for this convention.
+        // Hand-written native-only IR passes an undefined callee for a symbol
+        // with no source function index. Real callable values and indexed
+        // source functions never use that convention.
         if (!functionIndex(target) && undefined(args[ctjs::arg_callee])) {
             return call(target, args, depth);
         }
@@ -50,9 +62,10 @@ value evaluator::directCall(ctjs::CallDirectOp invoked, environment & env, unsig
     }
     if (original == target) { return call(target, args, depth); }
 
-    // A specialization may have folded or residualized its body. Validate its
-    // result and local heap effects under these actual arguments, instead of
-    // inferring equivalence from a name, matching schema, or provenance tags.
+    // A specialization may have folded or residualized its body. Check its
+    // result and heap effects under these actual arguments, instead of
+    // inferring equivalence from a name, a matching signature, or provenance
+    // tags.
     snapshot before = state;
     value candidateResult = call(target, args, depth);
     if (!problem.empty()) {
@@ -61,8 +74,8 @@ value evaluator::directCall(ctjs::CallDirectOp invoked, environment & env, unsig
     }
     snapshot candidate = std::move(state);
     state = before;
-    // Both executions and graph comparison consume one attempt's step budget.
-    // Nodes and call depth retain their existing per-execution bounds.
+    // Both executions and the graph comparison share one step budget. Node
+    // and call-depth limits still apply to each execution separately.
     state.steps = candidate.steps;
     value originalResult = call(original, args, depth);
     if (!problem.empty()) {

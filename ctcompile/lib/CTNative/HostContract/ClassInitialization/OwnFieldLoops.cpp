@@ -1,3 +1,11 @@
+//===- OwnFieldLoops.cpp - Own-field null loops -----------------*- C++ -*-===//
+//
+// Part of the class-initialization proof: evaluates, at compile time, a loop
+// that clears every own field of an object (`for (const k of keys) obj[k] =
+// null`) and replaces it with direct null stores.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../PartialEvaluation/Heap.h"
 #include "Proof.hpp"
 
@@ -5,6 +13,12 @@
 
 namespace ctcompile::ctnative::class_detail {
 
+/// Recognizes a for-of loop over `snapshot` (a snapshot of an object's own
+/// field names) that sets each field to null, runs the loop at compile time
+/// against the known `fields`, and replaces it with one direct null store per
+/// field on the snapshot's first argument. Returns true when the snapshot has
+/// no such loop or the loop was replaced; refuses (false) when the loop does
+/// anything else or the iterator intrinsics may have been replaced.
 bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
                                             llvm::ArrayRef<llvm::StringRef> fields,
                                             const HostContract & contract) {
@@ -51,9 +65,11 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
         return refuse("class own-key loop requires a local normal iterator close");
     }
 
-    // ponytail: evaluate only the finite snapshot's scalar iterator machinery
-    // and null stores. Other loop bodies need a separate effect/ownership proof.
-    // Census both arms first: even an empty snapshot cannot hide unknown effects.
+    // ponytail: only the iterator protocol over the finite snapshot and null
+    // stores are evaluated; any other loop body would need its own effect and
+    // ownership proof. Every operation in the loop, on both arms of each branch,
+    // is checked against the allow-list first, because even an empty snapshot
+    // must not hide an unknown effect in a branch that never runs.
     llvm::DenseSet<mlir::Operation *> operations;
     for (auto * root : segment) {
         if (!walkSteps(root, [&](mlir::Operation * op) {
@@ -128,6 +144,8 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
     llvm::SmallVector<llvm::StringRef> cleared;
     const auto evaluate = [&](auto && visit, mlir::Block::iterator begin, mlir::Block::iterator end,
                               unsigned depth) -> std::optional<Values> {
+        // Bounds recursion through nested regions; the lowered for-of protocol
+        // nests only a few levels deep.
         if (depth >= 64) {
             refuse("class own-key loop nesting limit exceeded");
             return {};
@@ -281,8 +299,9 @@ bool classInitialization::clearOwnFieldLoop(ctjs::CallOp snapshot,
     if (!evaluate(evaluate, first->getIterator(), std::next(close->getIterator()), 0)) {
         return refuse("class own-key loop requires bounded literal null clearing");
     }
-    // Only constants may escape this eliminated protocol segment. No receiver,
-    // iterator record or snapshot value is replaced with a runtime container.
+    // The loop is about to be erased, so any of its results used outside it
+    // must have evaluated to a constant. A receiver, iterator record or snapshot
+    // value used outside refuses; it is never rebuilt as a runtime container.
     llvm::SmallVector<std::pair<mlir::Value, mlir::Attribute>> replacements;
     for (auto * op : segment) {
         for (auto output : op->getResults()) {

@@ -1,4 +1,11 @@
-// Global identity, reflection and opaque-body effect checks.
+//===- Effects.cpp - Global-object and compiler effect checks ---*- C++ -*-===//
+//
+// Helpers for --ctjs-resolve-globals' clause 5 (nothing writes the globals
+// table dynamically): which names and property reads can yield the global
+// object or the run-time compiler (`Function`), which values may be functions,
+// and what the importer's ctjs.skipped rows say about bodies it refused.
+//
+//===----------------------------------------------------------------------===//
 #include "Effects.h"
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -21,28 +28,22 @@
 
 namespace ctcompile::ctjs::globals_detail {
 
-// THE NAMES THE SHELL BINDS THE WINDOW OBJECT TO, AND `self` IS ONE OF THEM.
-//
-// the end of install_window in lib/Shell/bindings/window/window.cpp is three define_global calls of
-// the same proxy - `window`, `globalThis` AND `self` - and this list held two.
-// hands_back_the_global_object() below already lists `self` among the reads
-// that alias, and its own comment names all three, so the omission was a
-// soundness hole rather than a policy: `self.x = 1` reaches the proxy's `set`
-// trap and therefore define_global("x", 1), through a value this walk never
-// marked. The idiom is not exotic - testharness.js is
-// `(function (global_scope) { ... }(self))`, because a library that may run in
-// a worker never writes `window` at all.
+/// Whether \p name is one of the globals the shell binds to the window proxy:
+/// install_window (ctbrowser/lib/Shell/bindings/window/window.cpp) defines
+/// `window`, `globalThis` and `self`. Missing one is a soundness hole:
+/// `self.x = 1` reaches the proxy's `set` trap and defines global `x`.
+/// Libraries that may run in a worker (testharness.js) use only `self`.
 bool names_global_object(llvm::StringRef name) {
     return name == "globalThis" || name == "window" || name == "self";
 }
 
-// A global whose value compiles source text at run time.
+/// Whether global \p name compiles source text at run time.
 bool names_eval(llvm::StringRef name) {
     return name == "Function" || name == "eval";
 }
 
-// The operation's name, then the op's own file location or a fused one's first
-// direct file part.
+/// Describes \p op for a diagnostic: its name, then its own file location or
+/// the first file part of a fused location.
 std::string describe(mlir::Operation * op) {
     std::string text = op->getName().getStringRef().str();
     mlir::FileLineColLoc file = mlir::dyn_cast<mlir::FileLineColLoc>(op->getLoc());
@@ -55,33 +56,32 @@ std::string describe(mlir::Operation * op) {
     return text;
 }
 
-// CAN THIS VALUE BE A FUNCTION OBJECT?
-//
-// THE QUESTION THE `.constructor` CLAUSE FORGOT TO ASK. `o.constructor` is
-// `Function` only when `o` is one: `constructor` is an own property of every
-// `X.prototype` table and holds the function that owns that table (compile/
-// classes.cpp writes it for a class, ensure_prototype in vm/call/construct.cpp
-// for an ordinary function,
-// builtins/internal.hpp:635 for the natives), and `Function.prototype`'s copy
-// is the one holding `Function`. Every function object reaches that table,
-// which is why `(function(){}).constructor` IS the compiler; a plain object
-// reaches `Object.prototype` first and gets `Object`.
-//
-// THE ANSWER IS "YES" UNLESS THE DEFINING OPERATION SAYS OTHERWISE, so a block
-// argument, a load, a call result and any operation not listed here stay
-// tainted. The list is only the shapes that CONSTRUCT something non-callable.
-//
-// AND `Object` IS ITSELF A FUNCTION. `({}).constructor` is untainted by this -
-// the receiver is a literal - and its RESULT is `Object`, which is callable and
-// whose own `.constructor` IS `Function`. That second read's receiver is a
-// ctjs.get_property, which is NOT in the list, so `({}).constructor.constructor`
-// is still tainted. Listing the results as non-functions too is the mistake
-// this paragraph exists to stop.
+/// Whether \p value may be a function object.
+///
+/// This matters for `.constructor` reads: `o.constructor` is `Function` only
+/// when `o` is a function. `constructor` is an own property of every
+/// `X.prototype` table and holds the function that owns that table
+/// (compile/classes.cpp writes it for a class, ensure_prototype in
+/// vm/call/construct.cpp for an ordinary function, and the native-constructor
+/// setup in ctbrowser/lib/Script/builtins/internal.hpp for the natives), and
+/// `Function.prototype`'s copy holds `Function`. Every function object reaches
+/// that table, which is why `(function(){}).constructor` is the compiler; a
+/// plain object reaches `Object.prototype` first and gets `Object`.
+///
+/// The answer is "yes" unless the defining operation says otherwise, so a
+/// block argument, a load, a call result and any unlisted operation stay
+/// tainted. Only shapes that construct something non-callable are listed.
+///
+/// `Object` is itself a function. `({}).constructor` is untainted (the receiver
+/// is a literal), but its result is `Object`, whose own `.constructor` is
+/// `Function`. That second read's receiver is a ctjs.get_property, which is
+/// not listed, so `({}).constructor.constructor` stays tainted. Do not list
+/// property-read results as non-functions.
 bool may_be_function(mlir::Value value) {
     mlir::Operation * definition = value.getDefiningOp();
     if (definition == nullptr) { return true; } // a block argument: unknown
 
-    // A PRIMITIVE, OR A FRESH NON-CALLABLE. ctjs.constant carries undefined,
+    // A primitive, or a fresh non-callable. ctjs.constant carries undefined,
     // null, a string, a number or a boolean and nothing else; the arithmetic,
     // predicate and delete operations answer primitives; create_object,
     // create_array, create_regexp, own_keys and the two `arguments`
@@ -93,53 +93,52 @@ bool may_be_function(mlir::Value value) {
         return false;
     }
 
-    // THE `super(...)` DESUGARING, AND IT IS 17 OF BOOTSTRAP'S 38 CONSTRUCTOR
-    // READS.
+    // The `super(...)` desugaring, the most common `.constructor` read in real
+    // class-based code.
     //
-    // `super(t, e)` is not a property read anybody wrote. compile/expressions
-    // .cpp:640 and :685 compile it to `load_home; get_proto; get_prop
-    // "constructor"` - the parent constructor, reached through the class's own
-    // prototype chain - and the taint answered "a value that may be the
-    // run-time compiler escapes into ctjs.call", because the very next thing
-    // `super(...)` does is call it.
+    // `super(t, e)` is not a property read anybody wrote:
+    // compiler_impl::compile_call_target
+    // (ctbrowser/lib/Script/compile/expression_calls.cpp) compiles it to
+    // `load_home; get_proto; get_prop "constructor"`, the parent constructor
+    // reached through the class's own prototype chain, and then calls it.
     //
-    // WHY THAT VALUE IS NOT `Function`:
+    // Why that value is not `Function`:
     //   * `__home` inside a constructor is the class's own `prototype` table,
-    //     an op::new_object (compile/classes.cpp builds it and installs it);
+    //     an op::new_object (compile/classes.cpp builds and installs it);
     //   * ctjs.get_proto of that table is the link `extends` installed, which
-    //     is the PARENT's `prototype` table (classes.cpp: get_prop "prototype"
+    //     is the parent's `prototype` table (classes.cpp: get_prop "prototype"
     //     then set_proto);
     //   * a `prototype` table's own `constructor` is the function that owns
-    //     it, never `Function` - unless that table IS `Function.prototype`,
+    //     it, never `Function`, unless that table is `Function.prototype`,
     //     which means the class extends `Function`;
     //   * and naming `Function` needs ctjs.load_global "Function", which this
     //     clause refuses module-wide, or another `.constructor` read whose
     //     value escapes into the `extends` clause, which this same walk
     //     refuses.
     //
-    // THE ONE PREMISE THE SSA WALK CANNOT SEE IS CHECKED, in
-    // prototype_replaced(): step two assumes nothing put a CALLABLE where that
-    // link points, and `X.prototype = <a function>` would.
+    // The one premise the SSA walk cannot see is checked in
+    // prototype_replaced(): the second bullet above assumes nothing put a
+    // callable where that link points, and `X.prototype = <a function>` would.
     // `Object.setPrototypeOf(X.prototype, f)` would too and is a call into a
-    // native - invisible here, exactly as a global object a native or the host
+    // native, invisible here, just as a global object a native or the host
     // hands over (`document.defaultView`, `this` in a timer callback) is
-    // invisible to the rest of this clause. Said rather than papered over.
+    // invisible to the rest of this clause. This is a known hole.
     if (auto link = mlir::dyn_cast<GetProtoOp>(definition)) {
         if (link.getObject().getDefiningOp<LoadHomeOp>() != nullptr) { return false; }
     }
     return true;
 }
 
-// THE PREMISE OF THE SUPER CLAUSE, CHECKED RATHER THAN ASSUMED.
-//
-// A class's `prototype` table is written by the class machinery itself -
-// compile/classes.cpp emits `set_prop dst, "prototype", <the new_object>` - so
-// the ordinary case is a ctjs.create_object and provably not callable. A
-// `X.prototype = <anything this pass cannot rule out>` can point some class's
-// parent link at a function, whose `.constructor` IS `Function`. One such
-// write anywhere retires the super clause for the whole module. It does not
-// REFUSE the module: the clause it retires is a relaxation, so withdrawing it
-// only restores the older, coarser answer.
+/// Whether any `X.prototype = v` store in \p module may store a function.
+///
+/// This checks the premise of the `super(...)` case in may_be_function(). A
+/// class's `prototype` table is written by the class machinery itself
+/// (compile/classes.cpp emits `set_prop dst, "prototype", <the new_object>`),
+/// so normally it is a ctjs.create_object and provably not callable. A store
+/// this pass cannot rule out could point some class's parent link at a
+/// function, whose `.constructor` is `Function`. One such write disables the
+/// super case for the whole module. It does not refuse the module: the super
+/// case is a relaxation, so withdrawing it only restores the coarser answer.
 bool prototype_replaced(mlir::ModuleOp module) {
     bool replaced = false;
     module.walk([&](SetPropertyOp set) {
@@ -152,82 +151,51 @@ bool prototype_replaced(mlir::ModuleOp module) {
     return replaced;
 }
 
-// FROM THE GLOBAL OBJECT, WHICH NAMED READS HAND IT BACK?
-//
-// THE SAME QUESTION AS THE ONE BELOW, ASKED OF THE OTHER WATCHED KIND, AND ON
-// BOOTSTRAP IT IS THE ONE THAT STILL BINDS AFTER THE `.constructor` CLAUSE IS
-// FIXED. The walk propagated through EVERY read - "a read through it yields
-// another value that may BE it (`window.window`)" - so
-// `window.getComputedStyle(el)` marked the getter and then answered "the
-// global object escapes into ctjs.call". Bootstrap reads eight names off the
-// window (getComputedStyle, CSS, jQuery, innerWidth, document, escape,
-// PointerEvent, DOMParser) and calls or returns every one of them; not one is
-// the window.
-//
-// THE ALIAS SET IS THE HOST'S AND IT IS CLOSED. lib/Shell/bindings/window/window.cpp
-// binds `window`, `globalThis` and `self` to the proxy as GLOBALS (install_window)
-// and sets `parent` and `top` on the target to the same proxy (975-976);
-// `frames` is listed because it is the standard fifth and costs nothing.
-// Reading any other name off the window yields whatever global has that name,
-// and for one of THOSE to be the window the program would have to have stored
-// the window into a global - which is a ctjs.store_global of the marked value,
-// an escape, and already the answer. So either this walk has already refused
-// the module, or the five names below are the only reads that alias.
-//
-// WHAT IT DOES NOT CLOSE, and did not before either: `document.defaultView` is
-// the window and `document` is an ordinary global this walk never marks, so
-// `document.defaultView.x = 1` was invisible before this change and is
-// invisible after it. The hole belongs to "which values are watched", not to
-// "how far a watched value propagates".
+/// Whether reading property \p key off the global object can yield the global
+/// object again. Only the host's aliases do: `window`, `globalThis` and `self`
+/// (globals) and `parent`, `top` (set on the window; `frames` is the standard
+/// fifth). Any other name yields whatever global has that name, and storing
+/// the window into a global is already an escape. So `window.getComputedStyle`
+/// does not keep the taint. An empty key (computed) is unknown and keeps it.
+/// Not covered: `document.defaultView`, since `document` is never marked.
 bool hands_back_the_global_object(llvm::StringRef key) {
     static const llvm::StringSet<> aliases{"window", "globalThis", "self",
                                            "parent", "top",        "frames"};
+    // The length check is a cheap reject before hashing: "globalThis" (10)
+    // is the longest alias.
     return key.empty() || (key.size() <= 10 && aliases.contains(key));
 }
 
-// FROM A VALUE THAT MAY BE `Function`, WHICH NAMED READS CAN HAND IT BACK?
-//
-// THE SECOND HALF OF THE PRECISION, AND ON THE CORPORA THE LARGER HALF. The
-// taint propagates through every property read, which is right for
-// `f.constructor.constructor` and absurd for `this.constructor.NAME` - a
-// string - or for `this.constructor.eventName("show")`, which is bootstrap's
-// commonest idiom and used to answer "escapes into ctjs.call". No named
-// property of `Function` is `Function`, except:
-//
-//   constructor  `Function.constructor` is `Function`
-//   prototype    and `Function.prototype.constructor` is too
-//   __proto__    the same table under its other name
-//   call/apply/bind  hand back something that CALLS `Function`
-//
-// A COMPUTED KEY IS UNKNOWN and keeps the taint - which is what an empty
-// constantKey means here, and also what `o[""]` gets, harmlessly.
+/// Whether reading property \p key off a value that may be `Function` can
+/// yield `Function` (or something that calls it) again.
+///
+/// The taint must follow `f.constructor.constructor`, but not
+/// `this.constructor.NAME` (a string) or `this.constructor.eventName("show")`,
+/// a common Bootstrap idiom. No named property of `Function` is `Function`,
+/// except:
+///
+///   constructor  `Function.constructor` is `Function`
+///   prototype    and `Function.prototype.constructor` is too
+///   __proto__    the same table under its other name
+///   call/apply/bind  hand back something that calls `Function`
+///
+/// A computed key (an empty constantKey) is unknown and keeps the taint; a
+/// literal `o[""]` gets the same answer, harmlessly.
 bool hands_back_the_compiler(llvm::StringRef key) {
     static const llvm::StringSet<> aliases{"constructor", "prototype", "__proto__",
                                            "call",        "apply",     "bind"};
+    // "constructor" (11) is the longest alias; see hands_back_the_global_object.
     return key.empty() || (key.size() <= 11 && aliases.contains(key));
 }
 
-// THE SKIPPED ROWS, READ FOR THE ONE THING THAT STILL REFUSES THE MODULE.
-//
-// A body the importer dropped is a body whose `ctjs.store_global`s are not
-// here to be counted, and the first version of this clause therefore refused
-// every name in the program the moment ONE function was skipped: 101 globals
-// on p5 from 51 skips, 72 on phaser from TWO. Sound, and far too coarse.
-//
-// The importer now summarises each dropped body FROM ITS BYTECODE, which it
-// still has: `stores` is the exact set of names the body's op::set_globals
-// name - a static index into the function's own name pool, needing no lowering
-// to read - and `opaque` says when that set does not bound the body. So only
-// `opaque` is a module-wide answer; `stores` is refused per NAME below.
-//
-// A ROW WITH NO SUMMARY IS OPAQUE. Hand-written IR, and any translator
-// predating the summary, produce rows without the two keys, and reading a
-// missing key as "stores nothing" would resolve names a dropped body rebinds -
-// the exact unsoundness this clause exists for. Absent means unknown.
-//
-// AND THE NAMES THOSE BODIES MAY STORE, which are refused one by one - read in
-// the same pass over the rows. The FIRST row that refuses the module decides
-// `opaque`.
+/// Reads the module's `ctjs.skipped` rows: functions the importer did not
+/// translate, so their `ctjs.store_global`s are not in the IR. Each row carries
+/// `stores` (the global names the body's bytecode writes, read from its name
+/// pool) and `opaque` (non-empty when that set does not bound the body). Names
+/// in `stores` are refused one by one; an `opaque` row, or a row with no
+/// summary at all (hand-written IR, older importers), refuses the whole module,
+/// since a missing summary must mean "may store anything". The first such row
+/// supplies the reason.
 skipped_summary read_skipped(mlir::ModuleOp module) {
     skipped_summary summary;
     auto skipped = module->getAttrOfType<mlir::ArrayAttr>("ctjs.skipped");
@@ -252,8 +220,8 @@ skipped_summary read_skipped(mlir::ModuleOp module) {
     return summary;
 }
 
-// Whether every operation before `store` in its block belongs to the hoisting
-// prologue: the frame, constants, and closure/store pairs.
+/// Whether every operation before \p store in its block belongs to the
+/// hoisting prologue: the frame, constants, and closure/store pairs.
 bool in_prologue(StoreGlobalOp store) {
     for (mlir::Operation & before : *store->getBlock()) {
         if (&before == store.getOperation()) { return true; }

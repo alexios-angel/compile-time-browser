@@ -1,3 +1,12 @@
+//===- CTNativeLattice.cpp - The ctnative type lattice ----------*- C++ -*-===//
+//
+// Implements `meet`, the least upper bound of two ctnative types: numbers and
+// strings widen within their family, containers meet elementwise, and anything
+// else becomes a canonical, capped union. CTNativeLattice.h documents the
+// lattice itself.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/IR/CTNativeLattice.h"
 
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
@@ -18,13 +27,10 @@ using mlir::Type;
 namespace ctcompile::ctnative {
 namespace {
 
-// THE TWO CHAINS, CHECKED AT COMPILE TIME.
-//
-// CTNativeEnums.td says the enumerator values ARE the lattice rank, which is
-// what lets `widerOf` be a `max` instead of a table. That claim is only true so
-// long as nobody reorders the cases, and a reorder produces no diagnostic at
-// all - just a lattice that quietly widens the wrong way. The plan is explicit
-// about preferring a build error to a test, so this is a build error.
+// CTNativeEnums.td defines enumerator values as lattice rank, which lets
+// `widerOf` be a plain `max` instead of a table. Reordering the enum cases
+// would silently make the lattice widen the wrong way, so the order of both
+// chains is checked at compile time.
 static_assert(static_cast<std::uint32_t>(NumKind::I32) < static_cast<std::uint32_t>(NumKind::I64),
               "the numeric chain is i32 -> i64 -> f64; CTNativeEnums.td was reordered");
 static_assert(static_cast<std::uint32_t>(NumKind::I64) < static_cast<std::uint32_t>(NumKind::F64),
@@ -33,21 +39,20 @@ static_assert(static_cast<std::uint32_t>(StrEncoding::UTF8) <
                   static_cast<std::uint32_t>(StrEncoding::UTF16),
               "the encoding chain is utf8 -> utf16; CTNativeEnums.td was reordered");
 
+/// The wider of two ranked enumerators (see the static_asserts above).
 template <typename Enum> Enum widerOf(Enum a, Enum b) {
     using Underlying = std::underlying_type_t<Enum>;
     return static_cast<Enum>(std::max(static_cast<Underlying>(a), static_cast<Underlying>(b)));
 }
 
-// THE ORDER OF A VARIANT'S ALTERNATIVES IS ITS PRINTED ORDER, and it has to be
-// SOMETHING deterministic rather than nothing.
-//
-// MLIR uniques a parameterized type on its parameters, so `variant<bool, str>`
-// and `variant<str, bool>` are two DIFFERENT types that print differently and
-// compare unequal. Without a total order on alternatives, `meet(a, b)` and
-// `meet(b, a)` would be equivalent-but-unequal, `==` would stop meaning
-// equality, and the fixpoint check in any dataflow analysis over this lattice
-// would never converge. Sorting by the printed form is not elegant; it is total
-// and stable across runs, which are the only two properties that matter.
+/// `type` as MLIR prints it, the sort key for a variant's alternatives.
+///
+/// MLIR uniques a parameterized type on its parameters, so `variant<bool, str>`
+/// and `variant<str, bool>` are two different types that compare unequal.
+/// Without a total order on alternatives, `meet(a, b)` and `meet(b, a)` would
+/// be equivalent but unequal, and the fixpoint check of any dataflow analysis
+/// over this lattice would never converge. The printed form is total and
+/// stable across runs, which is all the order needs.
 std::string printedForm(Type type) {
     std::string buffer;
     llvm::raw_string_ostream stream(buffer);
@@ -55,7 +60,7 @@ std::string printedForm(Type type) {
     return buffer;
 }
 
-// The parts of a union, gathered before anything is decided about them.
+/// The parts of a union, gathered before anything is decided about them.
 struct Alternatives {
     llvm::SmallVector<Type, 8> members;
     bool nullable = false;
@@ -63,6 +68,8 @@ struct Alternatives {
     bool sawJson = false;
 };
 
+/// Flattens `type` into `into`: variants are expanded, `opt` sets the nullable
+/// flag, `bottom` is dropped, and `boxed`/`json` are recorded as flags.
 void collect(Type type, Alternatives & into) {
     if (!type) { return; }
     // `bottom` contributes no values, so it drops out of a union entirely.
@@ -75,22 +82,13 @@ void collect(Type type, Alternatives & into) {
         into.sawJson = true;
         return;
     }
-    // NULLABILITY IS HOISTED, NOT CARRIED. `opt` inside a union becomes a flag
-    // and comes back outside it, which is what makes `opt` a LIFT rather than
-    // another rung of the ladder.
-    //
-    // MEASURED, BECAUSE THE OBVIOUS CLAIM ABOUT IT IS WRONG. Deleting this
-    // branch - so that `opt<T>` is just another opaque alternative - leaves the
-    // meet PERFECTLY ASSOCIATIVE: 9261 triples, 0 disagreements. An opaque
-    // element trivially satisfies the laws. What it breaks is the CANONICAL
-    // FORM and the precision that comes with it: `meet(opt<i32>, f64)` answers
-    // `variant<num<f64>, opt<num<i32>>>` instead of `opt<num<f64>>`, which is
-    // still a sound answer and a much worse one, and which the variant verifier
-    // would reject if anything tried to print it.
-    //
-    // So the guard on this is the HAND-WRITTEN MEET TABLE, not the property
-    // sweep - six of its rows go red - and that is the argument for having both
-    // in ctcompile/test/Analysis/Types/Lattice.cpp rather than either alone.
+    // Nullability is hoisted: an `opt` inside a union becomes the `nullable`
+    // flag and is re-applied around the result, so `meet(opt<i32>, f64)` is
+    // `opt<num<f64>>` rather than `variant<num<f64>, opt<num<i32>>>`. Removing
+    // this keeps the meet associative but loses the canonical form (which
+    // the variant verifier requires); the hand-written meet table in
+    // ctcompile/test/Analysis/Types/Lattice.cpp catches that, the
+    // associativity sweep does not.
     if (auto optional = llvm::dyn_cast<OptType>(type)) {
         into.nullable = true;
         collect(optional.getElementType(), into);
@@ -103,6 +101,7 @@ void collect(Type type, Alternatives & into) {
     into.members.push_back(type);
 }
 
+/// Sorts `members` by printed form and drops duplicates.
 void sortAndUnique(llvm::SmallVectorImpl<Type> & members) {
     llvm::sort(members, [](Type a, Type b) { return printedForm(a) < printedForm(b); });
     members.erase(std::unique(members.begin(), members.end()), members.end());
@@ -112,9 +111,12 @@ void sortAndUnique(llvm::SmallVectorImpl<Type> & members) {
 
 // Declared here rather than in the anonymous block above because `meet` and
 // this are mutually recursive: a container's element types are themselves met.
-// The recursion is on type DEPTH, which is finite, so it terminates.
+// The recursion is on type depth, which is finite, so it terminates.
 static Type mergeSameFamily(Type a, Type b);
 
+/// Builds the canonical union of `parts`: `boxed` or `json` if either was
+/// seen, otherwise the merged, sorted members as `bottom`, one type, a
+/// variant, or `json` past the cap, wrapped in `opt` when nullable.
 static Type finishUnion(MLIRContext * context, Alternatives & parts) {
     // `boxed` absorbs everything, and `json` absorbs everything but `boxed`.
     // Both already carry the absent case, so `nullable` says nothing further.
@@ -123,8 +125,8 @@ static Type finishUnion(MLIRContext * context, Alternatives & parts) {
 
     sortAndUnique(parts.members);
 
-    // PAIRWISE MERGE TO A FIXPOINT. Two numbers in a union are not a union;
-    // they are the wider number. Doing this before the cap is checked is what
+    // Merge pairs until nothing changes. Two numbers in a union are not a
+    // union; they are the wider number. Doing this before the cap is checked
     // stops `meet` falling off the top of the lattice for a value that is
     // merely an `i32` in four places.
     bool changed = true;
@@ -141,18 +143,12 @@ static Type finishUnion(MLIRContext * context, Alternatives & parts) {
             }
         }
     }
-    // AND SORTED AGAIN, WHICH IS NOT REDUNDANT AND WAS MEASURED. The merge loop
-    // REPLACES members - `num<i32>` and `num<f64>` become `num<f64>` in the
-    // first slot - so a list sorted before it is not sorted after it, and the
-    // surviving order then depends on which pair merged first, which depends on
-    // the order the two operands arrived in. Delete this line and
-    // `meet(set<bool>, meet(owned<bool>, shared<bool>))` answers
-    // `variant<set, shared>` while the other bracketing answers
-    // `variant<shared, set>`: two MLIR types for one lattice element.
-    //
-    // THE HAND-WRITTEN TABLE DOES NOT CATCH IT - all thirty rows still pass -
-    // and the associativity sweep reports exactly four disagreements out of
-    // 9261. That is the argument for the sweep existing.
+    // Sort again: the merge loop replaces members in place (`num<i32>` and
+    // `num<f64>` become `num<f64>` in the first slot), so the list is no
+    // longer sorted, and without this the result's order would depend on
+    // operand order, giving two MLIR types for one lattice element. The
+    // associativity sweep in ctcompile/test/Analysis/Types/Lattice.cpp catches
+    // its removal; the hand-written meet table does not.
     sortAndUnique(parts.members);
 
     Type result;
@@ -161,9 +157,10 @@ static Type finishUnion(MLIRContext * context, Alternatives & parts) {
     } else if (parts.members.size() == 1) {
         result = parts.members.front();
     } else if (parts.members.size() > kMaxVariantAlternatives) {
-        // THE CAP, AND IT IS THE LATTICE'S HEIGHT BOUND. See
-        // kMaxVariantAlternatives in CTNativeLattice.h for why an uncapped
-        // union would leave Phase 54's analysis with no termination argument.
+        // Too many alternatives widen to `json`. This cap bounds the lattice's
+        // height, which is what guarantees the type-inference dataflow
+        // analysis (CTNative/Analysis/TypeInference) reaches a fixpoint; see
+        // kMaxVariantAlternatives in CTNativeLattice.h.
         result = JsonType::get(context);
     } else {
         result = VariantType::get(context, parts.members);
@@ -177,19 +174,18 @@ static Type finishUnion(MLIRContext * context, Alternatives & parts) {
     return OptType::get(context, result);
 }
 
-// Two single-element containers of kind T merge elementwise; anything else does
-// not merge.
+/// Two single-element containers of kind T merge elementwise; anything else
+/// does not merge.
 template <class T> static Type mergeElements(Type a, Type b) {
     auto other = llvm::dyn_cast<T>(b);
     if (!other) { return Type(); }
     return T::get(a.getContext(), meet(llvm::cast<T>(a).getElementType(), other.getElementType()));
 }
 
-// Do these two types belong to one family with a widening between them? A null
-// answer means they do not, and the caller makes a union instead.
-//
-// EVERY ARM HERE IS A CLAIM THAT ONE REPRESENTATION SUBSUMES ANOTHER, and each
-// one is written down in CTNativeTypes.td beside the type it is about.
+/// The wider of two types in one family (numbers, strings, containers,
+/// pointers), or null when they are in different families and the caller must
+/// make a union instead. Every arm claims that one representation subsumes
+/// another; each claim is documented in CTNativeTypes.td beside its type.
 static Type mergeSameFamily(Type a, Type b) {
     if (a == b) { return a; }
     MLIRContext * context = a.getContext();
@@ -200,9 +196,9 @@ static Type mergeSameFamily(Type a, Type b) {
         return NumType::get(context, widerOf(numberA.getKind(), numberB.getKind()));
     }
 
-    // `str` AND `strview` ARE ONE FAMILY AND THE OWNING ONE WINS. A view can
-    // always be widened into an owning string; narrowing the other way needs a
-    // lifetime proof, and this phase has no analysis to supply one.
+    // `str` and `strview` are one family, and the owning `str` wins. A view
+    // can always be copied into an owning string; going the other way would
+    // need a lifetime proof, which the lattice has no information to make.
     const auto encodingOf = [](Type type) {
         return llvm::isa<StrType>(type) ? llvm::cast<StrType>(type).getEncoding()
                                         : llvm::cast<StrViewType>(type).getEncoding();
@@ -225,13 +221,12 @@ static Type mergeSameFamily(Type a, Type b) {
                             meet(mapA.getValueType(), mapB.getValueType()));
     }
 
-    // THE ONLY ORDERING AMONG THE THREE POINTERS IS `owned` INTO `shared`.
-    // A unique owner can always be made shared; a shared one cannot be made
-    // unique without proving no other reference exists, which is exactly what
-    // the analysis failed to prove if it produced `shared`. `weak` is
-    // deliberately unordered against both - see CTNative_WeakType, and Stage
-    // 55C, where silently unifying a strong and a weak reference is the
-    // miscompile the whole rule exists to prevent.
+    // Among the pointer types, only `owned` widens to `shared`. A unique owner
+    // can always become shared; a shared one cannot become unique without
+    // proving no other reference exists, which is exactly what the analysis
+    // failed to prove if it produced `shared`. `weak` is unordered against
+    // both, because merging a strong and a weak reference would change object
+    // lifetimes; see the CTNative_WeakType description in CTNativeTypes.td.
     const auto pointeeOf = [](Type type) {
         return llvm::isa<OwnedType>(type) ? llvm::cast<OwnedType>(type).getPointeeType()
                                           : llvm::cast<SharedType>(type).getPointeeType();
@@ -254,7 +249,7 @@ static Type mergeSameFamily(Type a, Type b) {
 }
 
 Type meet(Type a, Type b) {
-    // A null Type is ABSENT, not `bottom`. It is what a caller folding over an
+    // A null Type is absent, not `bottom`. It is what a caller folding over an
     // empty range has before the first element, and returning the other operand
     // is what lets that caller not carry a seed.
     if (!a) { return b; }

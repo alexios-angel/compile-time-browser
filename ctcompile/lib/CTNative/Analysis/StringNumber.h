@@ -1,3 +1,9 @@
+//===- StringNumber.h - Literal string to Number ----------------*- C++ -*-===//
+//
+// Converts string literals to Numbers at compile time, only where the result
+// provably matches JavaScript's ToNumber.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "ctbrowser/core/algorithms.hpp"
@@ -12,15 +18,19 @@
 
 namespace ctcompile::ctnative {
 
+/// Converts a string literal to a Number when the result is provably the same
+/// as JavaScript's ToNumber; returns nullopt for anything it cannot prove,
+/// including radix overflow and unrecognised spellings. Linear in the text
+/// length: callers must bound or charge for the bytes first.
 inline std::optional<double> literalStringNumber(llvm::StringRef text) {
-    // Callers must bound or charge source bytes before this linear scan. Core
-    // counts mantissa digits in int when resolving overflow/underflow.
+    // ctbrowser::string_to_number counts mantissa digits in an int when
+    // resolving overflow and underflow.
     if (text.size() > static_cast<unsigned>(std::numeric_limits<int>::max())) {
         return std::nullopt;
     }
     llvm::StringRef digits = ctbrowser::trim_js_space({text.data(), text.size()});
-    // Only these exact tokens may supply a nonfinite conversion proof. Other
-    // spellings that Core converts to NaN still require validated grammar below.
+    // Only these exact tokens may produce a non-finite result. Other spellings
+    // that string_to_number turns into NaN must pass the grammar check below.
     if (digits == "Infinity" || digits == "+Infinity" || digits == "-Infinity" || digits == "NaN") {
         return ctbrowser::string_to_number({text.data(), text.size()});
     }
@@ -47,8 +57,9 @@ inline std::optional<double> literalStringNumber(llvm::StringRef text) {
         if (rest.consume_front_insensitive("e")) {
             if (!rest.consume_front("+")) { rest.consume_front("-"); }
             unsigned exponent = 0;
-            // Core adds an int exponent to the mantissa order on range failure.
-            // Retain the old 32-byte margin and widen it with the input.
+            // string_to_number adds the exponent to the mantissa's digit count
+            // in an int; reject exponents that could overflow it, keeping a
+            // margin of at least 32 or the input length.
             if (rest.empty() || !llvm::all_of(rest, decimal) || rest.getAsInteger(10, exponent) ||
                 exponent > static_cast<unsigned>(std::numeric_limits<int>::max()) -
                                std::max<std::size_t>(32, text.size())) {
@@ -64,8 +75,9 @@ inline std::optional<double> literalStringNumber(llvm::StringRef text) {
         return std::nullopt;
     }
     const double converted = ctbrowser::string_to_number({text.data(), text.size()});
-    // Decimal overflow may feed bitwise conversion. Radix overflow in Core is
-    // NaN, so it still cannot supply a JavaScript conversion proof.
+    // Decimal overflow gives Infinity, which is the right ToNumber result.
+    // string_to_number returns NaN for radix overflow, which JavaScript does
+    // not, so that result is refused.
     if (std::isnan(converted)) { return std::nullopt; }
     return converted;
 }

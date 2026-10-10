@@ -1,4 +1,12 @@
-// Admission/Functions.cpp - native lowering implementation.
+//===- Admission/Functions.cpp - Whole-function native admission ----------===//
+//
+// admission::function, the entry point of native admission: it checks the
+// function's implicit and declared parameters, then admits every operation
+// in the body and requires every JavaScript value it defines to have a
+// native carrier.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -21,19 +29,19 @@ bool admission::function(ctjs::FuncOp fn) {
         return storage == carrier::none ||
                (storage == carrier::json && (!domEntry || domEntry->entry() != fn));
     };
-    // THE RECEIVER IS A PARAMETER when the lift said so, and %arg0 is then
-    // the one implicit argument that HAS a carrier: the generated class of
+    // The receiver is a parameter when the lift said so, and %arg0 is then
+    // the one implicit argument that has a carrier: the generated class of
     // the shape every call site passes. The lift proved every use of it is
-    // a constant-key access or another lifted method call; this asks the
+    // a constant-key access or another lifted method call. This asks the
     // same question of the IR that came out, because the lift's proof was
-    // made before its own rewrite ran and a later refusal - the callee of
-    // a `this.other()` that was not lifted - can have opened it since.
+    // made before its own rewrite ran, and a later refusal (the callee of
+    // a `this.other()` that was not lifted) can have opened it since.
     const bool carriesReceiver = fn->hasAttr(kNativeReceiver);
     if (carriesReceiver && !isClosedObject(entry.getArgument(0))) {
         return refuse("its `this` is no longer a closed-shape receiver - " +
                       whyOpenReceiver(entry.getArgument(0)));
     }
-    // THE THREE IMPLICIT ARGUMENTS - receiver, new.target, callee - have no
+    // The three implicit arguments (receiver, new.target, callee) have no
     // native carrier and must be unused.
     for (unsigned i = carriesReceiver ? 1 : 0; i < 3 && i < entry.getNumArguments(); ++i) {
         for (mlir::Operation * user : entry.getArgument(i).getUsers()) {
@@ -45,8 +53,8 @@ bool admission::function(ctjs::FuncOp fn) {
                     continue;
                 }
             }
-            // A closure that lowers to nothing does not READ these: a
-            // declaration's pair is erased with its store, and a LIFTED
+            // A closure that lowers to nothing does not read these: a
+            // declaration's pair is erased with its store, and a lifted
             // one's `$enclosing_closure` and `$enclosing_this` operands go
             // with the ctjs.call_direct that replaced its calls.
             // ResolveGlobals makes the same exemption on the same operand
@@ -55,35 +63,30 @@ bool admission::function(ctjs::FuncOp fn) {
             if (llvm::isa<ctjs::CreateClosureOp>(user) && !environmentTarget(user).empty()) {
                 continue; // environment construction drops the two enclosing-frame operands
             }
-            // AND A CLOSURE THIS TIER CANNOT CARRY IS NOT THE SAME THING
-            // as a function that reads its own closure. Both are uses of
-            // %arg2, and this check runs before the body walk, so every
-            // one of the 2,426 `uses its own closure` refusals measured
-            // over the corpora was reported with the message for the wrong
-            // one - on functions whose only crime is declaring a nested
-            // function. The reason the lift wrote onto the closure is the
-            // one a reader can act on. (A genuine reader of %arg2 - a
-            // named function expression calling itself, a ctjs.load_upvalue
-            // in a function nothing lifted - still gets the old sentence,
-            // which is what refusal-corpus-shapes.mlir pins.)
+            // A nested closure the lift refused also uses %arg2, but that
+            // does not mean this function reads its own closure. Report the
+            // reason the lift recorded on the closure instead. A real reader
+            // of %arg2 (a named function expression calling itself, or a
+            // ctjs.load_upvalue in an unlifted function) still gets "uses
+            // its own closure"; Admission/refusal/corpus-shapes.mlir tests
+            // that.
             if (llvm::isa<ctjs::CreateClosureOp>(user)) { return refuse(closureRefusal(user)); }
             return refuse(i == 0   ? "uses `this`"
                           : i == 1 ? "uses new.target"
                                    : "uses its own closure");
         }
     }
-    // PHASE 59 SLICE 1: THE LEADING PARAMETERS ARE CAPTURES, and the
-    // diagnostic has to say so or it names a parameter the JavaScript does
-    // not have. `ctnative.captures` is written by the lift; it is 0 on
-    // every function that was not lifted, which is the shape below
-    // unchanged.
+    // In a lifted closure, the parameters after the three implicit ones start
+    // with its captured values. `ctnative.captures` counts them (0 on any
+    // function that was not lifted), and diagnostics subtract them so that a
+    // parameter number matches the JavaScript source.
     const auto capturesAttr = fn->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures);
     const unsigned captures = capturesAttr ? static_cast<unsigned>(capturesAttr.getInt()) : 0u;
     for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
-        // THE OBJECT PARAMETERS, ASKED THE RECEIVER'S QUESTION. Their
-        // carrier is the generated class one indirection away, so
-        // `carrierOf` has no row for them and the loop below would refuse
-        // every one; what has to hold is that the shape is still closed.
+        // Object parameters get the receiver's check. Their carrier is the
+        // generated class one indirection away, so `carrierOf` has no row for
+        // them and the check below would refuse every one; what has to hold is
+        // that the shape is still closed.
         if (isObjectArg(fn.getOperation(), i)) {
             if (!isClosedObject(entry.getArgument(i))) {
                 return refuse("parameter " + std::to_string(i - 3 - captures) +
@@ -94,18 +97,16 @@ bool admission::function(ctjs::FuncOp fn) {
         }
         const mlir::Type t = typeOf(entry.getArgument(i));
         const bool isCapture = i - 3 < captures;
-        // PHASE 59 SLICE 2 STEP 2: A SHARED CAPTURE SAYS SO. Its carrier
-        // is the one the POINTER points at, and the refusal below is the
-        // second condition of the carried-cell rule asked at the callee -
-        // the same question `op` asks of the box in the owning frame, in
-        // the function that reads it through the pointer.
+        // A shared capture is a cell passed by pointer, so the refusal names
+        // it as one. Its carrier is that of the value it points at: the same
+        // check `op` makes on the cell in the frame that owns it.
         const std::string kind = !isCapture                        ? "parameter "
                                  : isCellArg(fn.getOperation(), i) ? "shared capture "
                                                                    : "capture ";
         const std::string which = kind + std::to_string(isCapture ? i - 3 : i - 3 - captures);
         if (unsupported(entry.getArgument(i))) {
-            // Distinguish an unknown parameter from a proved type this
-            // tier cannot represent, such as an optional string. The
+            // Distinguish an unknown parameter from a proved type native
+            // lowering cannot represent, such as an optional string. The
             // latter needs a carrier even when every caller is known.
             if (t == nullptr || llvm::isa<BoxedType>(t)) {
                 return refuse(which + " is " + printed(t) +
@@ -146,8 +147,8 @@ bool admission::function(ctjs::FuncOp fn) {
             load && ownedGlobalValue(load.getResult())) {
             return;
         }
-        // EVERY JAVASCRIPT VALUE THIS OPERATION DEFINES OR CARRIES has a
-        // carrier - including scf results and region arguments.
+        // Every JavaScript value this operation defines or carries needs a
+        // carrier, including scf results and region arguments.
         for (mlir::Value r : o->getResults()) {
             if (llvm::isa<ctjs::ValueType>(r.getType()) && unsupported(r)) {
                 ok = refuse(("a value of type " + printed(typeOf(r)) + " from `" +

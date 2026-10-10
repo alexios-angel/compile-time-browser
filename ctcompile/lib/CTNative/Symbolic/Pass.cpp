@@ -1,3 +1,11 @@
+//===- Pass.cpp - The precompute pass -------------------------------------===//
+//
+// --ctnative-precompute: runs symbolic::Analysis, folds what it proves with
+// symbolic::rewrite, and annotates every result with its fact's domain
+// (ctnative.symbolic_results) plus a module summary.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Facts.h"
 
 #include "ctcompile/CTNative/Transforms/Passes.h"

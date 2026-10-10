@@ -1,8 +1,20 @@
+//===- OwnedGlobals.cpp - Owned global storage ------------------*- C++ -*-===//
+//
+// Lowers global bindings proved to own one object (Analysis/OwnedGlobalRoots.h)
+// to typed C++ storage that keeps the object in place instead of boxing it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Records storage for every owned global whose owner is in an accepted
+/// function: a std::shared_ptr<Class> global normally, or a plain pointer
+/// into the DOM data session when one is active. Also maps each global's
+/// create/store/load/field operations to that storage, and adds an
+/// identity-only object for host-object reads with no owned root.
 void lowering::censusOwnedGlobals(const OwnedGlobalRoots & roots,
                                   llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (const auto & root : roots.roots()) {
@@ -50,6 +62,8 @@ void lowering::censusOwnedGlobals(const OwnedGlobalRoots & roots,
     }
 }
 
+/// Rewrites one operation recorded by censusOwnedGlobals() against its storage.
+/// Returns false when the operation does not touch an owned global.
 bool lowering::replaceOwnedGlobal(mlir::Operation * operation) {
     const auto found = ownedGlobalOperations.find(operation);
     if (found == ownedGlobalOperations.end()) { return false; }

@@ -1,17 +1,20 @@
-// recovery - the effect proof: completion inputs across an acyclic call family,
-// what counts as a primitive value, which operations cannot throw or reenter.
+//===- Effects.cpp - Recovery effect proof ----------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
-// 2026-09-08. All are member functions of `recovery`, the disposable-clone
-// transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
-// header the rest of the lowering sees, did not change.
+// The effect proof: completion inputs across an acyclic call family, what
+// counts as a primitive value, and which operations cannot throw or reenter.
+//
+// Member functions of `recovery`, the disposable-clone transaction declared in
+// Attempt.h; the rest of the lowering uses only Exceptions/Recovery.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../../LoweringSupport.h"
 #include "Attempt.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
-// Pure alone is not a substitute for CTJS's exception/reentry traits.
+/// True when `operation` is pure and has none of CTJS's may-throw, may-reenter
+/// or may-suspend traits; MLIR purity alone does not rule those out.
 bool effectFree(mlir::Operation * operation) {
     return mlir::isPure(operation) && !operation->hasTrait<ctjs::CTJSMayThrow>() &&
            !operation->hasTrait<ctjs::CTJSMayReenterJS>() &&
@@ -26,6 +29,8 @@ std::optional<unsigned> recovery::contextFor(ctjs::CallDirectOp call, unsigned p
     if (auto found = contexts.indices.find(key); found != contexts.indices.end()) {
         return found->second;
     }
+    // Bounds the call-family walk so a deep (but acyclic) call chain cannot
+    // make admission expensive; deeper chains are refused, not truncated.
     if (contexts.frames[parent].depth >= 32) {
         reject("native invocation completion call depth exceeds 32");
         return {};
@@ -46,10 +51,11 @@ std::optional<unsigned> recovery::contextFor(ctjs::CallDirectOp call, unsigned p
 bool recovery::completionInputs(ctjs::CallDirectOp call, bool thrown, unsigned parent,
                                 primitiveContexts & contexts,
                                 llvm::SmallVectorImpl<primitiveInput> & inputs) {
-    // A bounded source call-family query, separate from carrier and
-    // native admission. Returns belong only to the invoked body, whereas
-    // an uncaught throw in any descendant can complete its unwind. Keep
-    // the exact chain of actual operands for every such completion.
+    // Collects, within the work budget, the values that can complete `call`,
+    // independently of carrier selection and native admission. A return
+    // completes only the invoked body, whereas an uncaught throw in any
+    // descendant can complete its unwind; the exact chain of actual operands
+    // is kept for every such completion.
     auto initial = contextFor(call, parent, contexts);
     if (!initial) { return false; }
     llvm::SmallVector<unsigned> pending{*initial};
@@ -162,7 +168,7 @@ bool recovery::primitive(mlir::Value value) {
             }
             // No selected invocation: a body-wide effect proof needs all
             // live actuals, including callers outside the protected try.
-            // The complete acyclic census above prevents optimistic
+            // The complete acyclic call-graph scan above prevents optimistic
             // recursion through a formal with one known incoming value.
             auto target =
                 module ? module.lookupSymbol<ctjs::FuncOp>(body.getSymName()) : ctjs::FuncOp{};
@@ -229,11 +235,12 @@ bool recovery::nonthrowing(mlir::Operation * operation) {
 }
 
 bool recovery::proveEffects(const tail & normal, const tail & caught) {
-    // The old check still owns both successors while this runs. Only the
-    // exact call recorded by inspectInvocation has a represented unwind;
-    // a property read, callee lookup, second call or callback cannot borrow
-    // that permission. Scan both continuations, including unchecked catch
-    // operations, before constructing or adopting any recovered body.
+    // The original ctjs.check still branches to both successors while this
+    // runs; nothing is rewritten until the proof succeeds. Only the exact call
+    // recorded by inspectInvocation has a represented unwind; a property read,
+    // callee lookup, second call or callback may not rely on it. Both
+    // continuations, including unchecked catch operations, are scanned before
+    // any recovered body is built or adopted.
     bool needsBindings = false;
     for (const tail * plan : {&normal, &caught}) {
         for (mlir::Block * block : plan->blocks) {
@@ -249,9 +256,10 @@ bool recovery::proveEffects(const tail & normal, const tail & caught) {
             for (mlir::Operation & operation : *block) {
                 if (!spend(uint64_t(1) + operation.getNumOperands())) { return false; }
                 auto invocation = invocations.lookup(block->getTerminator());
-                // Structural recovery also records ordinary calls. This closed
-                // source effect proof has no authority for their host/unknown
-                // callee, even when the full unwind snapshot was preserved.
+                // Structural recovery also records ordinary (unresolved) calls.
+                // This proof cannot vouch for a host or unknown callee, so only
+                // a resolved call_direct invocation is skipped here, even when
+                // the full unwind snapshot was preserved.
                 if (plan == &normal && invocation == &operation &&
                     llvm::isa<ctjs::CallDirectOp>(operation)) {
                     continue;

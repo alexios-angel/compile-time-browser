@@ -1,3 +1,12 @@
+//===- Operations.cpp - Lower String-valued ctjs operations ---------------===//
+//
+// lowering::replaceStringValue: lowers ctjs operations on native String
+// carriers (`length`, concatenation, `typeof` of String unions, and loose or
+// strict equality involving a String) to EmitC calls of ctnative runtime
+// helpers.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../EmitC/Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -12,8 +21,9 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     const auto string = carrierType(context, carrier::string);
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && read.getObject().getType() == string) {
-        // Admission proved the length key before key constants were lowered.
-        // ND-1: `length` counts UTF-16 code units over the stored WTF-8 bytes.
+        // Admission proved the key is `length` before key constants were
+        // lowered. `length` counts UTF-16 code units over the stored WTF-8
+        // bytes, not bytes (divergence ND-1 in ctcompile/docs/native-divergences.md).
         auto size = callValue(b, where, ec::OpaqueType::get(context, "std::size_t"),
                               "ctnative::string_length",
                               convertScalar(b, where, read.getObject(),
@@ -28,8 +38,9 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
          binary.getKind() == ctjs::BinaryKind::Concat) &&
         binary.getResult().getType() == string) {
         const auto operand = [&](mlir::Value value) {
-            // Exact primitives select their typed addition overload. Tagged
-            // scalar/optional String concatenation first materializes its text.
+            // A definite Number or Boolean selects its typed `+` overload. Any
+            // other operand (a tagged or optional String) is converted to a
+            // String first.
             return isNumberCarrier(value.getType()) || isBooleanCarrier(value.getType())
                        ? value
                        : convertScalar(b, where, value, string);
@@ -76,8 +87,9 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
          compare.getKind() == ctjs::CompareKind::StrictEq) &&
         (hasStringAlternative(compare.getLhs().getType()) ||
          hasStringAlternative(compare.getRhs().getType()))) {
-        // Exact String pairs keep their direct C++ comparison. Every mixed or
-        // optional pair retains its original tags until the selected JS rule.
+        // Two definite Strings keep the direct C++ comparison. Any mixed or
+        // optional pair keeps its tags until the runtime helper applies the
+        // JavaScript equality rule.
         if (compare.getLhs().getType() == string && compare.getRhs().getType() == string) {
             return false;
         }

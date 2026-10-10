@@ -1,3 +1,11 @@
+//===- Mutations.cpp - Provider methods that mutate captured Maps ---------===//
+//
+// Implements prefixAnalysis::providerMutation: symbolic execution of one call
+// to a provider method that reads and writes the Maps its factory captured.
+// The new provider state is committed only when the whole call is modeled.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Provider/Paths.h"
 
 #include "../Provider/Diagnostics.h"
@@ -10,6 +18,11 @@
 namespace ctcompile::ctnative::host_detail {
 namespace {
 
+/// Abstract interpreter for one provider-method invocation. It tracks Map
+/// instances (resources) and objects through property access and the Map
+/// methods get/set/has/delete/size, charging the shared step budget. Any
+/// operation it cannot model yields an unknown value, which makes
+/// providerMutation refuse.
 struct mapPathReader {
     prefixAnalysis & prefix;
     const HostPrefixFactory & factory;
@@ -21,6 +34,8 @@ struct mapPathReader {
     providerObjectState objects{prefix, proof, {}};
     using environment = prefixAnalysis::environment;
 
+    /// Converts an analysis value to a Map key or entry value: a primitive, an
+    /// accepted object or a Map. Unknown for anything else.
     providerValue known(prefixValue value) {
         if (value.kind == prefixValue::Kind::primitive) {
             auto literal = booleanFromBit(value.literal);
@@ -35,6 +50,7 @@ struct mapPathReader {
         return {};
     }
 
+    /// Converts a stored Map entry back to an analysis value.
     prefixValue carried(providerValue value) {
         if (value.kind == providerValue::Kind::primitive && value.literal) {
             return prefixValue::constant(value.literal);
@@ -175,6 +191,9 @@ struct mapPathReader {
         return diagnostics.operation(operation, values);
     }
 
+    /// True when every Map this call allocated is reachable from a provider
+    /// root after it returns (an unreachable one would be dropped from the
+    /// committed state). Also retains objects stored as Map keys or values.
     bool retained() {
         llvm::SmallVector<unsigned> pending;
         llvm::DenseSet<unsigned> seen;
@@ -214,6 +233,13 @@ struct mapPathReader {
 
 } // namespace
 
+/// Symbolically runs `function`, a method closure published by a summarized
+/// provider factory, for the entry-function `call` that invokes it. The method
+/// may read and mutate the provider's captured Maps (get/set/has/delete/size).
+/// It runs on a clone of the provider state and commits the new state and a
+/// proof record only if it returns one primitive (or an accepted object) and
+/// every Map it allocated stays reachable from a provider root. Returns the
+/// returned value, or unknown on any refusal.
 prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp function,
                                              prefixValue closure, environment & arguments) {
     if (!followProviderMutations || closure.invocation > providerRoots.size()) { return {}; }
@@ -230,6 +256,7 @@ prefixValue prefixAnalysis::providerMutation(ctjs::CallOp call, ctjs::FuncOp fun
     }
     if (followProviderDiagnostics && !reader.diagnostics.initialize()) { return {}; }
     environment values;
+    // Skip the three implicit entry arguments (receiver, new.target, callee).
     for (auto [argument, value] :
          llvm::zip(function.getBody().front().getArguments().drop_front(3), call.getArgs())) {
         if (!step()) { return {}; }

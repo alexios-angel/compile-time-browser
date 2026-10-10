@@ -1,10 +1,19 @@
+//===- Captures.cpp - DOM helper captures and budget ------------*- C++ -*-===//
+//
+// DOMSource's work-budget accounting (step, drain, refuse), specialisation of
+// private helpers on constant string arguments, folding of
+// `str.replace(/[A-Z]/g, ...)` on known strings, and the proofs that a
+// captured cell is written at most once, before any read.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::dom_source_detail {
 namespace {
-// Whether `op`'s enclosing operation orders it: an scf.if/while or ctjs.try
-// arm, an invocation's normal or unwind continuation, or - with
-// `protectedCall` - a call in the invocation's protected body.
+/// Whether `op`'s enclosing operation orders it: an scf.if/while or ctjs.try
+/// arm, an invocation's normal or unwind continuation, or - with
+/// `protectedCall` - a call in the invocation's protected body.
 bool orderedByParent(mlir::Operation * op, bool protectedCall) {
     auto * parent = op->getParentOp();
     if (llvm::isa_and_nonnull<mlir::scf::IfOp, mlir::scf::WhileOp, ctjs::TryOp>(parent)) {
@@ -50,7 +59,8 @@ bool DOMSource::eraseRootedUses(mlir::Value value, llvm::StringRef reason) {
 }
 
 bool DOMSource::chargeCaptureQuery() {
-    // The shared immutable-capture query scans the module and target uses.
+    // Charge six full scans of the module: the cost model for
+    // immutableClosureTarget, which walks the module and the target's uses.
     for (unsigned scan = 0; scan < 6; ++scan) {
         if (!step(operationCount)) { return false; }
     }
@@ -58,9 +68,11 @@ bool DOMSource::chargeCaptureQuery() {
 }
 
 bool DOMSource::precedesInStructuredBody(mlir::Operation * definition, mlir::Operation * use) {
-    // Every selected arm follows the definition, including exception outcomes.
-    // Only ordering is proved here; capture, lifetime and effect checks remain
-    // with the callers. A capture assignment must precede the whole enclosure.
+    // Climb from `use` to the definition's block through ordered parents
+    // (structured arms and invocation outcomes), so whichever arm runs, it runs
+    // after the definition. Only ordering is proved here; callers check
+    // captures, lifetimes and effects. A capture assignment must therefore
+    // precede the whole enclosing operation.
     while (use->getBlock() != definition->getBlock()) {
         if (!step() || !orderedByParent(use, /*protectedCall=*/true)) { return false; }
         use = use->getParentOp();
@@ -135,7 +147,7 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
             invocations.push_back(arguments);
         }
     } else {
-        // A private direct target has no remaining numeric closure. Census
+        // A private target called directly by symbol has no closure. Collect
         // every symbol use before specializing, not only the first caller.
         auto module = target->getParentOfType<mlir::ModuleOp>();
         if (!target.isPrivate() || creations.lookup(*functionIndex(target)) != 0) { return true; }
@@ -178,8 +190,9 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
             }
         }
     }
-    // Publish only after every use has an exact invocation proof. Unknown
-    // inputs poison the whole formal, including earlier constant calls.
+    // Rewrite only now that every use is a known invocation. One unknown
+    // input disqualifies the whole parameter, even if other calls passed
+    // constants.
     mlir::OpBuilder at(&body, body.begin());
     for (auto [argument, values, known] : llvm::zip(body.getArguments(), inputs, complete)) {
         if (!step()) { return false; }
@@ -194,8 +207,9 @@ bool DOMSource::bindConstantArguments(ctjs::CreateClosureOp closure, ctjs::FuncO
             argument.replaceAllUsesWith(value.getResult());
             ++operationCount;
         } else {
-            // ponytail: retain charged inputs, including duplicates; a set
-            // becomes worthwhile if repeated calls exhaust the work budget.
+            // Remember the possible strings for foldConstantReplacements.
+            // ponytail: duplicates are kept; dedupe with a set if repeated
+            // calls start exhausting the work budget.
             stringInputs[argument] = std::move(values);
         }
     }
@@ -231,8 +245,8 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
         const auto alphanumeric = [](char c) {
             return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
         };
-        // ponytail: a literal ASCII range, no case folding or Unicode flags.
-        // Broader patterns need a separately bounded RegExp evaluator.
+        // ponytail: accepts only a five-character `[X-Y]` ASCII range with no
+        // flags or `g`; broader patterns need a bounded RegExp evaluator.
         if (pattern.size() != 5 || pattern[0] != '[' || pattern[2] != '-' || pattern[4] != ']' ||
             !alphanumeric(pattern[1]) || !alphanumeric(pattern[3]) || pattern[1] > pattern[3] ||
             (!flags.getValue().empty() && flags.getValue() != "g")) {
@@ -281,13 +295,14 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
             if (!reason.empty()) { return false; }
             continue;
         }
-        // The isolated provider fixes the complete initial String/RegExp
-        // prototype chains (including @@replace, exec and flag accessors)
-        // and the reserved literal factory binding.
-        // The residual source must still pass complete DOM reproof, which
-        // forbids mutation and script reentry. Fresh literal state cannot
-        // escape. Matching inputs require the complete callback proof above;
-        // the original all-call census supplies every possible input here.
+        // Folding is safe because the isolated DOM provider guarantees the
+        // built-in String/RegExp prototypes (@@replace, exec, flag accessors)
+        // and the __ctbrowser_regexp literal factory are unmodified, and the
+        // fresh RegExp cannot escape. The rewritten body is checked again by
+        // the DOM entry proof, which forbids mutation and reentry. When the
+        // pattern matches, the callback has been proved to be the lowercase
+        // replacement above, and bindConstantArguments collected every string
+        // the receiver can be.
         mlir::Value result = call.getReceiver();
         if (matches) {
             mlir::OpBuilder at(call);
@@ -312,6 +327,8 @@ bool DOMSource::foldConstantReplacements(ctjs::FuncOp function) {
                     first = false;
                     continue;
                 }
+                // Charge for the six operations each further alternative adds,
+                // matching `operationCount += 6` below.
                 for (unsigned operation = 0; operation < 6; ++operation) {
                     if (!step()) { return false; }
                 }
@@ -354,9 +371,10 @@ bool DOMSource::captureTarget(ctjs::CreateClosureOp closure, ctjs::FuncOp target
         }
         return true;
     }
-    // The shared leaf query intentionally excludes forwarding. Here every
-    // child has already been expanded, and the original creator census plus
-    // the enclosing slot prove which invocation supplies each remaining load.
+    // immutableClosureTarget does not handle forwarded captures. Here every
+    // child has already been expanded, and the unique creation (counted in
+    // `creations`) plus the enclosing slot index prove which invocation
+    // supplies each remaining upvalue load.
     auto parent = closure->getParentOfType<ctjs::FuncOp>();
     if (!uniqueCreation(closure) || indices.size() != closure.getUpvalues().size()) {
         return refuse("DOM helper forwarded capture identity is ambiguous");
@@ -420,9 +438,10 @@ bool DOMSource::resolveCell(ctjs::CreateCellOp cell) {
         auto * operation = use.getOwner();
         auto * position = operation;
         if (llvm::isa<ctjs::CellGetOp, ctjs::RootOp>(operation)) {
-            // Immutable reads may follow either outcome of a protected call.
-            // Initialization must precede the entire enclosing operation;
-            // writes, cell transport and callable scheduling stay unchanged.
+            // A read may sit in either outcome of a protected call, so climb
+            // to the operation in the cell's block that encloses it; the
+            // initializing write must precede that whole operation. Writes
+            // and captures are not lifted this way.
             while (position->getBlock() != cell->getBlock() &&
                    orderedByParent(position, /*protectedCall=*/false)) {
                 if (!step()) { return false; }

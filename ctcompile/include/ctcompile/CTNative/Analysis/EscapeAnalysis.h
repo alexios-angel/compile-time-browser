@@ -1,53 +1,56 @@
-// PHASE 55A - CAN AN OBJECT BORN HERE OUTLIVE THE ACTIVATION THAT MADE IT?
+//===- EscapeAnalysis.h - Escape analysis for native code -------*- C++ -*-===//
+//
+// Can an object allocated in this function outlive the call that made it?
 //
 // One question per allocation site, two answers. `confined`: no object
 // allocated at this ctjs.create_object / ctjs.create_array is reachable from
-// anything once the activation has returned or unwound, so Phase 56/57 may
-// give it automatic storage (subject to O-2/O-3/O-4 in
-// 25-escape-analysis.md §4). `escapes(reason)`: it can be, or this analysis
-// could not prove otherwise - and on the native target, which has no
-// collector and no VM, that means the site needs an OWNER. Phase 55B reads
-// the reason to pick one: a site that escapes only by `returned` is the
-// std::unique_ptr candidate, `stored`/`captured`/`passed` are shared, and
-// `arguments`, `suspended`, `unknown_op` and the `unvisited*` gaps are outside
-// the native subset and become a compile-time diagnostic naming the site and
-// the reason. So the reason is load-bearing, not a roadmap, and the analysis
-// keeps the FIRST one it finds. A separate, complete local-container proof may
-// discharge a Stored verdict when no return path can retain the site. It
-// never relabels a stored child as uniquely returned or chooses a graph owner.
+// anything once the activation has returned or unwound, so the native backend
+// may give it automatic (stack) storage. `escapes(reason)`: it may be
+// reachable, or this analysis could not prove otherwise. The native target has
+// no collector and no VM, so such a site needs an owner, and the ownership
+// lowering picks one from the reason: a site that escapes only by `returned`
+// is the std::unique_ptr candidate, `stored`/`captured`/`passed` are shared,
+// and `arguments`, `suspended`, `unknown_op` and the `unvisited*` reasons are
+// outside the native subset and become a compile-time diagnostic naming the
+// site and the reason. So the reason matters, and the analysis keeps the first
+// one it finds. A separate, complete local-container proof may discharge a
+// Stored verdict when no return path can retain the site. It never relabels a
+// stored child as uniquely returned or chooses a graph owner.
 //
-// TWO LATTICES, ONE POST-PASS, and the split is the design's central fact:
+// Two lattices' worth of work, split into a dataflow analysis and a post-pass:
 //
-//   (1) ALIAS, per SSA value - AliasValue below, a sparse forward analysis on
+//   (1) Alias, per SSA value: AliasValue below, a sparse forward analysis on
 //       MLIR's DataFlowFramework in the shape of TypeInference.h. "This value
-//       may denote an object allocated at any of `sites` in THIS function,
+//       may denote an object allocated at any of `sites` in this function,
 //       and/or an object not allocated at a tracked site."
 //
-//   (2) VERDICT, per site - NOT a lattice element. computeVerdicts runs AFTER
-//       the fixpoint, walks every operation in every LIVE block, and for every
+//   (2) Verdict, per site: not a lattice element. computeVerdicts runs after
+//       the fixpoint, walks every operation in every live block, and for every
 //       operand position whose role is SINK marks every site in that operand's
-//       alias set. It is a post-pass for a reason worth stating twice: MLIR's
-//       AbstractSparseForwardDataFlowAnalysis::visitOperation exits early on
-//       an operation with no results ("Exit early on operations with no
-//       results", SparseAnalysis.cpp), and ctjs.return, throw, store_global,
-//       set_property, append, cell_set, store_upvalue, set_proto,
+//       alias set. It must be a post-pass: MLIR's
+//       AbstractSparseForwardDataFlowAnalysis::visitOperation exits early on an
+//       operation with no results (SparseAnalysis.cpp), and ctjs.return, throw,
+//       store_global, set_property, append, cell_set, store_upvalue, set_proto,
 //       define_accessor, copy_props and every delete have no results. A sink
 //       fired from visitOperation would silently never fire for `return {}`.
-//       The unit test's return and throw rows are what turn that into a red
-//       number if anyone moves it back.
+//       The unit test's return and throw rows fail if anyone moves it back.
 //
-// THE TABLE IS NOT HERE. Which operand positions sink, carry, or neither is
-// TableGen's: Arg<..., [CTJS_Sink...]> decorators in CTJSOps.td, read through
-// ctjs::EscapeEffectOpInterface (part 23 §1, ODS first). What is here is the
-// default rule for an operation that has no annotation - every !ctjs.value
-// operand sinks with reason `unknown_op` - and the one C++ switch the design
-// allows: ctjs.unary, ctjs.compare and ctjs.convert, whose role depends on an
+// The per-operand table is not here. Which operand positions sink, carry, or
+// neither is declared in TableGen with Arg<..., [CTJS_Sink...]> decorators on
+// the ops in ctcompile/include/ctcompile/CTJS/IR/Ops/*.td (the classes are in
+// CTJSInterfaces.td) and read through ctjs::EscapeEffectOpInterface. What is
+// here is the default rule for an operation that has no annotation (every
+// !ctjs.value operand sinks with reason `unknown_op`) and the one C++ switch:
+// ctjs.unary, ctjs.compare and ctjs.convert, whose role depends on an
 // attribute a decorator cannot see.
 //
-// SOUNDNESS IS ABSOLUTE AND PRECISION IS A BACKLOG, as in Phase 54A. "Result
-// is external and every tracked operand sinks" is always sound; CARRY and
-// NEITHER exist for precision and every NEITHER carries its VM proof in the
-// .td. A NEITHER that is wrong is the only way this analysis is unsound.
+// Soundness is required; precision can be improved later. "The result is
+// external and every tracked operand sinks" is always sound. CARRY and NEITHER
+// exist only for precision, and every NEITHER role has its VM justification
+// next to it in the .td. A wrong NEITHER is the only way this analysis can be
+// unsound.
+//
+//===----------------------------------------------------------------------===//
 #ifndef CTCOMPILE_CTNATIVE_ANALYSIS_ESCAPEANALYSIS_H
 #define CTCOMPILE_CTNATIVE_ANALYSIS_ESCAPEANALYSIS_H
 
@@ -68,19 +71,19 @@
 
 namespace ctcompile::ctnative {
 
-// What one SSA value may denote, as a lattice element.
-//
-// UNINITIALIZED IS THE IDENTITY, exactly as TypeValue's null Type is: the
-// framework constructs every element before it visits anything that could
-// define it, and the first real answer must replace that state rather than
-// join with it. `join` is set union on the sites and OR on `external`; the
-// height is sites-in-function + 1, so termination is by construction.
-//
-// A SITE IS A ctjs.create_object OR A ctjs.create_array AND NOTHING ELSE. The
-// remaining NEITHER rows apply only to these ordinary allocation kinds;
-// property access still exposes them through possible inherited accessors.
-// The constructor asserts the restriction, onlyTrackedSites re-checks it,
-// and tests ensure other allocating operations enter no alias set.
+/// What one SSA value may denote, as a lattice element.
+///
+/// Uninitialized is the identity, exactly as TypeValue's null Type is: the
+/// framework constructs every element before it visits anything that could
+/// define it, and the first real answer must replace that state rather than
+/// join with it. `join` is set union on the sites and OR on `external`; the
+/// height is sites-in-function + 1, so termination is by construction.
+///
+/// A site is a ctjs.create_object or a ctjs.create_array and nothing else. The
+/// NEITHER rows apply only to these ordinary allocation kinds; property access
+/// still exposes them through possible inherited accessors. The constructor
+/// asserts the restriction, onlyTrackedSites re-checks it, and tests ensure
+/// other allocating operations enter no alias set.
 class AliasValue {
 public:
     AliasValue() = default;
@@ -93,6 +96,7 @@ public:
     /// The object allocated at `site`, which must be a tracked site.
     static AliasValue site(mlir::Operation * site);
 
+    /// The lattice join: union of sites, OR of `external`.
     static AliasValue join(const AliasValue & lhs, const AliasValue & rhs);
 
     [[nodiscard]] bool isUninitialized() const { return !initialized_; }
@@ -108,16 +112,16 @@ public:
 private:
     bool initialized_ = false;
     bool external_ = false;
-    llvm::SmallVector<mlir::Operation *, 4> sites_; // sorted by address, unique
+    llvm::SmallVector<mlir::Operation *, 4> sites_; // Sorted by address, unique.
 };
 
 using AliasLattice = mlir::dataflow::Lattice<AliasValue>;
 
-// The alias half. Load it into a solver alongside BOTH DeadCodeAnalysis AND
-// SparseConstantPropagation, for TypeInference.h's two reasons: without the
-// first there is no predecessor information and no block argument ever
-// receives anything; without the second DeadCodeAnalysis cannot decide which
-// successor of a branch is live and marks none.
+/// The alias half of the analysis. Load it into a solver alongside both
+/// DeadCodeAnalysis and SparseConstantPropagation, for TypeInference.h's two
+/// reasons: without the first there is no predecessor information and no
+/// block argument ever receives anything; without the second DeadCodeAnalysis
+/// cannot decide which successor of a branch is live and marks none.
 class EscapeAnalysis : public mlir::dataflow::SparseForwardDataFlowAnalysis<AliasLattice> {
 public:
     using SparseForwardDataFlowAnalysis::SparseForwardDataFlowAnalysis;
@@ -125,7 +129,7 @@ public:
     /// SITE for the two tracked operations; CARRY (union of the carried
     /// operands, plus external) for an operation whose interface says so;
     /// none for a non-value result or a constant; external for everything
-    /// else. NO SINK IS APPLIED HERE - see the file comment.
+    /// else. No sink is applied here; see the file comment.
     mlir::LogicalResult visitOperation(mlir::Operation * op,
                                        llvm::ArrayRef<const AliasLattice *> operands,
                                        llvm::ArrayRef<AliasLattice *> results) override;
@@ -135,23 +139,25 @@ public:
     void setToEntryState(AliasLattice * lattice) override;
 };
 
-// --- the roles, as the post-pass reads them ----------------------------------
+// --- The roles, as the post-pass reads them -----------------------------------
 
+/// What an operand position does to the objects it may denote.
 enum class OperandRole {
     Sink,
     Carry,
     Neither
 };
 
+/// An operand's role, with the escape reason when the role is Sink.
 struct RoleOf {
     OperandRole role = OperandRole::Neither;
-    EscapeReason reason = EscapeReason::Confined; // meaningful for Sink only
+    EscapeReason reason = EscapeReason::Confined; ///< Meaningful for Sink only.
 };
 
 /// The role of operand `index` of `op`: the kind switch for unary/compare/
 /// convert; the ODS interface for an operation that has it; CARRY for a
 /// BranchOpInterface's value operands (the framework moves them); and the
-/// DEFAULT RULE - SINK(unknown_op) for every !ctjs.value operand - for an
+/// default rule, SINK(unknown_op) for every !ctjs.value operand, for an
 /// operation with none of those. Exposed so the unit test can assert every
 /// row's operand through the same path the verdict takes.
 [[nodiscard]] RoleOf operandRole(mlir::Operation * op, unsigned index);
@@ -159,8 +165,9 @@ struct RoleOf {
 /// A ctjs.create_object or ctjs.create_array.
 [[nodiscard]] bool isTrackedSite(mlir::Operation * op);
 
-/// An allocating operation the MVP claims `escapes(reason)` rather than
-/// tracks - the Res<..., [CTJS_Boxed...]> decorators in CTJSOps.td.
+/// True for an allocating operation that this analysis does not track and
+/// always reports as `escapes(reason)`, and sets `reason`. These are the ops
+/// with Res<..., [CTJS_Boxed...]> decorators in CTJS/IR/Ops/*.td.
 [[nodiscard]] bool isBoxedSite(mlir::Operation * op, EscapeReason & reason);
 
 /// The bytecode pc the importer stamped on `op` - the `<at>` of the NameLoc
@@ -168,12 +175,14 @@ struct RoleOf {
 /// location does not parse (a claim for such an op is `unvisited`, counted).
 [[nodiscard]] std::optional<unsigned> allocationPc(mlir::Operation * op);
 
-// --- the verdicts --------------------------------------------------------------
+// --- The verdicts --------------------------------------------------------------
 
+/// One site's verdict: why it escapes (or Confined), and the first sinking
+/// operand, when known.
 struct Verdict {
     EscapeReason reason = EscapeReason::Confined;
-    mlir::Operation * by = nullptr; // the sinking operation, when known
-    unsigned position = 0;          // its operand index
+    mlir::Operation * by = nullptr; ///< The sinking operation, when known.
+    unsigned position = 0;          ///< Its operand index.
 };
 
 /// The direct target of the first Stored witness: create_array's result,
@@ -200,13 +209,14 @@ struct DirectStorageWrite {
     AliasValue target;
 };
 
+/// Every direct Stored write in a function, and whether the census is complete.
 struct DirectStorageEvidence {
     llvm::SmallVector<DirectStorageWrite, 0> writes;
     /// All Stored operands in the live top-level CFG have initialized value
     /// and supported direct-target aliases, with no nested-region or raw-frame
     /// refusal. False preserves the partial records, never an empty success.
     ///
-    /// This is completeness of the direct-write census ONLY. It says nothing
+    /// This is completeness of the direct-write census only. It says nothing
     /// about indirect contents transfers (copy_props, loads, spread calls),
     /// setters, other escape reasons or object instances sharing a site. Even
     /// when true it is not a contents/retention proof or permission to weaken
@@ -223,6 +233,7 @@ struct DirectPropertyRead {
     llvm::SmallVector<std::size_t, 2> candidateWrites;
 };
 
+/// Every live top-level property read, linked to the direct writes it may see.
 struct DirectLoadEvidence {
     llvm::SmallVector<DirectPropertyRead, 0> reads;
     /// Every top-level get_property base has initialized aliases and the
@@ -233,13 +244,14 @@ struct DirectLoadEvidence {
     /// They do not follow loaded aliases, prototypes, accessors, copy_props or
     /// other indirect transfers. An empty candidate list says only that no
     /// recorded write shares a known local site. Even a complete census is
-    /// NOT a points-to/contents proof, and never changes load result lattices
+    /// not a points-to or contents proof, and never changes load result lattices
     /// or escape verdicts. Recompute after any IR mutation.
     bool complete = true;
 };
 
+/// The result of computeVerdicts().
 struct EscapeVerdicts {
-    /// Every tracked site under a LIVE top-level CFG block, in preorder
+    /// Every tracked site under a live top-level CFG block, in preorder
     /// (a MapVector so the inventory is deterministic). All descendants of dead
     /// top-level blocks are dropped and counted. Nested sites remain UnknownOp
     /// with no operand witness, unless an earlier whole-function refusal applies;
@@ -249,21 +261,24 @@ struct EscapeVerdicts {
     DirectStorageEvidence directStorage;
     /// Diagnostic local-site links from direct writes to property reads.
     DirectLoadEvidence directLoads;
+    /// Tracked sites in dead top-level blocks, dropped from `sites`.
     unsigned deadSites = 0;
-    /// A site in a live block whose result lattice the solver never
-    /// initialized: `escapes(unvisited)`, counted, gated at zero.
+    /// Sites in live blocks whose result lattice the solver never initialized;
+    /// each is reported `escapes(unvisited)`. Tests require this to be zero.
     unsigned unvisitedSites = 0;
-    /// A SINK operand in a live block with no lattice: EVERY site of the
-    /// function becomes `escapes(unvisited_operand)`, counted, gated at zero.
+    /// SINK operands in live blocks with no lattice. Each makes every site of
+    /// the function `escapes(unvisited_operand)`. Tests require this to be
+    /// zero.
     unsigned unvisitedOperands = 0;
     unsigned blocks = 0;
     unsigned liveBlocks = 0;
-    /// R1: the function built an `arguments` object or a rest parameter, so
-    /// every parameter has a heap alias and a future callee summary must treat
-    /// it as capturing every argument.
+    /// The function builds an `arguments` object or a rest parameter (refusal
+    /// R1), so every parameter has a heap alias and a future callee summary
+    /// must treat the function as capturing every argument.
     bool capturesAllArguments = false;
-    /// R4 `suspended` or R1's guard `arguments_late`: every site escapes with
-    /// this reason.
+    /// Set when a rule applies to the whole function: `suspended` for a
+    /// function with a suspension point (refusal R4), or `arguments_late` when
+    /// R1's placement guard fails. Every site escapes with this reason.
     std::optional<EscapeReason> wholeFunction;
     /// A separate complete local-container proof discharged these stored sites,
     /// including implicit region captures whose exact operand role is Stored.
@@ -297,6 +312,7 @@ struct EscapeExposure {
     AliasValue value;
 };
 
+/// The result of computeLoadProvenance().
 struct LoadProvenanceEvidence {
     llvm::SmallVector<DirectStorageWrite, 0> writes;
     llvm::SmallVector<PropertyReadProvenance, 0> reads;
@@ -307,7 +323,7 @@ struct LoadProvenanceEvidence {
     bool converged = false;
     /// The original direct census and every queried lattice were initialized,
     /// with no unsupported target, region or raw-frame refusal. Even together
-    /// with converged this does NOT establish complete contents: keys, order,
+    /// with converged this does not establish complete contents: keys, order,
     /// accessors, prototypes, calls and indirect transfers remain unproved.
     bool inputsComplete = true;
     /// Constraint visits and site joins performed during propagation. Building
@@ -315,7 +331,7 @@ struct LoadProvenanceEvidence {
     std::size_t work = 0;
 };
 
-/// Recompute from the live solver and verdict census for the SAME IR snapshot.
+/// Recompute from the live solver and verdict census for the same IR snapshot.
 /// This separate, bounded diagnostic query never changes an AliasLattice or a
 /// Verdict, and no native admission may consume it as a confinement proof.
 [[nodiscard]] LoadProvenanceEvidence computeLoadProvenance(mlir::DataFlowSolver & solver,
@@ -323,10 +339,11 @@ struct LoadProvenanceEvidence {
                                                            const EscapeVerdicts & verdicts,
                                                            std::size_t workLimit = 100000);
 
-/// Independent complete own-element/field evidence, not the candidate graph above.
-/// Values name their original constant, independent primitive producer or fresh
-/// allocation, following exact earlier reads. Each write keeps its actual
-/// operand position as a witness.
+/// One write to a fresh array's element, from the complete contents proof
+/// (computeArrayContents), not the candidate graph above. Values name their
+/// original constant, independent primitive producer or fresh allocation,
+/// following exact earlier reads. Each write keeps its actual operand position
+/// as a witness.
 struct ArrayElementWrite {
     mlir::Operation * by = nullptr;
     unsigned position = 0;
@@ -335,6 +352,7 @@ struct ArrayElementWrite {
     mlir::Value value;
 };
 
+/// One read of a fresh array's element, from computeArrayContents.
 struct ArrayElementRead {
     mlir::Operation * by = nullptr;
     mlir::Operation * array = nullptr;
@@ -342,8 +360,10 @@ struct ArrayElementRead {
     mlir::Value value;
 };
 
+/// A fresh object's own data properties, by key.
 using ObjectOwnProperties = llvm::MapVector<mlir::StringAttr, mlir::Value>;
 
+/// One write to a fresh object's own data property.
 struct ObjectPropertyWrite {
     mlir::Operation * by = nullptr;
     unsigned position = 0;
@@ -352,6 +372,7 @@ struct ObjectPropertyWrite {
     mlir::Value value;
 };
 
+/// One read of a fresh object's own data property.
 struct ObjectPropertyRead {
     mlir::Operation * by = nullptr;
     mlir::Operation * object = nullptr;
@@ -359,6 +380,7 @@ struct ObjectPropertyRead {
     mlir::Value value;
 };
 
+/// One deletion of a fresh object's own property.
 struct ObjectPropertyDeletion {
     mlir::Operation * by = nullptr;
     mlir::Operation * object = nullptr;
@@ -379,8 +401,9 @@ struct ObjectPropertyCopy {
     mlir::Value value;
 };
 
+/// The exact contents of every fresh container on one path to a return.
 struct ArrayContentsExit {
-    mlir::Operation * by = nullptr; // return
+    mlir::Operation * by = nullptr; ///< The return.
     mlir::Value value;
     /// Exact final dense own elements on this path, including empty arrays.
     /// A join is explored separately for each incoming path; the same return
@@ -395,6 +418,7 @@ struct ArrayContentsExit {
     llvm::SmallVector<mlir::Operation *, 4> reachableSites;
 };
 
+/// Why computeArrayContents refused, or None.
 enum class ArrayContentsFailure {
     None,
     UnsupportedControlFlow,
@@ -409,6 +433,7 @@ enum class ArrayContentsFailure {
     MissingProperty
 };
 
+/// The result of computeArrayContents().
 struct ArrayContentsEvidence {
     /// Every array site visited on any path, once each. Exact final contents
     /// live on exits; writes/reads preserve all path-specific earlier states.
@@ -422,7 +447,8 @@ struct ArrayContentsEvidence {
     llvm::SmallVector<ObjectPropertyCopy, 0> propertyCopies;
     llvm::SmallVector<ArrayContentsExit, 1> exits;
     /// Published only after the entire function and exit reachability pass.
-    /// Refusal/exhaustion returns NO container, write, read, deletion, copy or exit records.
+    /// A refusal or exhaustion returns no container, write, read, deletion, copy
+    /// or exit records.
     bool complete = false;
     ArrayContentsFailure failure = ArrayContentsFailure::None;
     mlir::Operation * refusedBy = nullptr;
@@ -432,157 +458,59 @@ struct ArrayContentsEvidence {
     std::size_t work = 0;
 };
 
-/// Recompute from the CURRENT verified IR; needs neither trusted annotations
-/// nor alias lattices. An acyclic cf.br/cf.cond_br/cf.switch graph may contain
-/// constants, fresh objects/arrays, literal append, constant-Number-index array
-/// reads/overwrites, empty-object deletions/copies,
-/// strict equality, ToBoolean, logical negation, typeof, void, supported static
-/// binary operations on independently non-BigInt origins, arithmetic unary
-/// operations, dynamic Sub/Mul/Div/Mod/Pow/Add/Concat, loose equality and relational
-/// comparisons on independently primitive origins, including mixed BigInt constants
-/// or computed results, truthy and return. Ordinary-object writes refuse:
-/// an inherited setter can retain their value without installing an own field.
-/// Object reads require independently proved own data; absent reads, keys longer
-/// than 256 bytes and __proto__ refuse. Absent deletion is a no-op. Array writes
-/// remain in the cycle graph and saved reads retain their exact origins.
-/// copy_props requires known fresh own-data objects at both ends and snapshots
-/// every source field before writing, including self-copy. Copied fields retain
-/// their origins; source-container identity is not copied. Arrays and unknown
-/// sources/targets refuse. Enumeration order is outside this contents proof.
-/// Every array deletion refuses. String array indices refuse because the current
-/// VM's named property path does not access dense elements, unlike JavaScript's String
-/// index semantics. Loaded aliases share one contents state per path; cycles
-/// are visited once at exits. Unknown values/keys,
-/// holes, calls, throws, publication, unsupported regions, prototypes and accessors refuse.
-/// Single-block scf.if arms keep separate exact states; scf.yield transports
-/// all result facts simultaneously, including aliases and scalar snapshots.
-/// An implicit empty else preserves its incoming state. Single-block scf.while
-/// uses the read-only zero/+1 own-length certificate described below; init,
-/// condition and yield operands preserve simultaneous aliases and scalar facts.
-/// Every conditional/switch edge is explored, including default and statically
-/// untaken cases. Switch flags must have an independently known origin. Strict
-/// equality, ToBoolean and logical negation produce independent, noncapturing
-/// primitive Booleans; they infer no operand value, alias or branch liveness.
-/// TypeOf and Void independently yield primitive String and Undefined origins,
-/// with no key/value inference. TypeOf's VM String allocation carries no input
-/// object; this query proves neither absence of allocation nor its success.
-/// The seven static binary kinds yield Number only after both exact origins
-/// exclude BigInt. Static Add/BitAnd/BitOr/BitXor/Shl/Shr separately accept two
-/// independently proved BigInt origins and record the normal independent BigInt
-/// result in the charged per-path category set. Exact digit operations invoke no
-/// user conversion. Signed shifts can throw an independent RangeError for an
-/// oversized left shift, including a negative right-shift count. The whole-frame
-/// exclusion of calls, handlers and publication prevents that exit from retaining
-/// unpublished local objects; normal completion, no-throw/effects and allocation
-/// success remain unproved. Mixed/opaque inputs and unsigned BigInt shifts still
-/// refuse. Non-BigInt static conversion never
-/// invokes user code, including on a fresh object (a documented VM deviation
-/// from source JS). Static Add separately carries an exact Number index when
-/// both saved facts or original Number literals and their sum lie in [0, 2^32-1].
-/// Bounded literal subtraction also preserves that fact; no branch liveness or
-/// loop admission follows. Other static results infer no Number value or index.
-/// String conversion can allocate C++ temporaries; absence of allocation and
-/// its success are not proved.
-/// Neg/Plus/BitNot yield Number only for independently primitive non-BigInt
-/// origins. Fresh objects/arrays and opaque inputs remain refused: excluding
-/// BigInt alone does not exclude object conversion. Saved reads use their
-/// original primitive identity, never a slot's newer contents. Neg/BitNot also
-/// accept independently proved BigInt origins and record their independent
-/// BigInt result in a separately charged per-path category set. Chained results
-/// and exact saved/forwarded origins retain that category; downstream non-BigInt
-/// operations must exclude it. Plus separately accepts a proved original BigInt:
-/// to_number_value raises an independent TypeError before object lookup or user
-/// conversion. That Error has no edge to the input or unpublished fresh locals.
-/// The VM's independent Number result carrier does not imply successful completion;
-/// every structural continuation is still checked, including later publication.
-/// None of these unary operations carries an input object identity or runs user
-/// conversion; VM allocation and C++ temporary allocation success remain unproved.
-/// Neg/Plus still have a catchable recursion-depth guard: its unrelated Error
-/// cannot retain unpublished fresh locals from this call/handler-free subset.
-/// This retention query proves no normal completion or no-throw/effect contract;
-/// a native lifetime/effect consumer would need an independent proof.
-/// Loose equality and relational kinds yield an independent Boolean only after
-/// BOTH original origins separately prove primitive categories, including mixed
-/// BigInt constants or independently categorized unary/binary results. Saved
-/// reads retain their original identity across overwrites. VM paths compare
-/// digits, parse Strings and convert static numbers, without retaining inputs
-/// or invoking object hooks. Their mixed-category value-semantic differences
-/// remain separate: no equality, key, branch choice or native carrier follows.
-/// Relational kinds and BigInt/Boolean loose equality can enter to_primitive's
-/// depth guard and throw an independent RangeError. As with Neg/Plus, the whole
-/// frame's exclusion of calls, handlers and publication prevents retention of
-/// its unpublished fresh locals. This supplies no normal-completion,
-/// allocation-success or no-throw/effect contract. Object, opaque and unproved
-/// computed inputs remain refused. Other conversion kinds refuse.
-/// Dynamic Sub/Mul/Div/Mod/Pow likewise require BOTH original primitive
-/// non-BigInt operands. Normal results are independent Numbers even for NaN,
-/// infinity or signed zero, with no constant/index/key inference. Each operand's
-/// to_number_value depth guard has the same retention-only early-exit argument
-/// as Neg/Plus; this adds no completion/effect guarantee. Dynamic Add/Concat
-/// accept the same original primitive non-BigInt inputs. Concat also accepts
-/// independently proved BigInts; Add accepts String/BigInt only when one original
-/// independently proves String. String literals, TypeOf and Concat are exact
-/// categories; proved String-producing Add results enter a separately charged
-/// per-path set. Saved/forwarded results preserve their original category after
-/// overwrite/deletion, while ambiguous Number/String Add results cannot authorize
-/// a later BigInt operand. No constant/key inference follows. Add enters
-/// to_primitive's guard and shares the same
-/// retention-only argument; primitive Concat uses static to_string. String
-/// results allocate in the VM; allocation success remains unproved. Dynamic
-/// Add/Sub/Mul/Div/Mod/Pow additionally accept two independently proved original
-/// BigInts, preserving their independent normal-result category in the same
-/// charged per-path set as Neg/BitNot. Saved reads and chained results retain
-/// that category; neither operand supplies authority for the other. Add's depth
-/// guard, Div/Mod's zero-divisor RangeError and Pow's negative/oversized-exponent
-/// RangeErrors have the same retention-only early-exit argument: the independent
-/// Error has no local object edge, while the whole-frame proof excludes calls,
-/// handlers and publication. Pow keeps the VM's unconditional exponent cap for
-/// small bases as an explicit source-semantics divergence. Dynamic Sub/Mul/Div/Mod also
-/// accept exactly one original BigInt and one independently proved non-BigInt
-/// primitive. bigint_binary rejects this pair before lookup or user conversion;
-/// its independent TypeError cannot retain unpublished fresh locals. The VM's
-/// independent Undefined carrier is not a BigInt or a proved Number, and every
-/// structural continuation is still checked. Static Pow/unsigned
-/// shifts, dynamic bitwise/shifts and other mixed/object/opaque
-/// inputs remain outside this bounded BigInt proof. No allocation-success,
-/// normal-completion or native effect guarantee follows.
-/// Joins keep exact separate states rather than unioning overwrite targets. Truthy
-/// accepts an external value only as a noncapturing predicate, never an element.
-/// Exact entry !ctjs.value identities may travel through unused register arguments
-/// and these noncapturing tests separately from known origins. They never authorize
-/// unknown roots, stored contents, returns, keys, copy endpoints or effects. Opaque seeding and
-/// path snapshots are charged to the same work budget. Other unknown forwarded
-/// values refuse. A certified read-only CFG or scf.while header/body loop may replay with proved
-/// nonnegative integral Number initialization and proved positive integral Number Add steps
-/// (dynamic or static, with either operand order), or dynamic Sub of an original bounded
-/// negative Number literal (including literal Neg), or a held bounded signed Number
-/// preserved through Plus/Neg, under a
-/// strict current own-array length guard (`index < length`, `length > index`,
-/// `!(index >= length)` or `!(length <= index)`), within the same
-/// work budget. The start and exact final
-/// update must remain within 0..2^32-1; a start at or beyond length preserves its original value
-/// without a body iteration. Held steps stay invariant across the actual
-/// header/body/backedge transport; repeated computations cannot borrow an earlier iteration's
-/// scalar facts. Allocation, mutation and nested control in that loop refuse.
-/// The guarded array may be a transported header argument or a direct allocation
-/// already known on this path after SCF eliminates an invariant array argument.
-/// Other repeated blocks refuse. Unvisited ordinary blocks are unreachable
-/// independently of solver flags.
-/// An optional imported frame must enter first and exit immediately before
-/// every return; roots name that active frame and an independently known value.
-/// Checked branch arguments may forward the same frame handle.
-/// Entry failure precedes every tracked allocation, not a nonthrowing claim.
+/// Proves the exact own contents of every fresh array and plain object on each
+/// path to a return, and which local allocations each returned value can
+/// reach. Works on the current verified IR alone; needs neither trusted
+/// annotations nor alias lattices.
 ///
-/// This query changes no escape verdict itself. computeVerdicts independently
-/// recomputes it before its bounded Stored refinement; neither query proves
-/// native element types or ownership/lifetime. Any IR mutation invalidates all
-/// returned records, including successful ones.
+/// Accepted: acyclic cf.br/cf.cond_br/cf.switch control flow (every edge is
+/// explored, including untaken switch cases), single-block scf.if (arms keep
+/// separate exact states; an implicit empty else keeps its incoming state),
+/// and read-only counted loops (CFG or single-block scf.while) whose index
+/// starts at a proved nonnegative integral Number, steps by a proved positive
+/// amount, and is guarded by a strict own-length test such as
+/// `index < length`, all within 0..2^32-1. Inside that: constants, fresh
+/// objects and arrays, literal append, constant-Number-index array reads and
+/// overwrites, own-data object reads (keys at most 256 bytes, never
+/// `__proto__`), deletions on fresh objects, copy_props between known fresh
+/// own-data objects (every source field is snapshotted first, including
+/// self-copy), truthy, return, and primitive operators whose operands are
+/// independently proved primitive, so no user conversion can run. BigInt
+/// operands are accepted only where the VM's BigInt path is exact and its
+/// errors (TypeError, RangeError, the recursion-depth guard) carry no edge to
+/// a local object; the whole-frame exclusion of calls, handlers and
+/// publication then keeps such an early exit from retaining unpublished
+/// locals.
+///
+/// Refused: calls, throws, publication, accessors, prototypes, unknown values
+/// or keys, holes, every array deletion, string array indices (the VM's named
+/// property path does not reach dense elements), ordinary-object writes (an
+/// inherited setter could retain the value), allocation, mutation or nested
+/// control inside a loop, and other repeated blocks. A refusal sets `failure`
+/// and `refusedBy` and publishes no records.
+///
+/// Two VM deviations from source JavaScript are modelled as the VM behaves:
+/// non-BigInt static conversion never invokes user code, even on a fresh
+/// object, and Pow keeps the VM's unconditional exponent cap for small bases.
+///
+/// Joins keep exact separate states per incoming path rather than unioning
+/// overwrite targets. An optional imported frame must enter first and exit
+/// immediately before every return.
+///
+/// Success proves only that local objects are not retained past the frame. It
+/// proves no native element type, ownership, normal completion, absence of
+/// exceptions or allocation success. computeVerdicts recomputes this query
+/// before its bounded Stored refinement. The per-operator rules are commented
+/// beside each case in lib/CTNative/Analysis/EscapeAnalysis/*.cpp. Any IR
+/// mutation invalidates every returned record, including successful ones.
 [[nodiscard]] ArrayContentsEvidence computeArrayContents(ctjs::FuncOp function,
                                                          std::size_t workLimit = 100000);
 
-/// The post-pass. Takes the solver by non-const reference only because
+/// The post-pass that computes every site's verdict. It takes the solver by
+/// non-const reference only because
 /// DataFlowSolver::getProgramPointBefore(Block *) interns its anchor and is
 /// not const; nothing here changes a lattice.
+///
 /// Models the function's top-level CFG. A live operation's nested regions
 /// sink their implicit captures as unknown_op; no region-control-flow proof
 /// is inferred. Allocations inside nested regions are inventoried with an
@@ -593,15 +521,17 @@ struct ArrayContentsEvidence {
 /// With initialized solver evidence, a complete current computeArrayContents
 /// proof may discharge Stored sites absent from every return path, including
 /// UnknownOp region captures whose exact operand role is Stored. A bounded
-/// acyclicity check over ALL array/object writes excludes transient cycles. Retained
-/// children keep their original witness; no unique owner is inferred.
-/// For scf.if/scf.while, a charged census checks current operand/result lattices
-/// and direct Stored targets before the independent contents proof. The legacy
-/// top-level census remains incomplete. Nested allocations require exclusively
-/// scf.if ancestors; the complete contents query rejects repeated root blocks
-/// except allocation/region-free counted loops, proving at most one instance per
-/// call. A site may refine only when absent from every return's reachable sites.
-/// This proves frame confinement, never region lifetime or native ownership.
+/// acyclicity check over all array/object writes excludes transient cycles.
+/// Retained children keep their original witness; no unique owner is inferred.
+/// For scf.if/scf.while, a census (charged to the same work limit) checks the
+/// current operand/result lattices and direct Stored targets before the
+/// contents proof runs; the top-level direct-write census
+/// (DirectStorageEvidence) still reports such functions as incomplete. Nested
+/// allocations require exclusively scf.if ancestors; the contents query
+/// rejects repeated root blocks except allocation-free and region-free counted
+/// loops, proving at most one instance per call. A site may be refined only
+/// when absent from every return's reachable sites. This proves frame
+/// confinement, never region lifetime or native ownership.
 /// Unsupported operations, cycles, missing lattices or budget exhaustion leave
 /// every original verdict intact. No native admission consumes this refinement.
 [[nodiscard]] EscapeVerdicts computeVerdicts(mlir::DataFlowSolver & solver, ctjs::FuncOp function,

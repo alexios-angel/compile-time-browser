@@ -1,3 +1,11 @@
+//===- Bodies.cpp - Helper body checks --------------------------*- C++ -*-===//
+//
+// DOMSource::checkBody, the structural check every DOM helper body passes
+// before it is inlined, and DOMSource::proveUnusedBody, which accepts a
+// helper that is never called only when its body is inert for any input.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::dom_source_detail {
@@ -27,6 +35,8 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
     mlir::DominanceInfo dominance(function);
     const auto visit = [&](auto && self, mlir::Block & body, unsigned depth, mlir::Value & frame,
                            bool & nonReturning) -> bool {
+        // The depth limit of 64 keeps a pathological module from overflowing
+        // the stack; proveUnusedBody uses the same bound.
         if (depth == 64 || (depth && body.getNumArguments() &&
                             !llvm::isa<mlir::scf::WhileOp>(body.getParentOp()))) {
             return refuse(entry ? "DOM entry branch depth or arguments are unsupported"
@@ -40,8 +50,8 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
         for (mlir::Operation & operation : body) {
             if (!step()) { return false; }
             // A normalized URI invoke is opaque here: normalizeDOMURI proved
-            // its regions, and the complete DOM entry proof reproves the
-            // inlined result before anything is published.
+            // its regions, and the DOM entry proof (DOMEntryAnalysis) checks
+            // the inlined result again before anything is published.
             if ((operation.getNumRegions() &&
                  !llvm::isa<mlir::scf::IfOp, mlir::scf::WhileOp, mlir::scf::ExecuteRegionOp,
                             ctjs::InvokeOp, ctjs::TryOp>(operation)) ||
@@ -69,8 +79,8 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
                     !dominance.dominates(thrown.getValue(), thrown)) {
                     return refuse("DOM helper throw has no preceding local value");
                 }
-                // This path unwinds. Only its structural yield may follow;
-                // its live frame does not reach the normal sibling's join.
+                // This path unwinds. Only its scf.yield may follow, and its
+                // live frame does not reach the join with the normal arm.
                 nonReturning = true;
                 continue;
             }
@@ -160,9 +170,10 @@ bool DOMSource::checkBody(ctjs::FuncOp function, bool entry, bool directReceiver
             } else {
                 values.insert(operation.getResults().begin(), operation.getResults().end());
             }
-            // A proved capture-free callback stays in its selected source
-            // arm. Other callable/capture definitions still require the
-            // entry block; repeated loop-local identities are not proved.
+            // Inside a branch, only a capture-free callback accepted by
+            // confinedCallback may be created (and never inside a loop, where
+            // it would get a new identity per iteration). Cells, other
+            // closures and non-data objects must be created in the top block.
             auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(operation);
             if (depth) {
                 auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(operation);
@@ -216,15 +227,15 @@ bool DOMSource::proveUnusedBody(ctjs::FuncOp function, unsigned depth) {
         !checkBody(function, false)) {
         return false;
     }
-    // No invocation supplies parameter facts. These operations are inert for
-    // every value, including Objects and Symbols; conversions and calls are
-    // deliberately excluded. Check the original body before retiring it.
-    // Check both arms, including discarded values and constant-dead arms.
-    // checkBody already proved their dominance, completion and shadow frames.
-    // Cells hold arbitrary values, never host facts. Their identities must
-    // remain private, and every operation on every read is still checked.
-    // ponytail: uncaptured conditional bodies; loops and invoked helpers
-    // need their own complete independent body proof.
+    // The helper is never called, so nothing is known about its parameters.
+    // Accept only operations that are inert for any value, Objects and
+    // Symbols included (no conversions, no calls), checking every op in both
+    // arms, dead ones too; checkBody above already proved dominance,
+    // completion and shadow frames. Local cells may hold any value but must
+    // not escape this function. Nested closures must be uncaptured, unused
+    // and provable the same way.
+    // ponytail: only straight-line and if/else bodies are proved; loops and
+    // invoked helpers are refused until they get their own body proof.
     const auto checked = function.walk([&](mlir::Operation * operation) {
         if (!step()) { return mlir::WalkResult::interrupt(); }
         if (operation == function) { return mlir::WalkResult::advance(); }

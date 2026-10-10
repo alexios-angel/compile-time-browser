@@ -1,12 +1,20 @@
-#pragma once
+//===- CTNativeAttrNames.h - Shared ctnative attribute names ----*- C++ -*-===//
+//
 // The discardable `ctnative.*` attribute names one pass writes and another
-// (or the C++ emitter) reads. A typo in a bare string is a silent miss - the
-// reader falls back and nothing fails - so both sides spell them from here.
+// (or the C++ emitter) reads. A typo in a bare string is a silent miss (the
+// reader falls back and nothing fails), so both sides must spell them from
+// here.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
 #include "llvm/ADT/StringRef.h"
 
 namespace ctcompile::ctnative {
 
-// Closure lifting (Lowering/ClosureLifting) and the admission that reads it.
+/// Written by closure lifting (lib/CTNative/Lowering/ClosureLifting) and read
+/// by the admission check.
 inline constexpr llvm::StringLiteral kNativeReceiver = "ctnative.receiver";
 inline constexpr llvm::StringLiteral kNativeObjectArgs = "ctnative.object_args";
 inline constexpr llvm::StringLiteral kNativeCellArgs = "ctnative.cell_args";
@@ -20,7 +28,7 @@ inline constexpr llvm::StringLiteral kNativeObjectReason = "ctnative.object_reas
 inline constexpr llvm::StringLiteral kNativeMethod = "ctnative.method";
 inline constexpr llvm::StringLiteral kNativeMethodRefusal = "ctnative.method_refusal";
 
-// Lowering -> C++ emitter (lib/Target/Cpp).
+/// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";
 inline constexpr llvm::StringLiteral kNativeCallableCreate = "ctnative.callable_create";
 inline constexpr llvm::StringLiteral kNativeProvenance = "ctnative.provenance";

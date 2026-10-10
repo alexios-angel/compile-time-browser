@@ -1,12 +1,17 @@
+//===- SourceSite.h - JavaScript site of a location -------------*- C++ -*-===//
+//
+// Recovers the JavaScript file:line:col an MLIR location was imported from.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "mlir/IR/Location.h"
 
 namespace ctcompile {
 
-// THE JAVASCRIPT SITE OF A LOCATION. The importer fuses a NameLoc with the
-// FileLineColLoc of the site; the first file location found, at any depth, is
-// the site. Null when there is none.
+/// The JavaScript site of a location. The importer fuses a NameLoc with the
+/// FileLineColLoc of the site; the first file location found, at any depth, is
+/// the site. Null when there is none.
 inline mlir::FileLineColLoc sourceSite(mlir::Location loc) {
     mlir::FileLineColLoc site;
     loc->walk([&](mlir::Location l) {

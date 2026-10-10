@@ -1,3 +1,11 @@
+//===- Close.cpp - normalize iterator close -------------------------------===//
+//
+// normalizeDOMIteratorClose: rewrites the try/catch that suppresses errors from an
+// iterator's close call (`__ctbrowser_iter_close`) into a structured form the DOM
+// entry proof accepts, on a private clone of the entry function.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Snapshot/Bounds.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
@@ -19,8 +27,11 @@
 
 namespace ctcompile::ctnative {
 
-// The caller owns a disposable clone. Preserve both source completions while
-// upstream structures their common CFG; no native effect or payload is proved here.
+/// Lifts \p function (a disposable clone the caller owns) to structured control
+/// flow with MLIR's CFG-to-SCF transform, then replaces the final
+/// return-or-throw branch with an scf.if whose arms keep the original return
+/// and the original throw. Does nothing when the function never returns. It
+/// only reshapes control flow and proves no effect or payload.
 static llvm::Error structureCloseCompletion(ctjs::FuncOp function, WorkBudget & budget) {
     const auto refuse = [](llvm::StringRef reason) { return llvm::createStringError(reason); };
     bool returns = false;
@@ -33,8 +44,8 @@ static llvm::Error structureCloseCompletion(ctjs::FuncOp function, WorkBudget & 
         }
     }
     if (!returns) { return llvm::Error::success(); }
-    // Upstream has no work callback. Reserve its quadratic CFG work and the
-    // terminal-region rewrite before touching this clone.
+    // MLIR's transform has no work callback, so charge up front for its
+    // quadratic CFG work and the exit rewrite below before touching the clone.
     const uint64_t blocks = function.getBody().getBlocks().size() + 1;
     if (!budget.spend(size * 4) || !budget.spend(blocks * blocks * width)) {
         return refuse("DOM iterator completion work budget exhausted");
@@ -60,8 +71,10 @@ static llvm::Error structureCloseCompletion(ctjs::FuncOp function, WorkBudget & 
     auto * dispatch = root.getTerminator();
     auto switcher = llvm::dyn_cast<mlir::cf::SwitchOp>(dispatch);
     auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(dispatch);
-    // ponytail: the two distinct terminal kinds produced by CFG-to-SCF;
-    // keep broader terminal graphs until their region correspondence is proved.
+    // ponytail: accepts only what CFG-to-SCF produces for one return/throw
+    // split (an entry block plus two exit blocks, through cond_br or a
+    // one-case switch); refuses larger exit graphs until their regions can be
+    // mapped back to source exits.
     if (function.getBody().getBlocks().size() != 3 ||
         (!branch && (!switcher || switcher.getCaseDestinations().size() != 1))) {
         return refuse("DOM iterator completion requires one throw/return dispatch");
@@ -112,8 +125,9 @@ static llvm::Error structureCloseCompletion(ctjs::FuncOp function, WorkBudget & 
             auto & body = abrupt.getRegion().emplaceBlock();
             terminal->moveBefore(&body, body.end());
             end.setInsertionPointToEnd(block);
-            // This yield is structurally required and unreachable. The actual
-            // throw remains a terminator; only the real return supplies a result.
+            // scf.if needs this yield, but it is unreachable: the throw stays a
+            // terminator inside the execute_region, and only the real return
+            // supplies a result.
             value = mlir::ub::PoisonOp::create(end, terminal->getLoc(), value.getType());
         } else {
             terminal->erase();
@@ -142,7 +156,8 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
                                                             : mlir::WalkResult::interrupt();
     });
     const uint64_t size = maxSteps - budget.remaining;
-    // Reserve fingerprinting, the disposable clone, verification and rewrite.
+    // Charge for fingerprinting, the disposable clone, verification and the
+    // rewrite: six passes over the module.
     if (counted.wasInterrupted() || !budget.spend(size * 6)) {
         return refuse("DOM iterator close normalization work budget exhausted");
     }
@@ -190,8 +205,9 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     }
     if (pushes == 1 && landings == 1 && push.getHandler() == landing->getBlock() &&
         !landing.getThrown().use_empty()) {
-        // This is not a suppression landing. Leave its payload, state and calls
-        // intact for checked exception recovery and the subsequent protocol proof.
+        // The catch reads the thrown value, so this is not a suppression
+        // landing. Leave it intact for checked exception recovery and the
+        // later iterator-protocol proof.
         return false;
     }
     if (pushes != 1 || landings != 1 || push.getHandler() != landing->getBlock() ||
@@ -218,8 +234,9 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
     ctjs::CallOp close;
     ctjs::PopHandlerOp pop;
     auto * previous = push->getBlock();
-    // ponytail: one argument-free straight close chain; retain register-vector
-    // handlers until their state correspondence has a separate proof.
+    // ponytail: accepts only one straight chain of argument-free blocks from
+    // the handler push to the saved throw; refuses handlers whose blocks carry
+    // saved register values until mapping that state has its own proof.
     for (auto * block = push.getBody(); block != joined;) {
         if (!budget.spend() || block == caught || block->getNumArguments() ||
             !protectedBlocks.insert(block).second || block->getSinglePredecessor() != previous) {
@@ -306,9 +323,10 @@ llvm::Expected<bool> normalizeDOMIteratorClose(mlir::ModuleOp candidate,
             }
         }
     }
-    // Only initial intrinsic lookup and constants leave the protected chain.
-    // A caller must still reprove the full prefix/global/reentry contract on
-    // this private candidate before publication. The call itself remains caught.
+    // Only the initial intrinsic lookup and constants move out of the
+    // protected chain; the close call itself stays caught. The caller must
+    // still re-prove the prefix, global and reentry contract on this private
+    // candidate before using it.
     mlir::OpBuilder at(push);
     mlir::IRMapping mapping;
     for (auto * operation : setup) { at.clone(*operation, mapping); }

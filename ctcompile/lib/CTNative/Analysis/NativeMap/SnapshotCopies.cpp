@@ -1,7 +1,17 @@
+//===- SnapshotCopies.cpp - Map snapshot copy candidates --------*- C++ -*-===//
+//
+// Finds `Array.from(m.keys())` and `Array.from(m.values())` copies of native
+// Maps that may be lowered to an eager native vector copy, after checking that
+// `Array` and `Array.from` are the standard builtins.
+//
+//===----------------------------------------------------------------------===//
 #include "SnapshotCopies.h"
 
 namespace ctcompile::ctnative::map_detail {
 namespace {
+/// Checks that `iterator` (a keys() or values() call) is consumed by exactly
+/// one snapshot copy later in the same block, with only constants, roots or
+/// the Array.from lookups in between.
 std::string proveImmediateConsumption(ctjs::CallOp iterator, const snapshotCopies & copies,
                                       llvm::function_ref<bool()> spend) {
     ctjs::CallOp consumed;
@@ -18,9 +28,9 @@ std::string proveImmediateConsumption(ctjs::CallOp iterator, const snapshotCopie
         !iterator->isBeforeInBlock(consumed)) {
         return "native Map iterator requires one immediate Array.from consumption";
     }
-    // Map iterators are stateful and observe mutations before consumption.
-    // An eager native vector is equivalent only when its single consumer
-    // cannot observe that timing or consume the same iterator a second time.
+    // Map iterators are stateful and see mutations made before they are
+    // consumed. An eager native vector behaves the same only when nothing runs
+    // between creation and the single consumer.
     for (auto * op = iterator->getNextNode(); op != consumed.getOperation();
          op = op->getNextNode()) {
         if (!spend()) { return "snapshot proof work budget exhausted"; }

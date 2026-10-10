@@ -1,4 +1,10 @@
-// EmitC/Module.cpp - native lowering implementation.
+//===- Module.cpp - Module-level EmitC output ----------------- -*- C++ -*-===//
+//
+// Module-level EmitC output: the runtime include and defines, globals, shape
+// classes, function prototypes and the DOM session class, plus the final
+// erasure of the emptied ctjs.funcs.
+//
+//===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Runtime.h"
@@ -10,12 +16,12 @@ void lowering::verbatim(mlir::OpBuilder & b, const llvm::Twine & text) {
 }
 
 void lowering::finish() {
-    // PROTOTYPES FIRST. main is the importer's function 0 and is emitted
-    // first, and C++ needs a declaration before a use; one
-    // emitc.declare_func per lowered function, at the top of the module
-    // after the includes and carrier definitions, is what the emitter
-    // prints as a prototype. Map parameters and returns name the helper's
-    // number_map template, so its definition must precede the prototypes.
+    // Declare every lowered function except main before any definition, since
+    // main (the importer's function 0) is emitted first and C++ needs a
+    // declaration before a use. Each emitc.declare_func prints as a prototype.
+    // The order at the top of the module is: includes and helpers, shape
+    // classes, owned-global storage, then the prototypes (skipped in a DOM
+    // data session, whose functions are class members).
     {
         mlir::OpBuilder b(context);
         b.setInsertionPointToStart(module.getBody());
@@ -33,12 +39,11 @@ void lowering::finish() {
                 break;
             }
         }
-        // THE CLASSES FIRST, one per SHAPE and no longer one per site
-        // (Phase 56C), public fields only: emitc.class prints exactly that.
-        // A family that disagrees on a field type carries its parameter
-        // list as an attribute and its varying fields as the parameters -
-        // the fork's emitter is the one consumer, like every other
-        // ctcompile divergence in it.
+        // One emitc.class per object shape (not per allocation site), with
+        // public fields only. A shape family whose members disagree on a field
+        // type becomes a class template: the varying fields' types are template
+        // parameters listed in `ctnative.template_params`, an attribute only
+        // ctcompile's patched C++ emitter reads.
         for (const family & f : families) {
             auto cls = ec::ClassOp::create(b, module.getLoc(), f.name);
             cls->setAttr("ctnative.provenance", b.getStringAttr(provenanceOf(f)));
@@ -108,8 +113,10 @@ void lowering::finish() {
 }
 
 void lowering::declareGlobals() {
-    // A presentation policy only: retain typed constants through every
-    // optimization and let the C++ printer choose their literal spelling.
+    // Presentation policies for the C++ printer only: keep typed constants
+    // through every optimization and let the printer choose their literal
+    // spelling, declare bindings const where the operands allow it, and spell
+    // double as js_num.
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
@@ -123,7 +130,7 @@ void lowering::declareGlobals() {
     });
     mlir::OpBuilder b(context);
     b.setInsertionPointToStart(module.getBody());
-    // THE RUNTIME IS ONE INCLUDE (Runtime/ctnative.hpp), and the two things a
+    // The runtime is one include (Runtime/ctnative.hpp), and the two things a
     // program decides that a header cannot are defines in front of it. The
     // builder advances past each op it creates, so creation order is file
     // order. Everything after the include is text the program parameterises:

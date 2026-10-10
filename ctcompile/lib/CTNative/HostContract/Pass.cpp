@@ -1,3 +1,13 @@
+//===- Pass.cpp - The ctnative-host-contract pass -------------------------===//
+//
+// CTNativeHostContractPass runs HostContractAnalysis against the driver
+// manifest named by the pass's `manifest` option and records the verdict on
+// the module as ctnative.host_* attributes. It can also write a JSON report
+// (`output`), emit a summary remark (`report`), print only the module
+// fingerprint (`fingerprint`), or fail the pass on refusal (`requireProof`).
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 

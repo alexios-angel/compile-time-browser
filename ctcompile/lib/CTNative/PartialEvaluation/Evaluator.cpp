@@ -1,3 +1,13 @@
+//===- Evaluator.cpp - Abstract interpreter for ctjs regions --------------===//
+//
+// The partial evaluator's interpreter (class evaluator in Heap.h). It runs a
+// function on known arguments over an abstract heap of objects, Maps, cells
+// and closures. Anything it cannot compute exactly (an unknown value reaching
+// a branch, a host read, an unproved call) stops evaluation with a reason, so
+// a successful run is an exact result.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Heap.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -64,6 +74,9 @@ std::optional<snapshot> evaluator::run(ctjs::FuncOp function, llvm::ArrayRef<val
     return std::move(state);
 }
 
+/// Interprets one region from its entry block, following cf branches between
+/// blocks, until a ctjs.return, scf.yield or scf.condition ends it. Any value
+/// that cannot be computed exactly halts evaluation with a reason in `problem`.
 evaluator::completion evaluator::region(mlir::Region & body, llvm::ArrayRef<value> incoming,
                                         environment & env, unsigned depth) {
     if (body.empty()) { return halt("empty region"); }
@@ -163,8 +176,9 @@ evaluator::completion evaluator::region(mlir::Region & body, llvm::ArrayRef<valu
 value evaluator::operation(mlir::Operation * op, environment & env, unsigned depth) {
     auto * context = module.getContext();
     const auto get = [&](mlir::Value input) { return env.lookup(input); };
-    // Structuring introduces dead carried slots. Unknown is safe to carry,
-    // but cannot control a branch, participate in a computation or escape.
+    // Lifting to scf introduces dead loop-carried slots initialized with
+    // ub.poison. An unknown value is safe to carry, but it cannot control a
+    // branch, take part in a computation or escape.
     if (op->getName().getStringRef() == "ub.poison") { return {}; }
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) {
         if (!ctjs::isPrimitiveAttr(constant.getValue())) {
@@ -193,9 +207,9 @@ value evaluator::operation(mlir::Operation * op, environment & env, unsigned dep
         if (load->hasAttr(kNativeMapConstructor)) {
             return {value::kind::mapConstructor, {}, 0, {}};
         }
-        if (calleeSlotOnly(load)) {
-            return {};
-        } // Direct-call evaluation separately proves the loaded callee identity.
+        // A global loaded only to be the callee of a direct call is left
+        // unknown; directCall proves the callee's identity separately.
+        if (calleeSlotOnly(load)) { return {}; }
         return fail("host or mutable global read");
     }
     if (llvm::isa<ctjs::CreateCellOp, ctjs::CellGetOp, ctjs::CellSetOp, ctjs::CreateClosureOp>(

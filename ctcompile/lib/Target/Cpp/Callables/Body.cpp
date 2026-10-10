@@ -1,3 +1,10 @@
+//===- ctcompile/lib/Target/Cpp/Callables/Body.cpp - Callable body plan ---===//
+//
+// Implements callableBodyPlan: validates a function's
+// `ctnative.callable_body` description and decides what to print for it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Body.h"
 #include "../Const/Bindings.h"
 
@@ -7,8 +14,9 @@
 namespace ctcompile::cpp {
 namespace {
 
-// The lowering spells every name with a generated prefix (ctn_, capture_,
-// argument_), so a plain identifier check is the whole validation.
+/// True when `value` is a C identifier. The lowering spells every name with a
+/// generated prefix (ctn_, capture_, argument_), so a plain identifier check is
+/// the whole validation.
 bool identifier(llvm::StringRef value) {
     const auto word = [](char ch) {
         return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
@@ -36,6 +44,8 @@ mlir::FailureOr<CallableBody> callableBodyPlan(mlir::emitc::FuncOp function) {
     auto name = description.getAs<mlir::StringAttr>("name");
     auto captures = description.getAs<mlir::ArrayAttr>("captures");
     auto parameters = description.getAs<mlir::ArrayAttr>("parameters");
+    // drop_front(10) skips the `ctnative::` namespace prefix before validating
+    // the rest of the type name.
     if (!type || !binder || !name || !captures || !parameters || description.size() != 5 ||
         captures.size() + parameters.size() != function.getNumArguments() ||
         !type.getValue().starts_with("ctnative::ctn_env_") ||

@@ -1,21 +1,32 @@
+//===- Preparation.h - DOM entry preparation entry points -------*- C++ -*-===//
+//
+// Declares the steps that ready a DOM entry for native code: closure lifting
+// for classes, class-initialization normalization, and prepareDOMEntry, which
+// combines them and reproves the result.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative {
 
-// Prepare a fingerprinted DOM entry with the existing URI, helper, element and
-// iteration proofs. Publish the module and refreshed contract together only
-// after complete source reproof; both remain unchanged on refusal. This grants
-// no ownership or native representation authority.
+/// Normalizes a fingerprinted DOM entry (URI, helper, element and iteration
+/// rewrites) on a private clone, then re-runs the DOM entry proof on it. The
+/// module and the refreshed contract are replaced together only when that
+/// proof passes; on refusal both are unchanged. Passing does not by itself
+/// prove ownership or permit a native representation.
 llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps);
 
-// Apply the existing bounded closure lift to a private class candidate. No
-// admission authority: complete typed DOM reproof is still required.
+/// Runs closure lifting on a private candidate module holding DOM classes,
+/// refusing when the module is too large for `maxSteps`. Lifting proves
+/// nothing: the full typed DOM proof must still pass afterwards.
 llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps);
 
-// Normalize original class initialization only on prepareDOMEntry's private
-// candidate. Caller must reprove all remaining DOM effects before publishing.
+/// Rewrites class-definition code to plain initialization, only on
+/// prepareDOMEntry's private candidate. The caller must prove all remaining
+/// DOM effects again before publishing the result.
 llvm::Error normalizeDOMClasses(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps);
 
 } // namespace ctcompile::ctnative

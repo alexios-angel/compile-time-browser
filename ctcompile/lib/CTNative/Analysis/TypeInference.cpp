@@ -1,35 +1,35 @@
-// THE TRANSFER FUNCTION - what JavaScript guarantees about each operation's
-// result, and nothing more than that.
+//===- TypeInference.cpp - Type transfer rules ----------------------------===//
 //
-// Everything structural is upstream's: the worklist, the fixpoint, the join at
-// block arguments and the interaction with dead code all belong to MLIR's
-// DataFlowFramework. What is ours is the table below, and the table is where
-// every soundness bug will live, so each row that claims anything narrower than
-// `boxed` says WHY, and the ones that were verified against the interpreter say
-// where.
+// The transfer function of the CTNative type inference: what JavaScript
+// guarantees about each operation's result, and nothing more.
 //
-// BIGINT IS THE REASON THIS FILE IS OPERAND-SENSITIVE AT ALL, and it is worth
-// stating up front because the obvious version of this analysis is WRONG.
-// `a | b` looks like it must be an int32 - ECMAScript's ToInt32 says so - but
+// The worklist, the fixpoint, the join at block arguments and the handling of
+// dead code all come from MLIR's DataFlowFramework. This file supplies the
+// per-operation rules, which is where any soundness bug would live, so every
+// rule that claims something narrower than `boxed` says why.
+//
+// BigInt is the reason the rules look at operand types at all. `a | b` looks
+// like it must be an int32 because ECMAScript's ToInt32 says so, but
 // `1n | 2n` is `3n`, a BigInt. context::binary_op consults its BigInt arm
-// BEFORE any numeric conversion, and so does context::binary_op_static despite
-// its name and despite ctjs.binary_static's own description saying it "uses
-// to_number and to_int32": that description is about RE-ENTRANCY - no user
-// valueOf runs - and not about BigInt. Measured in
-// ctbrowser/lib/Script/vm/coerce.cpp: `binary_op_static` opens with
-// `if (value made; bigint_binary(kind, lhs, rhs, made)) { return made; }`.
+// before any numeric conversion, and so does context::binary_op_static, even
+// though ctjs.binary_static's description says it "uses to_number and
+// to_int32": that description is about re-entrancy (no user valueOf runs),
+// not about BigInt. In ctbrowser/lib/Script/vm/coerce.cpp, `binary_op_static`
+// opens with `if (value made; bigint_binary(kind, lhs, rhs, made)) { return
+// made; }`.
 //
 // So a numeric claim needs a proof that neither operand is a BigInt, and
-// couldBeBigInt below is that proof. ctnative has no BigInt type, which means
-// `boxed` and `json` may be one and the burden falls where it should: on the
-// analysis, not on the lattice.
+// couldBeBigInt below is that proof. CTNative has no BigInt type, so `boxed`
+// and `json` may hold one; the burden falls on the analysis, not the lattice.
 //
-// THE ONE OPERATOR THAT ESCAPES THIS is `>>>`. A BigInt has no width, so the
-// specification gives it no unsigned right shift and the VM throws a TypeError
-// rather than producing one. `>>>` therefore yields a Number unconditionally -
-// and a `num<f64>` rather than a `num<i32>`, because the result is a uint32 and
-// `(-1) >>> 0` is 4294967295, which does not fit an int32. That pair of facts
-// is the file in miniature.
+// The one operator exempt from this is `>>>`. A BigInt has no width, so the
+// specification gives it no unsigned right shift and the VM throws a
+// TypeError. `>>>` therefore always yields a Number, typed `num<f64>` rather
+// than `num<i32>` because the result is a uint32: `(-1) >>> 0` is 4294967295,
+// which does not fit an int32.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "OwnedGlobalRoots.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -70,7 +70,7 @@ void TypeValue::print(llvm::raw_ostream & os) const {
 
 namespace {
 
-// --- the small constructors, so the table below reads as JavaScript ---------
+// Small type constructors, so the rules below read as JavaScript.
 
 mlir::Type boolType(mlir::MLIRContext * c) {
     return BoolType::get(c);
@@ -85,24 +85,21 @@ mlir::Type stringType(mlir::MLIRContext * c) {
     return defaultStringType(c);
 }
 
-// `undefined` AND `null` ARE THE SAME TYPE HERE, which CTNative_OptType's own
-// description admits is a real narrowing: `typeof` tells them apart and
-// `null === undefined` is false. An empty optional is what part 24 chose to
-// represent both, so the obligation to check that the difference is never
-// observed belongs to the phase that USES this - it is recorded in
-// ctcompile/docs/native-divergences.md - and an inference that reported them
-// as distinct types would be inventing a distinction the lattice cannot carry.
+/// The type of `undefined` and of `null`, which share one type here: an empty
+/// optional. CTNative_OptType's description admits this is a real narrowing
+/// (`typeof` tells them apart and `null === undefined` is false), so the
+/// lowering that consumes these types must prove the difference is never
+/// observed; ctcompile/docs/native-divergences.md records this. Inference
+/// cannot report them as distinct because the lattice has no way to express it.
 mlir::Type absentType(mlir::MLIRContext * c) {
     return OptType::get(c, BottomType::get(c));
 }
 
-// --- the BigInt proof -------------------------------------------------------
-
-// Could a value of this type be a BigInt?
-//
-// CONSERVATIVE BY CONSTRUCTION: an unknown type must answer true, because the
-// only use of a false answer is to license a numeric claim. A null Type is
-// "nothing known yet" and answers true for the same reason.
+/// Whether a value of this type could be a BigInt.
+///
+/// Conservative by construction: an unknown type answers true, because the
+/// only use of a false answer is to license a numeric claim. A null Type means
+/// "nothing known yet" and answers true for the same reason.
 bool couldBeBigInt(mlir::Type type) {
     if (type == nullptr) { return true; }
     if (llvm::isa<BoolType, NumType, StrType, StrViewType, BottomType>(type)) { return false; }
@@ -113,20 +110,21 @@ bool couldBeBigInt(mlir::Type type) {
         }
         return false;
     }
-    // boxed, json, and every container - a container cannot itself BE a BigInt,
-    // but nothing in this phase produces one, so saying so would be a rule
-    // written for no caller.
+    // Boxed, json and every container type. A container cannot be a BigInt, but
+    // no rule in this file produces a container operand here, so no case is
+    // written for one.
     return true;
 }
 
-// A proved string: `str` or `strview`, and not an optional of one - an
-// undefined-or-string does not concatenate the way a string does.
+/// A proved string: `str` or `strview`, and not an optional of one. An
+/// undefined-or-string does not concatenate the way a string does.
 bool isProvedString(const TypeLattice * operand) {
     return llvm::isa_and_nonnull<StrType, StrViewType>(operand->getValue().getType());
 }
 
-// Primitive alternatives on which ToPrimitive cannot invoke object hooks.
-// Without Strings, generic `+` is necessarily numeric addition.
+/// Whether every alternative of `type` is a primitive on which ToPrimitive
+/// cannot invoke object hooks: bool, number, undefined/null, and string when
+/// `allowString`. Without strings, generic `+` is necessarily numeric addition.
 bool isProvedPrimitiveType(mlir::Type type, bool allowString) {
     if (type == nullptr) { return false; }
     if (llvm::isa<BoolType, NumType>(type) ||
@@ -145,6 +143,7 @@ bool isProvedPrimitiveType(mlir::Type type, bool allowString) {
     return false;
 }
 
+/// A proved non-string primitive, so generic `+` on two of them adds.
 bool isProvedNumeric(const TypeLattice * operand) {
     return isProvedPrimitiveType(operand->getValue().getType(), false);
 }
@@ -156,17 +155,15 @@ bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
     return true;
 }
 
-// --- constants --------------------------------------------------------------
-
-// The type of a literal, which is the only place an i32 comes from without a
-// bound proof - because the bound is right there in the attribute.
-//
-// THREE WAYS A DOUBLE FAILS TO BE AN i32 and all three are the oracle's
-// business: a fractional part, a magnitude outside int32, and NEGATIVE ZERO.
-// The last is the one that gets forgotten: `-0` is integral and in range, and
-// `Object.is(-0, 0)` is false, so calling it an int32 loses an observable
-// difference. tools/check/type-oracle.py counts NUM_NEGATIVE_ZERO as
-// not-an-i32 for exactly this reason, and the two must agree.
+/// The type of a literal. This is the only place an i32 comes from without a
+/// bound proof, because the value is right there in the attribute.
+///
+/// A double fails to be an i32 in exactly three ways: a fractional part, a
+/// magnitude outside int32, and negative zero. The last is easy to forget:
+/// `-0` is integral and in range, but `Object.is(-0, 0)` is false, so calling
+/// it an int32 loses an observable difference. tools/check/type-oracle.py
+/// counts NUM_NEGATIVE_ZERO as not-an-i32 for the same reason, and the two
+/// must agree.
 mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
     mlir::MLIRContext * c = constant.getContext();
     mlir::Attribute value = constant.getValue();
@@ -181,29 +178,29 @@ mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
                                    d >= -2147483648.0 && d <= 2147483647.0;
         return representable ? int32Type(c) : doubleType(c);
     }
-    // A BigInt literal. ctnative has no type for one, so this is the honest
-    // answer rather than a wrong one.
+    // A BigInt literal. CTNative has no type for one, so no type is claimed.
     return {};
 }
 
 } // namespace
 
-// --- the operation-only half of the table -----------------------------------
-
+/// The result type an operation has whatever its operands are, or a null Type
+/// when the answer depends on the operands (or is not expressible).
 mlir::Type staticResultType(mlir::Operation * op) {
     mlir::MLIRContext * c = op->getContext();
 
-    // `ub.poison` IS THE ABSENCE OF A VALUE, and the lattice's identity is
-    // the only honest type for it. The structuring pass yields one for every
-    // loop-carried value on the path that leaves the loop - a path on which
-    // nothing reads them - and a poison typed `boxed` would absorb the
-    // counter's type at the join, refusing every `for` loop the lift builds.
-    // Matched by name so this file needs no dependency on the ub dialect.
+    // `ub.poison` is the absence of a value, and the lattice's identity
+    // (bottom) is the only correct type for it. The structuring pass yields one
+    // for every loop-carried value on the path that leaves the loop, a path on
+    // which nothing reads them. A poison typed `boxed` would absorb the
+    // counter's type at the join and refuse every `for` loop the lift builds.
+    // It is matched by name so this file needs no dependency on the ub dialect.
+
     if (op->getName().getStringRef() == "ub.poison") { return BottomType::get(c); }
 
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
 
-    // EVERY COMPARISON IS A BOOLEAN, including the relational ones on BigInts:
+    // Every comparison is a boolean, including the relational ones on BigInts:
     // `1n < 2` is a perfectly good comparison and its answer is still a bool.
     if (llvm::isa<ctjs::CompareOp, ctjs::InstanceOfOp, ctjs::HasPropertyOp, ctjs::DeletePropertyOp,
                   ctjs::DeleteNamedOp, ctjs::FromBoolOp>(op)) {
@@ -218,13 +215,13 @@ mlir::Type staticResultType(mlir::Operation * op) {
         case ctjs::UnaryKind::TypeOf: return stringType(c);
         // `void x` evaluates x and yields undefined.
         case ctjs::UnaryKind::Void: return absentType(c);
-        // UNARY PLUS IS ToNumber, WHICH THROWS ON A BIGINT rather than
-        // returning one - context::to_number, coerce.cpp: "Cannot convert a
-        // BigInt value to a number". So if it produces a value at all, that
-        // value is a Number. No operand proof needed.
+        // Unary plus is ToNumber, which throws on a BigInt rather than
+        // returning one (context::to_number in coerce.cpp: "Cannot convert a
+        // BigInt value to a number"). So if it produces a value at all, that
+        // value is a Number. No operand proof is needed.
         case ctjs::UnaryKind::Plus: return doubleType(c);
-        // AND NEGATION IS NOT, because `-1n` is `-1n`. Operand-sensitive; see
-        // visitOperation.
+        // Negation and `~` are not, because `-1n` is `-1n`. They depend on the
+        // operands; see visitOperation.
         case ctjs::UnaryKind::Neg:
         case ctjs::UnaryKind::BitNot: return {};
         }
@@ -237,7 +234,7 @@ mlir::Type staticResultType(mlir::Operation * op) {
         // As above: ToNumber throws on a BigInt rather than yielding one.
         case ctjs::ConvertKind::ToNumber: return doubleType(c);
         case ctjs::ConvertKind::ToString: return stringType(c);
-        // ToPropertyKey is a string OR A SYMBOL, ToObject is any object, and
+        // ToPropertyKey is a string or a symbol, ToObject is any object, and
         // ToPrimitive is anything that is not one. None is expressible.
         case ctjs::ConvertKind::ToPropertyKey:
         case ctjs::ConvertKind::ToObject:
@@ -247,12 +244,12 @@ mlir::Type staticResultType(mlir::Operation * op) {
     }
 
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
-        // CONCAT NEVER CONSULTS THE BIGINT ARM - coerce.cpp says so in as many
-        // words - so it is a string whatever reaches it. It is the only
-        // unconditional claim in the binary family.
+        // Concat never consults the BigInt arm (coerce.cpp says so), so it is a
+        // string whatever reaches it. It is the only unconditional claim in the
+        // binary family.
         if (binary.getKind() == ctjs::BinaryKind::Concat) { return stringType(c); }
-        // `>>>` has no BigInt meaning: the VM throws a TypeError. A uint32, so
-        // f64 and NOT i32.
+        // `>>>` has no BigInt meaning: the VM throws a TypeError. The result is
+        // a uint32, so f64 and not i32.
         if (binary.getKind() == ctjs::BinaryKind::UShr) { return doubleType(c); }
         return {};
     }
@@ -268,13 +265,11 @@ mlir::Type staticResultType(mlir::Operation * op) {
     return {};
 }
 
-// --- the analysis ------------------------------------------------------------
-
 mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array) {
-    // FROM UNDEFINED, and that start is not decoration: `[1, 2][7]` is
-    // `undefined`, and so is every index no `append` ever wrote. Starting from
-    // `num` would claim a number for a read the interpreter answers
-    // `undefined` for, which is the one direction the lattice cannot undo.
+    // The join starts from undefined on purpose: `[1, 2][7]` is `undefined`,
+    // and so is every index no `append` ever wrote. Starting from `num` would
+    // claim a number for a read the interpreter answers `undefined` for, which
+    // is the one direction the lattice cannot undo.
     mlir::Type element = absentType(op->getContext());
     if (auto call = array.getDefiningOp<ctjs::CallOp>(); call && isNativeMapSnapshot(call)) {
         const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), array);
@@ -291,7 +286,7 @@ mlir::Type TypeInference::joinLattices(mlir::Operation * op, mlir::ValueRange va
                                        mlir::Type seed) {
     for (mlir::Value value : values) {
         const TypeLattice * lattice = getLatticeElementFor(getProgramPointAfter(op), value);
-        // Never visited is dead code and never executes.
+        // A value never visited is dead code and never executes.
         if (!lattice->getValue().isUninitialized()) {
             seed = meet(seed, lattice->getValue().getType());
         }
@@ -299,16 +294,17 @@ mlir::Type TypeInference::joinLattices(mlir::Operation * op, mlir::ValueRange va
     return seed;
 }
 
-// PHASE 59 SLICE 2 STEP 3, THE FIELD HALF. The three conditions and the reason
-// for each are in TypeInference.h; this is the query.
+// Returns true when a store of `key` to `object` is guaranteed to run before
+// `read`, so the read can never see the field missing. The conditions and the
+// reason for each are documented on the declaration in TypeInference.h.
 bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key,
                                           mlir::Operation * read) {
     if (nativeObjectFieldGroup(read) >= 0) { return assignedIdentityFields_.contains(read); }
     llvm::DenseSet<mlir::Value> active;
     unsigned work = 0;
     const auto assigned = [&](auto && self, mlir::Value value, mlir::Operation * before) -> bool {
-        // ponytail: at most 64 forwarding frames and 65536 queries; larger or
-        // recursive borrows need a cached interprocedural presence proof.
+        // ponytail: at most 64 forwarding frames and 65536 queries. Larger or
+        // recursive borrows would need a cached interprocedural presence proof.
         if (++work > 65536 || active.size() >= 64) { return false; }
         if (auto origin = nativeMapRecordOrigin(value)) { return self(self, origin, before); }
         const auto sites = fieldStoreSites_.find({value, key});
@@ -343,25 +339,25 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
 }
 
 mlir::Type TypeInference::cellTypeOf(mlir::Operation * op, mlir::Value cell) {
-    // FROM THE INITIAL, and the start is the whole soundness of the rule: a
-    // read of a shared binding on a path that reached no assignment yields
-    // what the box was built with. `compiler_impl::predeclare_locals` boxes
-    // `undefined`, so that is normally `opt<>` and the join is `opt<num>` -
-    // a double whose undefined is NaN, exact in arithmetic, comparison and
-    // truthiness, refused at equality by `defined()`. Step 1 needed two
-    // dominance proofs to make the initial unobservable; step 2 needs none,
-    // because it does not replace the box - it emits it.
+    // The join starts from the cell's initial value, and that is what makes it
+    // sound: a read on a path that reached no assignment yields whatever the
+    // box was created with. `compiler_impl::predeclare_locals` boxes
+    // `undefined`, so that is normally `opt<>` and the join is `opt<num>`: a
+    // double whose undefined is NaN, exact in arithmetic, comparison and
+    // truthiness, and refused at equality by `defined()`. No dominance proof is
+    // needed here because the lowering keeps the box rather than replacing it.
     //
-    // UNLESS THERE IS NO SUCH PATH - PHASE 59 SLICE 2 STEP 3. When the lift
-    // proved a write dominates every read of the binding it wrote
-    // `kAssignedBeforeRead` onto the cell and `initialize()` left the initial
-    // out of `cellStores_`, so this join is over the WRITES alone and a hoisted
-    // `var` that is assigned before it is read is `num` rather than `opt<num>`.
-    // The set is the input; nothing here has a second opinion about it.
+    // Exception: when the closure lift proved that a write dominates every read
+    // of the binding, it marked the cell `kAssignedBeforeRead` and
+    // `initialize()` left the initial out of `cellStores_`. This join is then
+    // over the writes alone, so a hoisted `var` assigned before it is read is
+    // `num`, not `opt<num>`. This function trusts that set and does not
+    // re-check it.
     const auto stored = cellStores_.find(cell);
     if (stored == cellStores_.end()) { return BoxedType::get(op->getContext()); }
-    // `n = n + 1` is exactly the cycle a not-yet-visited store needs: the
-    // stored value reads the box. No seed: the join starts absent.
+    // No seed: the join starts empty, because `cellStores_` already holds the
+    // initial when it can be observed. `n = n + 1` is the cycle this must
+    // tolerate: the stored value reads the box, so it may not be visited yet.
     return joinLattices(op, stored->second, {});
 }
 
@@ -421,12 +417,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
                                                   llvm::ArrayRef<const TypeLattice *> operands,
                                                   llvm::ArrayRef<TypeLattice *> results) {
     mlir::MLIRContext * c = op->getContext();
-    // Answers `type` for the first result; this visit is done.
+    // Answers `type` for the first result and ends the visit.
     const auto answer = [&](mlir::Type type) {
         propagateIfChanged(results[0], results[0]->join(TypeValue{type}));
         return mlir::success();
     };
-    // Answers `value`'s type, subscribing to it; nothing while it is pending.
+    // Answers `value`'s type and subscribes to it; answers nothing while it is
+    // still pending.
     const auto forward = [&](mlir::Value value) {
         const auto * source = getLatticeElementFor(getProgramPointAfter(op), value);
         if (!source->getValue().isUninitialized()) {
@@ -535,17 +532,16 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return forward(at->second[static_cast<size_t>(read.getIndex())]);
     }
 
-    // AN UNINITIALIZED OPERAND MEANS "NOT YET", NOT "UNKNOWN". The framework
-    // visits an operation before every value feeding it has an answer - a
-    // loop's back edge, a recursive call's result - and re-visits it when
-    // they do. Answering `boxed` for an operand that has merely not arrived
-    // is wrong in the one direction the lattice cannot undo: boxed absorbs,
-    // so a counter incremented on a back edge, or fib's own result, would
-    // stay boxed forever. Measured: every recursive function and every
-    // `for` loop refused by the native lowering until this line. Bailing
-    // leaves the result uninitialized, which is exactly what its consumers
-    // must wait for; a value that NEVER initializes is dead code and is
-    // boxed by whoever reads the final state.
+    // An uninitialized operand means "not yet", not "unknown". The framework
+    // visits an operation before every value feeding it has an answer (a
+    // loop's back edge, a recursive call's result) and re-visits it when they
+    // do. Answering `boxed` for an operand that has merely not arrived is wrong
+    // in the one direction the lattice cannot undo: boxed absorbs, so a counter
+    // incremented on a back edge, or fib's own result, would stay boxed
+    // forever, and the native lowering would refuse every recursive function
+    // and every `for` loop. Returning here leaves the result uninitialized,
+    // which is what its consumers must wait for; a value that never
+    // initializes is dead code and is boxed by whoever reads the final state.
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
     }
@@ -596,12 +592,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return mlir::success();
     }
 
-    // The operand-sensitive rows, which exist only because of BigInt. Each one
-    // is "the numeric answer, IF neither operand can be a BigInt".
+    // The operand-sensitive rules, which exist only because of BigInt. Each one
+    // is "the numeric answer, if neither operand can be a BigInt".
     mlir::Type numeric{};
     if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
         if (noneAreBigInt(operands)) {
-            // `-x` is a double: negating the int32 minimum leaves int32.
+            // `-x` is a double, not an int32: `-0` is not an int32, and
+            // negating INT32_MIN leaves the int32 range.
             if (unary.getKind() == ctjs::UnaryKind::Neg) { numeric = doubleType(c); }
             // `~x` is ToInt32 then a bitwise complement, which stays in int32.
             if (unary.getKind() == ctjs::UnaryKind::BitNot) { numeric = int32Type(c); }
@@ -610,8 +607,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         const auto kind = llvm::isa<ctjs::BinaryOp>(op)
                               ? llvm::cast<ctjs::BinaryOp>(op).getKind()
                               : llvm::cast<ctjs::BinaryStaticOp>(op).getKind();
-        // A PROVED STRING ON EITHER SIDE OF GENERIC `+` MAKES A STRING, and
-        // this sits OUTSIDE the BigInt guard on purpose: `"x" + 1n` is "x1".
+        // A proved string on either side of generic `+` makes a string, and
+        // this sits outside the BigInt guard on purpose: `"x" + 1n` is "x1".
         // The other operand's ToPrimitive then ToString always yields a
         // string; a Symbol throws and produces no value at all.
         if (llvm::isa<ctjs::BinaryOp>(op) && kind == ctjs::BinaryKind::Add &&
@@ -620,19 +617,19 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
         if (numeric == nullptr && noneAreBigInt(operands)) {
             switch (kind) {
-            // THE INT32 FAMILY. ECMAScript defines all five through ToInt32,
+            // The int32 family. ECMAScript defines all five through ToInt32,
             // and to_int32 in this VM returns an int32_t, so the result is one.
             case ctjs::BinaryKind::BitAnd:
             case ctjs::BinaryKind::BitOr:
             case ctjs::BinaryKind::BitXor:
             case ctjs::BinaryKind::Shl:
             case ctjs::BinaryKind::Shr: numeric = int32Type(c); break;
-            // ARITHMETIC IS A DOUBLE AND NOT AN INT32: `2**31` overflows one
-            // and not the other, which is part 24 §1.1's own counterexample.
+            // Arithmetic yields a double, not an int32: `2**31` overflows an
+            // int32 but not a double.
             //
-            // THE GENERIC FAMILY ONLY. binary_op_static has no arm for these
-            // and answers undefined; the verifier on ctjs.binary_static
-            // rejects them, and this is the belt to that brace.
+            // Only for the generic family. binary_op_static has no arm for
+            // these and answers undefined; the verifier on ctjs.binary_static
+            // already rejects them, and this check is a second guard.
             case ctjs::BinaryKind::Sub:
             case ctjs::BinaryKind::Mul:
             case ctjs::BinaryKind::Div:
@@ -640,17 +637,14 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             case ctjs::BinaryKind::Pow:
                 if (llvm::isa<ctjs::BinaryOp>(op)) { numeric = doubleType(c); }
                 break;
-            // `+` IN THE GENERIC FAMILY concatenates when either side is a
-            // string and adds otherwise, and both halves are provable from
-            // the operand types: a proved string on either side makes the
-            // result a string (ToPrimitive on the other side then ToString -
-            // every value has one; a Symbol throws and produces nothing);
-            // two operands that are each a number, a boolean, undefined or
-            // null add numerically, because ToPrimitive is the identity on
-            // all four and none is a string or a BigInt. Anything else - an
-            // object with its own valueOf, a value nothing proved - is boxed.
-            // The STATIC family reaches `+` only from `++` and its counters,
-            // through to_number, so there it is a number outright.
+            // Generic `+` concatenates when either side is a string and adds
+            // otherwise. The string case is handled above. Two operands that
+            // are each a number, a boolean, undefined or null add numerically,
+            // because ToPrimitive is the identity on all four and none is a
+            // string or a BigInt. Anything else (an object with its own
+            // valueOf, a value nothing proved) is boxed. The static family
+            // reaches `+` only from `++` and its counters, through to_number,
+            // so there it is a number outright.
             case ctjs::BinaryKind::Add:
                 if (llvm::isa<ctjs::BinaryStaticOp>(op)) {
                     numeric = doubleType(c);
@@ -668,7 +662,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    // THE CLOSED-WORLD GLOBAL: see TypeInference.h. getLatticeElementFor
+    // Closed-world globals (see TypeInference.h). getLatticeElementFor
     // subscribes this load to every store's operand, so a store whose type
     // widens later re-visits the load.
     std::optional<mlir::Type> global;
@@ -698,8 +692,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    // THE CLOSED-SHAPE FIELD READ: the join over the stores of that key to
-    // that object, from undefined. Same mechanism as the global rule, with
+    // Closed-shape field reads: the join over the stores of that key to that
+    // object, starting from undefined. Same mechanism as the global rule, with
     // getLatticeElementFor subscribing this read to every store.
     std::optional<mlir::Type> field;
     if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
@@ -722,21 +716,18 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             if (!*field) { return mlir::success(); }
         } else if (hasClosedShape(get.getObject())) {
             const llvm::StringRef key = constantKey(get.getKey());
-            // AND THE SEED IS DROPPED WHERE A STORE DOMINATES - PHASE 59 SLICE
-            // 2 STEP 3, the field half. "Nothing orders the read after a store"
-            // is true of a field in general and false of THIS read when a
-            // `ctjs.set_property` of this key on this object comes before it on
-            // every path. `var p = { n: 8 }; return p.n;` is then `num` rather
-            // than `opt<num>`, which is what lets a `ctjs.store_global` of it
-            // through: a global is printed as `%.17g` and cannot spell
-            // `undefined`. The join below is unchanged and still over the whole
-            // alias group - this drops what the field cannot hold, not what it
-            // can.
+            // The `undefined` seed is dropped when a `ctjs.set_property` of
+            // this key on this object comes before the read on every path.
+            // `var p = { n: 8 }; return p.n;` is then `num` rather than
+            // `opt<num>`, which lets a `ctjs.store_global` of it through (a
+            // global is printed as `%.17g` and cannot spell `undefined`). The
+            // join below still covers the whole alias group: this removes only
+            // the value the field cannot hold, not any value it can.
             field = fieldIsAssignedBefore(get.getObject(), key, op) ? mlir::Type{} : absentType(c);
             const auto stores = fieldStores_.find({get.getObject(), key});
             if (stores != fieldStores_.end()) { field = joinLattices(op, stores->second, *field); }
-            // AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the reason spelled at
-            // the carried cell below, and reachable here for the same reason:
+            // An empty join means "not yet", not `boxed`, for the reason given
+            // at the carried cell below, and it is reachable here likewise:
             // with the `undefined` seed dropped, every member of this join is a
             // stored value the solver may not have visited yet. A closed shape
             // can never also be a dense array (`hasClosedShape` demands a
@@ -746,10 +737,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    // THE DENSE ARRAY (part 24 Phase 57A). The literal itself is a
-    // `vec<element>`; a read of `length` is a Number; a read through an index
-    // is the element type. Same mechanism as the two rules above -
-    // getLatticeElementFor subscribes the read to every appended value.
+    // Dense arrays. The literal itself is a `vec<element>`, a read of `length`
+    // is a Number, and a read through an index is the element type. As in the
+    // two rules above, getLatticeElementFor subscribes the read to every
+    // appended value.
     std::optional<mlir::Type> vector;
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op)) {
         if (isDenseVectorSite(array.getResult())) {
@@ -758,14 +749,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
         if (isDenseVectorSite(get.getObject())) {
             if (constantKey(get.getKey()) == "length") {
-                // NOT AN i32, AND THE BOUND IS THE REASON. An array's length
-                // is a uint32, which does not fit an int32, and nothing here
-                // proves this one is small. `f64` is exact for every length
-                // there is.
+                // Not an i32: an array's length is a uint32, which does not
+                // fit an int32, and nothing here proves this one is small.
+                // `f64` is exact for every possible length.
                 vector = doubleType(c);
             } else if (isProvedNumeric(operands[1])) {
-                // THE KEY HAS TO BE PROVED A NUMBER, and not merely "not a
-                // constant string". `a[k]` with a string `k` reads a PROPERTY:
+                // The key has to be proved a number, not merely "not a
+                // constant string". `a[k]` with a string `k` reads a property:
                 // `a["push"]` is a function, and claiming the element type for
                 // it would be unsound on any array whose only other uses are
                 // appends and index reads. A boolean, undefined or null key
@@ -784,26 +774,24 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
     }
 
-    // THE SHARED BINDING (part 24 Phase 59 slice 2 step 2). The box and every
-    // read of it answer the join over everything ever assigned to it, from its
-    // initial - one type for one `double`, whichever of the two spellings asks.
+    // Shared (carried) bindings. The cell and every read of it get the join
+    // over everything ever assigned to it, starting from its initial value, so
+    // the `ctjs.create_cell` and each `ctjs.cell_get` agree on one type.
     std::optional<mlir::Type> cell;
     if (auto made = llvm::dyn_cast<ctjs::CreateCellOp>(op)) {
         if (made->hasAttr("ctnative.carried")) {
             cell = cellTypeOf(op, made.getResult());
-            // AND AN EMPTY JOIN IS "NOT YET", NOT `boxed` - the same
-            // distinction the operand loop at the top of this function draws,
-            // and it became reachable with slice 2 step 3. While the initial
-            // was always in the set, one member of the join was an OPERAND of
-            // this op and so was guaranteed visited; a cell whose initial is
-            // left out can be visited before any of its assignments is. Falling
-            // through would answer `boxed`, which absorbs, and the binding
-            // would never recover - `n = n + 1` is exactly the cycle, since the
-            // stored value reads the box.
+            // An empty join means "not yet", not `boxed`, as in the operand
+            // loop at the top of this function. When the initial is left out
+            // of the join (see cellTypeOf), the cell can be visited before any
+            // of its assignments. Answering `boxed` would absorb every later
+            // type, and the binding would never recover: `n = n + 1` is exactly
+            // that cycle, because the stored value reads the cell.
             if (!*cell) { return mlir::success(); }
         }
     } else if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(op)) {
-        // THE OPERAND'S OWN TYPE, not a second join: `operands[0]` is the box
+        // The operand's own type, not a second join: `operands[0]` is the box
+
         // in this frame or the pointer a lifted call handed us, and either
         // already carries the answer the row above computed. A second walk
         // here would be a second chance for the two to disagree.

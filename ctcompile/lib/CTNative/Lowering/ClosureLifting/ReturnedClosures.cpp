@@ -1,7 +1,18 @@
+//===- ReturnedClosures.cpp - Lifting returned closures ------- -*- C++ -*-===//
+//
+// A closure returned from its creating function outlives that frame, so its
+// captures cannot be pointers into it. This file proves which returned
+// closures can still become direct calls (their captures copied into an
+// environment value at creation) and rewrites their call sites.
+//
+//===----------------------------------------------------------------------===//
 #include "../../Analysis/ClosedValueFlow.h"
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+/// Builds a plan for every closure that flows into a ctjs.return: the call
+/// sites that invoke it and, when it cannot be lifted, the first reason why
+/// (stored in `returnedClosures[c].reason`). Changes no IR.
 void closureLifter::returnedClosureCensus() {
     closedValueFlow flow;
     flow.build(module);
@@ -27,12 +38,13 @@ void closureLifter::returnedClosureCensus() {
             if (plan.reason.empty()) { plan.reason = ("returned closure " + why).str(); }
         };
         const auto target = targetOf(c);
-        // One proto has one creation site in imported JavaScript. Check it
-        // here as well: changing a target signature affects every creation.
+        // Imported JavaScript has one creation site per function proto. Check
+        // it anyway, because changing the target's signature affects every
+        // creation site.
         if (creations.lookup(target) != 1) { reject("requires one creation site for its target"); }
         for (mlir::Value value : families[root]) {
             if (value == c.getResult()) {
-                // The sole concrete producer of this callable family.
+                // The only concrete producer of this callable family.
             } else if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(value)) {
                 auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
                 if (!closedValueFlow::closed(fn) || arg.getOwner() != &fn.getBody().front() ||
@@ -56,6 +68,8 @@ void closureLifter::returnedClosureCensus() {
                     continue;
                 }
                 if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+                    // call_direct operands 0-2 are receiver, new.target and
+                    // callee; JavaScript arguments start at 3.
                     if (use.getOperandNumber() >= 3) {
                         if (!closedValueFlow::closed(call.getTarget())) {
                             reject("argument requires a closed callee");
@@ -84,6 +98,7 @@ void closureLifter::returnedClosureCensus() {
     }
 }
 
+/// The first reason the returned closure `c` cannot be lifted, or nullopt.
 std::optional<std::string> closureLifter::whyNotReturnedClosure(ctjs::CreateClosureOp c) {
     const auto & plan = returnedClosures.find(c)->second;
     if (!plan.reason.empty()) { return plan.reason; }
@@ -99,9 +114,10 @@ std::optional<std::string> closureLifter::whyNotReturnedClosure(ctjs::CreateClos
                    " is a mutable or late-initialized binding; it needs an owning shared cell";
         }
     }
-    // Ownership starts at creation, unlike the local lift which can read a
-    // binding at each call. A hoisted declaration before initialization must
-    // not silently capture its later value, or a pointer to a dead frame.
+    // A returned closure copies its captures at creation, unlike the local
+    // lift, which can read a binding at each call. So a capture must already
+    // be initialized at creation: a hoisted declaration must not silently
+    // capture its later value, or a pointer to a dead frame.
     if (auto why = whyCapturesDoNotReach(c, c)) { return "returned closure: " + *why; }
     if (auto why = whyUpvalueReadsDoNotLift(c, target)) { return why; }
     for (mlir::Operation * site : plan.calls) {
@@ -116,6 +132,9 @@ std::optional<std::string> closureLifter::whyNotReturnedClosure(ctjs::CreateClos
     return std::nullopt;
 }
 
+/// Rewrites `c` to carry its captures as an environment value and turns each
+/// planned call site into a direct call to `target` that passes the captures
+/// (read back with ctjs.load_upvalue) as leading arguments.
 void closureLifter::liftReturnedClosure(ctjs::CreateClosureOp c, ctjs::FuncOp target,
                                         unsigned captures, unsigned parameters, liftReport & out,
                                         bool preserveReceiver) {

@@ -1,3 +1,13 @@
+//===- Analysis.cpp - Function reachability analysis ----------------------===//
+//
+// Builds a call/reference graph over a module's ctjs functions, from symbol
+// uses and from ctjs.create_closure's numeric function index, and marks
+// everything reachable from the roots. Any construct whose references cannot
+// be enumerated refuses the whole proof, so nothing is deleted on a partial
+// one.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -26,6 +36,8 @@ public:
                 }
             }
         }
+        // A refusal keeps every function: nothing is deleted on a partial
+        // proof.
         for (ctjs::FuncOp function : functions) {
             if (!output.reason.empty() || live.contains(function)) {
                 ++output.retained;
@@ -58,8 +70,8 @@ private:
         if (owner) {
             edges[owner].push_back(target);
         } else {
-            // Module attributes and operations outside function bodies remain
-            // executable/exported roots, irrespective of their dialect.
+            // A reference from a module attribute or from an operation outside
+            // any function body is a root, whatever its dialect.
             mark(target);
         }
     }
@@ -73,8 +85,9 @@ private:
                 return mlir::WalkResult::interrupt();
             }
             // Opaque code and other dialects can encode function addresses in
-            // strings or custom properties. This pass is deliberately before
-            // native/boxed lowering, where CTJS's reference forms are explicit.
+            // strings or custom properties, so they are refused. This pass runs
+            // before native lowering, while ctjs's reference forms are still
+            // explicit.
             const bool supported = op->getName().isRegistered() &&
                                    llvm::StringSwitch<bool>(op->getName().getDialectNamespace())
                                        .Cases({"builtin", "ctjs", "arith", "scf", "cf", "ub"}, true)
@@ -90,6 +103,8 @@ private:
                 }
                 const auto index = functionIndex(function);
                 if (index) { indexed[*index].push_back(function); }
+                // Roots: declarations without a body, the top-level script
+                // (function index 0), and anything not private.
                 if (function.getBody().empty() || index == 0 || !function.isPrivate()) {
                     mark(function);
                 }
@@ -103,8 +118,9 @@ private:
     }
 
     bool symbolEdges() {
-        // A symbol table's own attributes and its body have separate scopes in
-        // MLIR. Both can contain roots, including nested dictionary/array attrs.
+        // In MLIR a symbol table's own attributes and its body are separate
+        // scopes. Both can hold references, including inside nested
+        // dictionary and array attributes.
         for (const auto & uses : {mlir::SymbolTable::getSymbolUses(module.getOperation()),
                                   mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())}) {
             if (!uses) { return refuse("symbol uses could not be enumerated"); }
@@ -126,8 +142,8 @@ private:
             if (closure.getFunction() < 0 || found == indexed.end()) {
                 return refuse("numeric closure reference has no visible CTJS target");
             }
-            // Never choose one body from an ambiguous numeric identity. The
-            // symbol namespace can distinguish them, but the closure cannot.
+            // When several functions share a numeric index, the closure could
+            // name any of them, so every one of them gets an edge.
             for (ctjs::FuncOp target : found->second) {
                 if (!spend()) { return false; }
                 edge(closure, target);

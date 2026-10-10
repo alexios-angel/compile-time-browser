@@ -1,37 +1,39 @@
+//===- BytecodeImport.cpp - Bytecode to ctjs import -----------------------===//
+//
+// Imports ctbrowser script bytecode into the ctjs MLIR dialect, one ctjs.func
+// per bytecode function.
+//
+// The VM's register file becomes block arguments: every non-entry block takes
+// `frame_size` !ctjs.value arguments, a side table maps each slot to its
+// current SSA value, and every branch passes the whole vector. This
+// deliberately avoids SSA construction: there are no dominance frontiers, no
+// phi minimisation and no backpatching. Every block exists with its full
+// argument list before emission, so successor operands are known at each
+// branch, back edges included. A later pass prunes the dead arguments.
+//
+// ctjs.push_handler carries both $bodyOperands and $handlerOperands and
+// implements BranchOpInterface, which assumes blocks carry this vector.
+//
+//===----------------------------------------------------------------------===//
 #include "Bytecode/Importer.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
-// THE IMPORTER.
-//
-// THE REGISTER FILE IS THE BLOCK ARGUMENT VECTOR, and that decision is the
-// whole shape of this file. Every block other than the entry takes exactly
-// `frame_size` arguments of !ctjs.value; a side table maps slot index to the
-// current SSA value; every branch passes the whole vector as successor
-// operands.
-//
-// THAT IS NOT SSA CONSTRUCTION, which the plan forbids here: there are no
-// dominance frontiers, no phi minimisation and no backpatching of incomplete
-// blocks. Blocks are created with their full argument list before anything is
-// emitted, so successor operands are always known at the branch site - including
-// on a back edge. Pruning the vector down to the arguments that are actually
-// live is a later cleanup pass, which is exactly the plan's "later transition
-// toward SSA/block arguments".
-//
-// The dialect was already built for it: ctjs.push_handler carries
-// $bodyOperands AND $handlerOperands and implements BranchOpInterface, which
-// only makes sense if a block carries a register vector.
 namespace ctcompile::js {
 using namespace bytecode_detail;
 
 namespace {
 // ---- leaders --------------------------------------------------------------
-//
-// EVERY INSTRUCTION A BLOCK STARTS AT, one past the end included; nothing when a
-// jump leaves the code.
+
+/// The instructions a block starts at.
 struct leaders {
+    /// Indexed by instruction, with one extra entry for one past the end.
     std::vector<bool> at;
+    /// Whether any jump or handler targets instruction 0. leader[0] is always
+    /// true, so this is recorded separately.
     bool targets_zero = false;
 };
+
+/// Every instruction a block starts at, or nothing when a jump leaves the code.
 std::optional<leaders> find_leaders(const function_proto & proto) {
     leaders found{std::vector<bool>(proto.code.size() + 1, false)};
     std::vector<bool> & leader = found.at;
@@ -44,16 +46,10 @@ std::optional<leaders> find_leaders(const function_proto & proto) {
                 return std::nullopt;
             }
             leader[static_cast<std::size_t>(target)] = true;
-            // AND WHETHER ANYTHING BRANCHES BACK TO INSTRUCTION ZERO,
-            // which needs recording separately because leader[0] is true
-            // for every function whether or not anything targets it.
-            //
-            // INSIDE THE COMBINED PREDICATE ON PURPOSE, not under is_jump
-            // alone. op::push_handler computes its target the same way and
-            // is handled here for that reason; narrowing this to jumps
-            // would leave a handler whose pad is instruction 0 refusing
-            // forever, and no corpus would show it - there are zero
-            // push_handler targets of 0 across bootstrap, p5 and phaser.
+            // Record whether anything branches back to instruction 0. This
+            // sits under the combined jump-or-push_handler test on purpose:
+            // a handler whose pad is instruction 0 needs it too, although no
+            // corpus currently has one.
             if (target == 0) { found.targets_zero = true; }
         }
         if (ends_a_block(in.code) && at + 1 <= proto.code.size()) { leader[at + 1] = true; }
@@ -62,18 +58,19 @@ std::optional<leaders> find_leaders(const function_proto & proto) {
 }
 
 // ---- the refusals the walk cannot make -----------------------------------
+
+/// Refuses function shapes that no single instruction reveals: several
+/// protected regions, a suspension point, or a generator.
 void refuse_unsupported_shape(function_importer & state) {
     const function_proto & proto = state.proto;
 
-    // AND AT MOST ONE PROTECTED REGION PER FUNCTION, FOR NOW.
-    //
-    // Not because nesting is hard, but because TWO push_handlers is what
-    // try/FINALLY compiles to - compile_try_with_finally pushes its second
-    // one SEQUENTIALLY rather than nested, so a depth test would admit it -
-    // and finally brings a completion record, a rethrow through
+    // At most one protected region per function, for now. Two push_handlers
+    // is what try/finally compiles to (compile_try_with_finally pushes its
+    // second one sequentially, not nested, so a depth test would admit it),
+    // and finally needs a completion record, a rethrow through
     // op::throw_value, and ctjs.resume_throw, which has no lowering. This
-    // refuses finally, nested try, and two sibling try blocks alike; the
-    // first is the one that would be WRONG rather than merely absent.
+    // refuses finally, nested try and sibling try blocks alike; finally is the
+    // one that would otherwise be miscompiled rather than merely refused.
     if (!state.gave_up) {
         const auto pushes = llvm::count_if(
             proto.code, [](const instruction & each) { return each.code == op::push_handler; });
@@ -84,22 +81,13 @@ void refuse_unsupported_shape(function_importer & state) {
         }
     }
 
-    // AND A SUSPENSION POINT REFUSES THE FUNCTION WITH ITS OWN REASON.
-    //
-    // BEFORE THE WALK RATHER THAN AS A `case`, for two reasons that both
-    // matter. First, a `case` label naming a suspending opcode is what
-    // ctcompile_importer_coverage reads as "the importer DISPATCHES this",
-    // and a refusal is not a dispatch - the ratchet would stop measuring
-    // anything. That test's own sanity check caught the first draft of THIS
-    // COMMENT, which spelled the label out and was therefore matched as
-    // one; it is deliberately paraphrased now, and the guard is load-
-    // bearing rather than decorative. Second, the reason belongs to the
-    // FUNCTION, not to the instruction: nothing in a body containing an
-    // `await` is compilable, including the parts before it.
-    //
-    // It reports the FIRST suspension point rather than instruction 0, so
-    // the offset in the diagnostic names something a person can go and
-    // read.
+    // A function containing a suspension point (await/yield) is refused as a
+    // whole, with the offset of the first one so the diagnostic points at real
+    // code. This is checked before the walk rather than as a `case` label,
+    // because the importer-coverage test (test/CTJS/Import/Coverage.cpp) reads
+    // this source and counts a `case` label as "dispatched", and a refusal is
+    // not a dispatch. Do not spell a suspending opcode as a case label in this
+    // comment: the coverage test would match it.
     if (!state.gave_up) {
         for (std::size_t at = 0; at < proto.code.size(); ++at) {
             if (!may_suspend(proto.code[at].code)) { continue; }
@@ -127,15 +115,16 @@ void refuse_unsupported_shape(function_importer & state) {
 
 // ---- the handlers open at each instruction --------------------------------
 using handler_stack = decltype(function_importer::handlers);
+
+/// The handlers open at each instruction, or nothing for unreached ones.
 std::vector<std::optional<handler_stack>> handlers_by_flow(function_importer & state) {
     const function_proto & proto = state.proto;
-    // THE HANDLERS OPEN AT EACH INSTRUCTION, BY CONTROL FLOW rather than by
-    // instruction order. A `return`, `break` or `continue` leaving a try
-    // pops its handler on its own path before jumping (380ee61d5 made one
-    // routed into a finally do it too), so the try's normal-path pop comes
-    // LATER in the code with the region still open on its own path. Read
-    // in instruction order, that second pop found nothing open and every
-    // `try { return } finally {}` was refused.
+    // The handlers open at each instruction, computed by control flow rather
+    // than by instruction order. A `return`, `break` or `continue` leaving a
+    // try pops its handler on its own path before jumping (including one
+    // routed through a finally block), so the try's normal-path pop comes
+    // later in the code with the region still open on its own path. Read in
+    // instruction order, that pop would find nothing open.
     //
     // A pad starts with the handlers open at its push_handler, because the
     // interpreter's unwinder pops the handler it lands from. Unreached code
@@ -180,17 +169,17 @@ std::vector<std::optional<handler_stack>> handlers_by_flow(function_importer & s
 import_result import_program(const program & from, llvm::StringRef program_id,
                              mlir::MLIRContext * context) {
     import_result out;
-    // ONE LINE TABLE FOR THE WHOLE PROGRAM, built once. Every function's
+    // One line table for the whole program, built once. Every function's
     // instruction offsets index the same source text, so building it per
     // function would scan that text once per function.
     //
-    // EMPTY SOURCE MEANS NO TABLE, not an empty one: an image that dropped its
+    // Empty source means no table, not an empty one: an image that dropped its
     // source also dropped code_offsets, because an offset into text nobody has
     // cannot be turned into a line.
     const ctbrowser::script::line_table lines{from.source};
     const ctbrowser::script::line_table * const lines_or_null =
         from.source.empty() ? nullptr : &lines;
-    // LOADED, NOT MERELY REGISTERED. A DialectRegistry says a dialect MAY be
+    // Loaded, not merely registered. A DialectRegistry says a dialect may be
     // used; `Type::get` and `Op::create` need it actually loaded into the
     // context, and mlir-translate's harness only registers. Without this the
     // first ctjs::ValueType::get crashes with a stack trace that names the
@@ -213,11 +202,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         const function_proto & proto = from.functions[index];
         std::vector<unsupported_opcode> skipped;
 
-        // A FUNCTION IS BUILT INTO A THROWAWAY MODULE FIRST and only adopted if
-        // it survives. Emitting into the real module and erasing on failure
-        // would leave whatever the walk had already created if it gave up in
-        // the middle, which is precisely the partial translation the plan
-        // forbids.
+        // Each function is built in a scratch module and moved into the output
+        // only if it is fully imported and verifies. Building it in the real
+        // module and erasing it on failure could leave a half-translated
+        // function behind.
         mlir::OwningOpRef<mlir::ModuleOp> scratch = mlir::ModuleOp::create(builder.getUnknownLoc());
         mlir::OpBuilder into(scratch->getBodyRegion());
 
@@ -225,12 +213,11 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         llvm::SmallVector<mlir::Type> inputs(implicit_arguments + proto.param_count, value_type);
         const auto signature = into.getFunctionType(inputs, {value_type});
 
-        // THE INDEX IS PART OF THE NAME, ALWAYS. ctjs.func is a Symbol, and a real
-        // program has many functions sharing one name - p5.js has dozens called
-        // `constructor` and dozens more anonymous. Without the suffix the module
-        // fails to verify on a duplicate symbol, which surfaces as
-        // ctjs-translate producing NO OUTPUT AT ALL for a 4,000-function file
-        // while every individual function verified perfectly well.
+        // The index is always part of the name. ctjs.func is a Symbol, and a
+        // real program has many functions sharing one name (p5.js has dozens
+        // called `constructor` and dozens more anonymous). Without the suffix
+        // the module fails to verify on a duplicate symbol, and ctjs-translate
+        // produces no output at all even though every function verified.
         //
         // The source name stays in front of it, because a trace that says
         // @createCanvas$412 is worth reading and @fn412 is not.
@@ -254,16 +241,14 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         }
         into.setInsertionPointToStart(entry);
 
-        // THE FRAME, in the entry block and nowhere else. The entry dominates
-        // every block in the region, so the context needs no threading - which
-        // is fortunate, because push_handler's operands are !ctjs.value and
-        // could not carry a !ctjs.context.
+        // The frame, in the entry block and nowhere else. The entry dominates
+        // every block in the region, so the context needs no threading, which
+        // matters because push_handler's operands are !ctjs.value and could not
+        // carry a !ctjs.context.
         //
-        // AND IT CARRIES THE REGISTER WINDOW. proto.frame_size is read three
-        // lines below to size this importer's own register file, and until now
-        // it was dropped afterwards - so ct_aot_enter, which needs exactly this
-        // number, had nowhere to get it. A backend guessing param_count would
-        // size the window to the parameters and leave every local unslotted.
+        // The frame op also records proto.frame_size, because ct_aot_enter
+        // must size the register window from it. param_count alone would leave
+        // locals without a slot.
         state.frame = ctjs::FrameEnterOp::create(
             into, state.location_for(0), ctjs::ContextType::get(context),
             into.getI32IntegerAttr(static_cast<std::int32_t>(proto.frame_size)));
@@ -281,14 +266,12 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         // ---- leaders ------------------------------------------------------
         const std::optional<leaders> found = find_leaders(proto);
         if (!found) {
-            // THE THIRD REFUSAL SITE, AND THE ONLY ONE THAT IS DELIBERATELY
-            // OPAQUE. The other two drop a function whose instruction stream is
-            // well formed, so reading its op::set_globals back off that stream
-            // is exact. This one drops a function whose CONTROL FLOW is not: a
-            // jump leaves the code array, which means the program is corrupt
-            // and nothing in it should be reasoned about instruction by
-            // instruction. Precision here would buy nothing and would be the
-            // one summary whose premise is already false.
+            // The only refusal whose globals summary is deliberately opaque.
+            // The other refusals (give_up, and the verifier failure below)
+            // drop a function whose instruction stream is well formed, so its
+            // op::set_globals can be read back exactly. Here a jump leaves the
+            // code array, so the program is corrupt and nothing in it should
+            // be reasoned about instruction by instruction.
             skipped.push_back(unsupported_opcode{
                 program_id.str(),
                 static_cast<std::uint32_t>(index),
@@ -307,33 +290,18 @@ import_result import_program(const program & from, llvm::StringRef program_id,
 
         // One block per leader, each carrying the whole register file.
         for (std::size_t at = targets_zero ? 0 : 1; at < proto.code.size(); ++at) {
-            // STRICTLY INSIDE THE CODE. `ret` marks its successor a leader, and
-            // for the last instruction that successor is one past the end - a
-            // block no instruction would ever fill, which then needs a
-            // terminator invented for it and shows up as an unreachable stub in
-            // every imported function.
+            // Strictly inside the code. `ret` marks its successor a leader, and
+            // for the last instruction that is one past the end: a block no
+            // instruction would fill, which would need an invented terminator.
             //
-            // AND INSTRUCTION ZERO GETS ONE ONLY WHEN SOMETHING BRANCHES BACK
-            // TO IT. This loop started at 1, and the exclusion was never
-            // deliberate - the comment above explains the UPPER bound and says
-            // nothing about the lower one. leader[0] is set unconditionally, so
-            // a function whose FIRST statement is a loop marked index 0 a
-            // leader, got no block for it, and was refused whole with "jump
-            // target is not a block leader".
-            //
-            // It needs the flag rather than leader[0] because leader[0] is true
-            // for every function; without something actually targeting zero
-            // this would put a pointless header block in front of every
-            // imported body. Six functions across the three vendored corpora
-            // have the shape - a loop with no prologue ahead of it, like
-            // `while (a.length > n) a.pop();` as the first statement.
-            //
-            // THE ENTRY BLOCK CANNOT SIMPLY BE THE TARGET: MLIR forbids
+            // Instruction 0 gets its own block only when something branches
+            // back to it (for example, a function whose first statement is a
+            // loop). leader[0] is always true, so `targets_zero` is checked
+            // instead, so that every function does not get an empty header
+            // block. The entry block cannot be the target: MLIR forbids
             // predecessors on a FunctionOpInterface entry block, and its
-            // arguments are the ABI's rather than the register file. So index 0
-            // becomes a real header the entry falls through into, which is the
-            // shape Import/loop-property.mlir already asserts for loops that
-            // start one instruction later.
+            // arguments are the ABI's. The entry falls through into the header
+            // instead (see test/CTJS/Import/loop-property.mlir).
             if (!leader[at]) { continue; }
             state.blocks[static_cast<std::int64_t>(at)] = state.new_block(function.getBody(), at);
         }
@@ -342,14 +310,12 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         const auto enter_block = [&](std::size_t at) {
             mlir::Block * block = state.block_at(static_cast<std::int64_t>(at));
             if (block == nullptr) { return; }
-            // THE FALL-THROUGH EDGE, WHICH IS NOT IMPLICIT IN AN MLIR CFG.
-            //
+            // The fall-through edge, which is not implicit in an MLIR CFG.
             // Bytecode runs off the end of one instruction into the next; a
-            // block does not run off its end into the block below it. Without
-            // this branch the entry block of every loop simply ended, the
-            // terminator pass below gave it `return undefined`, and the loop
-            // header was reachable only from its own back edge - a function
-            // that verifies, prints plausibly, and returns undefined.
+            // block does not run into the block below it. Without this branch
+            // a block before a loop header would end, the terminator pass
+            // below would give it `return undefined`, and the function would
+            // verify and silently return undefined.
             mlir::Block * previous = into.getInsertionBlock();
             if (previous != nullptr && !previous->mightHaveTerminator()) {
                 into.setInsertionPointToEnd(previous);
@@ -359,7 +325,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             state.bind(block);
         };
 
-        // WHICH REGISTER EACH PAD'S THROWN VALUE LANDS IN, collected before the
+        // Which register each pad's thrown value lands in, collected before the
         // walk because a pad block is reached from the CFG rather than from the
         // instruction that named it.
         llvm::DenseMap<std::int64_t, std::uint16_t> catch_slot_at;
@@ -375,7 +341,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         for (std::size_t at = 0; at < proto.code.size() && !state.gave_up; ++at) {
             if (leader[at] && (at > 0 || targets_zero)) { enter_block(at); }
             if (leader[at] && open_at[at]) { state.handlers = *open_at[at]; }
-            // A PAD BLOCK TAKES ITS THROWN VALUE FROM THE RUNTIME, not from a
+            // A pad block takes its thrown value from the runtime, not from a
             // predecessor. ctjs.catch_land is the block's first operation and
             // its result replaces the block argument for the catch register -
             // that argument stays dead on purpose.
@@ -389,11 +355,11 @@ import_result import_program(const program & from, llvm::StringRef program_id,
             const instruction & in = proto.code[at];
             const mlir::Location where = state.location_for(at);
 
-            // THE REGISTER FILE AS OF THE THROW, SNAPSHOT BEFORE THE
-            // INSTRUCTION RUNS. It is what the handler block will be given, and
-            // taking it AFTER would name this instruction's own result in a
-            // block this instruction does not dominate - which is a verifier
-            // crash rather than a wrong answer, and only because MLIR checks.
+            // The register file as of a throw, snapshotted before the
+            // instruction runs. It is what the handler block will be given;
+            // taking it after would name this instruction's own result in a
+            // block the instruction does not dominate, which fails
+            // verification.
             const llvm::SmallVector<mlir::Value> before_instruction =
                 state.handlers.empty() ? llvm::SmallVector<mlir::Value>{} : state.outgoing();
 
@@ -401,20 +367,18 @@ import_result import_program(const program & from, llvm::StringRef program_id,
 
             // ---- and the caught edge, if a region is open ------------------
             //
-            // ONE ctjs.check PER INSTRUCTION, not per fallible operation, and
-            // the two are not the same: op::call_method emits a
-            // ctjs.get_property AND a ctjs.call, and `try { o.m(); } catch (e)
-            // {}` is about as ordinary as JavaScript gets. Splitting per
-            // instruction is still correct because an instruction writes its
-            // destination register LAST - so the snapshot taken before it is
-            // exactly what the interpreter would have in hand at either throw.
+            // One ctjs.check per instruction, not per fallible operation:
+            // op::call_method emits a ctjs.get_property and a ctjs.call, and
+            // either can throw. One check is still correct because an
+            // instruction writes its destination register last, so the
+            // snapshot taken before it is what the interpreter would have at
+            // either throw.
             //
-            // AND IT IS EMITTED AFTER EVERY INSTRUCTION, not only after ones
-            // that can throw. A check whose block holds nothing fallible lowers
-            // to a plain branch and costs an eliminated block argument; deciding
-            // which instructions can throw is the lowering's job, because it is
-            // the lowering that knows which operations became status calls.
-            // NOT after a terminator: a second one does not verify.
+            // It is emitted after every instruction, not only after ones that
+            // can throw. A check whose block holds nothing fallible lowers to a
+            // plain branch; deciding which instructions can throw is the
+            // lowering's job, because it knows which operations became status
+            // calls. Never after a terminator: a second one does not verify.
             if (!state.gave_up && !state.handlers.empty() && !ends_a_block(in.code)) {
                 mlir::Block * fresh = state.new_block(function.getBody(), at + 1);
                 ctjs::CheckOp::create(into, where, state.outgoing(), before_instruction, fresh,
@@ -425,7 +389,7 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         }
 
         if (!state.gave_up) {
-            // A BLOCK THAT RAN OFF ITS END needs a terminator. The bytecode
+            // A block that ran off its end needs a terminator. The bytecode
             // guarantees one only at the end of the function; a leader in the
             // middle can be reached by falling through.
             for (mlir::Block & block : function.getBody()) {
@@ -439,14 +403,13 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         out.skipped.insert(out.skipped.end(), skipped.begin(), skipped.end());
         if (state.gave_up) { continue; }
 
-        // ADOPTED ONLY IF IT VERIFIES. "A verifier failure here is an importer
-        // bug, never a reason to relax the verifier" - so a function that does
+        // Adopted only if it verifies. A verifier failure here is an importer
+        // bug, never a reason to relax the verifier, so a function that does
         // not verify is reported as unsupported rather than emitted.
         if (mlir::failed(mlir::verify(function))) {
-            // THE SECOND REFUSAL SITE, and it needs the same summary: this
-            // function is dropped exactly as a `give_up` one is, so a globals
-            // record without it would be the one skipped row that still
-            // refuses the whole module.
+            // This refusal needs the same globals summary as give_up: the
+            // function is dropped the same way, and a skipped row without a
+            // summary would make the globals resolver refuse the whole module.
             dropped_globals globals = summarise_globals(proto);
             out.skipped.push_back(
                 unsupported_opcode{program_id.str(), static_cast<std::uint32_t>(index), 0, "-",
@@ -457,10 +420,10 @@ import_result import_program(const program & from, llvm::StringRef program_id,
         function->remove();
         out.module->push_back(function);
 
-        // AND ITS REGISTER MAP, ONLY NOW. Everything above this line can still
+        // Publish its register map only now. Everything above can still
         // abandon the function, and an abandoned function's values are erased
-        // with the scratch module - so a map handed out earlier would be a set
-        // of dangling handles rather than a coverage gap somebody notices.
+        // with the scratch module, so a map handed out earlier would hold
+        // dangling handles.
         register_map occupancy;
         occupancy.function_index = static_cast<std::uint32_t>(index);
         occupancy.slots = std::move(state.occupied);

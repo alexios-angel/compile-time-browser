@@ -1,7 +1,17 @@
+//===- Browser.hpp - Native DOM element and document views ------*- C++ -*-===//
+//
+// js_element_t and js_document_t: the views generated native DOM code uses
+// for elements and the document, and document_scope, which binds the
+// document that native calls on this thread see.
+//
+// A DOM entry defines CTNATIVE_DOM before including either runtime header, so
+// primitive-only programs and raw element_ref clients never pull in the style
+// engine.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
-// DOM entries opt in before including either runtime header. Keep the Style
-// implementation out of primitive-only and raw element_ref clients.
 #ifndef CTNATIVE_DOM
 #error "Define CTNATIVE_DOM before including the native browser views"
 #endif
@@ -12,10 +22,12 @@
 
 namespace ctnative {
 
-// These views own nothing. Their document, atom table and Style engine must
-// remain alive at stable addresses, as for element_ref and std::span. Copies
-// preserve the association; detaching a node does not invalidate its identity.
-// Selector absence is null, represented by optional; undefined is not an element.
+/// A borrowed view of one element and the style engine used for selector
+/// matching. Views own nothing: the document, atom table and style engine must
+/// stay alive at stable addresses, as for element_ref and std::span. Copies keep
+/// the association; detaching a node does not change its identity. A selector
+/// that finds nothing gives null (an empty optional); undefined is never an
+/// element.
 class js_element_t {
     ctbrowser::element_ref element;
     ctbrowser::style::engine * styles;
@@ -59,6 +71,8 @@ public:
     }
 };
 
+/// A borrowed view of a document and its style engine, for document-level
+/// queries. Owns nothing, like js_element_t.
 class js_document_t {
     ctbrowser::document * document;
     ctbrowser::style::engine * styles;
@@ -99,8 +113,10 @@ public:
     }
 };
 
-// Bind synchronous native calls on this thread; nested entries restore their
-// caller's document, including when they throw. The owner must outlive the scope.
+/// Makes `borrowed` the document that native calls on this thread see
+/// (through document_object) for the lifetime of the scope. Nested scopes
+/// restore their caller's document on exit, including when they throw. The
+/// document and engine must outlive the scope.
 class document_scope {
     inline static thread_local const js_document_t * current = nullptr;
     js_document_t bound;
@@ -136,7 +152,8 @@ inline std::vector<js_element_t> document_object::querySelectorAll(
     return document_scope::active().querySelectorAll(selector);
 }
 
-// Bridge the proved null-only view result to the existing native element carrier.
+/// Converts an optional view to the plain element_ref carrier, with an empty
+/// element_ref for null.
 inline ctbrowser::element_ref element_or_null(const std::optional<js_element_t> & element) {
     return element ? element->value() : ctbrowser::element_ref{};
 }

@@ -1,3 +1,9 @@
+//===- Calls.cpp - EmitC call helpers ------------------------- -*- C++ -*-===//
+//
+// Small builders for emitc.call_opaque and emitc.member_call_opaque that the
+// rest of the EmitC lowering uses to spell runtime calls.
+//
+//===----------------------------------------------------------------------===//
 #include "Emitter.h"
 
 namespace ctcompile::ctnative::lowering_detail {

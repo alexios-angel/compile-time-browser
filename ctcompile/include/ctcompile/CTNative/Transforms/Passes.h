@@ -1,3 +1,10 @@
+//===- Passes.h - ctnative pass declarations --------------------*- C++ -*-===//
+//
+// Declarations and registration of the ctnative passes, generated from
+// Passes.td.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_H
 #define CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_H
 

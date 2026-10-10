@@ -1,3 +1,15 @@
+//===- DOMData.cpp - DOM Data Map proofs ------------------------*- C++ -*-===//
+//
+// Class-initialization proofs for the "DOM Data" pattern: a Map keyed by DOM
+// elements behind a factory and a wrapper function, as in Bootstrap's Data
+// module. forwardDOMDataFields replaces constructor fields that only hold an
+// element input with that input; proveDOMDataScalars records the primitive
+// kind of each field and Map-method result read in the entry function;
+// proveDOMDataFamily checks that element inputs reach nothing but the
+// captured Map's calls and marks those operations as domDataOperations.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -5,7 +17,9 @@
 namespace ctcompile::ctnative::class_detail {
 namespace {
 
-// `record` and every retained alias recorded for it, one step per recorded alias.
+/// Collects `record` and every retained alias of it into `aliases`, charging
+/// one work-budget step per retained-origin entry scanned. Returns false when
+/// the budget runs out.
 bool recordAliases(classInitialization & proof, mlir::Value record,
                    llvm::SmallVectorImpl<mlir::Value> & aliases) {
     aliases.push_back(record);
@@ -16,7 +30,8 @@ bool recordAliases(classInitialization & proof, mlir::Value record,
     return true;
 }
 
-// `use` is the stored value of a checked Map set.
+/// True if `use` is the stored value (operand 3: the second argument) of a
+/// `map.set(key, value)` call already recorded in mapOperations.
 bool mapSetValue(classInitialization & proof, mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
     return call && use.getOperandNumber() == 3 && proof.mapOperations.contains(call) &&
@@ -26,10 +41,15 @@ bool mapSetValue(classInitialization & proof, mlir::OpOperand & use) {
 
 } // namespace
 
+/// Replaces reads of a constructor field that only ever holds a declared DOM
+/// element input with that input, erases the field store, and passes undefined
+/// for the now-unused constructor argument. Then forwards reads of immutable
+/// entry cells holding an element input the same way.
 bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
-    // ponytail: fixed fields on method-free local records. Mutated fields,
-    // inheritance and method receivers need a wider read-time identity proof.
+    // ponytail: only never-reassigned fields of objects built in the entry
+    // function and never used as method receivers. Mutated fields, inheritance
+    // and method receivers would need a proof of which value each read sees.
     for (auto function : module.getOps<ctjs::FuncOp>()) {
         if (!step()) { return false; }
         if (!constructors.contains(function) || !llvm::hasSingleElement(function.getBody())) {
@@ -119,8 +139,9 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
                 }
             }
             if (!fixed) { continue; }
-            // Only the field disappears, never its record or retained aliases.
-            // The exposed element uses still owe the complete Map-key census.
+            // Erase only the field (its write and reads); the record and its
+            // retained aliases stay. Element inputs that remain exposed must still
+            // pass proveDOMDataFamily's check that every use is a proved Map key.
             for (auto [op, actual] : reads) {
                 if (!step()) { return false; }
                 auto read = llvm::cast<ctjs::GetPropertyOp>(op);
@@ -141,8 +162,10 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
             }
         }
     }
-    // The provider requires direct input uses. Retire only already-proved
-    // immutable entry cells with no capture or other transport observer.
+    // The native DOM provider needs element inputs used directly, not through
+    // a cell. Replace reads of an entry-function cell that holds an input, but
+    // only when the cell is already proved immutable and every operation on it
+    // is a recorded cell operation (no closure capture or other use).
     for (auto [cell, initial] : llvm::make_early_inc_range(cells)) {
         if (!step()) { return false; }
         auto actual = sourceValue(initial);
@@ -166,12 +189,17 @@ bool classInitialization::forwardDOMDataFields(const HostContract & contract) {
     return reason.empty();
 }
 
+/// Records in analysis.classScalarReads the primitive kind (boolean, number,
+/// string, ...) of each field read on a class instance the entry function builds,
+/// and of each Map `has`/`delete`/`clear`/`size` result there. Returns false on
+/// refusal or budget exhaustion.
 bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) {
     auto entry = analysis.entry;
     llvm::DenseMap<mlir::Value, mlir::Value> origins;
     llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> initialFields;
-    // ponytail: only literal/formal constructor stores and explicit entry overwrites.
-    // Constructor expressions and method effects need their own read-time proof.
+    // ponytail: only constructor stores of literals or formals, and explicit
+    // overwrites in the entry function. Computed constructor stores and method
+    // effects would need a proof of which value each read sees.
     for (ctjs::ConstructOp made : entry.getBody().front().getOps<ctjs::ConstructOp>()) {
         if (!step()) { return false; }
         auto closure = sourceValue(made.getCallee()).getDefiningOp<ctjs::CreateClosureOp>();
@@ -242,8 +270,8 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
     }
     llvm::DenseMap<mlir::Value, llvm::StringMap<PrimitiveAlternatives>> fields;
     const llvm::DenseMap<mlir::Value, PrimitiveAlternatives> noResults;
-    // The complete Map census proves these operations' categories, not their
-    // values. In particular, has/delete evidence cannot select a source arm.
+    // The Map check proves the kind of these results, not their values: a
+    // has/delete result is known to be a boolean but cannot decide a branch.
     for (mlir::Operation * op : mapOperations) {
         if (!step()) { return false; }
         if (op->getParentOfType<ctjs::FuncOp>() != entry) { continue; }
@@ -263,8 +291,9 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
                 PrimitiveAlternatives::forTag(mlir::TypeID::get<ctjs::NumberAttr>());
         }
     }
-    // Alias validation above forbids nested writes. Postorder visits both
-    // read-only arms before a scalar join, retaining each read-time field tag.
+    // The alias check above allows writes only at the top of the entry
+    // function, so branches only read fields. The post-order walk visits both
+    // arms of a branch before the join and records the kind each read sees.
     return walkSteps(entry,
                      [&](mlir::Operation * op) {
                          if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op)) {
@@ -280,8 +309,9 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
                              auto category = analysis.entryCategories(write.getValue(), noResults,
                                                                       write, 0, &dependencies);
                              remaining = analysis.remaining;
-                             // Other records need their own complete use census. Only literals,
-                             // their scalar expressions and already checked class reads qualify.
+                             // A value depending on another record would need that record's
+                             // own check of every use. Only literals, scalar expressions of
+                             // them and already checked class reads qualify.
                              if (!dependencies.empty()) { category = {}; }
                              fields[owner][ctjs::constantKey(write.getKey())] = category;
                          } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
@@ -297,6 +327,11 @@ bool classInitialization::proveDOMDataScalars(host_detail::analyzer & analysis) 
            reason.empty() && !analysis.exhausted;
 }
 
+/// Proves that every non-root use of an entry-function element input is an
+/// argument used as an outer Map key in a call to a helper that captures one
+/// DOM Data Map, reached through the single published table slot, and that the
+/// Map is built by a factory called once from a wrapper the entry calls once.
+/// Marks the operations involved in domDataOperations.
 bool classInitialization::proveDOMDataFamily(const HostContract & contract) {
     auto entry = module.lookupSymbol<ctjs::FuncOp>(contract.entry);
     llvm::SmallVector<std::pair<mlir::BlockArgument, mlir::OpOperand *>> uses;
@@ -308,8 +343,9 @@ bool classInitialization::proveDOMDataFamily(const HostContract & contract) {
         }
     }
     if (!reason.empty() || uses.empty()) { return reason.empty(); }
-    // These facts authorize source effects only, never native storage. The
-    // provider and owned-global analyses still reprove the rewritten module.
+    // These facts only allow the source effects; they say nothing about native
+    // storage. The DOM provider and owned-global analyses still check the
+    // rewritten module from scratch.
     host_detail::analyzer analysis(module, contract, remaining);
     remaining = analysis.remaining;
     if (!proveDOMDataScalars(analysis)) {
@@ -388,8 +424,8 @@ bool classInitialization::proveDOMDataFamily(const HostContract & contract) {
         for (ctjs::CreateClosureOp closure : capture.closures) {
             if (!analysis.step()) { return reject(); }
             domDataOperations.insert(closure);
-            // capturedMap publishes only after every complete reusable body,
-            // invocation and outer-key observer has passed its own census.
+            // analysis.propertyCall sets capturedMap only after every helper body,
+            // every call and every use of an outer key has been checked.
             auto member = analysis.callable(closure.getResult());
             if (!member) { return reject(); }
             member.walk([&](mlir::Operation * op) {
@@ -416,8 +452,8 @@ bool classInitialization::proveDOMDataFamily(const HostContract & contract) {
             if (!analysis.step() || !llvm::isa<ctjs::RootOp>(user)) { return reject(); }
         }
     }
-    // Only the wrapper's signature and exact calls gain authority. Its body
-    // and the factory body retain the complete class source-effect census.
+    // Only the wrapper itself and the exact calls are marked. The wrapper and
+    // factory bodies still go through censusSource's check of every operation.
     domDataOperations.insert(wrapper);
     domDataOperations.insert(wrapperCall);
     domDataOperations.insert(factoryCall);

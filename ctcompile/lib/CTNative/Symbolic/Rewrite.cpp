@@ -1,3 +1,9 @@
+//===- Rewrite.cpp - Fold proved constants and branches -------------------===//
+//
+// Implements symbolic::rewrite (see Facts.h).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Facts.h"
 
 #include "../PartialEvaluation/Heap.h"
@@ -12,8 +18,9 @@
 
 namespace ctcompile::ctnative::symbolic {
 namespace {
-// The analysis proves the value; this only adapts its literal to the result
-// representation.
+/// The proved literal for `op`'s result, adapted to the result's type: an
+/// IntegerAttr for an integer result, a ctjs literal for a ctjs value. Null if
+/// nothing is proved. The analysis proves the value; this only adapts it.
 mlir::Attribute literal(mlir::Operation * op, const Analysis & analysis) {
     const auto known = analysis.get(op->getResult(0)).literal;
     if (!known) { return {}; }
@@ -25,9 +32,10 @@ mlir::Attribute literal(mlir::Operation * op, const Analysis & analysis) {
     return known;
 }
 
-// One root becomes one constant of the root's own result type. `Attr` is the
-// attribute class the constant's builder wants: `arith.constant` takes a
-// TypedAttr, and literal() only ever hands an integer result an IntegerAttr.
+/// Replaces a `Root` operation whose result is proved constant with a
+/// `Constant` of the same result type. `Attr` is the attribute class the
+/// constant's builder wants: `arith.constant` takes a TypedAttr, and literal()
+/// only ever hands an integer result an IntegerAttr.
 template <typename Root, typename Constant, typename Attr = mlir::Attribute>
 struct Precompute : mlir::OpRewritePattern<Root> {
     Precompute(mlir::MLIRContext * context, const Analysis & analysis)
@@ -44,8 +52,9 @@ struct Precompute : mlir::OpRewritePattern<Root> {
     }
 };
 
-// Moving a selected region and remapping its yield is control-flow surgery,
-// which stays a hand rewrite rather than a pattern.
+/// Replaces `branch` with the contents of its `take` region. Moving a region
+/// and remapping its yield is control-flow surgery, so it stays a hand-written
+/// rewrite rather than a pattern.
 bool select(mlir::scf::IfOp branch, bool take) {
     auto & selected = take ? branch.getThenRegion() : branch.getElseRegion();
     if (selected.empty()) {
@@ -68,7 +77,7 @@ Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & b
     // The patterns capture this invocation's analysis by reference; the
     // frozen set and applicator are destroyed before it goes out of scope.
     // Truthiness returns i1 and arith.trunci an integer, so those two become
-    // arith constants; the boxed CTJS results become ctjs.constant.
+    // arith constants; ctjs value results become ctjs.constant.
     mlir::RewritePatternSet patterns(module.getContext());
     patterns.add<Precompute<ctjs::BinaryOp, ctjs::ConstantOp>,
                  Precompute<ctjs::BinaryStaticOp, ctjs::ConstantOp>,
@@ -81,9 +90,9 @@ Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & b
     mlir::PatternApplicator applicator(frozen);
     applicator.applyDefaultCostModel();
 
-    // Derive the scalar candidate set from the patterns' root kinds, including
-    // candidates without a proved literal. This preserves one budget step per
-    // original candidate without a second inventory of the roots.
+    // Derive the candidate set from the patterns' root kinds, including
+    // candidates without a proved literal, so each original candidate costs
+    // one budget step and the root list is not written out twice.
     llvm::SmallDenseSet<mlir::OperationName, 8> roots;
     applicator.walkAllPatterns([&](const mlir::Pattern & pattern) {
         const auto root = pattern.getRootKind();
@@ -108,8 +117,9 @@ Changes rewrite(mlir::ModuleOp module, const Analysis & analysis, WorkBudget & b
             continue;
         }
         if (mlir::succeeded(applicator.matchAndRewrite(op, rewriter))) { ++changes.expressions; }
-        // Producers are deliberately retained, including effectful calls and
-        // object coercions whose boolean/string result made a consumer fold.
+        // Operand producers are deliberately kept, including effectful calls
+        // and object coercions whose Boolean or String result let a consumer
+        // fold.
     }
     return changes;
 }

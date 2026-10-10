@@ -1,4 +1,11 @@
-// Closed shapes, receivers, cells and dense vector use proofs.
+//===- Shapes.cpp - Closed shapes, receivers and cells --------------------===//
+//
+// TypeInference's structural predicates: which objects have a fixed set of
+// fields, which values are lifted-method receivers or object parameters, which
+// captured variables became frame-local cells, and which arrays can be stored
+// as dense native vectors.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
@@ -20,7 +27,8 @@ namespace ctcompile::ctnative {
 using ctjs::constantKey;
 
 namespace {
-// An entry argument of a ctjs.func whose `attr` lists its index.
+/// True when \p v is an entry argument of a ctjs.func whose `attr` lists its
+/// index.
 bool listedArgument(mlir::Value v, llvm::StringRef attr) {
     auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
     if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
@@ -30,7 +38,7 @@ bool listedArgument(mlir::Value v, llvm::StringRef attr) {
            llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(arg.getArgNumber()));
 }
 
-// Every member of `classes` mapped to its whole class.
+/// Maps every member of `classes` to its whole class.
 template <unsigned N>
 llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, N>> flatten(
     const llvm::EquivalenceClasses<mlir::Value> & classes) {
@@ -44,13 +52,11 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, N>> flatten(
 }
 } // namespace
 
-// THE RECEIVER IS A PARAMETER, and `%arg0` of a lifted method is the only block
-// argument that names an object. The attribute is written by the lift inside
-// --ctnative-lower-to-emitc, which runs BEFORE this analysis is loaded, so by
-// the time anything here asks the question the answer is already in the IR -
-// and it is one attribute lookup rather than a walk of the module for the call
-// sites. That matters: this predicate is asked once per property access per
-// solver visit, and a symbol-table walk here would be quadratic in the module.
+/// True when \p v is `%arg0` of a ctjs.func marked `ctnative.receiver`, i.e.
+/// the `this` of a lifted method. Closure lifting (part of
+/// --ctnative-lower-to-emitc) writes the attribute before this analysis runs,
+/// so the check is one attribute lookup instead of a module-wide walk over
+/// call sites; it runs once per property access per solver visit.
 bool TypeInference::isReceiverArgument(mlir::Value v) {
     auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
     if (!arg || arg.getArgNumber() != 0 || !arg.getOwner()->isEntryBlock()) { return false; }
@@ -58,20 +64,19 @@ bool TypeInference::isReceiverArgument(mlir::Value v) {
     return fn && fn->hasAttr("ctnative.receiver");
 }
 
-// AND THE ARGUMENT FORM, WHICH IS THE SAME ATTRIBUTE LOOKUP ONE OPERAND ALONG.
-// `ctnative.object_args` lists entry-block indices rather than a single bit
-// because a function may take two of them - `join(a, b)` is one signature with
-// two `ctn_x *` - and because the operand number is what the call site and the
-// emitted parameter list both count in.
+/// True when \p v is a lifted method's receiver or an entry argument listed in
+/// `ctnative.object_args`. The attribute holds a list of indices because one
+/// function can take several object parameters, e.g. `join(a, b)`, and the
+/// operand number is what both the call site and the emitted parameter list
+/// count in.
 bool TypeInference::namesAnObjectParameter(mlir::Value v) {
     return isReceiverArgument(v) || listedArgument(v, "ctnative.object_args");
 }
 
-// PHASE 59 SLICE 2 STEP 2: DOES THIS VALUE NAME A SHARED BINDING THE LIFT MADE
-// A FRAME-LOCAL VARIABLE? Two spellings of one storage location - the box in
-// the frame that owns it, and the pointer parameter every lifted call handed
-// the callee - and they must answer the same type, because they are the same
-// `double`.
+/// True when \p v names a captured variable that closure lifting turned into a
+/// frame-local cell: either the `ctjs.create_cell` marked `ctnative.carried` in
+/// the owning frame, or a callee parameter listed in `ctnative.cell_args`. Both
+/// are views of the same storage location, so both must infer the same type.
 bool TypeInference::namesACarriedCell(mlir::Value v) {
     if (auto made = v.getDefiningOp<ctjs::CreateCellOp>()) {
         return made->hasAttr("ctnative.carried");
@@ -79,11 +84,10 @@ bool TypeInference::namesACarriedCell(mlir::Value v) {
     return listedArgument(v, "ctnative.cell_args");
 }
 
-// AND WHICH OF THEM NAME ONE BOX. A union-find over the carried cells and the
-// capture parameters, joined at every `ctjs.call_direct` operand the lift
-// listed in `ctnative.cell_args` - the same walk groupReceivers makes over
-// receivers, and it has to be a fixpoint for the same reason: a pointer passed
-// on to a closure two levels in reaches the third function through the second.
+/// Groups carried cells with the callee parameters they are passed to through
+/// `ctjs.call_direct` operands listed in `ctnative.cell_args`. A union-find is
+/// used (as in groupReceivers) because a cell passed through two levels of
+/// closures reaches the third function by way of the second.
 llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::groupCells(
     mlir::Operation * top) {
     llvm::EquivalenceClasses<mlir::Value> classes;
@@ -106,23 +110,27 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::gr
 }
 
 namespace {
-// A USE THAT PASSES THE OBJECT AS A LIFTED METHOD'S `this`, which does NOT open
-// its shape: the lift proved that method reaches `this` only through constant
-// keys, and it marked the CALL as well as the callee so that this test costs
-// one attribute lookup instead of a symbol lookup.
+/// True when \p use passes the object as a lifted method's `this` or as a listed
+/// object argument. Such a use keeps the shape closed: closure lifting proved
+/// the callee reaches the object only through constant keys, and it marked the
+/// call as well as the callee so this test is one attribute lookup.
 bool passesAReceiver(mlir::OpOperand & use) {
     auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
     if (!call) { return false; }
     if (use.getOperandNumber() == 0 && call->hasAttr("ctnative.receiver")) { return true; }
-    // AND AN ARGUMENT THE LIFT PROVED IS A PARAMETER. ctjs.call_direct's
-    // operands ARE the callee's entry block in order, so the operand number IS
-    // the index the attribute lists - no adjustment, and no symbol lookup.
+    // An object argument: ctjs.call_direct's operands are the callee's entry
+    // block arguments in order, so the operand number is the index the
+    // attribute lists, with no adjustment and no symbol lookup.
     auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args");
     return listed &&
            llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(use.getOperandNumber()));
 }
 } // namespace
 
+/// True when \p object (an object literal, an object parameter or a native Map
+/// record) is only ever used as the target of constant, non-`__proto__` keys,
+/// as a lifted method's receiver or object argument, or as a native Map record
+/// store, so its set of fields is fixed.
 bool TypeInference::hasClosedShape(mlir::Value object) {
     if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object) &&
         !nativeMapRecordOrigin(object)) {
@@ -132,8 +140,8 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
         mlir::Operation * user = use.getOwner();
         // Assignment to __proto__ invokes an inherited accessor, so even a
         // dominating constant-key store does not establish an own data field.
-        // The object as a set's TARGET only: stored as a value into another
-        // object it would escape, and that is not this rule's business.
+        // Only as the target (operand 0): stored as a value into another object
+        // it would escape, which this predicate refuses.
         if (const mlir::Value key = ctjs::propertyKey(user)) {
             if (use.getOperandNumber() != 0 || constantKey(key).empty() ||
                 constantKey(key) == "__proto__") {
@@ -146,6 +154,9 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
     return true;
 }
 
+/// Groups closed object literals, native Map record payloads, and the receiver
+/// and object parameters they are passed to, so a field store through any member
+/// is visible through every other.
 llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::groupReceivers(
     mlir::Operation * top) {
     // A union-find over the two kinds of node there are: a closed object
@@ -179,7 +190,7 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         if (call->hasAttr("ctnative.receiver")) {
             classes.unionSets(call.getReceiver(), entry.getArgument(0));
         }
-        // ONE GROUP PER PARAMETER, NOT ONE PER FUNCTION. `f(a, b)` taking two
+        // One group per parameter, not one per function. `f(a, b)` taking two
         // objects joins a to %arg3 and b to %arg4; joining them to each other
         // would give both the union of two shapes and a class with fields
         // neither literal has.
@@ -204,27 +215,32 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
     return flatten<2>(classes);
 }
 
-// Appends and reads preserve density. An indexed write additionally needs a
-// complete current own-contents proof: the exact store must overwrite an own
-// element on every path. Literal length assignments may only shrink. Sparse
-// writes, growth, deletion and escape still refuse. This use census supplies
-// local lifetime separately; contents evidence alone proves neither native
-// element types nor ownership.
-// SCF selections and certified counted loops borrow entry-block owners. The
-// connected use census includes every incoming edge, source and borrowed slot.
-// ponytail: no CFG transport or region-local owners; those need lifetimes.
-// ponytail: repeated whole-function queries can be quadratic; cache only within
-// an immutable analysis phase if profiling makes that necessary.
-//
-// WHAT IT DOES NOT PROVE: that nothing planted a numeric own property on
-// `Array.prototype`, which an index past the end would find. That is the same
-// boundary hasClosedShape draws with namesObjectPrototypeMember, and the same
-// answer: `Array.prototype[7] = x` is not a thing this tier undertakes to
-// survive, and it is recorded here rather than assumed away.
+/// True when \p array can be stored as a dense native vector.
+///
+/// Appends and reads preserve density. An indexed write additionally needs a
+/// complete computeArrayContents proof that the store overwrites an existing
+/// own element on every path. Literal length assignments may only shrink.
+/// Sparse writes, growth, deletion and escape refuse. The use scan in
+/// denseVectorAliases supplies the local lifetime; contents evidence alone
+/// proves neither native element types nor ownership. An array that flows
+/// through scf.if or scf.while values must be allocated in the entry block.
+/// ponytail: no CFG block arguments or region-local allocations; those need
+/// lifetimes.
+/// ponytail: repeated whole-function queries can be quadratic; cache within one
+/// analysis run if profiling makes that necessary.
+///
+/// Not proved: that no script added a numeric property to `Array.prototype`,
+/// which a read past the end would find. The native compiler does not support
+/// that pattern; admission's namesObjectPrototypeMember draws the same line for
+/// object keys.
 bool TypeInference::isDenseVectorSite(mlir::Value array) {
     return !denseVectorAliases(array).empty();
 }
 
+/// Returns every value that aliases \p array through scf.if/scf.while values if
+/// all of them can be stored as a dense native vector, or an empty list if any
+/// use breaks density or escapes the function. The walk is capped at 65536
+/// steps (values plus uses); a larger group is refused.
 llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value array) {
     llvm::SmallVector<mlir::Value, 4> members{array};
     llvm::DenseSet<mlir::Value> seen{array};
@@ -248,7 +264,7 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value 
         add(loop.getResult(index));
     };
     for (std::size_t at = 0; at < members.size(); ++at) {
-        // A failed census publishes no partial ownership group.
+        // Any failure returns an empty list, never a partial group.
         if (++work > 65536) { return {}; }
         mlir::Value member = members[at];
         auto * definition = member.getDefiningOp();
@@ -301,8 +317,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value 
                 continue;
             }
             if (llvm::isa<ctjs::AppendOp>(user)) {
-                // OPERAND 0 IS THE ARRAY BEING BUILT; operand 1 is the element,
-                // and an array appended INTO another array has escaped into it.
+                // Operand 0 is the array being built; operand 1 is the element,
+                // and an array appended into another array has escaped into it.
                 if (use.getOperandNumber() != 0 || snapshot ||
                     !member.getDefiningOp<ctjs::CreateArrayOp>()) {
                     return {};
@@ -346,8 +362,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::denseVectorAliases(mlir::Value 
         const auto contents = computeArrayContents(function);
         if (!contents.complete) { return {}; }
         for (auto store : stores) {
-            // The complete query checks every literal length store against its
-            // current dense contents; shrink publishes no element-write edge.
+            // computeArrayContents checked every literal length store against
+            // the current contents; a shrink records no element write.
             if (constantKey(store.getKey()) == "length") { continue; }
             if (!llvm::any_of(contents.writes, [&](const ArrayElementWrite & write) {
                     return write.by == store && write.position == 2 &&

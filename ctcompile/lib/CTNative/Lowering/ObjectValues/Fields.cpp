@@ -1,13 +1,25 @@
+//===- Fields.cpp - Lower identity-object fields to members ---------------===//
+//
+// Identity objects (objects whose identity matters but whose shape is closed)
+// lower to one shared C++ `identity_object` struct. Each property name becomes
+// a member named `field_<hex of the name>`, stored as nullable_scalar or
+// nullable_string, with get/set helper templates; property reads and writes
+// on such objects lower to calls of those helpers.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Admission/Admission.h"
 #include "../EmitC/Emitter.h"
 #include "llvm/ADT/StringExtras.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
+/// The C++ member name for property `name`: hex-encoded, so any property
+/// name is a valid identifier and distinct names never collide.
 std::string fieldName(llvm::StringRef name) {
     return "field_" + llvm::toHex(name, /*LowerCase=*/true);
 }
-// The C++ type an identity field is stored as.
+/// The C++ type an identity field is stored as.
 llvm::StringRef fieldStorage(mlir::Type type) {
     return isNullableStringCarrier(type) ? "nullable_string" : "nullable_scalar";
 }
@@ -27,7 +39,8 @@ llvm::StringMap<mlir::Type> identityFieldStoreTypes(mlir::DataFlowSolver & solve
             if (!store) { return; }
             const auto * lattice = solver.lookupState<TypeLattice>(store.getValue());
             const auto type = lattice ? lattice->getValue().getType() : mlir::Type{};
-            // Missing/pending source information is never a storage choice.
+            // A store with no inferred type must not pick the storage; it
+            // widens the member to boxed instead.
             const auto actual = type ? type : BoxedType::get(store.getContext());
             position->second = meet(position->second, actual);
         });
@@ -94,8 +107,9 @@ bool lowering::replaceIdentityField(mlir::Operation * op) {
         mlir::Value value =
             callValue(b, where, storage, "ctnative::object_get_" + found->second, get.getObject());
         const auto target = get.getResult().getType();
-        // Shared member storage can be wider than this allocation's field.
-        // Narrow with exact tag checks, never JavaScript string coercion.
+        // The shared member storage can be wider than this allocation's
+        // field. Narrow with exact tag checks, never JavaScript string
+        // coercion.
         if (isNullableStringCarrier(storage) && target != storage) {
             const auto helper = isNullableCarrier(target) ? "ctnative::object_absent_field"
                                                           : "ctnative::global_string";

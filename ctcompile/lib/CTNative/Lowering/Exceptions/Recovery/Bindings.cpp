@@ -1,10 +1,12 @@
-// recovery - the closed source-declaration proof: every global read in the
-// protected region resolves to a uniquely bound, nonthrowing private body.
+//===- Bindings.cpp - Callee binding proof ----------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,251-line Exceptions/Recovery.cpp on
-// 2026-09-08. All are member functions of `recovery`, the disposable-clone
-// transaction declared in Attempt.h beside this; Exceptions/Recovery.h, the
-// header the rest of the lowering sees, did not change.
+// The closed source-declaration proof: every global read in the protected
+// region must resolve to a uniquely bound private body that cannot throw.
+//
+// Member functions of `recovery`, the disposable-clone transaction declared in
+// Attempt.h; the rest of the lowering uses only Exceptions/Recovery.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Attempt.h"
 
@@ -34,9 +36,9 @@ bool recovery::bindingFailure(llvm::StringRef why) {
 }
 
 bool recovery::proveBindings() {
-    // This is a closed source-declaration proof, not permission from the
-    // resolved symbol or a host name. Inventory every current body before
-    // accepting any load. A missing body, property operation, host call or
+    // The proof is made from the source declarations themselves; a resolved
+    // symbol or a host name proves nothing. Every current body is inventoried
+    // before any load is accepted. A missing body, property operation, host call or
     // coercion that could reenter leaves the original checks intact.
     if (!module) { return bindingFailure("the source module is unavailable"); }
     if (auto skipped = module->getAttr("ctjs.skipped")) {
@@ -183,17 +185,17 @@ bool recovery::proveBindings() {
             return bindingFailure("an implicit callee value is observed or escapes");
         }
     }
-    // Declarations publish own source bindings before any call. Other
-    // named stores are allowed only in the entry, and the complete name
-    // census above already excludes writes to a callable binding.
+    // Function declarations store their own bindings before any call. Other
+    // named stores are allowed only in the entry, and the scan of all names
+    // above already excludes writes to a callable binding.
     for (mlir::Operation * original : operations) {
         if (!spend()) { return false; }
         auto * op = copies.lookupOrDefault(original);
         if (auto thrown = llvm::dyn_cast<ctjs::ThrowOp>(op)) {
-            // Throw diagnostics may coerce the payload. Prove every
-            // actual input through the whole call family too; an uncalled body with
-            // an unknown payload cannot borrow a represented invoke's
-            // primitive payload fact.
+            // Throw diagnostics may coerce the payload, so every actual input
+            // is proved primitive through the whole call family too; an
+            // uncalled body with an unknown payload may not rely on the
+            // primitive payload proved for a represented invoke.
             if (primitive(thrown.getValue())) { continue; }
             if (!refusal.empty()) { return false; }
             return bindingFailure("a throw payload has an unknown actual or uncalled formal");

@@ -1,3 +1,12 @@
+//===- LoweringSupport.cpp - Carrier selection and lowering helpers -------===//
+//
+// Shared helpers for the native EmitC lowering: which C++ carrier holds a value
+// of each ctnative type (carrierOf), the C++ spellings of Map, closure and
+// method-table storage, source-site strings for provenance comments, and the
+// declarative rewrite patterns applied before retyping.
+//
+//===----------------------------------------------------------------------===//
+
 #include "LoweringSupport.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/Support/CppLiterals.hpp"
@@ -7,15 +16,15 @@ namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
 
-// `+x` IS `x` ONCE ADMISSION HAS PROVED x A NUMBER, and that is where the
-// soundness lives, not in the match: `+x` in general is ToNumber, which can
-// re-enter user code through valueOf and can produce a different value ("1"
-// becomes 1). It is the identity only on a value already proved numeric, which
-// applyDeclarativeRules() checks the operand's NumType before seeding the
-// driver. Admitted Boolean, nullable and String operands retain their explicit
-// conversions. The rewrite is type-preserving (`!ctjs.value` for `!ctjs.value`),
-// which is why it must run before retype(). If it ever stops firing,
-// replace()'s Plus arm reports a fatal error naming it.
+/// Rewrites `+x` to `x`. This is sound only once admission has proved `x` a
+/// number, and the soundness lives there, not in the match: `+x` in general is
+/// ToNumber, which can re-enter user code through valueOf and can produce a
+/// different value ("1" becomes 1). applyDeclarativeRules() checks the
+/// operand's NumType before seeding the driver. Admitted Boolean, nullable and
+/// String operands keep their explicit conversions. The rewrite is
+/// type-preserving (`!ctjs.value` for `!ctjs.value`), which is why it must run
+/// before retype(). If it ever stops firing, the Plus arm of
+/// lowering::replace() reports a fatal error naming it.
 struct UnaryPlusIsIdentity : mlir::OpRewritePattern<ctjs::UnaryOp> {
     using OpRewritePattern::OpRewritePattern;
 
@@ -27,7 +36,8 @@ struct UnaryPlusIsIdentity : mlir::OpRewritePattern<ctjs::UnaryOp> {
     }
 };
 
-// Whether a Variant's `alternatives` are exactly two, one satisfying each predicate.
+/// Whether a Variant's `alternatives` are exactly two, one satisfying each
+/// predicate.
 template <class First, class Second>
 bool pairAlternatives(llvm::ArrayRef<mlir::Type> alternatives, First && first, Second && second) {
     return alternatives.size() == 2 && llvm::any_of(alternatives, first) &&
@@ -38,7 +48,7 @@ template <class Kind> bool is(mlir::Type type) {
     return llvm::isa<Kind>(type);
 }
 
-// Whether `level` holds for this Map or for any Map nested as its values.
+/// Whether `level` holds for this Map or for any Map nested as its values.
 template <class Level> bool anyMapLevel(MapType type, Level && level) {
     for (; type; type = llvm::dyn_cast<MapType>(type.getValueType())) {
         if (level(type)) { return true; }
@@ -61,8 +71,9 @@ mlir::Type scalarObservationType(mlir::MLIRContext * context, PrimitiveAlternati
     return type;
 }
 
-// What C++ type carries a value of this ctnative type, per the table above.
-// `none` is "not representable here", and is the reason for a refusal.
+/// Returns which C++ carrier holds a value of this ctnative type (see kCarriers
+/// in LoweringSupport.h). `carrier::none` means the type is not representable
+/// natively, and the value must be refused.
 carrier carrierOf(mlir::Type type) {
     if (type == nullptr) { return carrier::none; }
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
@@ -87,10 +98,10 @@ carrier carrierOf(mlir::Type type) {
             return carrier::nullable;
         }
     }
-    // Numeric/Boolean unions use the same tags as an optional scalar. The
-    // lattice retains its exact alternatives: selecting this representation
-    // neither adds nullability nor admits objects or unknown values. A closed
-    // Boolean/String temporary has its own finite, owning variant carrier.
+    // Number/Boolean unions use the same tags as an optional scalar. The
+    // lattice keeps its exact alternatives: choosing this representation
+    // neither adds nullability nor admits objects or unknown values. A
+    // Boolean|String or Number|String value has its own owning variant carrier.
     if (auto variant = llvm::dyn_cast<VariantType>(type)) {
         if (pairAlternatives(variant.getAlternatives(), is<BoolType>, [](mlir::Type alternative) {
                 auto string = llvm::dyn_cast<StrType>(alternative);
@@ -126,9 +137,9 @@ carrier carrierOf(mlir::Type type) {
             (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
-    // Generic mutable arrays retain their numeric content proof. Proved
-    // String and borrowed Element snapshots have
-    // distinct carriers and their own access/ownership admission.
+    // Generic mutable arrays keep their numeric-content proof. Arrays of
+    // strings and of borrowed DOM elements have their own carriers and
+    // admission rules.
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
         auto element = elements.getElementType();
         if (llvm::isa<DOMElementType>(element)) { return carrier::domElementVector; }
@@ -164,15 +175,15 @@ llvm::StringRef opaqueSpelling(mlir::Type type) {
     return opaque ? opaque.getValue() : llvm::StringRef{};
 }
 
-// The one C++ type a dense array lowers to. Spelled once: the emitted
-// declaration, the helper signatures and the lit test all have to agree, and
-// three copies of a string is how they stop agreeing.
+/// The one C++ type a dense array lowers to. It is spelled once because the
+/// emitted declaration, the helper signatures and the lit tests must agree.
 mlir::Type vectorCarrierType(mlir::MLIRContext * c, bool strings) {
     return ec::LValueType::get(ec::OpaqueType::get(c, strings ? kStringVectorType : kVectorType));
 }
 
-// These are exact closed storage alternatives, not a general JS value.
-// Scalar call operands and independently typed reads remain separate gates.
+/// Returns the C++ storage type for a two-alternative Map value variant
+/// (Boolean|Number or Boolean|String), or empty if there is none. This covers
+/// Map storage only; call operands and typed reads are admitted separately.
 llvm::StringRef mixedMapSpelling(mlir::Type type) {
     auto variant = llvm::dyn_cast<VariantType>(type);
     if (!variant) { return {}; }
@@ -191,15 +202,17 @@ llvm::StringRef mixedMapSpelling(mlir::Type type) {
 llvm::StringRef mixedMapKeySpelling(mlir::Type type) {
     if (auto scalar = mixedMapSpelling(type); !scalar.empty()) { return scalar; }
     auto variant = llvm::dyn_cast<VariantType>(type);
-    // Keys own exact identities; object/scalar payloads retain object_value storage.
+    // Number|object keys hold exact identities; Map values of that type use
+    // object_value storage instead.
     return variant &&
                    pairAlternatives(variant.getAlternatives(), is<NumType>, is<ObjectIdentityType>)
                ? "std::variant<double, std::shared_ptr<ctnative::identity_object>>"
                : llvm::StringRef{};
 }
 
-// Closed tagged storage for optional scalars and owning nullable Strings.
-// Map storage remains independent of scalar/signature and snapshot carriers.
+/// Returns the tagged Map storage type for an optional scalar, nullable String
+/// or nullable Boolean|String, or empty if `type` is none of those. Map
+/// storage is chosen independently of the scalar and signature carriers.
 llvm::StringRef nullableMapSpelling(mlir::Type type) {
     auto optional = llvm::dyn_cast<OptType>(type);
     if (!optional) { return {}; }
@@ -279,11 +292,10 @@ mlir::Type methodTableCarrierType(MethodTableType type) {
 }
 
 mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
-    // `none` HAS NO REPRESENTATION, and returning f64 for it was a silent
-    // guess at the one thing this tier exists not to guess at. A value with no
-    // proved carrier must be refused by admission long before it gets here;
-    // reaching this point means a rule let one through, and a crash naming
-    // that is worth far more than a double that happens to verify.
+    // The method-table carrier needs its proved schema
+    // (methodTableCarrierType), and `none` has no C++ representation at all.
+    // Either one reaching this point means admission let an unproved value
+    // through, so crash with a clear message rather than invent a type.
     if (which == carrier::methodTable) {
         llvm::report_fatal_error("method table carrier needs its proved schema");
     }
@@ -328,8 +340,9 @@ bool domBookkeeping(const DOMEntryAnalysis & entry, mlir::Operation * op) {
                     entry.isTokenList(read.getResult()) || entry.isDataset(read.getResult()));
 }
 
-// Every value that names the same object as `v`, `v` included. A literal
-// nothing is lifted onto is a group of one, so callers need no special case.
+/// Every value that names the same object as `v`, `v` included. A literal
+/// that nothing is lifted onto is a group of one, so callers need no special
+/// case.
 llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir::Value v) {
     if (groups != nullptr) {
         const auto entry = groups->find(v);
@@ -338,9 +351,10 @@ llvm::SmallVector<mlir::Value, 2> aliasesOf(const receiverGroups * groups, mlir:
     return {v};
 }
 
-// PART 24 PHASE 63 STEP 7: a provenance comment above every generated
-// definition, so a C++ diagnostic on generated code maps back to the
-// JavaScript site (ctcompile::sourceSite).
+/// Formats a source location as `file:line:column`. The emitter writes it in a
+/// comment above every generated definition, so a C++ diagnostic on the
+/// generated code can be traced back to the JavaScript source (see
+/// ctcompile::sourceSite).
 static std::string spelledSite(mlir::FileLineColLoc file) {
     return file ? file.getFilename().str() + ":" + std::to_string(file.getLine()) + ":" +
                       std::to_string(file.getColumn())
@@ -349,8 +363,8 @@ static std::string spelledSite(mlir::FileLineColLoc file) {
 std::string siteOf(mlir::Location loc) {
     return spelledSite(sourceSite(loc));
 }
-// The importer gives a ctjs.func no location of its own; its first located
-// operation is the function's site.
+/// The source site of `fn`. The importer gives a ctjs.func no location of its
+/// own, so the first located operation in its body stands in for it.
 std::string siteOfFunction(ctjs::FuncOp fn) {
     auto site = sourceSite(fn.getLoc());
     if (!site) {
@@ -366,8 +380,8 @@ std::string cIdentifier(llvm::StringRef symbol) {
     return cpp::identifier(symbol);
 }
 
-// BUILT ONCE PER LOWERING, not per function: FrozenRewritePatternSet is what
-// both greedy entry points take.
+/// The declarative rewrite patterns, built once per lowering rather than per
+/// function; FrozenRewritePatternSet is what both greedy entry points take.
 mlir::FrozenRewritePatternSet declarativePatterns(mlir::MLIRContext * context) {
     mlir::RewritePatternSet patterns(context);
     patterns.add<UnaryPlusIsIdentity>(context);

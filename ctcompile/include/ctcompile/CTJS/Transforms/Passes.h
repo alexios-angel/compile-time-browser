@@ -1,10 +1,14 @@
+//===- Passes.h - CTJS pass declarations ------------------------*- C++ -*-===//
+//
+// CTJS passes (ctjs-lower-to-emitc, ctjs-lift-to-scf, ctjs-resolve-globals,
+// ...), declared and registered from Passes.td. The generated registration
+// turns each pass's `dependentDialects` into `registry.insert<Dialect>()`,
+// which needs the full class definitions, so those dialect headers are
+// included here.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
-// CTJS passes. None yet; the declarations and the registration function are
-// generated from Passes.td.
-// THE DIALECTS THE GENERATED HEADER NAMES. -gen-pass-decls turns each pass's
-// `dependentDialects` into a `registry.insert<mlir::scf::SCFDialect>()`, which
-// needs the class DEFINED and not merely declared - so a pass that depends on a
-// dialect obliges this header to include it.
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/EmitC/IR/EmitC.h"

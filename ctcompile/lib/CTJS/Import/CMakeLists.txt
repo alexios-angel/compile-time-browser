@@ -1,19 +1,18 @@
-# THE IMPORTER, as an ORDINARY library rather than an add_mlir_library.
+# The bytecode importer, as an ordinary library rather than an add_mlir_library.
 #
-# It is not a dialect: it generates nothing, exports no TableGen target, and is
-# hand-written C++ by the plan's own instruction. Using MLIR's helper made it
-# compile through an `obj.CTJSImport` object target that
-# target_compile_options(CTJSImport ...) does not reach - so it built at the
-# compiler's default standard and the engine's C++23 headers did not parse, with
-# errors naming atom.hpp rather than a standard version.
+# It is not a dialect: it generates nothing and exports no TableGen target.
+# add_mlir_library would compile it through an `obj.CTJSImport` object target
+# that target_compile_options(CTJSImport ...) does not reach, so it would build
+# at the compiler's default standard and the engine's C++23 headers (atom.hpp
+# first) would not parse.
 #
 # ctcompile_target() gives it the project's flags and its C++23 floor, which is
 # what every other library here is built with.
 add_library(ctcompile-ctjs-import BytecodeImport.cpp)
 ctcompile_target(ctcompile-ctjs-import)
 
-# THE GENERATED HEADERS IT READS, as a build edge rather than an assumption -
-# the same rule the dialect's own CMakeLists follows.
+# The generated headers it reads, as a build edge rather than an assumption;
+# the dialect's own CMakeLists follows the same rule.
 add_dependencies(ctcompile-ctjs-import MLIRCTJSOpsIncGen)
 
 target_link_libraries(ctcompile-ctjs-import

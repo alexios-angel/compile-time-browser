@@ -1,3 +1,14 @@
+//===- Preparation.cpp - Prepare DOM entries for native code ----*- C++ -*-===//
+//
+// prepareDOMEntry readies a fingerprinted DOM or intrinsic-helper entry for
+// native emission. On a private clone it normalizes exception handlers,
+// classes, custom iterators, helper calls, element guards, iteration and
+// defaults, then re-runs DOMEntryAnalysis on the result. The module and its
+// contract are replaced together only when that check passes; on refusal both
+// stay unchanged.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Preparation.h"
 #include "../../Lowering/ClosureLifting/ClosureLifter.h"
 #include "../../Lowering/Exceptions/Recovery.h"
@@ -14,9 +25,12 @@
 
 namespace ctcompile::ctnative {
 
-// Called only immediately after recovery of a source without poison. Recovery's
-// inactive padding is not an alternate capture identity. Keep the call and all
-// live payloads; forward a capture only when every active incoming value agrees.
+/// Runs right after exception-region recovery on a poison-free entry. Replaces
+/// try/invoke results and catch arguments that always carry the same cell or
+/// closure with that value, then drops the now-unused results and block
+/// arguments. Poison values that recovery inserts on inactive paths are
+/// ignored when deciding whether all incoming values agree. Calls and live
+/// payloads are kept.
 static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned remaining) {
     const auto refuse = [] {
         return llvm::createStringError("DOM recovered capture correspondence exhausted its budget");
@@ -139,6 +153,12 @@ static llvm::Error forwardRecoveredCaptures(ctjs::FuncOp function, unsigned rema
     return llvm::Error::success();
 }
 
+/// Rewrites helper functions that the inert wrapper (function 0) stores as
+/// globals into direct calls: every `load_global name; call` becomes
+/// `call_direct @name`, the other loads become undefined, and the store and its
+/// closure are removed. Refuses unless each helper is a private, uncaptured,
+/// once-created closure whose only uses are the store and root bookkeeping.
+/// Charges `remaining`.
 static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::StringRef entry,
                                              unsigned & remaining, unsigned sourceSize) {
     const auto refuse = [](llvm::StringRef reason) { return llvm::createStringError(reason); };
@@ -246,8 +266,8 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
     }
     for (auto & helper : helpers) {
         auto store = declarations.lookup(helper.first());
-        // ponytail: one charged complete census per declaration; index global
-        // uses if large helper sets exhaust the existing preparation budget.
+        // ponytail: one full module walk per declaration (quadratic); index
+        // global uses if large helper sets exhaust the preparation budget.
         if (!spend(uint64_t(2) * sourceSize)) {
             return refuse("intrinsic helper declaration work budget exhausted");
         }
@@ -273,8 +293,9 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
         auto store = declarations.lookup(helper.first());
         auto closure = store.getValue().getDefiningOp<ctjs::CreateClosureOp>();
         store.erase();
-        // Preserve every root/frame operation for the existing inert-wrapper
-        // proof; only the unobserved callable value becomes its inert enclosure.
+        // Keep the root/frame operations so isInertEntryDeclaration can still
+        // check the wrapper; replace the remaining closure uses with the
+        // wrapper's own callee argument, which nothing observes.
         for (mlir::OpOperand & use : llvm::make_early_inc_range(closure.getResult().getUses())) {
             if (!spend()) { return refuse("intrinsic helper work budget exhausted"); }
             use.set(closure.getEnclosingClosure());
@@ -289,8 +310,9 @@ static llvm::Error normalizeIntrinsicGlobals(mlir::ModuleOp module, llvm::String
 
 llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     const auto refuse = [](const llvm::Twine & reason) { return llvm::createStringError(reason); };
-    // ponytail: quadratic input-size ceiling around the existing finite
-    // lift; thread a step budget through its censuses before widening it.
+    // ponytail: refuses when operations * size exceeds maxSteps, a quadratic
+    // bound because closureLifter has no step budget of its own; pass a budget
+    // into the lifter before raising this limit.
     uint64_t operations = 0, size = 0;
     auto counted = module.walk([&](mlir::Operation * op) {
         ++operations;
@@ -314,16 +336,18 @@ llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
                 !target.getBody().front().getArgument(ctjs::arg_callee).use_empty()) {
                 continue;
             }
-            // Ordinary closure lifting retains the callee as bookkeeping. Its
-            // proved direct target does not observe it; DOM expansion needs only
-            // the symbol and still proves every argument and original operation.
+            // Closure lifting keeps the closure as the call's callee operand,
+            // but the direct target never reads its callee argument. Helper
+            // expansion needs only the symbol, so pass undefined instead.
             mlir::OpBuilder at(call);
             use.set(ctjs::ConstantOp::create(at, call.getLoc(),
                                              ctjs::UndefinedAttr::get(module.getContext())));
         }
     }
-    // Check all callee premises before deleting a child closure can make an
-    // enclosing callee argument unused; DenseSet iteration grants no authority.
+    // Check every lifted closure before erasing any: erasing one can make an
+    // enclosing function's callee argument unused and change what a later
+    // check sees. lifter.lifted has no stable order, so checking and erasing
+    // in one pass would make the outcome order-dependent.
     for (mlir::Operation * operation : lifter.lifted) {
         auto closure = llvm::cast<ctjs::CreateClosureOp>(operation);
         if (llvm::any_of(closure->getUsers(),
@@ -339,9 +363,9 @@ llvm::Error liftDOMClasses(mlir::ModuleOp module, unsigned maxSteps) {
     return llvm::Error::success();
 }
 
-// Drop the proved inert wrapper and make the initial `undefined` binding a
-// constant. Only the complete source proof authorizes either; no VM lookup or
-// C++ global survives emission.
+/// Erases the inert declaration wrapper and replaces loads of the global
+/// `undefined` with a constant, so no VM lookup or C++ global survives
+/// emission. Valid only because `source` (DOMEntryAnalysis) accepted the entry.
 static void retireDeclaration(mlir::ModuleOp prepared, const DOMEntryAnalysis & source) {
     if (auto wrapper = source.wrapper()) {
         prepared.lookupSymbol<ctjs::FuncOp>(wrapper.getSymName()).erase();
@@ -356,8 +380,9 @@ static void retireDeclaration(mlir::ModuleOp prepared, const DOMEntryAnalysis & 
     });
 }
 
-// Discard supplied native reports, export the entry, and reprove the private
-// clone before it replaces `module` and `contract`.
+/// Removes earlier ctnative.* reports, makes the entry public and re-runs
+/// DOMEntryAnalysis on `prepared`; only then does it replace `module` and
+/// `contract`. `stage` prefixes the refusal message.
 static llvm::Error publishPrepared(mlir::ModuleOp module, HostContract & contract,
                                    mlir::ModuleOp prepared, HostContract transformed,
                                    unsigned maxSteps, llvm::StringRef stage) {
@@ -372,11 +397,12 @@ static llvm::Error publishPrepared(mlir::ModuleOp module, HostContract & contrac
     return llvm::Error::success();
 }
 
-// A handler in the entry is normalized in place. A handler owned by a local
-// helper is normalized first, under the same fingerprinted proof, so helper
-// expansion then inlines one structured invoke. `entryHandler` stays set when
-// the entry's own handler remains; `deferredCatch` when its recovered catch
-// awaits the independent effect proof after expansion.
+/// Normalizes every function that pushes an exception handler. The entry's
+/// handler is rewritten in place; a local helper's handler is rewritten first
+/// so that helper expansion later inlines one structured invoke. On return
+/// `entryHandler` is set when the entry's own handler remains, and
+/// `deferredCatch` when its recovered catch must wait for
+/// normalizeDOMRecoveredCatch after helper expansion.
 static llvm::Error normalizeHandlers(mlir::ModuleOp composed, const HostContract & contract,
                                      HostContract & transformed, unsigned maxSteps,
                                      bool & entryHandler, bool & deferredCatch) {
@@ -430,9 +456,10 @@ static llvm::Error normalizeHandlers(mlir::ModuleOp composed, const HostContract
                 if (auto error = forwardRecoveredCaptures(entry, remaining - recovered.steps)) {
                     return error;
                 }
-                // Keep the catch and every represented call. Expansion may
-                // resolve local captures and own records, but only the later
-                // independent effect proof can select a normal completion.
+                // Keep the catch and every call it covers. Helper expansion may
+                // resolve local captures and records, but only
+                // normalizeDOMRecoveredCatch, after expansion, can decide the
+                // calls complete normally.
                 deferredCatch = true;
                 entryHandler = false;
                 transformed.moduleSha256 = hostContractFingerprint(composed);
@@ -449,9 +476,10 @@ static llvm::Error normalizeHandlers(mlir::ModuleOp composed, const HostContract
 llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsigned maxSteps) {
     const auto refuse = [](const llvm::Twine & reason) { return llvm::createStringError(reason); };
     if (contract.provider == HostContract::Provider::ctbrowserIntrinsics) {
-        // Exact helpers reuse the DOM normalizer, but not its prototype
-        // or initialization premises. Check those boundaries on original source;
-        // complete typed/effect proof follows expansion on a private candidate.
+        // Entries that call ctbrowser intrinsic helpers reuse the DOM helper
+        // expander, but not its class-prototype or initialization checks.
+        // Validate the original source here, expand a private clone, and run
+        // DOMEntryAnalysis on the result before publishing it.
         mlir::OwningOpRef<mlir::ModuleOp> prepared;
         unsigned remaining = maxSteps;
         const auto spend = [&](uint64_t cost = 1) {
@@ -473,7 +501,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             bool unsupported = false;
             unsigned sourceSize = 0;
             const auto scanned = module.walk([&](mlir::Operation * operation) {
-                // Reserve source inspection, clone and original fingerprint.
+                // Reserve three walks: inspection, clone and fingerprint.
                 const uint64_t cost = 3 * operationWork(operation, true);
                 if (!spend(cost)) { return mlir::WalkResult::interrupt(); }
                 sourceSize += static_cast<unsigned>(cost / 3);
@@ -503,9 +531,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                         if (!spend()) {
                             return refuse("native intrinsic helper work budget exhausted");
                         }
-                        // Only exact callee-slot reads may reach the existing
-                        // immutable-cell/call census. Receiver/new.target
-                        // observations and capture writes remain unsupported.
+                        // Only reads of the callee slot through load_upvalue
+                        // are allowed. Reading the receiver or new.target, or
+                        // writing a capture, is not supported.
                         auto load = llvm::dyn_cast<ctjs::LoadUpvalueOp>(use.getOwner());
                         if (!llvm::isa<ctjs::RootOp, ctjs::CreateClosureOp>(use.getOwner()) &&
                             !(load && argument.getArgNumber() == ctjs::arg_callee &&
@@ -542,7 +570,7 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             if (!source.proved()) { return refuse("native intrinsic entry: " + source.reason()); }
             remaining -= source.steps();
             const auto counted = sourceModule.walk([&](mlir::Operation * operation) {
-                // Reserve the clone, cleanup walks and refreshed fingerprint.
+                // Reserve four walks: clone, cleanup and refreshed fingerprint.
                 return spend(4 * operationWork(operation, true)) ? mlir::WalkResult::advance()
                                                                  : mlir::WalkResult::interrupt();
             });
@@ -584,8 +612,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         return refuse("native DOM source: " + llvm::toString(std::move(sourceError)));
     }
     transformed.moduleSha256 = hostContractFingerprint(*composed);
-    // Helper expansion resolves proved local cells and maps
-    // helper formals back to the validated entry parameters.
+    // Helper expansion has resolved local cells and mapped helper formals back
+    // to the entry parameters, so element guards inside helpers now fold too.
     if (auto error = normalizeDOMElementGuards(*composed, transformed, maxSteps)) {
         return refuse("native DOM element guard: " + llvm::toString(std::move(error)));
     }
@@ -594,8 +622,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             transformed.elementParameters)) {
         return refuse("native DOM attribute completion: " + llvm::toString(std::move(error)));
     }
-    // Successful helper results are now ordinary local records. Reuse the
-    // complete own-field/use census after invocation transport disappears.
+    // Helper results are now ordinary local records, so forward their fields
+    // to the readers directly.
     dom_source_detail::DOMSource fields(maxSteps);
     if (!fields.forwardFields(composed->lookupSymbol<ctjs::FuncOp>(transformed.entry))) {
         return refuse("native DOM result fields: " + fields.reason);
@@ -616,20 +644,18 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
         return refuse("native DOM snapshot: " + llvm::toString(std::move(error)));
     }
     transformed.moduleSha256 = hostContractFingerprint(*composed);
-    // An explicit library entry may replace only its proved
-    // inert declaration wrapper. Prepare privately, discard
-    // supplied native reports, and reprove before publishing
-    // the exported function. `source` borrows `composed`, so
-    // the swap waits until it is gone.
+    // Check the composed module, then build `prepared` from a clone of it.
+    // `source` borrows `composed`, so publishing waits until it goes out of
+    // scope.
     mlir::OwningOpRef<mlir::ModuleOp> prepared;
     {
         const DOMEntryAnalysis source(*composed, transformed, maxSteps);
         if (!source.proved()) { return refuse("native DOM entry: " + source.reason()); }
         mlir::IRMapping mapping;
         prepared = llvm::cast<mlir::ModuleOp>((*composed)->clone(mapping));
-        // A saved throw cannot reach its structural yield. Keep that padding
-        // in the live sibling's proved primitive kind before sparse inference,
-        // so an unreachable undefined does not widen an ordinary result.
+        // A yield after a saved throw is unreachable. Replace its placeholder
+        // operands with constants of the kind the reachable arm yields, so
+        // sparse type inference does not widen the result to include undefined.
         for (const auto & padding : source.unreachableYields()) {
             auto * yield = mapping.lookup(padding.operation);
             auto at = mlir::OpBuilder::atBlockBegin(yield->getBlock());
@@ -638,16 +664,16 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 yield->setOperand(static_cast<unsigned>(index), constant.getResult());
             }
         }
-        // Make proved callback bodies reachable to sparse dataflow;
-        // they still emit as ordinary internal C++ functions.
+        // Make callback bodies public so sparse dataflow visits them; they
+        // still emit as ordinary internal C++ functions.
         for (ctjs::FuncOp callback : source.callbacks()) {
             prepared->lookupSymbol<ctjs::FuncOp>(callback.getSymName()).setPublic();
         }
         retireDeclaration(*prepared, source);
-        // Normalize optional force while the original method
-        // proof is available. Token lists omit undefined;
-        // Element coerces it to false. The emitter then needs
-        // only ordinary Boolean arguments.
+        // Normalize an undefined `force` argument to toggle() while the
+        // original call classification is available: classList.toggle drops
+        // it, Element.toggleAttribute gets false. The emitter then sees only
+        // Boolean arguments.
         source.entry().walk([&](ctjs::CallOp original) {
             const auto * edge = source.call(original);
             if (!edge || (edge->kind != HostDOMMethod::toggleClass &&
@@ -666,8 +692,8 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
                 call.getArgsMutable().slice(1, 1).assign(value.getResult());
             }
         });
-        // Only a complete source proof can resolve defaults. Retain argument
-        // producers and the selected arm in place; never evaluate a skipped default.
+        // Fold the default-parameter tests DOMEntryAnalysis resolved. Argument
+        // producers and the selected arm stay; a skipped default never runs.
         for (auto [original, value] : source.constantBooleans()) {
             auto result = mapping.lookup(original);
             mlir::OpBuilder at(result.getDefiningOp());
@@ -688,8 +714,9 @@ llvm::Error prepareDOMEntry(mlir::ModuleOp module, HostContract & contract, unsi
             }
         });
     }
-    // The complete DOM proof above establishes the replacement's structure.
-    // An earlier CFG-lifting failure describes the original handler body only.
+    // DOMEntryAnalysis above accepted the replacement's structure. An earlier
+    // CFG-lifting failure (ctjs.not_structured) describes only the original
+    // handler body.
     prepared->lookupSymbol<ctjs::FuncOp>(contract.entry)->removeAttr("ctjs.not_structured");
     return publishPrepared(module, contract, *prepared, std::move(transformed), maxSteps,
                            "native DOM entry preparation");

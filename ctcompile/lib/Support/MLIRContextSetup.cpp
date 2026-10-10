@@ -1,3 +1,11 @@
+//===- ctcompile/lib/Support/MLIRContextSetup.cpp - Dialect registry ------===//
+//
+// Registers the MLIR dialects the ctcompile pipeline reads and writes, for
+// every driver (ctjs-opt and the compiler) that builds an MLIRContext. The
+// list is deliberately short: only what the pipeline produces or parses.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctcompile/Support/MLIRContextSetup.hpp>
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -14,48 +22,38 @@
 namespace ctcompile {
 
 void registerCTCompileDialects(mlir::DialectRegistry & registry) {
-    // ctjs, AND ctnative, WHICH IS WHAT THIS HEADER MEANT BY "the list is the
-    // pipeline's, and it grows when a phase needs it to". Phase 53's dialect:
-    // the static types that sit between CTJS and the C++ emitter.
+    // ctjs, and ctnative: the statically typed dialect between CTJS and the C++
+    // emitter. ctnative is registered here, rather than in a separate
+    // ctnative-opt tool, so ctjs-opt can parse and round-trip ctnative IR
+    // without a second driver executable and its extra lit/CMake wiring.
     //
-    // PART 24's STAGE 53A ASKS FOR A SEPARATE `ctnative-opt` DRIVER AND THIS IS
-    // THE DEVIATION. Standing one up means a new tools/ subdirectory, a line in
-    // tools/CMakeLists.txt, and then two MID-FILE edits: the tool's build
-    // directory into CTCOMPILE_TOOLS_DIRS and its name into lit.cfg.py's tool
-    // list. Appendix A.3 of part 23 names test/CMakeLists.txt as the most
-    // collided-on file in the tree and asks agents to APPEND ONE BLOCK AT THE
-    // END rather than edit it in the middle. Registering the dialect here
-    // instead is two additive lines, gives ctjs-opt the same round-trip the
-    // plan wanted ctnative-opt for, and costs nothing: a driver that can parse
-    // ctnative is the requirement, not a second executable.
-    // THE THREE THE DIALECT DECLARES AS dependentDialects, and no more. A
-    // compiled function is a func.func with cf branches between its blocks and
-    // arith on the integers that are genuinely integers - shift counts, block
-    // arguments, the ordering a comparison returns - and everything else is a
+    // func, cf and arith: the three dialects CTJS declares as
+    // dependentDialects. A compiled function is a func.func with cf branches
+    // between blocks and arith on values that are genuinely integers (shift
+    // counts, block arguments, comparison orderings); everything else is a
     // !ctjs.value.
-    // AND EmitC, WHICH IS THE PRIMARY BACKEND'S OUTPUT. It is registered for
-    // PARSING, not only for the pass that produces it: a pass declaring it as a
-    // dependent dialect gets it loaded when the pass runs, which is too late
-    // for ctjs-opt to read a file that already contains emitc operations. That
-    // is exactly what a lit test of --emitc-eliminate-block-arguments does, and
-    // without this it fails with "Dialect `emitc' not found".
-
-    // AND THE TWO THE CFG LIFTING PASS CREATES.
     //
-    // --lift-cf-to-scf rewrites cf.br/cf.cond_br into scf.if, scf.while and
-    // scf.index_switch, and it materialises ub.poison on the paths its edge
-    // multiplexers prove unreachable. Neither dialect is ever produced by this
-    // project's own code, which is why they were absent - but a pass cannot
-    // build an operation of a dialect the context has not loaded, and the
-    // failure is a crash inside OperationName rather than a diagnostic.
+    // emitc, the C++ backend's output. It is registered for parsing, not only
+    // for the pass that produces it: a pass's dependent dialects are loaded
+    // when the pass runs, which is too late for ctjs-opt to read a file that
+    // already contains emitc operations (a lit test of
+    // --emitc-eliminate-block-arguments does exactly that, and without this
+    // fails with "Dialect `emitc' not found").
+    //
+    // scf and ub, which --lift-cf-to-scf creates: it rewrites cf.br/cf.cond_br
+    // into scf.if, scf.while and scf.index_switch, and materialises ub.poison
+    // on paths its edge multiplexers prove unreachable. No other code here
+    // produces them, but a pass cannot build an operation of a dialect the
+    // context has not loaded, and the failure is a crash inside OperationName
+    // rather than a diagnostic.
     registry.insert<ctjs::CTJSDialect, ctnative::CTNativeDialect, mlir::func::FuncDialect,
                     mlir::cf::ControlFlowDialect, mlir::arith::ArithDialect,
                     mlir::emitc::EmitCDialect, mlir::scf::SCFDialect, mlir::ub::UBDialect>();
-    // WHAT IS NOT HERE: the LLVM dialect and its translation registrations,
-    // which Phase 7's deliverable list names. They belong to the SECOND backend
-    // (Phases 11-12A), and registering them now would link LLVM's translation
-    // machinery into a driver that has nothing to translate - which is the same
-    // mistake as registerAllDialects, one dialect at a time.
+    // The LLVM dialect and its translations are deliberately not registered:
+    // nothing in this pipeline lowers to LLVM IR, and registering them would
+    // link LLVM's translation machinery into a driver with nothing to
+    // translate (the same mistake as registerAllDialects, one dialect at a
+    // time).
 }
 
 } // namespace ctcompile

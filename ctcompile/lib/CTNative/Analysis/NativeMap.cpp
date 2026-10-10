@@ -1,4 +1,13 @@
-//===- NativeMap.cpp - standard identity and instance-use proofs ---------===//
+//===- NativeMap.cpp - Proves standard Map instances native -----*- C++ -*-===//
+//
+// Decides which `new Map()` sites may be lowered to native Maps. It proves the
+// global `Map` is the standard constructor, groups each Map with every value
+// it flows into (one schema per group), checks that every use of an instance
+// is a supported method call or `size` read on that same instance, and runs
+// the Presence proof for the values its reads return. The result is written
+// as ctnative.map_* attributes; any failure records one reason instead.
+//
+//===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
@@ -29,7 +38,7 @@ llvm::StringRef nativeMapAction(mlir::Operation * op) {
 
 bool nativeMapKeyAction(llvm::StringRef action) {
     static const llvm::StringSet<> actions{"set", "get", "has", "delete"};
-    // Reject long source names before hashing, as literal comparisons did.
+    // Every accepted name is at most six characters; check length before hashing.
     return action.size() <= 6 && actions.contains(action);
 }
 
@@ -88,9 +97,9 @@ mlir::Value nativeMapRecordPayload(mlir::Value map) {
 
 namespace {
 
-// Record Map keys compared at compile time: literal Strings by text, any other
-// key (an element, a parameter) only by SSA identity - it may equal any key it
-// is not.
+/// How two record Map keys compare at compile time: literal Strings by text,
+/// any other key (an element, a parameter) only by SSA identity, since it may
+/// equal any key it is not.
 enum class keyRelation {
     same,
     distinct,
@@ -106,9 +115,9 @@ keyRelation relate(mlir::Value left, mlir::Value right) {
                                                          : keyRelation::distinct;
 }
 
-// The record a `get` answers: the payload of the latest `set` of the same key,
-// unless a later operation on that Map may have replaced it (`ambiguous`) or
-// removed it. Null when either happened or no such `set` precedes the read.
+/// The record a `get` answers: the payload of the latest `set` of the same key,
+/// unless a later operation on that Map may have replaced it (`ambiguous`) or
+/// removed it. Null when either happened or no such `set` precedes the read.
 mlir::Value exactRecordOrigin(ctjs::CallOp get, bool & ambiguous) {
     ambiguous = false;
     mlir::Value origin;
@@ -157,6 +166,7 @@ bool isNativeMapRecordStore(mlir::OpOperand & use) {
 
 namespace {
 
+/// One Map family (Maps joined by value flow) and every use of it.
 struct plan {
     llvm::SmallVector<ctjs::ConstructOp> made;
     llvm::SmallVector<mlir::Value> members;
@@ -166,9 +176,14 @@ struct plan {
     bool records = false;
 };
 
-// Record owners remain stack objects. The Map borrows their addresses and
-// saved reads keep that address across overwrite/delete; neither owns a record.
-// ponytail: one entry-block Map; transport needs a wider lifetime proof.
+/// Decides whether `candidate` must be a record Map: one that stores the real
+/// objects instead of copies. The records stay stack objects; the Map and any
+/// saved `get` result only borrow their addresses, which stay valid across an
+/// overwrite or delete because neither owns a record. Returns a refusal reason,
+/// or empty (setting `candidate.records` when a record Map was proved).
+// ponytail: only a Map created and used in its function's entry block is
+// supported; a Map carried through branches or loops needs a wider lifetime
+// proof.
 std::string proveRecords(plan & candidate,
                          llvm::function_ref<bool(ctjs::CreateObjectOp)> hostRecord) {
     if (!llvm::any_of(candidate.calls, [&](ctjs::CallOp call) {
@@ -177,8 +192,10 @@ std::string proveRecords(plan & candidate,
                               : ctjs::CreateObjectOp{};
             if (mapMethodName(call) != "set" || !stored) { return false; }
             if (hostRecord && hostRecord(stored)) { return true; }
-            // Existing plain-object identity Maps keep their independent
-            // owning representation. A lifted receiver needs its real record.
+            // A Map of plain objects normally owns copies of its values. Only
+            // when a stored object is passed as `this` to a native method (a
+            // call_direct marked ctnative.receiver) must the Map hold the
+            // real object, so only then is it a record Map.
             return llvm::any_of(call.getArgs()[1].getUses(), [](mlir::OpOperand & use) {
                 return llvm::isa<ctjs::CallDirectOp>(use.getOwner()) &&
                        use.getOperandNumber() == 0 && use.getOwner()->hasAttr("ctnative.receiver");
@@ -213,6 +230,8 @@ std::string proveRecords(plan & candidate,
             return "native record Map requires direct entry-block operations";
         }
     }
+    // Cap the proof at 65536 visited operations and uses so a huge entry block
+    // refuses quickly instead of running a quadratic scan.
     unsigned work = 0;
     for (mlir::Operation & op : *map->getBlock()) {
         if (++work > 65536) { return "native record Map lifetime proof exceeded its work limit"; }
@@ -249,8 +268,9 @@ std::string proveRecords(plan & candidate,
                     if (target && target->hasAttr("ctnative.receiver") &&
                         !target.getBody().empty() &&
                         target.getBody().front().getNumArguments() == direct->getNumOperands()) {
-                        // Final target admission must recheck its closed
-                        // receiver uses; input annotations alone prove nothing.
+                        // Accepted provisionally: the callee's own admission
+                        // later rechecks how it uses the receiver, since the
+                        // ctnative.receiver attribute alone proves nothing.
                         continue;
                     }
                 }
@@ -267,10 +287,13 @@ std::string proveRecords(plan & candidate,
     return {};
 }
 
-// The value flow unifies C++ SCHEMAS, never runtime identities. Two fresh Maps
-// passed to the same parameter need one key/value carrier but remain distinct
-// owning allocations. Every producer in a family must be checked below: a
-// union containing one Map does not prove that another incoming value is one.
+/// Joins two values into one flow family. Returns true if they were apart.
+///
+/// The value flow unifies C++ schemas, never runtime identities: two fresh Maps
+/// passed to the same parameter share one key/value type but stay distinct
+/// owning allocations. Every producer in a family must be checked separately:
+/// a family containing one Map does not prove that another incoming value is
+/// one.
 bool unify(closedValueFlow & flow, mlir::Value left, mlir::Value right) {
     flow.add(left);
     flow.add(right);
@@ -279,16 +302,18 @@ bool unify(closedValueFlow & flow, mlir::Value left, mlir::Value right) {
     return true;
 }
 
+/// Puts each `set` result in its receiver's family (`set` returns the Map).
 void connectSetReceivers(closedValueFlow & flow, mlir::ModuleOp module) {
     module.walk([&](ctjs::CallOp call) {
         if (mapMethodName(call) == "set") { flow.join(call.getReceiver(), call.getResult()); }
     });
 }
 
-// A container's stored values and its get results share one schema.
-// Discover recursively: a get result may itself become a Map receiver.
-// Primitive families remain outside the Map plans; a mixed Map/scalar
-// family reaches collect(), whose producer check refuses it.
+/// Joins each Map family's stored values with its `get` results, since they
+/// share one schema. Repeats until nothing changes, because a `get` result may
+/// itself be a Map receiver. Primitive families stay outside the Map plans; a
+/// family mixing Maps and scalars reaches collect(), whose producer check
+/// refuses it.
 void connectPayloads(closedValueFlow & flow, mlir::ModuleOp module,
                      llvm::ArrayRef<ctjs::ConstructOp> sites) {
     bool changed = true;
@@ -317,9 +342,13 @@ void connectPayloads(closedValueFlow & flow, mlir::ModuleOp module,
     }
 }
 
-// A method value may only be called on the exact instance from which it was
-// loaded. Detached methods, .call/.apply, property writes, escaping instances
-// and real loop-carried aliases need additional proofs and are refused.
+/// Checks every producer and use of one Map family and fills `out` with its
+/// method reads, `size` reads and method calls. Returns a refusal reason or
+/// empty.
+///
+/// A method value may only be called on the exact instance it was loaded
+/// from. Detached methods, .call/.apply, property writes, escaping instances
+/// and real loop-carried aliases would need further proofs and are refused.
 std::string collect(plan & out, closedValueFlow & graph,
                     const llvm::DenseSet<mlir::Operation *> & sites) {
     for (ctjs::ConstructOp made : out.made) {
@@ -414,6 +443,10 @@ std::string collect(plan & out, closedValueFlow & graph,
     return {};
 }
 
+/// Refuses Maps that (transitively) store themselves, then sorts each family's
+/// `get` calls into the read lists Presence checks: reads of a Map whose values
+/// are Maps (`reads`, must be present), reads on a host-captured global Map
+/// (`optionalReads`) and reads of mixed primitive values (`typedReads`).
 std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
                           closedValueFlow & graph, llvm::DenseMap<mlir::Value, unsigned> & families,
                           const llvm::DenseSet<mlir::Operation *> & snapshotCopies,
@@ -454,10 +487,11 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             const auto * captured = root.capturedMap();
             if (!captured) { continue; }
             for (ctjs::CallOp call : captured->calls) { publishedCalls.insert(call); }
-            // These are current semantic actual/formal facts from the complete
-            // host body worklist, not solver types or input annotations. They
-            // may seed primitive alternatives. Only a checked write of that
-            // value can establish a payload fact, never the signature alone.
+            // The primitive kinds the host-method proof saw passed to each
+            // parameter (from every call site it visited, not from solver types
+            // or IR annotations). They only seed the possible primitive kinds of
+            // a stored value; a payload type still needs a checked write of
+            // that value.
             for (const HostMethodParameters & method : captured->parameters) {
                 auto function = method.function;
                 auto & body = function.getBody().front();
@@ -476,13 +510,13 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
     for (auto [index, candidate] : llvm::enumerate(plans)) {
         llvm::append_range(calls, candidate.calls);
         llvm::append_range(sizes, candidate.sizes);
-        // Recognize a closed primitive mixed family before the monotone
-        // solver starts. Otherwise an early broad/optional result would
-        // permanently pollute a read whose last literal write is exact.
-        // Nonliteral published writes already have an independent primitive
-        // body/actual proof. A local get is also a candidate, but its scalar
-        // tag must be proved from exact contents below; neither this census
-        // nor the schema supplies the tag. Arbitrary parameters stay excluded.
+        // Classify each Map family's stored values before Presence runs: its
+        // solver only widens, so a read typed too broadly early on could never
+        // be narrowed back to its exact last literal write. Non-literal writes
+        // on a host-captured Map were already proved primitive by the host
+        // proof. This is only a list of candidate reads; Presence proves each
+        // one's type from the actual contents. Arbitrary parameters stay
+        // excluded.
         llvm::DenseSet<mlir::Value> savedReads;
         for (ctjs::CallOp call : candidate.calls) {
             const auto action = mapMethodName(call);
@@ -506,8 +540,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
                 !self(self, branch.elseYield().getOperand(position), depth + 1)) {
                 return false;
             }
-            // This is only a candidate census. Presence independently checks
-            // both reaching payload tags before a read can acquire a type.
+            // Only a candidate: Presence checks both branches' value types
+            // before a read gets a type.
             savedReads.insert(value);
             return true;
         };
@@ -528,9 +562,9 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             string |= llvm::isa<ctjs::StringAttr>(value);
             primitive &= ctjs::isPrimitiveAttr(value);
         }
-        // A conditional or saved value may supply every String/absent
-        // alternative without a direct literal set. Such a family can need
-        // an exact read seed too; only Presence establishes that seed.
+        // A conditional or saved value may supply every String or absent
+        // alternative without a literal set, so such a family is mixed too;
+        // only Presence decides each read's exact type.
         const bool mixed = primitive && (nonliteral || (boolean && (number != string)));
         for (ctjs::CallOp read : candidate.calls) {
             if (mapMethodName(read) != "get") { continue; }
@@ -538,9 +572,9 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
             if (!children[index].empty()) {
                 reads.push_back(read);
             } else if (publishedCalls.contains(read)) {
-                // Ownership supplies only the closed call census. Presence
-                // is rederived below for this instance/key on every path;
-                // an unproved primitive read keeps its nullable result.
+                // OwnedGlobalRoots only supplies the complete list of calls.
+                // Presence proves membership for this instance and key on every
+                // path; an unproved primitive read keeps its nullable result.
                 optionalReads.push_back(read);
             }
         }
@@ -555,7 +589,8 @@ std::string provePayloads(mlir::ModuleOp module, llvm::ArrayRef<plan> plans,
 void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
                        llvm::function_ref<bool(mlir::Operation *)> hostTyped,
                        llvm::function_ref<bool(ctjs::CreateObjectOp)> hostRecord) {
-    // Proof annotations are derived, not trusted input, including on reruns.
+    // Clear every attribute this analysis writes: they are its output, never
+    // trusted input, and a rerun must not see a previous run's results.
     module.walk([&](mlir::Operation * op) {
         for (llvm::StringRef name :
              {kNativeMapSite, kNativeMapAction, kNativeMapMethod, kNativeMapConstructor,
@@ -614,10 +649,11 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
     }
     map_detail::snapshotCopies copies;
     if (reason.empty()) { reason = map_detail::collectSnapshotCopies(module, calls, copies); }
-    // Standard builtins are installed by the reference/native program's
-    // initial environment. A spelling alone is insufficient: explicit stores,
-    // global-object/reflection access and unknown invocations can replace the
-    // constructor or its prototype. Refuse module-wide in this first slice.
+    // The name `Map` alone does not prove the standard constructor: a global
+    // store, reflection on the global object or an unknown call could replace
+    // the constructor or its prototype. Any such operation anywhere in the
+    // module refuses native Maps for the whole module (a per-function proof
+    // would be finer but is not implemented).
     module.walk([&](mlir::Operation * op) {
         if (!reason.empty()) { return; }
         if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
@@ -625,13 +661,12 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
             reason = "standard Map binding is assigned in this program";
         } else if (hostTyped && llvm::isa<ctjs::LoadGlobalOp, ctjs::CallOp>(op) &&
                    !calls.contains(op) && hostTyped(op)) {
-            // The complete host proof typed this read or browser call.
+            // The host contract proof typed this read or browser call.
         } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
                    load && load.getName() != "Map" && !copies.builtins.contains(op)) {
-            // A complete live source-owner proof identifies this load as the
-            // ordinary exported root or an independently proved Number or Boolean.
-            // Both require the complete live family and source effects; names,
-            // observations and native annotations never authorize a read.
+            // Allowed only when OwnedGlobalRoots proved this load reads an
+            // owned global root or a global holding a proved Number or
+            // Boolean. Names and native attributes never authorize a read.
             if (globals && globals->proved()) {
                 if (globals->lookup(load)) { return; }
                 if (globals->objectGlobal(load)) { return; }
@@ -653,8 +688,9 @@ void prepareNativeMaps(mlir::ModuleOp module, const OwnedGlobalRoots * globals,
             reason = "standard Map identity is unproved across dynamic invocation or deletion";
         }
     });
-    // Presence may preserve membership across a snapshot copy only after its
-    // live builtin, iterator-use and whole-module identity proofs succeed.
+    // Presence may keep membership facts across a snapshot copy, so it runs
+    // only after the builtin, iterator-use and whole-module identity checks
+    // above have passed.
     if (reason.empty()) {
         reason = provePayloads(module, plans, graph, families, copies.calls, globals, hostTyped);
     }

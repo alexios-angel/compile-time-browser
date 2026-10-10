@@ -1,3 +1,11 @@
+//===- Control.cpp - Supercompilation termination control -----------------===//
+//
+// The parts of supercompilation that decide what may be driven: the whistle
+// (homeomorphic embedding over binding shapes), generalization, and the
+// kernel admission check.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Driver.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -9,15 +17,19 @@
 
 namespace ctcompile::ctnative::supercompilation {
 namespace {
+/// A labelled tree used only for the embedding test.
 struct Shape {
     unsigned label;
     std::vector<Shape> children;
 };
 
+/// Abstracts a binding list to a tuple of leaf labels: 1 dynamic, 2 number,
+/// 3 string, 4 null, 5 undefined, 6 true, 7 false. The label set is finite,
+/// so homeomorphic embedding is a well-quasi-order and driving terminates.
 Shape shape(llvm::ArrayRef<mlir::Attribute> bindings) {
     Shape result{0, {}};
     for (auto literal : bindings) {
-        unsigned label = 1; // Dynamic argument, independent of its SSA name.
+        unsigned label = 1; // A dynamic argument, whatever its SSA name.
         if (llvm::isa_and_nonnull<ctjs::NumberAttr>(literal)) { label = 2; }
         if (llvm::isa_and_nonnull<ctjs::StringAttr>(literal)) { label = 3; }
         if (llvm::isa_and_nonnull<ctjs::NullAttr>(literal)) { label = 4; }
@@ -31,9 +43,10 @@ Shape shape(llvm::ArrayRef<mlir::Attribute> bindings) {
 }
 
 bool embedding(const Shape & left, const Shape & right) {
-    // Coupling and diving, the usual homeomorphic embedding rules. This first
-    // slice has only tuple/leaf shapes; later structured configurations must
-    // preserve a finite label alphabet and bounded arity too.
+    // Homeomorphic embedding by coupling (same label, children embed
+    // pairwise) or diving (left embeds in some child of right). Shapes are
+    // currently only a tuple of leaves; any richer shape added later must keep
+    // a finite label set and bounded arity, or the whistle may never blow.
     if (left.label == right.label && left.children.size() == right.children.size() &&
         llvm::all_of(llvm::zip(left.children, right.children),
                      [](auto pair) { return embedding(std::get<0>(pair), std::get<1>(pair)); })) {

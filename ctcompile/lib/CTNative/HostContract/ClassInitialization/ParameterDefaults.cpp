@@ -1,7 +1,20 @@
+//===- ParameterDefaults.cpp - Parameter default selection ------*- C++ -*-===//
+//
+// Part of the class-initialization proof: turns the lowered form of a default
+// parameter (`param = param === undefined ? default : param`) into a value
+// selection so no cell is left behind.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Proof.hpp"
 
 namespace ctcompile::ctnative::class_detail {
 
+/// Rewrites each default-parameter pattern in the entry block (a cell
+/// initialized from a formal, then a single store inside an scf.if guarded by
+/// a strict-equality test against undefined) into an scf.if that yields either
+/// the default or the original formal, and erases the cell. Refuses any other
+/// shape. Returns false on refusal or budget exhaustion.
 bool classInitialization::selectParameterDefaults(ctjs::FuncOp entry) {
     auto & block = entry.getBody().front();
     llvm::SmallVector<ctjs::CreateCellOp> candidates;
@@ -29,6 +42,7 @@ bool classInitialization::selectParameterDefaults(ctjs::FuncOp entry) {
             assignment = write;
         }
         if (!conditional) { continue; }
+        // Charge for the fixed set of operations the shape check below inspects.
         if (!spend(12)) { return false; }
         auto branch = llvm::dyn_cast<mlir::scf::IfOp>(assignment->getParentOp());
         if (multiple || !branch || branch->getBlock() != &block || !cell->isBeforeInBlock(branch) ||
@@ -76,6 +90,7 @@ bool classInitialization::selectParameterDefaults(ctjs::FuncOp entry) {
             if (!read || use.getOperandNumber() != 0 || position == branch) {
                 return refuse("class parameter default cell escapes its ordered reads");
             }
+            // Charge one step per use the rewrite below will redirect.
             for (mlir::OpOperand & selected : read.getResult().getUses()) {
                 (void)selected;
                 if (!step()) { return false; }
@@ -83,9 +98,10 @@ bool classInitialization::selectParameterDefaults(ctjs::FuncOp entry) {
             reads.emplace_back(read, branch->isBeforeInBlock(position));
         }
         if (!spend(7 + reads.size() + roots.size())) { return false; }
-        // A supplied argument and its default remain distinct SSA values.
-        // Move the original arms intact: the default's producers and effects
-        // still execute only on the undefined path and receive full DOM proof.
+        // A supplied argument and its default stay distinct SSA values. The
+        // original arms move into the new scf.if intact, so the default's
+        // computation and effects still run only when the argument is undefined,
+        // and the DOM proof still checks them.
         mlir::OpBuilder at(branch);
         auto selected = mlir::scf::IfOp::create(
             at, branch.getLoc(), mlir::TypeRange{formal.getType()}, branch.getCondition());
@@ -95,13 +111,13 @@ bool classInitialization::selectParameterDefaults(ctjs::FuncOp entry) {
         thenYield->setOperands(mlir::ValueRange{assignment.getValue()});
         elseYield->setOperands(mlir::ValueRange{formal});
         for (auto [read, after] : reads) {
-            // In particular, the undefined-test read must keep the original
-            // formal, not the selection whose condition it helps compute.
+            // Reads before the branch, including the undefined test itself, keep
+            // the original formal; they cannot use the selection their result feeds.
             read.getResult().replaceAllUsesWith(after ? selected.getResult(0)
                                                       : mlir::Value(formal));
             read.erase();
         }
-        // Preserve the original root positions and contexts for frame proof.
+        // Roots keep their positions and contexts for the frame proof.
         for (auto root : roots) { root.getValueMutable().assign(formal); }
         assignment.erase();
         branch.erase();

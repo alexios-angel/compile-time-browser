@@ -1,3 +1,10 @@
+//===- Number.hpp - The native JavaScript Number ----------------*- C++ -*-===//
+//
+// js_num, the C++ type generated native code uses for a JavaScript Number,
+// with JavaScript's arithmetic, bitwise and shift semantics.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ctbrowser/core/number.hpp"
@@ -9,10 +16,14 @@
 
 namespace ctnative {
 
-// An explicit construction token; NaN remains a JavaScript Number.
+/// Tag type for constructing a NaN js_num explicitly; NaN is still a
+/// JavaScript Number, not an absence marker.
 struct js_nan_t {};
 
-// Other representations need proofs that preserve JavaScript Number semantics.
+/// A JavaScript Number in generated native code. Only `double` is allowed for
+/// now: any other representation would need a proof that it preserves Number
+/// semantics. Bitwise operators and shifts convert through ToInt32/ToUint32
+/// and mask shift counts to five bits, as JavaScript does.
 template <class T>
 requires std::is_same_v<T, double>
 class js_basic_num {

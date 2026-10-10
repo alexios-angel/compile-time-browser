@@ -1,3 +1,11 @@
+//===- Analysis.cpp - Host entry prefix interpreter core --------*- C++ -*-===//
+//
+// The prefixAnalysis constructor (a census of the module), its budget
+// helpers, the interpreter's function/region walk, uniqueContext, and the
+// public HostEntryPrefixAnalysis constructor that runs it from the entry.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Analysis.h"
 
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
@@ -33,6 +41,9 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
             refusal = "ambiguous or missing numeric source function identity";
         }
     });
+    // Census of the module: count operations, closure creations and direct
+    // callers, and set `reflective` on anything that could observe or re-bind
+    // a function outside its known call sites.
     module.walk([&](mlir::Operation * operation) {
         if (!step()) { return; }
         ++operationCount;
@@ -54,6 +65,8 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(operation)) {
             static const llvm::StringSet<> reflectiveGlobals{"eval", "Function", "Reflect",
                                                              "Object"};
+            // The length test skips the set lookup for names longer than any
+            // entry ("Function" is 8 characters).
             reflective |= load.getName().size() <= 8 && reflectiveGlobals.contains(load.getName());
         }
         if (auto key = ctjs::propertyKey(operation)) {
@@ -71,6 +84,7 @@ prefixAnalysis::prefixAnalysis(mlir::ModuleOp module, const HostContract & contr
                                                                 "getPrototypeOf",
                                                                 "setPrototypeOf",
                                                                 "ownKeys"};
+            // 25 is the longest entry ("getOwnPropertyDescriptors").
             reflective |=
                 !number &&
                 (!text || !ctjs::ordinaryKey(text.getValue()) ||
@@ -146,9 +160,10 @@ ctjs::FuncOp prefixAnalysis::target(prefixValue value) {
 
 bool prefixAnalysis::uniqueContext(ctjs::FuncOp function, ctjs::CallDirectOp call,
                                    ctjs::CreateClosureOp producer) {
-    // The original body will be rewritten, so the actually executed call is
-    // insufficient: all source producers/uses must exclude a second invocation
-    // or later escape. Each caller already passed the same check on descent.
+    // The function's body will be specialised in place, so it is not enough
+    // that this call is the one executed: every creation and use must rule out
+    // a second invocation or a later escape. Each caller already passed the
+    // same check on the way down.
     auto & sites = callers[function];
     if (!step() || sites.size() != 1 || sites.front() != call || creations.lookup(function) != 1 ||
         !producer || reflective || function.getBody().empty() ||
@@ -156,9 +171,10 @@ bool prefixAnalysis::uniqueContext(ctjs::FuncOp function, ctjs::CallDirectOp cal
         pendingNewTarget.contains(call->getParentOfType<ctjs::FuncOp>())) {
         return false;
     }
-    // A global declaration is publication too: a later this.f/globalThis.f or
-    // unknown effect can invoke it without a load_global use. This in-place
-    // consumer accepts only an unexposed literal closure at its sole call.
+    // Storing the closure anywhere, even in a global, publishes it: a later
+    // this.f, globalThis.f or unknown effect could call it without a
+    // load_global. Accept only a closure literal used solely as this call's
+    // callee.
     for (mlir::OpOperand & use : producer.getResult().getUses()) {
         if (!step()) { return false; }
         if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
@@ -181,6 +197,8 @@ prefixAnalysis::completion prefixAnalysis::function(ctjs::FuncOp function,
                                                     llvm::ArrayRef<prefixValue> arguments,
                                                     unsigned depth) {
     if (!step()) { return {}; }
+    // Call depth is capped at 64 to bound the walk; `visited` analyses each
+    // function at most once, which also stops recursion.
     if (depth > 64 || !visited.insert(function).second) {
         stop(function, "repeated or recursive function context");
         return {};
@@ -226,8 +244,9 @@ prefixAnalysis::completion prefixAnalysis::region(mlir::Region & region, environ
                 stop(branch, "unknown branch condition");
                 return {};
             }
-            // After a provider summary, source observer branches are used
-            // only to discover the next actual call. They remain runtime.
+            // In functions marked discoveryOnly (after a provider summary), the
+            // branch is followed only to find the next call; it is not recorded
+            // as a proof and stays a runtime branch.
             if (!discoveryOnly.contains(branch->getParentOfType<ctjs::FuncOp>())) {
                 branches.push_back({branch, *selected});
             }
@@ -314,9 +333,10 @@ HostEntryPrefixAnalysis::HostEntryPrefixAnalysis(
         }
         for (auto proof : analysis.calls) {
             auto caller = proof.operation->getParentOfType<ctjs::FuncOp>();
-            // Naming a callee in the unreferenced script entry preserves the
-            // actual call and does not specialize a reusable callee body.
-            // Helper bodies still need the full continuation identity check.
+            // Resolving a call in the entry (which nothing else references)
+            // keeps the call and does not specialise a reusable callee body,
+            // so with followPublication the entry is exempt. Other callers
+            // still need identitySafeFunction.
             if (!followPublication || caller != entry) { changed.insert(caller); }
         }
         for (auto * operation : changed) {

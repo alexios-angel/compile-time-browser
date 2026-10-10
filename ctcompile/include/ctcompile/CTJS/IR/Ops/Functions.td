@@ -4,8 +4,8 @@
 
 // Control flow and completion
 //
-// NO CTJS BRANCH OPERATIONS. "Use the standard dialects wherever they suffice.
-// cf.br, cf.cond_br, and cf.switch cover all bytecode branching."
+// There are no CTJS branch operations: the standard dialects' cf.br,
+// cf.cond_br and cf.switch cover all bytecode branching.
 //===----------------------------------------------------------------------===//
 
 def CTJS_FuncOp : CTJS_Op<"func", [
@@ -30,20 +30,20 @@ def CTJS_FuncOp : CTJS_Op<"func", [
   let regions = (region AnyRegion:$body);
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
-  // NO extraClassDeclaration. MLIR 22 generates getArgumentTypes,
-  // getResultTypes and getCallableRegion for a FunctionOpInterface operation
-  // itself; declaring them here as the older idiom does is a redefinition.
+  // No extraClassDeclaration: MLIR generates getArgumentTypes, getResultTypes
+  // and getCallableRegion for a FunctionOpInterface op, so declaring them here
+  // would be a redefinition.
 }
 
 def CTJS_ReturnOp : CTJS_Op<"return", [Terminator, ReturnLike, HasParent<"FuncOp">]> {
   let summary = "Return a value from a JavaScript function";
-  // PHASE 55: SINK(returned) - run_loop.cpp:755 writes the caller's register,
-  // 754 hands it to a C++ caller (context::invoke, vm/call/invoke.cpp). Its own
-  // reason because 55B
-  // reads it: a site that escapes ONLY by return is the std::unique_ptr
-  // candidate. NOTE this is a ReturnLike terminator with no result: the
-  // analysis applies sinks in a post-fixpoint walk precisely because the
-  // sparse framework never calls visitOperation for it.
+  // Escape effects: SINK(returned). VM_CASE(ret) in run_loop.cpp writes the
+  // value into the caller's register, or hands it to a C++ caller
+  // (context::invoke, vm/call/invoke.cpp). It has its own reason because the
+  // ownership lowering treats a site that escapes only by return as a
+  // std::unique_ptr candidate. This is a ReturnLike terminator with no result,
+  // so the analysis applies sinks in a post-fixpoint walk: the sparse framework
+  // never calls visitOperation for it.
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkReturned]>:$value);
   let assemblyFormat = "$value attr-dict";
 }
@@ -57,10 +57,10 @@ def CTJS_ThrowOp
     to_primitive_string, which calls the thrown object's own toString. Page
     JavaScript runs in the middle of a fatal error.
   }];
-  // PHASE 55 (may_reenter 1: throw_value): SINK(thrown) - thrown_ is a root
-  // (each_root in vm.hpp; run_loop.cpp:1196), the value lands in the catching
-  // frame's register (vm.hpp:1488), and describe_thrown runs getters with it
-  // as `this` (vm/call/invoke.cpp).
+  // Escape effects (may_reenter 1: throw_value): SINK(thrown). The pending
+  // exception `thrown_` is a GC root (each_root in vm.hpp), the value lands in
+  // the catching frame's register, and describe_thrown runs getters with it as
+  // `this` (vm/call/invoke.cpp).
   let arguments = (ins Arg<CTJS_ValueType, "", [CTJS_SinkThrown]>:$value);
   let assemblyFormat = "$value attr-dict";
 }
