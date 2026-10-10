@@ -1,180 +1,180 @@
 fn 106 objectFrameBigIntShiftRetained
 alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 107 objectFrameBigIntDivModSaved
 alloc 11 obj 2 2 0 0 0 - escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 28 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 114 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 32 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 118 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 108 objectFrameBigIntDivModPaths
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 109 objectFrameBigIntDivModOpaque
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 110 objectFrameBigIntDivModMixed
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 57 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 59 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 111 objectFrameBigIntDivModDivEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 112 objectFrameBigIntDivModDivCatch
 fn 113 objectFrameBigIntDivModModEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 114 objectFrameBigIntDivModModCatch
 fn 115 objectFrameBigIntDivModRetained
 alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 116 objectFrameBigIntPowSaved
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 25 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 95 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 29 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 99 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 117 objectFrameBigIntPowPaths
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 118 objectFrameBigIntPowOpaque
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 34 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 119 objectFrameBigIntPowMixed
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 47 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 49 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 120 objectFrameBigIntPowNegativeEarly
 alloc 5 obj 3 3 0 0 0 - escapes:passed
-alloc 9 obj 3 2 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:passed
-site 26 obj 2 0 2 0 0 thrown:2 unclaimed
-alloc 42 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 3 2 1 0 0 temporaries:1 escapes:passed
+site 28 obj 2 0 2 0 0 thrown:2 unclaimed
+alloc 44 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 121 objectFrameBigIntPowNegativeCatch
 fn 122 objectFrameBigIntPowCapEarly
 alloc 5 obj 3 3 0 0 0 - escapes:passed
-alloc 9 obj 3 2 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:passed
-site 25 obj 2 0 2 0 0 thrown:2 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 3 2 1 0 0 temporaries:1 escapes:passed
+site 27 obj 2 0 2 0 0 thrown:2 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 123 objectFrameBigIntPowCapCatch
 fn 124 objectFrameBigIntPowRetained
 alloc 6 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 125 primitivePlusEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 24 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 40 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 26 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 42 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 126 primitivePlusRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 28 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 44 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 30 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 46 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 127 primitivePlusOpaque
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 17 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 33 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 19 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 35 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 128 primitivePlusCatch
 fn 129 primitiveMixedSubEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 130 primitiveMixedSubRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 29 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 45 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 31 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 47 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 131 primitiveMixedSubOpaque
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 18 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 34 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 20 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 132 primitiveMixedSubCatch
 fn 133 primitiveMixedMulEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 134 primitiveMixedMulRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 29 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 45 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 31 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 47 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 135 primitiveMixedMulOpaque
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 18 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 34 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 20 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 136 primitiveMixedMulCatch
 fn 137 primitiveMixedDivEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 138 primitiveMixedDivRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 29 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 45 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 31 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 47 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 139 primitiveMixedDivOpaque
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 18 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 34 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 20 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 140 primitiveMixedDivCatch
 fn 141 primitiveMixedModEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 142 primitiveMixedModRetained
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 29 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 45 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 31 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 47 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 143 primitiveMixedModOpaque
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 12 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 18 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 34 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 20 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 144 primitiveMixedModCatch
 fn 145 returned
 alloc 0 obj 1 0 1 0 0 temporaries:1 escapes:passed
@@ -187,7 +187,7 @@ fn 149 storedIntoExternal
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
 fn 150 storedIntoArrayLiteral
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
-alloc 7 arr 1 0 1 0 0 globals:1 escapes:passed
+alloc 8 arr 1 0 1 0 0 globals:1 escapes:passed
 fn 151 storedByIndex
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
 fn 152 storedGlobal
@@ -198,13 +198,13 @@ fn 154 globalAliasLoop
 alloc 3 obj 2 1 1 0 0 globals:1 escapes:passed
 fn 155 globalRetainedContainer
 alloc 2 obj 1 0 1 0 0 globals:1 escapes:passed
-alloc 6 obj 1 0 1 0 0 globals:1 escapes:passed
+alloc 7 obj 1 0 1 0 0 globals:1 escapes:passed
 fn 156 globalReplacedPublication
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
 fn 157 captured
 alloc 1 cell 1 0 1 0 0 temporaries:1 escapes:phase59
 alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 6 fn 1 0 1 0 0 temporaries:1 escapes:phase59
+alloc 7 fn 1 0 1 0 0 temporaries:1 escapes:phase59
 fn 158 -
 fn 159 hold
 fn 160 passed
@@ -213,22 +213,22 @@ fn 161 passedAsReceiver
 alloc 1 arr 1 0 1 0 0 globals:1 escapes:passed
 fn 162 spreadRetainedCall
 alloc 2 obj 1 0 1 0 0 globals:1 escapes:passed
-alloc 6 arr 1 1 0 0 0 - escapes:passed
-alloc 12 arr 1 1 0 0 0 - confined
-alloc 14 arr unobserved unclaimed
+alloc 7 arr 1 1 0 0 0 - escapes:passed
+alloc 13 arr 1 1 0 0 0 - confined
+alloc 15 arr unobserved unclaimed
 fn 163 SpreadRetainer
 fn 164 spreadRetainedConstruct
 alloc 2 obj 1 0 1 0 0 globals:1 escapes:passed
-alloc 6 arr 1 1 0 0 0 - escapes:passed
-alloc 11 arr 1 1 0 0 0 - confined
-alloc 13 arr unobserved unclaimed
-site 23 obj 2 1 1 0 0 globals:1 unclaimed
+alloc 7 arr 1 1 0 0 0 - escapes:passed
+alloc 12 arr 1 1 0 0 0 - confined
+alloc 14 arr unobserved unclaimed
+site 24 obj 2 1 1 0 0 globals:1 unclaimed
 fn 165 keepSpreadReceiver
 fn 166 spreadRetainedReceiver
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
-alloc 7 arr 1 1 0 0 0 - confined
-alloc 8 arr 1 1 0 0 0 - escapes:passed
-alloc 9 arr unobserved unclaimed
+alloc 8 arr 1 1 0 0 0 - confined
+alloc 9 arr 1 1 0 0 0 - escapes:passed
+alloc 10 arr unobserved unclaimed
 fn 167 ident
 fn 168 transit
 alloc 1 obj 1 1 0 0 0 - escapes:passed
@@ -238,15 +238,15 @@ fn 170 convertedCompare
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
 fn 171 convertedKey
 alloc 2 obj 1 1 0 0 0 - escapes:passed
-alloc 6 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 7 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 172 accessorDefined
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:accessor_defined
 alloc 2 fn 1 0 1 0 0 globals:1 escapes:phase59
 fn 173 -
 fn 174 protoMutated
 alloc 1 obj 1 0 1 0 0 globals:1 escapes:passed
-alloc 8 obj 1 0 1 0 0 globals:1 escapes:accessor_defined
-alloc 9 fn 1 0 1 0 0 globals:1 escapes:phase59
+alloc 9 obj 1 0 1 0 0 globals:1 escapes:accessor_defined
+alloc 10 fn 1 0 1 0 0 globals:1 escapes:phase59
 fn 175 -
 fn 176 usesArguments
 alloc 0 arr 1 1 0 0 0 - escapes:arguments
@@ -255,28 +255,28 @@ fn 177 usesRest
 alloc 1 obj 1 1 0 0 0 - escapes:passed
 fn 178 ownKeys
 alloc 2 obj 1 1 0 0 0 - escapes:passed
-alloc 11 arr 1 1 0 0 0 - escapes:runtime_array
+alloc 13 arr 1 1 0 0 0 - escapes:runtime_array
 fn 179 localClosure
 alloc 1 cell 1 1 0 0 0 - escapes:phase59
 alloc 3 obj 1 1 0 0 0 - escapes:passed
-alloc 7 fn 1 1 0 0 0 - escapes:phase59
+alloc 8 fn 1 1 0 0 0 - escapes:phase59
 fn 180 -
 fn 181 cycleConfined
 alloc 2 obj 1 1 0 0 0 - escapes:passed
-alloc 6 obj 1 1 0 0 0 - escapes:passed
+alloc 7 obj 1 1 0 0 0 - escapes:passed
 fn 182 cycleLeaked
 alloc 2 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 6 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 7 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 183 twice
 alloc 1 obj 2 2 0 0 0 - escapes:passed
 fn 184 neverCalled
 alloc 1 obj unobserved escapes:passed
 fn 185 suspended
 alloc 2 obj 1 0 0 0 1 - unclaimed
-site 7 arr 1 0 0 0 1 - unclaimed
-site 7 obj 1 0 0 0 1 - unclaimed
-site 9 arr 1 0 1 0 0 temporaries:1 unclaimed
-site 9 obj 1 0 1 0 0 temporaries:1 unclaimed
+site 8 arr 1 0 0 0 1 - unclaimed
+site 8 obj 1 0 0 0 1 - unclaimed
+site 11 arr 1 0 1 0 0 temporaries:1 unclaimed
+site 11 obj 1 0 1 0 0 temporaries:1 unclaimed
 fn 186 primitiveUShrEarly
 alloc 5 obj 2 2 0 0 0 - confined
 alloc 7 arr 2 1 1 0 0 temporaries:1 escapes:passed
