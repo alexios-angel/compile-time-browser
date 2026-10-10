@@ -77,6 +77,17 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             mark(op, "truthy");
             return;
         }
+        if (lower.pageViews && TypeInference::isStyleCall(op) &&
+            carrierOf(lower.typeOf(op->getResult(0))) == carrier::computedStyle) {
+            mark(op, "computed_style");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isStylePropertyCall(op) &&
+            carrierOf(lower.typeOf(llvm::cast<ctjs::CallOp>(op).getReceiver())) ==
+                carrier::computedStyle) {
+            mark(op, "property_value");
+            return;
+        }
         if (lower.pageViews && TypeInference::isRectCall(op) &&
             carrierOf(lower.typeOf(op->getResult(0))) == carrier::domRect) {
             mark(op, "bounding_rect");
@@ -299,6 +310,17 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     if (kind == "bounding_rect") {
         swap(callValue(b, where, o->getResult(0).getType(), "ctnative::getBoundingClientRect",
                        llvm::cast<ctjs::CallOp>(o).getReceiver()));
+        return true;
+    }
+    if (kind == "computed_style") {
+        swap(callValue(b, where, o->getResult(0).getType(), "ctnative::getComputedStyle",
+                       llvm::cast<ctjs::CallOp>(o).getArgs()[0]));
+        return true;
+    }
+    if (kind == "property_value") {
+        auto call = llvm::cast<ctjs::CallOp>(o);
+        swap(memberCall(b, where, carrierType(context, carrier::string), call.getReceiver(),
+                        "getPropertyValue", call.getArgs()[0]));
         return true;
     }
     if (kind == "dead_rect") {

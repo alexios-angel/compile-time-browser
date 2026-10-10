@@ -270,6 +270,11 @@ public:
     /// x.getBoundingClientRect() : null`, `x`; null otherwise. For an element
     /// `x` the test is always true and the null never produced.
     static mlir::Value deadRectReceiver(mlir::Operation * op);
+    /// Whether `op` calls the realm's own `getComputedStyle` with one argument.
+    static bool isStyleCall(mlir::Operation * op);
+    /// Whether `op` is `x.getPropertyValue(name)`, its callee read for that
+    /// call alone.
+    static bool isStylePropertyCall(mlir::Operation * op);
     /// Whether `op` loads the global `name` in a program that never stores
     /// to it, so the load is the realm's own binding of that name.
     static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
@@ -394,8 +399,9 @@ private:
     /// (an element), an element's tagName, id and className (Strings),
     /// children (a vector of elements), clientWidth and clientHeight, and
     /// `window.devicePixelRatio` (Numbers); getBoundingClientRect (a rect, its
-    /// existence test a Boolean, the null of its guard the rect too) and the
-    /// rect's left, top, width and height (Numbers). Null for anything else.
+    /// existence test a Boolean, the null of its guard the rect too), the
+    /// rect's left, top, width and height (Numbers), getComputedStyle(el) and
+    /// its getPropertyValue (a String). Null for anything else.
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);

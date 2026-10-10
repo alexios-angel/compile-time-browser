@@ -109,6 +109,16 @@ def CTNative_DOMRectType : CTNative_Type<"DOMRect", "dom_rect"> {
   }];
 }
 
+def CTNative_ComputedStyleType : CTNative_Type<"ComputedStyle", "computed_style"> {
+  let summary = "The result of getComputedStyle, as ctnative::js_computed_style";
+  let description = [{
+    The answer of an ordinary script's `getComputedStyle(el)` on a proved page
+    element. Live, like the VM's object: getPropertyValue computes from the
+    page as it stands (Runtime/Page.hpp). It borrows the page and names the
+    element. It meets only itself.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{

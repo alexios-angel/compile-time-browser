@@ -322,6 +322,21 @@ mlir::Value TypeInference::deadRectReceiver(mlir::Operation * op) {
     return test.getObject();
 }
 
+bool TypeInference::isStyleCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    return call && call.getArgs().size() == 1 &&
+           isRealmGlobal(call.getCallee().getDefiningOp(), "getComputedStyle");
+}
+
+bool TypeInference::isStylePropertyCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || call.getArgs().size() != 1 || ctjs::methodKey(call) != "getPropertyValue") {
+        return false;
+    }
+    auto read = ctjs::receiverMethod(call);
+    return read.getObject() == call.getReceiver() && read.getResult().hasOneUse();
+}
+
 mlir::Type TypeInference::domReadType(mlir::Operation * op,
                                       llvm::ArrayRef<const TypeLattice *> operands) {
     mlir::MLIRContext * c = op->getContext();
@@ -337,6 +352,18 @@ mlir::Type TypeInference::domReadType(mlir::Operation * op,
     }
     if (const mlir::Value receiver = deadRectReceiver(op); receiver && element(receiver)) {
         return DOMRectType::get(c);
+    }
+    // getComputedStyle(el) and its getPropertyValue(name), a String.
+    if (isStyleCall(op) && element(llvm::cast<ctjs::CallOp>(op).getArgs()[0])) {
+        return ComputedStyleType::get(c);
+    }
+    if (isStylePropertyCall(op)) {
+        auto call = llvm::cast<ctjs::CallOp>(op);
+        const bool style = llvm::isa_and_nonnull<ComputedStyleType>(
+            joinLattices(op, call.getReceiver(), mlir::Type{}));
+        const bool name =
+            llvm::isa_and_nonnull<StrType>(joinLattices(op, call.getArgs()[0], mlir::Type{}));
+        if (style && name) { return stringType(c); }
     }
     auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
     if (!read) { return {}; }

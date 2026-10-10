@@ -338,6 +338,13 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.dom_rect", "!ctnative.num<f64>",
      "!ctnative.variant<!ctnative.dom_rect, !ctnative.num<f64>>",
      "a rect is an object, not a Number: the two stay alternatives"},
+    {"!ctnative.computed_style", "!ctnative.computed_style", "!ctnative.computed_style",
+     "idempotent"},
+    {"!ctnative.computed_style", "!ctnative.opt<!ctnative.bottom>",
+     "!ctnative.opt<!ctnative.computed_style>", "a style that may be null is an optional style"},
+    {"!ctnative.computed_style", "!ctnative.dom_rect",
+     "!ctnative.variant<!ctnative.computed_style, !ctnative.dom_rect>",
+     "two page objects of different kinds stay alternatives"},
 
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
@@ -394,6 +401,7 @@ const char * const kSampleTypes[] = {
     "!ctnative.tuple<!ctnative.bool, !ctnative.bool, !ctnative.bool>",
     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
     "!ctnative.dom_rect",
+    "!ctnative.computed_style",
 };
 
 //===--------------------------------------------------------------------===//
@@ -648,9 +656,9 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 70 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 73 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 159;
+    const int expectedChecks = 165;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

@@ -80,6 +80,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<SymbolType>(type)) { return carrier::symbol; }
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
+    if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -200,6 +201,12 @@ std::string elementSpanSpelling(mlir::Type type) {
 bool isPageGlobal(mlir::Operation * o) {
     auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o);
     if (!load || load.getResult().use_empty()) { return false; }
+    if (load.getName() == "getComputedStyle") {
+        return TypeInference::isRealmGlobal(load, load.getName()) &&
+               llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+                   return use.getOperandNumber() == 0 && TypeInference::isStyleCall(use.getOwner());
+               });
+    }
     const llvm::StringRef read = load.getName() == "document" ? "documentElement"
                                  : load.getName() == "window" ? "devicePixelRatio"
                                                               : "";
@@ -214,7 +221,8 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o);
     if (!read || !read.getResult().hasOneUse()) { return false; }
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
-    return call && TypeInference::isRectCall(call) && ctjs::receiverMethod(call) == read;
+    return call && (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call)) &&
+           ctjs::receiverMethod(call) == read;
 }
 
 bool isVectorCallPlumbing(mlir::Operation * o) {
