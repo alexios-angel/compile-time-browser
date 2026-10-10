@@ -39,6 +39,11 @@ REASON = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 DIRECT = re.compile(r"\b(?:ctjs\.call_direct|emitc\.call) @([A-Za-z0-9_$]+)")
 CLOSURE = re.compile(r"ctjs\.create_closure %arg2\[(\d+)\]")
 CLOSURE_REASON = re.compile(r'ctnative\.closure_reason = "((?:[^"\\]|\\.)*)"')
+CLASS_REASON = re.compile(r'ctnative\.class_reason = "((?:[^"\\]|\\.)*)"')
+RESULT = re.compile(r"^\s*(%[\w#]+) = ")
+STRING = re.compile(r'ctjs\.constant #ctjs\.string<"([^"]*)">')
+SET = re.compile(r"ctjs\.set_property (%[\w#]+)\[(%[\w#]+)\], (%[\w#]+)")
+ACCESSOR = re.compile(r"ctjs\.define_accessor \S+ on (%[\w#]+) get (%[\w#]+) set (%[\w#]+)")
 INDEX = re.compile(r"[$_](\d+)$")
 
 ENCLOSING = "capture N is filled from the enclosing closure, which did not lift: "
@@ -53,13 +58,17 @@ def normalize(reason):
 
 
 def parse(text):
-    """Functions, call edges and closures of a lowered module.
+    """Functions, call edges, closures and refused classes of a lowered module.
 
-    Returns (funcs, callers, closures): funcs maps a name to its not_native
-    reason (None when it lowered); callers maps a name to the functions with
-    a direct call of it; closures lists (creator, target name, reason or None).
+    Returns (funcs, callers, closures, classes): funcs maps a name to its
+    not_native reason (None when it lowered); callers maps a name to the
+    functions with a direct call of it; closures lists (creator, target,
+    reason or None, class target or None), where the class is the refused
+    class whose constructor or prototype the closure is stored on, or which
+    the closure constructs; classes maps a constructor's target to its
+    ctnative.class_reason.
     """
-    funcs, callers, closures = {}, collections.defaultdict(set), []
+    funcs, callers, closures, classes = {}, collections.defaultdict(set), [], {}
     by_index, pending = {}, []
     current = None
     for line in text.splitlines():
@@ -71,6 +80,8 @@ def parse(text):
             index = INDEX.search(current)
             if index:
                 by_index[int(index.group(1))] = current
+            # Per function: SSA name -> pending closure, string, or class.
+            made_at, strings, class_of = {}, {}, {}
             continue
         if current is None:
             continue
@@ -79,24 +90,52 @@ def parse(text):
             continue
         for callee in DIRECT.findall(line):
             callers[callee].add(current)
+        result = RESULT.match(line)
+        constant = STRING.search(line)
+        if result and constant:
+            strings[result.group(1)] = constant.group(1)
         made = CLOSURE.search(line)
         if made:
             why = CLOSURE_REASON.search(line)
-            pending.append((current, int(made.group(1)), why.group(1) if why else None))
-    for creator, index, why in pending:
+            entry = [current, int(made.group(1)), why.group(1) if why else None, None]
+            cls = CLASS_REASON.search(line)
+            if cls:
+                classes[int(made.group(1))] = cls.group(1)
+                entry[3] = int(made.group(1))
+                if result:
+                    class_of[result.group(1)] = int(made.group(1))
+            pending.append(entry)
+            if result:
+                made_at[result.group(1)] = entry
+            continue
+        stored = SET.search(line)
+        if stored:
+            owner, key, value = stored.groups()
+            if owner in class_of and strings.get(key) == "prototype":
+                class_of[value] = class_of[owner]
+            elif owner in class_of and value in made_at and made_at[value][3] is None:
+                made_at[value][3] = class_of[owner]
+        accessor = ACCESSOR.search(line)
+        if accessor and accessor.group(1) in class_of:
+            for value in accessor.group(2, 3):
+                if value in made_at and made_at[value][3] is None:
+                    made_at[value][3] = class_of[accessor.group(1)]
+    for creator, index, why, cls in pending:
         if index in by_index:
-            closures.append((creator, by_index[index], why))
-    return funcs, callers, closures
+            closures.append((creator, by_index[index], why, by_index.get(cls)))
+    classes = {by_index[i]: why for i, why in classes.items() if i in by_index}
+    return funcs, callers, closures, classes
 
 
-def blame(funcs, callers, closures):
+def blame(funcs, callers, closures, classes):
     """The dependency graph: node -> (reason, set of nodes it depends on).
 
-    A node is ("fn", name) for a refused function or ("closure", target) for a
-    refused ctjs.create_closure of `target`."""
-    nodes = {}
-    maker = {target: (creator, why) for creator, target, why in closures}
-    for creator, target, why in closures:
+    A node is ("fn", name) for a refused function, ("closure", target) for a
+    refused ctjs.create_closure of `target`, or ("class", target) for a class
+    the class rule refused, whose constructor's target is `target`."""
+    nodes = {("class", c): ("class: " + normalize(why), set()) for c, why in classes.items()}
+    maker = {target: (creator, why) for creator, target, why, _ in closures}
+    for creator, target, why, cls in closures:
         if not why:
             continue
         deps = set()
@@ -105,6 +144,10 @@ def blame(funcs, callers, closures):
             deps.add(("closure", creator))
         while tail.startswith(ENCLOSING):
             tail = tail[len(ENCLOSING) :]
+        # A class member, and the constructor itself, are only values because
+        # the class rule refused the class: a proved class lowers them all.
+        if cls and ("class", cls) in nodes:
+            deps.add(("class", cls))
         nodes[("closure", target)] = (tail, deps)
     for name, why in funcs.items():
         if why is None:
@@ -126,7 +169,7 @@ def blame(funcs, callers, closures):
             # "uses `this` - ..." names the receiver lift's refusal of F's own
             # closure; the bare form names a refused closure made inside F.
             candidates = [made] if reason.startswith("uses") and made else []
-            candidates += [("closure", t) for c, t, w in closures if c == name and w]
+            candidates += [("closure", t) for c, t, w, _ in closures if c == name and w]
             for candidate in candidates:
                 if nodes[candidate][0] == inner:
                     deps.add(candidate)
@@ -198,6 +241,15 @@ PLANTED = """\
     %3 = ctjs.create_closure %arg2[5] this %0 {ctnative.closure_reason = "it is passed as an argument"}
     %4 = ctjs.call_direct @f$6(%x)
     %5 = ctjs.create_closure %arg2[9] this %0 {ctnative.closure_reason = "it is stored into an object or an array"}
+    %6 = ctjs.create_closure %arg2[10] this %0 {ctnative.class_reason = "it has static method `go`; static members are the next slice", ctnative.closure_reason = "it is the value of a local binding this tier cannot call directly"}
+    %7 = ctjs.constant #ctjs.string<"prototype"> {}
+    %8 = ctjs.create_object {}
+    ctjs.set_property %6[%7], %8
+    %9 = ctjs.create_closure %arg2[11] this %0 {ctnative.closure_reason = "it is stored into an object or an array"}
+    %10 = ctjs.constant #ctjs.string<"m"> {}
+    ctjs.set_property %8[%10], %9
+    %11 = ctjs.create_closure %arg2[12] this %0 {ctnative.closure_reason = "it is stored into an object or an array"}
+    ctjs.define_accessor "NAME" on %6 get %11 set %0
   }
   ctjs.func @a$1(%arg0) -> !ctjs.value attributes {ctnative.not_native = "a regular expression literal"} {
     %1 = ctjs.call_direct @b$2(%x)
@@ -224,6 +276,12 @@ PLANTED = """\
   }
   ctjs.func @i$9(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
   }
+  ctjs.func @k$10(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is the value of a local binding this tier cannot call directly"} {
+  }
+  ctjs.func @m$11(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
+  }
+  ctjs.func @n$12(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
+  }
 """
 
 # Expected rows for PLANTED: (reason, roots, blocks, solely).
@@ -233,16 +291,19 @@ PLANTED = """\
 #    a closure filled from e$5's) are behind it. d$4 lowered and is no node.
 #  - f$6 and h$8 are behind the closure of h$8 (stored into an object), and
 #    i$9 behind its own closure, refused for the same reason: two roots.
+#  - k$10 is a refused class's constructor, m$11 a prototype method stored on
+#    it and n$12 a static getter: all three are behind the class, not behind
+#    their closures' own reasons.
 EXPECTED = [
     ("it is stored into an object or an array", 2, 4, 3),
+    ("class: it has static method `X`; static members are the next slice", 1, 3, 3),
     ("a regular expression literal", 1, 3, 2),
     ("it is passed as an argument", 1, 2, 2),
 ]
 
 
 def self_test():
-    funcs, callers, closures = parse(PLANTED)
-    rows = report(blame(funcs, callers, closures))
+    rows = report(blame(*parse(PLANTED)))
     if rows != EXPECTED:
         sys.exit(f"root-reasons self-test FAILED\n  got      {rows}\n  expected {EXPECTED}")
     print("root-reasons self-test passed")
@@ -276,8 +337,8 @@ def main():
         text = run([a.opt, *pipeline], ctjs).decode("utf-8", "replace")
     else:
         ap.error("give --self-test, --ir, or --translate, --opt and --corpus")
-    funcs, callers, closures = parse(text)
-    rows = report(blame(funcs, callers, closures))
+    funcs, callers, closures, classes = parse(text)
+    rows = report(blame(funcs, callers, closures, classes))
     print_rows(rows, sum(1 for why in funcs.values() if why is not None), a.width)
 
 
