@@ -6,11 +6,14 @@ Data storage, event delivery or native initialization of the vendor bundle.
 """
 
 import argparse
+import functools
+import hashlib
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import threading
 
 from CTNative.harness import (
     CLEANUP,
@@ -668,6 +671,64 @@ def link_options(args, *, selectors=False, core_only=False):
     return includes, [*map(str, libraries), "-pthread", *rpaths]
 
 
+# Every program standalone() has built and run, by compiler, flags, libraries and
+# text with the label left out: the client prints it, and a deduced pin without a
+# source location names its file, {label}.deduced.mlir, in a static_assert
+# message. Under a host manifest ctnative-lower-to-emitc ignores `optimize`
+# (LowerToEmitC.cpp skips its default optimizations for a host contract), so a
+# driver's two policies emit one program, and a module with nothing to deduce
+# prints the same C++ in both layouts. Building and running such a program again
+# could only repeat its first answer.
+_built = set()
+_built_lock = threading.Lock()
+
+
+def first_build(*key):
+    """Whether `key` is new to this run, claiming it."""
+    digest = hashlib.sha256("\0".join(map(str, key)).encode()).digest()
+    with _built_lock:
+        new = digest not in _built
+        _built.add(digest)
+    return new
+
+
+# What every DOM program includes before its own code: the standard and public
+# ctbrowser headers ctnative.hpp pulls in under CTNATIVE_DOM, and the client's.
+# None of them reads a CTNATIVE_ or CTCOMPILE_ switch, so including them first
+# changes nothing but where they are parsed - and parsing them was 85% of every
+# build (167,718 preprocessed lines; 1.36 s of a 1.58 s GCC build).
+PRELUDE = (
+    "ctbrowser/core/algorithms.hpp ctbrowser/core/json.hpp ctbrowser/core/number.hpp "
+    "ctbrowser/core/number_format.hpp ctbrowser/core/symbol.hpp ctbrowser/core/uri.hpp "
+    "ctbrowser/dom/dataset.hpp ctbrowser/dom/element.hpp ctbrowser/dom/token_list.hpp "
+    "ctbrowser/style/css/parser.hpp algorithm array atomic cassert charconv cmath compare "
+    "cstddef cstdint cstdio exception expected functional iostream iterator limits map "
+    "memory optional stdexcept string string_view tuple type_traits utility variant vector"
+).split()
+
+
+@functools.cache
+def _prelude(compiler, flags, work):
+    digest = hashlib.sha256("\0".join((compiler, *flags)).encode()).hexdigest()[:16]
+    header = work / f"prelude-{digest}.hpp"
+    header.write_text("".join(f"#include <{name}>\n" for name in PRELUDE))
+    clang = "clang" in Path(compiler).name
+    built = header.with_name(header.name + (".pch" if clang else ".gch"))
+    run([compiler, *flags, "-x", "c++-header", str(header), "-o", str(built)])
+    # -Winvalid-pch under -Werror: a GCC that cannot use it fails rather than reparsing.
+    return ("-include-pch", str(built)) if clang else ("-include", str(header), "-Winvalid-pch")
+
+
+def prelude(compiler, flags, libraries, work):
+    """The flags that force-include PRELUDE, precompiled once per compiler and flags.
+
+    The header is built with the link line's -pthread too: it defines _REENTRANT,
+    and GCC refuses a header precompiled without it."""
+    flags = (*flags, *(option for option in libraries if option == "-pthread"))
+    with _built_lock:
+        return list(_prelude(compiler, flags, work))
+
+
 def standalone(
     args,
     native,
@@ -698,9 +759,7 @@ def standalone(
             "static_assert(std::is_same_v<decltype(@ENTRY@(element)), ctnative::js_boolean_t>);"
             + checks
         )
-    client = (
-        CLIENT.replace("@CHECKS@", checks).replace("@ENTRY@", entries[0]).replace("@NAME@", name)
-    )
+    client = CLIENT.replace("@CHECKS@", checks).replace("@ENTRY@", entries[0])
     for mode, ir in (("explicit", native), ("deduced", deduced)):
         cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
         if VM.search(cpp) or "ctbrowser::element_ref" not in cpp or re.search(r"\bmain\s*\(", cpp):
@@ -728,12 +787,20 @@ def standalone(
             if "ctnative::toggle_attribute" not in cpp:
                 raise RuntimeError(f"{name}/{mode}: attribute toggle bypasses the shared DOM API")
         source = args.work / f"{name}.{mode}.cpp"
-        source.write_text(cpp + client)
+        source.write_text(cpp + client.replace("@NAME@", name))
         for index, compiler in enumerate(compilers):
             binary = args.work / f"{name}.{mode}.{index}"
             flags = [*FLAGS, *includes]
+            if not first_build(compiler, *flags, *libraries, cpp.replace(name, "@NAME@") + client):
+                continue
             result = build_and_run(
-                compiler, source, binary, flags=flags, libraries=libraries, nm=args.nm, vm=VM
+                compiler,
+                source,
+                binary,
+                flags=[*flags, *prelude(compiler, flags, libraries, args.work)],
+                libraries=libraries,
+                nm=args.nm,
+                vm=VM,
             )
             if result.stdout != f"native DOM {name}: passed\n":
                 raise RuntimeError(f"{name}/{mode}: real DOM observations were not completed")
