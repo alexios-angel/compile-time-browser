@@ -161,6 +161,18 @@ void lowering::declareGlobals() {
             /*const_specifier=*/false);
         global->setAttr("ctnative.provenance", b.getStringAttr("global " + name.str()));
     }
+    // Boxed bindings of run-once functions. Like the globals above they start
+    // as their type's default and are assigned where the JavaScript frame
+    // made the box, before any closure can read them; unlike the globals,
+    // they are not observations and are never printed.
+    for (const auto & [name, type] : statics) {
+        auto variable = ec::GlobalOp::create(b, module.getLoc(), name, type, mlir::Attribute{},
+                                             /*extern_specifier=*/false,
+                                             /*static_specifier=*/true,
+                                             /*const_specifier=*/false);
+        variable->setAttr("ctnative.provenance",
+                          b.getStringAttr("binding of a function that runs once"));
+    }
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

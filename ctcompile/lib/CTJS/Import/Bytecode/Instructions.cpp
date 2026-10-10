@@ -437,11 +437,38 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
             ->setAttr(ctjs::defineOwnMarker, into.getUnitAttr());
         break;
     case op::new_object: set(in.a, ctjs::CreateObjectOp::create(into, where, value_type)); break;
-    case op::new_cell:
+    case op::new_cell: {
         // In place: the bytecode boxes the register's current value and
         // leaves the box where the value was.
-        set(in.a, ctjs::CreateCellOp::create(into, where, value_type, reg(in.a)));
+        //
+        // The debug table names the binding the box holds. The name goes into
+        // the location, after the instruction's own parts, because it is debug
+        // data (absent when the build drops the table) and must not change
+        // what the IR means. Native closure lifting reads the `binding:`
+        // prefix back (ClosureLifting/RunOnce.cpp) to spell a static variable.
+        // A hoisted box can be made before its declaration's window opens, so
+        // without a window covering `at` the name is still taken when only one
+        // boxed local ever lives in that register.
+        const local_desc * named = nullptr;
+        unsigned candidates = 0;
+        for (const local_desc & local : proto.locals) {
+            if (local.reg != in.a || !local.boxed) { continue; }
+            ++candidates;
+            if (local.first_pc <= at && at < local.last_pc) { named = &local; }
+        }
+        if (named == nullptr && candidates == 1) {
+            named = &*llvm::find_if(proto.locals, [&](const local_desc & local) {
+                return local.reg == in.a && local.boxed;
+            });
+        }
+        const mlir::Location boxed =
+            named ? mlir::FusedLoc::get(
+                        context,
+                        {where, mlir::NameLoc::get(into.getStringAttr("binding:" + named->name))})
+                  : where;
+        set(in.a, ctjs::CreateCellOp::create(into, boxed, value_type, reg(in.a)));
         break;
+    }
     case op::cell_get:
         set(in.a, ctjs::CellGetOp::create(into, where, value_type, reg(in.b)));
         break;

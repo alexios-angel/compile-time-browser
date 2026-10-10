@@ -63,18 +63,20 @@ def umd_contract(args, ir, name, observations):
     return config
 
 
-def prepare_umd(args):
-    """Prepare the UMD source and run the host-prefix pass on it.
+def prepare_umd(args, name="umd-browser", source=None):
+    """Prepare the UMD source, or `source` when given, and run the host-prefix
+    pass on it.
 
     Returns (js, prepared IR, specialized IR, expected observations).
     """
-    source, values, prefix = umd_source()
-    js, prepared, functions = boundary.prepare(args, "umd-browser", source.removesuffix("\n"))
+    pinned, values, prefix = umd_source()
+    source = source or pinned
+    js, prepared, functions = boundary.prepare(args, name, source.removesuffix("\n"))
     if js.read_bytes() != source.encode() or functions != 7:
-        raise RuntimeError("browser UMD preparation changed its source or seven functions")
-    config = umd_contract(args, prepared, "umd-browser", values)
-    report_file = args.work / "umd-browser.prefix.json"
-    specialized = args.work / "umd-browser.specialized.mlir"
+        raise RuntimeError(f"{name}: preparation changed its source or seven functions")
+    config = umd_contract(args, prepared, name, values)
+    report_file = args.work / f"{name}.prefix.json"
+    specialized = args.work / f"{name}.specialized.mlir"
     host.run(
         [
             args.opt,
@@ -115,17 +117,38 @@ def observe_umd(args, js, values):
     return observe(args, js.stem, js.read_text(), values)
 
 
-def umd_mutations(text):
-    """Return {name: (mutated IR, expected refusal reason)} for the UMD wrapper."""
+def umd_mutations(text, family):
+    """Return {name: (mutated IR, expected refusal reason)} for the UMD wrapper.
+
+    The "fallback" family edits the wrapper's result and publication in the
+    specialized IR. The "absent" family edits the `typeof exports` load, which
+    only the raw import still has: ResolveGlobals proves `exports` absent and
+    folds that read away.
+    """
     match = re.search(r"ctjs\.func @fn\$2\(.*?(?=\n  ctjs\.func |\n})", text, re.S)
     if not match:
         raise RuntimeError("UMD mutations lost the actual wrapper")
     wrapper = match[0]
     exports = re.search(r'(%[-\w.$]+) = ctjs.load_global "exports"(?: \{[^}\n]*\})?', wrapper)
     publication = re.search(r"ctjs.set_property (%[-\w.$]+)\[", wrapper)
-    if not exports or "typeof_lookup = true" not in exports[0] or not publication:
-        raise RuntimeError("UMD mutations lost the retained absent load or publication")
-    cases = {
+    if family == "fallback" and not publication:
+        raise RuntimeError("UMD mutations lost the publication")
+    if family == "absent" and (not exports or "typeof_lookup = true" not in exports[0]):
+        raise RuntimeError("UMD mutations lost the absent load")
+    if family == "fallback":
+        return umd_mutated(text, match, umd_fallback_cases(wrapper, publication))
+    return umd_mutated(text, match, umd_absent_cases(wrapper, exports))
+
+
+def umd_mutated(text, match, cases):
+    return {
+        name: (text[: match.start()] + changed + text[match.end() :], reason)
+        for name, (changed, reason) in cases.items()
+    }
+
+
+def umd_fallback_cases(wrapper, publication):
+    return {
         "fallback_returned": (
             re.sub(r"ctjs.return %[-\w.$]+", "ctjs.return %arg3", wrapper),
             None,
@@ -134,6 +157,11 @@ def umd_mutations(text):
             wrapper.replace(publication[0], "ctjs.set_property %arg3["),
             None,
         ),
+    }
+
+
+def umd_absent_cases(wrapper, exports):
+    return {
         "absent_bare_read": (
             wrapper.replace(
                 exports[0],
@@ -160,10 +188,6 @@ def umd_mutations(text):
             ),
             "an absent host binding has a source write",
         ),
-    }
-    return {
-        name: (text[: match.start()] + changed + text[match.end() :], reason)
-        for name, (changed, reason) in cases.items()
     }
 
 
@@ -321,6 +345,116 @@ def check_umd(args, node, reference, compilers, nm):
             raise RuntimeError(f"{name}: original UMD lost complete ownership")
         return output
 
+    def without(manifest, field, name):
+        missing = args.work / f"{name}.json"
+        value = json.loads(manifest.read_text())
+        value[field] = []
+        missing.write_text(json.dumps(value, indent=2) + "\n")
+        return missing
+
+    def expect(subject, name, manifest, options, admitted, reason=None):
+        """Return None when `name` lowers as expected, else what was observed."""
+        try:
+            if admitted:
+                native(subject, name, manifest, options)
+            else:
+                refused(subject, name, manifest, options, reason)
+            return None
+        except Exception as error:
+            output = args.work / f"{name}.native.mlir"
+            count = len(boundary.NATIVE.findall(output.read_text())) if output.exists() else "no"
+            first = str(error).splitlines()[0] if str(error) else type(error).__name__
+            return f"{name}: expected {7 if admitted else 0}/7 native, observed {count}: {first}"
+
+    # ResolveGlobals derives absence itself (NativeRealm.h): `define`,
+    # `exports` and `module` are never stored, never declared and not
+    # provided by the native realm, so their `typeof` reads fold to
+    # "undefined" before the host contract is read, and an empty
+    # absent_bindings list leaves no read unproved. `undefined` is provided
+    # by every realm and is never derived, so its contract entry is still
+    # required.
+    #
+    # No variant here keeps absence underived while the full contract still
+    # proves the program: a `var` declaration of an absent name is refused by
+    # the contract itself, and a computed write through the global object
+    # before the wrapper leaves the host-prefix pass an unproved host binding.
+    # CTJS/Transforms/absent-globals.mlir covers the fold staying off for a
+    # dynamic write (dynamic.js, window.js).
+    raw = args.work / "umd-browser.raw.mlir"
+    if 'ctjs.load_global "exports" {typeof_lookup = true}' not in raw.read_text():
+        raise RuntimeError("the raw UMD import lost its `typeof exports` load")
+
+    def lift(name, text):
+        """Run a raw import through ResolveGlobals and structure lifting."""
+        mutated = args.work / f"{name}.raw.mlir"
+        mutated.write_text(text)
+        lifted = args.work / f"{name}.prepared.mlir"
+        host.run(
+            [
+                args.opt,
+                str(mutated),
+                "--ctjs-resolve-globals",
+                "--ctjs-lift-to-scf",
+                "-o",
+                str(lifted),
+            ]
+        )
+        return lifted
+
+    def mutant(name, text):
+        """The pipeline's result for a mutated raw import and its own contract:
+        the host-prefix output, or the lifted IR when that pass refuses it."""
+        lifted = lift(name, text)
+        manifest = umd_contract(args, lifted, name, values)
+        try:
+            _, specialized_mutant, _ = specialize_prefix(
+                args.opt,
+                lifted,
+                json.loads(manifest.read_text()),
+                args.work / f"{name}-prefix",
+                options=boundary.FOLLOW + " follow-provider-objects=true",
+            )
+        except RuntimeError:
+            return lifted, manifest
+        return specialized_mutant, umd_contract(args, specialized_mutant, name, values)
+
+    mismatches = []
+    # The source mutations: the absent-load edits go into the raw import, so
+    # that the fold sees them as the source would put them, and run through
+    # the whole pipeline; the fallback edits go into the specialized IR,
+    # reprinted through opt so SSA names are canonical (otherwise a mutation
+    # that inserts a result before existing calls would break the
+    # operand-preservation comparison).
+    mutants = {}
+    for name, (text, reason) in umd_mutations(raw.read_text(), "absent").items():
+        try:
+            mutants[name] = (*mutant(f"umd-{name}", text), reason)
+        except Exception as error:
+            mismatches.append(f"umd-{name}: pipeline failed: {error}")
+    for name, (text, reason) in umd_mutations(specialized.read_text(), "fallback").items():
+        subject = args.work / f"umd-{name}.mlir"
+        unprinted = subject.with_suffix(".unprinted.mlir")
+        unprinted.write_text(text)
+        host.run([args.opt, str(unprinted), "-o", str(subject)])
+        mutants[name] = (subject, umd_contract(args, subject, f"umd-{name}", values), reason)
+    for policy, options in (("default", ""), ("disabled", "optimize=false")):
+        flags = options + " host-max-steps=1000000"
+        for field, admitted in (("absent_bindings", True), ("undefined_bindings", False)):
+            name = f"umd-{policy}-missing-{field}"
+            mismatches.append(
+                expect(specialized, name, without(config, field, name), flags, admitted)
+            )
+        for name, (subject, manifest, reason) in mutants.items():
+            stale = f"umd-{policy}-{name}-stale"
+            mismatches.append(expect(subject, stale, config, flags, False, "fingerprint mismatch"))
+            mismatches.append(
+                expect(subject, f"umd-{policy}-{name}", manifest, flags, False, reason)
+            )
+    # Every variant runs before any fails, so one run reports all of them.
+    mismatches = [mismatch for mismatch in mismatches if mismatch]
+    if mismatches:
+        raise RuntimeError("umd contract variants:\n" + "\n".join(mismatches))
+
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         flags = options + " host-max-steps=1000000"
         refused(prepared, "umd-raw-" + policy, raw_config, flags)
@@ -335,12 +469,6 @@ def check_umd(args, node, reference, compilers, nm):
                 options + f" host-max-steps={steps}",
                 "budget" if steps < 100_000 else None,
             )
-        for field in ("absent_bindings", "undefined_bindings"):
-            missing = args.work / f"umd-{policy}-missing-{field}.json"
-            value = json.loads(config.read_text())
-            value[field] = []
-            missing.write_text(json.dumps(value, indent=2) + "\n")
-            refused(specialized, f"umd-{policy}-missing-{field}", missing, flags)
         forged = args.work / f"umd-{policy}-forged.mlir"
         forged.write_text(forge_leaf_evidence(specialized.read_text()))
         refused(forged, f"umd-{policy}-forged-stale", config, flags, "fingerprint mismatch")
@@ -352,17 +480,6 @@ def check_umd(args, node, reference, compilers, nm):
             host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, specialized
         ):
             raise RuntimeError(f"umd-{policy}: fresh forged reports changed emitted C++")
-        for name, (text, reason) in umd_mutations(specialized.read_text()).items():
-            subject = args.work / f"umd-{policy}-{name}.mlir"
-            unprinted = subject.with_suffix(".unprinted.mlir")
-            unprinted.write_text(text)
-            # Reprint through opt so SSA names are canonical; otherwise a
-            # mutation that inserts a result before existing calls would break
-            # the operand-preservation comparison.
-            host.run([args.opt, str(unprinted), "-o", str(subject)])
-            refused(subject, f"umd-{policy}-{name}-stale", config, flags, "fingerprint mismatch")
-            fresh = umd_contract(args, subject, f"umd-{policy}-{name}", values)
-            refused(subject, f"umd-{policy}-{name}", fresh, flags, reason)
 
     # The host-prefix pass may fold `typeof exports` only when the load is in
     # typeof mode, where an absent global gives "undefined". A plain read of an
@@ -389,16 +506,17 @@ def check_umd(args, node, reference, compilers, nm):
         )
         observe_umd(args, observed, {"traceCaught": 1})
         subjects[name] = subject
-    explicit = args.work / "umd-hard-explicit-false.mlir"
+    # The explicit-false control edits the raw import, as the absent-load
+    # mutations do, because the fold removes the `typeof exports` load from
+    # the prepared IR.
     text, replacements = re.subn(
         r'(ctjs.load_global "exports" \{)typeof_lookup = true(\})',
         r"\1typeof_lookup = false\2",
-        prepared.read_text(),
+        raw.read_text(),
     )
     if replacements != 1:
         raise RuntimeError("explicit hard-read control lost its actual source lookup mode")
-    explicit.write_text(text)
-    subjects["explicit-false"] = explicit
+    subjects["explicit-false"] = lift("umd-hard-explicit-false", text)
     for name, subject in subjects.items():
         fresh = umd_contract(args, subject, "umd-hard-" + name, values)
         report, stopped, _ = specialize_prefix(

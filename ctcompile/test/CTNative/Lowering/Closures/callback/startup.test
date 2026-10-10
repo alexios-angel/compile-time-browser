@@ -2,9 +2,13 @@
 # RUN: not python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$463' 2>&1 | FileCheck %s --check-prefix=UNREACHABLE
 # RUN: python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../Fixtures/Closures/callback.js --require-entry-callee 'bootstrapFactory$9' | FileCheck %s --check-prefix=NATIVE
 
-# BOOTSTRAP: CLAIMED 0   LIFTED 5   REFUSED 19
+# Thirteen of the lifted callees capture only bindings of the run-once factory,
+# which are static variables, so they are lifted with no captures.
+# BOOTSTRAP: CLAIMED 0   LIFTED 18   REFUSED 19
 # The frontend's cell-before-closure order exposes D$8 -> fn$9, outside startup.
-# BOOTSTRAP: post-native graph: 64 distinct targets over 225 ctjs.call_direct and 0 emitc.call site(s)
+# The absent-global fold leaves one call of the factory fn$2 (the CommonJS arm
+# is gone), and closures over static variables add fn$66 and fn$544 as targets.
+# BOOTSTRAP: post-native graph: 66 distinct targets over 227 ctjs.call_direct and 0 emitc.call site(s)
 # BOOTSTRAP: entry _script_$0: 6 function(s) on static direct-call paths
 # BOOTSTRAP: reachable: _script_$0, bi$88, fn$1, fn$125, fn$178, fn$2
 # UNREACHABLE: named-callees: fn$463 is not reachable by direct calls from _script_$0

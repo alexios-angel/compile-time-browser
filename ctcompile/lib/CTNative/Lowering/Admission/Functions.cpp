@@ -12,6 +12,26 @@
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+namespace {
+/// The reason closure lifting recorded on a closure that names `fn`, worded as
+/// closureRefusal words it, or empty when no closure naming `fn` carries one
+/// (a declaration, for example, is never judged).
+std::string receiverLiftRefusal(ctjs::FuncOp fn) {
+    const std::optional<unsigned> index = ctjs::functionIndex(fn);
+    auto module = fn->getParentOfType<mlir::ModuleOp>();
+    if (!index || !module) { return {}; }
+    std::string why;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (ctjs::closureFunction(made) != index || !made->hasAttr(kNativeClosureReason) ||
+            made->hasAttr(kNativeLifted)) {
+            return mlir::WalkResult::advance();
+        }
+        why = admission::closureRefusal(made);
+        return mlir::WalkResult::interrupt();
+    });
+    return why;
+}
+} // namespace
 
 bool admission::function(ctjs::FuncOp fn) {
     if (auto why = fn->getAttrOfType<mlir::StringAttr>("ctnative.structure_refusal")) {
@@ -71,6 +91,14 @@ bool admission::function(ctjs::FuncOp fn) {
             // its own closure"; Admission/refusal/corpus-shapes.mlir tests
             // that.
             if (llvm::isa<ctjs::CreateClosureOp>(user)) { return refuse(closureRefusal(user)); }
+            // A method or callback whose `this` the receiver lift would have
+            // made a parameter: name why the lift refused it, which is the
+            // actionable reason, instead of the bare use.
+            if (i == 0) {
+                if (const std::string why = receiverLiftRefusal(fn); !why.empty()) {
+                    return refuse("uses `this` - " + why);
+                }
+            }
             return refuse(i == 0   ? "uses `this`"
                           : i == 1 ? "uses new.target"
                                    : "uses its own closure");
