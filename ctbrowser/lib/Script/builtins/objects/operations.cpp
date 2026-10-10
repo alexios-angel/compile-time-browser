@@ -1,22 +1,29 @@
-// ctbrowser.script builtins - the abstract operations Object and Reflect both
-// answer through: FromPropertyDescriptor, OwnPropertyKeys over every kind of
-// value, [[GetPrototypeOf]], and ToPropertyDescriptor's own refusals.
+//===- objects/operations.cpp - Object and Reflect operations ---*- C++ -*-===//
 //
-// One of five files carved out of a 1,429-line builtins/objects.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp; what only this
-// directory shares is in internal.hpp beside this.
+// The abstract operations that both Object and Reflect are built on:
+// CreateListFromArrayLike, OwnPropertyKeys over every kind of value,
+// [[GetPrototypeOf]] and [[SetPrototypeOf]], and ToPropertyDescriptor's own
+// refusals.
+//
+// Declarations shared across builtins (the argument helpers, namespace detail
+// and these functions) are in ../internal.hpp; those shared only within this
+// directory are in ./internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::script {
-// Defined in vm/objects/lookup.cpp; see the note there.
+/// The prototype object for typed arrays of \p kind, or null for a plain
+/// array. Defined in vm/objects/lookup.cpp; see the note there.
 object_object * typed_array_prototype(context & cx, element_kind kind);
 } // namespace ctbrowser::script
 
 namespace ctbrowser::script::detail {
 
+/// CreateListFromArrayLike: copies \p list's elements into a fresh
+/// array, throwing a TypeError for a non-object and a RangeError when its
+/// length exceeds \p limit.
 value create_argument_list(context & cx, value list, double limit) {
     if (!list.is_object_like()) {
         cx.throw_error("TypeError", "CreateListFromArrayLike called on non-object");
@@ -55,15 +62,15 @@ namespace {
 
 } // namespace
 
-// See context::key_value.
+/// See context::key_value.
 [[nodiscard]] value key_value(context & cx, const std::string & key) {
     return cx.key_value(key);
 }
 
-// EVERY OWN KEY OF ANY VALUE, including the synthesised ones. An array
-// has `length` and its indices, a string has `length` and its characters, a
-// function has `name`, `length` and `prototype` - and getOwnPropertyNames
-// reported none of them because it only knew about object_object.
+/// Every own key of any value, including synthesised ones: an array has
+/// `length` and its indices, a string has `length` and its characters, a
+/// function has `name`, `length` and `prototype`. \p which selects string
+/// keys, symbol keys or both.
 [[nodiscard]] std::vector<std::string> own_property_names(context & cx, value of,
                                                           key_filter which) {
     std::vector<std::string> out;
@@ -155,7 +162,7 @@ namespace {
             out.insert(first_string, "length");
         }
         // 10.1.11.1 OrdinaryOwnPropertyKeys: integer keys ascending (the walk's
-        // own order), then strings, then SYMBOLS, each in creation order.
+        // own order), then strings, then symbols, each in creation order.
         if (which == key_filter::all) {
             std::stable_partition(out.begin(), out.end(), [](const std::string & k) {
                 return !k.starts_with(symbol_key_mark);
@@ -165,7 +172,7 @@ namespace {
     }
     if (of.is_array()) {
         auto * arr = static_cast<array_object *>(of.as_heap());
-        // An array's SYMBOL keys live in its named table, and come last
+        // An array's symbol keys live in its named table, and come last
         // (10.1.11.1; 10.4.5.7 for a typed array): indices, strings, symbols.
         if (which == key_filter::symbols) {
             if (arr->named) {
@@ -182,13 +189,13 @@ namespace {
             (void)held;
             out.push_back(std::to_string(at));
         }
-        // A typed array has NO own `length` (23.2.3.19 is a prototype getter).
+        // A typed array has no own `length` (23.2.3.19 is a prototype getter).
         if (arr->elements == element_kind::none) { out.emplace_back("length"); }
         // Then the named own properties - see array_object::named.
         if (arr->named) {
             const std::size_t named_from = out.size();
             arr->named->each_own_key([&](const std::string & k) {
-                // An accessor ELEMENT's pair also lives here, under its
+                // An accessor element's pair also lives here, under its
                 // index; it was reported above.
                 std::uint32_t at = 0;
                 if (wanted_key(which, k) && !object_object::array_index_key(k, at)) {
@@ -225,26 +232,25 @@ namespace {
     }
     if (of.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(of.as_heap());
-        // 10.2.5 CREATION ORDER: `length`, then `name`, then `prototype`. All
+        // 10.2.5 creation order: `length`, then `name`, then `prototype`. All
         // three are synthesised by context::own_property unless the page has
         // redefined one, so each is asked for rather than asserted - an arrow
         // has no `prototype` and a closure with no compiled proto has neither
         // of the other two - and skipped here when the table already carries
         // it, so a redefined `length` is reported once rather than twice.
         //
-        // ASKING FOR `prototype` CREATES IT. `context::ensure_prototype` is lazy
-        // and materialises the slot into the table the moment anything looks, so
-        // the loop below then found the entry this loop had just caused and
-        // reported `prototype` TWICE. The names taken here are remembered and
-        // skipped there rather than the test being taken twice.
+        // Asking for `prototype` creates it (context::ensure_prototype is lazy
+        // and materialises the slot into the table), so the table walk below
+        // would see it too; names taken here are remembered in `taken` and
+        // skipped there.
         //
-        // A REDEFINED ONE KEEPS ITS PLACE: `Object.defineProperty(f, "length",
+        // A redefined one keeps its place: `Object.defineProperty(f, "length",
         // ...)` after `f.a = 1` moves the slot into the table after `a`, but
         // a redefinition is not a new property and OwnPropertyKeys still
-        // reads ["length", ..., "a"]. Only a DELETED one (the *_erased flags)
+        // reads ["length", ..., "a"]. Only a deleted one (the *_erased flags)
         // that came back sits where it came back.
         //
-        // And 10.1.11.1's order over the table: integer keys ASCENDING (a
+        // Then 10.1.11.1's order over the table: integer keys ascending (a
         // class's `static 2()` before its `static 1()` reads [1, 2]), then
         // strings, then symbols. `__home` is the compiler's [[HomeObject]]
         // slot (compile/classes.cpp), not a property of the page's.
@@ -288,21 +294,12 @@ namespace {
     return out;
 }
 
-// [[GetPrototypeOf]], FOR EVERY KIND OF VALUE, and the one place that decides
-// what a plain object's prototype IS.
-//
-// It answered `object_object::prototype` - which is `null` for every object
-// that did not come from `class` or `Object.create` - so
-// `Object.getPrototypeOf({}) === Object.prototype` was false. That is not what
-// this engine does: context::lookup_property ends EVERY chain walk at the
-// `proto_kind::object` table, which is why `({}).hasOwnProperty` resolves at
-// all. Reporting null was a lie about behaviour the engine already had.
-//
-// The cost is stated rather than hidden: `Object.create(null)` cannot make an
-// object that does not inherit Object.prototype here, so this now reports
-// Object.prototype for one - which is the truthful answer about the object it
-// actually built, and the honest half of a deviation that used to be reported
-// two contradictory ways at once.
+/// [[GetPrototypeOf]] for every kind of value, and the one place that decides
+/// what a plain object's prototype is. An object_object whose `prototype` field
+/// is null inherits the implicit Object.prototype (context::lookup_property
+/// ends every chain walk at the `proto_kind::object` table), so that is what
+/// this reports; an explicit null [[Prototype]] (Object.create(null),
+/// setPrototypeOf(o, null)) is stored as undefined and reported as null.
 [[nodiscard]] value prototype_of(context & cx, value of) {
     if (of.is_kind(heap_kind::proxy)) {
         // 10.5.1 [[GetPrototypeOf]] of a proxy: the `getPrototypeOf` trap,
@@ -348,18 +345,18 @@ namespace {
     if (of.is_object()) {
         auto * obj = static_cast<object_object *>(of.as_heap());
         if (obj->prototype.is_object_like()) { return obj->prototype; }
-        // An EXPLICIT null (object_object::prototype says how the two nulls
+        // An explicit null (object_object::prototype says how the two nulls
         // are told apart); and Object.prototype's own [[Prototype]] is null.
         if (obj->prototype.is_undefined()) { return value::null(); }
         if (obj == cx.prototype(context::proto_kind::object)) { return value::null(); }
         return table(context::proto_kind::object);
     }
-    // A FUNCTION HAS A [[Prototype]] TOO, and it is not its `prototype`
-    // property. Babel's `_inherits` sets both - the subclass's prototype
-    // property for instance methods, the subclass FUNCTION for static ones -
-    // and answering null for a function broke every transpiled `extends`.
-    // For the NativeErrors the link is `Error` rather than %Function.prototype%
-    // (20.5.6.2), which is why it is consulted before the table.
+    // A function has a [[Prototype]] too, and it is not its `prototype`
+    // property. Babel's `_inherits` sets both: the subclass's prototype
+    // property for instance methods, the subclass function for static ones,
+    // so every transpiled `extends` depends on it. For the NativeErrors the
+    // link is `Error` rather than %Function.prototype% (20.5.6.2), which is
+    // why it is consulted before the table.
     if (of.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(of.as_heap());
         if (closure->proto_link.is_undefined()) { return value::null(); } // an explicit null
@@ -375,15 +372,11 @@ namespace {
         if (!fn->proto_link.is_null()) { return fn->proto_link; }
         return table(context::proto_kind::function);
     }
-    // A PRIMITIVE HAS A PROTOTYPE TOO. `Object.getPrototypeOf('x')` is
-    // String.prototype, not null - the primitive is boxed for the lookup, which
-    // is the same reason `'x'.toUpperCase()` works at all.
-    //
-    // Returning null made an ordinary type-detection loop draw the wrong
-    // conclusion rather than none: colorjs walks
-    // `Object.getPrototypeOf(arg)?.constructor?.name` and compares it to the
-    // constructor's name. With null on one side and a nameless class on the
-    // other, undefined === undefined reported a MATCH.
+    // A primitive has a prototype too: `Object.getPrototypeOf('x')` is
+    // String.prototype, not null, because the primitive is boxed for the
+    // lookup (the same reason `'x'.toUpperCase()` works). Type-detection code
+    // such as colorjs's `Object.getPrototypeOf(arg)?.constructor?.name`
+    // depends on it.
     if (of.is_string()) { return table(context::proto_kind::string); }
     if (of.is_number()) { return table(context::proto_kind::number); }
     if (of.is_boolean()) { return table(context::proto_kind::boolean); }
@@ -404,23 +397,22 @@ namespace {
     return value::null();
 }
 
-// [[SetPrototypeOf]] over the three tables that carry a link - shared by
-// Object.setPrototypeOf, Reflect.setPrototypeOf and the `__proto__` setter.
-// A primitive receiver is a no-op that succeeds. FALSE is 10.1.2.1's refusal:
-// a non-extensible object keeps the prototype it has, a chain may not be made
-// cyclic, and Object.prototype's own [[Prototype]] is immutable (10.4.7).
+/// [[SetPrototypeOf]] over the value kinds that carry a link, shared by
+/// Object.setPrototypeOf, Reflect.setPrototypeOf and the `__proto__` setter.
+/// A primitive receiver is a no-op that succeeds. False is 10.1.2.1's refusal:
+/// a non-extensible object keeps the prototype it has, a chain may not be made
+/// cyclic, and Object.prototype's own [[Prototype]] is immutable (10.4.7).
 [[nodiscard]] bool set_prototype_of(context & cx, value of, value proto) {
     if (!of.is_object_like()) { return true; }
     if (of.is_kind(heap_kind::proxy)) {
         // 10.5.2 [[SetPrototypeOf]] of a proxy: the `setPrototypeOf` trap's
         // boolean, and a true over a non-extensible target must be the truth.
-        // THE CONTRACT IS ONE THROW: Object.setPrototypeOf and the
-        // __proto__ setter turn false into their TypeError, so a revoked
-        // proxy answers false rather than throwing here and again there - a
-        // throw this native raises has landed by the time the caller raises
-        // its own, which is then uncaught (Reflect.setPrototypeOf checks the
+        // At most one throw reaches the page: Object.setPrototypeOf and the
+        // __proto__ setter turn false into their own TypeError, so a revoked
+        // proxy answers false rather than throwing here as well (a second
+        // throw would be left uncaught; Reflect.setPrototypeOf checks the
         // revoked case itself). A trap lying about a non-extensible target
-        // throws HERE, where Reflect needs it too, and answers true.
+        // throws here, where Reflect needs it too, and answers true.
         auto * p = static_cast<proxy_object *>(of.as_heap());
         if (!p->handler.is_object_like()) { return false; }
         const value trap = cx.lookup_property(p->handler, "setPrototypeOf");
@@ -438,8 +430,8 @@ namespace {
         const value real = prototype_of(cx, p->target);
         if (cx.throw_pending()) { return false; }
         // Steps 12-13: a `true` over a non-extensible target whose prototype
-        // is NOT the one asked for is the TypeError itself - Reflect's too,
-        // which has no false of its own to turn into one - and a throw
+        // is not the one asked for is the TypeError itself (Reflect's too,
+        // which has no false of its own to turn into one), and a throw
         // answers true, so the callers above do not throw a second time.
         if (!real.strict_equals(proto)) {
             cx.throw_error("TypeError", "'setPrototypeOf' on proxy: trap returned truish for "
@@ -459,17 +451,18 @@ namespace {
         walk = prototype_of(cx, walk);
     }
     if (of.is_object()) {
-        // null is an EXPLICIT null here - see object_object::prototype.
+        // null is an explicit null here - see object_object::prototype.
         static_cast<object_object *>(of.as_heap())->prototype =
             proto.is_null() ? value::undefined() : proto;
     } else if (of.is_array()) {
         static_cast<array_object *>(of.as_heap())->prototype =
             proto.is_null() ? value::undefined() : proto;
     } else if (of.is_kind(heap_kind::function)) {
-        // A function's too: a null link is the UNSET one, which means
-        // %Function.prototype% (context::get_prototype), so `setPrototypeOf(C,
-        // null)` left C inheriting from it - and `super.x = v` in C's static
-        // method stored through Function.prototype instead of throwing.
+        // A function's too: a null link is the unset one, which means
+        // %Function.prototype% (context::get_prototype), so an explicit null
+        // is stored as undefined. Otherwise `setPrototypeOf(C, null)` would
+        // leave C inheriting from it, and `super.x = v` in C's static method
+        // would store through Function.prototype instead of throwing.
         static_cast<closure_object *>(of.as_heap())->proto_link =
             proto.is_null() ? value::undefined() : proto;
     } else if (of.is_kind(heap_kind::native)) {
@@ -479,14 +472,14 @@ namespace {
     return true;
 }
 
-// 6.2.6.6 ToPropertyDescriptor's OWN three refusals, which nothing here made.
-//
-// ValidateAndApplyPropertyDescriptor - context::define_own_property - is a
-// different question: it asks whether a well-formed descriptor may be applied
-// to the property that is already there. These three are about the descriptor
-// OBJECT, they are checked before any property is touched, and without them
-// `Object.defineProperty(o, 'x', {get: 1})` installed a getter that could not
-// be called and `{get: g, value: 1}` installed one of the two silently.
+/// 6.2.6.6 ToPropertyDescriptor's own three refusals: a non-callable getter,
+/// a non-callable setter, and a descriptor that is both accessor and data.
+/// Throws a TypeError and returns false for any of them.
+///
+/// ValidateAndApplyPropertyDescriptor (context::define_own_property) is a
+/// different question: whether a well-formed descriptor may be applied to the
+/// property already there. These checks are about the descriptor object and
+/// run before any property is touched.
 [[nodiscard]] bool valid_descriptor(context & cx, const context::property_descriptor & d) {
     if (d.has_get && !d.getter.is_undefined() && !d.getter.is_callable()) {
         cx.throw_error("TypeError", "Getter must be a function");

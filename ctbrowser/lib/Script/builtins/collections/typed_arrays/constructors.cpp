@@ -1,26 +1,25 @@
-// ctbrowser.script builtins - %TypedArray% (ECMA-262 23.2.1-23.2.2), the
-// twelve concrete constructors (23.2.5-23.2.7), and the element accessors
-// every file in this directory and the VM's index paths read through.
-// internal.hpp says how a typed array is laid out; the prototype methods are
-// prototype.cpp's.
+//===- typed_arrays/constructors.cpp - TypedArray constructors --*- C++ -*-===//
 //
-// 123 uses in p5.js - Uint8Array for pixels, Float32Array for matrices - and
-// `new Uint32Array(n)` is what stopped the bundle once localStorage was
-// there. Phaser makes four views of different kinds over one buffer and
-// uploads `view.subarray(0, used)`, so a view is a window onto shared bytes
-// and never a copy.
+// %TypedArray% (ECMA-262 23.2.1-23.2.2), the twelve concrete constructors
+// (23.2.5-23.2.7), and the element accessors every file in this directory
+// and the VM's index paths read through. internal.hpp describes how a typed
+// array is laid out; the prototype methods are in prototype.cpp.
 //
-// WHAT THE VM DOES NOT HAVE, and where it shows: a typed array is an
-// array_object whose [[Prototype]] is found through its kind's global, so a
-// subclass instance cannot be one; and lookup_property answers `buffer`,
-// `length`, `byteLength` and `byteOffset` for a view before any prototype
-// getter is asked, so `ta.buffer` is a fresh wrapper each read. Each is a
-// change to vm/objects/, not to this directory.
+// Views share bytes and never copy: Phaser makes four views of different
+// kinds over one buffer and uploads `view.subarray(0, used)`, which must see
+// the same memory.
+//
+// A typed array is an array_object whose [[Prototype]] is found through its
+// kind's global (typed_array_prototype in vm/objects/lookup.cpp) unless a
+// subclass constructor set an explicit one (adopt_subclass_prototype below).
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::script {
-// Defined in vm/objects/lookup.cpp; see the note there.
+/// The `prototype` of the global constructor for `kind`, or null. Defined in
+/// vm/objects/lookup.cpp; see the note there.
 object_object * typed_array_prototype(context & cx, element_kind kind);
 } // namespace ctbrowser::script
 
@@ -28,6 +27,7 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
+/// A concrete constructor: its global name and element kind.
 struct spec {
     const char * name;
     element_kind kind;
@@ -47,14 +47,15 @@ constexpr spec kinds[] = {
     {"BigUint64Array", element_kind::big_u64},
 };
 
+/// Reads private slot `key` off a typed array, or undefined.
 [[nodiscard]] value view_slot(array_object * arr, std::string_view key) {
     if (!arr->named) { return value::undefined(); }
     const value * found = arr->named->find(key);
     return found == nullptr ? value::undefined() : *found;
 }
 
-// IteratorToList (7.4.13) over GetIteratorFromMethod (7.4.4): the values as a
-// fresh array, or undefined with the throw in flight.
+/// IteratorToList (7.4.13) over GetIteratorFromMethod (7.4.4): the values as a
+/// fresh array, or undefined with the throw in flight.
 [[nodiscard]] value iterator_to_list(context & cx, value obj, value method) {
     const value iterator = cx.call(method, {}, obj);
     if (cx.throw_pending()) { return value::undefined(); }
@@ -77,13 +78,13 @@ constexpr spec kinds[] = {
     return out;
 }
 
-// InitializeTypedArrayFromList (23.2.5.1.4) and ...FromArrayLike (23.2.5.1.5)
-// share their loop: a fresh array of `len`, each element Set from the source.
+/// InitializeTypedArrayFromList (23.2.5.1.4) and ...FromArrayLike (23.2.5.1.5)
+/// share their loop: a fresh array of `len`, each element Set from the source.
 [[nodiscard]] value typed_array_from_values(context & cx, element_kind kind, value source,
                                             double len) {
     const value out = allocate_typed_array(cx, kind, len);
     if (out.is_undefined()) { return out; }
-    // Both rooted across the element coercions, which can run script.
+    // Both are rooted across the element coercions, which can run script.
     const context::rooted keep_source{cx, source};
     const context::rooted keep_out{cx, out};
     auto * arr = static_cast<array_object *>(out.as_heap());
@@ -97,7 +98,8 @@ constexpr spec kinds[] = {
     return out;
 }
 
-// 23.2.5.1, the whole dispatch on the first argument.
+/// The TypedArray constructor (23.2.5.1): the whole dispatch on the first
+/// argument.
 [[nodiscard]] value construct_typed_array(context & c, element_kind kind, std::span<value> a) {
     const char * name = typed_array_global_name(kind);
     if (!detail::constructing_this(c.current_this())) {
@@ -110,7 +112,7 @@ constexpr spec kinds[] = {
         if (!to_index(c, first, length)) { return value::undefined(); }
         return allocate_typed_array(c, kind, length);
     }
-    // 23.2.5.1.2 InitializeTypedArrayFromTypedArray
+    // 23.2.5.1.2 InitializeTypedArrayFromTypedArray.
     if (is_typed_array(first)) {
         array_object * src = validate_typed_array(c, first, name);
         if (src == nullptr) { return value::undefined(); }
@@ -124,7 +126,7 @@ constexpr spec kinds[] = {
         }
         return out;
     }
-    // 23.2.5.1.3 InitializeTypedArrayFromArrayBuffer
+    // 23.2.5.1.3 InitializeTypedArrayFromArrayBuffer.
     if (array_object * store = buffer_store(first)) {
         const std::size_t width = bytes_per_element(kind);
         double offset = 0;
@@ -186,15 +188,15 @@ constexpr spec kinds[] = {
         return value::undefined();
     }
     if (using_iterator.is_callable()) {
-        // THE STRAIGHT LINE for `new Float32Array([...])` over an ordinary
-        // dense Array whose @@iterator is still the built-in `values`: its
-        // elements ARE the list, and nothing can observe the iterator that
-        // was not run - the same shortcut Array.from takes.
+        // Fast path for `new Float32Array([...])` over an ordinary dense Array
+        // whose @@iterator is still the built-in `values`: its elements are
+        // the list, and nothing can observe the iterator that was not run.
+        // Array.from takes the same shortcut.
         if (first.is_array() && using_iterator.is_kind(heap_kind::native) &&
             static_cast<native_object *>(using_iterator.as_heap())->name == "values" &&
             detail::dense_array_this(first) != nullptr &&
             static_cast<array_object *>(first.as_heap())->sparse.empty()) {
-            // A COPY, as IteratorToList makes one: a valueOf run by the
+            // A copy, as IteratorToList makes one: a valueOf run by the
             // element coercion below may empty the source array.
             const value list = c.make_array();
             static_cast<array_object *>(list.as_heap())->items =
@@ -214,8 +216,8 @@ constexpr spec kinds[] = {
     return typed_array_from_values(c, kind, first, len);
 }
 
-// %TypedArray%.from (23.2.2.1) and %TypedArray%.of (23.2.2.2): `this` is the
-// constructor, and every element lands through Set with the map applied.
+/// %TypedArray%.from (23.2.2.1): `this` is the constructor, and every element
+/// lands through Set with the map applied.
 [[nodiscard]] value typed_array_from(context & c, std::span<value> a) {
     const value ctor = c.current_this();
     if (!is_constructor(ctor)) {
@@ -272,6 +274,8 @@ constexpr spec kinds[] = {
     return out;
 }
 
+/// %TypedArray%.of (23.2.2.2): `this` is the constructor, and each argument
+/// lands through Set.
 [[nodiscard]] value typed_array_of(context & c, std::span<value> a) {
     const value ctor = c.current_this();
     if (!is_constructor(ctor)) {
@@ -351,10 +355,10 @@ bool coerce_for_kind(context & cx, element_kind kind, value v, value & out) {
             out = v;
             return true;
         }
-        // ToPrimitive HERE, so a valueOf that throws stops the write with
-        // ITS throw. Under a store the VM runs, that throw has LANDED by the
-        // time to_primitive_hint returns - which then answers true with an
-        // undefined - and to_bigint went on to throw a TypeError over it.
+        // ToPrimitive here, under an unwind_watch: when the VM runs a store, a
+        // throwing valueOf has already unwound by the time to_primitive_hint
+        // returns (which then answers true with undefined). Without the
+        // watch, to_bigint would raise a second, wrong TypeError.
         value prim = v;
         if (v.is_object_like()) {
             const detail::unwind_watch watch{cx};
@@ -382,7 +386,8 @@ void typed_array_put(context & cx, array_object * arr, std::size_t i, value coer
         return;
     }
     if (i >= arr->length() || !coerced.is_kind(heap_kind::bigint)) { return; }
-    // ToBigInt64 / ToBigUint64: the value modulo 2^64, then signed or not.
+    // ToBigInt64 / ToBigUint64: the value modulo 2^64, then read as signed or
+    // unsigned.
     const bigint & digits = static_cast<bigint_object *>(coerced.as_heap())->digits;
     const std::uint64_t raw = bigint_to_uint64_wrap(digits);
     if (arr->is_view()) {
@@ -391,8 +396,8 @@ void typed_array_put(context & cx, array_object * arr, std::size_t i, value coer
     }
     bigint wrapped = arr->elements == element_kind::big_i64 ? bigint{static_cast<std::int64_t>(raw)}
                                                             : bigint{raw};
-    // The one it was handed when the wrap changed nothing - a bigint is
-    // immutable, so sharing it is invisible and saves the allocation.
+    // Reuse the bigint it was handed when the wrap changed nothing: a bigint
+    // is immutable, so sharing it is invisible and saves the allocation.
     arr->items[i] =
         wrapped == digits ? coerced : value::object(cx.allocate<bigint_object>(std::move(wrapped)));
 }
@@ -436,7 +441,7 @@ value allocate_typed_array(context & cx, element_kind kind, double length) {
     const value out = cx.make_array();
     auto * arr = static_cast<array_object *>(out.as_heap());
     arr->elements = kind;
-    // ONE 0n shared by every element of a BigInt kind: a bigint is immutable,
+    // One 0n shared by every element of a BigInt kind: a bigint is immutable,
     // and a fresh allocation per element would make `new BigInt64Array(n)`
     // n allocations for nothing.
     const value zero = is_bigint_kind(kind) ? value::object(cx.allocate<bigint_object>(bigint{0}))
@@ -453,7 +458,7 @@ array_object * ensure_store(context & cx, array_object * arr) {
     if (buffer.is_undefined()) { return nullptr; }
     array_object * store = buffer_store(buffer);
     // Become the view, then write the elements through it: view_set is the
-    // one encoding of each kind, so the bytes are what a write would have
+    // single encoder for each kind, so the bytes are what a write would have
     // produced.
     std::vector<value> held;
     held.swap(arr->items);
@@ -475,10 +480,10 @@ value typed_array_constructor(context & cx, element_kind kind) {
 
 value typed_array_create_from_constructor(context & cx, value ctor, std::span<const value> args,
                                           bool write) {
-    // NOT throw_pending() ALONE: a constructor written in JavaScript that
+    // Not throw_pending() alone: a constructor written in JavaScript that
     // throws has already unwound to the page's handler by the time construct
     // returns, and a second throw here would consume a second handler
-    // (internal.hpp, unwind_watch).
+    // (../../internal.hpp, unwind_watch).
     const detail::unwind_watch watch{cx};
     const value made = cx.construct(ctor, args);
     if (watch.threw()) { return value::undefined(); }
@@ -576,10 +581,10 @@ void install_typed_arrays(context & cx) {
             });
         ctor->proto_link = value::object(typed_ctor);
         detail::constant(ctor, "BYTES_PER_ELEMENT", value::number(width));
-        // 23.2.7: each constructor has a `prototype` OBJECT of its own, chained
+        // 23.2.7: each constructor has a `prototype` object of its own, chained
         // to %TypedArray%.prototype, with `constructor` and BYTES_PER_ELEMENT.
         // context::lookup_property and prototype_of reach it through the
-        // global (value.hpp, typed_array_global_name).
+        // global (script/value/arrays.hpp, typed_array_global_name).
         object_object * own_proto = new_table(cx);
         own_proto->prototype = value::object(typed_proto);
         detail::constant(own_proto, "BYTES_PER_ELEMENT", value::number(width));

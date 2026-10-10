@@ -1,3 +1,11 @@
+//===- dispatch.cpp - Mixed-mode dispatch and transition counts -*- C++ -*-===//
+//
+// The out-of-line half of dispatch.hpp: the transition counters between C++,
+// the interpreter and compiled (AOT) bodies, and enter_compiled_body, which
+// calls a function's compiled entry point and records the crossing.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/script/dispatch.hpp>
 
 #include <ctbrowser/aot/aot.hpp>
@@ -11,11 +19,11 @@ namespace ctbrowser::script {
 
 namespace {
 
-// ONE COUNTER PER TRANSITION, and they are ordinary statics rather than
-// thread_local because a `context` is not shared between threads and two
+// One counter per transition. They are ordinary statics rather than
+// thread_local because a `context` is not shared between threads, and two
 // contexts on two threads counting into the same six numbers is a reporting
-// question, not a correctness one. If script ever runs on more than one thread
-// this becomes thread_local and the test sums them.
+// question, not a correctness one. If script ever runs on more than one
+// thread, make these thread_local and have the test sum them.
 std::array<std::uint64_t, static_cast<std::size_t>(transition::count)> counts{};
 
 [[nodiscard]] transition into_vm_from(executing_kind from) noexcept {
@@ -60,25 +68,23 @@ void note_transition_into_vm(const context & ctx) noexcept {
 }
 
 void note_transition_into_cxx(const context & ctx) noexcept {
-    // ONLY FROM A COMPILED BODY IS COUNTED. C++ calling C++ is not a mixed-mode
-    // transition and the plan does not list it; VM -> C++ is not listed either,
-    // because a native built-in called from bytecode never had a choice of
-    // backend to make.
+    // Count only calls made from a compiled body. C++ calling C++ is not a
+    // mixed-mode transition, and VM -> C++ is not counted because a native
+    // built-in called from bytecode never had a choice of backend.
     if (ctx.executing_ == executing_kind::aot) {
         ++counts[static_cast<std::size_t>(transition::aot_to_cxx)];
     }
 }
 
-// Reached only when there IS a compiled body - the header's inline half has
-// already asked. Everything here happens once per compiled call, so none of it
-// is on the interpreter's ordinary path.
+// Reached only when there is a compiled body: the header's inline half has
+// already checked. Everything here happens once per compiled call, so none of
+// it is on the interpreter's ordinary path.
 bool enter_compiled_body(context & ctx, const function_proto & target, value closure,
                          const value * argv, std::size_t argv_base, std::uint32_t argc,
                          value receiver, bool constructing, value & out) {
-    // WHERE THE ARGUMENTS ARE, HANDED ON AS AN INDEX. ct_aot_enter consumes
-    // both and clears them, exactly as it does pending_new_target_ and
-    // pending_closure_ - and for the same reason they are set here rather than
-    // read there: this is the last place that knows.
+    // Where the arguments are, handed on as an index. ct_aot_enter consumes
+    // and clears both, as it does pending_new_target_ and pending_closure_;
+    // they are set here because this is the last place that knows them.
     ctx.pending_argv_base_ = argv_base;
     ctx.pending_argc_ = argc;
     const transition crossing = ctx.executing_ == executing_kind::aot  ? transition::aot_to_aot
@@ -88,11 +94,10 @@ bool enter_compiled_body(context & ctx, const function_proto & target, value clo
 
     std::uint64_t produced = 0;
     aot::ct_aot_status status = aot::ct_aot_status::failed;
-    // THE CLOSURE TRAVELS THROUGH THE CONTEXT, not through the signature, for
-    // the reason aot_entry.h gives about that signature: it "is the thing two
-    // code generators are written against and a parameter added later is a
-    // break". new.target already travels this way, and ct_aot_enter consumes
-    // both in the same place.
+    // The closure travels through the context, not the entry signature:
+    // aot_entry.h explains that the signature is what two code generators are
+    // written against, so adding a parameter breaks them. new.target already
+    // travels this way, and ct_aot_enter consumes both in the same place.
     ctx.pending_closure_ = closure;
     {
         const executing_as running{ctx, executing_kind::aot};
@@ -103,10 +108,10 @@ bool enter_compiled_body(context & ctx, const function_proto & target, value clo
                              constructing ? 1u : 0u, &produced));
     }
 
-    // NOTHING IS WRITTEN ON ANY OTHER STATUS. An unwound frame is gone and a
-    // failed one is the run loop's business; both are re-derived by the
-    // interpreter exactly as they are after `op::throw_value`, and a C++ caller
-    // sees the failure flag it would have seen from an interpreted throw.
+    // Nothing is written on any other status. An unwound frame is gone and a
+    // failed one is the run loop's business; the interpreter handles both
+    // exactly as after `op::throw_value`, and a C++ caller sees the failure
+    // flag it would have seen from an interpreted throw.
     if (status == aot::ct_aot_status::ok) { out = value::from_bits(produced); }
     return true;
 }

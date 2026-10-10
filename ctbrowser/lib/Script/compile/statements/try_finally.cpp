@@ -1,18 +1,18 @@
-// compiler_impl - statements: `try`/`catch`, and the completion-record lowering
-// of `finally` that every non-local exit is routed through.
+//===- try_finally.cpp - try/catch and finally lowering ---------*- C++ -*-===//
 //
-// One of four files carved out of a 1,017-line compile/statements.cpp on
-// 2026-09-08 - which was itself one of the files carved out of a 3,845-line
-// compile.cpp on 2026-08-09. All are members of compiler_impl, declared whole
-// in compiler_impl.hpp beside the directory; nothing about that header changed.
+// compiler_impl members that compile `try`/`catch`, and the completion-record
+// lowering of `finally` that every non-local exit (return, break, continue,
+// throw) is routed through. Members are declared in ../compiler_impl.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../compiler_impl.hpp"
 
 namespace ctbrowser::script::detail {
 
-// A `try` WITH A `finally` IS A DIFFERENT SHAPE, and it gets its own function
-// rather than more branches in this one. What is below handles `try`/`catch`
-// with no finally, which is the common case and was always correct.
+/// Compiles `try`/`catch` with no `finally`. A `try` with a `finally` is
+/// delegated to compile_try_with_finally, so the `finally_block >= 0`
+/// branches below never run.
 void compiler_impl::compile_try(const vp::node & n) {
     if (n.c >= 0) {
         compile_try_with_finally(n);
@@ -24,9 +24,8 @@ void compiler_impl::compile_try(const vp::node & n) {
     std::uint16_t caught_reg = 0;
     std::string caught_name;
     if (catch_clause >= 0) {
-        // The parameter name is the clause's TEXT and the body is its `a`.
-        // Reading them as `a` and `b` compiled an empty catch block, so a
-        // throw jumped correctly and then fell straight through it.
+        // The parameter name is the clause's `text` and the body is its `a`
+        // (a destructuring pattern, if any, is its `b`).
         caught_name = std::string{at(catch_clause).text};
     }
 
@@ -38,13 +37,13 @@ void compiler_impl::compile_try(const vp::node & n) {
     proto().emit(instruction{op::pop_handler});
     --handler_depth_;
     if (finally_block >= 0) {
-        ++completion_suspended_; // a normal finally keeps the try's value (14.15.3)
+        ++completion_suspended_; // A normal finally keeps the try's value (14.15.3).
         compile_stmt(finally_block);
         --completion_suspended_;
     }
     const std::size_t done = proto().emit(instruction{op::jump});
 
-    // The catch block. push_handler's operand is a RELATIVE address, so it
+    // The catch block. push_handler's operand is a relative address, so it
     // is patched the same way a forward jump is.
     patch_here(guard);
     if (catch_clause >= 0) {
@@ -59,7 +58,7 @@ void compiler_impl::compile_try(const vp::node & n) {
         pop_scope();
     }
     if (finally_block >= 0) {
-        ++completion_suspended_; // a normal finally keeps the try's value (14.15.3)
+        ++completion_suspended_; // A normal finally keeps the try's value (14.15.3).
         compile_stmt(finally_block);
         --completion_suspended_;
     }
@@ -67,25 +66,19 @@ void compiler_impl::compile_try(const vp::node & n) {
     pop_scope();
 }
 
-// A COMPLETION RECORD AND ONE COPY OF THE BLOCK.
-//
-// `finally` used to be compiled by emitting the block TWICE - once after the
-// try body and once after the catch - and by letting every other way out of the
-// block leave without running it at all. Measured against what JavaScript
-// specifies, six of nine cases were wrong, and the worst of them lost an
-// exception entirely: with a finally and no catch, `push_handler` sent a throw
-// to the catch path, which had no catch to run, ran the finally and FELL
-// THROUGH. `try { throw x } finally { }` swallowed x, with no error anywhere.
-//
-// Every exit now writes what it was doing into two registers and jumps to one
-// copy of the block, whose tail does that thing. That is the standard shape and
-// it is the only one that makes `return`, `break`, `continue` and a rethrow all
-// work without emitting the block once per exit.
+/// Compiles `try ... finally` (with or without a catch) using one copy of
+/// the finally block. Every exit from the try or catch (normal, throw,
+/// return, break, continue) records its kind and value in two registers and
+/// jumps to the block; the block's tail (emit_finally_dispatch) then performs
+/// the recorded exit. This avoids emitting the block once per exit.
 void compiler_impl::compile_try_with_finally(const vp::node & n) {
     const std::int32_t catch_clause = n.b;
     const std::int32_t finally_block = n.c;
 
     push_scope();
+    // The completion record. kind_reg: 0 normal, 1 throw, 2 return, 3 + i
+    // the i-th break/continue in finally_context::exits. value_reg holds the
+    // thrown or returned value. emit_finally_dispatch decodes these.
     const std::uint16_t kind_reg = alloc_reg();
     const std::uint16_t value_reg = alloc_reg();
     const std::uint16_t caught_reg = alloc_reg();
@@ -98,7 +91,7 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
     finallies_.push_back(
         finally_context{kind_reg, value_reg, loops_.size(), {}, {}, handler_depth_});
 
-    // THE TRY BODY, protected. The handler lands with the thrown value in
+    // The try body, protected. The handler lands with the thrown value in
     // `caught_reg`, which is also the catch parameter's register.
     const std::size_t guard = proto().emit(instruction{op::push_handler, caught_reg});
     ++handler_depth_;
@@ -108,20 +101,18 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
     set_kind(0);
     finallies_.back().arrivals.push_back(proto().emit(instruction{op::jump}));
 
-    // THE EXCEPTION PATH.
+    // The exception path.
     patch_here(guard);
     if (catch_clause >= 0) {
         push_scope();
         const std::string caught_name{at(catch_clause).text};
         if (!caught_name.empty()) { declare_local_at(caught_name, caught_reg); }
-        // THE CATCH BODY IS PROTECTED TOO, and that is a fix of its own: a
-        // throw inside a catch used to skip its own finally, because
-        // `unwind_to_handler` had already consumed this try's handler on the
-        // way in. `try { try { throw 1 } catch (e) { throw 2 } finally { f() } }`
-        // did not run f().
+        // The catch body has its own handler so that a throw from the catch
+        // still runs this finally: unwind_to_handler consumed the try's
+        // handler on the way in.
         const std::size_t catch_guard = proto().emit(instruction{op::push_handler, value_reg});
         ++handler_depth_;
-        emit_catch_filter(caught_reg); // inside the guard, so the finally still runs
+        emit_catch_filter(caught_reg); // Inside the guard, so the finally still runs.
         if (at(catch_clause).b >= 0) {
             compile_pattern_binding(at(catch_clause).b, caught_reg, true, true);
         }
@@ -139,11 +130,11 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
         set_kind(1);
     }
 
-    // THE FINALLY, ONCE.
+    // The finally block, emitted once.
     const finally_context open = std::move(finallies_.back());
     finallies_.pop_back();
     for (const std::size_t arrival : open.arrivals) { patch_here(arrival); }
-    ++completion_suspended_; // a normal finally keeps the try's value (14.15.3)
+    ++completion_suspended_; // A normal finally keeps the try's value (14.15.3).
     compile_stmt(finally_block);
     --completion_suspended_;
     emit_finally_dispatch(open);
@@ -151,10 +142,10 @@ void compiler_impl::compile_try_with_finally(const vp::node & n) {
     pop_scope();
 }
 
-// A CATCH CLAUSE NEVER SEES A GENERATOR'S RETURN COMPLETION. `.return(v)`
-// travels through the body as a thrown marker so that every finally runs
-// (see return_marker_key); the first thing a catch does is hand a marker
-// on. One native call on the exceptional path only.
+/// A catch clause never sees a generator's return completion: `.return(v)`
+/// travels through the body as a thrown marker so that every finally runs
+/// (see return_marker_key), and the first thing a catch in a generator does
+/// is rethrow a marker. Costs one native call, on the exceptional path only.
 void compiler_impl::emit_catch_filter(std::uint16_t caught) {
     if (!fn().is_generator) { return; }
     const std::uint32_t mark = reg_mark();
@@ -163,13 +154,15 @@ void compiler_impl::emit_catch_filter(std::uint16_t caught) {
     release_to(mark);
 }
 
-// The tail of a finally: do what the completion says, or fall through.
-//
-// Each branch emits the SAME lowering the statement would have emitted outside
-// the try - which is what makes nesting work: a `return` crossing three
-// finallys is stored in the innermost, and this dispatch re-emits a return that
-// finds the next one still open and stores it there in turn. No finally needs
-// to know how deep it is.
+/// Emits the tail of a finally block: performs the exit recorded in
+/// \p open's completion record (see compile_try_with_finally), or falls
+/// through for a normal completion.
+///
+/// Each branch emits the same lowering the statement would have emitted
+/// outside the try, which is what makes nesting work: a `return` crossing
+/// three finally blocks is stored in the innermost, and this dispatch
+/// re-emits a return that finds the next one still open and stores it there
+/// in turn. No finally needs to know how deep it is.
 void compiler_impl::emit_finally_dispatch(const finally_context & open) {
     const std::uint16_t test = alloc_reg();
     const std::uint16_t want = alloc_reg();
@@ -180,15 +173,15 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
         return proto().emit(instruction{op::jump_if_false, test});
     };
 
-    // 1 - rethrow.
+    // Kind 1: rethrow.
     {
         const std::size_t skip = branch_if_kind(1);
         emit_rethrow(open.value_reg, true);
         patch_here(skip);
     }
-    // 2 - return. `wrap_promise` is re-applied here for the same reason the
-    // statement applies it: an async function hands back a promise, and this IS
-    // that function's return.
+    // Kind 2: return. `wrap_promise` is re-applied here for the same reason
+    // the statement applies it: an async function hands back a promise, and
+    // this is that function's return.
     {
         const std::size_t skip = branch_if_kind(2);
         if (!route_return_through_finally(open.value_reg)) {
@@ -203,7 +196,7 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
         }
         patch_here(skip);
     }
-    // 3 + i - a loop exit that was recorded on the way in.
+    // Kind 3 + i: a loop exit that was recorded on the way in.
     for (std::size_t i = 0; i < open.exits.size(); ++i) {
         const std::size_t skip = branch_if_kind(static_cast<std::uint16_t>(3 + i));
         const finally_context::exit & one = open.exits[i];
@@ -217,7 +210,7 @@ void compiler_impl::emit_finally_dispatch(const finally_context & open) {
         }
         patch_here(skip);
     }
-    // 0 - fall through, which is the whole of the normal path.
+    // Kind 0: fall through, which is the whole of the normal path.
 }
 
 void compiler_impl::emit_caught_throw(std::uint16_t value_reg) {
@@ -228,8 +221,9 @@ void compiler_impl::emit_caught_throw(std::uint16_t value_reg) {
 }
 
 void compiler_impl::emit_rethrow(std::uint16_t value_reg, bool caught) {
-    // A catch/finally inside the iterator gets the exception before the iterator
-    // closes. Its eventual rethrow comes back here at the surrounding depth.
+    // Close the iterators of for-of loops opened at this handler depth. A
+    // catch/finally inside the loop gets the exception before the iterator
+    // closes; its eventual rethrow comes back here at the surrounding depth.
     const std::uint32_t mark = reg_mark();
     for (auto loop = loops_.rbegin(); loop != loops_.rend(); ++loop) {
         if (loop->handler_depth != handler_depth_) { break; }
@@ -322,10 +316,9 @@ bool compiler_impl::route_return_through_finally(std::uint16_t value_reg) {
 bool compiler_impl::route_exit_through_finally(std::size_t loop_index, bool is_continue) {
     if (finallies_.empty()) { return false; }
     finally_context & open = finallies_.back();
-    // ONLY IF THIS BREAK ACTUALLY LEAVES THE TRY. A loop opened inside it is
-    // exited without the finally ever being crossed, and routing such a break
-    // here made the dispatch re-emit a jump to a loop that had already been
-    // popped - which asan found as a leaked patch list in the compiler.
+    // Only if this break actually leaves the try. A loop opened inside it is
+    // exited without crossing the finally; routing such a break here would
+    // make the dispatch re-emit a jump to a loop that has already been popped.
     if (loop_index >= open.loops_open) { return false; }
     std::size_t which = 0;
     bool found = false;

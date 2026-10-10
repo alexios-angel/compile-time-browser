@@ -1,5 +1,9 @@
-// ctbrowser.script builtins - Temporal.Instant (8), an exact time, and
-// Temporal.Now (2), the system clock read through each type.
+//===- temporal/instant.cpp - Temporal.Instant builtin ----------*- C++ -*-===//
+//
+// Temporal.Instant (Temporal specification chapter 8), an exact time, and
+// Temporal.Now (chapter 2), the system clock read through each type.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -9,7 +13,7 @@ namespace ctbrowser::script::builtins_detail::temporal_js {
 
 namespace {
 
-// DifferenceTemporalInstant (8.5.9).
+/// DifferenceTemporalInstant (8.5.9).
 value difference(context & cx, bool since, tc::i128 ns, std::span<value> a) {
     tc::i128 other = 0;
     value options;
@@ -30,7 +34,7 @@ value difference(context & cx, bool since, tc::i128 ns, std::span<value> a) {
     return make_duration(cx, since ? tc::negate(*result) : *result);
 }
 
-// AddDurationToInstant (8.5.10).
+/// AddDurationToInstant (8.5.10).
 value add_duration(context & cx, bool subtract, tc::i128 ns, value like) {
     tc::duration_record d;
     if (!to_temporal_duration(cx, like, d)) { return value::undefined(); }
@@ -95,7 +99,7 @@ value instant_to_string(context & cx, std::span<value> a) {
     return str(cx, tc::instant_to_string(rounded, zone, precision.precision));
 }
 
-// ToBigInt, then the instant range.
+/// ToBigInt, then a RangeError outside the instant range.
 [[nodiscard]] bool epoch_from_bigint(context & cx, value v, tc::i128 & out) {
     if (!to_i128_bigint(cx, v, out)) { return false; }
     if (!tc::is_valid_epoch_nanoseconds(out)) {
@@ -104,14 +108,15 @@ value instant_to_string(context & cx, std::span<value> a) {
     return true;
 }
 
-// SystemUTCEpochNanoseconds, from the context's clock: the one Date.now
-// reads (context::set_clock), so a page with a virtual clock sees one time.
+/// SystemUTCEpochNanoseconds, from the context's clock: the one Date.now
+/// reads (context::set_clock), so a page with a virtual clock sees one time.
 [[nodiscard]] tc::i128 now_ns(context & cx) {
     return static_cast<tc::i128>(std::llround(cx.clock_ms() * 1'000'000.0));
 }
 
-// SystemDateTime: the zone given, else the system's ("UTC" here - this engine
-// has no time zone database, and its Date's local time is UTC too).
+/// SystemDateTime: the zone given, else the system's, which is "UTC" here
+/// because this engine has no time zone database and its Date's local time is
+/// UTC too.
 [[nodiscard]] bool system_date_time(context & cx, value zone_like, tc::iso_datetime & out) {
     std::string zone = "UTC";
     if (!zone_like.is_undefined() && !to_time_zone_identifier(cx, zone_like, zone)) {

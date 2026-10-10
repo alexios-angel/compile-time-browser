@@ -1,6 +1,12 @@
-// ctbrowser.script builtins - Temporal.ZonedDateTime (6): an exact time in a
-// time zone and calendar. The zones here have fixed offsets, so there are no
-// transitions: getTimeZoneTransition answers null and every day is 24 hours.
+//===- zoned_date_time.cpp - Temporal.ZonedDateTime -------------*- C++ -*-===//
+//
+// Temporal.ZonedDateTime (Temporal proposal section 6): an exact time in a
+// time zone and calendar. Section numbers below refer to the same
+// specification. The only zones supported are UTC and fixed offsets, so there
+// are no transitions: getTimeZoneTransition returns null and every day is 24
+// hours.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -12,7 +18,7 @@ namespace {
     return tc::get_iso_datetime_for(z.zone, z.epoch_ns);
 }
 
-// TemporalZonedDateTimeToString (6.5.4).
+/// TemporalZonedDateTimeToString (6.5.4).
 [[nodiscard]] std::string zoned_to_string(const zoned & z, int precision, tc::show_calendar show,
                                           tc::show_calendar show_zone, bool show_offset,
                                           std::int64_t increment = 1,
@@ -30,7 +36,7 @@ namespace {
     return result + tc::format_calendar_annotation(z.calendar, show);
 }
 
-// DifferenceTemporalZonedDateTime (6.5.9).
+/// DifferenceTemporalZonedDateTime (6.5.9): until() and, with \p since, since().
 value difference(context & cx, bool since, const zoned & self, std::span<value> a) {
     zoned other;
     if (!to_temporal_zoned(cx, arg_at(a, 0), value::undefined(), other)) {
@@ -72,7 +78,7 @@ value difference(context & cx, bool since, const zoned & self, std::span<value> 
     return make_duration(cx, since ? tc::negate(*result) : *result);
 }
 
-// AddDurationToZonedDateTime (6.5.10).
+/// AddDurationToZonedDateTime (6.5.10): add() and, with \p subtract, subtract().
 value add_duration(context & cx, bool subtract, const zoned & self, std::span<value> a) {
     tc::duration_record d;
     if (!to_temporal_duration(cx, arg_at(a, 0), d)) { return value::undefined(); }

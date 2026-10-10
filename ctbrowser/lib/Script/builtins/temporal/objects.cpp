@@ -1,6 +1,10 @@
-// ctbrowser.script builtins - the Temporal class layer's shared half: slots,
-// creation, options, calendar fields and the ToTemporalX conversions. See
-// objects.hpp.
+//===- objects.cpp - Temporal class layer -----------------------*- C++ -*-===//
+//
+// The shared half of the Temporal JavaScript classes: slots, creation,
+// options, calendar fields and the ToTemporalX conversions. See objects.hpp.
+// Bare section numbers refer to the Temporal proposal specification.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -8,6 +12,9 @@ namespace ctbrowser::script::builtins_detail::temporal_js {
 
 namespace {
 
+// Each Temporal object keeps its internal slots in a private array stored under
+// slot_key. Element 0 is the kind tag; the slots for that kind follow. An epoch
+// time takes two elements (see push_epoch).
 constexpr std::string_view slot_key = CTBROWSER_PRIVATE_KEY("Temporal");
 constexpr std::string_view prototypes_key = CTBROWSER_PRIVATE_KEY("TemporalPrototypes");
 
@@ -16,6 +23,7 @@ constexpr const char * kind_names[] = {"Temporal.Duration",       "Temporal.Plai
                                        "Temporal.PlainYearMonth", "Temporal.PlainMonthDay",
                                        "Temporal.Instant",        "Temporal.ZonedDateTime"};
 
+/// The slot array of \p v when it is a Temporal object of kind \p k, else null.
 [[nodiscard]] array_object * slots_of(value v, kind k) {
     if (!v.is_object()) { return nullptr; }
     auto * object = static_cast<object_object *>(v.as_heap());
@@ -39,8 +47,9 @@ constexpr const char * kind_names[] = {"Temporal.Duration",       "Temporal.Plai
     return cx.to_string(slots->items[i]);
 }
 
-// An epoch-nanosecond value as two exact doubles: whole seconds, and the
-// nanoseconds within the second.
+/// Appends an epoch-nanosecond value as two exact doubles: whole seconds
+/// (floored), and the nanoseconds within the second (0 to 999999999). One
+/// double cannot hold the i128 exactly.
 void push_epoch(std::vector<value> & items, i128 ns) {
     i128 seconds = ns / 1'000'000'000;
     i128 rest = ns % 1'000'000'000;
@@ -55,7 +64,7 @@ void push_epoch(std::vector<value> & items, i128 ns) {
     return static_cast<i128>(num(slots, i)) * 1'000'000'000 + static_cast<i128>(num(slots, i + 1));
 }
 
-// The object to fill: the constructor's `this`, or a new intrinsic instance.
+/// The object to fill: the constructor's `this`, or a new intrinsic instance.
 [[nodiscard]] object_object * target_object(context & cx, kind k, value self) {
     if (self.is_object()) { return static_cast<object_object *>(self.as_heap()); }
     auto * made = static_cast<object_object *>(cx.make_object().as_heap());
@@ -63,6 +72,7 @@ void push_epoch(std::vector<value> & items, i128 ns) {
     return made;
 }
 
+/// Stores the slot array [k, items...] on the target object and returns it.
 [[nodiscard]] value fill(context & cx, kind k, value self, std::vector<value> items) {
     object_object * target = target_object(cx, k, self);
     const value held = value::object(target);
@@ -333,7 +343,9 @@ value bigint_value(context & cx, i128 v) {
 bool to_i128_bigint(context & cx, value v, i128 & out) {
     bigint big;
     if (!to_bigint(cx, v, big)) { return false; }
-    // Past the instant range either way: stand in with a value that is too.
+    // Anything beyond +/-1e26 ns is far outside the valid instant range. Clamp to
+    // 10x the instant limits so callers still reject it, and the digit loop below
+    // cannot overflow i128.
     const bigint limit{"100000000000000000000000000"}; // 1e26
     if (big > limit) {
         out = tc::ns_max_instant * 10;
@@ -355,10 +367,11 @@ bool to_i128_bigint(context & cx, value v, i128 & out) {
 
 // --- numbers -----------------------------------------------------------------
 
-// A THROW MAY HAVE LANDED ALREADY: one the VM raises itself (a revoked
-// proxy, a ToPrimitive with nothing callable) unwinds to its handler at once
-// and leaves no pending throw, so every helper here asks unwind_watch - and a
-// second throw on top would consume a second handler (internal.hpp).
+// An exception may already have been delivered. One the VM raises itself (a
+// revoked proxy, ToPrimitive with nothing callable) unwinds to its handler at
+// once and leaves no pending exception, so each helper checks
+// detail::unwind_watch (builtins/internal.hpp) instead of throwing again,
+// which would consume a second handler.
 bool get(context & cx, value object, std::string_view name, value & out) {
     const detail::unwind_watch watch{cx};
     out = cx.lookup_property(object, std::string{name});
@@ -701,8 +714,8 @@ bool to_time_zone_identifier(context & cx, value v, std::string & out) {
 
 namespace {
 
-// Table 19's rows in lexicographic order of property key - the order
-// PrepareCalendarFields reads them.
+// The calendar fields from the Temporal spec's Calendar Fields Record table,
+// sorted by property key: the order PrepareCalendarFields reads them.
 struct field_row {
     std::string_view key;
     field bit;
@@ -722,9 +735,10 @@ constexpr field_row sorted_fields[] = {
     {"year", f_year},
 };
 
-// ParseMonthCode then the ISO calendar's own refusal of leap months: the
-// syntax is a TypeError/RangeError here, the leap month a RangeError later
-// (CalendarResolveFields). Answers the month number, or 0 for a leap month.
+/// Parses a monthCode value (ParseMonthCode). Syntax errors throw here as a
+/// TypeError or RangeError; leap months are accepted here and rejected later by
+/// CalendarResolveFields with a RangeError. On success \p out is the month
+/// number, negated for a leap month ("M05L" gives -5, "M00L" gives 0).
 [[nodiscard]] bool parse_month_code_value(context & cx, value v, int & out) {
     value prim = v;
     if (v.is_object_like() && !cx.to_primitive_hint(v, "string", prim)) { return false; }
@@ -738,7 +752,7 @@ constexpr field_row sorted_fields[] = {
     }
     const int number = (code[1] - '0') * 10 + (code[2] - '0');
     if (number == 0 && !leap) { return range_error(cx, "invalid monthCode " + code); }
-    out = leap ? -number : number; // negative: a leap month
+    out = leap ? -number : number;
     return true;
 }
 
@@ -886,8 +900,9 @@ calendar_fields iso_date_to_fields(const tc::iso_date & date, date_type type) {
     return f;
 }
 
-// CalendarMergeFields for "iso8601": `month` and `monthCode` override each
-// other (CalendarFieldKeysToIgnore), the rest field by field.
+/// CalendarMergeFields for "iso8601": a `month` or `monthCode` in \p additional
+/// replaces both of them (CalendarFieldKeysToIgnore); every other field is
+/// overridden one by one.
 calendar_fields calendar_merge_fields(const calendar_fields & fields,
                                       const calendar_fields & additional) {
     calendar_fields merged = fields;
@@ -987,14 +1002,16 @@ bool to_temporal_duration(context & cx, value item, tc::duration_record & out) {
 
 namespace {
 
-// The options read after an object that needs no conversion: GetOptionsObject
-// then GetTemporalOverflowOption, for their errors.
+/// Reads the options for an item that needs no conversion: GetOptionsObject
+/// then GetTemporalOverflowOption, only for the errors they throw.
 [[nodiscard]] bool check_overflow_only(context & cx, value options) {
     value resolved;
     tc::overflow ignored{};
     return get_options_object(cx, options, resolved) && get_overflow_option(cx, resolved, ignored);
 }
 
+/// The canonical calendar identifier of a parsed string's annotation, with
+/// "iso8601" when it has none.
 [[nodiscard]] bool parse_calendar(context & cx, const tc::parse_record & r, std::string & out) {
     const std::string raw = r.calendar.empty() ? std::string{"iso8601"} : r.calendar;
     const auto canonical = tc::canonicalize_calendar(raw);
@@ -1053,8 +1070,8 @@ bool to_temporal_date(context & cx, value item, value options, plain_date & out)
 bool to_time_record(context & cx, value item, bool partial, double (&out)[6]) {
     const double initial = partial ? std::nan("") : 0.0;
     for (double & v : out) { v = initial; }
-    // hour, microsecond, millisecond, minute, nanosecond, second - the order
-    // of ToTemporalTimeRecord - into [h, min, s, ms, us, ns].
+    // Read in ToTemporalTimeRecord's order (hour, microsecond, millisecond,
+    // minute, nanosecond, second) into out's [h, min, s, ms, us, ns] layout.
     static constexpr std::pair<std::string_view, int> order[] = {
         {"hour", 0},   {"microsecond", 4}, {"millisecond", 3},
         {"minute", 1}, {"nanosecond", 5},  {"second", 2}};
@@ -1274,7 +1291,8 @@ bool to_temporal_instant(context & cx, value item, i128 & out) {
 
 namespace {
 
-// UTCOffset[+SubMinutePrecision] with seconds: "more than one MinuteSecond".
+/// Whether a UTC offset string such as "+01:00:30" includes seconds, i.e. has
+/// more than four digits before any fractional part.
 [[nodiscard]] bool offset_has_seconds(std::string_view offset) {
     std::size_t digits = 0;
     for (const char c : offset) {
@@ -1284,6 +1302,7 @@ namespace {
     return digits > 4;
 }
 
+/// What InterpretISODateTimeOffset needs, gathered from a property bag or string.
 struct zoned_inputs {
     tc::iso_date date;
     std::optional<tc::time_record> time;
@@ -1294,6 +1313,8 @@ struct zoned_inputs {
     tc::match_behaviour match = tc::match_behaviour::exactly;
 };
 
+/// Resolves \p in to an exact time: a Z designator uses the offset exactly, a
+/// missing offset means wall-clock time, and otherwise \p option decides.
 [[nodiscard]] bool finish_zoned(context & cx, const zoned_inputs & in, tc::disambiguation how,
                                 tc::offset_option option, zoned & out) {
     tc::offset_behaviour behaviour = tc::offset_behaviour::option;
@@ -1541,7 +1562,7 @@ void install_calendar_getters(context & cx, object_object * proto, kind k, std::
             switch (bit) {
             case g_calendar_id: return c.string(found->calendar);
             case g_era:
-            case g_era_year: return value::undefined(); // the ISO calendar has no eras
+            case g_era_year: return value::undefined(); // The ISO calendar has no eras.
             case g_year: return value::number(double(d.year));
             case g_month: return value::number(d.month);
             case g_month_code: return c.string(tc::month_code(d.month));

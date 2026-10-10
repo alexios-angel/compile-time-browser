@@ -1,11 +1,11 @@
-// ctbrowser.script builtins - the two text-shaped globals: btoa/atob and
-// structuredClone.
+//===- globals.cpp - Text-shaped globals ------------------------*- C++ -*-===//
 //
-// One of four files carved out of a 1,333-line builtins/text.cpp on 2026-09-08
-// - which was itself one of five carved out of builtins.cpp on 2026-08-09.
-// Everything shared - the argument helpers, namespace detail, and these
-// functions' declarations - is in ../internal.hpp; nothing is shared between
-// these four alone, so there is no second header.
+// Global functions that are not tied to a constructor: btoa/atob,
+// encodeURI(Component)/decodeURI(Component), escape/unescape and
+// structuredClone. Shared helpers and these functions' declarations are in
+// ../internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../collections/typed_arrays/internal.hpp"
 #include "../internal.hpp"
@@ -15,28 +15,11 @@
 
 namespace ctbrowser::script::builtins_detail {
 
-// Number.prototype
-// `Boolean`, and the two methods a boolean has.
-//
-// Small, and it closes a hole rather than adding a feature: `true.toString()`
-// found nothing, so generic code that converts "any value" by calling toString
-// on it failed on exactly one of the primitive types.
-// `structuredClone` - a DEEP copy of plain data.
-//
-// A page uses it to take a snapshot it can then mutate without disturbing the
-// original; p5.js clones a colour's coordinate array before scaling it, so
-// without this every conversion mutated the colour it was reading.
-//
-// Data only, which is what the algorithm covers: objects, arrays, typed arrays
-// and primitives are copied, and anything with behaviour - a function, a DOM
-// node - is not clonable. Cycles are preserved through a seen-list, because a
-// structure that points back at itself is exactly what a naive recursive copy
-// cannot survive.
-// A DOMException named `name` when the host defined the interface (lib/Shell
-// does), so `assert_throws_dom(name, ...)` sees its `code`; without a host, an
-// Error with that name. btoa and atob throw InvalidCharacterError through it,
-// structuredClone DataCloneError.
 namespace {
+/// Throws a DOMException named `name` when the host defined DOMException
+/// (lib/Shell does), so `assert_throws_dom(name, ...)` sees its `code`;
+/// without a host it throws an Error with that name. btoa and atob throw
+/// InvalidCharacterError through it, structuredClone DataCloneError.
 void throw_dom_exception(context & c, const char * name, std::string message) {
     const value dom_exception = c.global("DOMException");
     if (dom_exception.is_callable()) {
@@ -50,15 +33,14 @@ void throw_dom_exception(context & c, const char * name, std::string message) {
 }
 } // namespace
 
-// `btoa` and `atob` - base64, which is how bytes travel inside a string.
-//
-// A data: URL is base64, `canvas.toDataURL()` produces one, and a page that
-// hand-rolls a download encodes with btoa. Byte-oriented, which is what these
-// two actually are: btoa's argument is a "binary string" - code UNITS 0-255,
-// one per byte, Infra's isomorphic encode - and atob's answer is one (its
-// isomorphic decode). A unit above 0xFF is not a byte and btoa refuses it;
-// `btoa("\u00e9")` is "6Q==", the one byte E9, not the base64 of the two
-// bytes of its UTF-8.
+/// Installs `btoa` and `atob` (base64), then calls install_uri for the URI
+/// functions and escape/unescape.
+///
+/// Both are byte-oriented: btoa's argument is a "binary string" (code units
+/// 0-255, one per byte, Infra's isomorphic encode) and atob's answer is one
+/// (its isomorphic decode). A unit above 0xFF is not a byte and btoa refuses
+/// it; `btoa("\u00e9")` is "6Q==", the one byte E9, not the base64 of the two
+/// bytes of its UTF-8.
 void install_base64(context & cx) {
     cx.define_native("btoa", [](context & c, std::span<value> a) {
         const std::string text = a.empty() ? std::string{} : c.to_string(a[0]);
@@ -75,15 +57,13 @@ void install_base64(context & cx) {
         }
         return c.string(base64_encode(in));
     });
-    // THE SAME DECODER A data: URL GOES THROUGH (core/algorithms.hpp). These
-    // were one loop retyped twice for a while, which is the shape of bug this
-    // tree has already paid for once in its two URL parsers.
-    //
-    // atob is Infra's FORGIVING-BASE64 DECODE (4.9) and then an isomorphic
+    // atob is Infra's forgiving-base64 decode (4.9) and then an isomorphic
     // decode: ASCII whitespace is dropped, one or two `=` may close a length
     // that is a multiple of four, and after that a length leaving a remainder
     // of 1 or a character outside the alphabet is an InvalidCharacterError.
-    // core's decoder is lenient about exactly the inputs this has refused.
+    // It decodes with the same base64_decode a data: URL uses
+    // (core/algorithms.hpp); that decoder is lenient, so these strict checks
+    // run first.
     cx.define_native("atob", [](context & c, std::span<value> a) {
         const std::string given = a.empty() ? std::string{"undefined"} : c.to_string(a[0]);
         std::string data;
@@ -106,15 +86,17 @@ void install_base64(context & cx) {
         }
         return c.string(isomorphic_decode(base64_decode(data)));
     });
-    // The other four text-shaped globals, installed alongside.
+    // The URI functions and escape/unescape are installed alongside.
     install_uri(cx);
 }
 
-// 19.2.6: encodeURI / encodeURIComponent / decodeURI / decodeURIComponent.
-// Strings here are UTF-8 bytes already, so Encode is a byte loop: an
-// unreserved ASCII byte passes, everything else is %XX. Decode folds %XX
-// back - a malformed escape, or a decoded byte sequence that is not UTF-8,
-// is a URIError - and decodeURI keeps the reserved set encoded.
+/// Installs encodeURI, encodeURIComponent, decodeURI and decodeURIComponent
+/// (ECMA-262 19.2.6), and Annex B's escape and unescape.
+///
+/// Strings here are UTF-8 bytes already, so Encode is a byte loop: an
+/// unreserved ASCII byte passes, everything else is %XX. Decode folds %XX
+/// back (a malformed escape, or a decoded byte sequence that is not UTF-8, is
+/// a URIError), and decodeURI keeps the reserved set encoded.
 void install_uri(context & cx) {
     static constexpr std::string_view unreserved =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()";
@@ -122,7 +104,7 @@ void install_uri(context & cx) {
     const auto encoder = [](std::string_view keep_extra) {
         return [keep_extra](context & c, std::span<value> a) {
             const std::string in =
-                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined"
+                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined".
             if (c.throw_pending()) { return value::undefined(); }
             std::string out;
             out.reserve(in.size());
@@ -151,7 +133,7 @@ void install_uri(context & cx) {
     const auto decoder = [](auto decode) {
         return [decode](context & c, std::span<value> a) {
             const std::string in =
-                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined"
+                string_arg(c, arg_at(a, 0)); // ToString: undefined is "undefined".
             if (c.throw_pending()) { return value::undefined(); }
             const auto out = decode(in);
             if (!out) {
@@ -171,8 +153,8 @@ void install_uri(context & cx) {
         made->is_constructor = false;
         detail::install_arity(cx, made, 1);
     }
-    // Annex B.2.1 escape and unescape: the pre-URI percent encoding, and it is
-    // over UTF-16 CODE UNITS, not bytes - a unit below 256 is %XX and one above
+    // Annex B.2.1 escape and unescape: the pre-URI percent encoding, over
+    // UTF-16 code units, not bytes: a unit below 256 is %XX and one above
     // is %uXXXX, so `escape("\u{10401}")` is the two surrogate halves
     // "%uD801%uDC01". Hence the round trip through wtf8_to_utf16: the WTF-8
     // bytes would have answered %F0%90%90%81, which is encodeURI's answer.
@@ -240,13 +222,13 @@ void install_uri(context & cx) {
     });
 }
 
-// HTML §2.7 STRUCTURED CLONE: StructuredSerializeInternal and
+// HTML §2.7 structured clone: StructuredSerializeInternal and
 // StructuredDeserialize folded into one walk, since the copy never leaves this
 // realm. What the specification serialises is copied here: the primitives, a
 // primitive wrapper, Date, RegExp, ArrayBuffer and every view, Map, Set, an
 // Error of the seven kinds, an Array (its length and its own enumerable
 // properties, index or not) and a plain object's own enumerable string keys
-// read through [[Get]] - so a getter runs, and one that throws propagates. A
+// read through [[Get]], so a getter runs, and one that throws propagates. A
 // symbol, a function, a proxy and an object with a private-keyed slot this
 // walk does not know are the DataCloneError, as is a detached buffer or an
 // out-of-bounds view. The memory map keeps identity and cycles: two references
@@ -264,17 +246,22 @@ void throw_data_clone_error(context & c, std::string message) {
     throw_dom_exception(c, "DataCloneError", std::move(message));
 }
 
+/// One structuredClone walk: the memory map from originals to copies, and the
+/// lazily built table of the host's platform interfaces.
 struct cloner {
     context & c;
-    // THE COPIES ARE ROOTED THROUGH `held`: a copy is referenced from this C++
-    // vector and from the copy of its parent, neither of which the collector
-    // sees, and every constructor call below can collect.
+    /// A script array that roots every copy. A copy is otherwise referenced
+    /// only from `memory` and from the copy of its parent, neither of which the
+    /// collector sees, and every constructor call below can collect.
     value held;
+    /// Original-to-copy pairs: preserves identity and cycles.
     std::vector<std::pair<heap_object *, value>> memory;
+    /// Current recursion depth, capped in copy().
     std::size_t depth = 0;
-    // THE HOST'S REGISTERED INTERFACES, keyed by prototype. Their global
-    // bindings may have been deleted or replaced. Built the first time an object with an unusual
-    // prototype is met, so an array of numbers - p5's colours - never pays for it.
+    /// The host's registered interfaces, keyed by prototype, since their global
+    /// bindings may have been deleted or replaced. Built the first time an
+    /// object with an unusual prototype is met, so a plain array of numbers
+    /// never pays for it.
     struct interface_entry {
         heap_object * key;
         value prototype;
@@ -298,7 +285,7 @@ struct cloner {
         }
     }
 
-    // The interface of the nearest host interface prototype on `v`'s chain.
+    /// The interface of the nearest host interface prototype on `v`'s chain.
     [[nodiscard]] const interface_entry * platform_interface(value v) {
         value up = static_cast<object_object *>(v.as_heap())->prototype;
         const object_object * plain = c.prototype(context::proto_kind::object);
@@ -313,13 +300,13 @@ struct cloner {
         return nullptr;
     }
 
-    // A [Serializable] platform object's serialization steps: the own
-    // properties its interface names as state (context::
-    // set_serializable_interface) - internal ones included, which is where a
-    // binding keeps what a script cannot see (a Blob's bytes, a FileList's
-    // files) - and no other. A page's expando is not the platform object's
-    // state. Each value is cloned in turn; a function or an accessor is the
-    // platform's own and is shared, not copied.
+    /// A [Serializable] platform object's serialization steps: copies the own
+    /// properties its interface names as state
+    /// (context::set_serializable_interface), internal ones included, which is
+    /// where a binding keeps what a script cannot see (a Blob's bytes, a
+    /// FileList's files), and no others. A page's expando is not the platform
+    /// object's state. Each value is cloned in turn; a function or an accessor
+    /// is the platform's own and is shared, not copied.
     [[nodiscard]] value copy_platform(value v, object_object * source, value prototype,
                                       const std::vector<std::string> & state) {
         const value made = c.make_object();
@@ -344,21 +331,26 @@ struct cloner {
         return made;
     }
 
+    /// Throws a DataCloneError naming `what`; returns undefined.
     [[nodiscard]] value fail(std::string what) {
         throw_data_clone_error(c, "structuredClone cannot copy " + std::move(what));
         return value::undefined();
     }
+    /// Records `to` as the copy of `from` and roots it; returns `to`.
     [[nodiscard]] value remember(value from, value to) {
         memory.emplace_back(from.as_heap(), to);
         static_cast<array_object *>(held.as_heap())->items.push_back(to);
         return to;
     }
+    /// Constructs the global constructor `ctor` with `args`.
     [[nodiscard]] value make(const char * ctor, std::span<const value> args) {
         const value callee = c.global(ctor);
         if (!callee.is_callable()) { return fail(std::string{"a "} + ctor); }
         return c.construct(callee, args);
     }
 
+    /// Returns the clone of `v`: a primitive as it is, an already-copied
+    /// object's existing copy, otherwise a fresh copy (copy_heap).
     [[nodiscard]] value copy(value v) {
         if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint)) { return v; }
         if (v.is_kind(heap_kind::symbol)) { return fail("a symbol"); }
@@ -386,11 +378,11 @@ struct cloner {
             return copy_array(v, source);
         }
         auto * source = static_cast<object_object *>(v.as_heap());
-        // A PLATFORM OBJECT (steps 25-26), FIRST: an instance of one of the
-        // host's interfaces is copied when the interface is [Serializable], as
-        // the closest serializable interface on its chain, and is the
-        // DataCloneError otherwise - a Response, a Node, an AbortSignal. First
-        // because a host object may carry a slot an intrinsic is recognised by
+        // A platform object (steps 25-26) is checked first: an instance of one
+        // of the host's interfaces is copied when the interface is
+        // [Serializable], as the closest serializable interface on its chain,
+        // and is the DataCloneError otherwise (a Response, a Node, an
+        // AbortSignal). First because a host object may carry a slot an intrinsic is recognised by
         // below: a Blob keeps its bytes under `__bytes`, which is what an
         // ArrayBuffer's store is found by (buffer_store).
         if (const interface_entry * platform = platform_interface(v)) {
@@ -422,9 +414,9 @@ struct cloner {
             return copy_keyed(v, source, false);
         }
         if (source->find(CTBROWSER_PRIVATE_KEY("ErrorData")) != nullptr) { return copy_error(v); }
-        // Anything else carrying an internal slot - a WeakMap, a Promise, a
-        // generator - is not serializable (StructuredSerializeInternal step
-        // 20). A private FIELD (`@#name:class`) is an ordinary property the
+        // Anything else carrying an internal slot (a WeakMap, a Promise, a
+        // generator) is not serializable (StructuredSerializeInternal step
+        // 20). A private field (`@#name:class`) is an ordinary property the
         // walk below skips, as the specification's own-enumerable read does.
         for (const auto & [key, held] : source->props) {
             if (key.starts_with(private_key_prefix) && key.find(':') == std::string::npos) {
@@ -434,8 +426,8 @@ struct cloner {
         return copy_own_enumerable(v, remember(v, c.make_object()));
     }
 
-    // An ArrayBuffer: a fresh one of the same length (and maxByteLength when
-    // resizable) holding the same bytes. Detached is the DataCloneError.
+    /// An ArrayBuffer: a fresh one of the same length (and maxByteLength when
+    /// resizable) holding the same bytes. Detached is the DataCloneError.
     [[nodiscard]] value copy_buffer(value v, array_object * store) {
         if (store_detached(store)) { return fail("a detached ArrayBuffer"); }
         const value made = make_array_buffer(c, static_cast<double>(store->items.size()),
@@ -445,8 +437,8 @@ struct cloner {
         return remember(v, made);
     }
 
-    // Step 18/26: `new Array(length)`, then its own enumerable properties -
-    // the elements that are not holes and any named ones - as an object's.
+    /// Steps 18 and 26: `new Array(length)`, then its own enumerable properties
+    /// (the elements that are not holes and any named ones), as an object's.
     [[nodiscard]] value copy_array(value v, array_object * source) {
         const value made = c.make_array();
         auto * out = static_cast<array_object *>(made.as_heap());
@@ -456,8 +448,8 @@ struct cloner {
         return copy_own_enumerable(v, remember(v, made));
     }
 
-    // Step 26: every own enumerable string key, in order, read through [[Get]]
-    // (a getter runs; a throw propagates), then CreateDataProperty on the copy.
+    /// Step 26: every own enumerable string key, in order, read through [[Get]]
+    /// (a getter runs; a throw propagates), then CreateDataProperty on the copy.
     [[nodiscard]] value copy_own_enumerable(value v, value made) {
         for (const std::string & key : detail::own_property_names(c, v)) {
             context::property_descriptor d;
@@ -476,8 +468,8 @@ struct cloner {
         return made;
     }
 
-    // Steps 19 and 22: the entry list is read whole, then each key and value
-    // is cloned and added through the copy's own `set`/`add`.
+    /// Steps 19 and 22: the entry list is read whole, then each key and value
+    /// is cloned and added through the copy's own `set`/`add`.
     [[nodiscard]] value copy_keyed(value v, object_object * source, bool map) {
         const value made = make(map ? "Map" : "Set", {});
         if (c.throw_pending()) { return value::undefined(); }
@@ -514,8 +506,8 @@ struct cloner {
         return made;
     }
 
-    // Step 17: name (one of the seven, else "Error"), an own data `message`,
-    // `stack` when a string, and an own `cause` cloned - nothing else.
+    /// Step 17: name (one of the seven, else "Error"), an own data `message`,
+    /// `stack` when a string, and an own `cause` cloned; nothing else.
     [[nodiscard]] value copy_error(value v) {
         std::string name = c.to_string(c.lookup_property(v, "name"));
         if (c.throw_pending()) { return value::undefined(); }
@@ -550,6 +542,8 @@ struct cloner {
         return made;
     }
 
+    /// A typed array: an owning one is copied element by element; a view gets
+    /// its buffer copied through the memory map and the same window over it.
     [[nodiscard]] value copy_typed_array(value v, array_object * source) {
         if (typed_array_out_of_bounds(source)) { return fail("an out-of-bounds TypedArray"); }
         const value ctor = typed_array_constructor(c, source->elements);
@@ -577,6 +571,8 @@ struct cloner {
         return remember(v, c.construct(ctor, args));
     }
 
+    /// A DataView: its buffer copied through the memory map and a new view
+    /// with the same offset and length.
     [[nodiscard]] value copy_data_view(value v, object_object * source) {
         const value * held = source->find(data_view_store_key);
         auto * store = held != nullptr && held->is_array()
@@ -612,13 +608,14 @@ struct cloner {
 
 } // namespace
 
-// StructuredSerializeWithTransfer (HTML 2.7.6) and the deserialization after
-// it, for `structuredClone(value, { transfer })`. Every transferable is
-// checked first - an ArrayBuffer, not detached, not listed twice; this engine
-// has no transferable platform object, so anything else is the
-// DataCloneError - and its copy is made up front and put in the memory map,
-// so a reference to it anywhere in `value` is a reference to the one copy.
-// The bytes move and the original is detached only once the walk succeeded.
+/// Installs `structuredClone`: StructuredSerializeWithTransfer (HTML 2.7.6) and
+/// the deserialization after it, for `structuredClone(value, { transfer })`.
+/// Every transferable is checked first (an ArrayBuffer, not detached, not
+/// listed twice; this engine has no transferable platform object, so anything
+/// else is the DataCloneError), and its copy is made up front and put in the
+/// memory map, so a reference to it anywhere in `value` is a reference to the
+/// one copy. The bytes move and the original is detached only once the walk
+/// succeeded.
 void install_structured_clone(context & cx) {
     cx.define_native("structuredClone", [](context & c, std::span<value> a) {
         cloner walk{c, c.make_array(), {}, 0, {}, false};
@@ -647,7 +644,7 @@ void install_structured_clone(context & cx) {
                     c.throw_error("TypeError", "structuredClone: a transferable is not an object");
                     return value::undefined();
                 }
-                // A platform object - a Blob answers buffer_store too - has
+                // A platform object (a Blob answers buffer_store too) has
                 // no transfer steps here: no interface of this host is
                 // [Transferable].
                 array_object * store = each.is_object() && walk.platform_interface(each) != nullptr

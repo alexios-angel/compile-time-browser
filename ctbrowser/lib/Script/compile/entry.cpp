@@ -1,10 +1,11 @@
-// compiler_impl - entry.
+//===- ctbrowser/lib/Script/compile/entry.cpp - Compiler entry point ------===//
 //
-// `compile_program` - the top of the compiler, and the only member
-// `compiler::compile()` calls.
+// compiler_impl::compile_program, the top of the compiler and the only member
+// compiler::compile() calls. It sets up the program frame (script, module or
+// eval), hoists declarations, then compiles the body. Section numbers are
+// ECMA-262's. compiler_impl is declared in compiler_impl.hpp.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include <boost/scope/scope_exit.hpp>
 
@@ -26,14 +27,14 @@ void compiler_impl::compile_program() {
     out_.functions[script].is_strict = fn().is_strict;
     // An eval program is the one that returns its completion value.
     top_level_is_scope_ = module_scope_ || (completion_value_ && fn().is_strict);
-    // A DIRECT EVAL'S PROGRAM is closed over its caller's bindings: they are
+    // A direct eval's program is closed over its caller's bindings: they are
     // the entry function's upvalues, in the order the caller hands the cells
     // over (context: direct_eval_name), and resolve_upvalue(0, ...) finds them.
     for (std::size_t i = 0; i < eval_outer_names_.size(); ++i) {
         (void)add_upvalue(0, eval_outer_names_[i],
                           upvalue_desc{false, static_cast<std::uint16_t>(i)});
     }
-    // A DIRECT EVAL SEES ITS CALLER'S PRIVATE NAMES, under the caller's keys.
+    // A direct eval sees its caller's private names, under the caller's keys.
     if (!eval_site_.private_names.empty()) {
         private_scope outer;
         for (const auto & [name, key] : eval_site_.private_names) {
@@ -45,25 +46,20 @@ void compiler_impl::compile_program() {
     build_capture_index();
     fn().captures = range_of(ast_.root);
     collect_declared_names(ast_.root);
-    // A MODULE'S TOP LEVEL IS A SCOPE, so its declarations are pre-declared
-    // exactly as a function body's are. A classic script's are globals and
-    // need none of this, which is why it was never called here before.
-    // A CLASSIC SCRIPT HOISTS ITS `var`s (16.1.7 GlobalDeclarationInstantiation
-    // step 12: CreateGlobalVarBinding for each, undefined unless it already
-    // exists): `use(x); var x = 1;` reads undefined, and since 2026-09-12 an
-    // unbound name is a ReferenceError, so without this the hoisting gap
-    // became a throw. Recorded on the program rather than emitted - a call
-    // at the top of every script was a global read no native pipeline could
-    // type - and context::run binds them before the first instruction.
-    // VarDeclaredNames is `var` only - a `let`/`const` is lexical, and a
-    // block's `const` is nobody's global - which is what hoist_nested_vars keeps.
+    // A classic script hoists its `var`s (16.1.7 GlobalDeclarationInstantiation
+    // step 12): `use(x); var x = 1;` reads undefined rather than throwing
+    // ReferenceError. The names are recorded on the program
+    // (program::hoisted_vars) instead of emitted as code, so no native
+    // pipeline has to type an extra global read, and context::run binds them
+    // before the first instruction. Only `var`s count; `let`/`const` are
+    // lexical, which is what hoist_nested_vars keeps.
     if (!top_level_is_scope_) {
         hoist_nested_vars(ast_.root,
                           [&](std::string n) { out_.hoisted_vars.push_back(std::move(n)); });
         // B.3.3 for a script: a block's function declaration is a global var
         // too (undefined until the block runs - compile_function_decl writes
         // it as a global at any depth of a classic script).
-        // Only the ones IN a block: a top-level function declaration is a
+        // Only the ones in a block: a top-level function declaration is a
         // global the declaration itself writes, and listing it here as well
         // would show the native prover a var where it expects a function.
         if (!fn().is_strict) {
@@ -123,16 +119,18 @@ void compiler_impl::compile_program() {
         std::erase_if(out_.hoisted_vars, caller_binds);
         std::erase_if(out_.annex_b_names, caller_binds);
     }
-    // AN EVAL'S `let`, `const` and `class` ARE ITS OWN, strict or not
-    // (19.2.1.3 step 17: a new declarative environment) - hoisted like a
-    // function body's, where only its `var`s go the caller's way.
+    // A module's top level is a scope, so its declarations are pre-declared
+    // exactly as a function body's are. An eval's `let`, `const` and `class`
+    // are its own, strict or not (19.2.1.3 step 17: a new declarative
+    // environment), and are pre-declared the same way; only its `var`s go the
+    // caller's way.
     if (top_level_is_scope_) {
         predeclare_locals(ast_.root);
     } else if (completion_value_) {
         predeclare_locals(ast_.root, true);
     }
-    // A CLASSIC SCRIPT'S TOP-LEVEL `const`s are globals here, and immutable
-    // ones - known before the hoisted functions below compile their writes.
+    // A classic script's top-level `const`s are globals here, and immutable
+    // ones, known before the hoisted functions below compile their writes.
     if (!top_level_is_scope_ && !completion_value_) {
         for (const std::int32_t s : kids(root)) {
             if (at(s).kind != vp::nk::var_decl ||
@@ -150,8 +148,8 @@ void compiler_impl::compile_program() {
         // Sorted, for binding_immutability's binary search: every write to a
         // global asks, and a large script has many of both.
         std::ranges::sort(script_consts_);
-        // THE NAMES GlobalDeclarationInstantiation COMPARES (16.1.7 steps
-        // 3-6) - see program::lexical_names.
+        // Collect the names GlobalDeclarationInstantiation compares (16.1.7
+        // steps 3-6); see program::lexical_names.
         for (const std::int32_t s : kids(root)) {
             const vp::node & d = at(s);
             if (d.kind == vp::nk::var_decl && d.text != "var") {
@@ -169,7 +167,7 @@ void compiler_impl::compile_program() {
             }
         }
     }
-    // AN EVAL OF THE GLOBAL VARIABLE ENVIRONMENT (program::eval_global): its
+    // An eval in the global variable environment (program::eval_global): its
     // top-level functions are what EvalDeclarationInstantiation checks with
     // CanDeclareGlobalFunction and makes with CreateGlobalFunctionBinding.
     if (!top_level_is_scope_ && completion_value_ && !eval_site_.in_function && !fn().is_strict) {
@@ -181,14 +179,14 @@ void compiler_impl::compile_program() {
         }
     }
     if (module_scope_) {
-        // THEN THE IMPORTS, still at entry: a function declared anywhere in
+        // Then the imports, still at entry: a function declared anywhere in
         // this module closes over them, and the closures are made below.
         for (const std::int32_t s : kids(root)) { bind_imports(s); }
-        // AND THE RE-EXPORT EDGES, which are data for the loader rather
-        // than code - collected here because this is where the top level is
+        // Then the re-export edges, which are data for the loader rather
+        // than code, collected here because this is where the top level is
         // walked, not because anything is emitted.
         for (const std::int32_t s : kids(root)) { collect_reexports(s); }
-        // AND THE EXPORTS, likewise before a single statement of the body
+        // Then the exports, likewise before a single statement of the body
         // runs. See bind_export.
         std::vector<std::pair<std::string, std::string>> bindings;
         for (const std::int32_t s : kids(root)) { export_bindings(s, bindings); }
@@ -204,14 +202,12 @@ void compiler_impl::compile_program() {
         }
     }
     // Function declarations hoist: a script may call one before its text.
-    // THROUGH AN `export` WRAPPER TOO - `export function f() {}` is a
-    // function declaration that hoists like any other, and looking only at
-    // the wrapper left it compiled in the second pass, after anything that
-    // called it.
+    // That includes one inside an `export` wrapper: `export function f() {}`
+    // hoists like any other, so declared_by looks through the wrapper.
     const auto declared_by = [this](std::int32_t s) {
         return at(s).kind == vp::nk::export_decl && at(s).c != 1 && at(s).a >= 0 ? at(s).a : s;
     };
-    // `export default function () {}` IS A DECLARATION TOO (16.2.3: a
+    // `export default function () {}` is a declaration too (16.2.3: a
     // HoistableDeclaration[+Default]), instantiated before the module's first
     // statement - a module importing itself, or a cycle, calls it before its
     // text. A parenthesised function is an expression and is not hoisted; the
@@ -234,8 +230,8 @@ void compiler_impl::compile_program() {
             break;
         }
     }
-    // A DIRECT EVAL IN FUNCTIONS THAT KEEP THEIR EVALS' `var`s ON OBJECTS
-    // (with_scope::eval_vars), handed over as bindings: every name beyond
+    // A direct eval inside functions that keep their evals' `var`s on objects
+    // (with_scope::eval_vars) gets those objects as bindings: every name beyond
     // the eval's own is looked up on them first, innermost first - deepest
     // name last - and a sloppy eval's `var`s and functions are made on the
     // innermost, its caller's variable environment (19.2.1.3 steps 16-17
@@ -334,7 +330,7 @@ bool compiler_impl::has_use_strict_directive(std::int32_t body) const {
         const vp::node & stmt = at(s);
         if (stmt.kind != vp::nk::expr_stmt || stmt.a < 0) { return false; }
         const vp::node & e = at(stmt.a);
-        if (e.kind != vp::nk::str) { return false; } // the prologue ended
+        if (e.kind != vp::nk::str) { return false; } // The prologue ended.
         // The lexeme keeps its quotes, and escapes are not allowed to spell
         // it (11.2.1: "the exact code point sequence").
         if (e.text == "\"use strict\"" || e.text == "'use strict'") { return true; }

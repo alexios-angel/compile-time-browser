@@ -1,31 +1,27 @@
-// ctbrowser.script builtins - Array, continued: the callback-taking methods,
-// sort, the iterators, and the five ES2023 additions. Also list_iterator, the
-// real Iterator over an existing list that Map and Set share.
+//===- array_iteration.cpp - Array callbacks and iterators ------*- C++ -*-===//
 //
-// One of four files carved out of a 1,824-line builtins/collections.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp.
+// Array's callback-taking methods, sort, the array iterators, copyWithin and
+// the ES2023 change-by-copy methods; also list_iterator, the Iterator over an
+// existing list that Map and Set share. Shared argument helpers, namespace
+// detail and these functions' declarations are in ../internal.hpp. Section
+// numbers are ECMA-262 (ES2024 numbering).
+//
+//===----------------------------------------------------------------------===//
 
 #include "typed_arrays/internal.hpp"
 
 namespace ctbrowser::script::detail {
 
-namespace {
+namespace {} // namespace
 
-// ONE PROTOTYPE PER KIND - %ArrayIteratorPrototype% and its siblings
-// (23.1.5.2, 22.1.5.1, 24.1.5.1, 24.2.5.1): `next` and the tag live
-// there, its [[Prototype]] is %Iterator.prototype% (so `@@iterator`, the
-// helpers and `Object.getPrototypeOf(Object.getPrototypeOf([].values()))`
-// are what the standard says), and two iterators of a kind share it.
-// Made on first use, because Iterator installs after the collections do,
-// and kept under a PRIVATE key on Array.prototype (value.hpp: no source
-// text can spell one and OwnPropertyKeys never reports one) - as a
-// global it was an enumerable object on `window`, and the one global of
-// a kind ctcompile's native convention has no form for. Each iterator
-// used to carry its own two natives and a null prototype.
-} // namespace
-
+/// Returns the shared prototype for one iterator kind (%ArrayIteratorPrototype%
+/// and its String/Map/Set siblings, 23.1.5.2, 22.1.5.1, 24.1.5.1, 24.2.5.1). It
+/// holds `next` and @@toStringTag, and inherits from %Iterator.prototype%, so
+/// @@iterator and the iterator helpers work on every iterator of the kind. It
+/// is created on first use, because Iterator is installed after the
+/// collections, and cached under a private key on Array.prototype (see
+/// CTBROWSER_PRIVATE_KEY in value/base.hpp) so no script can see or enumerate
+/// it.
 value iterator_kind_prototype(context & cx, const char * tag, native_fn next) {
     const std::string key = std::string{CTBROWSER_PRIVATE_KEY("IteratorPrototype:")} + tag;
     object_object * home = nullptr; // null only once a page has deleted `Array`
@@ -50,22 +46,24 @@ value iterator_kind_prototype(context & cx, const char * tag, native_fn next) {
 
 namespace {
 
+/// Shorthand for iterator_kind_prototype inside this file.
 [[nodiscard]] value kind_prototype(context & cx, const char * tag, native_fn next) {
     return iterator_kind_prototype(cx, tag, std::move(next));
 }
 
-// CreateArrayIterator's state (23.1.5.1), as private slots on the iterator.
-// [[IteratedArrayLike]] undefined means the closure has RETURNED: exhausted,
-// or ended by a throw, and every later `next` is done.
+/// CreateArrayIterator's state (23.1.5.1), as private slots on the iterator.
+/// [[IteratedArrayLike]] undefined means the closure has returned (exhausted,
+/// or ended by a throw), and every later `next` is done. The kind is 0 for
+/// keys, 1 for values and 2 for entries.
 inline constexpr std::string_view iterated_key = CTBROWSER_PRIVATE_KEY("IteratedArrayLike");
 inline constexpr std::string_view next_index_key = CTBROWSER_PRIVATE_KEY("ArrayLikeNextIndex");
 inline constexpr std::string_view kind_key = CTBROWSER_PRIVATE_KEY("ArrayLikeIterationKind");
 
-// %ArrayIteratorPrototype%.next (23.1.5.2.1): one step of CreateArrayIterator's
-// closure, LIVE over the array-like. `length` is read on EVERY step (a
-// typed array's through the out-of-bounds TypeError), so a push during the
-// walk is seen and a truncation ends it, and each element is a [[Get]] as it
-// is reached - a snapshot answered neither.
+/// %ArrayIteratorPrototype%.next (23.1.5.2.1): one step of
+/// CreateArrayIterator's closure, live over the array-like. `length` is read on
+/// every step (a typed array's through the out-of-bounds TypeError), so a push
+/// during the walk is seen and a truncation ends it, and each element is a
+/// [[Get]] as it is reached rather than read from a snapshot.
 value array_iterator_next(context & c, std::span<value>) {
     const value self = c.current_this();
     auto * it = self.is_object() ? static_cast<object_object *>(self.as_heap()) : nullptr;
@@ -77,7 +75,7 @@ value array_iterator_next(context & c, std::span<value>) {
         return value::undefined();
     }
     if (target->is_undefined()) { return c.iter_result(value::undefined(), true); }
-    // COPIED before anything can run script: a `length` getter may add
+    // Copied before anything can run script: a `length` getter may add
     // properties to this very iterator, and the pointers into its table
     // would not survive the rehash.
     const value array = *target;
@@ -122,6 +120,7 @@ value array_iterator_next(context & c, std::span<value>) {
 
 } // namespace
 
+/// CreateArrayIterator(target, kind): kind 0 is keys, 1 values, 2 entries.
 value array_iterator(context & cx, value target, double kind) {
     const context::rooted keep{cx, target};
     const value proto = kind_prototype(cx, "Array Iterator", array_iterator_next);
@@ -135,32 +134,22 @@ value array_iterator(context & cx, value target, double kind) {
     return out;
 }
 
-// A REAL ITERATOR over a list that already exists.
-//
-// `keys()`, `values()` and `entries()` are specified to return an Iterator, and
-// this file used to hand back a plain Array with a comment saying that for..of
-// walks one and that is what they are for. It is - `op::iterable` materialises
-// through `context::iterable_values` and never touches `next` - but a PAGE may
-// drive an iterator by hand, and one does: Babylon walks a Map of shadow
-// generators with `for (let n = i.next(); !0 !== n.done; n = i.next())`, which
-// threw "`next` is undefined" and took its shadows with it.
-//
-// So the object answers BOTH protocols. `next` and `@@iterator` are the real
-// ones; iterated_list_key is what `iterable_values` recognises, so `for (const x of
-// m.values())` still costs one array copy and no interpretation. A partly
-// consumed iterator handed to for..of restarts, which is the one place the two
-// disagree and is written down here rather than discovered - nothing drives an
-// iterator halfway and then spreads it.
+/// Returns a real Iterator over an existing list (used by Map and Set
+/// keys/values/entries). It supports both protocols: `next` and @@iterator for
+/// code that drives it by hand, and iterated_list_key, which
+/// context::iterable_values recognises so `for..of` copies the list once
+/// without calling `next`. A partly consumed iterator passed to for..of
+/// restarts from the beginning; nothing currently relies on that case.
 [[nodiscard]] value list_iterator(context & cx, value items, const char * tag) {
-    // Reads its state off the RECEIVER rather than out of the closure, so
+    // Reads its state off the receiver rather than out of the closure, so
     // the collector sees one object holding everything and a native
     // captures nothing it would have to root.
     const value table =
         kind_prototype(cx, tag, [kind = std::string{tag}](context & c, std::span<value>) {
             const value self = detail::array_this(c);
             // RequireInternalSlot (22.1.5.1, 24.1.5.1, 24.2.5.1): the
-            // receiver is an iterator of THIS kind - iterated_list_key is
-            // the slot, iterator_kind_key which prototype made it - or it is a TypeError.
+            // receiver must be an iterator of this kind (iterated_list_key is
+            // the slot, iterator_kind_key names the kind), or it is a TypeError.
             const value * of_kind =
                 self.is_object()
                     ? static_cast<object_object *>(self.as_heap())->find(iterator_kind_key)
@@ -194,8 +183,8 @@ value array_iterator(context & cx, value target, double kind) {
         });
     auto * it = static_cast<object_object *>(cx.make_object().as_heap());
     it->prototype = table;
-    // PRIVATE-keyed internal slots (value/objects.hpp): no own property a
-    // page can see, read or forge - `JSON.stringify(xs.entries())` is `{}`.
+    // Private-keyed internal slots (value/objects.hpp): no own property a
+    // page can see, read or forge, so `JSON.stringify(xs.entries())` is `{}`.
     it->define(iterated_list_key, items, attr_none);
     it->define(iterated_index_key, value::number(0), attr_none);
     it->define(iterator_kind_key, cx.string(std::string{tag}), attr_none);
@@ -208,16 +197,17 @@ namespace ctbrowser::script::builtins_detail {
 
 using detail::list_iterator;
 
-// `find` and its three siblings DO NOT SKIP A HOLE - 23.1.3.9 reads every
-// index with [[Get]] and hands the callback an undefined - which is why none
-// of them goes through `each` below. The miss is undefined for the two that
-// answer the item, -1 for the two that answer the index.
+/// find, findIndex, findLast and findLastIndex. They do not skip a hole:
+/// 23.1.3.9 reads every index with [[Get]] and hands the callback an
+/// undefined, which is why none of them goes through `each` below. The miss is
+/// undefined for the two that answer the item, -1 for the two that answer the
+/// index.
 value array_find(context & c, std::span<value> a, const char * name, bool backwards,
                  bool want_index) {
     const value miss = want_index ? value::number(-1) : value::undefined();
     const value self = detail::array_this(c);
     if (!detail::coercible_this(c, self, name)) { return miss; }
-    // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+    // LengthOfArrayLike before the callback is examined (steps 2-4): a
     // `length` getter runs, and its throw wins, even for a callback that
     // is not callable.
     const double len = detail::array_like_length(c, self);
@@ -232,28 +222,26 @@ value array_find(context & c, std::span<value> a, const char * name, bool backwa
         if (watch.threw()) { return miss; }
         const value call_args[3] = {item, value::number(k), self};
         const bool hit = context::truthy(c.call(callback, call_args, this_arg));
-        if (c.throw_pending()) { return miss; } // parked, as in `each` below
+        if (c.throw_pending()) { return miss; } // pending, as in `each` below
         watch.rearm();
         if (hit) { return want_index ? value::number(k) : item; }
     }
     return miss;
 }
 
+/// Installs the second half of Array.prototype (see the file comment) and sets
+/// Array.prototype on `array_ctor`.
 void install_array_iteration(context & cx, native_object * array_ctor,
                              object_object * array_proto) {
     using detail::method;
 
-    // The iteration methods call back INTO the VM, which is what
-    // context::call() exists for. Each snapshots the item first, because the
-    // callback may mutate the array underneath it.
+    // The iteration methods call back into the VM through context::call().
+    // Each reads the item before the call, because the callback may mutate
+    // the array underneath it.
     //
-    // ALL OF THEM ARE GENERIC OVER THE RECEIVER now (detail::array_like_length
-    // and the two accessors beside it say why), ALL OF THEM TAKE A `thisArg`,
-    // and all of them refuse a non-callable callback with a TypeError. The
-    // second was accepted and dropped - a callback written as a method and
-    // handed its object explicitly ran against `undefined` - and the third is
-    // 141 of built-ins/Array's "Expected a TypeError to be thrown but no
-    // exception was thrown at all" (measured 2026-09-07).
+    // All of these methods accept any array-like receiver (see
+    // detail::array_like_length), take an optional `thisArg`, and throw a
+    // TypeError for a non-callable callback.
     //
     // `body` gets the index, the element and what the callback answered, and
     // returns false to stop. `each` reports whether it ran to the end, which is
@@ -261,7 +249,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     const auto each = [](context & c, std::span<value> a, const char * name, auto && body) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, name)) { return false; }
-        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // LengthOfArrayLike before the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
         detail::unwind_watch watch{c};
@@ -271,9 +259,8 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         if (!detail::callable_arg(c, callback, "callback")) { return false; }
         const value this_arg = arg_at(a, 1);
         for (double k = 0; k < len; k += 1.0) {
-            // A HOLE IS SKIPPED, not visited with undefined. That is the whole
-            // difference between `[, 1].forEach(f)` calling back once and
-            // twice, and it is what the array-like tests are written around.
+            // A hole is skipped, not visited with undefined, so
+            // `[, 1].forEach(f)` calls back once.
             const bool present = detail::has_element(c, self, k);
             if (watch.threw()) { return false; }
             if (!present) { continue; }
@@ -281,11 +268,11 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             if (watch.threw()) { return false; }
             const value call_args[3] = {item, value::number(k), self};
             const value verdict = c.call(callback, call_args, this_arg);
-            // A THROW ENDS THE WALK: the rest of an array-like of 2^53 - 1
-            // is not walked to find each read and call a no-op. A callback's
-            // throw is PARKED (context::call), which throw_pending sees; the
-            // unwind count is no signal after a call, since a callback that
-            // throws and catches inside itself moves it too.
+            // A throw ends the walk, so the rest of an array-like of 2^53 - 1
+            // is not walked. A callback's throw is left pending
+            // (context::call), which throw_pending sees; the unwind count is
+            // no signal after a call, since a callback that throws and catches
+            // inside itself moves it too.
             if (c.throw_pending() || !body(k, item, verdict)) { return false; }
             watch.rearm();
         }
@@ -299,7 +286,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "map")) { return out; }
-        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // LengthOfArrayLike before the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
         detail::unwind_watch watch{c};
@@ -308,21 +295,18 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value callback = arg_at(a, 0);
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         const value this_arg = arg_at(a, 1);
-        // ArraySpeciesCreate(O, len) FIRST (step 5), and for an Array it is
+        // ArraySpeciesCreate(O, len) first (step 5), and for an Array it is
         // ArrayCreate(len), which refuses a `length` of 2^32. Sizing it up
         // front is also the only way a hole in the source can stay a hole in
         // the result rather than shifting everything after it.
         out = detail::array_species_create(c, self, len);
         if (out.is_undefined()) { return out; }
-        // THE RESULT IS A C++ LOCAL ACROSS EVERY CALLBACK, and a C++ local is
-        // in none of the collector's roots. It is allocated BEFORE the first
-        // call, so a callback that collects - `$262.gc()`, or gc stress, which
-        // is where ctcompile's differential gate runs this - freed the array
-        // the remaining iterations then pushed into. Under the asan preset
-        // that is a heap-use-after-free WRITE; without one it is silent, and
-        // two distinct object literals become one allocation because the first
-        // was only reachable through the array that had already been freed.
-        // context::rooted is the primitive for exactly this.
+        // The result is a C++ local that lives across every callback call, and
+        // C++ locals are not garbage-collector roots. A callback that triggers
+        // a collection (`$262.gc()`, or GC stress mode) would free the array
+        // while later iterations still write into it: a heap-use-after-free
+        // under ASan and silent corruption otherwise. context::rooted keeps it
+        // alive.
         const context::rooted keep(c, out);
         for (double k = 0; k < len; k += 1.0) {
             const bool present = detail::has_element(c, self, k);
@@ -338,7 +322,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         return out;
     });
-    // 23.1.3.8, written out rather than through `each` because
+    // 23.1.3.8 filter, written out rather than through `each` because
     // ArraySpeciesCreate(O, 0) sits between the callback check and the loop.
     method(cx, array_proto, "filter", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
@@ -352,7 +336,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const value this_arg = arg_at(a, 1);
         out = detail::array_species_create(c, self, 0);
         if (out.is_undefined()) { return out; }
-        const context::rooted keep(c, out); // as `map` - see the note there
+        const context::rooted keep(c, out); // as in `map`: see the note there
         double to = 0;
         for (double k = 0; k < len; k += 1.0) {
             const bool present = detail::has_element(c, self, k);
@@ -392,19 +376,18 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             answer = context::truthy(verdict);
             return answer;
         });
-        // A THROW MUST NOT READ AS `true`. `each` stops on a refusal from the
-        // callback AND on a TypeError it raised itself; `answer` is only
+        // A throw must not read as `true`. `each` stops on a refusal from the
+        // callback and on a TypeError it raised itself; `answer` is only
         // meaningful in the first case, and it starts true for the empty array
         // that 23.1.3.6 says is vacuously every.
         return value::boolean(answer);
     });
-    // `reduce` and `reduceRight` are one shape walked in two directions. Both
-    // throw a TypeError on an empty array with no initial value - which was an
-    // `undefined` here, and is the one error every fold is written to rely on.
+    // `reduce` and `reduceRight` are one fold walked in two directions. Both
+    // throw a TypeError for an empty array with no initial value.
     const auto fold = [](context & c, std::span<value> a, const char * name, bool backwards) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, name)) { return value::undefined(); }
-        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // LengthOfArrayLike before the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
         detail::unwind_watch watch{c};
@@ -434,13 +417,12 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                 return value::undefined();
             }
         }
-        // The callback is a C++ local across every call it makes, and the only
-        // reference to it once whatever produced it has been overwritten -
-        // exactly the hazard `map` and `sort` document above.
+        // Root the callback: it is a C++ local and may be the only reference
+        // left (see the note in `map`).
         const context::rooted keep_callback(c, callback);
         for (; in_range(); k += step) {
-            // THE ACCUMULATOR IS ROOTED PER ITERATION, not once: `rooted` takes
-            // a COPY, so a root taken before the loop would pin the initial
+            // The accumulator is rooted per iteration, not once: `rooted` takes
+            // a copy, so a root taken before the loop would pin the initial
             // value and leave every accumulator the callback produces after it
             // unreachable. Constructing it first thing in the body covers the
             // element read and the call; between the destructor here and the
@@ -453,7 +435,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             if (watch.threw()) { return value::undefined(); }
             const value call_args[4] = {total, item, value::number(k), self};
             total = c.call(callback, call_args);
-            // A THROW ENDS THE FOLD, rather than walking the rest of an
+            // A throw ends the fold, rather than walking the rest of an
             // array-like of 2^53 - 1 to call a callback that cannot run.
             if (c.throw_pending()) { return value::undefined(); }
             watch.rearm();
@@ -464,38 +446,30 @@ void install_array_iteration(context & cx, native_object * array_ctor,
            [fold](context & c, std::span<value> a) { return fold(c, a, "reduce", false); });
     method(cx, array_proto, "reduceRight", 1,
            [fold](context & c, std::span<value> a) { return fold(c, a, "reduceRight", true); });
-    // SORTING A VECTOR, once, for both `sort` and `toSorted`.
-    //
-    // It was inline in `sort` and `toSorted` needs exactly the same thing over
-    // a copy; two spellings of a merge sort that has this much reasoning behind
-    // it is how the two of them come to disagree about stability.
+    // Sorts `work` in place for both `sort` and `toSorted`, so the two cannot
+    // disagree about stability.
     const auto sort_values = [](context & c, std::vector<value> & work, value comparator) {
-        // ...AND THE VECTOR IS THE ONLY REFERENCE THERE IS once the comparator
-        // has emptied the array it came from. A bare std::vector<value> is in
-        // none of the collector's roots, so `a.sort(function (x, y) {
-        // a.length = 0; $262.gc(); ... })` freed every element that was not
-        // currently an argument and the next merge step read them - a segfault
-        // in Release and a heap-use-after-free under asan. The work vector is
-        // permuted, never added to, so rooting the initial contents roots every
-        // value this loop can reach.
+        // The vector may be the only reference to its elements once the
+        // comparator has emptied the array they came from (`a.sort(function
+        // (x, y) { a.length = 0; $262.gc(); ... })`), and a bare
+        // std::vector<value> is not a GC root. The work vector is permuted,
+        // never added to, so rooting its initial contents roots every value
+        // this loop can reach.
         const context::rooted_values keep_work(c, work);
         // The comparator is a C++ local too, and the only reference to it once
         // whatever produced it has been overwritten.
         const context::rooted keep_comparator(c, comparator);
         if (!comparator.is_callable()) {
-            // The default really is lexicographic on the STRING form, which is
+            // The default order is lexicographic on the string form, which is
             // why [10, 9].sort() is [10, 9].
             //
-            // THE KEYS ARE COMPUTED ONCE. `stable_sort` with `to_string` inside
-            // the comparison converts each element about 2 log n times and
-            // allocates a std::string for every one of them; a page sorting a
-            // thousand items paid for twenty thousand conversions to answer a
-            // thousand questions.
+            // The string keys are computed once per element rather than inside
+            // the comparison, which would convert each element about 2 log n
+            // times.
             //
-            // undefined SORTS LAST, ahead of the comparison rather than
-            // through it: 23.1.3.30 moves every undefined to the end and never
-            // asks about one, and ToString(undefined) is "undefined", which
-            // lands between "u" and "v" instead.
+            // undefined sorts last, separately from the comparison:
+            // 23.1.3.30 moves every undefined to the end and never asks about
+            // one, while ToString(undefined) would land between "u" and "v".
             std::vector<std::pair<std::string, value>> keyed;
             std::size_t undefined_count = 0;
             keyed.reserve(work.size());
@@ -506,7 +480,8 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                     keyed.emplace_back(c.to_string(item), item);
                 }
             }
-            // CODE UNIT order (23.1.3.30.2 via IsLessThan), not the bytes'.
+            // UTF-16 code unit order (23.1.3.30.2 via IsLessThan), not the
+            // UTF-8 bytes' order.
             std::ranges::stable_sort(keyed, [](const auto & x, const auto & y) {
                 return utf16::compare(x.first, y.first) < 0;
             });
@@ -515,23 +490,12 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             work.resize(work.size() + undefined_count, value::undefined());
             return;
         }
-        // A BOTTOM-UP MERGE SORT, and every word of that is load-bearing.
-        //
-        // `std::sort` would be undefined behaviour with an inconsistent
-        // comparator, and a comparator written in JavaScript can be anything at
-        // all - it can return random numbers, or mutate the array it is
-        // sorting. That is why this was a stable INSERTION sort: it cannot be
-        // talked into reading out of bounds.
-        //
-        // But it was O(n^2), measured: 250 elements 0.5 ms, 4000 elements
-        // 104 ms, tracking n^2 to within a tenth. Ten thousand would be most of
-        // a second and a page would look hung.
-        //
-        // Merge sort keeps the property that mattered. Each merge reads only
-        // within two index ranges it computed itself, so no answer the
-        // comparator gives can move an index out of them - the safety comes
-        // from the STRUCTURE rather than from the comparator behaving. It is
-        // stable, which the specification requires. And it is n log n.
+        // Bottom-up merge sort. std::sort is undefined behaviour with an
+        // inconsistent comparator, and a JavaScript comparator can return
+        // anything or mutate the array. Each merge reads only inside index
+        // ranges it computed itself, so no comparator result can cause an
+        // out-of-bounds read. It is also stable (required by the specification)
+        // and O(n log n).
         const std::size_t n = work.size();
         if (n <= 1) { return; }
         std::vector<value> spare(n);
@@ -541,7 +505,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                 const std::size_t hi = std::min(lo + 2 * width, n);
                 std::size_t left = lo, right = mid, out = lo;
                 while (left < mid && right < hi) {
-                    // undefined IS NEVER COMPARED, in this arm either: it sorts
+                    // undefined is never compared in this arm either: it sorts
                     // after everything, so it loses every merge it is on the
                     // left of and wins none.
                     double order = 0;
@@ -553,10 +517,10 @@ void install_array_iteration(context & cx, native_object * array_ctor,
                         const value pair[2] = {work[left], work[right]};
                         order = context::to_number(c.call(comparator, pair));
                     }
-                    // NOT `> 0` TAKES THE LEFT, which is what makes this
-                    // stable: equal elements keep their order. Spelled so that
-                    // a NaN answer is +0 as 23.1.3.30.2 says - `order <= 0`
-                    // was false for a NaN and swapped them.
+                    // "Not greater than 0" takes the left, which makes this
+                    // stable: equal elements keep their order. Written as
+                    // `!(order > 0)` so a NaN answer counts as +0, as
+                    // 23.1.3.30.2 says (`order <= 0` is false for NaN).
                     spare[out++] = !(order > 0) ? work[left++] : work[right++];
                 }
                 while (left < mid) { spare[out++] = work[left++]; }
@@ -567,7 +531,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     };
     method(cx, array_proto, "sort", 1, [sort_values](context & c, std::span<value> a) {
         const value comparator = arg_at(a, 0);
-        // The comparator is checked BEFORE the receiver is touched (23.1.3.30
+        // The comparator is checked before the receiver is touched (23.1.3.30
         // step 1), so `[].sort(1)` is a TypeError rather than a sorted nothing.
         if (!comparator.is_undefined() && !comparator.is_callable()) {
             c.throw_error("TypeError",
@@ -576,39 +540,33 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "sort")) { return self; }
-        // A COMPARATOR THAT THROWS leaves the array as it was: the throw is
+        // A comparator that throws leaves the array as it was: the throw is
         // SortIndexedProperties' and comes before any element is written back.
         const detail::unwind_watch watch{c};
         if (array_object * dense = detail::dense_array_this(self)) {
-            // ON A SNAPSHOT, which is a robustness fix rather than a speed one.
-            // The old loop indexed `items` while calling out to the comparator,
-            // so a comparator that shortened the array - `a.sort(() => {
-            // a.length = 0; return 0; })` - left it indexing past the end.
-            // Sorting a copy and writing it back cannot: the comparator may do
-            // what it likes to the array meanwhile.
+            // Sort a copy and assign it back: the comparator may shrink or
+            // otherwise mutate the array while the sort runs.
             std::vector<value> work = dense->items;
             sort_values(c, work, comparator);
-            if (c.throw_pending()) { return self; } // the comparator's throw is parked
-            // ASSIGNED, not written slot by slot, so both arms agree about what
-            // the array holds afterwards. Where nothing mutated during the sort
-            // the two spellings are identical; where something did, this is
-            // defined and the old one was not.
+            if (c.throw_pending()) { return self; } // the comparator's throw is pending
+            // Assign the whole vector, so the result is well defined even if the
+            // comparator mutated the array.
             dense->items = std::move(work);
             return self;
         }
         const double len = detail::array_like_length(c, self);
-        // A String's indices refuse the write-back - but an EMPTY one has
+        // A String's indices refuse the write-back, but an empty one has
         // nothing to write, and `[].sort.call("")` is its wrapper.
         if (len > 0 && !detail::mutable_receiver(c, self, "sort")) { return self; }
         if (!detail::generic_walk_ok(c, len)) { return self; }
-        // SortIndexedProperties, 23.1.3.30.1, with holes SKIPPED: the present
+        // SortIndexedProperties, 23.1.3.30.1, with holes skipped: the present
         // elements are read out, sorted, written back over 0..n-1, and every
-        // index the holes used to occupy is deleted - which is what moves them
-        // all to the end.
+        // remaining index up to `len` is deleted, which moves the holes to the
+        // end.
         //
-        // INTO A ROOTED ARRAY rather than a bare std::vector<value>, for the
-        // reason `toSorted` gives: a getter can collect and a value held only
-        // by a C++ vector is in none of the collector's roots.
+        // They are read into a rooted array rather than a bare
+        // std::vector<value>: a getter can trigger a collection, and a value
+        // held only by a C++ vector is not a GC root.
         const value holder = c.make_array();
         const context::rooted keep(c, holder);
         auto & work = static_cast<array_object *>(holder.as_heap())->items;
@@ -633,15 +591,9 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         return self;
     });
     detail::constant(array_ctor, "prototype", value::object(array_proto));
-    // `Array.prototype.toString` IS join(','). The C++ conversion always knew
-    // that; the prototype did not, so once conversion started going through an
-    // object's own toString an array fell back to Object.prototype's and
-    // stringified as "[object Array]".
-    //
-    // 23.1.3.36 as written: ToObject(this), then its own `join` if callable,
-    // else %Object.prototype.toString% - so it is GENERIC (`toString.call(
-    // {join() {...}})`) and a non-array receiver answers its tag, where this
-    // answered "" for anything but an Array.
+    // Array.prototype.toString (23.1.3.36): ToObject(this), then call its
+    // `join` if callable, otherwise %Object.prototype.toString%. It is generic,
+    // so a non-array receiver without `join` gets its tag.
     method(cx, array_proto, "toString", 0, [](context & c, std::span<value>) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "toString")) { return value::undefined(); }
@@ -659,7 +611,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         return c.call(fn, {}, self);
     });
-    // 23.2.3.32: %TypedArray%.prototype.toString IS this function object -
+    // 23.2.3.32: %TypedArray%.prototype.toString is this same function object,
     // installed here because install_typed_arrays runs first.
     if (object_object * typed = cx.prototype(context::proto_kind::typed_array)) {
         if (const value * fn = array_proto->find("toString")) {
@@ -667,7 +619,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
     }
     // 23.1.3.5 entries, 23.1.3.19 keys, 23.1.3.38 values: ToObject(this),
-    // then CreateArrayIterator - LIVE over any array-like, not a copy of an
+    // then CreateArrayIterator, live over any array-like, not a copy of an
     // Array's items (see array_iterator).
     const auto iterator_method = [&](const char * name, double kind) {
         method(cx, array_proto, name, 0, [name, kind](context & c, std::span<value>) {
@@ -679,7 +631,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     iterator_method("entries", 2);
     iterator_method("keys", 0);
     iterator_method("values", 1);
-    // 23.1.3.40: Array.prototype[@@iterator] IS `values` - the same function
+    // 23.1.3.40: Array.prototype[@@iterator] is `values`, the same function
     // object. `for (x of a)` never asks (op::iterable reads the items), but
     // `for await`, spread of an array into a Map, and anything driving the
     // protocol by hand does.
@@ -694,7 +646,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
     {
         value made = cx.make_object();
         auto * blocked = static_cast<object_object *>(made.as_heap());
-        blocked->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
+        blocked->prototype = value::undefined(); // an explicit null (object_object::prototype)
         for (const char * name : {"at", "copyWithin", "entries", "fill", "find", "findIndex",
                                   "findLast", "findLastIndex", "flat", "flatMap", "includes",
                                   "keys", "toReversed", "toSorted", "toSpliced", "values"}) {
@@ -702,15 +654,12 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         array_proto->define(CTBROWSER_SYMBOL_KEY("unscopables"), made, attr_configurable);
     }
-    // --- THE FIVE THAT WERE NOT HERE AT ALL ---------------------------------
+    // --- copyWithin and the ES2023 change-by-copy methods -------------------
     //
-    // `copyWithin` (23.1.3.4) and the four change-by-copy methods added in
-    // ES2023 - `with`, `toReversed`, `toSorted`, `toSpliced` (23.1.3.39, .33,
-    // .34, .35). test262 spends 39, 21, 17, 21 and 30 files on them and every
-    // one read "TypeError: X is undefined, not a function". All five are
-    // generic over the receiver; the four copying ones build an ordinary Array
-    // whatever they were called on, which is what the specification says and
-    // what makes `Array.prototype.toReversed.call({length: 2, ...})` an array.
+    // copyWithin (23.1.3.4), and `with`, `toReversed`, `toSorted`, `toSpliced`
+    // (23.1.3.39, .33, .34, .35). All are generic over the receiver; the four
+    // copying methods always build an ordinary Array, so
+    // `Array.prototype.toReversed.call({length: 2, ...})` is an array.
     method(cx, array_proto, "copyWithin", 2, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "copyWithin")) { return self; }
@@ -722,9 +671,8 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const double raw_end = has_index(a, 2) ? integer_arg(c, a, 2) : len;
         const double end = raw_end < 0 ? std::max(len + raw_end, 0.0) : std::min(raw_end, len);
         double count = std::min(end - from, len - to);
-        // OVERLAPPING RANGES COPY BACKWARDS. Forwards would overwrite a source
-        // element before reading it, which is the one thing memmove semantics
-        // are for and the one thing a naive loop gets wrong.
+        // Overlapping ranges copy backwards (memmove semantics): copying
+        // forwards would overwrite a source element before reading it.
         double direction = 1.0;
         if (count > 0 && from < to && to < from + count) {
             direction = -1.0;
@@ -754,9 +702,8 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         const double len = detail::array_like_length(c, self);
         const double relative = integer_arg(c, a, 0);
         const double at = relative >= 0 ? relative : len + relative;
-        // OUT OF RANGE IS A RangeError, not a silent grow: `with` exists to
-        // hand back a copy of the same shape, so an index it cannot hold is
-        // a question with no answer.
+        // An out-of-range index is a RangeError, not a silent grow: `with`
+        // returns a copy of the same length.
         if (at >= len || at < 0) {
             c.throw_error("RangeError", "Invalid index");
             return out;
@@ -786,16 +733,15 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         return out;
     });
-    // `toSorted` and `toSpliced` READ THE WHOLE RECEIVER FIRST, into a rooted
-    // vector, and then build the result out of it. That is what the
-    // specification's SortIndexedProperties does and it is also the only shape
-    // that survives a comparator which mutates the array it was handed.
+    // `toSorted` reads the whole receiver first, into its rooted result, and
+    // then sorts that. This is what the specification's SortIndexedProperties
+    // does, and it survives a comparator that mutates the source array.
     method(cx, array_proto, "toSorted", 1, [sort_values](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         const value comparator = arg_at(a, 0);
-        // The comparator is checked BEFORE the receiver is read, which is the
-        // order 23.1.3.34 gives and which one test262 file per method asserts.
+        // The comparator is checked before the receiver is read, the order
+        // 23.1.3.34 gives.
         if (!comparator.is_undefined() && !comparator.is_callable()) {
             c.throw_error("TypeError", "The comparison function must be either a function or "
                                        "undefined");
@@ -808,11 +754,12 @@ void install_array_iteration(context & cx, native_object * array_ctor,
             return out;
         }
         const context::rooted keep(c, out);
-        // READ INTO THE RESULT, not into a bare std::vector. `element_at` can
-        // run a getter, a getter can collect, and a value sitting only in a C++
-        // vector is in none of the collector's roots - the same hazard `sort`
-        // documents. Everything pushed here is reachable through `out`, which
-        // is rooted, from the moment it lands.
+        // Read into the result, not into a bare std::vector: `element_at` can
+        // run a getter that triggers a collection, and a value held only by a
+        // C++ vector is not a GC root. Everything pushed here is reachable
+        // through the rooted `out` from the moment it lands. The reservation
+        // is capped because `len` comes from an array-like and can be up to
+        // max_array_length.
         auto * result = static_cast<array_object *>(out.as_heap());
         result->items.reserve(static_cast<std::size_t>(std::min(len, 65536.0)));
         for (double k = 0; k < len; k += 1.0) {
@@ -840,7 +787,7 @@ void install_array_iteration(context & cx, native_object * array_ctor,
         }
         const double new_len = len + inserted - skipped;
         // 2^53-1 is a TypeError here rather than the RangeError ArrayCreate
-        // gives, because 23.1.3.35 step 12 checks it BEFORE creating anything.
+        // gives, because 23.1.3.35 step 12 checks it before creating anything.
         if (new_len > max_safe_integer) {
             c.throw_error("TypeError", "Invalid array length");
             return out;

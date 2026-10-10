@@ -1,5 +1,10 @@
-// ctbrowser.script builtins - Temporal.PlainDateTime (5): a calendar date and
-// a wall-clock time, with no zone.
+//===- plain_date_time.cpp - Temporal.PlainDateTime -------------*- C++ -*-===//
+//
+// Temporal.PlainDateTime (Temporal proposal section 5): a calendar date and a
+// wall-clock time, with no time zone. Section numbers below refer to the same
+// specification.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -7,7 +12,7 @@ namespace ctbrowser::script::builtins_detail::temporal_js {
 
 namespace {
 
-// DifferenceTemporalPlainDateTime (5.5.15).
+/// DifferenceTemporalPlainDateTime (5.5.15): until() and, with \p since, since().
 value difference(context & cx, bool since, const plain_date_time & self, std::span<value> a) {
     plain_date_time other;
     if (!to_temporal_date_time(cx, arg_at(a, 0), value::undefined(), other)) {
@@ -38,7 +43,7 @@ value difference(context & cx, bool since, const plain_date_time & self, std::sp
     return make_duration(cx, since ? tc::negate(*result) : *result);
 }
 
-// AddDurationToDateTime (5.5.16).
+/// AddDurationToDateTime (5.5.16): add() and, with \p subtract, subtract().
 value add_duration(context & cx, bool subtract, const plain_date_time & self, std::span<value> a) {
     tc::duration_record d;
     if (!to_temporal_duration(cx, arg_at(a, 0), d)) { return value::undefined(); }

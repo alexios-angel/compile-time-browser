@@ -1,18 +1,32 @@
+//===- iterator/helpers.cpp - Iterator helper state machine -----*- C++ -*-===//
+//
+// The shared machinery behind the %IteratorHelperPrototype% objects that
+// Iterator.prototype.map, filter, take, drop, flatMap, Iterator.concat,
+// Iterator.zip / zipKeyed, chunks and windows return (ECMA-262 27.1.2.1 and
+// the iterator-chunking and joint-iteration proposals): one step of each
+// helper's abstract closure, `next` and `return`, and the argument checks
+// that close the receiver on refusal.
+//
+//===----------------------------------------------------------------------===//
 #include "helpers.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
 namespace iterator_helper {
 
-// %IteratorHelperPrototype% objects (27.1.2.1) are ordinary objects with a
-// private-keyed state slot: the underlying Iterator Record, the mapper or
-// predicate, the counter, and the generator-like state of 27.1.2.1.1.
+// %IteratorHelperPrototype% objects (ECMA-262 27.1.2.1) are ordinary objects
+// with a private-keyed state slot: the underlying Iterator Record, the mapper
+// or predicate, the counter, and the generator-like state of 27.1.2.1.1.
 
+/// Reads own property `name` of `o`, or undefined when it is absent.
 [[nodiscard]] value slot(object_object * o, std::string_view name) {
     const value * held = o->find(name);
     return held == nullptr ? value::undefined() : *held;
 }
 
+/// The state record behind an Iterator Helper `self`, or nullptr with a
+/// TypeError in flight when `self` is not one. `method` names the caller in
+/// the message.
 [[nodiscard]] object_object * helper_state(context & cx, value self, const char * method) {
     if (self.is_object()) {
         const value * held = static_cast<object_object *>(self.as_heap())->find(helper_slot);
@@ -25,6 +39,9 @@ namespace iterator_helper {
     return nullptr;
 }
 
+/// Reads the Iterator Record stored on `state` under the `<prefix>Iterator`,
+/// `<prefix>Next` and `<prefix>Done` keys ("" for the underlying iterator,
+/// "inner" for flatMap's and concat's current inner one).
 [[nodiscard]] iterator_record record_of(object_object * state, const char * prefix) {
     iterator_record rec;
     rec.iterator = slot(state, std::string{prefix} + "Iterator");
@@ -32,14 +49,15 @@ namespace iterator_helper {
     rec.done = context::truthy(slot(state, std::string{prefix} + "Done"));
     return rec;
 }
+/// Writes `rec` back under the keys record_of reads.
 void store_record(object_object * state, const char * prefix, const iterator_record & rec) {
     state->set(std::string{prefix} + "Iterator", rec.iterator);
     state->set(std::string{prefix} + "Next", rec.next);
     state->set(std::string{prefix} + "Done", value::boolean(rec.done));
 }
 
-// A step of the underlying iterator, with the record written back. `false`
-// is a throw in flight (the record is done: nothing closes it).
+/// One step of the underlying iterator, with the record written back. Returns
+/// false with a throw in flight; the record is then done, so nothing closes it.
 [[nodiscard]] bool step_underlying(context & cx, object_object * state, const char * prefix,
                                    bool & done, value & out) {
     iterator_record rec = record_of(state, prefix);
@@ -48,9 +66,9 @@ void store_record(object_object * state, const char * prefix, const iterator_rec
     return ok;
 }
 
-// A call whose abrupt completion CLOSES the underlying iterator first
-// (IfAbruptCloseIterator, 7.4.12): fenced, then `return()` quietly, then the
-// original throw again.
+/// Calls `fn`, and on an abrupt completion closes `closing` before rethrowing
+/// (IfAbruptCloseIterator, ECMA-262 7.4.12): the call is fenced, `return()`
+/// runs quietly, then the original throw is raised again.
 [[nodiscard]] bool call_or_close(context & cx, value fn, std::span<const value> args, value closing,
                                  value & out) {
     bool threw = false;
@@ -63,6 +81,8 @@ void store_record(object_object * state, const char * prefix, const iterator_rec
     return false;
 }
 
+/// The helper's counter: the index passed to the mapper or predicate, and the
+/// position in Iterator.concat's list of iterables.
 [[nodiscard]] double counter_of(object_object * state) {
     return slot(state, "counter").as_number();
 }
@@ -70,11 +90,11 @@ void bump_counter(object_object * state) {
     state->set("counter", value::number(counter_of(state) + 1.0));
 }
 
-// IteratorCloseAll over what a helper holds open: zip's open rows in
-// reverse, or the one underlying iterator. With `quietly` a throw is already
-// in hand and every `return()`'s outcome is discarded; otherwise the first
-// throw out of a `return()` becomes the completion (and the rest are quiet).
-// False with that throw in flight.
+/// IteratorCloseAll over what a helper holds open: zip's open rows in reverse,
+/// or the one underlying iterator. With `quietly` a throw is already in hand
+/// and every `return()`'s outcome is discarded; otherwise the first throw out
+/// of a `return()` becomes the completion and the rest are quiet. Returns
+/// false with that throw in flight.
 [[nodiscard]] bool close_open(context & cx, object_object * state, bool quietly, value) {
     std::vector<value> open;
     const value list = slot(state, "iters");
@@ -113,9 +133,10 @@ void bump_counter(object_object * state) {
     return true;
 }
 
-// ONE STEP OF EACH HELPER'S ABSTRACT CLOSURE (27.1.4.x): the record it
-// yields, or `done` set with undefined. False is a throw in flight, and every
-// close the specification asks for has already happened.
+/// One step of each helper's abstract closure (ECMA-262 27.1.4.x): the value it
+/// yields in `out`, or `done` set with undefined. Returns false with a throw in
+/// flight; every close the specification asks for has then already happened,
+/// or is flagged on `state` ("closeOuter", "closeAll") for helper_next.
 [[nodiscard]] bool helper_step(context & cx, helper_kind kind, object_object * state, bool & done,
                                value & out) {
     done = false;
@@ -180,11 +201,10 @@ void bump_counter(object_object * state) {
                 store_record(state, "inner", inner);
                 if (!ok) {
                     // IfAbruptCloseIterator(innerValue, iterated): the outer
-                    // is closed with the inner's throw in hand.
-                    // The throw is parked or landed: close under a fence
-                    // cannot run, so the outer is closed once the value is
-                    // ours - see the caller (helper_next), which is why the
-                    // record is marked here.
+                    // iterator must be closed with the inner's throw pending.
+                    // It cannot be closed here, inside the fence, so mark it
+                    // and let helper_next close it after capturing the
+                    // thrown value.
                     state->set("closeOuter", value::boolean(true));
                     return false;
                 }
@@ -203,8 +223,8 @@ void bump_counter(object_object * state) {
             value mapped = value::undefined();
             if (!call_or_close(cx, slot(state, "fn"), args, iterated, mapped)) { return false; }
             const context::rooted keep_mapped{cx, mapped};
-            // GetIteratorFlattenable(mapped, reject-primitives), its throw
-            // closing the outer too.
+            // GetIteratorFlattenable(mapped, reject-primitives); a throw here
+            // closes the outer iterator too.
             iterator_record inner;
             const detail::completion opened = detail::fenced(cx, [&](context & c) -> value {
                 if (!detail::iterator_flattenable(c, mapped, false, inner)) {
@@ -223,8 +243,8 @@ void bump_counter(object_object * state) {
         }
     }
     case helper_kind::concat: {
-        // Iterator.concat's closure (ES2026 27.1.3.2.1): each (iterable,
-        // method) pair in turn, opened when reached.
+        // Iterator.concat's closure (ECMA-262 2026, 27.1.3.2.1): each
+        // (iterable, method) pair in turn, opened when reached.
         for (;;) {
             if (context::truthy(slot(state, "innerAlive"))) {
                 iterator_record inner = record_of(state, "inner");
@@ -266,8 +286,9 @@ void bump_counter(object_object * state) {
     case helper_kind::zip: {
         // IteratorZip's closure (joint iteration, Iterator.zip / zipKeyed):
         // one value from every open iterator per step. `iters` holds
-        // [iterator, next, open] rows; `mode` is 0 shortest, 1 longest, 2
-        // strict; `padding` fills a finished iterator under "longest".
+        // [iterator, next, open] rows; `mode` is 0 for "shortest", 1 for
+        // "longest" and 2 for "strict"; `padding` fills in for a finished
+        // iterator under "longest".
         const value list = slot(state, "iters");
         const auto & rows = static_cast<array_object *>(list.as_heap())->items;
         const std::size_t count = rows.size();
@@ -312,8 +333,8 @@ void bump_counter(object_object * state) {
                                            "Iterator.zip: iterators of unequal length");
                             return false;
                         }
-                        // Every other iterator must be done too - IteratorStep,
-                        // which reads no `value`.
+                        // Every other iterator must be done too. This is
+                        // IteratorStep, which reads no `value`.
                         for (std::size_t k = 1; k < count; ++k) {
                             auto & other = static_cast<array_object *>(rows[k].as_heap())->items;
                             const value next = other[1];
@@ -371,7 +392,9 @@ void bump_counter(object_object * state) {
         // zipKeyed's finishResults: a null-prototype object, one own data
         // property per key.
         object_object * record = detail::new_table(cx);
-        record->prototype = value::undefined(); // explicit null, see object_object::prototype
+        // Undefined encodes an explicit null [[Prototype]]; see
+        // object_object::prototype.
+        record->prototype = value::undefined();
         const auto & names = static_cast<array_object *>(keys.as_heap())->items;
         for (std::size_t i = 0; i < names.size() && i < collected->items.size(); ++i) {
             record->define(cx.to_string(names[i]), collected->items[i], attr_default);
@@ -395,9 +418,10 @@ void bump_counter(object_object * state) {
             value item = value::undefined();
             if (!step_underlying(cx, state, "", done, item)) { return false; }
             if (done) {
-                // A short final chunk always; a short final window only under
-                // "allow-partial", and only when no full one was ever yielded
-                // (the buffer is then still shorter than the size).
+                // A short final chunk is always yielded; a short final window
+                // only under "allow-partial", and only when no full one was
+                // ever yielded (the buffer is then still shorter than the
+                // size).
                 const bool partial = context::truthy(slot(state, "partial"));
                 if (!held->items.empty() &&
                     (kind == helper_kind::chunks || (partial && held->items.size() < size))) {
@@ -407,7 +431,7 @@ void bump_counter(object_object * state) {
                 }
                 return true;
             }
-            // A window keeps its last `size` values BETWEEN steps (the oldest
+            // A window keeps its last `size` values between steps (the oldest
             // goes as the next arrives), so at exhaustion the buffer is only
             // shorter than the size when no full window was ever yielded.
             if (kind == helper_kind::windows && held->items.size() == size) {
@@ -427,6 +451,7 @@ void bump_counter(object_object * state) {
     return true;
 }
 
+/// The helper's generator state, stored as a number under "state".
 [[nodiscard]] gen_state state_of(object_object * state) {
     return static_cast<gen_state>(static_cast<std::uint8_t>(slot(state, "state").as_number()));
 }
@@ -434,8 +459,9 @@ void set_state(object_object * state, gen_state s) {
     state->set("state", value::number(static_cast<double>(static_cast<std::uint8_t>(s))));
 }
 
-// %IteratorHelperPrototype%.next, 27.1.2.1.1 - GeneratorResume over the
-// closure: running is a TypeError, completed is done, otherwise one step.
+/// %IteratorHelperPrototype%.next, ECMA-262 27.1.2.1.1: GeneratorResume over
+/// the closure. A running helper is a TypeError, a completed one answers done,
+/// otherwise it takes one step.
 [[nodiscard]] value helper_next(context & cx) {
     const value self = cx.current_this();
     object_object * state = helper_state(cx, self, "next");
@@ -452,9 +478,9 @@ void set_state(object_object * state, gen_state s) {
         static_cast<helper_kind>(static_cast<std::uint8_t>(slot(state, "kind").as_number()));
     bool done = false;
     value out = value::undefined();
-    // Under a fence, so an abrupt step's value is in hand for the one close
-    // that has to run AFTER the throw and BEFORE it propagates (flatMap's
-    // inner step failing closes the outer).
+    // Under a fence, so an abrupt step's value is in hand for the closes that
+    // must run after the throw and before it propagates (flatMap's failing
+    // inner step closes the outer; zip's failing step closes every row).
     const detail::completion stepped = detail::fenced(cx, [&](context & c) -> value {
         return value::boolean(helper_step(c, kind, state, done, out));
     });
@@ -480,9 +506,9 @@ void set_state(object_object * state, gen_state s) {
     return cx.iter_result(out, false);
 }
 
-// %IteratorHelperPrototype%.return, 27.1.2.1.2: GeneratorResumeAbrupt with a
-// return completion - the closures all answer it by closing what they hold,
-// inner iterator first.
+/// %IteratorHelperPrototype%.return, ECMA-262 27.1.2.1.2: GeneratorResumeAbrupt
+/// with a return completion. Every closure answers it by closing what it
+/// holds, inner iterator first.
 [[nodiscard]] value helper_return(context & cx) {
     const value self = cx.current_this();
     object_object * state = helper_state(cx, self, "return");
@@ -494,10 +520,11 @@ void set_state(object_object * state, gen_state s) {
     case gen_state::completed: return cx.iter_result(value::undefined(), true);
     default: break;
     }
-    // suspended-start completes BEFORE the close (27.1.2.1.2 step 4: a
-    // re-entrant `next()` from `return()` then answers done); suspended-yield
-    // is GeneratorResumeAbrupt, EXECUTING while the closure closes what it
-    // holds (a re-entrant `next()` is then the TypeError), completed after.
+    // A suspended-start helper completes before the close (27.1.2.1.2 step 4:
+    // a re-entrant `next()` from `return()` then answers done). A
+    // suspended-yield helper goes through GeneratorResumeAbrupt and is
+    // executing while the closure closes what it holds (a re-entrant `next()`
+    // is then the TypeError), and completed afterwards.
     const bool started = state_of(state) == gen_state::suspended_yield;
     set_state(state, started ? gen_state::executing : gen_state::completed);
     const auto finish = [&](value out) {
@@ -518,7 +545,7 @@ void set_state(object_object * state, gen_state s) {
             return value::boolean(detail::iterator_close(c, inner));
         });
         if (closed.threw) {
-            // IfAbruptCloseIterator(backupCompletion, iterated)
+            // IfAbruptCloseIterator(backupCompletion, iterated).
             const context::rooted keep{cx, closed.result};
             detail::iterator_close_quietly(cx, iterated);
             set_state(state, gen_state::completed);
@@ -530,8 +557,8 @@ void set_state(object_object * state, gen_state s) {
     return finish(cx.iter_result(value::undefined(), true));
 }
 
-// The helper object over a state record whose underlying record is already
-// filled in.
+/// Makes the helper object over a state record whose underlying record is
+/// already filled in, and resets its counter and generator state.
 [[nodiscard]] value make_helper(context & cx, object_object * helper_proto, helper_kind kind,
                                 object_object * state) {
     state->set("kind", value::number(static_cast<double>(static_cast<std::uint8_t>(kind))));
@@ -543,10 +570,10 @@ void set_state(object_object * state, gen_state s) {
     return value::object(made);
 }
 
-// A limit argument of take / drop / chunks / windows: ToNumber, then the
-// RangeErrors of 27.1.4.4 - and every refusal closes the receiver first
-// (IteratorClose with the error), because the receiver is an Iterator Record
-// from step 3 on. `whole` demands a positive integer below 2^32 (chunking).
+/// A limit argument of take or drop: ToNumber, then the RangeErrors of
+/// ECMA-262 27.1.4.4. Every refusal closes the receiver first (IteratorClose
+/// with the error), because the receiver is an Iterator Record from step 3 on.
+/// `whole` instead demands an integer in [1, 2^32 - 1].
 [[nodiscard]] bool limit_arg(context & cx, value self, value raw, bool whole, double & out) {
     const detail::completion converted = detail::fenced(cx, [raw](context & c) -> value {
         if (!numeric_arg(c, raw)) { return value::undefined(); }
@@ -571,9 +598,9 @@ void set_state(object_object * state, gen_state s) {
     return true;
 }
 
-// The size of `chunks` / `windows` (iterator chunking): NO coercion - not a
-// Number or not integral is a TypeError, outside [1, 2^32-1] a RangeError -
-// and every refusal closes the receiver.
+/// The size argument of `chunks` and `windows` (iterator chunking), with no
+/// coercion: a non-Number or non-integral value is a TypeError, one outside
+/// [1, 2^32 - 1] a RangeError, and every refusal closes the receiver.
 [[nodiscard]] bool size_arg(context & cx, value self, value raw, double & out) {
     if (!raw.is_number() || !std::isfinite(raw.as_number()) ||
         std::trunc(raw.as_number()) != raw.as_number()) {
@@ -591,9 +618,9 @@ void set_state(object_object * state, gen_state s) {
     return true;
 }
 
-// `includes`' skippedElements: undefined is 0; otherwise +-Infinity or an
-// integral Number (else TypeError), not negative and not past 2^53-1 (else
-// RangeError); every refusal closes the receiver.
+/// The skippedElements argument of `includes`: undefined is 0; otherwise it
+/// must be +-Infinity or an integral Number (else TypeError), neither negative
+/// nor past 2^53 - 1 (else RangeError). Every refusal closes the receiver.
 [[nodiscard]] bool skip_arg(context & cx, value self, value raw, double & out) {
     if (raw.is_undefined()) {
         out = 0;
@@ -616,7 +643,8 @@ void set_state(object_object * state, gen_state s) {
     return true;
 }
 
-// A callable argument, with the same close-on-refusal.
+/// Checks that `fn` is callable; otherwise closes the receiver and throws a
+/// TypeError naming `what`.
 [[nodiscard]] bool callable_or_close(context & cx, value self, value fn, const char * what) {
     if (fn.is_callable()) { return true; }
     detail::iterator_close_quietly(cx, self);
@@ -624,8 +652,9 @@ void set_state(object_object * state, gen_state s) {
     return false;
 }
 
-// SetterThatIgnoresPrototypeProperties, 27.1.3.2.1.1: the accessor's setter
-// writes an OWN property on the receiver rather than touching the prototype.
+/// SetterThatIgnoresPrototypeProperties, ECMA-262 27.1.3.2.1.1: the accessor's
+/// setter writes an own property on the receiver rather than touching the
+/// prototype `home`.
 [[nodiscard]] value ignoring_setter(context & cx, object_object * home, const std::string & key,
                                     value v) {
     const value self = cx.current_this();

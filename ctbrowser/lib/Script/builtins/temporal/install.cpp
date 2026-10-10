@@ -1,11 +1,17 @@
-// ctbrowser.script builtins - the Temporal namespace object (1), and the
-// classes on it. See core.hpp for what this engine's Temporal covers: the
-// ISO 8601 calendar, and the UTC and fixed-offset time zones.
+//===- temporal/install.cpp - Temporal namespace installer ------*- C++ -*-===//
+//
+// Builds the Temporal namespace object and the classes on it, and adds
+// Date.prototype.toTemporalInstant. See core.hpp for what this engine's
+// Temporal covers: the ISO 8601 calendar, and the UTC and fixed-offset time
+// zones.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
+/// Installs the `Temporal` global and Date.prototype.toTemporalInstant.
 void install_temporal(context & cx) {
     object_object * ns = detail::new_table(cx);
     ns->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("Temporal"), attr_configurable);
@@ -22,7 +28,7 @@ void install_temporal(context & cx) {
 
     // Date.prototype.toTemporalInstant (14.7.1): thisTimeValue, a RangeError
     // for an invalid date, and the milliseconds as nanoseconds. The time value
-    // is Date's `__ms` slot (date.cpp).
+    // is the Date's private `date_value_key` slot.
     const value date_ctor = cx.global("Date");
     if (object_object * date_proto =
             date_ctor.is_object_like()

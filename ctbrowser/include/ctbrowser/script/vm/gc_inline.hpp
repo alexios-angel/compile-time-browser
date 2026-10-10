@@ -1,4 +1,11 @@
 #pragma once
+//===- gc_inline.hpp - Inline GC members of context -------------*- C++ -*-===//
+//
+// Inline definitions of `context`'s garbage-collection and await plumbing:
+// external roots, the stress mode, safepoints, threshold-driven collection
+// and the helpers that suspend a coroutine on a pending promise.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../vm.hpp"
 
@@ -13,15 +20,10 @@ inline auto context::set_weak_prune(std::function<void(const survives_fn &)> pru
     weak_prune_ = std::move(prune);
 }
 
-// COLLECT AT EVERY SAFEPOINT, FOR TESTS.
-//
-// Until 2026-09-12 the only thing that collected in an ordinary run was
-// `collect_if_due`, once per tick, from the browser's frame loop - so a
-// collection NEVER happened while script was running, and a rooting bug
-// was unreachable. `safepoint()` now collects when the heap is due, but
-// only at a call boundary. This TEST MODE collects the whole heap at every
-// safepoint, which is enormously slow, and is the only way the rooting
-// discipline the ABI demands can be exercised.
+/// Test mode: collect the whole heap at every safepoint. Very slow, but it is
+/// the only way to exercise the rooting rules the ABI requires, since an
+/// ordinary run collects only when the heap is due and only at a call
+/// boundary.
 inline auto context::set_gc_stress(bool on) noexcept -> void {
     gc_stress_ = on;
 }
@@ -30,18 +32,16 @@ inline auto context::set_gc_stress(bool on) noexcept -> void {
     return gc_stress_;
 }
 
-// A point where the ABI says a collection may happen. Under stress it
-// always does; otherwise only when the heap has grown past the threshold
-// `collect_if_due` keeps - the tick's rule, applied inside a turn, so a
-// synchronous script that never yields is bounded the way a page on a
-// timer is. Before this it was stress-only, and seven WPT reflection
-// files - thousands of subtests in ONE top-level script - grew until a
-// 4 GB address-space cap killed the process. One compare on the path that
-// calls it: `invoke`, every C++ entry into JavaScript - which is what
-// `Function.prototype.apply` is, and what testharness.js runs every
-// subtest through. An interpreted JS-to-JS call is deliberately NOT one:
-// ctcompile/test/EscapeCycle.cpp pins that `churn(1000)` collects exactly
-// once under stress and returns with its 4,000 dead nodes unswept.
+/// A point where the ABI allows a collection. Under stress it always collects;
+/// otherwise only when the heap has passed `collect_if_due`'s threshold, so a
+/// synchronous script that never yields is bounded the way a page on a timer
+/// is (some WPT files run thousands of subtests in one top-level script).
+/// The cost is one compare. It is called from `invoke`, every C++ entry into
+/// JavaScript, which includes `Function.prototype.apply` and so every
+/// testharness.js subtest. Interpreted JS-to-JS calls are deliberately not
+/// safepoints: ctcompile/test/Analysis/Escape/Cycle.cpp checks that
+/// `churn(1000)` collects exactly once under stress and returns with its 4,000
+/// dead nodes unswept.
 inline auto context::safepoint() -> void {
     if (gc_stress_) [[unlikely]] {
         (void)collect();
@@ -50,20 +50,20 @@ inline auto context::safepoint() -> void {
     (void)collect_if_due();
 }
 
-// HOW MANY COLLECTIONS HAVE RUN. A test that forces GC and asserts an
-// answer proves nothing on its own - the answer is the same if no
-// collection happened at all, which is exactly how a stress mode that
-// silently does nothing looks.
+/// How many collections have run. A test that forces GC and checks an answer
+/// proves nothing on its own: the answer is the same if no collection
+/// happened, which is exactly how a stress mode that silently does nothing
+/// looks. Asserting this counter grew is the proof.
 [[nodiscard]] inline auto context::collections() const noexcept -> std::size_t {
     return collections_;
 }
 
-// Collect if the heap has grown enough to be worth it. Called once per
-// tick, and from `safepoint()` at every call boundary, so a long-running
-// page's garbage is bounded instead of accumulating for the life of the
-// document - or of one synchronous script. The threshold doubles with the
-// survivors, so the work is amortised O(1) per allocation and the heap
-// peaks at about twice the live set.
+/// Collects if the heap has grown enough to be worth it. Called once per tick
+/// and from `safepoint()` at every call boundary, so a long-running page's
+/// garbage is bounded instead of accumulating for the life of the document,
+/// or of one synchronous script. The threshold doubles with the survivors, so
+/// the work is amortised O(1) per allocation and the heap peaks at about twice
+/// the live set.
 inline auto context::collect_if_due() -> std::size_t {
     if (live_objects_ < collect_threshold_ && string_bytes_ < string_budget_) { return 0; }
     const std::size_t freed = collect();
@@ -77,17 +77,18 @@ inline auto context::collect_if_due() -> std::size_t {
     return live_objects_;
 }
 
-// Whether this value is a promise that has NOT settled - the one case
-// `await` cannot answer by reading. The shape is the standard library's:
-// its settled slot present and false.
+/// Whether this value is a promise that has not settled, the one case `await`
+/// cannot answer by reading. The shape is the standard library's: its settled
+/// slot is present and false.
 [[nodiscard]] inline auto context::is_pending_promise(value v) -> bool {
     if (!v.is_object()) { return false; }
     value * settled = static_cast<object_object *>(v.as_heap())->find(promise_settled_key);
     return settled != nullptr && !truthy(*settled);
 }
 
-// THE JOB THAT RESUMES AN AWAIT OF A SETTLED VALUE: (coroutine, value,
-// rejected) -> resume. One native per context, made on first use.
+/// The job that resumes an await of a settled value: called as
+/// (coroutine, value, rejected), it resumes the coroutine. One native per
+/// context, made on first use.
 [[nodiscard]] inline auto context::await_job() -> value {
     if (await_job_.is_undefined()) {
         await_job_ =
@@ -99,9 +100,9 @@ inline auto context::collect_if_due() -> std::size_t {
     return await_job_;
 }
 
-// Ask a pending promise to put this coroutine back when it settles. The
-// record goes on the promise's own handler list, so a resumption is queued
-// and ordered exactly like a `then` - because that is what it is.
+/// Asks a pending promise to resume this coroutine when it settles. The record
+/// goes on the promise's own reaction list, so the resumption is queued and
+/// ordered exactly like a `then`, because that is what it is.
 inline auto context::attach_resume(value promise, value coroutine) -> void {
     if (!promise.is_object()) { return; }
     value * handlers = static_cast<object_object *>(promise.as_heap())->find(promise_reactions_key);
@@ -109,7 +110,7 @@ inline auto context::attach_resume(value promise, value coroutine) -> void {
     auto * record = allocate<object_object>();
     record->set("co", coroutine);
     static_cast<array_object *>(handlers->as_heap())->items.push_back(value::object(record));
-    mark_promise_handled(promise); // an await is a PerformPromiseThen (27.7.5.3)
+    mark_promise_handled(promise); // An await is a PerformPromiseThen (27.7.5.3).
 }
 
 } // namespace ctbrowser::script

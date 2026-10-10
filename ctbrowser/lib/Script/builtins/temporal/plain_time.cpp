@@ -1,5 +1,9 @@
-// ctbrowser.script builtins - Temporal.PlainTime (4): a wall-clock time with
-// no date and no zone.
+//===- plain_time.cpp - Temporal.PlainTime ----------------------*- C++ -*-===//
+//
+// Temporal.PlainTime (Temporal proposal section 4): a wall-clock time with no
+// date and no time zone.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 

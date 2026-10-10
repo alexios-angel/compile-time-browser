@@ -1,11 +1,10 @@
-// ctbrowser.script context - closures, generators and the suspended frame an
-// `await` or a `yield` leaves behind.
+//===- coroutines.cpp - Closures and generators -----------------*- C++ -*-===//
 //
-// One of five files carved out of a 1,171-line vm/call.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// Closures, generators, async generators and the suspended frame that an
+// `await` or a `yield` leaves behind. All functions here are members of
+// `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <algorithm>
 #include <cstddef>
@@ -18,41 +17,32 @@
 
 namespace ctbrowser::script {
 
-// PUT A SUSPENDED FRAME BACK AND RUN IT.
-//
-// The mirror of the suspension in `op::await_value`: the saved window goes on
-// top of the register stack, the frame is rebuilt around it, the awaited value
-// lands in the register the await was writing to, and the body carries on from
-// the instruction after it.
-//
-// Called from a microtask, because a resumption IS a promise handler - it was
-// registered on the awaited promise's own handler list, so it queues and orders
-// with every other `then`.
 // --- generators -------------------------------------------------------------
 //
-// A generator is the SAME suspended frame `await` uses, with a different
-// resumer: an explicit `.next()` instead of a settling promise. That is why
-// there is no second suspension mechanism here - `coroutine_object` already
-// carried a proto, an ip, a register window and this frame's handlers, which
-// is the whole of what a paused function is.
+// A generator is the same suspended frame `await` uses, with a different
+// resumer: an explicit `.next()` instead of a settling promise. So there is
+// no second suspension mechanism: `coroutine_object` already holds a proto,
+// an ip, a register window and the frame's handlers, which is everything a
+// paused function needs.
 //
-// WHAT THIS IS FOR. Babylon.js has 622 `function*` bodies and not one of them
-// is an author writing a generator: TypeScript compiles every `async` function
-// into a generator driven by an `__awaiter` helper, so `yield` there is what
-// `await` became. That helper needs exactly `.next(v)`, `.throw(e)` and a
-// `{value, done}` record back, which is what this implements.
+// Generators matter for real pages even where authors never write one:
+// TypeScript compiles every `async` function into a generator driven by an
+// `__awaiter` helper (Babylon.js has 622 such `function*` bodies). That
+// helper needs exactly `.next(v)`, `.throw(e)` and a `{value, done}` record
+// back.
 
-// op::closure's BODY, VERBATIM, plus the three guards a compiled caller needs.
+/// Creates the closure for function \p function_index. Shared by the
+/// interpreter's op::closure (run_loop.cpp) and by compiled (AOT) callers
+/// through ct_aot_make_closure.
 value context::make_closure(closure_object * enclosing, std::uint32_t function_index,
                             upvalue_source parent, value enclosing_this) {
-    // PER FRAME, not per loop: a context can be running functions from more
-    // than one program at a time, and a function index means nothing outside
-    // the program it was compiled in.
+    // The program is taken per frame, not per loop: a context can be running
+    // functions from more than one program at a time, and a function index
+    // means nothing outside the program it was compiled in.
     //
-    // GUARDED, WHICH THE INLINE VERSION IS NOT. run_loop dereferences
-    // *program_ unguarded because an interpreted frame cannot exist without a
-    // program; Phase 19's AOT-only mode is exactly the configuration where one
-    // can, and a null deref is undefined behaviour rather than a fault.
+    // Guarded, because a compiled caller can run with no interpreted program
+    // loaded (AOT-only mode), and a null `program_` dereference would be
+    // undefined behaviour rather than a clean error.
     const program * prog =
         enclosing != nullptr && enclosing->owner != nullptr ? enclosing->owner : program_;
     if (prog == nullptr) {
@@ -64,9 +54,9 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
         return value::undefined();
     }
     const function_proto & target = prog->functions[function_index];
-    // AND THE COUNT MUST AGREE WITH THE TARGET, because reading the caller's
-    // array past its end is worse than a fault: it is a closure that captured
-    // whatever was next in memory.
+    // The upvalue count must agree with the target, because reading the
+    // caller's array past its end is worse than a fault: it would make a
+    // closure that captured whatever was next in memory.
     if (parent.by_descriptor != nullptr && parent.descriptor_count != target.upvalues.size()) {
         raise("closure upvalue count disagrees with the function it names");
         return value::undefined();
@@ -93,9 +83,9 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
             made->upvalues.push_back(value::undefined());
         }
     }
-    // An arrow's `this` is decided HERE, where it is written, not where it is
-    // called - which is what makes an arrow inside an arrow inside a method
-    // still see the method's object. The caller reads the EFFECTIVE receiver.
+    // An arrow's `this` is decided here, where it is written, not where it is
+    // called, which is what makes an arrow inside an arrow inside a method
+    // still see the method's object. The caller passes the effective receiver.
     if (target.is_arrow) {
         made->captured_this = enclosing_this;
         if (enclosing != nullptr && enclosing->proto != nullptr && enclosing->proto->is_arrow) {
@@ -121,11 +111,11 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
         if (!new_target.is_undefined()) {
             made->define(CTBROWSER_PRIVATE_KEY("NewTarget"), new_target, attr_none);
         }
-        // ...AND ITS HOME OBJECT, for the same reason: `super.m()` and
-        // `super()` inside an arrow resolve against the method or constructor
-        // the arrow was written in (an arrow has no [[HomeObject]] of its
-        // own, 15.3.4). load_home reads the running closure's `__home`, so
-        // the enclosing one's is copied where there is one.
+        // The home object is lexical too: `super.m()` and `super()` inside an
+        // arrow resolve against the method or constructor the arrow was
+        // written in (an arrow has no [[HomeObject]] of its own, 15.3.4).
+        // load_home reads the running closure's `__home`, so the enclosing
+        // one's is copied when there is one.
         if (enclosing != nullptr) {
             if (const value * home = enclosing->find("__home")) { made->set("__home", *home); }
         }
@@ -133,6 +123,9 @@ value context::make_closure(closure_object * enclosing, std::uint32_t function_i
     return value::object(made);
 }
 
+/// Creates the generator object returned by calling generator function
+/// \p closure. Runs the eager parameter prologue now, if the function has one,
+/// but not the body.
 value context::make_generator(closure_object * closure, value receiver,
                               std::span<const value> args) {
     auto * saved = allocate<coroutine_object>();
@@ -143,20 +136,18 @@ value context::make_generator(closure_object * closure, value receiver,
     saved->realm = realm_for(closure);
     saved->receiver = receiver;
     saved->generator = true;
-    // THE ARGUMENTS ARE THE FRAME'S FIRST REGISTERS, which is how an ordinary
-    // call passes them - the callee's frame starts where its arguments already
+    // The arguments are the frame's first registers, which is how an ordinary
+    // call passes them: the callee's frame starts where its arguments already
     // are. A generator has no such frame yet, so the window is built here and
     // the body runs out of it on the first `.next()`.
     saved->window.assign(args.begin(), args.end());
     saved->window.resize(closure->proto->frame_size, value::undefined());
 
     value out = make_object();
-    // ROOTED FROM HERE: the eager prologue below runs page code - a default
-    // parameter can call anything, and a call can collect - while the
-    // generator is reachable only from this local, and `saved` only through
-    // it. A native's pin hid this under `eval` until 2026-09-26 (test262's
-    // staging/sm/expressions/destructuring-array-default-*: heap-use-after-
-    // free in suspend_frame).
+    // Rooted from here: the eager prologue below runs page code (a default
+    // parameter can call anything, and a call can collect), while the
+    // generator is reachable only from this local and `saved` only through it.
+    // Regression: test262 staging/sm/expressions/destructuring-array-default-*.
     const rooted keep{*this, out};
     auto * obj = static_cast<object_object *>(out.as_heap());
     saved->async_gen = closure->proto->is_async;
@@ -177,9 +168,9 @@ value context::make_generator(closure_object * closure, value receiver,
         saved->started = false;
     }
     // 27.5.3.x / 27.6.3.x EvaluateBody: FunctionDeclarationInstantiation
-    // (the prologue above) FIRST, then OrdinaryCreateFromConstructor
-    // (functionObject, "%GeneratorPrototype%") - the function's own
-    // `prototype` as of NOW when it is an object (a default parameter may
+    // (the prologue above) first, then OrdinaryCreateFromConstructor
+    // (functionObject, "%GeneratorPrototype%"). That is the function's own
+    // `prototype` as of now when it is an object (a default parameter may
     // have reassigned it; ensure_prototype makes one inheriting the intrinsic
     // otherwise), else the intrinsic already set above.
     if (!failed_) {
@@ -209,6 +200,9 @@ value context::return_marker_value(value marker) const {
     return held != nullptr ? *held : value::undefined();
 }
 
+/// Runs one `.next(v)`, `.throw(e)` or `.return(v)` request on \p generator
+/// and returns its `{value, done}` record. For an async generator the answer
+/// may be undefined, meaning the request is settled later by resume().
 value context::generator_resume(value generator, value sent, resume_mode how) {
     if (!generator.is_object()) { return iter_result(value::undefined(), true); }
     value * held = static_cast<object_object *>(generator.as_heap())->find(generator_slot_key);
@@ -217,40 +211,42 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     }
     auto * saved = static_cast<coroutine_object *>(held->as_heap());
 
-    // A GENERATOR CANNOT RESUME ITSELF. `.next()` from inside the body would
+    // A generator cannot resume itself. `.next()` from inside the body would
     // push a second frame over the same register window and both would write
     // each other's locals; the spec makes it a TypeError and so does this.
     if (saved->running) {
         throw_error("TypeError", "this generator is already running");
         return iter_result(value::undefined(), true);
     }
-    // AN ASYNC GENERATOR'S `.return(v)` AWAITS v FIRST - 27.6.3.8
+    // An async generator's `.return(v)` awaits v first (27.6.3.8
     // AsyncGeneratorUnwrapYieldResumption at a yield, 27.6.3.9
-    // AsyncGeneratorAwaitReturn when there is no yield to resume - so the
+    // AsyncGeneratorAwaitReturn when there is no yield to resume), so the
     // request stays open until that settles, and resume() decides what the
     // awaited value does: a return completion through the body's finally
     // blocks, or the request's own done record.
     if (saved->async_gen && how == resume_mode::returned) {
         const bool at_yield = saved->started && !saved->done;
         if (!at_yield) { saved->done = true; }
+        // 1: resume at the yield with a return completion once v settles;
+        // 2: no yield to resume, so just settle the request with v.
         saved->return_pending = at_yield ? 1 : 2;
         saved->awaiting = true;
         await_for(saved, sent);
         return value::undefined();
     }
-    // `.throw(e)` AT AN ASYNC `yield*`: the delegate loop forwards it to the
-    // inner iterator's `throw` (14.4.14 step 7.b) - the frame resumes with
+    // `.throw(e)` at an async `yield*`: the delegate loop forwards it to the
+    // inner iterator's `throw` (14.4.14 step 7.b). The frame resumes with
     // the record and the loop's own native does the call.
     if (saved->async_gen && how == resume_mode::thrown && saved->started && !saved->done &&
         saved->delegate.is_object()) {
         sent = make_resume_record("throw", sent);
         how = resume_mode::next;
     }
-    // A FINISHED GENERATOR KEEPS ANSWERING, for ever. `.next()` past the end is
-    // not an error and must not run the body again.
+    // A finished generator keeps answering done forever. `.next()` past the
+    // end is not an error and must not run the body again.
     //
-    // AN ASYNC GENERATOR NEVER THROWS AT ITS CALLER: `.throw(e)` on one that
-    // has finished, or has not started, answers a REJECTED promise, which
+    // An async generator never throws at its caller: `.throw(e)` on one that
+    // has finished, or has not started, answers a rejected promise, which
     // settle_async_generator hands to the request. The sync form unwinds.
     if (saved->async_gen && how == resume_mode::thrown && (saved->done || !saved->started)) {
         saved->done = true;
@@ -264,7 +260,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         }
         return iter_result(how == resume_mode::returned ? sent : value::undefined(), true);
     }
-    // `.throw()` / `.return()` BEFORE THE BODY EVER RAN never enter it: there is
+    // `.throw()` / `.return()` before the body ever ran never enter it: there is
     // no `yield` to throw at, so the generator simply finishes.
     if (!saved->started && how != resume_mode::next) {
         saved->done = true;
@@ -274,7 +270,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         }
         return iter_result(how == resume_mode::returned ? sent : value::undefined(), true);
     }
-    // A `yield*` IN PROGRESS (sync only): `.throw(e)` and `.return(v)` go to
+    // A `yield*` in progress (sync only): `.throw(e)` and `.return(v)` go to
     // the inner iterator first (14.4.14 steps 7.b and 7.c), and only what
     // comes back decides whether the frame resumes, stays suspended, or
     // finishes. The record is the one yield_delegate_settle_name keeps on the
@@ -288,16 +284,14 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         const value iterator = slot("iterator");
         value forwarded = value::undefined();
         bool threw = false;
-        // EVERY `?` IN 14.4.14 STEP 7 IS A THROW AT THE YIELD: a getter on
-        // the inner iterator or on its result that throws hands its
-        // exception to the frame's own handlers, not to whoever called
-        // `.throw()`/`.return()`. Under the native that resumed us the
-        // throw is parked (context::call), so it is taken back here; one
-        // that already unwound past us (the interpreter asked directly) is
-        // the caller's, and this resume is over. A PARKED throw counts in
-        // unwinds_ too - it unwound to call's fence - so `landed` asks for
-        // an unwind that nothing parked; until 2026-09-26 it asked for any,
-        // and every getter throw here went to the caller of `.throw()`.
+        // Every `?` in ECMA-262 14.4.14 step 7 throws at the yield: a getter
+        // on the inner iterator or its result that throws goes to the frame's
+        // own handlers, not to whoever called `.throw()`/`.return()`. A throw
+        // parked by the native that resumed us (context::call) is taken back
+        // here. One that already unwound past us (the interpreter called
+        // directly) belongs to the caller, and this resume is over. A parked
+        // throw also bumps unwinds_ (it unwound to call's fence), so `landed`
+        // counts only unwinds with nothing parked.
         std::size_t unwound = unwinds_;
         const auto landed = [&] { return failed_ || (unwinds_ != unwound && !has_pending_throw_); };
         const auto took = [&] {
@@ -345,9 +339,9 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
                                  std::string{how == resume_mode::thrown ? "throw" : "return"} +
                                  " is not a function");
         } else {
-            // The thrown value in its OWN variable: `forwarded =
-            // call_fenced(..., forwarded)` stored the call's undefined answer
-            // over the exception call_fenced had just written there.
+            // The thrown value needs its own variable: call_fenced writes the
+            // exception through its out parameter and also returns undefined,
+            // so `forwarded` cannot be both.
             value thrown_by = value::undefined();
             const value answer = call_fenced(method, {&sent, 1}, iterator, threw, thrown_by);
             forwarded = threw ? thrown_by : answer;
@@ -370,7 +364,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
             }
         }
         if (!threw && no_method && how == resume_mode::returned) {
-            // fall through to the return completion
+            // Fall through to the return completion.
         } else if (threw) {
             // Thrown at the yield inside the loop - the frame resumes with it.
             saved->delegate = value::undefined();
@@ -392,14 +386,14 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
                 how = resume_mode::next;
             }
         } else {
-            // Still going: the inner result IS the answer, and the frame stays
+            // Still going: the inner result is the answer, and the frame stays
             // where it is.
             return forwarded;
         }
     }
-    // `.return(v)` AT A YIELD (27.5.3.4 step 6-9): a sync generator resumes
-    // with a return completion, which here is the marker thrown at the yield
-    // - every `finally` between the yield and the body's end runs, a catch
+    // `.return(v)` at a yield (27.5.3.4 steps 6-9): a sync generator resumes
+    // with a return completion, which here is a marker thrown at the yield.
+    // Every `finally` between the yield and the body's end runs, a catch
     // clause passes it on (catch_filter_name), a `yield` inside a finally
     // suspends again, and the marker escaping the frame is what finishes the
     // generator with v (or with whatever a finally returned instead). An
@@ -409,7 +403,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         how = resume_mode::thrown;
     }
 
-    // THE FENCE UNDER THE FRAME: a throw that leaves the body lands here
+    // The fence under the frame: a throw that leaves the body lands here
     // first, so a return marker can be told from a page's own exception and
     // the exception put back on its way (see after run_loop).
     // Not for an async generator: its frame may park on an `await` and come
@@ -426,9 +420,9 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
 
     const std::size_t base = restore_frame(saved);
 
-    // WHERE THE VALUE PASSED TO `.next(v)` LANDS: the destination register of
+    // The value passed to `.next(v)` lands in the destination register of
     // the `yield` that suspended, which is what makes `var x = yield y` see it.
-    // NOT on the first resume - nothing is waiting for it there, and writing it
+    // Not on the first resume: nothing is waiting for it there, and writing it
     // would clobber the frame's first local, which on a body with parameters is
     // an argument.
     if (saved->started) { registers_[base + saved->await_reg] = sent; }
@@ -461,8 +455,8 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
     };
 
     if (how == resume_mode::thrown) {
-        // THROW AT THE YIELD, so `try { yield x } catch` works across a real
-        // suspension. __awaiter's rejection path is exactly this.
+        // Throw at the yield, so `try { yield x } catch` works across a real
+        // suspension. __awaiter's rejection path relies on this.
         thrown_ = sent;
         if (!unwind_to_handler()) {
             while (frames_.size() > stop) { frames_.pop_back(); }
@@ -490,7 +484,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
 
     if (yielded_) {
         yielded_ = false;
-        // A sync `yield*` yields the inner result object AS IT IS (14.4.14
+        // A sync `yield*` yields the inner result object as it is (14.4.14
         // step 7.a.vii: GeneratorYield(innerResult)), not a fresh record.
         if (!saved->async_gen && saved->delegate.is_object() && produced.is_object()) {
             return produced;
@@ -498,7 +492,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         return iter_result(produced, false);
     }
     saved->delegate = value::undefined();
-    // AN ASYNC GENERATOR PARKED ON AN `await`. op::await_value lifted the
+    // An async generator parked on an `await`. op::await_value lifted the
     // frame back into this same coroutine and flagged it; the request is
     // finished by resume() when the awaited promise settles. Nothing to
     // answer yet.
@@ -507,7 +501,7 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
         return value::undefined();
     }
     // The body returned, threw past its own handlers, or the VM failed. Any of
-    // those finish the generator; a further `.next()` answers done for ever.
+    // those finish the generator; a further `.next()` answers done forever.
     saved->done = true;
     registers_.resize(base);
     return iter_result(produced, true);
@@ -516,14 +510,16 @@ value context::generator_resume(value generator, value sent, resume_mode how) {
 // --- async generators ---------------------------------------------------------
 //
 // `async function*`, 27.6. The body is the generator above with `await`
-// allowed in it, so a request - `.next(v)`, `.throw(e)`, `.return(v)` - cannot
+// allowed in it, so a request (`.next(v)`, `.throw(e)`, `.return(v)`) cannot
 // always be answered on the spot: the body may be parked on an await from the
 // previous one. So every request is a promise, joins a queue, and runs when
 // the body is free. The record a sync generator returns is what the promise
-// resolves with; a body that throws rejects it instead - the compiler's async
+// resolves with; a body that throws rejects it instead. The compiler's async
 // fence turns the throw into a rejected promise on the body's return path, and
 // settle_async_generator reads it back out.
 
+/// Queues one request on async generator \p generator and returns the promise
+/// that settles with its `{value, done}` record.
 value context::async_generator_request(value generator, value sent, resume_mode how) {
     if (!pending_promise_factory_ || !promise_settler_) { return value::undefined(); }
     const value promise = pending_promise_factory_(*this);
@@ -532,7 +528,7 @@ value context::async_generator_request(value generator, value sent, resume_mode 
                        : nullptr;
     if (held == nullptr || !held->is_kind(heap_kind::coroutine) ||
         !static_cast<coroutine_object *>(held->as_heap())->async_gen) {
-        // 27.6.3.3 step 3: not an async generator - the promise rejects, the
+        // 27.6.3.3 step 3: not an async generator. The promise rejects; the
         // caller is never thrown at.
         promise_settler_(*this, promise, make_error("TypeError", "not an async generator"), true);
         return promise;
@@ -543,6 +539,8 @@ value context::async_generator_request(value generator, value sent, resume_mode 
     return promise;
 }
 
+/// Runs queued requests on \p saved until the queue is empty or the body
+/// parks on an `await`.
 void context::async_generator_drain(coroutine_object * saved) {
     while (!saved->queue.empty() && !saved->running && !saved->awaiting && !failed_) {
         const coroutine_object::async_request request = saved->queue.front();
@@ -558,6 +556,8 @@ void context::async_generator_drain(coroutine_object * saved) {
     }
 }
 
+/// Settles the current request's promise with \p outcome. \p raw_return means
+/// \p outcome is the body's return value rather than a finished record.
 void context::settle_async_generator(coroutine_object * saved, value outcome, bool raw_return) {
     if (!promise_settler_) { return; }
     const value promise = saved->promise;
@@ -606,6 +606,8 @@ void context::settle_async_generator(coroutine_object * saved, value outcome, bo
     promise_settler_(*this, promise, record, false);
 }
 
+/// Moves the top frame (its register window and handlers) into \p saved and
+/// pops it. \p await_reg is where the resumed value will be written.
 void context::suspend_frame(coroutine_object * saved, std::uint16_t await_reg) {
     const call_frame & frame = frames_.back();
     const std::size_t base = frame.base;
@@ -627,14 +629,11 @@ void context::suspend_frame(coroutine_object * saved, std::uint16_t await_reg) {
     }
     handlers_.resize(frame.handler_base);
     frames_.pop_back();
-    // NOT BELOW THE CALLER'S OWN WINDOW. An interpreted callee's frame starts
-    // INSIDE its caller's (op::call: base + a + 1), so cutting the stack at
-    // this frame's base threw away every caller register above the callee
-    // slot - and the next call's `resize(needed, undefined)` refilled them
-    // with undefined. `f(1); g(2);` with both async: g read `v` as undefined,
-    // and every test262 file that starts two async functions before the first
-    // settles read the same. The caller keeps frame_size + 8 as the call
-    // opcode reserved it; a native between the two frames has no window here.
+    // Do not cut below the caller's own window. An interpreted callee's frame
+    // starts inside its caller's (op::call: base + a + 1), so truncating at
+    // this frame's base would drop live caller registers (e.g. `f(1); g(2);`
+    // with both async). Keep frame_size + 8, as the call opcode reserved; a
+    // native between the two frames has no window here.
     std::size_t keep = base;
     if (!frames_.empty() && frames_.back().proto != nullptr) {
         const call_frame & caller = frames_.back();
@@ -643,6 +642,8 @@ void context::suspend_frame(coroutine_object * saved, std::uint16_t await_reg) {
     if (registers_.size() > keep) { registers_.resize(keep); }
 }
 
+/// Pushes \p saved's register window and handlers back as a new top frame and
+/// returns the frame's register base.
 std::size_t context::restore_frame(coroutine_object * saved) {
     const std::size_t base = registers_.size();
     registers_.insert(registers_.end(), saved->window.begin(), saved->window.end());
@@ -662,7 +663,7 @@ std::size_t context::restore_frame(coroutine_object * saved) {
     frame.constructing = saved->constructing;
     frame.handler_base = handlers_.size();
     // A generator's frame keeps its coroutine, and an async generator's
-    // settles the REQUEST'S promise, so an await inside it parks on that
+    // settles the request's promise, so an await inside it parks on that
     // one rather than minting another; a sync generator's is undefined.
     frame.generator = saved->generator ? saved : nullptr;
     frame.async_promise = saved->promise;
@@ -685,6 +686,9 @@ value context::make_resume_record(std::string_view how, value v) {
     return record;
 }
 
+/// Arranges for \p saved to resume when \p v settles (Await, 27.7.5.3): a
+/// pending promise gets a resume handler, anything else queues the resume as a
+/// microtask.
 void context::await_for(coroutine_object * saved, value v) {
     if (!pending_promise_factory_ || !promise_settler_) { return; }
     const value coroutine = value::object(saved);
@@ -699,9 +703,9 @@ void context::await_for(coroutine_object * saved, value v) {
     if (v.is_object() &&
         static_cast<object_object *>(v.as_heap())->find(promise_settled_key) != nullptr) {
         // PromiseResolve(%Promise%, v), 27.2.4.7.1: a promise is awaited as
-        // itself when its `constructor` is %Promise% - a getter's throw is
-        // the await's rejection, so it is read under a fence - and resolved
-        // into a fresh one otherwise.
+        // itself when its `constructor` is %Promise%, and resolved into a fresh
+        // one otherwise. A throwing `constructor` getter is the await's
+        // rejection, so it is read under a fence.
         handler fence;
         fence.frame = frames_.size();
         fence.reg_top = registers_.size();
@@ -751,17 +755,23 @@ void context::await_for(coroutine_object * saved, value v) {
     queue_microtask(await_job(), {coroutine, with, value::boolean(rejected)});
 }
 
+/// Puts a suspended frame back on the stack and runs it. This mirrors the
+/// suspension in `op::await_value`: the saved window goes back on top of the
+/// register stack, the awaited value \p with lands in the register the await
+/// writes to, and the body continues after it. Called from a microtask,
+/// because a resumption is a promise handler and must be ordered with every
+/// other `then`.
 void context::resume(value coroutine, value with, bool rejected) {
     if (!coroutine.is_kind(heap_kind::coroutine) || failed_) { return; }
     auto * saved = static_cast<coroutine_object *>(coroutine.as_heap());
 
     if (saved->generator && saved->return_pending != 0) {
-        // THE AWAITED `.return(v)` ARRIVES. A finished generator's request
-        // settles with it as its done record (or with the rejection); one
-        // parked at a `yield*` hands it to the delegate loop as a record for
-        // the inner iterator; one at a plain yield resumes with a return
-        // completion - the marker thrown at the yield, as the sync form does
-        // - or with the rejection thrown there.
+        // The awaited `.return(v)` value has arrived. A finished generator's
+        // request settles with it as its done record (or with the rejection).
+        // One parked at a `yield*` hands it to the delegate loop as a record
+        // for the inner iterator. One at a plain yield resumes with a return
+        // completion (the marker thrown at the yield, as the sync form does)
+        // or with the rejection thrown there.
         const std::uint8_t pending = saved->return_pending;
         saved->return_pending = 0;
         saved->awaiting = false;
@@ -782,7 +792,7 @@ void context::resume(value coroutine, value with, bool rejected) {
     }
 
     const std::size_t base = restore_frame(saved);
-    // An async generator comes back as a GENERATOR frame, so its next `yield`
+    // An async generator comes back as a generator frame, so its next `yield`
     // finds the coroutine to park in.
     if (saved->generator) {
         saved->awaiting = false;
@@ -793,15 +803,15 @@ void context::resume(value coroutine, value with, bool rejected) {
     const std::size_t stop = frames_.size() - 1;
     suspended_ = false;
 
-    // A REJECTED await THROWS AT THE AWAIT, so `try { await p } catch` works
+    // A rejected await throws at the await, so `try { await p } catch` works
     // across a real suspension and not only across a settled one.
     if (rejected) {
         thrown_ = with;
         if (!unwind_to_handler()) {
             // Nothing in this frame catches it: the function's own promise
             // rejects, which is what an async function does with an exception
-            // it does not handle. The frame is already gone - unwind_to_handler
-            // pops what it cannot satisfy - so there is nothing left to run.
+            // it does not handle. The frame is already gone (unwind_to_handler
+            // pops what it cannot satisfy), so there is nothing left to run.
             while (frames_.size() > stop) { frames_.pop_back(); }
             registers_.resize(base);
             thrown_ = value::undefined();
@@ -826,7 +836,7 @@ void context::resume(value coroutine, value with, bool rejected) {
 
     const value returned = run_loop(stop);
     if (saved->generator) {
-        // THE ASYNC GENERATOR'S REQUEST, finished here: the body yielded (the
+        // The async generator's request finishes here: the body yielded (the
         // record), returned or threw (done), or parked on another await
         // (nothing yet). Then the queue moves on.
         saved->running = false;
@@ -848,32 +858,28 @@ void context::resume(value coroutine, value with, bool rejected) {
     }
     if (suspended_) {
         suspended_ = false;
-        return; // it awaited again; its promise settles on some later resume
+        return; // It awaited again; its promise settles on a later resume.
     }
     if (failed_) { return; }
     // The body finished. What it returns is already a settled promise, because
-    // an async function's last act is `wrap_promise` - so its outcome is
-    // ADOPTED rather than wrapped a second time.
+    // an async function's last act is `wrap_promise`, so its outcome is
+    // adopted rather than wrapped a second time.
     value outcome = returned;
     bool failed_outcome = false;
     if (returned.is_object()) {
         auto * obj = static_cast<object_object *>(returned.as_heap());
-        // SETTLED, not merely a promise: a pending one carries `__settled`
-        // too, as false, and reading its absent value fulfilled this promise
-        // with undefined at once - `async () => { await x; return p; }`
-        // finished before `p` did (select-event.html's "a second time"). A
-        // pending promise goes to the settler below, whose resolve ADOPTS it.
+        // Only a settled promise is unwrapped here. A pending one also has
+        // `__settled` (false); it goes to the settler below, whose resolve
+        // adopts it, so `async () => { await x; return p; }` waits for `p`.
         if (const value * settled = obj->find(promise_settled_key);
             settled != nullptr && truthy(*settled)) {
             value * held = obj->find(promise_result_key);
             value * state = obj->find(promise_rejected_key);
             outcome = held == nullptr ? value::undefined() : *held;
             failed_outcome = state != nullptr && truthy(*state);
-            // ADOPTED, as far as the host's rejection tracker is concerned:
-            // this is the `then` a PromiseResolveThenableJob would have
-            // called (PerformPromiseThen step 9), and without it the fence's
-            // `Promise.reject(e)` - rejected, consumed here, never reacted to
-            // - was reported to the page as an unhandled rejection.
+            // Mark it handled, as the `then` of a PromiseResolveThenableJob
+            // would (PerformPromiseThen step 9); otherwise the fence's
+            // `Promise.reject(e)`, consumed here, is reported as unhandled.
             mark_promise_handled(returned);
         }
     }

@@ -1,13 +1,15 @@
-// ctbrowser.script builtins - explicit resource management's OBJECTS (ES2026
-// clauses 20.5.7 SuppressedError, 27.4 DisposableStack and 27.5
-// AsyncDisposableStack): the `using` and `await using` declarations that drive
-// them are the compiler's.
+//===- disposable.cpp - DisposableStack and AsyncDisposableStack ----------===//
 //
-// New on 2026-09-12. A stack holds its resources as [value, method, async]
-// triples in a private-keyed array; DisposeResources (7.5.7) walks them in
-// reverse, wrapping a second throw in a SuppressedError around the first. The
-// async form is the same walk as a promise chain: every awaited step parks the
-// walk on a reaction and resumes from it.
+// The objects of explicit resource management (ES2026 clauses 20.5.7
+// SuppressedError, 27.4 DisposableStack and 27.5 AsyncDisposableStack); the
+// `using` and `await using` declarations that drive them are compiled by the
+// compiler. A stack holds its resources as [value, method, async] triples in a
+// private-keyed array; DisposeResources (7.5.7) walks them in reverse,
+// wrapping a second throw in a SuppressedError around the first. The async
+// form is the same walk as a promise chain: every awaited step suspends the
+// walk on a promise reaction and resumes from it.
+//
+//===----------------------------------------------------------------------===//
 
 #include "iterator_internal.hpp"
 
@@ -15,17 +17,20 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
+/// Private slots on a stack object: the resource list, the disposed flag, and
+/// a marker present only on an AsyncDisposableStack.
 constexpr std::string_view stack_slot = CTBROWSER_PRIVATE_KEY("DisposableResourceStack");
 constexpr std::string_view disposed_slot = CTBROWSER_PRIVATE_KEY("DisposableState");
 constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableStack");
 
+/// Returns own property `name` of `o`, or undefined when it is absent.
 [[nodiscard]] value slot(object_object * o, std::string_view name) {
     const value * held = o->find(name);
     return held == nullptr ? value::undefined() : *held;
 }
 
-// RequireInternalSlot for either stack kind: the receiver's own table, or
-// null with the TypeError in flight.
+/// RequireInternalSlot for either stack kind: the receiver's own table, or
+/// null with the TypeError pending.
 [[nodiscard]] object_object * stack_of(context & cx, bool async, const char * method) {
     const value self = cx.current_this();
     if (self.is_object()) {
@@ -37,7 +42,8 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
     cx.throw_error("TypeError", std::string{method} + " called on an incompatible receiver");
     return nullptr;
 }
-// ...and not yet disposed: a ReferenceError otherwise (27.4.3.x step 3).
+/// Like stack_of, but also requires the stack not yet disposed; throws a
+/// ReferenceError otherwise (step 3 of the ES2026 27.4.3 and 27.5.3 methods).
 [[nodiscard]] object_object * live_stack_of(context & cx, bool async, const char * method) {
     object_object * o = stack_of(cx, async, method);
     if (o == nullptr) { return nullptr; }
@@ -48,9 +54,9 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
     return o;
 }
 
-// GetDisposeMethod, 7.5.5: @@dispose for a sync hint; @@asyncDispose, then
-// @@dispose wrapped so its result is NOT awaited, for an async one. False is
-// a throw in flight; `out` undefined means neither was there.
+/// GetDisposeMethod, 7.5.5: @@dispose for a sync hint; @@asyncDispose, then
+/// @@dispose wrapped so its result is not awaited, for an async one. Returns
+/// false when a throw is pending; `out` undefined means neither was there.
 [[nodiscard]] bool dispose_method(context & cx, value v, bool async, value & out) {
     out = value::undefined();
     if (async) {
@@ -79,7 +85,7 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
         return true;
     }
     // 7.5.5 step 1.c.ii: a closure calling the sync method and answering a
-    // promise of undefined - the sync method's own result is dropped.
+    // promise of undefined; the sync method's own result is dropped.
     auto * wrapper = cx.allocate<native_object>("", [sync](context & c, std::span<value>) {
         const value promise = c.make_pending_promise();
         const context::rooted keep{c, promise};
@@ -95,10 +101,10 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
     return true;
 }
 
-// AddDisposableResource, 7.5.3, onto the stack's list. A `method` given is
-// adopt/defer's closure; otherwise it is looked up on `v`, and a null or
-// undefined `v` adds nothing to a sync stack and an await-only marker to an
-// async one.
+/// AddDisposableResource, 7.5.3, onto the stack's list. A `method` given is
+/// adopt/defer's closure; otherwise it is looked up on `v`, and a null or
+/// undefined `v` adds nothing to a sync stack and an await-only marker to an
+/// async one. Returns false when a throw is pending.
 [[nodiscard]] bool add_resource(context & cx, object_object * stack, value v, bool async,
                                 value method) {
     if (method.is_undefined()) {
@@ -127,18 +133,19 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
     return true;
 }
 
-// The SuppressedError of 7.5.7 step 2.c.iii.1: `error` is the newer throw,
-// `suppressed` the one it displaced. Built through the intrinsic constructor,
-// which install_disposable retains on the stack prototypes.
+/// The SuppressedError of 7.5.7 step 2.c.iii.1: `error` is the newer throw,
+/// `suppressed` the one it displaced. Built through the intrinsic constructor,
+/// which install_disposable retains on the stack prototypes.
 [[nodiscard]] value suppressed_error(context & cx, value ctor, value error, value suppressed) {
     const value args[2] = {error, suppressed};
     const value made = cx.construct(ctor, args);
     return made.is_object() ? made : error;
 }
 
-// DisposeResources, 7.5.7, SYNC: reverse order, each method called on its
-// value, a throw over an earlier throw wrapped. False with the throw in
-// flight - thrown at the end, once, so every resource ran first.
+/// DisposeResources, 7.5.7, synchronous form: reverse order, each method
+/// called on its value, a throw over an earlier throw wrapped. Returns false
+/// with the throw pending; it is thrown once at the end, so every resource
+/// is disposed first.
 [[nodiscard]] bool dispose_all(context & cx, object_object * stack, value suppressed_ctor) {
     const value list = slot(stack, stack_slot);
     const std::vector<value> resources = static_cast<array_object *>(list.as_heap())->items;
@@ -161,14 +168,16 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
     return !threw;
 }
 
-// DisposeResources, 7.5.7, ASYNC: the same walk, but a step whose result
-// must be awaited parks the walk on a promise reaction and the reaction
-// resumes it. State lives in one object every reaction retains. The `await
-// undefined` steps (2.b, 3) keep a sync-disposed resource's callbacks and
-// an async one's ordered the way the specification's own microtask count
-// orders them.
+/// DisposeResources, 7.5.7, asynchronous form: the same walk, but a step whose
+/// result must be awaited suspends the walk on a promise reaction and the
+/// reaction resumes it. State lives in one object every reaction retains. The
+/// `await undefined` steps (2.b, 3) keep a sync-disposed resource's callbacks
+/// and an async one's in the order the specification's own microtask count
+/// gives them.
 [[nodiscard]] value dispose_step(context & cx, value state_value);
 
+/// Makes the reaction that resumes dispose_step, recording a rejection first
+/// when `rejected`.
 [[nodiscard]] value resume_fn(context & cx, value state_value, bool rejected) {
     auto * fn =
         cx.allocate<native_object>("", [state_value, rejected](context & c, std::span<value> a) {
@@ -188,9 +197,9 @@ constexpr std::string_view async_slot = CTBROWSER_PRIVATE_KEY("AsyncDisposableSt
     return value::object(fn);
 }
 
-// Await(v): PromiseResolve(%Promise%, v) then the two resumptions - the
-// engine's own factory is PromiseResolve, and PerformPromiseThen is
-// async.cpp's.
+/// Await(v): PromiseResolve(%Promise%, v) (the engine's promise factory), then
+/// PerformPromiseThen (builtins/async/promise_reactions.cpp) with the two
+/// resume callbacks.
 void await_then_step(context & cx, value state_value, value awaited) {
     const value wrapper = cx.make_promise(awaited, false);
     const context::rooted keep{cx, wrapper};
@@ -260,6 +269,7 @@ void await_then_step(context & cx, value state_value, value awaited) {
 
 } // namespace
 
+/// Installs SuppressedError, DisposableStack and AsyncDisposableStack.
 void install_disposable(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -281,7 +291,7 @@ void install_disposable(context & cx) {
             if (!detail::constructing_this(self)) { self = c.make_object(); }
             auto * made = static_cast<object_object *>(self.as_heap());
             if (!made->prototype.is_object()) { made->prototype = value::object(suppressed_proto); }
-            // ToString once - ToPrimitive, then a Symbol refuses - and the
+            // ToString once (ToPrimitive, then a Symbol refuses), and the
             // stack line below reuses it rather than converting again.
             std::string text;
             if (!arg_at(a, 2).is_undefined()) {
@@ -467,9 +477,9 @@ void install_disposable(context & cx) {
                     state->set("thrown", value::undefined());
                     state->set("promise", promise);
                     state->set("SuppressedError", suppressed_value);
-                    // The stack keeps a fresh, empty list from here (7.5.7
-                    // step 5 happens at the end; nothing can observe it
-                    // earlier because the stack is already disposed).
+                    // The resource list is cleared only when the walk finishes
+                    // (7.5.7 step 5); nothing can observe it earlier because
+                    // the stack is already disposed.
                     const context::rooted keep_state{c, value::object(state)};
                     (void)dispose_step(c, value::object(state));
                     return promise;

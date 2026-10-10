@@ -1,16 +1,19 @@
-// ctbrowser.script builtins - ShadowRealm (the TC39 proposal, stage 2.7).
+//===- objects/shadow_realm.cpp - ShadowRealm builtin -----------*- C++ -*-===//
 //
-// A ShadowRealm is a realm with INTRINSICS OF ITS OWN (create_intrinsic_realm,
-// builtins.cpp) that code can be evaluated in and imported into, and the one
-// thing that crosses between it and its creator is a primitive or a function:
-// an object is a TypeError, and a function is WRAPPED - a new function of the
-// receiving realm whose [[Call]] carries its arguments over the same boundary
-// the other way. So the shadow realm's `Array.prototype` can be rewritten
-// without the page seeing it, and neither side ever holds an object of the
-// other's.
+// ShadowRealm, from the TC39 ShadowRealm proposal (stage 2.7); section numbers
+// below are that proposal's. A ShadowRealm is a realm with intrinsics of its
+// own (create_intrinsic_realm, builtins.cpp) that code can be evaluated in and
+// imported into. Only primitives and functions cross between it and its
+// creator: an object is a TypeError, and a function is wrapped, becoming a new
+// function of the receiving realm whose [[Call]] carries its arguments over
+// the same boundary the other way. So the shadow realm's `Array.prototype` can
+// be rewritten without the page seeing it, and neither side ever holds an
+// object of the other's.
 //
-// Its [[ShadowRealm]] slot holds the realm's global object, which is how
-// context::realm_of finds the realm again.
+// An instance's [[ShadowRealm]] slot holds the realm's global object, which is
+// how context::realm_of finds the realm again.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../async/promise_reactions.hpp"
 #include "../collections/iterator_internal.hpp"
@@ -22,8 +25,8 @@ namespace {
 
 constexpr std::string_view shadow_realm_key = CTBROWSER_PRIVATE_KEY("ShadowRealm");
 
-// A TypeError OF `realm`'s: its prototype is that realm's %TypeError.prototype%,
-// whichever realm is running when it is thrown.
+/// A TypeError belonging to `realm`: its prototype is that realm's
+/// %TypeError.prototype%, whichever realm is running when it is thrown.
 value type_error_in(context & c, realm_record & realm, std::string message) {
     const context::realm_scope in{c, realm};
     return c.make_error("TypeError", std::move(message));
@@ -33,8 +36,8 @@ void throw_type_error_in(context & c, realm_record & realm, std::string message)
     c.throw_value(type_error_in(c, realm, std::move(message)));
 }
 
-// ValidateShadowRealmObject (3.1.4): `self`'s [[ShadowRealm]], or null with
-// the TypeError thrown.
+/// ValidateShadowRealmObject (3.1.4): `self`'s [[ShadowRealm]], or null with
+/// the TypeError thrown.
 realm_record * shadow_realm_of(context & c, value self, const char * method) {
     if (self.is_object()) {
         if (const value * global =
@@ -51,9 +54,10 @@ realm_record * shadow_realm_of(context & c, value self, const char * method) {
 bool wrap_value(context & c, realm_record & to, realm_record & from, realm_record & errors, value v,
                 value & out);
 
-// GetFunctionRealm (7.3.24) of a wrapped function's target: a closure's own
-// [[Realm]]; a proxy's target's, and a REVOKED proxy's a TypeError; anything
-// else the realm it came from. Null with the TypeError thrown.
+/// GetFunctionRealm (ECMA-262 7.3.24) of a wrapped function's target: a
+/// closure's own [[Realm]]; for a proxy, its target's (a revoked proxy is a
+/// TypeError); anything else, the realm it came from. Null with the TypeError
+/// thrown.
 realm_record * function_realm(context & c, realm_record & caller, value target,
                               realm_record & from) {
     while (target.is_kind(heap_kind::proxy)) {
@@ -72,8 +76,9 @@ realm_record * function_realm(context & c, realm_record & caller, value target,
     return &from;
 }
 
-// CopyNameAndLength(F, Target) (3.1.3) with argCount 0: `length` and `name`
-// read off the target, { false, false, true } both. False when a read threw.
+/// CopyNameAndLength(F, Target) (3.1.3) with argCount 0: `length` and `name`
+/// are read off the target and defined non-writable, non-enumerable and
+/// configurable. False when a read threw.
 bool copy_name_and_length(context & c, value wrapped, value target) {
     const detail::completion copied = detail::fenced(c, [wrapped, target](context & cc) {
         auto * fn = static_cast<native_object *>(wrapped.as_heap());
@@ -102,13 +107,13 @@ bool copy_name_and_length(context & c, value wrapped, value target) {
     return !copied.threw;
 }
 
-// WrappedFunctionCreate (3.1.2): a function of `caller`'s, [[Prototype]]
-// its %Function.prototype%, whose [[Call]] (2.1) wraps `this` and every
-// argument INTO the target's realm, calls the target there, and wraps what
-// comes back OUT. Any throw on the way - the target's own included - is a
-// fresh TypeError of `caller`'s: nothing the other realm threw crosses.
-// Making it is a TypeError of `errors`' when the target's `length` or `name`
-// cannot be read.
+/// WrappedFunctionCreate (3.1.2): a function of `caller`'s realm, whose
+/// [[Prototype]] is that realm's %Function.prototype% and whose [[Call]] (2.1)
+/// wraps `this` and every argument into the target's realm, calls the target
+/// there, and wraps the result back. Any throw on the way, the target's own
+/// included, becomes a fresh TypeError of `caller`'s: nothing the other realm
+/// threw crosses. Creation fails with a TypeError of `errors`' when the
+/// target's `length` or `name` cannot be read.
 bool wrapped_function_create(context & c, realm_record & caller, realm_record & from,
                              realm_record & errors, value target, value & out) {
     native_object * wrapped = detail::method_native(c, "", native_fn{});
@@ -172,11 +177,11 @@ bool wrapped_function_create(context & c, realm_record & caller, realm_record & 
     return true;
 }
 
-// GetWrappedValue(to, value) (3.1.5), for a value that came from `from`: a
-// primitive as it is, a function wrapped as `to`'s, any other object a
-// TypeError. Every error is `errors`' - the realm that asked, which is `to`
-// except for a wrapped function's arguments, carried the other way (2.1
-// step 3's note). False with that thrown.
+/// GetWrappedValue(to, value) (3.1.5), for a value that came from `from`: a
+/// primitive as it is, a function wrapped as `to`'s, any other object a
+/// TypeError. Every error belongs to `errors`, the realm that asked; that is
+/// `to` except for a wrapped function's arguments, which are carried the other
+/// way (2.1 step 3's note). False with the error thrown.
 bool wrap_value(context & c, realm_record & to, realm_record & from, realm_record & errors, value v,
                 value & out) {
     if (v.is_callable()) { return wrapped_function_create(c, to, from, errors, v, out); }
@@ -192,6 +197,7 @@ bool wrap_value(context & c, realm_record & to, realm_record & from, realm_recor
 
 } // namespace
 
+/// Installs the `ShadowRealm` constructor and its prototype methods.
 void install_shadow_realm(context & cx) {
     using detail::method;
 
@@ -215,10 +221,10 @@ void install_shadow_realm(context & cx) {
     proto->define("constructor", value::object(ctor), attr_builtin);
 
     // 3.4.1 ShadowRealm.prototype.evaluate ( sourceText ): PerformShadowRealmEval
-    // (3.1.1) - the source is an INDIRECT EVAL's in the other realm (its own
-    // lexical scope, its `var`s the global object's), a source that does not
-    // parse is the caller's SyntaxError, and a throw during the evaluation a
-    // TypeError of the caller's.
+    // (3.1.1). The source runs as an indirect eval in the other realm (its own
+    // lexical scope, its `var`s on that global object); a source that does not
+    // parse is the caller's SyntaxError, and a throw during the evaluation is
+    // a TypeError of the caller's.
     method(cx, proto, "evaluate", 1, [](context & c, std::span<value> a) {
         realm_record * const shadow = shadow_realm_of(c, c.current_this(), "evaluate");
         if (shadow == nullptr) { return value::undefined(); }
@@ -251,8 +257,8 @@ void install_shadow_realm(context & cx) {
     });
 
     // 3.4.2 ShadowRealm.prototype.importValue ( specifier, exportName ):
-    // ShadowRealmImportValue (3.1.6) - the module loaded and evaluated IN the
-    // other realm, and a promise of the caller's that settles with the named
+    // ShadowRealmImportValue (3.1.6). The module is loaded and evaluated in
+    // the other realm, and a promise of the caller's settles with the named
     // export wrapped, or rejects with a TypeError of the caller's: for a load
     // or an evaluation that failed (%ThrowTypeError% is the rejection
     // handler), for an export that is not there, and for one that cannot
@@ -310,7 +316,8 @@ void install_shadow_realm(context & cx) {
         return cap.promise;
     });
 
-    // 3.4.3 ShadowRealm.prototype [ @@toStringTag ]: { false, false, true }.
+    // 3.4.3 ShadowRealm.prototype [ @@toStringTag ]: non-writable,
+    // non-enumerable, configurable.
     proto->define(CTBROWSER_SYMBOL_KEY("toStringTag"), cx.string("ShadowRealm"), attr_configurable);
     cx.define_global("ShadowRealm", value::object(ctor));
 }

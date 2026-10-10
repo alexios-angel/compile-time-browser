@@ -1,10 +1,11 @@
-// compiler_impl - statements: a function declaration, and the function body
-// that holds every other statement.
+//===- functions.cpp - Function declarations and bodies ---------*- C++ -*-===//
 //
-// One of four files carved out of a 1,017-line compile/statements.cpp on
-// 2026-09-08 - which was itself one of the files carved out of a 3,845-line
-// compile.cpp on 2026-08-09. All are members of compiler_impl, declared whole
-// in compiler_impl.hpp beside the directory; nothing about that header changed.
+// compiler_impl members that compile function declarations and function
+// bodies: the parameter prologue, `arguments`, the named-function-expression
+// binding, the async fence, derived-constructor `super()` checks and implicit
+// returns. Members are declared in ../compiler_impl.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../compiler_impl.hpp"
 
@@ -47,7 +48,7 @@ void compiler_impl::emit_derived_return(std::uint16_t value) {
     const std::size_t defined = proto().emit(instruction{op::jump_if_defined, value});
     emit_super_check(fn().derived_flag, false);
     {
-        // `this` EXPLICITLY, not ret_undef: super() may have rebound it to
+        // Return `this` explicitly, not ret_undef: super() may have rebound it to
         // the object the parent returned (bind_this_name), which [[Construct]]
         // would not see in the instance it made.
         const std::uint16_t self = alloc_reg();
@@ -98,20 +99,17 @@ void compiler_impl::emit_implicit_return() {
 
 void compiler_impl::compile_function_decl(std::int32_t idx) {
     const vp::node & n = at(idx);
-    // A function declared in a BLOCK is a binding of that block (14.2.1 -
-    // and the `let`-like half of B.3.2): predeclare_locals hoists only a
-    // body's own statements, so one in a nested block had no local and its
-    // write went to a global - which strict code refuses as an assignment
-    // to an unresolvable name. Declared before its body compiles, so a
-    // recursive call inside resolves to it. Its register survives the
-    // statement because compile_stmt does not release a declaration's.
+    // A function declared in a block is a binding of that block (14.2.1, and
+    // the `let`-like half of B.3.2). predeclare_locals hoists only a body's
+    // own statements, so the block's local is declared here, before the body
+    // compiles, so that a recursive call inside resolves to it. Its register
+    // survives the statement because compile_stmt does not release a
+    // declaration's.
     //
-    // A SCRIPT'S OWN TOP LEVEL is the one place the declaration IS the global
-    // (16.1.7 step 17). A block of a classic script is not that place: it was
-    // treated as one, so `{ function f() {} }` wrote the global at the
-    // declaration and there was no block binding at all - which B.3.3.2 needs
-    // to have, because the var write is a COPY of it and is skipped whenever
-    // a `let` of the same name shadows.
+    // A classic script's own top level is the one place the declaration is
+    // the global (16.1.7 step 17). A block inside a classic script still gets
+    // its block binding: B.3.3.2's var write is a copy of it and is skipped
+    // whenever a `let` of the same name shadows.
     const bool script_scope = frames_.size() == 1 && !top_level_is_scope_;
     const bool script_top_level = script_scope && fn().scope_marks.size() <= 1;
     bool block_local = false;
@@ -124,38 +122,27 @@ void compiler_impl::compile_function_decl(std::int32_t idx) {
     const std::uint32_t index = compile_function_body(idx, std::string{n.text});
     const std::uint32_t mark = reg_mark();
     const std::uint16_t r = alloc_reg();
-    // `index` GOES IN WHOLE. `with_bx` takes a uint32 and splits it across b
-    // and c; three of the four op::closure sites narrowed it to uint16 first,
-    // which is not a bound, it is a WRAP. Measured before the casts went: a
-    // program with 70,001 functions called function 69,999 and ran function
-    // 4,463 - 69,999 minus 65,536 - with no error anywhere. Babylon is 31,905,
-    // so the corpus in this repository sat at 49% of a ceiling that the
-    // instruction encoding never had.
+    // Pass `index` as a full uint32: with_bx splits it across b and c.
+    // Narrowing it to uint16 would wrap silently past 65,535 functions and
+    // create the wrong closure.
     proto().emit(instruction::with_bx(op::closure, r, index));
-    // AT THE TOP LEVEL a function declaration is a global, by design: a page
-    // defines functions the host calls by name, and script scope is what
-    // sibling declarations close over.
+    // Only a classic script's top-level declaration is a global: a page
+    // defines functions the host calls by name. Anywhere else (nested
+    // functions, IIFE bundles, and a module's top level) it is a local, so
+    // helpers in different closures do not collide and `export function f`
+    // can find its binding.
     //
-    // ANYWHERE ELSE it is a local, and this used to emit set_global at every
-    // depth. Two helpers named `handler` in two different closures collided
-    // in one table, and a nested function meant to capture an enclosing
-    // local read a global instead. In a bundle where every module is an
-    // IIFE - which is every bundle - that is the whole point of the IIFE
-    // silently undone.
-    // A MODULE'S TOP LEVEL IS NOT THE GLOBAL SCOPE, so its functions are
-    // locals like any other binding. Leaving them global would leak every
-    // module's helpers into one namespace - and, more visibly, make
-    // `export function f() {}` unpublishable, because find_local would not
-    // know the name.
-    // THE SCRIPT'S VAR, a global - unless this is a direct eval's program
-    // and its caller binds the name: the eval's var-scoped function is that
-    // binding (19.2.1.3 step 8, B.3.2.3), as its `var` is (compile_stmt).
+    // write_script_var: the script's var is a global, unless this is a direct
+    // eval's program and its caller binds the name; then the eval's
+    // var-scoped function is that binding (19.2.1.3 step 8, B.3.2.3), as its
+    // `var` is (compile_stmt).
     const auto write_script_var = [&] {
         if (const int up = resolve_upvalue(0, n.text); up >= 0) {
             proto().emit(instruction{op::set_upvalue, static_cast<std::uint16_t>(up), r});
         } else if (!eval_vars_name_.empty()) {
-            // ...or of its caller's function's variable environment
-            // (with_scope::eval_vars), where compile_program made it.
+            // Or the binding lives on the caller's function's variable
+            // environment object (with_scope::eval_vars), where
+            // compile_program made it.
             const std::uint32_t object_mark = reg_mark();
             const std::uint16_t object = alloc_reg();
             emit_plain_read(eval_vars_name_, object);
@@ -200,9 +187,9 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     out_.functions[index].source_begin = n.begin;
     out_.functions[index].source_end = n.end;
 
-    // STRICTNESS IS INHERITED, and a class body or a directive of its own
-    // adds it (11.2.2). Decided before the frame is pushed, off the enclosing
-    // one.
+    // Strictness is inherited, and a class body or the function's own
+    // directive adds it (11.2.2). Decided from the enclosing frame, before the
+    // new frame is pushed.
     const bool strict =
         fn().is_strict || class_body_depth_ > 0 ||
         (n.a >= 0 && at(n.a).kind == vp::nk::block && has_use_strict_directive(n.a));
@@ -212,90 +199,64 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     frames_.back().has_home = method_pending_;
     method_pending_ = false;
     out_.functions[index].is_strict = strict;
-    // A BODY IS NOT THE DECLARATION THAT HOLDS IT: `const f = function () {
+    // A body is not the declaration that holds it: `const f = function () {
     // typo = 1; }` writes `typo` as an assignment, whatever `f` is.
     const not_declaring body_is_not_a_write{*this};
     push_scope();
-    // A FUNCTION BODY IS NOT PART OF THE CHAIN THAT ENCLOSES IT.
-    //
-    // `a?.b(() => c?.d)` compiles the arrow while the outer chain is open,
-    // so without this the arrow's own short-circuit would be recorded on
-    // the outer chain's exit list - and patched into the ENCLOSING proto's
-    // code array, at an index that means something else entirely there.
+    // A function body is not part of the optional chain that encloses it.
+    // `a?.b(() => c?.d)` compiles the arrow while the outer chain is open, so
+    // without this the arrow's own short-circuit would be recorded on the
+    // outer chain's exit list and patched into the enclosing proto's code
+    // array, at an index that means something else there.
     const bool saved_in_chain = in_chain_;
     std::vector<std::size_t> saved_exits;
     saved_exits.swap(optional_exits_);
     in_chain_ = false;
-    // AND NEITHER IS IT PART OF AN ENCLOSING `try`. Same reasoning as the
-    // chain above, and the same failure: a `return` inside this body would
-    // otherwise be routed into the enclosing function's open finally, storing a
-    // completion in ITS registers and pushing a jump onto ITS arrival list -
-    // which is then patched into the ENCLOSING proto's code array at an index
-    // that means something else in this one. Caught by the asan preset as a
-    // leak in the compiler, which is what an arrival list that never gets
-    // patched looks like from outside.
+    // Nor is it part of an enclosing `try`, for the same reason: a `return`
+    // inside this body would otherwise be routed into the enclosing
+    // function's open finally, storing a completion in its registers and
+    // pushing a jump onto its arrival list, to be patched into the wrong
+    // proto's code array.
     std::vector<finally_context> saved_finallies;
     saved_finallies.swap(finallies_);
-    // A loop and a handler stop at a function boundary for the same reason: a
-    // `break` or a `pop_handler` cannot cross one.
-    //
-    // `loops_` USED TO BE LEFT ALONE HERE, on the argument that `loop_for` is
-    // only reached from `break`/`continue` and that the parser refuses those
-    // outside a loop. The comment said it was worth someone checking rather
-    // than inheriting; it was checked, and it is WRONG. A LABELLED break
-    // inside a nested function - `L: do { (function(){ break L; })(); }
-    // while(0)` - reaches loop_for, finds the ENCLOSING function's loop, and
-    // pushes a jump site onto its `breaks` list. That site is an index into
-    // this proto's code array and is later patched using the OUTER proto's
-    // offsets, so the inner function jumps to an instruction chosen at random:
-    // test262's language/statements/break/S12.8_A6.js landed on a `load_string`
-    // with an out-of-range slot and allocated until std::bad_alloc killed the
-    // process (SIGABRT, measured 2026-09-03).
-    //
-    // Swapping the vector is the same fix the chain and the finally above
-    // already use, and it makes `break L` across a function boundary the
-    // compile refusal it should always have been - which is the early error
-    // 13.9.1 requires, arriving as a refusal rather than a SyntaxError because
-    // this engine has no early-error pass (docs/test262.md).
+    // Loops and handlers stop at a function boundary too: a `break` or a
+    // `pop_handler` cannot cross one. A labelled break inside a nested
+    // function, `L: do { (function(){ break L; })(); } while(0)`, would
+    // otherwise find the enclosing function's loop and record a jump patched
+    // with the wrong proto's offsets. With loops_ swapped out it becomes a
+    // compile refusal, standing in for the 13.9.1 early error (there is no
+    // early-error pass; see docs/test262.md).
     std::vector<loop_context> saved_loops;
     saved_loops.swap(loops_);
     const std::size_t saved_handler_depth = handler_depth_;
     handler_depth_ = 0;
-    // Which of this body's names some nested function mentions has to be
-    // known BEFORE any local is declared - that is what decides whether a
-    // local gets a register or a cell.
+    // Which of this body's names some nested function mentions must be known
+    // before any local is declared: that decides whether a local gets a
+    // plain register or a cell.
     fn().captures = range_of(idx);
     const std::span<const std::int32_t> params = kids(n);
     for (const std::int32_t p : params) { (void)declare_local(std::string{at(p).text}); }
-    // `arguments` IS MATERIALISED ONCE, BEFORE THE PROLOGUE, AND IS A REAL
-    // LOCAL.
+    // `arguments` is materialised once, as a real local, after the
+    // parameters are declared and before the prologue runs.
     //
-    // Before, because the prologue REWRITES the parameter registers: a
-    // destructured parameter unpacks into its own slot, a default overwrites
-    // an undefined one. Building `arguments` after that read the unpacked
-    // values rather than the arguments, so `function f(a, {b} = {})` had
-    // `arguments[1]` holding whatever the pattern left there - which is how
-    // colorjs's `isString(arguments[1])` was handed an options object it
-    // then tried to use as a colour space.
+    // Before the prologue, because the prologue rewrites the parameter
+    // registers: a destructured parameter unpacks into its own slot and a
+    // default overwrites an undefined one, so `function f(a, {b} = {})` would
+    // see the pattern's leftovers in `arguments[1]`. After the declarations,
+    // because the calling convention puts argument i in register i, and
+    // taking a register ahead of them would shift every argument. (Building
+    // it where the name is mentioned is too late: by then the surrounding
+    // expression has reused the registers holding the extra arguments.)
     //
-    // After the parameters are DECLARED, though: the calling convention puts
-    // argument i in register i, so taking a register ahead of them would
-    // shift every one.
-    //
-    // Building it where the name is MENTIONED is wrong for the same reason
-    // one step further on - by then the surrounding expression has reused
-    // the registers holding arguments past the last declared parameter.
-    //
-    // A local also gives it the right identity - one object per call, not a
-    // fresh array per mention - and lets an arrow capture the enclosing
-    // function's, which is the arrow rule, for free. Arrows do not make
-    // their own: `mentions_arguments` descends into them so the enclosing
-    // function makes one they can capture.
+    // A local also gives it the right identity, one object per call, and lets
+    // an arrow capture the enclosing function's. Arrows never make their own:
+    // `mentions_arguments` descends into them so the enclosing function makes
+    // one they can capture.
     std::uint16_t arguments_slot = 0;
     bool arguments_boxed = false;
-    // A DEFAULT MAY MENTION IT TOO (10.2.11 step 15-22: `arguments` is
-    // needed when the parameters or the body say it): `function f(x =
-    // arguments[2])` read an unresolvable name.
+    // A parameter default may mention it too (10.2.11 steps 15-22:
+    // `arguments` is needed when the parameters or the body name it), as in
+    // `function f(x = arguments[2])`.
     const bool wants_arguments =
         !out_.functions[index].is_arrow &&
         (mentions_arguments(n.a) ||
@@ -306,13 +267,14 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::make_arguments, arguments_slot});
         arguments_boxed = fn().locals.back().boxed;
     }
-    // THE OBJECT A SLOPPY DIRECT EVAL'S `var`s ARE MADE ON (with_scope::
-    // eval_vars), before the defaults - an eval may be in one - and after the
-    // parameters and `arguments`, which it must not shift. Null-prototyped,
-    // so `toString` is nobody's binding here: `undefined` is the explicit
-    // null of object_object::prototype. Its `locals_mark` is 0 - the eval
-    // may not shadow a binding of this function's own, so none is looked up
-    // on it. Named by how many such objects enclose it, which no two on one
+    // The object a sloppy direct eval's `var`s are created on
+    // (with_scope::eval_vars). Made before the defaults, since an eval may sit
+    // in one, and after the parameters and `arguments`, whose registers it
+    // must not shift. It has a null prototype so `toString` is nobody's
+    // binding here (`undefined` is the explicit null of
+    // object_object::prototype). Its `locals_mark` is 0: the eval may not
+    // shadow a binding of this function's own, so none is looked up on it.
+    // It is named by how many such objects enclose it, which no two on one
     // scope chain share (compile_program orders the ones it is handed so).
     if (!strict && own_direct_eval(idx)) {
         const auto depth =
@@ -329,16 +291,10 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::new_cell, held});
         with_scopes_.push_back(with_scope{fn().eval_vars, frames_.size() - 1, 0, true});
     }
-    // A captured PARAMETER needs boxing too, and it arrives already holding
-    // its value - so box in place, after the arguments land and BEFORE the
-    // defaults are evaluated: a default expression reads an earlier
-    // parameter through its cell (`function f(cls, p = cls.name)` with `cls`
-    // captured by an arrow in the body - zod's _instanceof), and boxing after
-    // the prologue meant that read went through cell_get on a raw value and
-    // answered undefined. The prologue writes a boxed parameter's default
-    // through cell_set for the same reason.
-    // See the fence below: an async (non-generator) function's fence covers
-    // its parameter defaults too, so it is pushed here, before them.
+    // An async (non-generator) function's fence also covers its parameter
+    // defaults, so it is pushed here, before the prologue. See the fence
+    // below. (Captured parameters are boxed inside compile_parameter_prologue,
+    // before any default reads them.)
     const bool is_async_fn = n.c > 0 && (n.c & 1) != 0;
     const bool is_generator_fn = n.c > 0 && (n.c & 2) != 0;
     const bool fenced = is_async_fn;
@@ -379,29 +335,27 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
     if (wants_arguments && arguments_boxed) {
         proto().emit(instruction{op::new_cell, arguments_slot});
     }
-    // A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME, in its own body and
-    // nowhere else. `var f = function me(n) { return me(n - 1); }` is how
-    // an unnamed function recurses, and `(function pump() { raf(pump); })()`
-    // is how one drives an animation loop - both called an undefined name
-    // without this, silently in the second case because a callback that is
-    // undefined simply never runs.
+    // A named function expression binds its own name, in its own body and
+    // nowhere else: `var f = function me(n) { return me(n - 1); }` and
+    // `(function pump() { raf(pump); })()` both rely on it.
     //
-    // AFTER the parameters, because the calling convention puts argument i
-    // in register i: taking a register ahead of them would shift every
-    // argument by one. A parameter of the same name legitimately shadows
-    // this binding, so one is only made when no parameter claimed the name.
+    // Declared after the parameters, because the calling convention puts
+    // argument i in register i. A parameter of the same name legitimately
+    // shadows this binding, so one is made only when no parameter claimed
+    // the name.
     if (n.kind == vp::nk::func_expr && idx != default_function_ &&
         !out_.functions[index].name.empty() &&
         find_local_in_current_scope(out_.functions[index].name) == nullptr) {
         const std::uint16_t self = declare_local(out_.functions[index].name);
         // CreateImmutableBinding(name, false) (15.2.5 step 4): `me = 1` in
-        // the body is ignored in sloppy code and the TypeError in strict.
-        // A NAME THE NODE DOES NOT CARRY is a class member's: a constructor's
-        // is the class's own name, immutable in its body (class_bindings_).
-        // A method binds no name at all (15.4.4), so ITS local is a known
-        // deviation - `foo` inside method `foo` reads the method - left
-        // mutable, and in place because removing it changes the bytecode of
-        // every class method, which ctcompile's proofs are pinned to.
+        // the body is ignored in sloppy code and a TypeError in strict code.
+        // A name the node does not carry belongs to a class member: a
+        // constructor's is the class's own name, immutable in its body
+        // (class_bindings_). A method binds no name at all (15.4.4), so its
+        // local is a known deviation (`foo` inside method `foo` reads the
+        // method). It is left mutable and in place because removing it
+        // changes the bytecode of every class method, which ctcompile's
+        // proofs are pinned to.
         if (!n.text.empty()) {
             fn().locals.back().readonly = immutability::sloppy;
         } else if (!class_bindings_.empty() &&
@@ -411,9 +365,9 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::load_callee, self});
         if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, self}); }
     }
-    // A DERIVED CONSTRUCTOR'S `super()` FLAG - see frame::derived_flag. Boxed
-    // whatever the capture index says, because an arrow in the body reads
-    // and writes it as an upvalue.
+    // A derived constructor's `super()`-has-run flag (see
+    // frame::derived_flag). Always boxed, whatever the capture index says,
+    // because an arrow in the body reads and writes it as an upvalue.
     if (derived_ctor_pending_) {
         derived_ctor_pending_ = false;
         fn().derived_flag = "@super:" + std::to_string(index);
@@ -422,7 +376,7 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::load_false, flag});
         proto().emit(instruction{op::new_cell, flag});
     }
-    // THE new.target ITS ARROWS SEE - see new_target_local.
+    // The new.target this function's arrows see (see new_target_local).
     if (!out_.functions[index].is_arrow && is_captured(new_target_local) &&
         arrow_wants_new_target(n.a, false)) {
         const std::uint16_t held = declare_local(std::string{new_target_local});
@@ -430,29 +384,29 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         proto().emit(instruction{op::load_new_target, held});
         proto().emit(instruction{op::new_cell, held});
     }
-    // Declarations are hoisted to the top of the body BEFORE any nested
-    // function is compiled. Without this, a nested function DECLARATION
-    // (which hoists, so it compiles first) resolves the enclosing local
-    // it means to capture as a global instead, and reads undefined.
+    // Declarations are hoisted to the top of the body before any nested
+    // function is compiled. Otherwise a nested function declaration (which
+    // hoists, so it compiles first) would resolve the enclosing local it
+    // means to capture as a global instead.
     predeclare_locals(n.a);
 
-    // c bit0 = async, bit1 = generator - but `c` DEFAULTS TO -1, so an
+    // `c` bit 0 = async, bit 1 = generator. `c` defaults to -1, so an
     // unmarked function looks async unless the sign is checked first.
     fn().is_async = n.c > 0 && (n.c & 1) != 0;
     fn().is_generator = n.c > 0 && (n.c & 2) != 0;
     proto().is_generator = fn().is_generator;
     proto().is_async = fn().is_async;
 
-    // A GENERATOR'S PARAMETERS ARE EVALUATED BY THE CALL, not by the first
+    // A generator's parameters are evaluated by the call, not by the first
     // `.next()`: FunctionDeclarationInstantiation is step 8 of [[Call]]
     // (10.2.1), before the generator object exists, so a default that throws
     // throws at `g()` and `g(null)` with a pattern parameter is a TypeError
     // there (27.5.3.1 / 27.6.3.1 both say `? FunctionDeclarationInstantiation`).
     // The body proper starts at this suspension: make_generator runs the
     // frame up to it, and the first resume lands past it with its argument
-    // in the scratch register - discarded, as 27.5.3.3 step 5 discards it.
-    // Only when the prologue can be observed - a default or a pattern - so a
-    // plain `function* g(a, b)` still costs nothing extra to call.
+    // in the scratch register, discarded as 27.5.3.3 step 5 discards it.
+    // Done only when the prologue can be observed (a default or a pattern),
+    // so a plain `function* g(a, b)` costs nothing extra to call.
     if (fn().is_generator) {
         bool observable = false;
         for (const std::int32_t p : params) { observable |= at(p).a >= 0 || at(p).b >= 0; }
@@ -464,22 +418,20 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         }
     }
 
-    // THE ASYNC FENCE. An async function never throws at its caller: a throw
-    // its body does not catch REJECTS the promise it returned (27.7.5.2,
-    // AsyncBlockStart step 3.f). Before this, `async function f() { throw e }`
-    // threw e synchronously out of `f()`, and after a real suspension the
-    // throw reached nothing at all and was an engine fault. One handler round
-    // the whole body, landing on a return of `Promise.reject(e)` - through the
-    // builtin's hidden global rather than a new opcode, so the compiled tier
-    // sees a call it already knows how to make. An async GENERATOR is fenced
-    // the same way; settle_async_generator reads the rejection back out of
-    // the record. `handler_depth_` counts it so a loop exit inside the body
-    // pops only what it opened.
-    // THE FENCE OPENS BEFORE THE PARAMETER PROLOGUE for an async function
-    // that is not a generator: a default that throws REJECTS the promise
-    // (27.7.5.1 EvaluateAsyncFunctionBody step 2-3), where an async
-    // generator's throws at the call (27.6.3.1 uses `?`). So the push may
-    // already have happened above; this block only opens it for the rest.
+    // The async fence: one handler around the whole body, so a throw the body
+    // does not catch rejects the returned promise instead of throwing at the
+    // caller (27.7.5.2, AsyncBlockStart step 3.f). It returns
+    // `Promise.reject(e)` through the builtin's hidden global rather than a
+    // new opcode, so the ahead-of-time compiler (ctcompile) sees an ordinary
+    // call. Async generators are fenced the same way (settle_async_generator
+    // reads the rejection back out of the record). `handler_depth_` counts
+    // the fence so a loop exit inside the body pops only what it opened.
+    //
+    // For a non-generator async function the fence was already opened before
+    // the parameter prologue, because a throwing default must reject
+    // (27.7.5.1 EvaluateAsyncFunctionBody steps 2-3); an async generator's
+    // default throws at the call (27.6.3.1 uses `?`). This block opens the
+    // fence only when that did not happen.
     if (fenced && fence_guard == no_fence) {
         fence_reg = alloc_reg();
         fence_guard = proto().emit(instruction{op::push_handler, fence_reg});
@@ -494,13 +446,12 @@ std::uint32_t compiler_impl::compile_function_body(std::int32_t idx, std::string
         compile_statement_list(kids(at(body)), true);
         emit_implicit_return();
     } else if (body >= 0) {
-        // concise arrow body: `x => expr` returns expr
+        // A concise arrow body: `x => expr` returns expr.
         const std::uint16_t r = alloc_reg();
         compile_expr(body, r);
-        // NOT for a generator, even an async one. A generator's `return`
-        // becomes the `value` of a `{value, done: true}` record; the
-        // promise, if there is to be one, is the driver's job - which is
-        // exactly what TypeScript's __awaiter helper does with it.
+        // Not for a generator, even an async one: a generator's `return`
+        // becomes the `value` of a `{value, done: true}` record, and any
+        // promise is the driver's job (as in TypeScript's __awaiter helper).
         if (fn().is_async && !fn().is_generator) { proto().emit(instruction{op::wrap_promise, r}); }
         proto().emit(instruction{op::ret, r});
     } else {

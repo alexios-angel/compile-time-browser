@@ -1,10 +1,9 @@
-// compiler_impl - helpers.
+//===- ctbrowser/lib/Script/compile/helpers.cpp - Emit helpers ------------===//
 //
-// Emitting a constant or a string, and patching a jump once its
-// target is known.
+// compiler_impl helpers: emitting a constant or a string, and patching a
+// jump once its target is known. The class is declared in compiler_impl.hpp.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -30,11 +29,9 @@ void compiler_impl::patch_jump(std::size_t at_index, std::size_t target) {
              ". Past that it branches to the WRONG address.");
     }
     instruction & jump = proto().code[at_index];
-    // The SAME split with_bx uses, and it has to stay that way: sbx() reads
-    // b and c back as one 32-bit field. Widening the operands without
-    // widening this shift left every jump encoded 8/8 into 16-bit halves,
-    // so every branch went somewhere else - and the symptom was an `if`
-    // body silently not running, not a crash.
+    // Must match instruction::with_bx: sbx() reads b (high 16 bits) and c
+    // (low 16 bits) back as one 32-bit offset. A mismatch silently sends every
+    // branch to the wrong address.
     const auto wide = static_cast<std::uint32_t>(offset);
     jump.b = static_cast<std::uint16_t>(wide >> 16);
     jump.c = static_cast<std::uint16_t>(wide & 0xFFFF);

@@ -1,3 +1,11 @@
+//===- execution.cpp - RegExpExec and helpers -------------------*- C++ -*-===//
+//
+// The matching half of RegExp (ECMA-262 22.2.7): compiling and caching a
+// pattern, RegExpBuiltinExec and RegExpExec, the exec result array,
+// lastIndex access, the Annex B legacy statics and the RegExp String
+// Iterator's next. Declared in execution.hpp and used by regexp.cpp.
+//
+//===----------------------------------------------------------------------===//
 #include "execution.hpp"
 
 namespace ctbrowser::script::builtins_detail {
@@ -10,12 +18,12 @@ bool full_unicode_flags(std::string_view flags) {
     return flags.find('u') != std::string_view::npos || flags.find('v') != std::string_view::npos;
 }
 
-// WITHOUT `u` OR `v` THE PATTERN IS CODE UNITS (22.2.2): a literal
-// "\u{1D306}" in it is two characters, each quantifiable and each a class
-// member on its own, so it is compiled with its pairs split
-// (utf16::split_pairs) - and matched against a subject split the same way
-// (builtin_exec). A group's NAME is not a character of the pattern and keeps
-// its pair: `(?<name>` and `\k<name>` are copied as written.
+/// Without `u` or `v` the pattern is code units (22.2.2): a literal
+/// "\u{1D306}" in it is two characters, each quantifiable and each a class
+/// member on its own, so it is compiled with its pairs split
+/// (utf16::split_pairs) and matched against a subject split the same way
+/// (builtin_exec). A group's name is not a character of the pattern and keeps
+/// its pair: `(?<name>` and `\k<name>` are copied as written.
 std::string split_pattern_pairs(const std::string & source) {
     if (!utf16::has_pair(source)) { return source; }
     std::string out;
@@ -25,7 +33,7 @@ std::string split_pattern_pairs(const std::string & source) {
                                 source[i + 3] != '=' && source[i + 3] != '!';
         const bool reference = source.compare(i, 3, "\\k<") == 0;
         if (source[i] == '\\' && !reference) {
-            ++i; // an escaped character is not the start of either
+            ++i; // An escaped character starts neither.
             continue;
         }
         if (!group_name && !reference) { continue; }
@@ -42,10 +50,10 @@ std::string split_pattern_pairs(const std::string & source) {
 
 } // namespace
 
-// The compiled program lives in a cache keyed by `source\0flags`, so the same
-// literal in a loop compiles once. Shared by every native this file installs
-// and dies with them.
-
+/// Returns the compiled program for `source` and `flags` from `cache`, keyed by
+/// `source\0flags`, compiling it on a miss so the same literal in a loop
+/// compiles once. The cache is shared by every RegExp native and dies with
+/// them.
 [[nodiscard]] std::shared_ptr<rx::rx_prog> compiled(const std::shared_ptr<regex_cache> & cache,
                                                     const std::string & source,
                                                     const std::string & flags) {
@@ -58,17 +66,17 @@ std::string split_pattern_pairs(const std::string & source) {
     return program;
 }
 
-// [[OriginalSource]] and [[OriginalFlags]]. Private keys, which no source text
-// can spell and no enumeration reports (value.hpp, private_key_prefix).
-
+/// Returns `v`'s object when it carries the [[OriginalSource]] slot, else null.
+/// [[OriginalSource]] and [[OriginalFlags]] are private keys, which no source
+/// text can spell and no enumeration reports (value.hpp, private_key_prefix).
 [[nodiscard]] object_object * regexp_table(value v) {
     if (!v.is_object()) { return nullptr; }
     auto * o = static_cast<object_object *>(v.as_heap());
     return o->find(slot_source) == nullptr ? nullptr : o;
 }
 
-// thisRegExpObject: the receiver of exec and the boolean accessors must carry
-// the slots; anything else is a TypeError with the method's name in it.
+/// thisRegExpObject: the receiver of exec and the boolean accessors must carry
+/// the slots; anything else is a TypeError with the method's name in it.
 [[nodiscard]] object_object * this_regexp(context & cx, const char * method) {
     object_object * o = regexp_table(cx.current_this());
     if (o == nullptr) {
@@ -77,13 +85,13 @@ std::string split_pattern_pairs(const std::string & source) {
     return o;
 }
 
-// EscapeRegExpPattern, 22.2.6.13.1: what `source` reads back so that
-// `new RegExp(re.source)` and `eval("/" + re.source + "/")` both mean the
-// same pattern again. The empty pattern is "(?:)", a bare `/` is escaped and
-// a line terminator - LF, CR, U+2028 and U+2029, none of which a literal may
-// hold - is spelled as its escape. One ALREADY escaped (`RegExp("\\\n")`, a
-// backslash then an LF) keeps its backslash and takes only the letter, so the
-// source reads `\n` and not `\\n`, which would be a backslash and an n.
+/// EscapeRegExpPattern (22.2.6.13.1): what `source` reads back so that
+/// `new RegExp(re.source)` and `eval("/" + re.source + "/")` both mean the
+/// same pattern again. The empty pattern is "(?:)", a bare `/` is escaped and
+/// a line terminator (LF, CR, U+2028 and U+2029, none of which a literal may
+/// hold) is spelled as its escape. One already escaped (`RegExp("\\\n")`, a
+/// backslash then an LF) keeps its backslash and takes only the letter, so the
+/// source reads `\n` and not `\\n`, which would be a backslash and an n.
 [[nodiscard]] std::string escape_pattern(const std::string & source) {
     if (source.empty()) { return "(?:)"; }
     // The escape for a line terminator at `i`, and its width - or nothing.
@@ -126,13 +134,13 @@ std::string split_pattern_pairs(const std::string & source) {
     return out;
 }
 
-// The array `exec` returns: the whole match, then each group, with `index`,
-// `input`, `groups` and - under `d` - `indices` alongside (22.2.7.2 steps
-// 19-36). ctjs's wrapper dropped the positions; they were always in the match.
-//
-// THE MATCHER'S POSITIONS ARE BYTES into the WTF-8 text, and they cut the
-// strings; every position the result REPORTS - `index` and each `indices`
-// pair - is the UTF-16 index a script counts in (string_object::unit_index).
+/// The array `exec` returns: the whole match, then each group, with `index`,
+/// `input`, `groups` and, under `d`, `indices` alongside (22.2.7.2 steps
+/// 19-36).
+///
+/// The matcher's positions are bytes into the WTF-8 text, and they cut the
+/// strings; every position the result reports (`index` and each `indices`
+/// pair) is the UTF-16 index a script counts in (string_object::unit_index).
 [[nodiscard]] value exec_result(context & cx, const rx::rx_prog & program, value subject,
                                 const rx::rx_match & m, const string_object * matched) {
     const auto & str =
@@ -154,9 +162,9 @@ std::string split_pattern_pairs(const std::string & source) {
     value groups = value::undefined();
     if (!program.names.empty()) {
         groups = cx.make_object();
-        arr->groups = groups; // reachable from the rooted result while its strings allocate
+        arr->groups = groups; // Rooted through the result while its strings allocate.
         auto * g = static_cast<object_object *>(groups.as_heap());
-        g->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
+        g->prototype = value::undefined(); // An explicit null (object_object::prototype).
         for (const auto & [name, slot] : program.names) {
             const auto & cap = m.caps[static_cast<std::size_t>(slot)];
             if (value * already = g->find(name); already != nullptr && cap.first < 0) { continue; }
@@ -173,8 +181,8 @@ std::string split_pattern_pairs(const std::string & source) {
     // The subject itself: a string's identity is not observable, and it is
     // the same text.
     arr->input = subject;
-    // AND AS OWN DATA PROPERTIES, which is what CreateDataProperty makes them
-    // (steps 22-23 and 25): `hasOwnProperty("groups")`, a page's write, a
+    // They are also own data properties, which is what CreateDataProperty makes
+    // them (steps 22-23 and 25): `hasOwnProperty("groups")`, a page's write, a
     // delete, OwnPropertyKeys - index, input, groups, then `indices` - and no
     // setter on Array.prototype runs. The slots above stay for the legacy
     // statics, which read the match as it was made.
@@ -183,10 +191,10 @@ std::string split_pattern_pairs(const std::string & source) {
     own.set("input", arr->input);
     own.set("groups", groups);
     if (program.indices) {
-        // MakeMatchIndicesIndexPairArray, 22.2.7.8: `[start, end]` per group,
+        // MakeMatchIndicesIndexPairArray (22.2.7.8): `[start, end]` per group,
         // undefined for one that did not participate, and its own `groups`.
         const value indices = cx.make_array();
-        arr->named_table().set("indices", indices); // rooted through the result
+        arr->named_table().set("indices", indices); // Rooted through the result.
         auto * list = static_cast<array_object *>(indices.as_heap());
         const auto pair = [&](std::ptrdiff_t from, std::ptrdiff_t to) {
             if (from < 0) { return value::undefined(); }
@@ -206,7 +214,7 @@ std::string split_pattern_pairs(const std::string & source) {
             index_groups = cx.make_object();
             list->named_table().set("groups", index_groups);
             auto * g = static_cast<object_object *>(index_groups.as_heap());
-            g->prototype = value::undefined(); // an EXPLICIT null (object_object::prototype)
+            g->prototype = value::undefined(); // An explicit null (object_object::prototype).
             for (const auto & [name, slot] : program.names) {
                 const auto & cap = m.caps[static_cast<std::size_t>(slot)];
                 if (value * already = g->find(name); already != nullptr && cap.first < 0) {
@@ -220,13 +228,17 @@ std::string split_pattern_pairs(const std::string & source) {
     return out;
 }
 
-// The six helpers below are RegExpExec and its neighbours as this file spells
-// them; string.cpp reaches RegExp only through is_regexp, regexp_create and
-// get_substitution (internal.hpp), so these are file-local.
+// RegExpExec and its neighbours. They are shared with regexp.cpp through
+// execution.hpp; string.cpp reaches RegExp only through is_regexp,
+// regexp_create and get_substitution (internal.hpp).
+
+/// True when `v` is an object carrying a RegExp's internal slots.
 bool has_regexp_matcher(value v) {
     return regexp_table(v) != nullptr;
 }
 
+/// Reads [[OriginalSource]] and [[OriginalFlags]] into `source` and `flags`.
+/// Returns false, touching neither, when `v` is not a RegExp.
 bool regexp_slots(value v, std::string & source, std::string & flags) {
     object_object * o = regexp_table(v);
     if (o == nullptr) { return false; }
@@ -237,8 +249,8 @@ bool regexp_slots(value v, std::string & source, std::string & flags) {
     return true;
 }
 
-// AdvanceStringIndex, 22.2.7.3, in units: past one code unit, or - under `u`
-// and `v` - past the whole surrogate pair that starts at `index`.
+/// AdvanceStringIndex (22.2.7.3), in units: past one code unit, or, under `u`
+/// and `v`, past the whole surrogate pair that starts at `index`.
 std::size_t advance_string_index(const string_object & s, std::size_t index, bool full_unicode) {
     if (!full_unicode || index + 1 >= s.length()) { return index + 1; }
     const char16_t first = s.unit(index);
@@ -247,6 +259,8 @@ std::size_t advance_string_index(const string_object & s, std::size_t index, boo
     return second >= 0xDC00 && second <= 0xDFFF ? index + 2 : index + 1;
 }
 
+/// ToLength(Get(rx, "lastIndex")) into `out`. Returns false with a throw in
+/// flight.
 bool get_last_index(context & cx, value rx, double & out) {
     const detail::unwind_watch watch{cx};
     const value raw = cx.lookup_property(rx, "lastIndex");
@@ -255,6 +269,8 @@ bool get_last_index(context & cx, value rx, double & out) {
     return !watch.threw();
 }
 
+/// Set(rx, "lastIndex", v, true): a rejected store throws a TypeError. Returns
+/// false with a throw in flight.
 bool set_last_index(context & cx, value rx, double v) {
     const detail::unwind_watch watch{cx};
     cx.clear_store_rejected();
@@ -264,6 +280,9 @@ bool set_last_index(context & cx, value rx, double v) {
     return !watch.threw();
 }
 
+/// RegExpExec (22.2.7.1): calls a callable `exec` on `rx`, else the intrinsic
+/// RegExp.prototype.exec. Returns the match object or null, or undefined with
+/// a throw in flight.
 value regexp_exec(context & cx, value rx, value subject) {
     const detail::unwind_watch watch{cx};
     const value exec = cx.lookup_property(rx, "exec");
@@ -281,7 +300,7 @@ value regexp_exec(context & cx, value rx, value subject) {
         cx.throw_error("TypeError", "RegExp exec method called on an incompatible receiver");
         return value::undefined();
     }
-    // The built-in matcher IS %RegExp.prototype.exec% - the INTRINSIC, kept
+    // The built-in matcher is the intrinsic %RegExp.prototype.exec%, kept
     // under a private key, not whatever `exec` a page has since put on the
     // prototype (step 4 runs exactly when that one is not callable).
     object_object * proto = cx.prototype(context::proto_kind::regexp);
@@ -293,19 +312,19 @@ value regexp_exec(context & cx, value rx, value subject) {
     return watch.threw() ? value::undefined() : result;
 }
 
-// RegExpBuiltinExec, 22.2.7.2. `lastIndex` is read through [[Get]] and
-// ToLength - a page may have written anything into it - and written back
-// through Set with Throw=true, so a frozen pattern refuses with a TypeError.
-//
-// lastIndex is a UNIT index and the matcher walks BYTES: the one conversion
-// in is locate, and the ones out are unit_index. A lastIndex at a pair's low
-// half is where the two views part: under `u` the input is code points and
-// the match starts at the pair holding it (step 13.b); without `u` the input
-// is code units, and the matcher walks the subject with its pairs split
-// (utf16::split_pairs, as the pattern was compiled), where every unit is a
-// code point of its own - so there is no pair to stand inside. The split
-// text has the subject's units at the subject's unit indices, so every
-// position reported from it is the subject's.
+/// RegExpBuiltinExec (22.2.7.2). `lastIndex` is read through [[Get]] and
+/// ToLength, since a page may have written anything into it, and written back
+/// through Set with Throw=true, so a frozen pattern refuses with a TypeError.
+///
+/// lastIndex is a unit index and the matcher walks bytes: the one conversion
+/// in is locate, and the ones out are unit_index. A lastIndex at a pair's low
+/// half is where the two views part: under `u` the input is code points and
+/// the match starts at the pair holding it (step 13.b); without `u` the input
+/// is code units, and the matcher walks the subject with its pairs split
+/// (utf16::split_pairs, as the pattern was compiled), where every unit is a
+/// code point of its own, so there is no pair to stand inside. The split
+/// text has the subject's units at the subject's unit indices, so every
+/// position reported from it is the subject's.
 [[nodiscard]] value builtin_exec(context & cx, const std::shared_ptr<regex_cache> & cache, value rx,
                                  value subject) {
     std::string source;
@@ -348,6 +367,8 @@ value regexp_exec(context & cx, value rx, value subject) {
     return result;
 }
 
+/// Stores the legacy statics record on %RegExp.prototype%: filled from an exec
+/// result array, or cleared when `result` is not an array.
 void set_legacy_statics(context & cx, value result) {
     object_object * home = cx.prototype(context::proto_kind::regexp);
     if (home == nullptr) { return; }
@@ -386,8 +407,8 @@ void set_legacy_statics(context & cx, value result) {
     home->define(slot_legacy_record, record, attr_none);
 }
 
-// SpeciesConstructor, 7.3.22: `O.constructor[@@species]`, or the default when
-// the chain says nothing. Undefined with a throw in flight.
+/// SpeciesConstructor (7.3.22): `O.constructor[@@species]`, or `fallback` when
+/// the chain says nothing. Returns undefined with a throw in flight.
 [[nodiscard]] value species_constructor(context & cx, value o, value fallback) {
     const detail::unwind_watch watch{cx};
     const value ctor = cx.lookup_property(o, "constructor");
@@ -407,7 +428,8 @@ void set_legacy_statics(context & cx, value result) {
     return species;
 }
 
-// The flags a @@method reads: ToString(Get(rx, "flags")). FALSE with a throw.
+/// The flags a @@method reads: ToString(Get(rx, "flags")). Returns false with a
+/// throw in flight.
 [[nodiscard]] bool read_flags(context & cx, value rx, std::string & out) {
     const detail::unwind_watch watch{cx};
     const value flags = cx.lookup_property(rx, "flags");
@@ -417,15 +439,15 @@ void set_legacy_statics(context & cx, value result) {
     return !watch.threw();
 }
 
-// A @@method's receiver must be an object (22.2.6.8 step 2 and its siblings).
+/// A @@method's receiver must be an object (22.2.6.8 step 2 and its siblings).
 [[nodiscard]] bool object_this(context & cx, value self, const char * method) {
     if (self.is_object_like()) { return true; }
     cx.throw_error("TypeError", std::string{method} + " called on a non-object");
     return false;
 }
 
-// ToString(Get(result, "0")): the matched text out of an exec result, which a
-// page's own `exec` may have built by hand.
+/// ToString(Get(result, "0")): the matched text out of an exec result, which a
+/// page's own `exec` may have built by hand.
 [[nodiscard]] bool matched_text(context & cx, value result, std::string & out) {
     const detail::unwind_watch watch{cx};
     const value first = cx.lookup_index(result, value::number(0));
@@ -434,9 +456,9 @@ void set_legacy_statics(context & cx, value result) {
     return !watch.threw();
 }
 
-// %RegExpStringIteratorPrototype%.next (22.2.9.2.1). The iterator's state -
-// the matcher, the subject and the two flags - is in private-keyed slots on
-// the iterator itself, so the collector sees one object holding everything.
+/// %RegExpStringIteratorPrototype%.next (22.2.9.2.1). The iterator's state
+/// (the matcher, the subject and the two flags) is in private-keyed slots on
+/// the iterator itself, so the collector sees one object holding everything.
 value regexp_string_iterator_next(context & cx, std::span<value>) {
     const value self = cx.current_this();
     auto * out = static_cast<object_object *>(cx.make_object().as_heap());
@@ -462,7 +484,7 @@ value regexp_string_iterator_next(context & cx, std::span<value>) {
         done != nullptr && done->as_boolean()) {
         return finish(value::undefined(), true);
     }
-    // THE SLOTS ARE PROPERTIES, and a computed key can spell `@#` - so this
+    // The slots are properties, and a computed key can spell `@#`, so this
     // reads them as a page may have left them: a missing flag is the
     // TypeError a missing slot is, and the subject is made a string again
     // before anything below treats it as one.

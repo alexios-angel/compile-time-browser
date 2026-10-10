@@ -1,3 +1,11 @@
+//===- iterator/helpers.hpp - Iterator helper internals ---------*- C++ -*-===//
+//
+// Private to lib/Script/builtins/collections/: the Iterator Helper state
+// machine (iterator/helpers.cpp) that iterator.cpp's Iterator.prototype
+// methods and Iterator.concat / zip build on. Each function is documented at
+// its definition in helpers.cpp.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "../../objects/internal.hpp"
@@ -7,10 +15,14 @@ namespace ctbrowser::script::builtins_detail::iterator_helper {
 
 using detail::iterator_record;
 
+/// The private slot on a helper object that holds its state record.
 inline constexpr std::string_view helper_slot = CTBROWSER_PRIVATE_KEY("IteratorHelper");
 
+/// The private slot on an Iterator.from wrapper (%WrapForValidIteratorPrototype%)
+/// that holds the Iterator Record its `next` and `return` forward to.
 inline constexpr std::string_view wrapped_slot = CTBROWSER_PRIVATE_KEY("Iterated");
 
+/// Which abstract closure a helper runs; stored on the state record as "kind".
 enum class helper_kind : std::uint8_t {
     map,
     filter,
@@ -23,6 +35,7 @@ enum class helper_kind : std::uint8_t {
     zip
 };
 
+/// The generator-like [[GeneratorState]] of a helper (ECMA-262 27.1.2.1.1).
 enum class gen_state : std::uint8_t {
     suspended_start,
     suspended_yield,

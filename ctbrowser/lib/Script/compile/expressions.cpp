@@ -1,10 +1,12 @@
-// compiler_impl - expressions.
+//===- expressions.cpp - Expression compilation ---------------------------===//
 //
-// `compile_expr_inner` is the hub - a 154-line dispatch that most
-// of the rest of the compiler eventually reaches.
+// compiler_impl expression compilation. compile_expr_inner dispatches on the
+// AST node kind, and most of the rest of the compiler is reached from it;
+// this file also holds identifiers, operators, assignment targets
+// (prepare_reference, emit_load, emit_store) and `yield*`. The class is
+// declared in compiler_impl.hpp. Section numbers are ECMA-262's.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 #include <ctbrowser/script/regex.hpp>
@@ -12,9 +14,10 @@
 namespace ctbrowser::script::detail {
 
 void compiler_impl::compile_expr(std::int32_t idx, std::uint16_t dst) {
-    // AND THE OTHER ONE. Every expression node the compiler visits passes
-    // through here, including the operands of the one that contains it - which
-    // is what makes the position per-INSTRUCTION rather than per-statement.
+    // Records this node's source position for the instructions emitted below
+    // (compile_stmt is the other place that does). Every expression node,
+    // including nested operands, passes through here, so positions are
+    // tracked per instruction rather than per statement.
     const at_source here{*this, idx};
     if (idx >= 0 && out_.ok && !in_chain_ && chain_has_optional(idx)) {
         compile_chain(idx, dst);
@@ -31,9 +34,9 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     const vp::node & n = at(idx);
     switch (n.kind) {
     case vp::nk::num: {
-        // THE `n` SUFFIX MAKES IT A BigInt. The lexer keeps it on the token
-        // because whether the digits are a valid one is this question, not
-        // a lexing question: `1.5n` and `1e3n` are integers-only failures
+        // The `n` suffix makes it a BigInt. The lexer keeps it on the token
+        // because whether the digits are a valid one is a compile question,
+        // not a lexing question: `1.5n` and `1e3n` are integers-only failures
         // and are refused here rather than there.
         if (n.text.ends_with('n')) {
             const std::string_view digits = n.text.substr(0, n.text.size() - 1);
@@ -67,7 +70,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     case vp::nk::ternary: compile_ternary(n, dst); break;
     case vp::nk::member: {
         // `super.x` reads through the parent prototype rather than through
-        // an object expression - there is no value `super` evaluates to -
+        // an object expression (there is no value `super` evaluates to),
         // and with `this` as the receiver, so a getter up there sees it.
         if (n.a >= 0 && at(n.a).kind == vp::nk::super_lit) {
             const std::uint32_t mark = reg_mark();
@@ -83,7 +86,7 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         break;
     }
     case vp::nk::super_lit:
-        // Bare `super` is not a value in JavaScript either - it is only ever
+        // Bare `super` is not a value in JavaScript either; it is only ever
         // `super(...)` or `super.x`, both handled where they appear.
         fail("`super` is only valid as `super(...)` or `super.member`");
         break;
@@ -116,27 +119,16 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
     }
     case vp::nk::this_lit:
         // In a derived constructor (or an arrow in one), `this` before
-        // `super()` is the ReferenceError - see frame::derived_flag.
+        // `super()` is the ReferenceError; see frame::derived_flag.
         if (const std::string * flag = derived_flag()) { emit_super_check(*flag, false); }
         proto().emit(instruction{op::load_this, dst});
         break;
-    // `new.target` - a meta-property, so it takes no operands and reads the
-    // frame. Every transpiler emits it (Babel's `_classCallCheck` guard is
-    // built on it) and Babylon.js uses it in its decorator metadata; it
-    // reached this compiler as a PARSE error until ctjs learned it.
+    // `new.target` is a meta-property, so it takes no operands and reads the
+    // frame (or, in an arrow, the enclosing function's copy).
     case vp::nk::new_target: emit_new_target(dst); break;
-    // Regular expressions are DEFERRED, not overlooked: they need a regex
-    // engine, and the standard library says the same about String.match and
-    // the RegExp forms of replace/split. Rejecting one by name beats
-    // mis-compiling it into something that silently does nothing.
+    // A regex literal compiles to a RegExp object; see compile_regex_literal.
     case vp::nk::regex: compile_regex_literal(n, dst); break;
-    // `yield x`, and `yield` with nothing - which yields undefined.
-    //
-    // Refused by name here until 2026-08-02, and the reason it stopped
-    // being refused is Babylon.js: TypeScript compiles every `async`
-    // function to a generator driven by an `__awaiter` helper, so 622
-    // `function*` bodies in that bundle are not the author writing
-    // generators at all - they are what `await` became.
+    // `yield x`, and a bare `yield`, which yields undefined.
     case vp::nk::yield_expr: {
         if (!fn().is_generator) {
             // `yield` outside a generator is a plain identifier in sloppy
@@ -157,32 +149,27 @@ void compiler_impl::compile_expr_inner(std::int32_t idx, std::uint16_t dst) {
         } else {
             proto().emit(instruction{op::load_undef, sent});
         }
-        // AN ASYNC GENERATOR AWAITS WHAT IT YIELDS (27.6.3.8 AsyncGeneratorYield
+        // An async generator awaits what it yields (27.6.3.8 AsyncGeneratorYield
         // step 5): `yield promise` hands out the promise's value, and a
         // rejected one throws at the yield.
         if (fn().is_async) { proto().emit(instruction{op::await_value, sent, sent}); }
         proto().emit(instruction{op::yield_value, dst, sent});
         break;
     }
-    // ES MODULES ARE REFUSED BY NAME, not mis-compiled. The syntax parses
-    // now (ctjs 2026-08-02); the semantics - a scope per module, live
-    // bindings, a dependency graph, a loader - are staged in
-    // docs/plans/modules.md and measured by test/corpus/modules/module_ratchet.cpp.
-    //
-    // Refusing beats accepting: a page whose `import` silently did nothing
-    // would run with half its bindings undefined and fail somewhere else
-    // entirely, which is the failure mode this tree keeps paying for.
+    // Dynamic `import()` compiles to op::dyn_import, and the loader resolves
+    // the specifier at run time. `import.meta` (below) is still refused by
+    // name, because a silently undefined binding would fail far from its
+    // cause; module work is tracked in ctbrowser/docs/plans/modules.md and
+    // measured by ctbrowser/test/corpus/modules/module_ratchet.cpp.
     case vp::nk::dynamic_import: {
-        // A RUNTIME SPECIFIER, which is the whole difference from a static
+        // A runtime specifier, which is the whole difference from a static
         // import: there is nothing here for the loader to have resolved in
-        // advance, and nothing to record in out_.imports. The graph a
-        // dynamic import reaches is not knowable at compile time - that is
-        // what it is FOR.
+        // advance, and nothing to record in out_.imports.
         const std::uint32_t mark = reg_mark();
         const std::uint16_t spec = alloc_reg();
         compile_expr(n.a, spec);
         // `import.source(x)` (c == 1): the source phase, answered by a
-        // hidden native - see import_source_name. `import.defer(x)` (c == 2)
+        // hidden native; see import_source_name. `import.defer(x)` (c == 2)
         // loads like `import(x)` does: the deferral is not observable until
         // a module graph with side effects asks for it, which is a loader
         // concern (docs/plans/modules.md), not a compiler one.
@@ -245,16 +232,15 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst, bool ty
         proto().emit(instruction{op::load_undef, dst});
         return;
     }
-    // THE TEMPORAL DEAD ZONE, decided statically (local::initialized_at): a
+    // The temporal dead zone, decided statically (local::initialized_at): a
     // read of this frame's own `let`/`const`/`class` textually before the
-    // declarator that initialises it - `let x = x + 1`, `use(y); const y = 1`
-    // - runs before that declarator every time the scope runs, so it is the
+    // declarator that initialises it (`let x = x + 1`, `use(y); const y = 1`)
+    // runs before that declarator every time the scope runs, so it is the
     // ReferenceError of 9.1.1.1.6 whenever it runs, `typeof` included.
-    // ONLY IN THE PROGRAM'S OWN TREE: a template substitution is re-parsed
-    // from its own text (current_ast_ is that sub-tree), and its offsets are
-    // relative to the piece, not the program - `${map.keys()}` after `const
-    // map` was a false ReferenceError (ctcompile's string_snapshots fixture,
-    // 2026-09-16).
+    // Only in the program's own AST: a template substitution is re-parsed
+    // from its own text (current_ast_ is that sub-tree), so its offsets are
+    // relative to the substitution and cannot be compared with
+    // initialized_at.
     if (n.end > n.begin && current_ast_ == &ast_) {
         if (const local * l = find_local_entry(fn(), n.text);
             l != nullptr && l->initialized_at != 0 && n.begin < l->initialized_at) {
@@ -281,16 +267,17 @@ void compiler_impl::compile_ident(const vp::node & n, std::uint16_t dst, bool ty
     emit_plain_read(n.text, dst, typeof_lookup);
 }
 
-// `yield* expr` (14.4.14): every value the inner iterator produces is
-// yielded by this generator, and the expression's own value is what the
-// inner iterator finally returned. GetIterator, the `next()` calls and the
-// result checks are the three natives named at yield_delegate_open_name; the
-// loop is here. A sync generator hands the inner RESULT OBJECT out untouched
-// (step 7.a.vii) - generator_resume knows from the record the settle native
-// leaves on the coroutine - and an async one awaits the result, then awaits
-// and yields its value like any other async yield. `.throw()`/`.return()`
-// while suspended here are generator_resume's, forwarded to the inner
-// iterator without resuming the frame.
+/// `yield* expr` (14.4.14): every value the inner iterator produces is
+/// yielded by this generator, and the expression's own value is what the
+/// inner iterator finally returned. GetIterator, the `next()` calls and the
+/// result checks are three natives (yield_delegate_open_name,
+/// yield_delegate_call_name, yield_delegate_settle_name); the loop is here.
+/// A sync generator hands the inner result object out untouched (step
+/// 7.a.vii; generator_resume knows from the record the settle native leaves
+/// on the coroutine), and an async one awaits the result, then awaits and
+/// yields its value like any other async yield. `.throw()`/`.return()` while
+/// suspended here are handled by generator_resume, forwarded to the inner
+/// iterator without resuming the frame.
 void compiler_impl::compile_yield_delegate(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t source = alloc_reg();
@@ -345,7 +332,7 @@ void compiler_impl::compile_yield_delegate(const vp::node & n, std::uint16_t dst
 void compiler_impl::compile_named_expr(std::int32_t idx, std::uint16_t dst, std::string_view name) {
     if (idx >= 0 && !name.empty()) {
         const vp::node & n = at(idx);
-        // A parenthesised function is still anonymous - the parser keeps no
+        // A parenthesised function is still anonymous: the parser keeps no
         // paren node, so `(function () {})` arrives as the function itself.
         if ((n.kind == vp::nk::func_expr || n.kind == vp::nk::arrow) && n.text.empty()) {
             const std::uint32_t index = compile_function_body(idx, "");
@@ -413,7 +400,7 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
     const vp::node & target = at(n.a);
     if (target.kind == vp::nk::member || target.kind == vp::nk::index) {
         // Through delete_ref_name, which answers the boolean 13.5.1.2 gives
-        // and throws where it says - the opcodes answer nothing. `delete
+        // and throws where it says; the opcodes answer nothing. `delete
         // super.x` evaluates the key and is the ReferenceError.
         const bool on_super = at(target.a).kind == vp::nk::super_lit;
         const std::uint16_t callee = alloc_reg();
@@ -451,7 +438,7 @@ void compiler_impl::compile_delete(const vp::node & n, std::uint16_t dst) {
             patch_here(unbound);
         }
     } else {
-        // `delete 1`, `delete void a.b`, `delete f()`: not a reference - the
+        // `delete 1`, `delete void a.b`, `delete f()`: not a reference; the
         // operand is evaluated and the answer is true (13.5.1.2 step 2).
         const std::uint16_t scratch = alloc_reg();
         compile_expr(n.a, scratch);
@@ -464,8 +451,8 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t lhs = alloc_reg();
     const std::uint16_t rhs = alloc_reg();
-    // `#x in o` (13.10.1): the private name is the KEY the brand is checked
-    // under, spelled as the class body resolved it - never a name to read.
+    // `#x in o` (13.10.1): the private name is the key the brand is checked
+    // under, spelled as the class body resolved it, never a name to read.
     const bool private_in =
         n.text == "in" && at(n.a).kind == vp::nk::ident && at(n.a).text.starts_with('#');
     if (private_in) {
@@ -493,8 +480,7 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
     } else if (o == "!==") {
         code = op::not_equal;
     }
-    // `==` and `!=` are LOOSE. Compiling `!=` as `!==` made `1 != "1"` true,
-    // which is the opposite of what the operator means.
+    // `==` and `!=` are loose equality (with type coercion).
     else if (o == "==") {
         code = op::loose_equal;
     } else if (o == "!=") {
@@ -539,8 +525,7 @@ void compiler_impl::compile_binary(const vp::node & n, std::uint16_t dst) {
 void compiler_impl::compile_logical(const vp::node & n, std::uint16_t dst) {
     compile_expr(n.a, dst);
     // `??` is not `||`. It asks whether the left side is null or undefined,
-    // so `0 ?? 5` is 0 and `"" ?? "x"` is "" - which is why anyone reaches
-    // for it over `||` in the first place.
+    // so `0 ?? 5` is 0 and `"" ?? "x"` is "".
     const op test = n.text == "&&"    ? op::jump_if_false
                     : n.text == "?\?" ? op::jump_if_not_nullish
                                       : op::jump_if_true;
@@ -550,7 +535,7 @@ void compiler_impl::compile_logical(const vp::node & n, std::uint16_t dst) {
 }
 
 void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
-    // `delete o.x` must NOT evaluate `o.x` - it takes the object and the
+    // `delete o.x` must not evaluate `o.x`: it takes the object and the
     // key, which is why it cannot go through the operand-first path below.
     if (n.text == "delete") {
         compile_delete(n, dst);
@@ -573,17 +558,12 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
     } else if (n.text == "typeof") {
         proto().emit(instruction{op::type_of, dst, operand});
     } else if (n.text == "await") {
-        // Promises here are SETTLED on creation - there is no event loop
-        // suspending a frame - so awaiting one is reading its value, and
-        // awaiting a plain value is the value. That is the same subset the previous engine
-        // shipped, and it is what `await fetch(...)` needs.
+        // `await` suspends the frame; the VM resumes it from a microtask once
+        // the awaited value settles (see context::execute_await in
+        // vm/run_loop/await.cpp, and vm/call/coroutines.cpp).
         proto().emit(instruction{op::await_value, dst, operand});
     } else if (n.text == "+") {
-        // NOT `move`. Unary plus is ToNumber, and the only reason a copy
-        // survived here is that the difference hides: `+x` used in a string
-        // concatenation reads identically whether it converted or not, and
-        // that is most of where it appears. It stops hiding the moment the
-        // result indexes an array.
+        // Unary plus is ToNumber, not a copy: `+"3"` must index an array as 3.
         proto().emit(instruction{op::to_number, dst, operand});
     } else if (n.text == "~") {
         proto().emit(instruction{op::bit_not, dst, operand});
@@ -600,7 +580,7 @@ void compiler_impl::compile_unary(const vp::node & n, std::uint16_t dst) {
 compiler_impl::reference compiler_impl::prepare_reference(const vp::node & target) {
     reference out;
     if (target.kind == vp::nk::ident) {
-        // Inside a `with`, the binding is decided ONCE, here (13.15.2 step 1
+        // Inside a `with`, the binding is decided once, here (13.15.2 step 1
         // evaluates the reference before the right side): the object that
         // binds the name, or undefined, sits in a register of its own for as
         // long as the caller keeps the reference.
@@ -631,13 +611,12 @@ compiler_impl::reference compiler_impl::prepare_reference(const vp::node & targe
         out.name = name_operand(std::string{target.text});
         return out;
     }
-    // `super.x = v` and `super[k] = v`: a Super Reference (13.3.7.1): the
-    // this binding checked first - the ReferenceError before a derived
-    // constructor's super() - then the key, then GetSuperBase; and it is
-    // read and PUT on that base with `this` as the receiver (6.2.5.5/6.2.5.6),
-    // so a setter on the parent runs on `this` rather than `this`'s own
-    // setter of the same name, which is how `set x(v) { super.x = v; }`
-    // recursed until the stack ran out.
+    // `super.x = v` and `super[k] = v`: a Super Reference (13.3.7.1). The
+    // this binding is checked first (the ReferenceError before a derived
+    // constructor's super()), then the key, then GetSuperBase; it is read
+    // and put on that base with `this` as the receiver (6.2.5.5/6.2.5.6), so
+    // a setter on the parent runs on `this` rather than `this`'s own setter
+    // of the same name, and `set x(v) { super.x = v; }` does not recurse.
     const bool on_super = target.a >= 0 && at(target.a).kind == vp::nk::super_lit;
     if (on_super && (target.kind == vp::nk::member || target.kind == vp::nk::index)) {
         if (const std::string * flag = derived_flag()) { emit_super_check(*flag, false); }
@@ -709,9 +688,9 @@ void compiler_impl::emit_load(const reference & ref, std::uint16_t dst) {
     }
 }
 
-// `name(base, key, [value,] this[, strict])` for a Super Reference - see
-// reference::kind::super_property. `value` is the store's source, or the
-// load's destination.
+/// Calls `name(base, key, [value,] this[, strict])` for a Super Reference; see
+/// reference::kind::super_property. `value` is the store's source, or the
+/// load's destination.
 void compiler_impl::emit_super_access(const reference & ref, std::string_view name,
                                       std::uint16_t value) {
     const bool store = name == super_set_name;
@@ -745,7 +724,7 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
         emit_store(plain, src);
         const std::size_t done = proto().emit(instruction{op::jump});
         patch_here(bound);
-        // A COPY: the check interns strings, which can grow `names`.
+        // A copy: the check interns strings, which can grow `names`.
         const std::string name = proto().names[ref.with_name];
         emit_with_still_bound(ref.with_reg, name);
         proto().emit(instruction{op::set_prop, ref.with_reg, ref.with_name, src});
@@ -759,7 +738,7 @@ void compiler_impl::emit_store(const reference & ref, std::uint16_t src) {
     case reference::kind::boxed_local: proto().emit(instruction{op::cell_set, ref.reg, src}); break;
     case reference::kind::upvalue: proto().emit(instruction{op::set_upvalue, ref.reg, src}); break;
     case reference::kind::global: {
-        // A COPY: the write interns names, which can grow `names` under a
+        // A copy: the write interns names, which can grow `names` under a
         // view into it.
         const std::string name = proto().names[ref.name];
         emit_global_write(name, src);
@@ -783,10 +762,7 @@ op compiler_impl::compound_op(std::string_view text, bool & ok) {
     if (text == "/=") { return op::div; }
     if (text == "%=") { return op::mod; }
     if (text == "**=") { return op::pow; }
-    // The bitwise compounds. Every one of these opcodes already existed for
-    // the plain operator; only the assignment form was missing, so `x <<= 1`
-    // was refused while `x = x << 1` compiled. p5.js's noise module is
-    // stopped by exactly that.
+    // The bitwise compound assignments reuse the plain operators' opcodes.
     if (text == "&=") { return op::bit_and; }
     if (text == "|=") { return op::bit_or; }
     if (text == "^=") { return op::bit_xor; }
@@ -801,13 +777,13 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     const vp::node & target = at(n.a);
     const std::uint32_t mark = reg_mark();
 
-    // DESTRUCTURING ASSIGNMENT: `[a, b] = pair` and `({x} = o)`.
+    // Destructuring assignment: `[a, b] = pair` and `({x} = o)`.
     //
-    // The left side is not a pattern node - the parser met it in expression
-    // position and read an array or object LITERAL, which is the only thing
+    // The left side is not a pattern node: the parser met it in expression
+    // position and read an array or object literal, which is the only thing
     // it could have been at the time. Re-reading it as a pattern here is
-    // what the grammar itself does, and it is why array literals had to
-    // learn about holes: `[, ref] = pair` skips the first element.
+    // what the grammar itself does, and it is why array literals keep their
+    // holes: `[, ref] = pair` skips the first element.
     if (n.text == "=" && (target.kind == vp::nk::array || target.kind == vp::nk::object)) {
         compile_expr(n.b, dst);
         compile_pattern(n.a, dst);
@@ -823,22 +799,18 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     const reference ref = prepare_reference(target);
 
     if (n.text == "=") {
-        // STRICT CODE MAY NOT CREATE A GLOBAL BY ASSIGNMENT (13.15.2 PutValue
-        // step 4.a / 9.1.1.4.5 SetMutableBinding step 3): a read of the same
-        // name throws the ReferenceError when it is unresolvable, and costs
-        // nothing new - set_global stays the one write. BEFORE the right side
-        // rather than after it, so `closure; set_global` stays adjacent for
-        // ctcompile's closure lift (the order is observable only when the
-        // right side has side effects AND the name is unresolvable). The
-        // compound and logical forms below read first anyway. NOT IN A
-        // MODULE, a deliberate leniency: a module's top-level `OUT = ...` is
-        // how ctcompile's module fixtures talk to their host
-        // (test/Runtime/Modules); the [[Set]] TypeErrors still apply there.
-        // A name the script DECLARES with var/let/const is resolvable from
-        // the start (hoisted, 16.1.7 GlobalDeclarationInstantiation) even
-        // when the assignment runs before the declaration's line, so it gets
-        // no probe - the top level has no hoisting pass to put it in the
-        // table early.
+        // In strict code, assigning to an unresolvable name is a
+        // ReferenceError (13.15.2 PutValue step 4.a, 9.1.1.4.5
+        // SetMutableBinding step 3). A get_global probe throws it, so
+        // set_global stays the one write. The probe runs before the right
+        // side, which keeps `closure; set_global` adjacent for ctcompile's
+        // closure lift (the order is observable only when the right side has
+        // side effects and the name is unresolvable); the compound and
+        // logical forms below read first anyway. Skipped in modules, a
+        // deliberate leniency: ctcompile's module fixtures
+        // (ctcompile/test/Runtime/Modules) assign undeclared globals to talk
+        // to their host. Also skipped for names the script declares with
+        // var/let/const, which are hoisted (16.1.7) and so always resolve.
         const auto declared_by_script = [&](std::string_view name) {
             const std::vector<std::string> & names = frames_.front().declared;
             return std::find(names.begin(), names.end(), name) != names.end();
@@ -894,10 +866,11 @@ void compiler_impl::compile_assign(const vp::node & n, std::uint16_t dst) {
     release_to(mark);
 }
 
-// `f() = v`, `f() += v`, `f()++` in non-strict code: the early-error pass
-// lets a call target through as ~web-compat~ ("Runtime Errors for Function
-// Call Assignment Targets"), and evaluating one is the call and then the
-// ReferenceError - before the right side, and before any read of the result.
+/// `f() = v`, `f() += v`, `f()++` in non-strict code: the early-error pass
+/// lets a call target through for web compatibility ("Runtime Errors for
+/// Function Call Assignment Targets"), and evaluating one is the call and then
+/// the ReferenceError, before the right side and before any read of the
+/// result.
 void compiler_impl::emit_call_target_error(std::int32_t call, std::uint16_t dst) {
     compile_expr(call, dst);
     emit_throw("ReferenceError", "Invalid left-hand side in assignment");
@@ -917,14 +890,14 @@ void compiler_impl::compile_update(const vp::node & n, std::uint16_t dst) {
     const std::uint16_t cur = alloc_reg();
     const std::uint16_t step = alloc_reg();
     emit_load(ref, cur);
-    // BOTH THROUGH op::add - `x--` is `x + (-1)`, the same double - because
+    // Both through op::add (`x--` is `x + (-1)`, the same double) because
     // op::add is the internal add of ++/-- and the counters, never source
     // `+`, and the VM lets it take a BigInt beside its integral Number step
     // (`1n++` is `2n`; `1n - 1` is the mixing TypeError op::sub keeps).
     emit_const(step, value::number(n.text == "++" ? 1 : -1));
-    // postfix yields the OLD value AS A NUMERIC (13.4.2.1 step 2: ToNumeric
-    // of it, so `false++` reads 0 and an object its valueOf) - `+ 0` through
-    // the same op is that conversion; prefix yields the new one.
+    // Postfix yields the old value as a numeric (13.4.2.1 step 2: ToNumeric
+    // of it, so `false++` reads 0 and an object its valueOf); `+ 0` through
+    // the same op is that conversion. Prefix yields the new one.
     if (n.b == 0) {
         const std::uint16_t zero = alloc_reg();
         emit_const(zero, value::number(0));

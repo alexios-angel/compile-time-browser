@@ -1,3 +1,28 @@
+//===- regex.hpp - Backtracking regular expressions -------------*- C++ -*-===//
+//
+// A backtracking regular-expression engine for the script VM, following
+// ECMA-262 section 22.2 (the bare section numbers in this file refer to it).
+// It began as a port of ctjs's `rxd` matcher.
+//
+// A pattern that fails to compile sets rx_prog::ok to false instead of
+// throwing, because the VM does not use exceptions. A match records its start
+// and end, so `.index` and capture positions are available.
+//
+// Supported: lookahead and lookbehind, named groups, numbered and named
+// backreferences, the d, g, i, m, s, u, v and y flags, `(?ims-ims:...)`
+// modifiers, and `\p{...}`/`\P{...}` over the Unicode tables in
+// lib/Script/regex_properties.inc. Under `iu`, characters compare by simple
+// case folding. A quantified group's captures are cleared on every repetition
+// (`/(a)|(b)/` twice over "ab" leaves group 1 undefined).
+//
+// The subject is UTF-8. A pattern character above U+007F is matched as its
+// UTF-8 bytes, and a class is a sorted list of code point ranges tested, by
+// binary search, against the code point decoded at the current position. A
+// quantified single-character piece is matched by a loop rather than a
+// recursion per repetition, so long subjects do not exhaust the stack.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <cstddef>
 #include <algorithm>
@@ -14,73 +39,55 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/depth.hpp>
 
-// A regular-expression engine.
-//
-// Ported from ctjs's `rxd`, which was already a self-contained backtracking
-// matcher and coupled to its host by exactly two calls. Two changes make it
-// fit here: a compile failure is a FLAG on the program rather than a thrown
-// exception, because nothing in this VM throws; and the match result was
-// already carrying its positions - only ctjs's exec wrapper discarded them -
-// so `.index`, which p5.js reads 143 times, comes for free.
-//
-// Added here: lookahead `(?=`/`(?!`, the sticky `y` flag, named groups
-// `(?<name>...)`, and - 2026-09-12, for test262's String.prototype rows -
-// backreferences (`\1`, `\k<name>`), lookbehind (`(?<=`/`(?<!`), the `s`
-// flag, and the specification's rule that a quantified group's captures are
-// cleared on every repetition (`/(a)|(b)/` twice over "ab" leaves group 1
-// undefined). A pattern character above U+00FF is matched as its UTF-8 bytes,
-// which is what the subject is made of, and a CLASS is a set of CODE POINT
-// ranges matched against the code point decoded at the position.
-//
-// 2026-09-17: `\p{...}` / `\P{...}` (22.2.2.9) over the Unicode Character
-// Database in lib/Script/regex_properties.inc, Canonicalize under `iu` by
-// simple case folding (22.2.2.7.3), and a class is SORTED so a hit is one
-// binary search - a property brings hundreds of ranges and the subject a
-// million code points. A quantified single-character piece is matched by a
-// loop rather than a recursion per repetition, for the same subjects.
-
 namespace ctbrowser::script::rx {
 
+/// An inclusive code point range.
 struct rx_range {
 	char32_t lo, hi;
 };
+/// A Unicode property: its code points and, for a property of strings, its
+/// strings.
 struct rx_property_set {
 	std::span<const rx_range> ranges;    // sorted, disjoint
-	std::span<const char32_t> sequences; // {length, code points...} runs; table 69 only
+	// {length, code points...} runs; only for properties of strings (table 69).
+	std::span<const char32_t> sequences;
 };
-// 22.2.2.9 UnicodeMatchProperty + UnicodeMatchPropertyValue over the UCD.
-// `value` is empty for the `\p{Name}` form; `strings` admits the properties
-// of strings (table 69, the `v` flag). Nullopt: not a name the specification
-// lists, which is a SyntaxError. Defined in lib/Script/regex_properties.cpp.
+/// Looks up `\p{...}` (22.2.2.9 UnicodeMatchProperty and
+/// UnicodeMatchPropertyValue) in the Unicode Character Database tables. `value`
+/// is empty for the `\p{Name}` form; `strings` admits the properties of strings
+/// (table 69, `v` flag only). Returns nullopt for a name the specification does
+/// not list, which is a SyntaxError. Defined in lib/Script/regex_properties.cpp.
 std::optional<rx_property_set> rx_property_lookup(std::string_view name, std::string_view value,
                                                   bool strings);
-// CaseFolding.txt's simple fold (C + S) - Canonicalize under `iu` - and every
-// OTHER code point that folds to `folded`, at most eight, written to `out`.
+/// rx_fold_simple is CaseFolding.txt's simple fold (status C + S), which is
+/// Canonicalize under `iu`. rx_unfold writes every other code point that folds
+/// to `folded` (at most eight) to `out` and returns how many.
 char32_t rx_fold_simple(char32_t cp);
 std::size_t rx_unfold(char32_t folded, char32_t (&out)[8]);
-// 22.2.1.1's early errors for a pattern and its flags - what a literal is
-// refused for at parse time, and what `new RegExp(p, f)` throws a
-// SyntaxError for (22.2.3.4 RegExpInitialize): the same scan, defined in
-// lib/Script/compile/early_errors/regexp.cpp, which says what it judges.
-// The first thing wrong, or nothing.
+/// Returns the first 22.2.1.1 early error in `body` and `flags`, or nullopt if
+/// there is none. Used both for regex literals at parse time and for
+/// `new RegExp(p, f)` (22.2.3.4). Defined in
+/// lib/Script/compile/early_errors/regexp.cpp.
 std::optional<std::string> rx_pattern_error(std::string_view body, std::string_view flags);
-// 22.2.1 GroupName: the RegExpIdentifierName between `<` and `>`, its `\u`
-// escapes and surrogate pairs decoded, as UTF-8 - or nullopt when it is not
-// one (22.2.1.1: ID_Start then ID_Continue, `$` `_` ZWNJ ZWJ). One decoder,
-// so `(?<a>)` and `\k<a>` name the same group everywhere.
-// Defined in lib/Script/regex_properties.cpp, beside the tables it reads.
+/// Decodes a 22.2.1 GroupName: the RegExpIdentifierName between `<` and `>`,
+/// its `\u` escapes and surrogate pairs decoded, as UTF-8; or nullopt when it is
+/// not one (22.2.1.1: ID_Start then ID_Continue, `$` `_` ZWNJ ZWJ). One decoder,
+/// so `(?<a>)` and `\k<a>` name the same group everywhere. Defined in
+/// lib/Script/regex_properties.cpp, beside the tables it reads.
 std::optional<std::string> rx_group_name(std::string_view raw);
 
+/// A character class: code point ranges (sorted and merged by
+/// rx_class_normalize), negated when `neg`.
 struct rx_class {
 	bool neg = false;
 	std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
-	// Under `v`, a class may hold STRINGS too (`\q{ab|c}`, a property of
-	// strings): UTF-8, tried longest first, before the code points.
+	/// Under `v`, a class may hold strings too (`\q{ab|c}`, a property of
+	/// strings): UTF-8, tried longest first, before the code points.
 	std::vector<std::string> strings;
 };
 
-// Sorted and merged, so a hit is one binary search and a complement is a
-// walk. Every class goes through here once its atoms are read.
+/// Sorts and merges the ranges, so a hit is one binary search and a complement
+/// is a walk. Every class goes through here once its atoms are read.
 inline void rx_class_normalize(rx_class & cc) {
 	std::sort(cc.ranges.begin(), cc.ranges.end());
 	std::vector<std::pair<std::uint32_t, std::uint32_t>> merged;
@@ -100,7 +107,8 @@ inline void rx_class_normalize(rx_class & cc) {
 	cc.strings.erase(std::unique(cc.strings.begin(), cc.strings.end()), cc.strings.end());
 }
 
-// The complement over the code space, of a NORMALIZED range list.
+/// The complement over the code space (0 to U+10FFFF) of a normalized range
+/// list.
 inline std::vector<std::pair<std::uint32_t, std::uint32_t>>
 rx_complement(const std::vector<std::pair<std::uint32_t, std::uint32_t>> & ranges) {
 	std::vector<std::pair<std::uint32_t, std::uint32_t>> out;
@@ -114,75 +122,87 @@ rx_complement(const std::vector<std::pair<std::uint32_t, std::uint32_t>> & range
 	return out;
 }
 struct rx_alt;
+/// One atom of a pattern with its quantifier: `min`..`max` repetitions,
+/// greedy or lazy.
 struct rx_piece {
 	enum kind_t { lit, any, cls, grp, bol, eol, wordb, nwordb, ahead, nahead, behind, nbehind, backref } kind = lit;
 	char c = 0;
-	// A literal above one byte: the UTF-8 sequence of the code point, matched
-	// as a run. Empty for the ordinary one-byte case, which stays in `c`.
+	/// For a literal: the UTF-8 bytes of a code point above U+007F, or of several
+	/// characters produced by an Annex B fallback, matched as a run. Empty when
+	/// the literal is the single byte in `c`. For a numbered backreference: the
+	/// digits as written, kept until rx_resolve_backrefs decides whether they are
+	/// a group number or a legacy octal escape.
 	std::string text;
 	rx_class cc;
 	std::shared_ptr<rx_alt> sub;
 	std::int32_t cap = -1; // capture slot, -1 = (?:); for backref, the slot it names
-	// `\k<name>` before the name is resolved (a group may be defined later in
-	// the pattern), and the capture slots a group ENCLOSES - [caps_lo, caps_hi)
-	// - which a repetition resets.
+	/// `\k<name>` before the name is resolved (a group may be defined later in
+	/// the pattern), and the capture slots a group encloses, [caps_lo, caps_hi),
+	/// which a repetition resets.
 	std::string ref_name;
 	std::int32_t caps_lo = 0, caps_hi = 0;
-	// `(?ims-ims:...)`: the modifiers the group adds and removes, i=1 m=2 s=4.
+	/// `(?ims-ims:...)`: the modifiers the group adds and removes, i=1 m=2 s=4.
 	std::uint8_t mod_on = 0, mod_off = 0;
 	std::int32_t min = 1;
 	std::int32_t max = 1; // -1 = unbounded
 	bool greedy = true;
 };
 using rx_seq = std::vector<rx_piece>;
+/// A disjunction: the alternatives, tried in order.
 struct rx_alt {
 	std::vector<rx_seq> alts;
 };
+/// A compiled pattern: the parse tree and its flags, made by rx_compile.
 struct rx_prog {
 	std::shared_ptr<rx_alt> root;
 	std::int32_t ngroups = 0;
 	bool icase = false, global = false, multi = false, sticky = false;
 	bool dotall = false, unicode = false, unicode_sets = false, indices = false;
-	// A pattern that did not compile. Checked by the caller; a program that is
-	// not ok never matches.
+	/// False when the pattern or its flags did not compile; `error` then holds
+	/// the message. rx_search does not check this, so the caller must test it
+	/// before matching.
 	bool ok = true;
 	std::string error;
-	// Named groups: `(?<name>...)` -> the capture slot it fills.
+	/// Named groups: `(?<name>...)` to the capture slot it fills.
 	std::vector<std::pair<std::string, std::int32_t>> names;
-	// How many groups and nested classes the reader is inside (depth_guard).
+	/// How many groups and nested classes the reader is inside (depth_guard).
 	std::int32_t parse_depth = 0;
 };
 
-// THE LIMITS, because the reader and the matcher both recurse. The reader
-// recurses once per `(` or nested `[`: past rx_max_nesting a pattern is
-// refused like a malformed one, and every walk of the tree (backreferences,
-// the destructor of its shared_ptrs) is bounded by that too. The matcher
-// recurses a few frames per repetition of a group and backtracks
-// exponentially on `(a+)+$`: past rx_max_depth nested pieces or rx_max_steps
-// pieces tried from one starting position (or rx_max_search_steps in one
-// search, rx_search) it gives up, and says so (rx_match::exhausted) - JavaScript reports it as a
-// RangeError, as V8 reports a regexp that overflows its stack, instead of the process dying on its stack
-// or never returning. A quantified single character is a loop and costs one
-// step per repetition, so `/a*/` over a megabyte is nowhere near either.
+// Recursion limits for the parser and the matcher. The parser recurses once
+// per `(` or nested `[`; a pattern nested deeper than rx_max_nesting is
+// rejected as malformed, which also bounds every walk of the tree
+// (backreferences, the destructor of its shared_ptrs). The matcher recurses a
+// few frames per repetition of a group and backtracks exponentially on
+// `(a+)+$`, so it gives up and sets rx_match::exhausted (reported to
+// JavaScript as a RangeError, as V8 does for a regexp that overflows its
+// stack) when it goes deeper than rx_max_depth pieces, tries more than
+// rx_max_steps pieces from one start position, or more than
+// rx_max_search_steps (plus 16 per subject byte) in one rx_search. A
+// quantified single character is matched in a loop and costs one step per
+// repetition, so `/a*/` over a megabyte is nowhere near either.
 //
-// The depth is what the STACK can hold: measured 2026-09-29, a level costs
-// about 600 bytes at -O2, 1.2 KB under ASan and 2.4 KB at -O0, so 2500 is
-// 1.5 MB of the 2 MB a MinGW .exe's main thread reserves and 6 MB of Linux's
-// 8. It is ~800 repetitions of `(?:a|b)`, or a sequence of ~1250 atoms.
+// rx_max_depth is bounded by stack size. Measured on 2026-09-29, one level
+// costs about 600 bytes at -O2, 1.2 KB under ASan and 2.4 KB at -O0, so 2500
+// levels use 1.5 MB of a MinGW main thread's 2 MB stack and 6 MB of Linux's 8.
+// That allows about 800 repetitions of `(?:a|b)` or a sequence of about 1250
+// atoms.
 inline constexpr std::int32_t rx_max_nesting = 256;
 inline constexpr std::int32_t rx_max_depth = 2500;
 inline constexpr std::uint64_t rx_max_steps = 10'000'000;
 inline constexpr std::uint64_t rx_max_search_steps = 50'000'000;
 
 
-// A malformed pattern marks the program instead of throwing: this VM has no
-// exceptions, and a caller that gets `ok == false` can report it in its own
-// terms.
+/// Marks the program as failed instead of throwing: this VM has no
+/// exceptions, and a caller that gets `ok == false` can report it in its own
+/// terms. Keeps the first error message.
 inline void rx_fail(rx_prog & p, std::string_view src) {
     if (p.error.empty()) { p.error = "Invalid regular expression: /" + std::string{src} + "/"; }
     p.ok = false;
 }
 
+/// Adds the ranges of the class escape `\d`, `\w` or `\s` (letter `e`) to
+/// `out`.
 inline constexpr void rx_class_escape(rx_class & out, char e) {
 	switch (e) {
 	case 'd': out.ranges.push_back({'0', '9'}); break;
@@ -210,28 +230,16 @@ inline constexpr void rx_class_escape(rx_class & out, char e) {
 	}
 }
 
-// `\xHH`, `\uHHHH` and `\u{H..}` AS A NUMBER, which they were not.
-//
-// `rx_escape_char` falls through to "the char itself" for anything it does not
-// know, so `\u` was the letter `u` and the four hex digits after it became four
-// more class members. `[\udc00-\udfff]` therefore parsed as {u,d,c,0,f} plus
-// the RANGE '0'-'u' - which matches most of ASCII, and matched it silently.
-//
-// WPT is what found it, and the damage was not in the tests but in the REPORT:
-// testharness.js sanitises every test NAME and every assertion MESSAGE through
-// `str.replace(/([\ud800-\udbff]+)...|.../g, ...)`, so that bogus range hit
-// nearly every character of every string the harness had to say. 2,343 failing
-// subtests in dom/nodes came back with their names rewritten into runs of
-// `U+61U+73U+73...` - a corpus-wide corruption of the results, from one escape.
-//
-// `i` is positioned just after the escape letter `e`; on success it advances
-// past the digits. A malformed escape returns false and is left to
-// rx_escape_char, which keeps the previous lenient behaviour.
-//
-// In the `u` and `v` modes (`unicode_mode`) a lead surrogate's `\uHHHH`
-// followed by a trail surrogate's is ONE code point (22.2.1
-// RegExpUnicodeEscapeSequence :: `u` HexLeadSurrogate `\u` HexTrailSurrogate),
-// so `/\ud834\udf06/u` is the pattern `/\u{1d306}/u`.
+/// Reads the hex digits of a `\xHH`, `\uHHHH` or `\u{H...}` escape into `cp`.
+/// `i` points just after the escape letter `e` and, on success, moves past the
+/// digits. Returns false for a malformed escape so that rx_escape_char treats
+/// the letter as itself. Without this, `[\udc00-\udfff]` would parse as
+/// {u,d,c,0,f} plus the range '0'-'u' and silently match most of ASCII.
+///
+/// When `unicode_mode` is set (the `u` or `v` flag), a `\uHHHH` lead surrogate
+/// followed by a `\uHHHH` trail surrogate becomes one code point (22.2.1
+/// RegExpUnicodeEscapeSequence), so `/\ud834\udf06/u` is the pattern
+/// `/\u{1d306}/u`.
 inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
                                  std::uint32_t & cp, bool unicode_mode = false) {
 	std::size_t want = 0;
@@ -279,10 +287,10 @@ inline bool rx_code_point_escape(std::string_view src, std::size_t & i, char e,
 	return true;
 }
 
-// One code point decoded forward from `at`, and its width in bytes. Core's
-// decode_utf8 has the contract this needs: a byte that does not start a
-// well-formed sequence is one code point of width 1 (its own value), so a
-// scan never stalls and a stray byte still compares.
+/// Decodes one code point forward from `at` and returns it, with its width in
+/// bytes. Core's decode_utf8 has the contract this needs: a byte that does not
+/// start a well-formed sequence is one code point of width 1 (its own value), so
+/// a scan never stalls and a stray byte still compares.
 inline std::uint32_t rx_utf8_decode(std::string_view s, std::size_t at, std::size_t & width) {
 	const std::size_t start = at;
 	const auto cp = static_cast<std::uint32_t>(decode_utf8(s, at));
@@ -290,6 +298,8 @@ inline std::uint32_t rx_utf8_decode(std::string_view s, std::size_t at, std::siz
 	return cp;
 }
 
+/// The character a one-letter escape such as `\n` stands for; any other
+/// letter stands for itself.
 inline char rx_escape_char(char e) {
 	switch (e) {
 	case 'n': return '\n';
@@ -302,13 +312,14 @@ inline char rx_escape_char(char e) {
 	}
 }
 
-// `\p{Name}` / `\p{Name=Value}` (22.2.1 UnicodePropertyValueExpression),
-// `i` just past the `p` or `P`. No loose matching: the name is ControlLetters
-// and `_`, the value adds digits, and the spelling must be one the tables
-// carry. The set lands in `out` - complemented for `\P`, which is the
-// CharacterComplement of 22.2.2.9 and happens BEFORE Canonicalize, unlike
-// `[^...]`. False for a bad spelling, an unknown name, or a negated property
-// of strings (22.2.1.1 MayContainStrings) - each a SyntaxError.
+/// Parses `\p{Name}` / `\p{Name=Value}` (22.2.1
+/// UnicodePropertyValueExpression), with `i` just past the `p` or `P`. No loose
+/// matching: the name is ControlLetters and `_`, the value adds digits, and the
+/// spelling must be one the tables carry. The set lands in `out`, complemented
+/// for `\P`, which is the CharacterComplement of 22.2.2.9 and happens before
+/// Canonicalize, unlike `[^...]`. Returns false for a bad spelling, an unknown
+/// name, or a negated property of strings (22.2.1.1 MayContainStrings), each a
+/// SyntaxError.
 inline bool rx_parse_property(std::string_view src, std::size_t & i, const rx_prog & p, bool negate,
                               rx_class & out) {
 	if (i >= src.size() || src[i] != '{') { return false; }
@@ -348,16 +359,16 @@ inline bool rx_parse_property(std::string_view src, std::size_t & i, const rx_pr
 	return true;
 }
 
-// THE `v` FLAG'S CLASS (22.2.1 ClassSetExpression): a union of characters,
-// ranges, nested classes, `\q{a|bc}` string disjunctions and escapes, or ONE
-// chain of `--` subtractions or `&&` intersections - the three do not mix.
-// A set is code points plus strings; a string of one code point IS a code
+// The `v` flag's class (22.2.1 ClassSetExpression): a union of characters,
+// ranges, nested classes, `\q{a|bc}` string disjunctions and escapes, or one
+// chain of `--` subtractions or `&&` intersections; the three do not mix.
+// A set is code points plus strings; a string of one code point is a code
 // point (22.2.1.1 MayContainStrings), so `\q{a}` lands in the ranges.
 //
 // Under `vi` the specification folds every operand first (MaybeSimpleCase-
 // Folding) and complements within the folded code points; here an operand
-// is CLOSED under the fold instead - every code point sharing a member's
-// fold joins - which the matcher's own fold check then reads identically,
+// is closed under the fold instead (every code point sharing a member's
+// fold joins), which the matcher's own fold check then reads identically,
 // and which keeps the set operations plain range arithmetic.
 using rx_ranges_t = std::vector<std::pair<std::uint32_t, std::uint32_t>>;
 rx_ranges_t rx_fold_closure(const rx_ranges_t & ranges); // regex_properties.cpp
@@ -374,8 +385,8 @@ inline rx_ranges_t rx_ranges_intersect(const rx_ranges_t & a, const rx_ranges_t 
 	return out;
 }
 
-// The set an operand yields; ranges normalized, strings of two or more code
-// points (or none) only.
+/// The set an operand yields: ranges normalized, and strings only of two or
+/// more code points.
 struct rx_set {
 	rx_ranges_t ranges;
 	std::vector<std::string> strings;
@@ -581,6 +592,7 @@ inline bool rx_class_set_expression(std::string_view src, std::size_t & i, rx_pr
 inline std::shared_ptr<rx_alt> rx_parse_alt(std::string_view src, std::size_t & i, rx_prog & p,
                                             bool top);
 
+/// Parses one atom and its quantifier at `i`, advancing past them.
 inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p) {
 	rx_piece pc;
 	const char c = src[i];
@@ -625,7 +637,7 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			i += 2;
 			const std::size_t start = i;
 			while (i < src.size() && src[i] != '>') { ++i; }
-			// Stored DECODED (rx_group_name), so `(?<\u{1d4d1}>)` answers to
+			// Stored decoded (rx_group_name), so `(?<\u{1d4d1}>)` answers to
 			// `groups.𝓑`; rx_pattern_error has already refused a bad name.
 			const std::string_view raw = src.substr(start, i - start);
 			std::string name = rx_group_name(raw).value_or(std::string{raw});
@@ -664,7 +676,7 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			rx_class_normalize(pc.cc);
 			return pc;
 		}
-		// `[]` is the EMPTY class and `[^]` matches anything (22.2.2.9 - a
+		// `[]` is the empty class and `[^]` matches anything (22.2.2.9: a
 		// ClassContents may be empty); the `]` is never literal in a class.
 		// One class atom: an escape (\xHH, \uHHHH, \u{...} or a letter), or
 		// the code point written in the pattern itself, which is UTF-8 here.
@@ -747,11 +759,10 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 			class_atom(lo);
 			std::uint32_t hi = lo;
 			if (i + 1 < src.size() && src[i] == '-' && src[i + 1] != ']') {
-				// A CLASS ESCAPE AT THE FAR END is no range: Annex B (B.1.2,
-				// NonemptyClassRangesNoDash) reads `[%-\d]` as `%`, `-` and
-				// the digits - the escape is read by the next pass - where
-				// class_atom took `\d` for the letter d and made `%-d`. Under
-				// u or v it is the SyntaxError.
+				// A class escape after `-` does not form a range. Annex B (B.1.2,
+				// NonemptyClassRangesNoDash) reads `[%-\d]` as `%`, `-` and the digits, so
+				// the escape is left for the next loop pass. Under `u` or `v` this is a
+				// SyntaxError.
 				if (src[i + 1] == '\\' && i + 2 < src.size() &&
 				    (std::string_view{"dDwWsS"}.find(src[i + 2]) != std::string_view::npos ||
 				     (unicode_mode && (src[i + 2] == 'p' || src[i + 2] == 'P')))) {
@@ -801,7 +812,7 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		i += 2;
 		if (e == 'b') { pc.kind = rx_piece::wordb; return pc; }
 		if (e == 'B') { pc.kind = rx_piece::nwordb; return pc; }
-		// A BACKREFERENCE: `\1`..`\99` by number, `\k<name>` by name. The
+		// A backreference: `\1`..`\99` by number, `\k<name>` by name. The
 		// number is read greedily; whether the group exists is checked after
 		// the whole pattern is parsed, because a reference may point forward.
 		// Annex B makes `\8` with no eighth group the literal "8", and that
@@ -890,9 +901,9 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 		if (rx_code_point_escape(src, i, e, cp, p.unicode || p.unicode_sets)) {
 			pc.kind = rx_piece::lit;
 			if (cp > 0x7F) {
-				// THE SUBJECT IS UTF-8, so a code point above ASCII is the
-				// run of bytes that spells it there, matched as a sequence.
-				// (Below 0x80 a code point and its byte are the same thing.)
+				// The subject is UTF-8, so a code point above ASCII is the run of bytes
+				// that spells it there, matched as a sequence. (Below 0x80 a code point
+				// and its byte are the same thing.)
 				append_utf8(pc.text, cp);
 				return pc;
 			}
@@ -917,9 +928,8 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 	}
 	pc.kind = rx_piece::lit;
 	if (static_cast<unsigned char>(c) >= 0xC0u) {
-		// A pattern character above ASCII is ONE piece of however many
-		// bytes, so `/é+/` repeats the character and `/k/iu` can fold it -
-		// one byte at a time it was the last byte that got the quantifier.
+		// A pattern character above ASCII is one piece covering all its bytes, so
+		// `/é+/` repeats the whole character and `/k/iu` can case-fold it.
 		std::size_t width = 1;
 		rx_utf8_decode(src, i, width);
 		if (width > 1) {
@@ -933,6 +943,8 @@ inline rx_piece rx_parse_atom(std::string_view src, std::size_t & i, rx_prog & p
 	return pc;
 }
 
+/// Parses a quantifier (`*`, `+`, `?`, `{n,m}`, optionally lazy) after an
+/// atom into `pc`; leaves `pc` at exactly-once when none follows.
 inline constexpr void rx_parse_quant(std::string_view src, std::size_t & i, rx_piece & pc) {
 	if (i >= src.size()) { return; }
 	const char c = src[i];
@@ -943,9 +955,9 @@ inline constexpr void rx_parse_quant(std::string_view src, std::size_t & i, rx_p
 		std::size_t j = i + 1;
 		std::int32_t lo = 0;
 		bool has = false;
-		// SATURATED, not wrapped: `b{9007199254740991}` is a bound no
-		// subject reaches, and a signed overflow here was undefined
-		// behaviour that came out as a small or negative count.
+		// Saturate at INT32_MAX instead of overflowing: no subject reaches a
+		// bound like `b{9007199254740991}`, and signed overflow is undefined
+		// behaviour.
 		const auto accumulate = [](std::int32_t n, char d) {
 			constexpr std::int32_t top = 0x7FFFFFFF;
 			return n > (top - (d - '0')) / 10 ? top : n * 10 + (d - '0');
@@ -1037,7 +1049,7 @@ inline void rx_resolve_backrefs(rx_alt & alt, rx_prog & p, std::string_view src)
 					rx_fail(p, src);
 				}
 			} else if (pc.cap >= p.ngroups) {
-				// Annex B.1.2: a number past the last group is a LEGACY OCTAL
+				// Annex B.1.2: a number past the last group is a legacy octal
 				// escape (`\1` with no group is U+0001, up to `\377`), except
 				// that `\8` and `\9` are the identity escapes of their digit.
 				// Whatever digits the octal does not consume are literal.
@@ -1063,6 +1075,9 @@ inline void rx_resolve_backrefs(rx_alt & alt, rx_prog & p, std::string_view src)
 	}
 }
 
+/// Compiles `source` (the pattern body without its slashes) with `flags`.
+/// Errors do not throw: check rx_prog::ok, and rx_prog::error for the
+/// message, before passing the program to rx_search.
 inline rx_prog rx_compile(std::string_view source, std::string_view flags) {
 	rx_prog p;
 	std::string seen;
@@ -1100,28 +1115,30 @@ inline rx_prog rx_compile(std::string_view source, std::string_view flags) {
 	return p;
 }
 
+/// The matcher's state during one search attempt.
 struct rx_state {
 	const std::string * s = nullptr;
 	const rx_prog * p = nullptr;
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps; // -1,-1 = unmatched
-	// The Modifiers Record (22.2.2.1.1): the flags' i, m and s as a
-	// `(?ims-ims:...)` group has set them for the piece being matched.
+	/// The Modifiers Record (22.2.2.1.1): the flags' i, m and s as a
+	/// `(?ims-ims:...)` group has set them for the piece being matched.
 	bool icase = false, multi = false, dotall = false;
-	// MATCHING BACKWARD, inside a lookbehind (22.2.2.4 with direction
-	// backward): each atom matches the text that ENDS at the position, a
-	// sequence runs right to left, and a group's capture is [end, start).
+	/// Matching backward, inside a lookbehind (22.2.2.4 with direction
+	/// backward): each atom matches the text that ends at the position, a
+	/// sequence runs right to left, and a group's capture is [end, start).
 	bool backward = false;
-	// The budget (rx_max_depth, rx_max_steps): once `exhausted`, every piece
-	// fails at once and the search reports it rather than any match.
+	/// The budget (rx_max_depth, rx_max_steps): once `exhausted`, every piece
+	/// fails at once and the search reports it rather than any match.
 	std::int32_t depth = 0;
 	std::uint64_t steps = 0;
 	std::uint64_t max_steps = rx_max_steps;
 	bool exhausted = false;
 };
 
-// Entered by every atom and piece matched; false once the budget is spent. A
-// STEP is a piece tried - backtracking runs through rx_match_piece - so the
-// loop over a quantified single character costs one however long it runs.
+/// Called for every atom and piece matched; returns false once the budget is
+/// spent. A step is a piece tried (backtracking runs through rx_match_piece),
+/// so the loop over a quantified single character costs one step however long
+/// it runs.
 inline bool rx_budget(rx_state & st, bool step) {
 	if (st.exhausted || st.depth > rx_max_depth || (step && ++st.steps > st.max_steps)) {
 		st.exhausted = true;
@@ -1129,9 +1146,9 @@ inline bool rx_budget(rx_state & st, bool step) {
 	return !st.exhausted;
 }
 
-// The code point that ENDS at byte `end`, and its width - rx_utf8_decode run
-// backward. A byte that is not the end of a well-formed sequence is one code
-// point of width 1, as forward.
+/// The code point that ends at byte `end`, and its width: rx_utf8_decode run
+/// backward. A byte that is not the end of a well-formed sequence is one code
+/// point of width 1, as forward.
 inline std::uint32_t rx_utf8_decode_before(std::string_view s, std::size_t end, std::size_t & width) {
 	std::size_t start = end - 1;
 	while (start > 0 && end - start < 4 && (static_cast<unsigned char>(s[start]) & 0xC0u) == 0x80u) {
@@ -1147,6 +1164,7 @@ inline std::uint32_t rx_utf8_decode_before(std::string_view s, std::size_t end, 
 	return cp;
 }
 
+/// ASCII case folding when `icase`, as everywhere in this engine.
 inline char rx_fold(char c, bool icase) {
 	return icase ? ascii_lower(c) : c;
 }
@@ -1185,10 +1203,12 @@ inline bool rx_class_hit(const rx_class & cc, std::uint32_t ch, bool icase, bool
 	return cc.neg ? !hit : hit;
 }
 
+/// A continuation: matches the rest of the pattern from a position.
 using rx_cont = std::function<bool(std::size_t)>;
 
 inline bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, const rx_cont & k);
 
+/// Matches `pc` once at `pos`, ignoring its quantifier, then calls `k`.
 inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
 	const depth_guard deeper{st.depth};
 	if (!rx_budget(st, false)) { return false; }
@@ -1216,8 +1236,8 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 			       k(pos - 1);
 		}
 		if (st.icase && (st.p->unicode || st.p->unicode_sets) && pos < s.size()) {
-			// Canonicalize under `iu` is the simple case fold of BOTH code
-			// points (`/k/iu` takes the KELVIN SIGN), so a literal of any
+			// Canonicalize under `iu` is the simple case fold of both code
+			// points (`/k/iu` matches U+212A KELVIN SIGN), so a literal of any
 			// width is compared as one decoded code point.
 			std::size_t pattern_width = 1;
 			const std::uint32_t want = pc.text.empty()
@@ -1236,8 +1256,8 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		return pos < s.size() && rx_fold(s[pos], st.icase) == rx_fold(pc.c, st.icase) &&
 		       k(pos + 1);
 	case rx_piece::any: {
-		// ONE CODE POINT, however many bytes: `"é".match(/./)[0]` is "é". A
-		// line terminator is not "any" unless `s` says so - \n, \r, and the
+		// One code point, however many bytes: `"é".match(/./)[0]` is "é". A
+		// line terminator is not "any" unless `s` says so: \n, \r, and the
 		// three-byte U+2028 and U+2029.
 		if (st.backward ? pos == 0 : pos >= s.size()) { return false; }
 		std::size_t width = 1;
@@ -1249,7 +1269,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		return k(st.backward ? pos - width : pos + width);
 	}
 	case rx_piece::backref: {
-		// A group that has not captured matches EMPTY (22.2.2.7.2 step 3),
+		// A group that has not captured matches empty (22.2.2.7.2 step 3),
 		// and one that has must be repeated here, folded like a literal. A
 		// duplicated name resolves to its first slot; the alternatives' other
 		// slots share the name, so the one that participated is looked up.
@@ -1267,7 +1287,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		}
 		if (cap.first < 0) { return k(pos); }
 		const auto len = static_cast<std::size_t>(cap.second - cap.first);
-		// Backward, the repetition is the text that ENDS here.
+		// Backward, the repetition is the text that ends here.
 		if (st.backward ? pos < len : pos + len > s.size()) { return false; }
 		const std::size_t from = st.backward ? pos - len : pos;
 		for (std::size_t j = 0; j < len; ++j) {
@@ -1280,11 +1300,11 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 	}
 	case rx_piece::behind:
 	case rx_piece::nbehind: {
-		// ZERO WIDTH, LOOKING BACK: the sub-pattern is matched RIGHT TO LEFT
+		// Zero width, looking back: the sub-pattern is matched right to left
 		// from here (22.2.2.4, direction backward), so a greedy quantifier in it
-		// takes as much as it can nearest this position and the captures are
-		// the ones that reading gives - `/(?<=(\d+)(\d+))$/` on "1053" is "1"
-		// and "053". Where it starts is its own business.
+		// takes as much as it can nearest this position and the captures are the
+		// ones that reading gives: `/(?<=(\d+)(\d+))$/` on "1053" captures "1"
+		// and "053". Where the lookbehind's match starts is not recorded.
 		const auto saved = st.caps;
 		const bool direction = st.backward;
 		st.backward = true;
@@ -1301,7 +1321,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		return k(pos);
 	}
 	case rx_piece::cls: {
-		// A class consumes ONE CODE POINT of the UTF-8 subject, however many
+		// A class consumes one code point of the UTF-8 subject, however many
 		// bytes it takes: `[\u1680]` matches the three bytes of U+1680.
 		// The strings of a `v` class go first, longest first (22.2.2.9: a
 		// ClassSetExpression's strings are matched by descending length).
@@ -1328,10 +1348,10 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		return (pos == s.size() || (st.multi && s[pos] == '\n')) && k(pos);
 	case rx_piece::wordb:
 	case rx_piece::nwordb: {
-		// IsWordChar (22.2.2.9.3): under `i` with `u` or `v` the word
-		// characters are every code point whose simple case fold is one -
-		// LATIN SMALL LETTER LONG S (s) and KELVIN SIGN (k) join the ASCII
-		// ones. Everywhere else they are the ASCII ones alone.
+		// IsWordChar (22.2.2.9.3): under `i` with `u` or `v`, a word character is
+		// any code point whose simple case fold is an ASCII word character. That
+		// adds U+017F LATIN SMALL LETTER LONG S and U+212A KELVIN SIGN to the ASCII
+		// set. Everywhere else the word characters are the ASCII ones alone.
 		const bool fold_words = st.icase && (st.p->unicode || st.p->unicode_sets);
 		const auto word_before = [&] {
 			if (pos == 0) { return false; }
@@ -1376,7 +1396,7 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 		if (mods) { apply(true); }
 		const bool ok = rx_match_alt(*pc.sub, st, pos, [&](std::size_t end) {
 			if (cap >= 0) {
-				// Backward, the group's text runs from where it ENDED to here.
+				// Backward, the group's text runs from where it ended to here.
 				const auto lo = static_cast<std::ptrdiff_t>(std::min(pos, end));
 				const auto hi = static_cast<std::ptrdiff_t>(std::max(pos, end));
 				st.caps[static_cast<std::size_t>(cap)] = {lo, hi};
@@ -1393,16 +1413,16 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 	}
 	case rx_piece::ahead:
 	case rx_piece::nahead: {
-		// ZERO WIDTH. The sub-pattern is matched at this position purely to ask
-		// whether it can be - the continuation resumes from `pos` either way,
-		// which is the whole point of an assertion. Natural in a backtracker:
-		// the inner match simply succeeds with a continuation that accepts
-		// anything and reports nothing.
+		// Zero width. The sub-pattern is matched at this position only to ask
+		// whether it can be; the continuation resumes from `pos` either way, which
+		// is what makes it an assertion. In a backtracker this is natural: the
+		// inner match succeeds with a continuation that accepts anything and
+		// reports nothing.
 		//
 		// Captures made inside a lookahead are rolled back on a negative one,
 		// because it did not match anything that survives.
 		const auto saved = st.caps;
-		// FORWARD, even inside a lookbehind (22.2.2.4: a lookahead's direction
+		// Forward, even inside a lookbehind (22.2.2.4: a lookahead's direction
 		// is always forward).
 		const bool direction = st.backward;
 		st.backward = false;
@@ -1422,14 +1442,17 @@ inline bool rx_match_once(const rx_piece & pc, rx_state & st, std::size_t pos, c
 	return false;
 }
 
-// A piece that consumes one character and captures nothing, whose
-// repetition is therefore a LOOP: `\p{Any}+` over the whole code space is
-// a million repetitions, and a recursion per repetition is a stack overflow.
+/// True for a piece that consumes one character and captures nothing, whose
+/// repetition can therefore be a loop: `\p{Any}+` over the whole code space is
+/// a million repetitions, and a recursion per repetition would overflow the
+/// stack.
 inline bool rx_simple_piece(const rx_piece & pc) {
 	return pc.kind == rx_piece::lit || pc.kind == rx_piece::any ||
 	       (pc.kind == rx_piece::cls && pc.cc.strings.empty());
 }
 
+/// Matches `pc` with its quantifier at `pos`, calling `k` after each
+/// candidate repetition count in greedy or lazy order.
 inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, const rx_cont & k) {
 	const depth_guard deeper{st.depth};
 	if (!rx_budget(st, true)) { return false; }
@@ -1463,13 +1486,15 @@ inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, 
 		}
 		return false;
 	}
-	// quantified matching; a zero-width repetition stops the loop
+	// General quantifier: one recursion per repetition. An iteration that
+	// matches the empty string after the minimum is met counts as a failure,
+	// which ends the loop.
 	std::function<bool(std::size_t, std::int32_t)> rec = [&](std::size_t at, std::int32_t n) -> bool {
 		const bool may_more = pc.max < 0 || n < pc.max;
 		const bool may_stop = n >= pc.min;
 		const auto more = [&]() {
 			if (!may_more) { return false; }
-			// 22.2.2.3.1 RepeatMatcher step 4: every capture INSIDE the atom
+			// 22.2.2.3.1 RepeatMatcher step 4: every capture inside the atom
 			// is cleared before each repetition, so `/(a)|(b)/` run twice by
 			// a quantifier does not keep group 1 from the first round. Saved
 			// and put back when the repetition fails, since the caller may
@@ -1482,11 +1507,11 @@ inline bool rx_match_piece(const rx_piece & pc, rx_state & st, std::size_t pos, 
 				}
 			}
 			// 22.2.2.3.1 step 2.b: once the minimum is met, an iteration
-			// that matched the EMPTY string is a failure - the atom
-			// backtracks to something longer, or the loop stops before it -
+			// that matched the empty string is a failure (the atom
+			// backtracks to something longer, or the loop stops before it),
 			// so `/(a?b??)*/` takes "ab" rather than stopping at "a", and
 			// `/(?:(?=(x)))?/` leaves group 1 undefined. Below the minimum it
-			// counts - and the ones still owed would be the same empty match
+			// counts, and the ones still owed would be the same empty match
 			// at the same place, so they are counted at once rather than
 			// recursed through (`(?:){2147483647}` is a legal pattern).
 			const bool ok = rx_match_once(pc, st, at, [&](std::size_t np) {
@@ -1522,18 +1547,20 @@ inline bool rx_match_alt(const rx_alt & alt, rx_state & st, std::size_t pos, con
 	return false;
 }
 
+/// The result of rx_search: the match's byte range and its captures.
 struct rx_match {
 	std::size_t begin = 0, end = 0;
 	std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> caps;
-	// The search gave up (rx_max_depth / rx_max_steps) rather than finding
-	// no match; rx_search returned false.
+	/// The search gave up (rx_max_depth / rx_max_steps) rather than finding
+	/// no match; rx_search returned false.
 	bool exhausted = false;
 };
 
-// `anchored` tries `from` alone: a sticky pattern fails where it is not at
-// lastIndex (22.2.7.2 step 13.a), so searching on to discard a later hit made
-// every failed sticky exec walk the rest of the input - a tokenizer fails one
-// per token, and WebIDL2's over html.idl took 21 seconds.
+/// Finds the first match of `p` in `s` at or after byte `from` and stores it
+/// in `out`. Returns false when there is no match, or when the step budget runs
+/// out (`out.exhausted` is then set). With `anchored`, only `from` is tried. A
+/// sticky search uses this because it must match at lastIndex (22.2.7.2 step
+/// 13.a), and a failed sticky exec should not scan the rest of the input.
 inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from, rx_match & out, bool anchored = false) {
 	out.exhausted = false;
 	// rx_max_steps from each starting position, and rx_max_search_steps for
@@ -1546,7 +1573,7 @@ inline bool rx_search(const rx_prog & p, const std::string & s, std::size_t from
 	const std::uint64_t search_steps =
 	    rx_max_search_steps + 16 * static_cast<std::uint64_t>(s.size() - std::min(from, s.size()));
 	for (std::size_t start = from; start <= s.size(); ++start) {
-		// A MATCH STARTS ON A CODE POINT, never inside one: a continuation
+		// A match starts on a code point, never inside one: a continuation
 		// byte is not a character, and `[^x]` at such a position would
 		// "match" the tail of the very character the class excludes.
 		if (start < s.size() && (static_cast<unsigned char>(s[start]) & 0xC0u) == 0x80u) {

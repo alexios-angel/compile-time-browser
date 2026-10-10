@@ -1,14 +1,19 @@
-// ctbrowser.script builtins - Temporal's string grammar (13.31-13.38): RFC
-// 9557 date-times with their annotations, UTC offsets, time zone identifiers
-// and ISO 8601 durations.
+//===- parse.cpp - Temporal string grammar ----------------------*- C++ -*-===//
 //
-// A RECURSIVE DESCENT OVER ONE STRING, one function per nonterminal, each
-// taking a cursor it advances only on success. The grammar is ambiguous only
-// where the specification says so - a bare time against a month-day or
-// year-month (13.31.3's early errors), which parse_time resolves by asking
-// the other two productions - and everywhere else the longest match is the
-// only one that can reach the end of the string, since what may follow a time
-// or an offset (a sign, a bracket, the end) never starts with a digit.
+// Temporal's string grammar (Temporal proposal sections 13.31-13.38): RFC 9557
+// date-times with their annotations, UTC offsets, time zone identifiers and
+// ISO 8601 durations. Bare section numbers below refer to the same
+// specification.
+//
+// This is a recursive descent over one string: one function per nonterminal,
+// each taking a cursor it advances only on success. The grammar is ambiguous
+// only where the specification says so: a bare time against a month-day or
+// year-month (13.31.3's early errors), which annotated_time resolves by trying
+// the other two productions. Everywhere else the longest match is the only one
+// that can reach the end of the string, since what may follow a time or an
+// offset (a sign, a bracket, the end) never starts with a digit.
+//
+//===----------------------------------------------------------------------===//
 
 #include "core.hpp"
 
@@ -21,6 +26,7 @@ namespace ctbrowser::script::temporal {
 
 namespace {
 
+/// A position in the string being parsed.
 struct cursor {
     std::string_view text;
     std::size_t at = 0;
@@ -34,7 +40,7 @@ struct cursor {
         ++at;
         return true;
     }
-    // One of two spellings of a designator, which may be either case.
+    /// Consumes the designator letter \p upper in either case.
     bool eat_letter(char upper) noexcept {
         const char c = peek();
         if (c != upper && c != static_cast<char>(upper - 'A' + 'a')) { return false; }
@@ -47,7 +53,7 @@ struct cursor {
     return c == '+' || c == '-';
 }
 
-// `count` digits exactly, as a number.
+/// Reads exactly \p count digits as a number.
 bool digits(cursor & c, int count, int & out) {
     int value = 0;
     for (int i = 0; i < count; ++i) {
@@ -59,7 +65,8 @@ bool digits(cursor & c, int count, int & out) {
     return true;
 }
 
-// Hour: 00-23. MinuteSecond: 00-59. TimeSecond: 00-60.
+/// Hour: 00-23. MinuteSecond: 00-59; minute_second with \p highest 60 reads a
+/// TimeSecond, which allows a leap second.
 bool hour(cursor & c, int & out) {
     cursor probe = c;
     if (!digits(probe, 2, out) || out > 23) { return false; }
@@ -73,7 +80,7 @@ bool minute_second(cursor & c, int & out, int highest = 59) {
     return true;
 }
 
-// TemporalDecimalFraction: . or , then one to nine digits - the digits, as text.
+/// TemporalDecimalFraction: '.' or ',' then one to nine digits, returned as text.
 bool fraction(cursor & c, std::string & out) {
     if (c.peek() != '.' && c.peek() != ',') { return false; }
     std::size_t n = 0;
@@ -84,14 +91,14 @@ bool fraction(cursor & c, std::string & out) {
     return true;
 }
 
-// The digits of a fraction as nanoseconds (right-padded to nine).
+/// The digits of a fraction as nanoseconds (right-padded to nine).
 [[nodiscard]] int fraction_nanoseconds(const std::string & digits_text) {
     std::string padded = digits_text + "000000000";
     padded.resize(9);
     return std::atoi(padded.c_str());
 }
 
-// DateYear: four digits, or a sign and six (not -000000).
+/// DateYear: four digits, or a sign and six (not -000000).
 bool date_year(cursor & c, std::int64_t & out) {
     cursor probe = c;
     if (is_sign(probe.peek())) {
@@ -123,7 +130,8 @@ bool date_day(cursor & c, int & out) {
     return true;
 }
 
-// IsValidMonthDay (13.31.1), and IsValidDate's leap-year rule (13.31.2).
+/// IsValidMonthDay (13.31.1): rejects day 31 in a 30-day month and February
+/// 30. February 29 in a non-leap year (IsValidDate, 13.31.2) is checked by date().
 [[nodiscard]] bool valid_month_day(int month, int day) noexcept {
     if (day == 31 && (month == 2 || month == 4 || month == 6 || month == 9 || month == 11)) {
         return false;
@@ -131,6 +139,7 @@ bool date_day(cursor & c, int & out) {
     return !(month == 2 && day == 30);
 }
 
+/// The date part of a parse; \c year is empty for a bare month-day.
 struct date_fields {
     std::optional<std::int64_t> year;
     int month = 1;
@@ -138,7 +147,7 @@ struct date_fields {
     bool has_day = false;
 };
 
-// Date: DateSpec[+Extended] | DateSpec[~Extended].
+/// Date: DateSpec[+Extended] | DateSpec[~Extended].
 bool date(cursor & c, date_fields & out) {
     cursor probe = c;
     std::int64_t year = 0;
@@ -156,7 +165,7 @@ bool date(cursor & c, date_fields & out) {
     return true;
 }
 
-// DateSpecYearMonth: DateYear -? DateMonth.
+/// DateSpecYearMonth: DateYear -? DateMonth.
 bool date_spec_year_month(cursor & c, date_fields & out) {
     cursor probe = c;
     std::int64_t year = 0;
@@ -169,7 +178,7 @@ bool date_spec_year_month(cursor & c, date_fields & out) {
     return true;
 }
 
-// DateSpecMonthDay: --? DateMonth -? DateDay.
+/// DateSpecMonthDay: --? DateMonth -? DateDay.
 bool date_spec_month_day(cursor & c, date_fields & out) {
     cursor probe = c;
     if (probe.peek() == '-' && probe.peek(1) == '-') { probe.at += 2; }
@@ -184,7 +193,7 @@ bool date_spec_month_day(cursor & c, date_fields & out) {
     return true;
 }
 
-// Time: TimeSpec[+Extended] | TimeSpec[~Extended], longest match.
+/// Time: TimeSpec[+Extended] | TimeSpec[~Extended], longest match.
 bool time_spec(cursor & c, time_record & out) {
     cursor probe = c;
     time_record t;
@@ -197,6 +206,7 @@ bool time_spec(cursor & c, time_record & out) {
         if (extended && !probe.eat(':')) {
             probe = after_minute;
         } else if (int second = 0; minute_second(probe, second, 60)) {
+            // A leap second (:60) parses and is clamped to :59, as Temporal does.
             t.second = second == 60 ? 59 : second;
             std::string digits_text;
             if (fraction(probe, digits_text)) {
@@ -209,16 +219,16 @@ bool time_spec(cursor & c, time_record & out) {
             probe = after_minute;
         }
     } else {
-        probe = after_hour; // "12:" is not a time; "12" is
+        probe = after_hour; // "12:" is not a time; "12" is.
     }
     out = t;
     c = probe;
     return true;
 }
 
-// UTCOffset[SubMinutePrecision]: the sign, the hour, and optionally minutes -
-// and, with sub-minute precision, seconds and a fraction - all separated by
-// colons or none of them. Returns nanoseconds.
+/// UTCOffset[SubMinutePrecision]: the sign, the hour, and optionally minutes
+/// (and, with \p sub_minute, seconds and a fraction), either all separated by
+/// colons or none of them. \p out is the offset in nanoseconds.
 bool utc_offset(cursor & c, bool sub_minute, i128 & out) {
     cursor probe = c;
     if (!is_sign(probe.peek())) { return false; }
@@ -249,7 +259,7 @@ bool utc_offset(cursor & c, bool sub_minute, i128 & out) {
     return true;
 }
 
-// TimeZoneIANAName: components of TZLeadingChar TZChar*, joined by '/'.
+/// TimeZoneIANAName: components of TZLeadingChar TZChar*, joined by '/'.
 bool iana_name(cursor & c) {
     cursor probe = c;
     for (;;) {
@@ -267,7 +277,7 @@ bool iana_name(cursor & c) {
     return true;
 }
 
-// TimeZoneIdentifier: UTCOffset[~SubMinutePrecision] | TimeZoneIANAName.
+/// TimeZoneIdentifier: UTCOffset[~SubMinutePrecision] | TimeZoneIANAName.
 bool time_zone_identifier(cursor & c) {
     i128 ignored = 0;
     cursor probe = c;
@@ -278,19 +288,22 @@ bool time_zone_identifier(cursor & c) {
     return iana_name(c);
 }
 
+/// One bracketed annotation, "[key=value]", critical when written "[!key=value]".
 struct annotation {
     bool critical = false;
     std::string key;
     std::string value;
 };
 
+/// The annotations after a date-time.
 struct annotated {
-    std::string time_zone; // the TimeZoneAnnotation's identifier, or empty
+    std::string time_zone; ///< The TimeZoneAnnotation's identifier, or empty.
     bool has_time_zone = false;
     std::vector<annotation> annotations;
 };
 
-// AnnotationKey: [a-z_][a-z_0-9-]*. AnnotationValue: alnum+ (- alnum+)*.
+/// One Annotation. AnnotationKey: [a-z_][a-z_0-9-]*. AnnotationValue:
+/// alnum+ (- alnum+)*.
 bool annotation_item(cursor & c, annotation & out) {
     cursor probe = c;
     if (!probe.eat('[')) { return false; }
@@ -319,7 +332,7 @@ bool annotation_item(cursor & c, annotation & out) {
     return true;
 }
 
-// TimeZoneAnnotation? Annotations? - the time zone first, if it is there.
+/// TimeZoneAnnotation? Annotations?: the time zone first, if it is there.
 bool annotations(cursor & c, annotated & out, bool zone_required) {
     cursor probe = c;
     if (probe.peek() == '[') {
@@ -344,10 +357,10 @@ bool annotations(cursor & c, annotated & out, bool zone_required) {
     return true;
 }
 
-// DateTimeUTCOffset[Z]: [+Z] a Z designator, or UTCOffset[+SubMinutePrecision].
+/// DateTimeUTCOffset[Z]: with [+Z] a Z designator, or UTCOffset[+SubMinutePrecision].
 struct offset_part {
     bool z = false;
-    std::string text; // the offset's source text
+    std::string text; ///< The offset's source text.
 };
 bool date_time_utc_offset(cursor & c, bool allow_z, offset_part & out) {
     if (allow_z && (c.peek() == 'Z' || c.peek() == 'z')) {
@@ -362,6 +375,7 @@ bool date_time_utc_offset(cursor & c, bool allow_z, offset_part & out) {
     return true;
 }
 
+/// Everything one goal's parse found, before parse_iso_datetime checks it.
 struct parsed {
     date_fields date;
     std::optional<time_record> time;
@@ -369,8 +383,8 @@ struct parsed {
     annotated notes;
 };
 
-// AnnotatedDateTime[Zoned, TimeRequired], and TemporalInstantString when
-// `instant` (a time and an offset required, Z allowed).
+/// AnnotatedDateTime[Zoned, TimeRequired], or TemporalInstantString when
+/// \p instant is set (a time and an offset required, Z allowed).
 bool annotated_date_time(cursor & c, bool zoned, bool time_required, bool instant, parsed & out) {
     cursor probe = c;
     if (!date(probe, out.date)) { return false; }
@@ -392,8 +406,8 @@ bool annotated_date_time(cursor & c, bool zoned, bool time_required, bool instan
     return true;
 }
 
-// Whether the whole of `text` is a DateSpecMonthDay or a DateSpecYearMonth -
-// the early errors that keep "1214" and "2021-12" from being times (13.31.3).
+/// Whether the whole of \p text is a DateSpecMonthDay or a DateSpecYearMonth:
+/// the early errors that keep "1214" and "2021-12" from being times (13.31.3).
 [[nodiscard]] bool is_month_day_or_year_month(std::string_view text) {
     date_fields ignored;
     cursor a{text};
@@ -402,7 +416,7 @@ bool annotated_date_time(cursor & c, bool zoned, bool time_required, bool instan
     return date_spec_year_month(b, ignored) && b.done();
 }
 
-// AnnotatedTime: T? Time DateTimeUTCOffset[~Z]? annotations.
+/// AnnotatedTime: T? Time DateTimeUTCOffset[~Z]? annotations.
 bool annotated_time(cursor & c, parsed & out) {
     cursor probe = c;
     const bool designated = probe.eat_letter('T');
@@ -419,6 +433,7 @@ bool annotated_time(cursor & c, parsed & out) {
     return true;
 }
 
+/// Parses the whole of \p text as the production(s) goal \p g names.
 bool parse_goal(std::string_view text, goal g, parsed & out) {
     const auto whole = [&](auto && production) {
         parsed attempt;
@@ -460,7 +475,9 @@ std::optional<parse_record> parse_iso_datetime(std::string_view text,
     for (const goal g : goals) {
         parsed result;
         if (!parse_goal(text, g, result)) { continue; }
-        // Step 4.b: the calendar annotations, and the critical flags.
+        // ParseISODateTime step 4.b: the first calendar annotation is used. A
+        // second one is an error if either is marked critical (`[!...]`), and
+        // an unknown annotation is an error if it is critical.
         std::string calendar;
         bool calendar_critical = false;
         bool have_calendar = false;
@@ -550,9 +567,9 @@ std::optional<time_zone_parse> parse_temporal_time_zone_string(std::string_view 
     return std::nullopt;
 }
 
-// ISO 8601 durations (13.37). Each value is the source's digits read as a
-// Number, as ToIntegerWithTruncation reads them; a fraction on the smallest
-// unit present is spread down the smaller ones exactly, as nanoseconds.
+/// ISO 8601 durations (13.37). Each value is the source's digits read as a
+/// Number, as ToIntegerWithTruncation reads them; a fraction on the smallest
+/// unit present is spread down the smaller ones exactly, as nanoseconds.
 std::optional<duration_record> parse_temporal_duration_string(std::string_view text) {
     cursor c{text};
     int factor = 1;
@@ -608,10 +625,10 @@ std::optional<duration_record> parse_temporal_duration_string(std::string_view t
             return true;
         };
         if (time_part('H', hours, f_hours) && !f_hours.empty()) {
-            // a fractional hour ends the duration
+            // A fractional hour ends the duration.
         } else {
             if (time_part('M', minutes, f_minutes) && !f_minutes.empty()) {
-                // a fractional minute ends it
+                // A fractional minute ends it.
             } else {
                 (void)time_part('S', seconds, f_seconds);
             }

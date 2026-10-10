@@ -1,10 +1,14 @@
-// THE RUNTIME COMPILES ITS OWN ABI. `ctbrowser/include/ctbrowser/aot/aot.hpp`
-// expands aot_helpers.def into an enum and the `extern "C"` prototypes, and
-// the presets that most need the check - `browser`, `browser-no-llvm`, `asan`,
-// `tsan`, `windows` - build no ctcompile at all. So this translation unit
-// exists to be COMPILED: it defines nothing and declares nothing; every line
-// in it is a `static_assert` about the contract, and it is part of
-// `ctbrowser-script`, so every configuration checks it.
+//===- aot_contract.cpp - Compile-time checks of the AOT helper ABI -------===//
+//
+// The runtime compiles its own ABI. ctbrowser/aot/aot.hpp expands
+// aot_helpers.def into an enum and the `extern "C"` prototypes, and the
+// presets that most need the check (`browser`, `browser-no-llvm`, `asan`,
+// `tsan`, `windows`) build no ctcompile at all. So this translation unit
+// exists only to be compiled: it defines and declares nothing, every line is a
+// `static_assert` about the contract, and because it is part of
+// `ctbrowser-script` every configuration checks it.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/aot/aot.hpp>
 
 #include <ctbrowser/script/bytecode.hpp>
@@ -18,10 +22,10 @@
 namespace ctbrowser::aot {
 namespace {
 
-// --- the shape of a row, read off the DECLARED PROTOTYPE ------------------
-// Not off a stringisation of the table's cells: the prototypes are what the
-// backends actually call, so asserting about `decltype(name)` checks the thing
-// that has consequences.
+/// Decomposes a helper's declared prototype into its result type and whether
+/// its first parameter is the frame handle. The prototype, not the table's
+/// cell text, is what the backends call, so asserting about `decltype(name)`
+/// checks the thing that has consequences.
 template <typename F> struct signature;
 template <typename R, typename... A> struct signature<R(A...)> {
     using result = R;
@@ -32,7 +36,7 @@ template <typename R, typename... A> struct signature<R(A...)> {
 
 } // namespace
 
-// --- THE CLASSIFIER, PINNED ------------------------------------------------
+// The status classifier, pinned.
 // The one row every status in the vocabulary is defined against. Deriving
 // `ct_aot_status`'s underlying type from this prototype means a change to the
 // table's `ret` column moves the enum; this says the prototype itself is what
@@ -46,13 +50,12 @@ static_assert(std::is_same_v<std::underlying_type_t<ct_aot_status>,
                              signature<decltype(ct_aot_check)>::result>,
               "the status vocabulary's type IS the classifier's return type");
 
-// --- A SIGNED RESULT IS A STATUS, AND A STATUS CARRIES A FRAME -------------
-// The table states this and names its single exception in prose
-// (aot_helpers.def, ct_aot_to_int32: "THE ONE DELIBERATE EXCEPTION to the
-// return-type rule - a signed int32 return that is DATA, not a status ... It
-// takes no frame handle, which is the mechanical tell"). Twenty-five rows
-// return `int32_t`; twenty-four of them take a frame handle first, and the one
-// that does not is that row. Asserting it two-sidedly is what makes the prose
+// A signed result is a status, and a status carries a frame.
+// The table states this and names its single exception in prose at
+// aot_helpers.def's ct_aot_to_int32: a signed int32 return that is data, not
+// a status, and takes no frame handle, which is the mechanical tell. Every row
+// that returns `int32_t` takes a frame handle first, except that one row.
+// Asserting it two-sidedly is what makes the prose
 // load-bearing: a new signed-returning helper that forgets its frame handle,
 // or a second data-returning exception added without a word, both stop the
 // build here.
@@ -66,7 +69,7 @@ static_assert(std::is_same_v<std::underlying_type_t<ct_aot_status>,
 #include <ctbrowser/aot/aot_helpers.def>
 #undef CT_AOT_HELPER
 
-// --- NOTHING COMES BACK IN MEMORY -----------------------------------------
+// Nothing comes back in memory.
 // A status in the return register and data through an out-pointer, never a
 // struct by value. A helper returning a struct by value would put a
 // hidden pointer in the first argument slot on every ABI this targets, which
@@ -79,12 +82,12 @@ static_assert(std::is_same_v<std::underlying_type_t<ct_aot_status>,
 #include <ctbrowser/aot/aot_helpers.def>
 #undef CT_AOT_HELPER
 
-// --- A VALUE AND THE uint64_t IT TRAVELS AS --------------------------------
+// A value and the uint64_t it travels as.
 // Every JavaScript value in the table is spelled `uint64_t`, so the boundary
 // reinterprets a `script::value` as sixty-four bare bits rather than going
 // through bits()/from_bits(). Size and trivial copyability are pinned beside
-// the type itself; what is NOT pinned anywhere is that a POINTER to one is a
-// pointer to the other, which is what `const uint64_t *argv` requires, and that
+// the type itself; what is not pinned anywhere else is that a pointer to one is
+// a pointer to the other, which is what `const uint64_t *argv` requires, and that
 // the bit map is the identity rather than some transformation.
 static_assert(sizeof(script::value) == sizeof(std::uint64_t),
               "a JS value is one machine word, which is what the ABI passes");

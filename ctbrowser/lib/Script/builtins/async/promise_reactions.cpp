@@ -1,46 +1,46 @@
+//===- promise_reactions.cpp - Promise resolution and reactions -----------===//
+//
+// The promise algorithms of ECMA-262 27.2 (section numbers below are
+// ECMA-262). A promise is an ordinary object carrying four private-key slots
+// (settled_slot, value_slot, rejected_slot and handlers_slot in
+// promise_reactions.hpp). The VM reads them through the same keys
+// (context::is_pending_promise, wrap_in_promise, attach_resume and the await
+// opcode), so the shape is fixed and only the algorithms are chosen here.
+// handlers_slot holds the PromiseReaction records (27.2.1.1), each an object
+// {ok, err, next, resolve, reject}, or {co}: the VM's record for a suspended
+// `await`, which `deliver` resumes instead of calling anything.
+//
+// A handler never runs the moment a promise settles: `settle` queues a
+// reaction job per record (context::queue_microtask) and the event loop
+// drains them at the end of the turn, so `p.then(f); after();` runs `after`
+// first, as a real job queue orders them.
+//
+//===----------------------------------------------------------------------===//
+
 #include "promise_reactions.hpp"
 
 namespace ctbrowser::script::detail {
 
 namespace promise {
 
-// --- promises ---------------------------------------------------------------
-//
-// A promise is an ordinary object carrying four own, non-enumerable slots:
-// `__settled`, `__value`, `__rejected` and `__handlers`. The VM READS THEM BY
-// NAME - context::is_pending_promise, wrap_in_promise, attach_resume and the
-// await opcode - so the shape is fixed here and only the algorithms are this
-// file's to choose. `__handlers` is the list of PromiseReaction records
-// (27.2.1.1), each an object {ok, err, next, resolve, reject} - or {co}, the
-// VM's own record for a suspended `await`, which `deliver` resumes instead of
-// calling anything.
-//
-// A handler never runs the moment a promise settles: `settle` QUEUES a
-// reaction job per record (context::queue_microtask) and the event loop
-// drains it at the end of the turn, so `p.then(f); after();` runs `after`
-// first, the way a real job queue orders them.
-
-// PRIVATE keys on Promise.prototype (value.hpp: no source text can spell one
-// and OwnPropertyKeys never reports one): the %Promise% intrinsic itself, the
-// two job natives, and the one native that reads `then` under a fence. They
-// live on the prototype table so the collector traces them like any property.
-
 [[nodiscard]] object_object * promise_prototype(context & cx);
 
+/// Returns own property `name` of `o`, or undefined when it is absent.
 [[nodiscard]] value slot(object_object * o, std::string_view name) {
     const value * held = o->find(name);
     return held == nullptr ? value::undefined() : *held;
 }
 
-// IsPromise, 27.2.1.6: an object with the [[PromiseState]] slot.
+/// IsPromise, 27.2.1.6: an object with the [[PromiseState]] slot.
 [[nodiscard]] bool is_promise(value v) {
     return v.is_object() &&
            static_cast<object_object *>(v.as_heap())->find(settled_slot) != nullptr;
 }
 
-// The four slots, PENDING, on a fresh object - or on the instance `new` handed
-// a subclass (`class P extends Promise` reaches the constructor through
-// `super()`, with `this` already made on P.prototype).
+/// Gives `self` the four slots in the pending state and returns it. `self` is
+/// either undefined (a fresh object is made) or the instance `new` handed a
+/// subclass (`class P extends Promise` reaches the constructor through
+/// `super()`, with `this` already made on P.prototype).
 [[nodiscard]] value init_promise(context & cx, value self) {
     if (!self.is_object()) { self = cx.make_object(); }
     auto * p = static_cast<object_object *>(self.as_heap());
@@ -51,32 +51,25 @@ namespace promise {
     p->define(handlers_slot, cx.make_array(), attr_none);
     return self;
 }
+/// Returns a new pending %Promise% instance.
 [[nodiscard]] value pending_promise(context & cx) {
     return init_promise(cx, value::undefined());
 }
-
-// A PromiseCapability record (27.2.1.1). For %Promise% itself `resolve` and
-// `reject` are left undefined and the promise is resolved directly - the
-// functions exist only when something hands them to JavaScript, see
-// `materialise`.
 
 void settle(context & cx, value promise, value with, bool rejected);
 void resolve_promise(context & cx, value promise, value resolution);
 [[nodiscard]] value reaction_job(context & cx);
 [[nodiscard]] value thenable_job(context & cx);
 
-// CreateResolvingFunctions, 27.2.1.3. The pair shares ONE [[AlreadyResolved]]
-// record, and a second pair for the same promise (NewPromiseResolveThenableJob
-// makes one) has its own - which is why the flag is in a shared cell rather
-// than on the promise.
-//
-// RETAINED, not merely captured: a `value` captured by a C++ lambda is
-// invisible to the collector, and these two hold the only reference to the
-// promise that outlives the call - a page keeps `resolve`, not the promise -
-// so it was collected out from under them and a later resolve() settled freed
-// memory, SILENTLY. `native_object::retained` is a traced list that is not a
-// property, so it costs no name and is not visible to
-// Object.getOwnPropertyNames(resolve).
+/// CreateResolvingFunctions, 27.2.1.3. The pair shares one [[AlreadyResolved]]
+/// record, and a second pair for the same promise (NewPromiseResolveThenableJob
+/// makes one) has its own, which is why the flag lives in a shared cell rather
+/// than on the promise.
+///
+/// The shared state is pushed onto `retained`, not just captured: the
+/// collector cannot see values captured by a C++ lambda, and a page often
+/// keeps only `resolve`, not the promise. `retained` is traced but is not a
+/// property, so Object.getOwnPropertyNames(resolve) does not show it.
 [[nodiscard]] std::pair<value, value> resolvers_for(context & cx, value promise) {
     object_object * shared = new_table(cx);
     shared->set("promise", promise);
@@ -106,9 +99,9 @@ void resolve_promise(context & cx, value promise, value resolution);
     return {resolve, reject};
 }
 
-// The capability's functions, made on first need: a native capability is
-// resolved directly until something has to HAND `resolve`/`reject` to
-// JavaScript (`then` on a combinator's element promise, `withResolvers`).
+/// Makes the capability's functions on first need: a native capability is
+/// resolved directly until something has to hand `resolve`/`reject` to
+/// JavaScript (`then` on a combinator's element promise, `withResolvers`).
 void materialise(context & cx, capability & cap) {
     if (cap.resolve.is_callable() && cap.reject.is_callable()) { return; }
     const auto [resolve, reject] = resolvers_for(cx, cap.promise);
@@ -116,9 +109,9 @@ void materialise(context & cx, capability & cap) {
     cap.reject = reject;
 }
 
-// Resolve or reject the capability with a value: through its functions when
-// it has them, directly otherwise. A throw out of a subclass's `resolve` is
-// left parked for the caller's fence.
+/// Resolves or rejects the capability with a value: through its functions when
+/// it has them, directly otherwise. A throw out of a subclass's `resolve` is
+/// left pending for the caller's fence.
 void settle_capability(context & cx, const capability & cap, value with, bool rejected) {
     const value fn = rejected ? cap.reject : cap.resolve;
     if (fn.is_callable()) {
@@ -133,11 +126,12 @@ void settle_capability(context & cx, const capability & cap, value with, bool re
     }
 }
 
-// TriggerPromiseReactions' job, 27.2.2.1 NewPromiseReactionJob: run the
-// handler for how the promise settled and pass its outcome to the capability.
+/// TriggerPromiseReactions' job, 27.2.2.1 NewPromiseReactionJob: runs the
+/// handler for how the promise settled and passes its outcome to the
+/// capability.
 void deliver(context & cx, value handler_record, value argument, bool rejected) {
     auto * record = static_cast<object_object *>(handler_record.as_heap());
-    // A RESUMPTION IS A PROMISE HANDLER. `await` registers the suspended frame
+    // A resumption is a promise handler. `await` registers the suspended frame
     // on the awaited promise's own handler list, so it queues and orders with
     // every `then` rather than being a second mechanism that races them.
     if (value * waiting = record->find("co"); waiting != nullptr) {
@@ -148,10 +142,9 @@ void deliver(context & cx, value handler_record, value argument, bool rejected) 
     bool threw = rejected;
     value result = argument;
     if (handler.is_callable()) {
-        // A HANDLER THAT THROWS REJECTS THE NEXT PROMISE (step 1.e): the call
+        // A handler that throws rejects the next promise (step 1.e). The call
         // is fenced so the throw stops here instead of unwinding to whatever
-        // page `try` happens to be below the microtask - or to nothing, which
-        // was an engine fault.
+        // page `try` happens to be below the microtask, or to nothing at all.
         const value args[1] = {argument};
         value thrown = value::undefined();
         result = cx.call_fenced(handler, args, value::undefined(), threw, thrown);
@@ -166,10 +159,10 @@ void deliver(context & cx, value handler_record, value argument, bool rejected) 
     }
 }
 
-// THE TWO JOBS. A job is a callable plus values so the collector traces it,
-// so the C++ work has to be reachable through a value - which is what these
-// natives are. One each per context, made on demand and kept on the prototype
-// table under a private key.
+/// Returns the native stored under private `key` on Promise.prototype, making
+/// it from `fn` on first use. A queued job is a callable plus values so the
+/// collector can trace it, so the C++ work of each job must be reachable
+/// through a value: one native per job per context.
 [[nodiscard]] value job_native(context & cx, std::string_view key, native_fn fn) {
     object_object * table = promise_prototype(cx);
     if (const value * existing = table->find(key); existing != nullptr) { return *existing; }
@@ -177,16 +170,17 @@ void deliver(context & cx, value handler_record, value argument, bool rejected) 
     table->define(key, made, attr_none);
     return made;
 }
+/// The NewPromiseReactionJob native: (record, argument, rejected) -> deliver.
 [[nodiscard]] value reaction_job(context & cx) {
     return job_native(cx, reaction_job_key, [](context & c, std::span<value> a) {
         if (a.size() >= 3 && a[0].is_object()) { deliver(c, a[0], a[1], context::truthy(a[2])); }
         return value::undefined();
     });
 }
-// 27.2.2.2 NewPromiseResolveThenableJob: (promise, thenable, then) -> a FRESH
-// pair of resolving functions, `then` called with them on the thenable, and a
-// throw out of it rejects - through the pair, so a thenable that resolved
-// first and then threw keeps its resolution.
+/// 27.2.2.2 NewPromiseResolveThenableJob: (promise, thenable, then) -> a fresh
+/// pair of resolving functions, `then` called with them on the thenable, and a
+/// throw out of it rejects through the pair, so a thenable that resolved
+/// first and then threw keeps its resolution.
 [[nodiscard]] value thenable_job(context & cx) {
     return job_native(cx, thenable_job_key, [](context & c, std::span<value> a) {
         if (a.size() < 3) { return value::undefined(); }
@@ -203,15 +197,16 @@ void deliver(context & cx, value handler_record, value argument, bool rejected) 
     });
 }
 
+/// Queues the reaction job for one record with the settled value.
 void enqueue_reaction(context & cx, value record, value argument, bool rejected) {
     cx.queue_microtask(reaction_job(cx), {record, argument, value::boolean(rejected)});
 }
 
-// FulfillPromise / RejectPromise (27.2.1.4, 27.2.1.7) and
-// TriggerPromiseReactions (27.2.1.8): settle ONCE, then queue every waiting
-// reaction. The once is defensive - the resolving functions already gate on
-// [[AlreadyResolved]] - and it is what keeps the VM's settler hook
-// (context::settle_promise) harmless on a promise something else settled.
+/// FulfillPromise / RejectPromise (27.2.1.4, 27.2.1.7) and
+/// TriggerPromiseReactions (27.2.1.8): settles once, then queues every waiting
+/// reaction. Settling once is defensive, since the resolving functions already
+/// gate on [[AlreadyResolved]]; it keeps the VM's settler hook
+/// (context::settle_promise) harmless on a promise something else settled.
 void settle(context & cx, value promise, value with, bool rejected) {
     if (!is_promise(promise)) { return; }
     auto * p = static_cast<object_object *>(promise.as_heap());
@@ -226,17 +221,18 @@ void settle(context & cx, value promise, value with, bool rejected) {
     }
     value * handlers = p->find(handlers_slot);
     if (handlers == nullptr || !handlers->is_array()) { return; }
-    // COPIED before draining: a handler may register another on this same
+    // Copied before draining: a handler may register another on this same
     // promise, and appending to the vector being walked invalidates it.
     const std::vector<value> pending = static_cast<array_object *>(handlers->as_heap())->items;
     static_cast<array_object *>(handlers->as_heap())->items.clear();
     for (const value & record : pending) { enqueue_reaction(cx, record, with, rejected); }
 }
 
-// Get(resolution, "then") AS ONE COMPLETION RECORD: the getter may throw, and
-// 27.2.1.3.2 step 9 rejects with exactly what it threw. A throw a native's
-// own `lookup_property` parks is rethrown at that native's return, so reading
-// the property inside a native under call_fenced is how the value is had.
+/// Get(resolution, "then") as one completion record: the getter may throw, and
+/// 27.2.1.3.2 step 9 rejects with exactly what it threw. A throw left pending
+/// by a native's own `lookup_property` is rethrown when that native returns,
+/// so the property is read inside a native called under call_fenced, which
+/// reports the throw in `threw` and `thrown`.
 [[nodiscard]] value get_then(context & cx, value resolution, bool & threw, value & thrown) {
     const value getter = job_native(cx, get_then_key, [](context & c, std::span<value> a) {
         return c.lookup_property(arg_at(a, 0), "then");
@@ -245,9 +241,9 @@ void settle(context & cx, value promise, value with, bool rejected) {
     return cx.call_fenced(getter, args, value::undefined(), threw, thrown);
 }
 
-// The promise resolve function's body, 27.2.1.3.2 steps 7-16 - what
-// `resolve(x)` does once [[AlreadyResolved]] is set. A thenable is NOT
-// adopted here: the job is queued and runs on its own tick.
+/// The promise resolve function's body, 27.2.1.3.2 steps 7-16: what
+/// `resolve(x)` does once [[AlreadyResolved]] is set. A thenable is not
+/// adopted here; its job is queued and runs on its own tick.
 void resolve_promise(context & cx, value promise, value resolution) {
     if (resolution.strict_equals(promise)) {
         settle(cx, promise, cx.make_error("TypeError", "Chaining cycle detected for promise"),
@@ -272,10 +268,10 @@ void resolve_promise(context & cx, value promise, value resolution) {
     cx.queue_microtask(thenable_job(cx), {promise, resolution, then});
 }
 
-// PerformPromiseThen, 27.2.5.4.1: one reaction record for both outcomes,
-// appended while the promise is pending, queued at once when it is not. The
-// capability may be EMPTY (an `await`, a combinator's element reaction): the
-// record then has no `next` and `deliver` calls nothing after the handler.
+/// PerformPromiseThen, 27.2.5.4.1: one reaction record for both outcomes,
+/// appended while the promise is pending, queued at once when it is not. The
+/// capability may be empty (an `await`, a combinator's element reaction): the
+/// record then has no `next` and `deliver` calls nothing after the handler.
 void perform_then(context & cx, value promise, value on_ok, value on_err, const capability & cap) {
     object_object * record = new_table(cx);
     record->set("ok", on_ok.is_callable() ? on_ok : value::undefined());
@@ -298,14 +294,15 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
     cx.mark_promise_handled(promise); // steps 9 and 11
 }
 
+/// Returns %Promise%, the realm's original Promise constructor.
 [[nodiscard]] value intrinsic_promise(context & cx) {
     return slot(promise_prototype(cx), intrinsic_key);
 }
 
-// NewPromiseCapability, 27.2.1.5. %Promise% itself takes the direct form; any
-// other constructor is run with a GetCapabilitiesExecutor and must hand it
-// two callables exactly once. FALSE means a TypeError - or the constructor's
-// own throw - is in flight.
+/// NewPromiseCapability, 27.2.1.5. %Promise% itself takes the direct form; any
+/// other constructor is run with a GetCapabilitiesExecutor and must hand it
+/// two callables exactly once. Returns false when a TypeError, or the
+/// constructor's own throw, is pending.
 [[nodiscard]] bool new_capability(context & cx, value ctor, capability & out) {
     if (ctor.is_heap() && ctor.strict_equals(intrinsic_promise(cx))) {
         out = capability{};
@@ -361,8 +358,9 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
     return true;
 }
 
-// SpeciesConstructor, 7.3.22: `O.constructor[@@species]`, the default when
-// either is absent, a TypeError when either is the wrong kind of thing.
+/// SpeciesConstructor, 7.3.22: `O.constructor[@@species]`, the default when
+/// either is absent, a TypeError when either is the wrong kind of thing.
+/// Returns false when a throw is pending.
 [[nodiscard]] bool species_constructor(context & cx, value o, value fallback, value & out) {
     const value ctor = cx.lookup_property(o, "constructor");
     if (cx.throw_pending()) { return false; }
@@ -388,8 +386,9 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
     return false;
 }
 
-// PromiseResolve(C, x), 27.2.4.7.1: x itself when it is a promise whose
-// `constructor` is C, else a new C resolved with it.
+/// PromiseResolve(C, x), 27.2.4.7.1: x itself when it is a promise whose
+/// `constructor` is C, else a new C resolved with it. Returns false when a
+/// throw is pending.
 [[nodiscard]] bool promise_resolve(context & cx, value ctor, value x, value & out) {
     if (is_promise(x)) {
         const value xc = cx.lookup_property(x, "constructor");
@@ -408,9 +407,10 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
     return true;
 }
 
-// then/catch/finally, once for the program rather than three natives per
-// promise. Built lazily so a context with no promise ever made pays nothing;
-// the constructor links to it when install_promise runs.
+/// Returns Promise.prototype (then/catch/finally, one set per context rather
+/// than three natives per promise). Built lazily so a context that never
+/// makes a promise pays nothing; the constructor links to it when
+/// install_promise runs.
 [[nodiscard]] object_object * promise_prototype(context & cx) {
     if (object_object * existing = cx.prototype(context::proto_kind::promise)) { return existing; }
     object_object * table = new_table(cx);
@@ -532,7 +532,8 @@ void perform_then(context & cx, value promise, value on_ok, value on_err, const 
 
 } // namespace promise
 
-// See collections/iterator_internal.hpp.
+/// PerformPromiseThen with an empty capability; see
+/// collections/iterator_internal.hpp.
 void perform_promise_then(context & cx, value promise, value on_ok, value on_err) {
     using namespace promise;
     if (!is_promise(promise)) { return; }

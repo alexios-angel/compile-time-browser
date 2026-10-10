@@ -1,10 +1,13 @@
-// ctbrowser.script - the program image READER: the bounds-checked byte source,
-// the operand shapes every instruction is validated against, the fixed prefix,
-// and read_image_header / load_image.
+//===- program_image/read.cpp - Program image reader ------------*- C++ -*-===//
 //
-// One of two files carved out of a 1,156-line program_image.cpp on 2026-09-08.
-// The format's constants and the one check both sides make are in internal.hpp
-// beside this, so the writer and the reader still cannot drift.
+// The program image reader: the bounds-checked byte source, the operand
+// shapes every instruction is validated against, the fixed prefix, and
+// read_image_header / load_image. An image is untrusted input, so everything
+// the VM later indexes without a check is validated here. The format's
+// constants and the checks shared with the writer (write.cpp) live in
+// internal.hpp so the two cannot drift.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -16,10 +19,9 @@ using detail::why_not_a_constant;
 
 namespace {
 
-// --- reading -------------------------------------------------------------
-
-// Every read is bounds-checked and sets `bad` once. A reader that returned
-// garbage past the end would turn a truncated file into a program.
+/// A cursor over the image bytes. Every read is bounds-checked and the first
+/// failure sets `bad` and `why`; later reads return zero. A reader that
+/// returned garbage past the end would turn a truncated file into a program.
 struct source_bytes {
     std::span<const std::byte> bytes;
     std::size_t at = 0;
@@ -44,11 +46,9 @@ struct source_bytes {
         if (!need(1)) { return 0; }
         return static_cast<std::uint8_t>(bytes[at++]);
     }
-    // ONE BOUNDS CHECK AND ONE LOOP PER VALUE, not one per byte. Reading a
-    // 7 MB image a byte at a time through the check cost 13% of the load,
-    // measured with callgrind - a bigger share than validating every operand.
-    // Little-endian by construction rather than by cast, so the format does
-    // not acquire an opinion about the host's byte order.
+    /// Reads one little-endian T with a single bounds check (a check per byte
+    /// measured 13% of the load of a 7 MB image). Assembled by shifts rather
+    /// than a cast, so the result does not depend on the host's byte order.
     template <typename T> T little() {
         if (!need(sizeof(T))) { return 0; }
         T v = 0;
@@ -72,12 +72,11 @@ struct source_bytes {
     }
 };
 
-// THE OPERAND KINDS, STRAIGHT FROM THE TABLE, so validation cannot disagree
-// with the inventory about which pool an operand indexes. This is what the
-// kind columns are for, and it is why `sidx` had to be split from `nidx` and
-// `fidx` from `kidx` before anything was generated from them: a check built on
-// the old spelling would have bounds-checked a constant pool against a
-// function index.
+/// Operand kinds, taken straight from the columns of bytecode_opcodes.def, so
+/// validation cannot disagree with the opcode table about which pool an
+/// operand indexes: reg (register), kidx (constant), sidx (string), nidx
+/// (name), fidx (function), jump (relative target), count, bx_hi (high half
+/// of a wide b operand) and unused.
 enum class slot_kind : std::uint8_t {
     reg,
     kidx,
@@ -114,24 +113,25 @@ constexpr opcode_shape shapes[] = {
 };
 static_assert(std::size(shapes) == opcode_count, "one shape per opcode");
 
-// The five that place a callee's frame AT the caller's argument window, where
-// `b` is an argument COUNT rather than an index. `a + 1 + b` must fit the
-// caller's frame or the argument gather reads past it.
+/// The five opcodes that place a callee's frame at the caller's argument
+/// window, where `b` is an argument count rather than an index. `a + 1 + b`
+/// must fit the caller's frame or the argument gather reads past it.
 [[nodiscard]] constexpr bool is_call_shape(op code) {
     return code == op::call || code == op::call_method || code == op::call_computed ||
            code == op::construct || code == op::call_receiver;
 }
 
-// THE FIXED PREFIX, READ IN ONE PLACE. `load_image` and `read_image_header`
-// both need it, and two readers of one layout is the drift this file's own
-// header warns about for the writer and the reader. Returns an empty string
-// when the prefix is one this build accepts.
+/// The fixed prefix: magic, format version, engine fingerprint, image
+/// option, script kind and source hash. Read in one place (read_prefix)
+/// because `load_image` and `read_image_header` both need it.
 struct prefix {
     image_option option = image_option::keep_source;
     script_kind kind = script_kind::classic;
     std::uint64_t source_hash = 0;
 };
 
+/// Reads the fixed prefix into \p out. Returns an empty string when the
+/// prefix is one this build accepts, and otherwise the reason it is not.
 [[nodiscard]] std::string read_prefix(source_bytes & in, prefix & out) {
     if (in.u32() != magic) { return "not a ctbrowser program image"; }
     if (const std::uint32_t v = in.u32(); v != format_version) {
@@ -139,7 +139,7 @@ struct prefix {
                std::to_string(format_version);
     }
     if (const std::uint64_t got = in.u64(); got != image_fingerprint()) {
-        // The most valuable refusal in the file. An image whose opcodes were
+        // The most important refusal in the file. An image whose opcodes were
         // numbered differently would otherwise load and run at full speed,
         // executing different instructions than the ones that were compiled.
         (void)got;
@@ -183,9 +183,9 @@ load_result load_image(std::span<const std::byte> bytes,
     }
     out.kind = head.kind;
     if (out.kind != expect_kind) {
-        // BEFORE THE SOURCE HASH, because it is the more specific answer: the
-        // text really is the text the caller asked for, and it is the COMPILE
-        // that differs. "built from different source" would send a reader
+        // Checked before the source hash because it is the more specific
+        // answer: the text is what the caller asked for, but it was compiled
+        // differently. "Built from different source" would send a reader
         // looking for an edit that never happened.
         out.error = out.kind == script_kind::module_
                         ? "the image is a module, and a classic script was asked for"
@@ -194,8 +194,8 @@ load_result load_image(std::span<const std::byte> bytes,
     }
     out.source_hash = head.source_hash;
     if (expect_source_hash && *expect_source_hash != out.source_hash) {
-        // THE REFUSAL THAT MAKES A CACHE SAFE. A stale image is not a slow
-        // path - it is different JavaScript running at full speed, with the
+        // The refusal that makes a cache safe. A stale image is not a slow
+        // path: it is different JavaScript running at full speed, with the
         // page behaving as it did before an edit nobody can see.
         out.error = "the image was built from different source";
         return out;
@@ -204,7 +204,7 @@ load_result load_image(std::span<const std::byte> bytes,
     const auto read_pool = [&in](const char * what) {
         std::vector<std::string> pool;
         const std::uint32_t n = in.u32();
-        if (!in.need(n)) { // a count larger than the file cannot be honest
+        if (!in.need(n)) { // A count larger than the file cannot be honest.
             in.fail(std::string{"the "} + what + " pool claims more entries than the image holds");
             return pool;
         }
@@ -218,7 +218,7 @@ load_result load_image(std::span<const std::byte> bytes,
     program result;
     const auto read_list = [&in](std::vector<std::string> & into, const char * what) {
         const std::uint32_t n = in.u32();
-        if (!in.need(static_cast<std::size_t>(n) * 4u)) { // see read_pool: a length prefix each
+        if (!in.need(static_cast<std::size_t>(n) * 4u)) { // Each entry has a 4-byte length.
             in.fail(std::string{"the "} + what + " list claims more entries than the image holds");
             return;
         }
@@ -229,9 +229,9 @@ load_result load_image(std::span<const std::byte> bytes,
     read_list(result.exports, "export");
     {
         const std::uint32_t n = in.u32();
-        // TWELVE BYTES EACH: a re-export is three length-prefixed strings, and
-        // the struct is 96 bytes, so this is the site where a corrupt count
-        // reserves gigabytes.
+        // At least 12 bytes each: a re-export is three length-prefixed
+        // strings. The struct is 96 bytes, so without this check a corrupt
+        // count would reserve gigabytes.
         if (in.need(static_cast<std::size_t>(n) * 12u)) {
             result.reexports.reserve(n);
             for (std::uint32_t i = 0; i < n && !in.bad; ++i) {
@@ -262,14 +262,11 @@ load_result load_image(std::span<const std::byte> bytes,
                     "caller assumes it exists";
         return out;
     }
-    // A COUNT AGAINST BYTES, NOT A CONSTANT. The bound here was 65,535, mirroring
-    // a compiler defect that no longer exists; what has to replace it is not a
-    // bigger constant but the same arithmetic the pools already use, because
-    // `resize` on a count out of a file is the reserve-the-world bug in another
-    // costume. The cheapest function this format can encode is 42 bytes of
-    // fields plus one 7-byte instruction, since a function with no code is
-    // refused below - so a count the remaining bytes cannot pay for is a count
-    // that is lying.
+    // Bound the function count by the bytes left, as the pools do: the
+    // smallest encodable function is 42 bytes of fields plus one 7-byte
+    // instruction (a function with no code is refused below), so a count the
+    // remaining bytes cannot pay for is corrupt, and resizing on it would
+    // allocate unbounded memory.
     constexpr std::size_t least_bytes_per_function = 49;
     if (!in.need(static_cast<std::size_t>(function_count) * least_bytes_per_function)) {
         out.error = "the image claims more functions than its remaining bytes could describe";
@@ -279,11 +276,9 @@ load_result load_image(std::span<const std::byte> bytes,
     result.functions.resize(function_count);
     for (std::uint32_t fi = 0; fi < function_count && !in.bad; ++fi) {
         function_proto & fn = result.functions[fi];
-        // LAZY, because it is almost never used. Building "function N: " for
-        // every function - and, in the operand pass below, a message for every
-        // INSTRUCTION - cost 22% of the load in std::string mutation alone,
-        // measured. An error message that is constructed whether or not there
-        // is an error is a message that costs more than the check it explains.
+        // Built lazily, only on failure: building "function N: " for every
+        // function (and, in the operand pass below, a message for every
+        // instruction) measured 22% of the load time.
         const auto where = [fi] { return "function " + std::to_string(fi) + ": "; };
         fn.module = in.text();
         fn.name = in.text();
@@ -301,27 +296,19 @@ load_result load_image(std::span<const std::byte> bytes,
         fn.is_arrow = (arrow & 1u) != 0;
         fn.is_strict = (arrow & 2u) != 0;
         fn.is_generator = generator != 0;
-        fn.is_async = generator == 2; // see write.cpp: only an async GENERATOR is recorded
+        fn.is_async = generator == 2; // Only an async generator records it (write.cpp).
         fn.eager_prologue = (flags & 4u) != 0;
         fn.source_begin = in.u32();
         fn.source_end = in.u32();
 
-        // frame_size 0 IS LEGAL AND THIS RULE USED TO REFUSE IT. An empty
-        // body needs no registers: p5 has 23 such functions out of 4,754, one
-        // instruction each and no pools at all. The rule was stricter than the
-        // compiler, and it was measurement that said so rather than argument -
-        // which is the right order for a validator, because a rule loosened
-        // because it was inconvenient is how a validator stops validating.
+        // frame_size 0 is legal: an empty body needs no registers. It is safe
+        // because the operand pass below rejects every `reg` operand against
+        // a zero-size frame.
         //
-        // Nothing replaces it: a frame of zero registers is safe precisely
-        // because the operand pass below rejects EVERY `reg` operand against
-        // it, so such a function can only contain instructions that name no
-        // register.
-        // THE ONE THAT IS A WRITE. op::call fills [b, param_count) in the
-        // callee's window without a bound of its own; the compiler cannot
-        // produce param_count > frame_size because parameters are allocated
-        // first, but an image can, and the result is a heap write past the
-        // register vector.
+        // param_count must not exceed frame_size: op::call fills
+        // [b, param_count) in the callee's window without its own bound, so a
+        // forged image would write past the register vector. The compiler
+        // never produces this, because parameters are allocated first.
         if (fn.param_count > fn.frame_size) {
             in.fail(where() + "param_count " + std::to_string(fn.param_count) +
                     " exceeds "
@@ -363,9 +350,8 @@ load_result load_image(std::span<const std::byte> bytes,
         }
         fn.constants.reserve(constant_count);
         for (std::uint32_t i = 0; i < constant_count && !in.bad; ++i) {
-            // A CONSTANT IS A VALUE, AND NOT EVERY 64-BIT PATTERN IS ONE. The
-            // whole rule, and why it is this rule rather than the `is_heap()`
-            // test it replaces, is above `why_not_a_constant`.
+            // Not every 64-bit pattern is a valid value; the rule and its
+            // reasons are documented at `why_not_a_constant` (internal.hpp).
             const std::uint64_t bits = in.u64();
             if (const char * why = why_not_a_constant(bits); why != nullptr) {
                 in.fail(where() + "constant " + std::to_string(i) + " " + why);
@@ -420,11 +406,11 @@ load_result load_image(std::span<const std::byte> bytes,
         }
         if (in.bad) { break; }
 
-        // THE DEBUG SIDE TABLES. Nothing executes them, which is exactly why
-        // they are validated: an out-of-range `reg` or a `last_pc` past the end
-        // of the code is a reader indexing off the end of a vector, and the
-        // reader that will do it - a stack trace, the AOT importer - is the one
-        // running when something has ALREADY gone wrong.
+        // The debug side tables. Nothing executes them, but they are still
+        // validated: an out-of-range `reg` or a `last_pc` past the end of the
+        // code would make their readers (a stack trace, the AOT importer)
+        // index off the end of a vector, typically while something has
+        // already gone wrong.
         const std::uint32_t local_count = in.u32();
         if (!in.need(static_cast<std::size_t>(local_count) * 15u)) {
             in.fail(where() + "the local table claims more entries than the image holds");
@@ -465,9 +451,9 @@ load_result load_image(std::span<const std::byte> bytes,
         if (in.bad) { break; }
 
         const std::uint32_t offset_count = in.u32();
-        // EITHER ALL OF THEM OR NONE. A half-filled table would silently
-        // attribute every instruction past the end to nowhere, which is the
-        // failure that looks like working debug information.
+        // Either one entry per instruction or none. A half-filled table would
+        // silently attribute every instruction past its end to nowhere while
+        // looking like working debug information.
         if (offset_count != 0 && offset_count != fn.code.size()) {
             in.fail(where() + "the source-offset table has " + std::to_string(offset_count) +
                     " entries for " + std::to_string(fn.code.size()) +
@@ -500,22 +486,17 @@ load_result load_image(std::span<const std::byte> bytes,
         return out;
     }
 
-    // OPERANDS LAST, because they are checked against tables that must all be
-    // present first. Every one is validated against the kind the inventory
-    // gives it - the VM reads these with unchecked operator[].
+    // Operands last, because they are checked against tables that must all
+    // be present first. Every one is validated against the kind the opcode
+    // table gives it, because the VM reads them with unchecked operator[].
     for (std::uint32_t fi = 0; fi < function_count; ++fi) {
         const function_proto & fn = result.functions[fi];
-        // ONE BOUND PER KIND, IN A TABLE, so that checking an operand is a load
-        // and a compare rather than a jump table. The switch this replaces ran
-        // three times per instruction on an index the branch predictor cannot
-        // learn - opcode kinds arrive in whatever order the program is written
-        // - and p5 is half a million instructions.
-        //
-        // NOTHING ABOUT WHAT IS CHECKED CHANGES. The kinds the switch did not
-        // check - count, jump, bx_hi, unused - get a bound of UINT32_MAX, and
-        // an operand is a uint16, so their compare is false by construction
-        // rather than by omission. The kind-specific message is still built by
-        // a switch, on the failure path, where a branch costs nothing.
+        // One bound per operand kind, in a table, so each check is a load and
+        // a compare instead of an unpredictable switch (this is hot: p5 has
+        // about half a million instructions). Kinds that need no check (count,
+        // jump, bx_hi, unused) get UINT32_MAX, which no uint16 operand can
+        // reach. The error message is built by a switch on the failure path
+        // only.
         const std::uint32_t reg_bound = fn.frame_size;
         const auto constant_bound = static_cast<std::uint32_t>(fn.constants.size());
         const auto string_bound = static_cast<std::uint32_t>(fn.strings.size());
@@ -528,10 +509,8 @@ load_result load_image(std::span<const std::byte> bytes,
         bound_of[static_cast<std::size_t>(slot_kind::sidx)] = string_bound;
         bound_of[static_cast<std::size_t>(slot_kind::nidx)] = name_bound;
         bound_of[static_cast<std::size_t>(slot_kind::fidx)] = function_count;
-        // A WIDE OPERAND IS CHECKED AGAINST FEWER KINDS than a narrow one -
-        // the switch it replaces had no `reg` case and fell through its
-        // `default` - so it gets its own table rather than sharing one and
-        // quietly becoming stricter than the code it replaced.
+        // Wide operands have their own bound table because they are checked
+        // against fewer kinds than narrow ones (no `reg` check).
         std::uint32_t wide_bound_of[static_cast<std::size_t>(slot_kind::unused) + 1];
         for (std::uint32_t & b : wide_bound_of) { b = unchecked; }
         wide_bound_of[static_cast<std::size_t>(slot_kind::kidx)] = constant_bound;
@@ -542,8 +521,7 @@ load_result load_image(std::span<const std::byte> bytes,
         for (std::size_t ip = 0; ip < code_size; ++ip) {
             const instruction & one = fn.code[ip];
             const opcode_shape & shape = shapes[static_cast<std::size_t>(one.code)];
-            // Built on failure only - see the note above. p5 has half a million
-            // instructions and this ran for every one of them.
+            // Built on failure only, like `where` above.
             const auto at = [fi, ip] {
                 return "function " + std::to_string(fi) + ", instruction " + std::to_string(ip) +
                        ": ";
@@ -566,12 +544,12 @@ load_result load_image(std::span<const std::byte> bytes,
                     in.fail(at() + which + " points outside the name table");
                     return;
                 case slot_kind::fidx: in.fail(at() + which + " is not a function"); return;
-                default: return; // unreachable: their bound is UINT32_MAX
+                default: return; // Unreachable: their bound is UINT32_MAX.
                 }
             };
 
-            // A WIDE OPERAND IS ONE FIELD, so b and c are checked together
-            // rather than separately when c is the high half.
+            // A wide operand is one field, so b and c are checked together
+            // when c is the high half.
             if (shape.c == slot_kind::bx_hi) {
                 const std::uint32_t wide = one.bx();
                 if (wide >= wide_bound_of[static_cast<std::size_t>(shape.b)]) {
@@ -580,7 +558,7 @@ load_result load_image(std::span<const std::byte> bytes,
                     case slot_kind::sidx: in.fail(at() + "string index out of range"); break;
                     case slot_kind::nidx: in.fail(at() + "name index out of range"); break;
                     case slot_kind::fidx: in.fail(at() + "function index out of range"); break;
-                    default: break; // unreachable: their bound is UINT32_MAX
+                    default: break; // Unreachable: their bound is UINT32_MAX.
                     }
                 }
                 check_slot(shape.a, one.a, "operand a");
@@ -591,29 +569,24 @@ load_result load_image(std::span<const std::byte> bytes,
             }
 
             if (shape.b == slot_kind::jump) {
-                // The target is relative to the ALREADY-INCREMENTED ip, which
+                // The target is relative to the already-incremented ip, which
                 // is what the compiler's patch arithmetic compensates for.
                 const std::int64_t target = static_cast<std::int64_t>(ip) + 1 + one.sbx();
                 if (target < 0 || target > static_cast<std::int64_t>(fn.code.size())) {
                     in.fail(at() + "jumps outside the function");
                 }
             }
-            // A CLOSURE'S UPVALUES ARE READ OUT OF THE ENCLOSING FRAME, and
-            // nothing bounded them. run_loop.cpp:904 does
-            // `made->upvalues.push_back(reg(up.index))` where `reg` is
-            // `registers_[base + r]` and is unchecked - the OTHER branch, three
-            // lines below it, does bound its index against the closure's
-            // upvalue count, which makes the gap easy to miss. An image could
-            // therefore name register 65,535 of a frame that has four, read
-            // half a megabyte past the register window, and hand whatever was
-            // there to a cell test that dereferences it.
+            // A closure's upvalues marked from_parent_local are read out of the
+            // enclosing frame's registers without a bounds check (see
+            // context::make_closure, reached from the `closure` opcode in
+            // run_loop.cpp). An image naming register 65,535 of a
+            // four-register frame would read far past the register window.
             //
-            // The bound is the ENCLOSING function's frame size, which is only
-            // knowable here: the compiler emits `upvalue_desc{true, l->reg}`
-            // where l->reg is a register of the function doing the closing, so
-            // the invariant belongs to the (closer, closed-over) PAIR rather
-            // than to either function alone. This is the only place both are in
-            // hand at once.
+            // The bound is the enclosing function's frame size: the compiler
+            // emits `upvalue_desc{true, l->reg}` where l->reg is a register of
+            // the function doing the closing, so the invariant belongs to the
+            // (closer, closed-over) pair, and this is the only place both are
+            // in hand.
             if (shape.b == slot_kind::fidx && shape.c == slot_kind::bx_hi) {
                 const std::uint32_t target = one.bx();
                 if (target < function_count) {
@@ -631,7 +604,7 @@ load_result load_image(std::span<const std::byte> bytes,
                 }
             }
             if (is_call_shape(one.code)) {
-                // The callee's frame is placed AT the caller's argument window,
+                // The callee's frame is placed at the caller's argument window,
                 // and the arguments are gathered straight out of it.
                 const std::size_t window = static_cast<std::size_t>(one.a) + 1u + one.b;
                 if (window > fn.frame_size) {

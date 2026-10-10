@@ -1,8 +1,11 @@
-// The AOT ABI - values and operators: the binary operators, the comparisons,
-// the conversions, the unary rows, instanceof, and the failure poll.
+//===- operators.cpp - AOT helpers for values and operators ---------------===//
 //
-// One of four files carved out of a 1,586-line aot_bridge.cpp on 2026-09-08;
-// each row holds its own body, and internal.hpp says why that is allowed.
+// The AOT runtime helpers for values and operators: binary operators,
+// comparisons, conversions, unary operators, instanceof and the failure poll.
+// Each extern "C" function implements one row (one CT_AOT_HELPER entry) of
+// aot_helpers.def; internal.hpp explains how a row reaches the VM's state.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -10,23 +13,21 @@ namespace ctbrowser::aot {
 
 extern "C" {
 
-// ct_aot_binary_op_static. Phase 5's first extracted semantic helper: the
-// seven non-re-entering binary operations, delegating to the SAME
-// context::binary_op_static the interpreter now calls.
-//
-// That identity is the point of the phase. A helper that reimplemented
-// `add` would agree with the interpreter on the day it was written and
-// drift afterwards, and the difference would surface as a Phase 12A oracle
-// mismatch on some page - not as a build error.
+/// ct_aot_binary_op_static: the seven binary operators that cannot run page
+/// JavaScript. It calls the same context::binary_op_static the interpreter
+/// uses. Sharing that function is deliberate: a separate implementation of
+/// `add` would drift from the interpreter, and the difference would surface
+/// only as compiled code disagreeing with the interpreter on some page, not as
+/// a build error.
 std::int32_t ct_aot_binary_op_static(ct_aot_frame * f, std::uint32_t op_kind, std::uint64_t lhs,
                                      std::uint64_t rhs, std::uint64_t * out) {
     const aot_frame_storage & held = aot_bridge::frame_of(f);
     context & cx = *held.ctx;
-    // AN OP KIND OUT OF AN IMAGE IS UNTRUSTED INPUT. The interpreter only
-    // ever passes the seven; a compiled body's operand came from a file.
-    // binary_op_static returns undefined for anything else, and checking
-    // the range here as well means the cast below cannot name an
-    // enumerator that does not exist.
+    // An op kind read from an image is untrusted input. The interpreter only
+    // ever passes the seven, but a compiled body's operand came from a file.
+    // binary_op_static returns undefined for anything else, and checking the
+    // range here as well means the cast below cannot name an enumerator that
+    // does not exist.
     if (op_kind >= opcode_count) {
         *out = value::undefined().bits();
         return static_cast<std::int32_t>(aot::ct_aot_status::ok);
@@ -38,14 +39,13 @@ std::int32_t ct_aot_binary_op_static(ct_aot_frame * f, std::uint32_t op_kind, st
     return status;
 }
 
-// ct_aot_binary_op. Phase 5's second extracted semantic helper: the seven
-// that CAN run page JavaScript, through the same context::binary_op the
-// interpreter now calls.
-//
-// The status test is not decoration here. Any of these can run a user
-// valueOf or toString, which can throw, and can call something that
-// exhausts the stack - so unlike the static family this one genuinely
-// reaches its non-ok arms.
+/// ct_aot_binary_op: the seven binary operators that can run page JavaScript
+/// (through a user valueOf or toString). It calls the same context::binary_op
+/// the interpreter uses.
+///
+/// The status test matters here. Any of these can run user code that throws or
+/// exhausts the stack, so unlike the static family this one really reaches its
+/// non-ok arms.
 std::int32_t ct_aot_binary_op(ct_aot_frame * f, std::uint32_t op_kind, std::uint64_t lhs,
                               std::uint64_t rhs, std::uint64_t * out) {
     const aot_frame_storage & held = aot_bridge::frame_of(f);
@@ -61,20 +61,11 @@ std::int32_t ct_aot_binary_op(ct_aot_frame * f, std::uint32_t op_kind, std::uint
     return status;
 }
 
-// ---- THE ROWS THAT NEEDED NO EXTRACTION AT ALL ----------------------
-//
-// Phase 5 is mostly about lifting semantics out of the interpreter's
-// handlers. These are the rows where the lift was already done - the
-// runtime already had the function, and what was missing was the ABI shim
-// in front of it.
-//
-// BATCHED, and the plan's one-helper-per-commit rule is about EXTRACTIONS
-// rather than about this: an extraction can change the VM's behaviour and
-// the discipline exists to keep that diagnosable. A shim adds a symbol and
-// touches no handler, so it cannot.
+// The helpers below are thin wrappers: the runtime already had each function,
+// so the helper only adapts it to the AOT calling convention.
 
-// ct_aot_failed. The uncatchable-failure poll, one load of one bool, so
-// that it can sit on back edges rather than after every allocation.
+/// ct_aot_failed: the uncatchable-failure poll. It is one load of one bool, so
+/// it can sit on loop back edges rather than after every allocation.
 std::uint32_t ct_aot_failed(ct_aot_frame * f) {
     return aot_bridge::frame_of(f).ctx->failed() ? 1u : 0u;
 }
@@ -87,18 +78,19 @@ std::int32_t ct_aot_loose_equals(ct_aot_frame * f, std::uint64_t a, std::uint64_
     return aot_bridge::check(f);
 }
 
-// ct_aot_compare. The four relational opcodes are constant comparisons
-// against the ordering this writes, so the NUMBERS matter and are taken
-// from the row rather than from std::partial_ordering's representation.
+/// ct_aot_compare. The four relational opcodes are constant comparisons
+/// against the ordering this writes, so the numbers matter and are taken from
+/// the row's ct_aot_ordering rather than from std::partial_ordering's
+/// representation.
 std::int32_t ct_aot_compare(ct_aot_frame * f, std::uint64_t lhs, std::uint64_t rhs,
                             std::int32_t * out_ordering) {
     context & cx = *aot_bridge::frame_of(f).ctx;
     const std::partial_ordering ord =
         cx.compare_relational(value::from_bits(lhs), value::from_bits(rhs));
-    // UNORDERED FIRST. A NaN on either side is unordered with everything
-    // INCLUDING ITSELF, so testing `ord == less` first would be right and
-    // testing `!(ord > 0)` for `<=` would not - which is exactly the
-    // mistake that makes `NaN <= NaN` true.
+    // Test unordered first. A NaN on either side is unordered with everything,
+    // itself included, so testing `ord == less` first would be right but
+    // testing `!(ord > 0)` for `<=` would not: that is exactly the mistake that
+    // makes `NaN <= NaN` true.
     *out_ordering = static_cast<std::int32_t>(
         ord == std::partial_ordering::unordered ? aot::ct_aot_ordering::unordered
         : ord == std::partial_ordering::less    ? aot::ct_aot_ordering::less
@@ -118,18 +110,17 @@ std::uint32_t ct_aot_instance_of(ct_aot_frame * f, std::uint64_t target, std::ui
     return cx.instance_of(value::from_bits(target), value::from_bits(ctor)) ? 1u : 0u;
 }
 
-// ct_aot_negate. `-x` through the same context::negate_value the
-// interpreter now calls.
-//
-// NOT ct_aot_to_number PLUS AN fneg, which is the lowering the shape
-// invites. The BigInt arm ALLOCATES a fresh bigint_object, so the answer
-// may be an unrooted heap value and the caller must park it - which is why
-// this row's out-parameter is a uint64_t VALUE while ct_aot_to_number's is
-// a double.
-//
-// NO OPERAND RANGE CHECK, unlike the two binary rows: there is no op_kind
-// out of an untrusted image here, only a value, and every bit pattern is a
-// legal one.
+/// ct_aot_negate: `-x`, through the same context::negate_value the
+/// interpreter calls.
+///
+/// This is not ct_aot_to_number plus an fneg, the lowering the shape invites.
+/// The BigInt arm allocates a fresh bigint_object, so the answer may be an
+/// unrooted heap value the caller must park; that is why this row's
+/// out-parameter is a uint64_t value while ct_aot_to_number's is a double.
+///
+/// There is no operand range check, unlike the two binary rows: no op_kind
+/// comes out of an untrusted image here, only a value, and every bit pattern
+/// is a legal one.
 std::int32_t ct_aot_negate(ct_aot_frame * f, std::uint64_t v, std::uint64_t * out) {
     context & cx = *aot_bridge::frame_of(f).ctx;
     const value produced = cx.negate_value(value::from_bits(v));
@@ -138,13 +129,13 @@ std::int32_t ct_aot_negate(ct_aot_frame * f, std::uint64_t v, std::uint64_t * ou
     return status;
 }
 
-// ct_aot_bit_not. The same shape, and the same reason for the value
-// out-parameter: `~1n` allocates.
-//
-// ITS may_throw IS THE CEILING, NOT A CATCHABLE THROW. The row says so:
-// `~1n` computes and `~obj` is -1, so neither arm has a JS-catchable
-// throw - an AOT backend needs a FAULT edge here, not an exception edge,
-// and only on the BigInt arm.
+/// ct_aot_bit_not: `~x`. The same shape, and the same reason for the value
+/// out-parameter: `~1n` allocates.
+///
+/// Its may_throw flag is a ceiling, not a catchable throw. As the row says,
+/// `~1n` computes and `~obj` is -1, so neither arm throws anything JavaScript
+/// can catch: an AOT backend needs a fault edge here, not an exception edge,
+/// and only on the BigInt arm.
 std::int32_t ct_aot_bit_not(ct_aot_frame * f, std::uint64_t v, std::uint64_t * out) {
     context & cx = *aot_bridge::frame_of(f).ctx;
     const value produced = cx.bit_not_value(value::from_bits(v));
@@ -153,9 +144,9 @@ std::int32_t ct_aot_bit_not(ct_aot_frame * f, std::uint64_t v, std::uint64_t * o
     return status;
 }
 
-// PURE, AND THEREFORE HANDLE-FREE. These four take no frame because they
-// cannot throw, cannot re-enter and cannot collect - which is what lets a
-// backend fold them away entirely when it has proven the operand's type.
+// Pure, and therefore handle-free. These rows take no frame because they
+// cannot throw, re-enter or collect, which lets a backend fold them away
+// entirely once it has proven the operand's type.
 std::uint32_t ct_aot_truthy(std::uint64_t v) {
     return context::truthy(value::from_bits(v)) ? 1u : 0u;
 }
@@ -180,10 +171,10 @@ double ct_aot_exponentiate(double base, double exponent) {
     return context::exponentiate(base, exponent);
 }
 
-// THE RETURN SLOT CARRIES A LENGTH, and *out_text points at static storage:
-// context::type_of returns a string_view over string literals, which is what
-// lets `typeof x === 'function'` be a length compare and a memcmp with no
-// allocation at all.
+/// Returns typeof's answer as a length, with *out_text pointing at static
+/// storage: context::type_of returns a string_view over string literals, so
+/// `typeof x === 'function'` becomes a length compare and a memcmp with no
+/// allocation.
 std::uint32_t ct_aot_type_of_name(std::uint64_t v, const char ** out_text) {
     const std::string_view text = context::type_of(value::from_bits(v));
     *out_text = text.data();

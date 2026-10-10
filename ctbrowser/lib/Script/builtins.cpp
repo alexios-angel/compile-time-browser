@@ -1,4 +1,9 @@
-// The standard library, assembled. Every install_* lives in builtins/.
+//===- ctbrowser/lib/Script/builtins.cpp - Standard library assembly ------===//
+//
+// Installs the JavaScript standard library into a realm. Every install_*
+// function lives under builtins/; this file only fixes the order they run in.
+//
+//===----------------------------------------------------------------------===//
 
 #include "builtins/internal.hpp"
 
@@ -10,6 +15,9 @@ void install_temporal(context & cx); // builtins/temporal/install.cpp
 
 using namespace builtins_detail;
 
+/// Installs every builtin into the current realm. `seed` seeds Math.random.
+/// The order matters where one installer reads tables an earlier one made
+/// (install_promise, for example, needs install_generator's prototypes).
 void install_builtins(context & cx, std::uint64_t seed) {
     install_math(cx, seed);
     install_generator(cx);
@@ -40,10 +48,11 @@ void install_builtins(context & cx, std::uint64_t seed) {
     cx.mark_globals_builtin();
 }
 
+/// Creates a new realm with its own global object and a full set of builtins.
 realm_record & create_intrinsic_realm(context & cx) {
     realm_record & made = cx.create_empty_realm();
-    // Everything below lands in the new realm: define_global and
-    // set_prototype write the CURRENT realm's table.
+    // Everything below lands in the new realm, because define_global and
+    // set_prototype write the current realm's table.
     const context::realm_scope in{cx, made};
     cx.set_global_this(cx.make_global_object(made));
     install_builtins(cx);

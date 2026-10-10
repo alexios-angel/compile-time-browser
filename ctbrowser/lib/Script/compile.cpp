@@ -1,6 +1,11 @@
-// `compiler::compile()` - the whole public surface of this subsystem.
+//===- ctbrowser/lib/Script/compile.cpp - compiler::compile entry ---------===//
 //
-// The compiler itself is in compile/compiler_impl.hpp and the files beside it.
+// `compiler::compile()` and its siblings: the whole public surface of the
+// script compiler. Each parses the source, runs the early errors, and hands
+// the tree to compiler_impl, which is in compile/compiler_impl.hpp and the
+// files beside it.
+//
+//===----------------------------------------------------------------------===//
 #include "compile/compiler_impl.hpp"
 #include "compile/early_errors.hpp"
 
@@ -10,13 +15,11 @@ namespace ctbrowser::script {
 
 namespace {
 
-// A byte offset, as the `line:column` every diagnostic in this engine ends
-// with. Shared by the parser's failure and the early errors' - they are the
-// same kind of answer about the same source and there is no reason for them to
-// be spelled differently.
-// Also kept as numbers on the program (program::error_line), for an embedder
-// that reports the SyntaxError with a position of its own - an ErrorEvent's
-// lineno and colno.
+/// Formats byte `offset` in `source` as the " - at line:column" suffix every
+/// diagnostic in this engine ends with, used by both parse failures and early
+/// errors. Also stores the numbers on `out` (program::error_line and
+/// error_column) for an embedder that reports the SyntaxError with a position
+/// of its own, such as an ErrorEvent's lineno and colno.
 [[nodiscard]] std::string position_in(std::string_view source, std::size_t offset, program & out) {
     const line_table lines{source};
     const auto at = static_cast<std::uint32_t>(std::min(offset, source.size()));
@@ -28,7 +31,10 @@ namespace {
 } // namespace
 
 namespace {
-// `site` is null for a program an embedder runs, and an eval's otherwise.
+/// Parses, checks and compiles `source`. `site` is null for a program an
+/// embedder runs and the eval call site otherwise; `outer` lists the bindings a
+/// direct eval can see; `script_goal` selects the classic Script goal for a
+/// top-level program, which disables top-level await.
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
                        std::span<const eval_binding> outer = {}, bool script_goal = false);
 } // namespace
@@ -54,7 +60,7 @@ program compiler::compile_for_direct_eval(std::string_view source,
 namespace {
 program compile_source(std::string_view source, script_kind kind, const eval_site * site,
                        std::span<const eval_binding> outer, bool script_goal) {
-    // SOURCE TEXT IS TEXT: a stray 0xFF in a file handed over as bytes is the
+    // Source text is text: a stray 0xFF in a file handed over as bytes is the
     // U+FFFD decoding makes of it, before a string literal or a regular
     // expression can carry it into a constant and spell an internal key
     // (core/symbol.hpp). Everything below reads the decoded copy.
@@ -70,33 +76,24 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
     out.kind = kind;
     if (!tree.ok) {
         out.ok = false;
-        // WITH THE POSITION, which was thrown away here for as long as this
-        // function has existed. `vp::ast` carries `error_offset` precisely so a
-        // caller holding the source can say where the parser stopped - the
-        // comment on that field says so - and dropping it left every parse
-        // failure reading "parse error: expression" about a bundle several
-        // megabytes long. That is half a diagnostic, and it is the half that
-        // costs the afternoon.
-        //
-        // Resolved to a line and column here rather than by every caller,
-        // because the source is right there and none of them have it in a
-        // convenient form. The shape matches what the ratchets' tooling already
-        // greps for - `<name>:<line>:<column>`.
+        // Report where the parser stopped (vp::ast::error_offset) as
+        // `line:column`, resolved here because the source is at hand and
+        // callers do not have it in a convenient form. Ratchet tooling greps
+        // for `<name>:<line>:<column>`.
         out.error =
             "parse error: " + std::string{tree.error} + position_in(source, tree.error_offset, out);
         return out;
     }
-    // THE EARLY ERRORS, BEFORE A SINGLE INSTRUCTION IS EMITTED. Clause 17 says
-    // they are reported "prior to the first evaluation of the source text", and
-    // the only way to promise that is to answer before the compiler starts.
+    // Early errors are checked before a single instruction is emitted: clause
+    // 17 says they are reported "prior to the first evaluation of the source
+    // text", and the only way to promise that is to answer before the compiler
+    // starts.
     //
-    // Reported with the parser's own prefix, and that is not cosmetic: an early
-    // error IS a SyntaxError in the source text, indistinguishable to a caller
-    // from one the grammar caught, and `parse error:` is the only thing this
-    // engine says that means "this source is a SyntaxError". `ct262` reads
-    // exactly that prefix to decide between phase `parse` and phase `refusal` -
-    // a refusal being "the compiler does not implement this", which an early
-    // error is emphatically not. See lib/Script/compile/early_errors.hpp.
+    // They use the parser's own prefix because an early error is a SyntaxError
+    // in the source text, and `parse error:` is the only thing this engine says
+    // that means that. `ct262` reads exactly that prefix to decide between
+    // phase `parse` and phase `refusal` ("the compiler does not implement
+    // this"). See lib/Script/compile/early_errors.hpp.
     if (const auto early = detail::find_early_error(tree, source, kind == script_kind::module_,
                                                     site, script_goal)) {
         out.ok = false;
@@ -110,9 +107,9 @@ program compile_source(std::string_view source, script_kind kind, const eval_sit
     out.eval_code = site != nullptr;
     detail::compiler_impl c{tree, out};
     c.module_scope_ = kind == script_kind::module_;
-    // THE CALLER'S BYTES, not `out.source`. Every `node::text` is a view into
-    // the buffer the PARSER saw, and `out.source` is a copy at a different
-    // address - so the copy is the wrong thing to subtract against. See
+    // The caller's bytes, not `out.source`: every `node::text` is a view into
+    // the buffer the parser saw, and `out.source` is a copy at a different
+    // address, so the copy is the wrong thing to subtract against. See
     // compiler_impl::offset_of.
     c.source_view_ = source;
     c.completion_value_ = site != nullptr;

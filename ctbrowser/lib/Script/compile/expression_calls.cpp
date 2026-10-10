@@ -1,4 +1,11 @@
-// Split from expressions.cpp: expression calls.
+//===- expression_calls.cpp - Calls and literals --------------------------===//
+//
+// compiler_impl code generation for calls, `new`, direct eval, optional
+// chains, templates (plain and tagged), `super` access, and array, object
+// and regex literals. The class is declared in compiler_impl.hpp. Section
+// numbers are ECMA-262's.
+//
+//===----------------------------------------------------------------------===//
 #include "compiler_impl.hpp"
 #include <ctbrowser/script/regex.hpp>
 
@@ -20,7 +27,7 @@ void compiler_impl::split_template(std::string_view raw, std::vector<std::string
         if (raw[i] == '$' && i + 1 < raw.size() && raw[i + 1] == '{') {
             chunks.push_back(std::move(chunk));
             chunk.clear();
-            // THE HOLE ENDS AT THE `}` TOKEN that balances it, found by LEXING
+            // The hole ends at the `}` token that balances it, found by lexing
             // the rest: a brace inside a string, comment, regex or nested
             // template is not one, so `${"}${alert(1)}"}` is one hole holding
             // a string, not a hole `"` and a second hole that runs code. The
@@ -127,8 +134,8 @@ void compiler_impl::compile_tagged(const vp::node & n, std::int32_t idx, std::ui
     }
 
     // GetTemplateObject: `strings = __ctbrowser_template_object(key, cooked, raw)`.
-    // The key names the SITE - the template's offset in this source, salted
-    // with the source itself - so one site hands the same frozen array to its
+    // The key names the site (the template's offset in this source, salted
+    // with the source itself), so one site hands the same frozen array to its
     // tag every time and two sites never share one. ponytail: two identical
     // scripts compiled separately share a site; a per-program salt fixes it if
     // anything observes that.
@@ -180,11 +187,11 @@ void compiler_impl::compile_tagged(const vp::node & n, std::int32_t idx, std::ui
 }
 
 void compiler_impl::compile_template(const vp::node & n, std::uint16_t dst) {
-    // The same cut a tagged template gets (split_template); each chunk is
-    // COOKED - every escape 12.9.6 names, through decode_string_literal, not
-    // the three this used to know - and each hole is compiled as a
-    // parenthesised expression (`${ {v: 1}.v }` would otherwise parse as a
-    // block), then concatenated, which is the coercion a template performs.
+    // Split as for a tagged template (split_template); each chunk is cooked
+    // (all 12.9.6 escapes, via decode_string_body), each hole is compiled as
+    // a parenthesised expression so `${ {v: 1}.v }` is not parsed as a block,
+    // and the pieces are concatenated, which is the coercion a template
+    // performs.
     std::vector<std::string> chunks;
     std::vector<std::string> holes;
     split_template(n.text, chunks, holes);
@@ -259,21 +266,18 @@ void compiler_impl::emit_init_fields_after_super() {
         instruction::with_bx(op::get_global, callee, intern_name(std::string{init_fields_name})));
     const std::uint16_t self = alloc_reg();
     proto().emit(instruction{op::load_this, self});
-    // The class, by way of its HOME: the constructor's home object is
-    // C.prototype, whose `constructor` is C - through an arrow too, which
-    // inherits the home. The native reads `constructor` off it rather than
-    // this emitting `get_prop "constructor"`, because a `.constructor` read
-    // whose receiver is not provably a non-function is, to ctcompile's
-    // resolve-globals pass, a value that may be `Function` escaping into a
-    // call it cannot name - which refused every global of every program with
-    // a derived class in it.
+    // Pass the constructor's home object (C.prototype, inherited by an arrow
+    // too); the native reads its `constructor` to find C. Emitting
+    // `get_prop "constructor"` here instead would make ctcompile's
+    // resolve-globals pass treat the result as a possible escaping `Function`
+    // and refuse the program.
     const std::uint16_t home = alloc_reg();
     proto().emit(instruction{op::load_home, home});
     proto().emit(instruction{op::call, callee, 2});
     release_to(mark);
 }
 
-// `dst = __ctbrowser_super_get(HomeObject.[[Prototype]], key, this)`.
+/// Emits `dst = __ctbrowser_super_get(HomeObject.[[Prototype]], key, this)`.
 void compiler_impl::emit_super_get(std::uint16_t key, std::uint16_t dst) {
     const std::uint32_t mark = reg_mark();
     const std::uint16_t callee = alloc_reg();
@@ -336,9 +340,10 @@ void compiler_impl::emit_optional_guard(std::uint16_t value) {
     release_to(mark);
 }
 
-// Evaluate the reference and GetValue before evaluating any argument. Keeping
-// the callable and receiver in separate registers also preserves both when an
-// argument replaces the method or reassigns the variable naming its receiver.
+/// Evaluates the reference and GetValue before evaluating any argument.
+/// Keeping the callable and receiver in separate registers also preserves both
+/// when an argument replaces the method or reassigns the variable naming its
+/// receiver.
 void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target,
                                         std::uint16_t self) {
     const vp::node & callee = at(n.a);
@@ -352,8 +357,8 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
     } else if (callee.kind == vp::nk::index && callee.a >= 0 &&
                at(callee.a).kind == vp::nk::super_lit) {
         // `super[k]()` (13.3.7.1, 13.3.6.1): the key, then the method off the
-        // home object's prototype, called with `this`. It was a refusal of
-        // the whole script - compile_expr has no value for `super` alone.
+        // home object's prototype, called with `this`. compile_expr has no
+        // value for `super` alone, so this case is handled here.
         const std::uint32_t mark = reg_mark();
         const std::uint16_t key = alloc_reg();
         compile_expr(callee.b, key);
@@ -362,7 +367,7 @@ void compiler_impl::compile_call_target(const vp::node & n, std::uint16_t target
         proto().emit(instruction{op::load_this, self});
     } else if (callee.kind == vp::nk::ident && emit_with_object(callee.text, self)) {
         // `f()` inside a `with`: the object that binds f is the receiver,
-        // and undefined when none does - which is what a plain call passes.
+        // and undefined when none does, which is what a plain call passes.
         const std::size_t bound = proto().emit(instruction{op::jump_if_not_nullish, self});
         emit_plain_read(callee.text, target);
         const std::size_t done = proto().emit(instruction{op::jump});
@@ -420,11 +425,10 @@ void compiler_impl::compile_spread_call(const vp::node & n, std::uint16_t dst) {
     if (!call_needs_receiver(callee)) { proto().emit(instruction{op::load_undef, self}); }
     const std::uint16_t argv = alloc_reg();
     emit_argument_array(args, argv);
-    // `super(...)` - NOT `super.m(...)` - carries new.target into the base
-    // constructor. Babylon reads it there to hang decorator metadata off
-    // the class actually being constructed, and got undefined.
+    // `super(...)`, not `super.m(...)`, carries new.target into the base
+    // constructor, so the base sees the class actually being constructed.
     const std::string * flag = callee.kind == vp::nk::super_lit ? derived_flag() : nullptr;
-    if (flag != nullptr) { emit_super_check(*flag, true); } // see compile_call
+    if (flag != nullptr) { emit_super_check(*flag, true); } // See compile_call.
     if (callee.kind == vp::nk::super_lit) { proto().emit(instruction{op::pass_new_target}); }
     proto().emit(instruction{op::apply, target, argv, self});
     if (flag != nullptr) { emit_super_done(*flag); }
@@ -486,25 +490,29 @@ bool compiler_impl::compile_param_eval(const vp::node & n, std::uint16_t dst) {
     return true;
 }
 
-// A DIRECT EVAL (19.2.1.1 PerformEval, direct): the eval'd source sees every
-// binding in scope at the call. They are all cells (is_captured boxes every
-// local of a function containing one, and of the functions around it), so
-// the call hands them over by name to direct_eval_name, which compiles the
-// source with those names as its entry function's upvalues:
-//
-//   (eval, source, callee, this, descriptor, new.target, cells...)
-//
-// `eval` is the binding's current value - the call is only direct if it is
-// %eval% (step 6 of 13.3.6.1), which the native checks - `callee` the running
-// closure, whose upvalues carry the enclosing functions' bindings, and the
-// descriptor says where the eval is on its first line ("strict" or "sloppy",
-// then the eval_site words) and names each binding on one of its own: "L
-// name" a cell argument, "V name" a value argument (a local nothing boxed),
-// "U index name" the callee's upvalue - each followed by " strict" or
-// " sloppy" when the binding is immutable (see immutability), and an L or V
-// by " lexical" when it is a `let`, `const` or `class` - and "P #x key" a
-// private name in scope. The shape changes only in functions that contain
-// `eval(`, which no native pipeline compiles anyway.
+/// A direct eval (19.2.1.1 PerformEval, direct): the eval'd source sees every
+/// binding in scope at the call. They are all cells (is_captured boxes every
+/// local of a function containing one, and of the functions around it), so
+/// the call hands them over by name to direct_eval_name, which compiles the
+/// source with those names as its entry function's upvalues:
+///
+///   (eval, source, callee, this, descriptor, new.target, cells...)
+///
+/// `eval` is the binding's current value (the call is only direct if it is
+/// %eval%, step 6 of 13.3.6.1, which the native checks); `callee` is the
+/// running closure, whose upvalues carry the enclosing functions' bindings.
+/// The descriptor's first line says where the eval is ("strict" or "sloppy",
+/// then the eval_site words), and each later line names one binding:
+///   - "L name": a cell argument;
+///   - "V name": a value argument (a local nothing boxed);
+///   - "U index name": the callee's upvalue;
+///   - "P #x key": a private name in scope.
+/// An L, V or U line ends with " strict" or " sloppy" when the binding is
+/// immutable (see immutability), and an L or V line with " lexical" when it
+/// is a `let`, `const` or `class`. The shape changes only in functions that
+/// contain `eval(`, which no native pipeline compiles anyway.
+///
+/// eval_site_here computes the descriptor's first-line facts for this call.
 eval_site compiler_impl::eval_site_here() {
     std::size_t level = frames_.size() - 1;
     while (level > 0 && out_.functions[frames_[level].proto].is_arrow) { --level; }
@@ -517,8 +525,8 @@ eval_site compiler_impl::eval_site_here() {
         site.in_function = true;
         site.in_method = f.has_home;
         site.in_class_field_initializer = f.field_initializer;
-        // ponytail: `super()` in a direct eval stays refused (in_derived_
-        // constructor false): the eval's frame has neither the constructor's
+        // ponytail: `super()` in a direct eval stays refused
+        // (in_derived_constructor false): the eval's frame has neither the constructor's
         // new.target nor its derived flag to hand the call. Pass both when a
         // test262 file needs it (language/eval-code/direct/super-call-*).
     }
@@ -526,9 +534,9 @@ eval_site compiler_impl::eval_site_here() {
 }
 
 bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
-    // AT A PROGRAM'S TOP LEVEL TOO: a block's `let` there is a local of the
+    // At a program's top level too: a block's `let` there is a local of the
     // script frame, which `{ let x; eval('x') }` reads (lex-env-heritage).
-    // Not inside a `with` - a direct eval's own variable environment is no
+    // Not inside a `with`; a direct eval's own variable environment is not a
     // `with` (with_scope::eval_vars).
     if (!is_direct_eval_call(n) ||
         std::ranges::any_of(with_scopes_, [](const with_scope & w) { return !w.eval_vars; })) {
@@ -562,7 +570,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
         }
     }
     std::vector<std::string> seen;
-    std::vector<const local *> handed; // this frame's, in descriptor order
+    std::vector<const local *> handed; // This frame's, in descriptor order.
     const auto taken = [&](std::string_view name) {
         return std::ranges::find(seen, name) != seen.end();
     };
@@ -602,7 +610,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
         for (const auto & [name, positions] : frames_[k].local_index) {
             if (!positions.empty() && usable(name) && !taken(name)) { outer.emplace_back(name); }
         }
-        // ...and the one an enclosing function keeps ITS evals' `var`s on,
+        // ...and the one an enclosing function keeps its evals' `var`s on,
         // which the eval's code resolves names through too.
         if (!frames_[k].eval_vars.empty()) { outer.push_back(frames_[k].eval_vars); }
         std::ranges::sort(outer);
@@ -615,7 +623,7 @@ bool compiler_impl::compile_direct_eval(const vp::node & n, std::uint16_t dst) {
             seen.push_back(name);
         }
     }
-    // Inside a direct eval's program, the bindings ITS caller handed over.
+    // Inside a direct eval's program, the bindings its caller handed over.
     std::vector<std::string> handed_down = eval_outer_names_;
     std::ranges::sort(handed_down);
     for (const std::string & name : handed_down) {
@@ -765,7 +773,7 @@ void compiler_impl::compile_chain(std::int32_t idx, std::uint16_t dst) {
     }
     optional_exits_.swap(outer);
     if (!root) {
-        // a nested chain hands its exits back to the enclosing one
+        // A nested chain hands its exits back to the enclosing one.
         for (const std::size_t site : outer) { optional_exits_.push_back(site); }
     }
 }
@@ -793,24 +801,16 @@ void compiler_impl::compile_optional(const vp::node & n, std::uint16_t dst) {
         compile_expr(n.b, key);
         proto().emit(instruction{op::get_index, dst, object, key});
     }
-    // The exit belongs to the CHAIN, not to this link. compile_chain
+    // The exit belongs to the chain, not to this link. compile_chain
     // patches every one of them to a single point past the whole thing.
     optional_exits_.push_back(skip);
     release_to(mark);
 }
 
 void compiler_impl::compile_sequence(const vp::node & n, std::uint16_t dst) {
-    // A SEQUENCE IS BINARY, not a list. The parser builds `a, b, c` as
-    // seq(seq(a, b), c) - left-nested, two children per node - and this
-    // read `kids(n)` instead, which for such a node is EMPTY. So every
-    // comma expression evaluated nothing at all and produced undefined,
-    // silently, from the day the operator was added.
-    //
-    // Nothing caught it because the operator was added to the parser with
-    // no test that a comma expression has EFFECTS - only that it parsed.
-    // `_createClass(e, r, t) { return r && _defineProperties(...), ..., e; }`
-    // is how every Babel-transpiled class installs its methods, so this one
-    // omission silently emptied every such class in p5.js.
+    // The parser builds `a, b, c` as seq(seq(a, b), c): two children per
+    // node, left-nested, not a kids() list. Each operand is evaluated for its
+    // effects; the last one's value is the result.
     compile_expr(n.a, dst);
     compile_expr(n.b, dst);
 }
@@ -823,12 +823,11 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
         proto().emit(instruction{op::load_undef, dst});
         return;
     }
-    // INVALID FLAGS ARE AN EARLY ERROR (13.2.7.2): `/a/gg`, `/a/x`. The
-    // PATTERN is deliberately not checked here: rx_compile cannot tell a
+    // Invalid flags are an early error (13.2.7.2): `/a/gg`, `/a/x`. The
+    // pattern is deliberately not checked here: rx_compile cannot tell a
     // syntax error from a feature it lacks (lookbehind, `\u{...}`), and the
-    // runtime path hands it the escape-DECODED text - so a compile-time
-    // check refused p5.js whole over `/\u2028/`, which runs fine. A bad
-    // pattern stays a throw at the line, as it was.
+    // runtime path sees the escape-decoded text. A bad pattern throws when
+    // the literal is evaluated.
     if (const rx::rx_prog probe = rx::rx_compile("", literal.substr(close + 1)); !probe.ok) {
         fail("parse error: " + probe.error);
         proto().emit(instruction{op::load_undef, dst});
@@ -850,18 +849,18 @@ void compiler_impl::compile_regex_literal(const vp::node & n, std::uint16_t dst)
 void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
     proto().emit(instruction{op::new_array, dst});
     const std::uint32_t mark = reg_mark();
-    // An ELISION IS A HOLE (13.2.4.1): `[1, , 3]` has a length of 3 and no
+    // An elision is a hole (13.2.4.1): `[1, , 3]` has a length of 3 and no
     // element 1, which forEach and `1 in` can tell from undefined. The slot
     // is appended as undefined and marked afterwards, in one native call
-    // naming the positions - only while those positions are static, which
-    // a spread before the hole makes them not.
+    // naming the positions, but only while those positions are static; a
+    // spread before the hole makes them unknown.
     std::vector<std::uint32_t> holes;
     bool positions_known = true;
     std::uint32_t position = 0;
     for (const std::int32_t element : kids(n)) {
         const std::uint16_t v = alloc_reg();
-        // A HOLE. `[, x]` and `[a, , b]` are legal, and an element list is
-        // the one place kids() yields -1 - which is why at() refuses a
+        // A hole. `[, x]` and `[a, , b]` are legal, and an element list is
+        // the one place kids() yields -1, which is why at() refuses a
         // negative index rather than reading past the pool.
         if (element < 0) {
             proto().emit(instruction{op::load_undef, v});
@@ -872,8 +871,8 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
             continue;
         }
         if (at(element).kind == vp::nk::spread) {
-            // `[...a]` appends a's ELEMENTS, not a itself. Compiled as an
-            // index loop rather than an opcode, because that is all it is.
+            // `[...a]` appends a's elements, not a itself; see
+            // emit_append_all.
             compile_expr(at(element).a, v);
             emit_append_all(dst, v);
             positions_known = false;
@@ -890,6 +889,8 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
                                           intern_name(std::string{array_holes_name})));
         const std::uint16_t arr = alloc_reg();
         proto().emit(instruction{op::move, arr, dst});
+        // A call carries at most 199 hole positions in registers; holes past
+        // that stay undefined instead of absent.
         std::uint16_t argc = 1;
         for (const std::uint32_t at_index : holes) {
             if (argc == 200) { break; }
@@ -903,9 +904,9 @@ void compiler_impl::compile_array(const vp::node & n, std::uint16_t dst) {
 
 void compiler_impl::emit_append_all(std::uint16_t target, std::uint16_t source) {
     const std::uint32_t mark = reg_mark();
-    // SPREAD TAKES ANYTHING ITERABLE, not just an array. This walks a
-    // `length`, so `[...new Set(v)]` and `f(...map.keys())` produced nothing
-    // at all - see context::iterable_values for what that cost.
+    // Spread takes any iterable: op::iterable first converts `source` to an
+    // array (context::iterable_values), then this loop appends its elements
+    // by index up to `length`.
     proto().emit(instruction{op::iterable, source, source});
     const std::uint16_t length = alloc_reg();
     proto().emit(instruction{op::get_prop, length, source, name_operand("length")});
@@ -933,7 +934,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         const vp::node & prop = at(p);
         if (prop.kind == vp::nk::spread) {
             // `{...o}` copies o's own properties in, and a later key still
-            // wins - which is why this is a copy at this point in the
+            // wins, which is why this is a copy at this point in the
             // sequence rather than a merge at the end.
             const std::uint16_t source = alloc_reg();
             compile_expr(prop.a, source);
@@ -945,8 +946,14 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             fail("unsupported object literal member");
             return;
         }
+        // prop.c is the member kind from the ctjs parser: 1 method, 2
+        // shorthand (`{a}`, or `{a = 1}` when prop.b is set), 3 accessor,
+        // negative a plain `key: value`. prop.d bits: 1 the key is an
+        // expression in prop.a (computed, quoted or numeric), 2 a quoted
+        // string key, 4 a setter (with c == 3).
         if (prop.c == 3) {
-            // An accessor, not a data property. `d` bit2 says which half.
+            // An accessor, not a data property: bit 4 of `d` set means a
+            // setter, clear means a getter.
             if ((prop.d & 1) != 0 && prop.a >= 0) {
                 emit_computed_accessor(dst, prop.a, prop.b, (prop.d & 4) != 0);
                 release_to(mark);
@@ -954,7 +961,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             }
             const std::uint16_t fnreg = alloc_reg();
             const bool homed = mentions_super(prop.b, true) || contains_direct_eval(prop.b);
-            method_pending_ = homed; // see frame::has_home
+            method_pending_ = homed; // See frame::has_home.
             // An accessor is named for its key, "get id" (15.4.5 step 6).
             compile_named_expr(prop.b, fnreg,
                                ((prop.d & 4) != 0 ? "set " : "get ") +
@@ -964,12 +971,12 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             proto().emit(instruction{(prop.d & 4) != 0 ? op::define_setter : op::define_getter, dst,
                                      name, fnreg});
             // The literal is the accessor's home object (15.4.5 step 3), so
-            // `super.x` inside it resolves through the literal's prototype -
-            // wired only when the body says `super`: the own `__home` is a
-            // reference from the closure back to the literal, and for the
-            // 99% of methods that never use it that is a property to store
-            // and a cycle the native backend's escape analysis has to refuse.
-            // (A direct eval in it may say `super` too.)
+            // `super.x` inside it resolves through the literal's prototype.
+            // Wired only when the body says `super` (or has a direct eval,
+            // which may): the own `__home` is a reference from the closure
+            // back to the literal, and for methods that never use it that is
+            // a property to store and a cycle the native backend's escape
+            // analysis has to refuse.
             if (homed) { emit_define_own(fnreg, "__home", dst, false); }
             release_to(mark);
             continue;
@@ -984,15 +991,16 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             release_to(mark);
             return;
         }
-        // A COMPUTED KEY NAMES THE FUNCTION IT HOLDS too (13.2.5.5, 15.4.4
+        // A computed key names the function it holds too (13.2.5.5, 15.4.4
         // DefineMethod): known now for a literal key, and otherwise only once
-        // the key is evaluated - which then comes first, made a key once
-        // (13.2.5.5 steps 1-2, before the value), and names the value at run
-        // time.
+        // the key is evaluated. That evaluation then comes first, converts to
+        // a property key once (13.2.5.5 steps 1-2, before the value), and
+        // names the value at run time.
         const std::optional<std::string> literal_key =
             (prop.d & 1) != 0 && prop.a >= 0 ? literal_key_name(prop.a) : std::nullopt;
         // Only a colon after an identifier or quoted __proto__ sets the
-        // prototype. Computed names, shorthand properties and methods define data.
+        // prototype. Computed names, shorthand properties and methods define
+        // data.
         const bool sets_prototype =
             prop.c < 0 && (((prop.d & 1) == 0 && prop.text == "__proto__") ||
                            ((prop.d & 2) != 0 && literal_key == "__proto__"));
@@ -1006,7 +1014,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
         }
         method_pending_ = homed;
         if (prop.b < 0) {
-            compile_ident(prop, v); // shorthand { x }
+            compile_ident(prop, v); // Shorthand `{ x }`.
         } else if ((prop.d & 1) == 0 && !sets_prototype) {
             // `{ f: function () {} }` names f (13.2.5.5); `__proto__: ...`
             // is a prototype assignment and names nothing.
@@ -1017,7 +1025,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             compile_expr(prop.b, v);
         }
         method_pending_ = false;
-        // A METHOD'S HOME OBJECT IS THE LITERAL (15.4.4 step 2): `super.m()`
+        // A method's home object is the literal (15.4.4 step 2): `super.m()`
         // in `{ m() { super.m(); } }` starts at Object.prototype or whatever
         // `__proto__:` set.
         if (homed) { emit_define_own(v, "__home", dst, false); }
@@ -1041,7 +1049,7 @@ void compiler_impl::compile_object(const vp::node & n, std::uint16_t dst) {
             proto().emit(instruction{op::set_proto, dst, v});
             patch_here(primitive);
         } else {
-            // DEFINED, not set (13.2.5.5 CreateDataPropertyOrThrow), by an
+            // Defined, not set (13.2.5.5 CreateDataPropertyOrThrow), by an
             // opcode rather than a global helper a page could replace.
             if ((prop.d & 1) == 0) {
                 key = alloc_reg();

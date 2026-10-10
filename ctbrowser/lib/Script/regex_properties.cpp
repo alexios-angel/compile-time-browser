@@ -1,10 +1,15 @@
-// ctbrowser.script - the Unicode Character Database behind `\p{...}`.
+//===- regex_properties.cpp - Unicode properties for \p{...} ----*- C++ -*-===//
+//
+// The Unicode Character Database behind regular expression `\p{...}`,
+// simple case folding, and group-name validation.
 //
 // 22.2.2.9's UnicodeMatchProperty and UnicodeMatchPropertyValue, over the
 // tables tools/gen/unicode_properties.py writes into regex_properties.inc.
-// The .inc is DATA (its header says which Unicode release); this file is the
-// only reader, so the matcher's header carries three declarations and no
-// 700 KB of ranges for every TU that includes it.
+// The .inc is generated data (its header names the Unicode release). This
+// file is its only reader, so the matcher's header carries a few declarations
+// instead of 700 KB of ranges for every translation unit that includes it.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/regex.hpp>
 
@@ -26,6 +31,7 @@ struct rx_string_property {
 
 #include "regex_properties.inc"
 
+/// Linear search of a property index by exact name; nullptr when absent.
 template <typename Entry, std::size_t N>
 [[nodiscard]] const Entry * find(const Entry (&index)[N], std::string_view name) {
     for (const Entry & e : index) {
@@ -43,7 +49,7 @@ template <typename Entry, std::size_t N>
 std::optional<rx_property_set> rx_property_lookup(std::string_view name, std::string_view value,
                                                   bool strings) {
     // `\p{Name=Value}`: only the three non-binary properties (table 68), and
-    // no loose matching - the spelling must be one the tables carry.
+    // no loose matching: the spelling must be one the tables carry.
     if (!value.empty()) {
         const rx_property * e = nullptr;
         if (name == "General_Category" || name == "gc") {
@@ -57,7 +63,8 @@ std::optional<rx_property_set> rx_property_lookup(std::string_view name, std::st
         return rx_property_set{ranges_of(*e), {}};
     }
     // `\p{LoneName}`: a General_Category value, then a binary property of
-    // table 67, then - under `v` only - a property of strings (table 69).
+    // table 67, then (under the `v` flag only) a property of strings (table
+    // 69).
     if (const rx_property * e = find(rx_general_category, name); e != nullptr) {
         return rx_property_set{ranges_of(*e), {}};
     }
@@ -67,7 +74,7 @@ std::optional<rx_property_set> rx_property_lookup(std::string_view name, std::st
     if (strings) {
         if (const rx_string_property * e = find(rx_strings, name); e != nullptr) {
             // The sequences are {length, code points...} runs; the span ends
-            // where the next property's begin, so it is measured out here.
+            // where the next property's begins, so it is measured here.
             std::size_t end = e->seq_at;
             for (std::uint32_t n = 0; n < e->seq_count; ++n) { end += 1 + rx_sequences[end]; }
             return rx_property_set{{rx_ranges + e->at, e->count},
@@ -109,9 +116,9 @@ rx_ranges_t rx_fold_closure(const rx_ranges_t & ranges) {
 
 std::optional<std::string> rx_group_name(std::string_view raw) {
     // RegExpIdentifierStart / RegExpIdentifierPart are code points: a
-    // `\uLEAD\uTRAIL` escape pair, a `\u{...}` escape, or a source character -
-    // whose WTF-8 may itself be a lead and a trail stored apart. A lone
-    // surrogate survives decoding and then fails the ID tests below.
+    // `\uLEAD\uTRAIL` escape pair, a `\u{...}` escape, or a source character,
+    // whose WTF-8 may itself be a lead and a trail surrogate stored apart. A
+    // lone surrogate survives decoding and then fails the ID tests below.
     std::vector<char32_t> points;
     const auto hex4 = [&raw](std::size_t at) -> std::optional<char32_t> {
         if (at + 4 > raw.size()) { return std::nullopt; }

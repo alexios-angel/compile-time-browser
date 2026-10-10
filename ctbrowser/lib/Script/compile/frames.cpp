@@ -1,11 +1,12 @@
-// compiler_impl - frames, registers and scopes.
+//===- ctbrowser/lib/Script/compile/frames.cpp - Frames and scopes --------===//
 //
-// The register allocator, the scope stack, locals and upvalues,
-// and the module import/export bindings. The three template members stay in
-// the header - two are called from more than one file.
+// compiler_impl frames, registers and scopes: the register allocator, the
+// scope stack, locals and upvalues, and the module import/export bindings.
+// The three template members stay in compiler_impl.hpp, where the class is
+// declared, because two of them are called from more than one file. Section
+// numbers are ECMA-262's.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -57,10 +58,10 @@ void compiler_impl::pop_scope() {
 
 void compiler_impl::add_local(frame & f, local l) {
 #if CTBROWSER_SCRIPT_DEBUG_NAMES
-    // THE DEBUG TABLE IS WRITTEN HERE AND NOWHERE ELSE, because this is the one
-    // place a name comes into existence. `finish_frame` cannot do it - the plan
-    // suggested it could - since `frame::locals` is a STACK that `pop_scope`
-    // has already emptied of everything but the outermost scope by then.
+    // The debug-name table is written here because this is the only place a
+    // local is created. `finish_frame` cannot do it: `frame::locals` is a
+    // stack, and by then `pop_scope` has removed every local except those in
+    // the outermost scope.
     function_proto & fp = out_.functions[f.proto];
     const auto pc = static_cast<std::uint32_t>(fp.code.size());
     l.debug_slot = static_cast<std::uint32_t>(fp.locals.size());
@@ -77,7 +78,7 @@ void compiler_impl::close_local([[maybe_unused]] const frame & f,
     function_proto & fp = out_.functions[f.proto];
     local_desc & d = fp.locals[l.debug_slot];
     d.last_pc = static_cast<std::uint32_t>(fp.code.size());
-    // THE BOXEDNESS AT THE END, not at the declaration. `mark_captured`,
+    // Record boxedness at the end, not at the declaration. `mark_captured`,
     // `bind_export` and `bind_imports` all set `boxed` on a local that was
     // declared already, so the value copied at `add_local` is a guess and this
     // one is the answer.
@@ -98,8 +99,8 @@ void compiler_impl::shrink_locals(frame & f, std::size_t mark) {
 
 std::uint32_t compiler_impl::offset_of([[maybe_unused]] std::int32_t idx) const {
 #if CTBROWSER_SCRIPT_DEBUG_NAMES
-    // A SUB-AST ANSWERS NOTHING. A template literal's interpolation and
-    // `compile_owned_expr`'s synthesised text are parsed from OTHER buffers, so
+    // A sub-AST has no offset. A template literal's interpolation and
+    // `compile_owned_expr`'s synthesised text are parsed from other buffers, so
     // a lexeme in one is not an offset into the program at all. Keeping the
     // enclosing statement's position is right as well as safe: that is where
     // the template was written.
@@ -107,10 +108,10 @@ std::uint32_t compiler_impl::offset_of([[maybe_unused]] std::int32_t idx) const 
         return function_proto::no_offset;
     }
     const vp::node & n = at(idx);
-    if (n.begin != 0) { return n.begin; } // a function; see node::begin
+    if (n.begin != 0) { return n.begin; } // A function; see node::begin.
     const char * const base = source_view_.data();
     const char * const text = n.text.data();
-    // BOUNDS-CHECKED WITH std::less, not with `<`. Comparing pointers into
+    // Bounds-checked with std::less, not with `<`. Comparing pointers into
     // different objects with a relational operator is unspecified, and this is
     // exactly that comparison: the whole question is whether `text` points into
     // this buffer or into some other one.
@@ -144,21 +145,18 @@ void compiler_impl::bind_export(const std::string & name, std::uint16_t reg) {
 void compiler_impl::bind_imports(std::int32_t idx) {
     const vp::node & n = at(idx);
     if (n.kind != vp::nk::import_decl) { return; }
-    // THE SPECIFIER IS RECORDED FOR THE LOADER, which walks the graph
-    // without re-parsing anything.
-    //
-    // DECODED, because the parser hands over the token as written - quotes
-    // included. Recording `'./m.js'` rather than `./m.js` made every lookup
-    // miss and every import read undefined, with the loader reporting a
-    // module it had never been asked for.
+    // The specifier is recorded for the loader, which walks the graph without
+    // re-parsing anything. It is decoded, because the parser hands over the
+    // token as written, quotes included; the loader looks modules up by the
+    // unquoted specifier.
     const std::string specifier = decode_string_literal(n.text);
     if (std::ranges::find(out_.imports, specifier) == out_.imports.end()) {
         out_.imports.push_back(specifier);
     }
     // `import defer * as ns` defers the module's evaluation - unless the
     // same module is imported eagerly somewhere in this one, in which case
-    // the eager import runs it anyway (16.2.2: a deferred request is only
-    // that request's).
+    // the eager import runs it anyway (16.2.2: a deferred request applies
+    // only to itself).
     const bool deferred = kids(n).size() == 1 && at(kids(n).front()).c == 3;
     const auto listed = std::ranges::find(out_.deferred_imports, specifier);
     if (deferred && listed == out_.deferred_imports.end()) {
@@ -169,13 +167,14 @@ void compiler_impl::bind_imports(std::int32_t idx) {
     const std::uint16_t from = name_operand(specifier);
     for (const std::int32_t spec_index : kids(n)) {
         const vp::node & spec = at(spec_index);
-        // `c`: 0 named, 1 default, 2 namespace, 3 a deferred namespace,
-        // which is the same binding holding the object that evaluates the
-        // module on its first read - made by a hidden native, so the
-        // bytecode's shape is one call the compiled tier already knows.
+        // `spec.c`: 0 named, 1 default, 2 namespace, 3 deferred namespace. A
+        // deferred namespace is an ordinary binding holding an object, made by
+        // a hidden native (import_defer_name), that evaluates the module on
+        // first read; it compiles to a plain native call, so no new opcode is
+        // needed.
         if (spec.c == 2 || spec.c == 3) {
             // `import * as ns`: one binding, holding the exporter's
-            // namespace object. NOT a cell - the namespace is itself the
+            // namespace object. Not a cell: the namespace is itself the
             // live thing, because each of its properties reads a cell.
             const int hoisted_ns = find_local(spec.text);
             if (hoisted_ns < 0) {
@@ -183,11 +182,9 @@ void compiler_impl::bind_imports(std::int32_t idx) {
                      "` was not hoisted - see predeclare_locals");
                 return;
             }
-            // THROUGH THE CELL IF IT IS ONE. A namespace binding captured
-            // by a function was hoisted BOXED, so writing the register
-            // directly would throw the cell away and leave the closure
-            // reading undefined - the same shape of bug that made an
-            // imported function called from a closure read undefined.
+            // A namespace binding captured by a closure was hoisted boxed, so
+            // write through the cell; writing the register directly would
+            // discard the cell and the closure would read undefined.
             bool boxed = false;
             for (const local & each : fn().locals) {
                 if (each.name == spec.text) { boxed = each.boxed; }
@@ -208,7 +205,7 @@ void compiler_impl::bind_imports(std::int32_t idx) {
             }
             continue;
         }
-        // The name the EXPORTER knows it by: the original when renamed,
+        // The name the exporter knows it by: the original when renamed,
         // otherwise the same as the local one. `default` for a default
         // import, which is the name the specification gives it.
         const std::string exported = spec.c == 1   ? std::string{"default"}
@@ -223,10 +220,10 @@ void compiler_impl::bind_imports(std::int32_t idx) {
         }
         const auto r = static_cast<std::uint16_t>(hoisted);
         proto().emit(instruction{op::load_import, r, what, from});
-        // ALWAYS BOXED, whether or not this module captures it: every read
+        // Always boxed, whether or not this module captures it: every read
         // has to go through the exporter's cell to see the writes that make
         // the binding live. And no `new_cell` - load_import has already put
-        // the exporter's box here, and boxing a box leaves the importer
+        // the exporter's box here, and boxing a box would leave the importer
         // reading a cell containing a cell.
         for (local & each : fn().locals) {
             if (each.name == spec.text) { each.boxed = true; }
@@ -248,9 +245,9 @@ void compiler_impl::collect_reexports(std::int32_t idx) {
             return;
         }
         // `export * as ns from './m.js'` (16.2.2.3: an ExportEntry with
-        // [[ImportName]] all and no local binding): ONE export, holding the
+        // [[ImportName]] all and no local binding): one export, holding the
         // namespace. It is compiled as `import * as <hidden> from './m.js';
-        // export { <hidden> as ns }` - the hidden local is not an identifier,
+        // export { <hidden> as ns }`. The hidden local is not an identifier,
         // so nothing in the module can name it, and the loader wires nothing:
         // the cell is this module's own, adopted at entry and written with
         // the namespace before the first statement runs.
@@ -279,7 +276,7 @@ void compiler_impl::export_bindings(std::int32_t outer,
     const vp::node & n = at(outer);
     if (n.kind != vp::nk::export_decl || !n.text.empty() || n.c == 2) { return; }
     if (n.c == 1) {
-        // A NAMED default exports ITS binding (16.2.3 ExportEntries: the
+        // A named default exports its own binding (16.2.3 ExportEntries: the
         // [[LocalName]] of `export default function f() {}` is "f"), so
         // `f = 2` inside the module is what an importer's `default` reads.
         // Only an anonymous one has the hidden `*default*`.
@@ -344,27 +341,28 @@ compiler_impl::local * compiler_impl::find_local_entry(frame & f, std::string_vi
 
 int compiler_impl::resolve_upvalue(std::size_t level, std::string_view name) {
     if (level == 0) {
-        // A DIRECT EVAL'S PROGRAM: its top level is closed over the caller's
+        // A direct eval's program: its top level is closed over the caller's
         // bindings, which it holds as upvalues from the start (compile_program).
         if (eval_outer_names_.empty()) { return -1; }
         const auto it = frames_[0].upvalue_index.find(name);
         return it == frames_[0].upvalue_index.end() ? -1 : static_cast<int>(it->second);
     }
     frame & f = frames_[level];
-    // Was a linear scan of upvalue_names, and it ran once per level per
-    // identifier mention - 8.65% of a Babylon compile between this and its
-    // recursive self, most of it inside memcmp.
+    // A hash lookup, not a scan of upvalue_names: this runs once per frame
+    // level for every identifier mention, and the scan was 8.65% of compiling
+    // Babylon.js.
     if (const auto it = f.upvalue_index.find(name); it != f.upvalue_index.end()) {
         return static_cast<int>(it->second);
     }
     frame & parent = frames_[level - 1];
     // Frame 0 is the script, and its `var`s are globals rather than locals
-    // (see the note in the var_decl arm), so the only locals it ever holds
-    // are the ones a construct makes for itself: a for..of item, a catch
-    // parameter. Those must be capturable or `for (const x of xs)
-    // fns.push(() => x)` closes over nothing at the top level.
+    // (see compile_stmt's var_decl case in statements/dispatch.cpp), so the
+    // only locals it ever holds are the ones a construct makes for itself: a
+    // for..of item, a catch parameter. Those must be capturable or
+    // `for (const x of xs) fns.push(() => x)` closes over nothing at the top
+    // level.
     if (local * l = find_local_entry(parent, name)) {
-        l->boxed = true; // captured, so it must be a cell
+        l->boxed = true; // Captured, so it must be a cell.
         return add_upvalue(level, name, upvalue_desc{true, l->reg});
     }
     const int inherited = resolve_upvalue(level - 1, name);
@@ -373,7 +371,7 @@ int compiler_impl::resolve_upvalue(std::size_t level, std::string_view name) {
 }
 
 std::pair<std::size_t, std::size_t> compiler_impl::binding_position(std::string_view name) {
-    // INNERMOST FRAME FIRST, which is the order resolve_upvalue settles on:
+    // Innermost frame first, which is the order resolve_upvalue settles on:
     // an enclosing frame's locals do not change while a nested function is
     // being compiled, so the local found here is the one it captures.
     for (std::size_t level = frames_.size(); level-- > 0;) {
@@ -445,22 +443,23 @@ void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> par
     }
     if (base_fields_pending_) {
         // A base class constructor: its instance fields, before the
-        // parameter defaults and the body (see base_fields_pending_) - and
-        // AFTER the rest gather, since the call's temporaries take the
+        // parameter defaults and the body (see base_fields_pending_), and
+        // after the rest gather, since the call's temporaries take the
         // registers past the declared parameters, where the extra arguments
-        // still sit until gather_rest has read them (p5's `class Vector {
-        // values = []; constructor(...args)` got an empty `args` at gate 3).
+        // still sit until gather_rest has read them. Otherwise
+        // `class V { values = []; constructor(...args) {} }` gets an empty
+        // `args`.
         base_fields_pending_ = false;
         emit_init_fields_at_entry();
     }
-    // BOX THE CAPTURED PARAMETERS HERE, between the rest gather (a raw write)
+    // Box the captured parameters here, between the rest gather (a raw write)
     // and the defaults (which read earlier parameters by name, i.e. through
     // the cell). See compile_function_body.
     //
-    // Parameter i IS local i: they are declared first, in order, into a fresh
-    // frame. Only the parameters are boxed here - a pattern name is declared
-    // and boxed below as it binds, and boxing it twice wrapped a cell in a
-    // cell (a captured `{ space }` parameter read as an empty object).
+    // Parameter i is local i: they are declared first, in order, into a fresh
+    // frame. Only the parameters are boxed here; a pattern name is declared
+    // and boxed below as it binds, and boxing it twice would wrap a cell in a
+    // cell.
     std::vector<bool> boxed(params.size(), false);
     for (std::size_t i = 0; i < params.size(); ++i) {
         boxed[i] = fn().locals[i].boxed;
@@ -472,7 +471,7 @@ void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> par
         const auto slot = static_cast<std::uint16_t>(i);
         const std::uint32_t mark = reg_mark();
         // This parameter and every one after it are in their TDZ while the
-        // default runs - see tdz_names_.
+        // default runs; see tdz_names_.
         tdz_names_.clear();
         for (std::size_t j = i; j < params.size(); ++j) {
             if (at(params[j]).b >= 0) {
@@ -501,7 +500,7 @@ void compiler_impl::compile_parameter_prologue(std::span<const std::int32_t> par
         }
         release_to(mark);
     }
-    // A parameter may be a SHAPE - `function f({x, y})`. Its register holds
+    // A parameter may be a pattern, as in `function f({x, y})`. Its register holds
     // the argument; the names inside come out of it. Last, so a default has
     // already been applied to the value being destructured.
     for (std::size_t i = 0; i < params.size(); ++i) {

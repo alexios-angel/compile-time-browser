@@ -1,8 +1,12 @@
-// ctbrowser.script builtins - JSON: the writer (25.5.2), the reader (25.5.1),
-// the reviver walk, and rawJSON/isRawJSON.
+//===- ctbrowser/lib/Script/builtins/json.cpp - The JSON built-in ---------===//
 //
-// Split from async.cpp on 2026-09-12; the helpers were ~650 inline lines of
-// internal.hpp that every builtins file parsed and only this one used.
+// The global JSON object: stringify (ECMA-262 25.5.2), parse with the reviver
+// walk (25.5.1), and JSON.rawJSON/isRawJSON from the JSON.parse source text
+// access proposal. Bare section numbers in this file refer to ECMA-262. The
+// grammar itself is core/json.hpp's parse_json; this file turns its tree into
+// script values.
+//
+//===----------------------------------------------------------------------===//
 
 #include "ctbrowser/core/json.hpp"
 #include "internal.hpp"
@@ -12,27 +16,20 @@ namespace ctbrowser::script::detail {
 
 namespace {
 
-// --- JSON -----------------------------------------------------------------
-
-// [[IsRawJSON]] (25.5.3): the private slot JSON.rawJSON's objects carry.
+/// [[IsRawJSON]] (source text access proposal): the private slot that
+/// JSON.rawJSON's objects carry.
 constexpr std::string_view raw_json_slot = CTBROWSER_PRIVATE_KEY("IsRawJSON");
 
-// QuoteJSONString, 25.5.2.3. The escape TABLE is the specification's, and two
-// of its rows were missing: U+0008 and U+000C have the short forms \b and \f
-// and were being written as the six-character \u0008 and \u000c forms by the
-// fall-through below. Both spellings parse back to the same character, so
-// nothing round-tripped wrong; what they cost is every byte-for-byte comparison
-// against another engine's output, which is what value-string-escape-ascii.js
-// is.
-//
-// A byte at or above 0x80 passes THROUGH. Strings here are UTF-8 and JSON is a
-// UTF-8 format, so the escaping stops at the C0 controls; \uXXXX for a
-// non-ASCII code point would be legal and is not what any other engine emits.
+/// QuoteJSONString (25.5.2.3), appended to `out`. Uses the spec's short escapes
+/// (\b, \f, \n, ...) so output matches other engines byte for byte; other C0
+/// controls become \u00XX. Bytes at or above 0x80 pass through unescaped, as
+/// other engines do (strings here are UTF-8, and so is JSON); lone surrogates
+/// are escaped as \uXXXX.
 void quote_json(std::string_view text, std::string & out) {
     out += '"';
     for (std::size_t i = 0; i < text.size(); ++i) {
         const char c = text[i];
-        // 25.5.2.3 QuoteJSONString step 2.b: a LONE SURROGATE is escaped as
+        // 25.5.2.3 QuoteJSONString step 2.b: a lone surrogate is escaped as
         // \uXXXX (well-formed JSON.stringify). The text is WTF-8, so one is the
         // three bytes ED A0..BF xx; a pair's halves arrive as one four-byte
         // scalar and never take this arm.
@@ -72,52 +69,46 @@ void quote_json(std::string_view text, std::string & out) {
     out += '"';
 }
 
-// THE SERIALISER IS A STATE OBJECT because 25.5.2 says it is.
-//
-// What used to be here was one free function of (value, string &): no
-// ReplacerFunction, no PropertyList, no gap, no stack. That is not four
-// missing features, it is one - every one of them is a field of the
-// specification's `state` record, threaded through SerializeJSONProperty, and
-// none can be added without the record. The cost of not having it was not only
-// the options: with no stack there was no cycle check either, so
-// `a = []; a[0] = a; JSON.stringify(a)` recursed until the C++ stack ran out.
-// The specification makes that a TypeError, and a TypeError is a page's own bug
-// reported to it rather than a dead process.
+/// The JSON.stringify serialiser state (25.5.2): indent, gap, replacer,
+/// property list and the stack used to reject cyclic structures with a
+/// TypeError.
 struct json_writer {
     explicit json_writer(context & c) : cx(c) {}
 
     context & cx;
-    // A THROW from a getter, a toJSON or a replacer is PARKED (context::call)
-    // and throw_pending sees it. The unwind count is NOT asked: a toJSON that
-    // throws and catches inside itself moves it as well, and serialising
-    // would stop at a value it had every right to finish. The one engine
-    // throw that LANDS instead - a revoked proxy's - is caught up front in
-    // serialize before anything reads it.
+    /// Whether a getter, a toJSON or a replacer threw. Such a throw is parked
+    /// (context::call) and throw_pending sees it. The unwind count is not asked:
+    /// a toJSON that throws and catches inside itself moves it as well, and
+    /// serialising would stop at a value it had every right to finish. The one
+    /// engine throw that lands instead - a revoked proxy's - is caught up front
+    /// in serialize before anything reads it.
     [[nodiscard]] bool threw() const { return cx.throw_pending(); }
     std::string indent;                     // 25.5.2 state.[[Indent]]
     std::string gap;                        // 25.5.2 state.[[Gap]]
     value replacer = value::undefined();    // state.[[ReplacerFunction]]
     std::vector<std::string> property_list; // state.[[PropertyList]]
     bool has_property_list = false;
-    // state.[[Stack]], the cycle check. Raw pointers rather than values: the
-    // question SerializeJSONObject asks is identity, and nothing pushed here
-    // outlives the call that pushed it.
+    /// state.[[Stack]], the cycle check. Raw pointers rather than values: the
+    /// question SerializeJSONObject asks is identity, and nothing pushed here
+    /// outlives the call that pushed it.
     std::vector<const heap_object *> stack;
-    // A throw already happened and the answer is worthless. A native here
-    // throws by calling context::throw_error, which unwinds the VM and RETURNS
-    // - so every recursive step has to be told to stop rather than discovering
-    // it.
+    /// A throw already happened and the answer is worthless. A native here
+    /// throws by calling context::throw_error, which unwinds the VM and
+    /// returns, so every recursive step has to be told to stop rather than
+    /// discovering it.
     bool failed = false;
 
-    // SerializeJSONProperty, 25.5.2.2, from step 2 - its step 1 is the [[Get]],
-    // and the CALLER does that: an array's elements are its std::vector and are
-    // not in a property table at all, so reading one is lookup_index and
-    // reading an object's member is lookup_property. Passing the value in keeps
-    // the two spellings of Get at the two places that know which they need.
-    //
-    // False means the value is not serialisable at all (undefined, a function,
-    // a symbol) and its holder must OMIT it - which is a different answer from
-    // the string "null", and is why this returns a bool rather than a string.
+    /// SerializeJSONProperty (25.5.2.2) from step 2; its step 1 is the [[Get]],
+    /// and the caller does that: an array's elements are its std::vector and
+    /// are not in a property table at all, so reading one is lookup_index and
+    /// reading an object's member is lookup_property. Passing the value in
+    /// keeps the two spellings of Get at the two places that know which they
+    /// need.
+    ///
+    /// False means the value is not serialisable at all (undefined, a
+    /// function, a symbol) and its holder must omit it - a different answer
+    /// from the string "null", which is why this returns a bool rather than a
+    /// string. False is also returned, with `failed` set, after a throw.
     [[nodiscard]] bool serialize(value holder, const std::string & key, value v,
                                  std::string & out) {
         // The [[Get]] that produced `v` (the caller's) may have thrown.
@@ -125,7 +116,7 @@ struct json_writer {
             failed = true;
             return false;
         }
-        // A REVOKED PROXY throws at its first operation, which is step 2's
+        // A revoked proxy throws at its first operation, which is step 2's
         // GetV of `toJSON` - one TypeError, here, rather than one there and a
         // second from IsArray over the handler the first consumed.
         if (v.is_kind(heap_kind::proxy) &&
@@ -134,7 +125,7 @@ struct json_writer {
             cx.throw_error("TypeError", "Cannot perform 'get' on a proxy that has been revoked");
             return false;
         }
-        // Steps 2-3: an Object or a BigInt is asked for `toJSON` FIRST, before
+        // Steps 2-3: an Object or a BigInt is asked for `toJSON` first, before
         // the replacer sees it. A Date's ISO string comes from there.
         if (v.is_object_like() || v.is_kind(heap_kind::bigint)) {
             // GetV (7.3.3): a BigInt reads through BigInt.prototype with the
@@ -158,7 +149,7 @@ struct json_writer {
                 }
             }
         }
-        // Step 4: the replacer is called with the HOLDER as its receiver and
+        // Step 4: the replacer is called with the holder as its receiver and
         // (key, value) as its arguments, so it can see which object a value
         // came out of.
         if (replacer.is_callable()) {
@@ -169,7 +160,7 @@ struct json_writer {
                 return false;
             }
         }
-        // Step 4: a Number, String, Boolean or BigInt WRAPPER serialises as
+        // Step 4: a Number, String, Boolean or BigInt wrapper serialises as
         // its primitive - through ToNumber / ToString, so a user valueOf or
         // toString on it runs; a Boolean and a BigInt read the slot.
         if (const value * slot = primitive_slot(v); slot != nullptr) {
@@ -189,7 +180,7 @@ struct json_writer {
             out += "null";
             return true;
         }
-        // 25.5.2.2 step 4.a: a rawJSON object is its text, verbatim.
+        // A rawJSON object (source text access proposal) is its text, verbatim.
         if (v.is_object()) {
             auto * obj = static_cast<object_object *>(v.as_heap());
             if (obj->find(raw_json_slot) != nullptr) {
@@ -208,15 +199,12 @@ struct json_writer {
             return true;
         }
         if (v.is_number()) {
-            // NaN AND THE INFINITIES ARE NOT JSON. Step 9 serialises every
-            // non-finite number as null, and emitting the bare words instead
-            // produces output that NO JSON PARSER WILL READ BACK - so a page
-            // round-tripping its own data through JSON.parse got a SyntaxError
-            // from bytes this engine wrote.
+            // NaN and the infinities are not JSON: step 9 serialises every
+            // non-finite number as null.
             out += std::isfinite(v.as_number()) ? number_to_string(v.as_number()) : "null";
             return true;
         }
-        // A BIGINT IS NOT JSON and there is no lossless spelling for one, so
+        // A BigInt is not JSON and there is no lossless spelling for one, so
         // step 10 throws rather than picking between a string and a rounded
         // number.
         if (v.is_kind(heap_kind::bigint)) {
@@ -233,14 +221,17 @@ struct json_writer {
         }
         if (array) { return write_array(v, out); }
         if (v.is_object_like() && !v.is_callable()) { return write_object(v, out); }
-        // undefined, a function and a symbol are all OMITTED - which is why
+        // undefined, a function and a symbol are all omitted - which is why
         // round-tripping a value through JSON can lose fields.
         return false;
     }
 
-    // The cycle check, 25.5.2.4/25.5.2.5 step 1. False means it has thrown.
+    /// The deepest nesting serialised before a RangeError, so deep input
+    /// cannot overflow the native stack.
     static constexpr std::size_t max_depth = 1000;
 
+    /// The cycle check (25.5.2.4/25.5.2.5 step 1) plus the max_depth limit,
+    /// pushing `v` on `stack`. False means it has thrown.
     [[nodiscard]] bool enter(value v) {
         const heap_object * self = v.as_heap();
         for (const heap_object * seen : stack) {
@@ -250,10 +241,10 @@ struct json_writer {
                 return false;
             }
         }
-        // The cycle check above catches a value nested inside ITSELF; this
-        // catches a value nested inside 1000 DISTINCT others, which recurses
+        // The cycle check above catches a value nested inside itself; this
+        // catches a value nested inside 1000 distinct others, which recurses
         // just as deep (write_array -> serialize -> write_array) and would
-        // otherwise overflow the native stack. `stack` IS the nesting depth.
+        // otherwise overflow the native stack. `stack` is the nesting depth.
         if (stack.size() >= max_depth) {
             failed = true;
             cx.throw_error("RangeError", "Maximum call stack size exceeded");
@@ -263,12 +254,12 @@ struct json_writer {
         return true;
     }
 
-    // How a member list becomes the finished text: 25.5.2.4 step 9 and
-    // 25.5.2.5 step 10, which are the same shape twice. With no gap it is one
-    // line; with one, every member sits on its own line indented by the INNER
-    // indent and the closing bracket by the enclosing one - which is why both
-    // indents are parameters rather than read off `indent`. The field has been
-    // restored to `stepback` by the time this runs.
+    /// How a member list becomes the finished text: 25.5.2.4 step 9 and
+    /// 25.5.2.5 step 10, which are the same shape twice. With no gap it is one
+    /// line; with one, every member sits on its own line indented by the inner
+    /// indent and the closing bracket by the enclosing one - which is why both
+    /// indents are parameters rather than read off `indent`. The field has been
+    /// restored to `stepback` by the time this runs.
     void join(const std::vector<std::string> & parts, const std::string & inner,
               const std::string & stepback, char open, char close, std::string & out) const {
         out += open;
@@ -290,20 +281,19 @@ struct json_writer {
         out += close;
     }
 
-    // SerializeJSONArray, 25.5.2.5. An element that is not serialisable is
-    // "null" here where an object's member is omitted - the two differ because
-    // an array's indices have to stay where they are.
+    /// SerializeJSONArray (25.5.2.5). An element that is not serialisable is
+    /// "null" here where an object's member is omitted - the two differ because
+    /// an array's indices have to stay where they are.
     [[nodiscard]] bool write_array(value v, std::string & out) {
         if (!enter(v)) { return false; }
         const std::string stepback = indent;
         indent += gap;
         std::vector<std::string> parts;
-        // ITEMS, NOT `length`. An array records an index it refused to
+        // Walk `items`, not `length`. An array records an index it refused to
         // materialise and raises `length` over it (see array_object::sparse),
         // so walking to `length` would turn `a[4294967295] = 1` into four
-        // billion "null"s. The deviation is array_object's own and every array
-        // built-in shares it. A PROXY of an array has no items of its own:
-        // its `length` is read through the trap (step 2, LengthOfArrayLike).
+        // billion "null"s. A proxy of an array has no items of its own: its
+        // `length` is read through the trap (step 2, LengthOfArrayLike).
         std::size_t count = 0;
         if (v.is_array()) {
             count = static_cast<array_object *>(v.as_heap())->items.size();
@@ -329,7 +319,7 @@ struct json_writer {
         return true;
     }
 
-    // SerializeJSONObject, 25.5.2.4.
+    /// SerializeJSONObject (25.5.2.4).
     [[nodiscard]] bool write_object(value v, std::string & out) {
         if (!enter(v)) { return false; }
         const std::string stepback = indent;
@@ -351,12 +341,11 @@ struct json_writer {
                 return false;
             }
         } else if (v.is_object()) {
-            // ENUMERABLE OWN STRING KEYS ONLY - EnumerableOwnProperties, step
-            // 5. A symbol key is filtered out by each_own_enumerable_key for
-            // the reason it always was: this engine spells one
-            // as a string key (core/symbol.hpp) and keeps it in the ordinary property
-            // table, so without the filter the internal spelling was serialised
-            // into the page's own data.
+            // Enumerable own string keys only (EnumerableOwnProperties, step
+            // 5). each_own_enumerable_key filters out symbol keys: they are
+            // spelled as string keys (core/symbol.hpp) in the ordinary property
+            // table, and without the filter that internal spelling would be
+            // serialised into the page's data.
             static_cast<const object_object *>(v.as_heap())
                 ->each_own_enumerable_key([&](const std::string & key) { keys.push_back(key); });
         }
@@ -381,8 +370,8 @@ struct json_writer {
     }
 };
 
-// 25.5.2 steps 4 through 8: the second and third arguments, which decide what
-// the serialiser IS before it has seen a value. False with a throw in flight.
+/// 25.5.2 steps 4 through 8: reads stringify's replacer and space arguments
+/// into `state` before it has seen a value. False with a throw in flight.
 [[nodiscard]] bool read_stringify_options(context & cx, json_writer & state, value replacer,
                                           value space) {
     bool replacer_is_array = false;
@@ -390,11 +379,11 @@ struct json_writer {
     if (replacer.is_callable()) {
         state.replacer = replacer;
     } else if (replacer_is_array) {
-        // A PROPERTY LIST IS A SET, in insertion order: step 4.b.iii.3 appends
+        // A property list is a set, in insertion order: step 4.b.iii.3 appends
         // only a name that is not already there, so
         // `JSON.stringify(o, ["a", "a"])` writes `a` once. Read through Get,
         // so a proxy of an array answers through its traps; a String or
-        // Number OBJECT (step 4.b.iii.2.c) is ToString'd, and anything else
+        // Number object (step 4.b.iii.2.c) is ToString'd, and anything else
         // contributes nothing.
         const double length = array_like_length(cx, replacer);
         if (state.threw()) { return false; }
@@ -420,7 +409,7 @@ struct json_writer {
         }
         state.has_property_list = true;
     }
-    // Step 6: a Number or String OBJECT is unwrapped first (ToNumber /
+    // Step 6: a Number or String object is unwrapped first (ToNumber /
     // ToString of it, which may run script).
     if (const value * slot = primitive_slot(space); slot != nullptr) {
         if (slot->is_number()) {
@@ -430,7 +419,7 @@ struct json_writer {
         }
         if (state.threw()) { return false; }
     }
-    // TEN IS THE CEILING for both forms (steps 7 and 8), and a number is
+    // Ten is the ceiling for both forms (steps 7 and 8), and a number is
     // ToIntegerOrInfinity'd rather than rounded: `JSON.stringify(o, null, 1.9)`
     // indents by one space.
     if (space.is_number()) {
@@ -439,7 +428,7 @@ struct json_writer {
         if (count >= 1) { state.gap.assign(static_cast<std::size_t>(count), ' '); }
     } else if (space.is_string()) {
         const std::string & text = static_cast<const string_object *>(space.as_heap())->text;
-        // The first ten CODE UNITS (25.5.2.1 step 9.b), a split pair leaving
+        // The first ten code units (25.5.2.1 step 9.b), a split pair leaving
         // its lone half.
         state.gap =
             utf16::slice(text, utf16::locate(text, 0),
@@ -448,8 +437,9 @@ struct json_writer {
     return true;
 }
 
-// The public Core parser owns the grammar and its data. Only this adapter
-// allocates VM values; native callers keep the ordinary owning JSON tree.
+/// Converts a tree from the Core parser (core/json.hpp) into script values.
+/// The Core parser owns the grammar; only this adapter allocates VM values, so
+/// native callers keep the ordinary owning JSON tree.
 value materialize_json(context & cx, const json_value & source) {
     return std::visit(
         [&](const auto & each) -> value {
@@ -483,11 +473,11 @@ value materialize_json(context & cx, const json_value & source) {
         source.data);
 }
 
-// JSON PARSE RECORDS (the JSON.parse source text access proposal, test262's
-// json-parse-with-source): what the reviver's third argument is built from.
-// A record keeps the value materialize made and, for a primitive, the exact
-// source text it was parsed from; an array's keeps its elements' records, an
-// object's its members' (the LAST of a repeated key, as the object holds).
+/// A JSON parse record (the JSON.parse source text access proposal, test262's
+/// json-parse-with-source): what the reviver's third argument is built from.
+/// A record keeps the value materialize made and, for a primitive, the exact
+/// source text it was parsed from; an array's keeps its elements' records, an
+/// object's its members' (the last of a repeated key, as the object holds).
 struct parse_entry;
 struct parse_record {
     value made = value::undefined();
@@ -495,20 +485,22 @@ struct parse_record {
     std::vector<parse_record> elements;
     std::vector<parse_entry> entries;
 };
+/// One member of an object's parse record.
 struct parse_entry {
     std::string key;
     parse_record record;
 };
 
-// The JSON grammar's white space (25.5.1: tab, LF, CR, space).
+/// Advances `at` past the JSON grammar's white space (25.5.1: tab, LF, CR,
+/// space).
 void skip_json_space(std::string_view text, std::size_t & at) {
     while (at < text.size() &&
            (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
         ++at;
     }
 }
-// Past one primitive token of text the Core parser has already accepted: a
-// string (escapes and all), or a number / true / false / null.
+/// Advances `at` past one primitive token of text the Core parser has already
+/// accepted: a string (escapes and all), or a number / true / false / null.
 void skip_json_token(std::string_view text, std::size_t & at) {
     if (at < text.size() && text[at] == '"') {
         for (++at; at < text.size() && text[at] != '"'; ++at) {
@@ -523,9 +515,9 @@ void skip_json_token(std::string_view text, std::size_t & at) {
     }
 }
 
-// materialize_json, walking the source text in step with the parsed tree so
-// every primitive's record carries its text. `made` gathers every value a
-// record holds, for the caller to root through the reviver walk.
+/// materialize_json, walking the source text in step with the parsed tree so
+/// every primitive's record carries its text. `made` gathers every value a
+/// record holds, for the caller to root through the reviver walk.
 value materialize_recorded(context & cx, const json_value & node, std::string_view text,
                            std::size_t & at, parse_record & rec, std::vector<value> & made) {
     skip_json_space(text, at);
@@ -587,14 +579,14 @@ value materialize_recorded(context & cx, const json_value & node, std::string_vi
     return rec.made;
 }
 
-// InternalizeJSONProperty, 25.5.1.1 - the reviver walk, through the ordinary
-// object operations so a reviver that grafts a Proxy in sees its traps run.
-//
-// POST-ORDER: a child is revived and written back before its parent is offered
-// to the reviver, so a reviver rebuilding a Date out of a string sees a
-// finished object. A reviver returning `undefined` DELETES the property, which
-// is how one filters, and is why this cannot be a plain map. Undefined with a
-// throw pending is an abrupt completion.
+/// InternalizeJSONProperty (25.5.1.1): the reviver walk, through the ordinary
+/// object operations so a reviver that grafts a Proxy in sees its traps run.
+///
+/// The walk is post-order: a child is revived and written back before its
+/// parent is offered to the reviver, so a reviver rebuilding a Date out of a
+/// string sees a finished object. A reviver returning `undefined` deletes the
+/// property, which is how one filters, and is why this cannot be a plain map.
+/// Undefined with a throw pending is an abrupt completion.
 value internalize_json(context & cx, value holder, const std::string & key, value reviver,
                        std::uint32_t depth, const parse_record * record, bool & failed) {
     // The recursion follows the parsed document's shape, so it is bounded by
@@ -602,9 +594,9 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
     // would then never end. The ceiling is the VM's own for the same reason the
     // VM has one.
     if (depth > context::reentry_ceiling) { return value::undefined(); }
-    // A THROW STOPS THE WALK. A getter's, a trap's or the reviver's is
-    // PARKED (context::call) and throw_pending sees it; the engine's own -
-    // IsArray of a revoked proxy the reviver grafted in - LANDS instead, and
+    // A throw stops the walk. A getter's, a trap's or the reviver's is
+    // parked (context::call) and throw_pending sees it; the engine's own -
+    // IsArray of a revoked proxy the reviver grafted in - lands instead, and
     // `failed` carries it up, so the walk stops there rather than deleting
     // the child and calling the reviver again. (The unwind count is no
     // signal: a reviver that throws and catches inside itself moves it.)
@@ -619,7 +611,7 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
     if (held.is_object_like()) {
         // Step 2.b: a deleted child is [[Delete]]d and a revived one
         // CreateDataProperty'd - each `? val.[[...]]`, so a throw (a proxy
-        // trap's) propagates but a REFUSAL is ignored: a reviver that made
+        // trap's) propagates but a refusal is ignored: a reviver that made
         // the property non-configurable first simply leaves it in place.
         const auto revive_child = [&](const std::string & k, const parse_record * child) {
             const value revived = internalize_json(cx, held, k, reviver, depth + 1, child, failed);
@@ -652,9 +644,9 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
                 if (!revive_child(number_to_string(i), child)) { return value::undefined(); }
             }
         } else {
-            // EnumerableOwnProperties (step 2.c.i), ONCE, before the walk:
+            // EnumerableOwnProperties (step 2.c.i), once, before the walk:
             // OwnPropertyKeys and each key's [[GetOwnProperty]] now, so a
-            // property the reviver adds is not visited - and one it DELETES
+            // property the reviver adds is not visited - and one it deletes
             // still is, its [[Get]] reading whatever the chain holds, which
             // the reviver may then define back (reviver-object-get-prop-from-
             // prototype).
@@ -698,7 +690,7 @@ value internalize_json(context & cx, value holder, const std::string & key, valu
 
 namespace ctbrowser::script::builtins_detail {
 
-// JSON
+/// Installs the global JSON object (stringify, parse, rawJSON, isRawJSON).
 void install_json(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -708,7 +700,7 @@ void install_json(context & cx) {
         if (!detail::read_stringify_options(c, state, arg_at(a, 1), arg_at(a, 2))) {
             return value::undefined();
         }
-        // THE VALUE IS SERIALISED AS A MEMBER OF A WRAPPER, 25.5.2 step 10, and
+        // The value is serialised as a member of a wrapper (25.5.2 step 10), and
         // that is not ceremony: SerializeJSONProperty reads its value out of a
         // holder with a key, so the replacer gets `("", value)` and an object
         // to be `this` on its first call exactly as it does on every later one.
@@ -717,24 +709,21 @@ void install_json(context & cx) {
         const value wrapper = c.make_object();
         static_cast<object_object *>(wrapper.as_heap())->set("", arg_at(a, 0));
         std::string out;
-        // AT THE TOP LEVEL an unserialisable value yields UNDEFINED, not the
-        // string "null" - step 12. Inside an array the same value becomes null,
-        // which is why the serialiser reports "omit" and the caller decides. A
-        // page testing `if (json === undefined)` was told the string "null".
+        // At the top level an unserialisable value yields undefined, not "null"
+        // (step 12); inside an array it becomes null, so serialize reports
+        // "omit" and the caller decides.
         if (!state.serialize(wrapper, "", arg_at(a, 0), out)) { return value::undefined(); }
         return c.string(out);
     });
     method(cx, json, "parse", 2, [](context & c, std::span<value> a) {
         // 25.5.1 step 1, ToString(text): a Symbol is the TypeError, before
-        // the text is looked at - and that throw has LANDED by the next line
+        // the text is looked at - and that throw has landed by the next line
         // (context::unwinds says why throw_pending cannot see it).
         if (!stringable_arg(c, arg_at(a, 0))) { return value::undefined(); }
         const std::string text = c.to_string(arg_at(a, 0));
         if (c.throw_pending()) { return value::undefined(); }
         const auto parsed = parse_json(text);
-        // 25.5.1 step 3: a document that does not fit the JSON grammar is a
-        // SyntaxError. It used to be `undefined`, which is a value a page can
-        // and does mistake for a successfully parsed `null`-ish document.
+        // 25.5.1 step 3: text that is not valid JSON throws a SyntaxError.
         if (!parsed) {
             c.throw_error("SyntaxError",
                           "Unexpected token in JSON at position " + std::to_string(parsed.error()));
@@ -751,7 +740,7 @@ void install_json(context & cx) {
         std::size_t at = 0;
         const value out = detail::materialize_recorded(c, *parsed, text, at, root, recorded_values);
         const context::rooted_values keep_records{c, recorded_values};
-        // Step 7: the reviver walks a WRAPPER whose one property is "", for the
+        // Step 7: the reviver walks a wrapper whose one property is "", for the
         // same reason stringify's does - the root has to be a (holder, key)
         // pair so the reviver can replace it.
         const value wrapper = c.make_object();
@@ -760,12 +749,12 @@ void install_json(context & cx) {
         bool failed = false;
         return detail::internalize_json(c, wrapper, "", reviver, 0, &root, failed);
     });
-    // 25.5.3 JSON.rawJSON / 25.5.2 JSON.isRawJSON (ES2025): a frozen,
-    // null-prototype object whose `rawJSON` is the text, serialised verbatim
-    // by stringify. [[IsRawJSON]] is the private key; the text must be a JSON
-    // primitive - no object or array, no surrounding whitespace.
+    // JSON.rawJSON / JSON.isRawJSON (JSON.parse source text access proposal): a
+    // frozen, null-prototype object whose `rawJSON` is the text, serialised
+    // verbatim by stringify. [[IsRawJSON]] is the private key; the text must be
+    // a JSON primitive - no object or array, no surrounding whitespace.
     method(cx, json, "rawJSON", 1, [](context & c, std::span<value> a) {
-        // ToString's TypeError for a Symbol has LANDED by the next line
+        // ToString's TypeError for a Symbol has landed by the next line
         // (context::unwinds), so it is watched for rather than asked about.
         const detail::unwind_watch watch{c};
         const std::string text = string_arg(c, arg_at(a, 0));
@@ -782,8 +771,10 @@ void install_json(context & cx) {
         }
         const value made = c.make_object();
         auto * obj = static_cast<object_object *>(made.as_heap());
-        obj->prototype = value::undefined(); // an explicit null - object_object::prototype
-        // Frozen (step 6): the one property { false, true, false }, and no more.
+        // undefined here means a null [[Prototype]]; see object_object::prototype.
+        obj->prototype = value::undefined();
+        // Frozen (step 6): `rawJSON` is non-writable, enumerable and
+        // non-configurable, and the object is non-extensible.
         obj->define("rawJSON", c.string(text), attr_enumerable);
         obj->define(std::string{detail::raw_json_slot}, value::boolean(true), attr_none);
         c.prevent_extensions(made);

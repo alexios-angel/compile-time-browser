@@ -1,10 +1,11 @@
-// ctbrowser.script builtins - Proxy and Reflect.
+//===- objects/proxy.cpp - Proxy and Reflect builtins -----------*- C++ -*-===//
 //
-// One of five files carved out of a 1,429-line builtins/objects.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp; what only this
-// directory shares is in internal.hpp beside this.
+// Installs the Proxy constructor (with Proxy.revocable) and the Reflect
+// namespace. Helpers shared by all builtins are declared in ../internal.hpp;
+// helpers shared only by the object builtins are in internal.hpp beside this
+// file.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -15,16 +16,9 @@ using detail::own_property_names;
 using detail::prototype_of;
 using detail::valid_descriptor;
 
-// `Proxy` and `Reflect`. p5.js has three proxies, and one of them runs at the
-// bundle's top level - `p5.renderers['p2d-p3'] = new Proxy(Renderer2D,
-// {construct(...) {...}})` - so the bundle could not finish loading without it.
-//
-// Three traps: `get`, `has` and `construct`, which are the three p5 uses. A
-// trap that is not implemented is not silently skipped - the operation falls
-// through to the target, which is what an absent trap means anyway. The traps
-// that ARE missing (set, deleteProperty, ownKeys, apply and the rest) behave
-// the same way, so a page using one gets the target's behaviour rather than a
-// wrong answer; that is a real gap and it is named here rather than discovered.
+/// Installs the `Proxy` and `Reflect` globals. Traps themselves are looked up
+/// through context::proxy_trap wherever an operation meets a proxy; an absent
+/// trap falls through to the target, as the specification requires.
 void install_proxy(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -55,7 +49,7 @@ void install_proxy(context & cx) {
     proxy_ctor->define("length", value::number(2), attr_configurable);
     proxy_ctor->define("name", cx.string("Proxy"), attr_configurable);
     // 28.2.2.1 Proxy.revocable: { proxy, revoke }, and `revoke` reaches its
-    // proxy through its OWN property table rather than a captured value,
+    // proxy through its own property table rather than a captured value,
     // because a value captured by a native lambda is not a collector root
     // (docs/script.md).
     method(cx, proxy_ctor, "revocable", 2, [proxy_create](context & c, std::span<value> a) {
@@ -90,8 +84,8 @@ void install_proxy(context & cx) {
     // thing - `Reflect.get(t, k)` inside a `get` trap is how a proxy adds
     // behaviour instead of replacing it.
     object_object * reflect = new_table(cx);
-    // 28.1: every Reflect function REFUSES a non-object target with a
-    // TypeError - the one place the namespace is stricter than Object - and
+    // 28.1: every Reflect function refuses a non-object target with a
+    // TypeError (the one place the namespace is stricter than Object), and
     // coerces its key with ToPropertyKey (a symbol passes through as its
     // key, see symbol_object).
     const auto target_of = [](context & c, std::span<value> a, const char * name) {
@@ -109,7 +103,7 @@ void install_proxy(context & cx) {
         out = c.to_string(primitive);
         return !c.throw_pending();
     };
-    // 28.1.6 Reflect.get, WITH ITS RECEIVER: an accessor found on the chain is
+    // 28.1.6 Reflect.get, with its receiver: an accessor found on the chain is
     // called on `receiver`, which is the whole reason the third argument
     // exists. A proxy target answers through its trap (context::lookup_index),
     // which takes no receiver; so does the two-argument form.
@@ -136,7 +130,7 @@ void install_proxy(context & cx) {
         return value::undefined();
     });
     // 28.1.13 Reflect.set: OrdinarySet (10.1.9.2) with a receiver, answering
-    // FALSE where a plain assignment is silently refused - a non-writable
+    // false where a plain assignment is silently refused: a non-writable
     // slot, an accessor with no setter, a non-extensible receiver, a receiver
     // that is not an object at all.
     method(cx, reflect, "set", 3, [target_of, key_of](context & c, std::span<value> a) {
@@ -149,7 +143,7 @@ void install_proxy(context & cx) {
         context::property_descriptor own;
         bool found = false;
         for (int hops = 0; hops < 10000 && walk.is_object_like(); ++hops) {
-            // A MODULE NAMESPACE'S [[Set]] is false, always (10.4.6.9) - it
+            // A module namespace's [[Set]] is always false (10.4.6.9); it
             // never reaches the [[DefineOwnProperty]] that answers true for
             // a value the export already holds.
             if (walk.is_object() &&
@@ -168,10 +162,10 @@ void install_proxy(context & cx) {
                 c.clear_store_rejected();
                 return value::boolean(!refused);
             }
-            // 10.4.5.5: a TYPED ARRAY answers a numeric key's [[Set]] itself.
+            // 10.4.5.5: a typed array answers a numeric key's [[Set]] itself.
             // As the receiver it coerces the value and writes a valid index;
             // under another receiver an index it does not have is a quiet
-            // success - no coercion, no property on the receiver - and one it
+            // success (no coercion, no property on the receiver), and one it
             // has is the writable data property OrdinarySet goes on with.
             if (walk.is_array() &&
                 static_cast<array_object *>(walk.as_heap())->elements != element_kind::none &&
@@ -215,10 +209,9 @@ void install_proxy(context & cx) {
         fresh.writable = fresh.enumerable = fresh.configurable = true;
         return value::boolean(c.define_own_property(receiver, key, fresh));
     });
-    // HasProperty, 7.3.11 - not "reads as something other than undefined".
-    // `Reflect.has({x: undefined}, 'x')` was false, and so was every accessor
-    // whose getter returns undefined. context::has_property is the operator
-    // `in` uses and is the same question.
+    // 28.1.12 Reflect.has: HasProperty (7.3.11), the same question as the `in`
+    // operator (context::has_property), so `Reflect.has({x: undefined}, 'x')`
+    // is true.
     method(cx, reflect, "has", 2, [target_of, key_of](context & c, std::span<value> a) {
         if (!target_of(c, a, "has")) { return value::undefined(); }
         std::string key;
@@ -244,7 +237,7 @@ void install_proxy(context & cx) {
         return c.construct(a[0], static_cast<array_object *>(args.as_heap())->items,
                            a.size() > 2 ? a[2] : a[0]);
     });
-    // 28.1.1 Reflect.apply: a non-callable target is a TypeError BEFORE the
+    // 28.1.1 Reflect.apply: a non-callable target is a TypeError before the
     // list is read.
     method(cx, reflect, "apply", 3, [](context & c, std::span<value> a) {
         if (!arg_at(a, 0).is_callable()) {
@@ -260,10 +253,8 @@ void install_proxy(context & cx) {
         value out = c.make_array();
         auto * result = static_cast<array_object *>(out.as_heap());
         const context::rooted keep{c, out};
-        // The UNFILTERED walk, over any receiver: `Reflect.ownKeys` reports
-        // symbols as well as names, and an array's indices as well as a plain
-        // object's keys. It answered `[]` for everything that was not an
-        // object_object.
+        // 28.1.11: every own key of any object, unfiltered: symbols as well
+        // as names, and an array's indices as well as a plain object's keys.
         if (!arg_at(a, 0).is_object_like()) {
             c.throw_error("TypeError", "Reflect.ownKeys called on non-object");
             return value::undefined();
@@ -273,15 +264,15 @@ void install_proxy(context & cx) {
         }
         return out;
     });
-    // The un-throwing halves of Object.defineProperty and friends: Reflect
-    // ANSWERS FALSE where Object throws, which is the whole difference between
-    // the two namespaces.
+    // The non-throwing counterparts of Object.defineProperty and friends:
+    // Reflect answers false where Object throws, which is the whole difference
+    // between the two namespaces.
     method(cx, reflect, "defineProperty", 3, [target_of, key_of](context & c, std::span<value> a) {
-        // FALSE is only for the VALIDATION step. A target that is not an object
-        // and a descriptor that is malformed are both TypeErrors here exactly
-        // as they are for Object.defineProperty (28.1.3 steps 1 and 3) - the
-        // difference between the two namespaces is what a REFUSED but
-        // well-formed define does, and that is the boolean below.
+        // False is only for a refused define. A target that is not an object
+        // and a malformed descriptor are both TypeErrors here, exactly as they
+        // are for Object.defineProperty (28.1.3 steps 1 and 3); what differs is
+        // what a refused but well-formed define does, which is the boolean
+        // below.
         if (!target_of(c, a, "defineProperty")) { return value::undefined(); }
         std::string key;
         if (!key_of(c, arg_at(a, 1), key)) { return value::undefined(); }
@@ -339,12 +330,11 @@ void install_proxy(context & cx) {
         c.prevent_extensions(a[0]);
         return value::boolean(true);
     });
-    // THE SAME [[GetPrototypeOf]] Object.getPrototypeOf answers with. It read
-    // `object_object::prototype` directly, so the two disagreed about every
-    // function, every primitive and every plain object.
+    // 28.1.8: the same [[GetPrototypeOf]] (detail::prototype_of) that
+    // Object.getPrototypeOf uses, so the two agree for every kind of object.
     method(cx, reflect, "getPrototypeOf", 1, [](context & c, std::span<value> a) {
         const value of = arg_at(a, 0);
-        // 28.1.8 step 1: Reflect REFUSES a non-object rather than coercing it,
+        // 28.1.8 step 1: Reflect refuses a non-object rather than coercing it,
         // which is the one place it is stricter than Object.
         if (!of.is_object_like()) {
             c.throw_error("TypeError", "Reflect.getPrototypeOf called on non-object");

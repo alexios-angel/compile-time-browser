@@ -1,11 +1,11 @@
-// ctbrowser.script builtins - Array: the constructor, its statics, and the
-// prototype methods up to the callback-taking ones; install_array_iteration in
-// array_iteration.cpp installs the rest, in the same order as before.
+//===- array.cpp - Array constructor and methods ----------------*- C++ -*-===//
 //
-// One of four files carved out of a 1,824-line builtins/collections.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp.
+// Array builtins: the constructor, its statics, and the prototype methods that
+// take no callback. array_iteration.cpp (install_array_iteration) installs the
+// callback-taking methods. Shared helpers and declarations are in
+// ../internal.hpp. Section numbers are ECMA-262 (ES2024 numbering).
+//
+//===----------------------------------------------------------------------===//
 
 #include "../internal.hpp"
 
@@ -13,18 +13,18 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
-// FlattenIntoArray, 23.1.3.13.1 - `flat` and `flatMap` - IN ITS ORDER, which
-// a proxy source shows trap by trap: for each index ascending, HasProperty,
-// Get, the mapper (flatMap's, on the top level only), then IsArray of the
-// element while depth remains, and either a descent into it - its own
-// LengthOfArrayLike, its own indices - or CreateDataPropertyOrThrow onto the
-// target at the next index.
-//
-// An explicit stack of levels rather than the specification's recursion:
-// `flat(Infinity)` on a deep structure must not be bounded by the C++ stack,
-// and one that contains itself is the RangeError a recursion would reach.
-// The sources are held in a rooted array - a getter can collect.
-// False with a throw in flight.
+/// FlattenIntoArray, 23.1.3.13.1, for `flat` and `flatMap`, in the
+/// specification's order, which a proxy source shows trap by trap: for each
+/// index ascending, HasProperty, Get, the mapper (flatMap's, on the top level
+/// only), then IsArray of the element while depth remains, and either a
+/// descent into it (its own LengthOfArrayLike, its own indices) or
+/// CreateDataPropertyOrThrow onto the target at the next index.
+///
+/// Uses an explicit stack of levels rather than the specification's recursion:
+/// `flat(Infinity)` on a deep structure must not be bounded by the C++ stack,
+/// and one that contains itself gets the RangeError a recursion would reach
+/// (at 10000 levels). The sources are held in a rooted array because a getter
+/// can trigger a collection. Returns false when a throw is pending.
 [[nodiscard]] bool flatten_into_array(context & c, value target, value source, double len,
                                       double depth, value mapper, value this_arg) {
     struct level {
@@ -59,8 +59,9 @@ namespace {
             const context::rooted keep_element(c, element);
             const value args[3] = {element, value::number(k), from};
             element = c.call(mapper, args, this_arg);
-            // Parked if it threw (context::call); the unwind count would also
-            // move for a mapper that throws and catches inside itself.
+            // Pending if it threw (context::call). The unwind count is not used
+            // here because it also moves for a mapper that throws and catches
+            // inside itself.
             if (c.throw_pending()) { return false; }
             walk.rearm();
         }
@@ -90,26 +91,22 @@ namespace {
 
 } // namespace
 
-// Array.prototype
+/// Installs the Array constructor, its static methods and Array.prototype
+/// (the rest of the prototype comes from install_array_iteration).
 void install_array(context & cx) {
     using detail::method;
     using detail::new_table;
 
-    // `Array` itself. 88 uses of isArray in p5.js alone - it is how every
-    // overloaded signature in the library decides what it was handed.
+    // `Array` itself.
     auto * array_ctor = cx.allocate<native_object>("Array", [](context & c, std::span<value> a) {
         value out = c.make_array();
         auto * made = static_cast<array_object *>(out.as_heap());
         // `Array(n)` is a length, `Array(a, b, ...)` is the elements.
         if (a.size() == 1 && a[0].is_number()) {
-            // THROUGH set_js_length, not `assign`. `new Array(4294967295)` is
-            // legal JavaScript and `assign` made it 34 GB of `value` - one of
-            // the SIGABRTs test262 found (built-ins/Array/length/
-            // S15.4.2.2_A2.1_T1) - while `new Array(1.5)` is a RangeError the
-            // silent std::max swallowed.
-            // Every index a hole (23.1.1.1 step 5: ArrayCreate, then only
-            // `length`), which forEach skips and a read takes from
-            // Array.prototype.
+            // set_js_length_with_holes, not `items.assign`: `new Array(4294967295)`
+            // is legal and must not allocate 4G values, and `new Array(1.5)` is
+            // a RangeError. Every index is a hole (23.1.1.1 step 5), which
+            // forEach skips and a read takes from Array.prototype.
             if (!made->set_js_length_with_holes(a[0].as_number())) {
                 c.throw_error("RangeError", "Invalid array length");
             }
@@ -137,17 +134,18 @@ void install_array(context & cx) {
         (void)detail::is_array_value(c, arg_at(a, 0), answer);
         return value::boolean(answer);
     });
-    // --- Array.of AND Array.from, 23.1.2.3 AND 23.1.2.1 ---------------------
+    // --- Array.of and Array.from, 23.1.2.3 and 23.1.2.1 ---------------------
     //
-    // BOTH HONOUR A CONSTRUCTOR `this`: `Array.of.call(C, ...)` builds through
+    // Both honour a constructor `this`: `Array.of.call(C, ...)` builds through
     // C and lands every element with CreateDataPropertyOrThrow, then sets
-    // `length` with Throw=true - which is what makes a subclass's `of` and
-    // `from` answer instances of the subclass. `this` being Array itself, or
-    // nothing callable, takes the straight line into a fresh Array.
+    // `length` with Throw=true, which makes a subclass's `of` and `from` answer
+    // instances of the subclass. When `this` is Array itself, or not a
+    // constructor, through_constructor returns undefined and the caller builds
+    // a fresh Array directly.
     const auto through_constructor = [array_ctor](context & c, value ctor, double len,
                                                   bool pass_len) -> value {
         // IsConstructor (7.2.4), as near as a native can be told: a built-in
-        // METHOD has no `prototype` property and a constructor does, so
+        // method has no `prototype` property and a constructor does, so
         // `Array.of.call(Math.cos)` builds a plain Array (step 5).
         if (!ctor.is_callable() || ctor.as_heap() == array_ctor) { return value::undefined(); }
         if (ctor.is_kind(heap_kind::native) &&
@@ -178,18 +176,18 @@ void install_array(context & cx) {
         if (!detail::put_length(c, out, len)) { return value::undefined(); }
         return out;
     });
-    // 23.1.2.2 Array.fromAsync - WRITTEN IN JAVASCRIPT, compiled on first
+    // 23.1.2.2 Array.fromAsync, written in JavaScript and compiled on first
     // use. It is `for await` over the items (an async iterable, a sync
-    // iterable, or an array-like), awaiting the mapper's result per element,
-    // and the language now has every piece; a C++ version would re-implement
-    // the async iteration protocol the compiler already lowers. Compiled
-    // lazily because `call` refuses a closure before the first program runs.
-    // A hidden global keeps the compiled helper between calls.
+    // iterable, or an array-like), awaiting the mapper's result per element; a
+    // C++ version would re-implement the async iteration protocol the compiler
+    // already lowers. Compiled lazily because `call` refuses a closure before
+    // the first program runs. A hidden global keeps the compiled helper between
+    // calls.
     static_method("fromAsync", 1, [](context & c, std::span<value> a) {
         value helper = c.global("__ctbrowser_from_async");
         if (!helper.is_callable()) {
             program compiled = compiler::compile(
-                // The two symbols come IN from the native, the intrinsic ones:
+                // The two symbols are passed in by the native (the intrinsic ones):
                 // a page may have replaced the global `Symbol` by the first call.
                 "return (async function (items, mapfn, thisArg, asyncKey, syncKey) {"
                 // Strict, so `out.length = i` on a read-only length is the TypeError
@@ -228,9 +226,9 @@ void install_array(context & cx) {
                 "    throw new TypeError('Array.fromAsync: @@iterator is not callable');"
                 "  }"
                 "  const iterable = usingAsync != null || usingSync != null;"
-                // Construct(C) with NO arguments for an iterable (step 3.e); and
-                // the method already read is the one iterated - `for await` over
-                // `items` itself would read both symbols a second time.
+                // Construct(C) with no arguments for an iterable (step 3.e); and
+                // the method already read is the one iterated, because `for await`
+                // over `items` itself would read both symbols a second time.
                 "  if (iterable) {"
                 "    out = custom ? new C() : [];"
                 "    const source = usingAsync != null"
@@ -241,7 +239,7 @@ void install_array(context & cx) {
                 "    if (custom) { out.length = i; }"
                 "    return out;"
                 "  }"
-                // LengthOfArrayLike: ToNumber, not Number() - `+1n` is the TypeError
+                // LengthOfArrayLike: ToNumber, not Number(); `+1n` is the TypeError
                 // ToLength gives a BigInt, where Number(1n) would be 1.
                 "  const len = Math.min(Math.max(Math.trunc(+items.length) || 0, 0), 2 ** "
                 "53 - 1);"
@@ -263,7 +261,7 @@ void install_array(context & cx) {
             helper = c.run_nested(c.own_program(std::move(compiled)));
             c.define_global("__ctbrowser_from_async", helper);
         }
-        // Each ROOTED before the next allocates: a collection between the two
+        // Each is rooted before the next allocates: a collection between the two
         // would free the first.
         const value async_key = c.key_value(CTBROWSER_SYMBOL_KEY("asyncIterator"));
         const context::rooted keep_async{c, async_key};
@@ -274,10 +272,8 @@ void install_array(context & cx) {
     });
     static_method(
         "from", 1, [through_constructor, create_element](context & c, std::span<value> a) {
-            // A mapping function that is PRESENT AND NOT CALLABLE is a TypeError
-            // (23.1.2.1 step 2), checked before the source is touched. It was
-            // silently ignored, so `Array.from(xs, 'nope')` copied xs and said
-            // nothing.
+            // A mapping function that is present but not callable is a TypeError
+            // (23.1.2.1 step 2), checked before the source is touched.
             const value mapper = arg_at(a, 1);
             const bool mapping = !mapper.is_undefined();
             if (mapping && !mapper.is_callable()) {
@@ -295,7 +291,7 @@ void install_array(context & cx) {
                 c.throw_error("TypeError", "Symbol.iterator is not a function");
                 return value::undefined();
             }
-            // The mapper's call is FENCED so an abrupt completion can close the
+            // The mapper's call is fenced so an abrupt completion can close the
             // iterator (IteratorClose, step 5.e.vi.2) before it is rethrown.
             const auto map = [&](value item, double k, value & out, value iterator) {
                 if (!mapping) {
@@ -320,10 +316,10 @@ void install_array(context & cx) {
                 value out = through_constructor(c, c.current_this(), 0, false);
                 if (c.throw_pending()) { return value::undefined(); }
                 if (out.is_undefined()) { out = c.make_array(); }
-                // THE STRAIGHT LINE for `Array.from(realArray)`: an Array whose
-                // @@iterator is still the built-in `values` is copied rather than
-                // stepped through ten thousand `next()` records, and nothing is
-                // observable either way since the built-in reads nothing else.
+                // Fast path for `Array.from(realArray)`: an Array whose @@iterator
+                // is still the built-in `values` is copied rather than stepped
+                // through one `next()` record per element. Nothing observable
+                // differs, since the built-in iterator reads nothing else.
                 if (items.is_array() && !mapping && using_iterator.is_kind(heap_kind::native) &&
                     static_cast<native_object *>(using_iterator.as_heap())->name == "values" &&
                     detail::dense_array_this(out) != nullptr &&
@@ -389,14 +385,11 @@ void install_array(context & cx) {
     cx.define_global("Array", value::object(array_ctor));
 
     object_object * array_proto = new_table(cx);
-    // 23.1.3: Array.prototype is an Array, so it has a `length` - 0, and
-    // { writable, not enumerable, not configurable } as every Array's is. Only
-    // the property: the table is not an array_object, so an element written to
-    // it does not move `length`.
+    // 23.1.3: Array.prototype is an Array, so it has a `length` of 0,
+    // {writable, not enumerable, not configurable} as every Array's is. Only
+    // the property is emulated: the table is not an array_object, so an element
+    // written to it does not move `length`.
     array_proto->define("length", value::number(0), attr_writable);
-    // The prototype methods p5.js uses that were not here. `at` and `fill` are
-    // the ones it leans on hardest - 43 and 31 uses - because a typed-array
-    // shim reaches for both.
     method(cx, array_proto, "at", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "at")) { return value::undefined(); }
@@ -415,9 +408,8 @@ void install_array(context & cx) {
         const value filler = arg_at(a, 0);
         const double start = integer_arg(c, a, 1);
         double k = start < 0 ? std::max(len + start, 0.0) : std::min(start, len);
-        // AN ABSENT `end` AND AN EXPLICIT `undefined` BOTH MEAN "to the end".
-        // A count test sees three arguments for `fill(0, 0, undefined)`,
-        // coerces the undefined to 0 and fills nothing.
+        // An absent `end` and an explicit `undefined` both mean "to the end",
+        // so has_index is tested rather than the argument count.
         const double raw_end = has_index(a, 2) ? integer_arg(c, a, 2) : len;
         const double end = raw_end < 0 ? std::max(len + raw_end, 0.0) : std::min(raw_end, len);
         for (; k < end; k += 1.0) {
@@ -425,15 +417,10 @@ void install_array(context & cx) {
         }
         return self;
     });
-    // 23.1.3.13, GENERIC, and its depth goes through ToIntegerOrInfinity.
-    //
-    // `flat(undefined)` is the DEFAULT depth of 1 and `flat('TestString')`,
-    // `flat({})` and `flat(-Infinity)` are all depth 0. The old spelling tested
-    // the argument COUNT for the default - so an explicit undefined flattened
-    // nothing - and then coerced with the STATIC to_number, which answers NaN
-    // for an object and compares false against every bound. The length is
-    // read BEFORE the depth is coerced (steps 2 and 4), and the result is
-    // ArraySpeciesCreate(O, 0) (step 5).
+    // 23.1.3.13 Array.prototype.flat, generic. An absent or undefined depth is
+    // 1; anything else goes through ToIntegerOrInfinity, so 'x', {} and
+    // -Infinity are depth 0. The length is read before the depth is coerced
+    // (steps 2 and 4), and the result is ArraySpeciesCreate(O, 0) (step 5).
     method(cx, array_proto, "flat", 0, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
@@ -450,15 +437,14 @@ void install_array(context & cx) {
         (void)flatten_into_array(c, out, self, len, depth, value::undefined(), value::undefined());
         return out;
     });
-    // 23.1.3.14, whose depth is ALWAYS 1. Generic, it takes its `thisArg` - the
-    // second argument, accepted and dropped before, while the receiver was
-    // passed as the callback's `this` instead - and a mapper that is absent or
-    // not callable is a TypeError rather than an empty result.
+    // 23.1.3.14 Array.prototype.flatMap, generic: depth is always 1, the second
+    // argument is the callback's `this`, and a missing or non-callable callback
+    // is a TypeError.
     method(cx, array_proto, "flatMap", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value out = c.make_array();
         if (!detail::coercible_this(c, self, "flatMap")) { return out; }
-        // LengthOfArrayLike BEFORE the callback is examined (steps 2-4): a
+        // LengthOfArrayLike before the callback is examined (steps 2-4): a
         // `length` getter runs, and its throw wins, even for a callback that
         // is not callable.
         const detail::unwind_watch watch{c};
@@ -468,7 +454,7 @@ void install_array(context & cx) {
         if (!detail::callable_arg(c, callback, "callback")) { return out; }
         out = detail::array_species_create(c, self, 0); // step 5
         if (out.is_undefined()) { return out; }
-        const context::rooted keep(c, out); // as `map` - see the note there
+        const context::rooted keep(c, out); // the callback can trigger a collection
         (void)flatten_into_array(c, out, self, len, 1.0, callback, arg_at(a, 1));
         return out;
     });
@@ -478,36 +464,37 @@ void install_array(context & cx) {
     method(cx, array_proto, "findLastIndex", 1, [](context & c, std::span<value> a) {
         return array_find(c, a, "findLastIndex", true, true);
     });
-    // --- THE FOUR THAT MUTATE AT AN END ------------------------------------
+    // --- push, pop, shift and unshift: the four that mutate at an end -------
     //
-    // push, pop, shift and unshift are as generic as the eighteen that read
-    // (see detail::array_like_length): `this` is ToObject'd, `length` is read
+    // These are as generic as the read-only methods (see
+    // detail::array_like_length): `this` is ToObject'd, `length` is read
     // through [[Get]] and ToLength, every element moves through [[Set]] or
-    // [[Delete]], and the algorithm ENDS with Set(O, "length", n, true).
-    // Writing the length back is the half a read-only method never had, and it
-    // is what `Array.prototype.push.call(obj, x)` needs to be worth calling.
+    // [[Delete]], and the algorithm ends with Set(O, "length", n, true), which
+    // is what makes `Array.prototype.push.call(obj, x)` useful.
     //
-    // EACH OPENS WITH A BRANCH, not with a second algorithm. A real, ordinary
-    // Array is its own std::vector and does the vector operation; anything else
-    // - an array-like, a Proxy, `arguments` from another realm - takes the
-    // specified walk. detail::dense_array_this is that branch.
+    // Each opens with a branch, not a second algorithm: a real, ordinary Array
+    // is its own std::vector and does the vector operation; anything else (an
+    // array-like, a Proxy, `arguments` from another realm) takes the specified
+    // walk. detail::dense_array_this is that branch.
     //
-    // 2^53-1 IS A TypeError, NOT A CLAMP (23.1.3.23 step 5, 23.1.3.32 step 4a).
-    // `length` itself clamps there through ToLength, so `push()` with no
-    // arguments on `{length: Infinity}` writes back 2^53-1 and succeeds while
-    // `push(null)` on the same object throws.
+    // Growing past 2^53 - 1 is a TypeError, not a clamp (23.1.3.23 step 5,
+    // 23.1.3.37 step 4a). `length` itself clamps there through ToLength, so
+    // `push()` with no arguments on `{length: Infinity}` writes back 2^53 - 1
+    // and succeeds while `push(null)` on the same object throws.
     method(cx, array_proto, "push", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "push")) { return value::number(0); }
-        // ...unless the chain holds an index: each Set of a new index is then
-        // the prototype's to answer (a setter on Array.prototype[0]), which
-        // the generic walk asks and vector surgery would skip.
+        // The vector fast path is skipped when the prototype chain holds an
+        // index: each Set of a new index is then the prototype's to answer (a
+        // setter on Array.prototype[0]), which the generic walk asks and vector
+        // surgery would skip.
         if (array_object * dense = detail::dense_array_this(self);
             dense != nullptr && !array_chain_holds_indices(c, *dense)) {
-            // FROZEN MEANS FROZEN, and it is a THROW here rather than a silent
-            // drop: the Sets in 23.1.3.23 carry Throw=true, so this is a
-            // TypeError in sloppy mode too - unlike a bare `a[0] = 1`, which
-            // context::store_index discards (TODO(strict) there).
+            // A frozen or non-extensible array throws here rather than
+            // silently dropping the write: the Sets in 23.1.3.23 carry
+            // Throw=true, so this is a TypeError in sloppy mode too, unlike a
+            // bare `a[0] = 1`, which context::store_index discards (see the
+            // TODO(strict) there).
             if (!dense->extensible && (!a.empty() || !dense->elements_writable)) {
                 c.throw_error("TypeError", "Cannot add a property to a non-extensible array");
                 return value::number(static_cast<double>(dense->items.size()));
@@ -528,8 +515,8 @@ void install_array(context & cx) {
         if (!detail::put_length(c, self, len)) { return value::number(0); }
         return value::number(len);
     });
-    // 23.1.3.22. An EMPTY receiver still writes `length` back - that is step
-    // 3a, and it is what turns `{length: NaN}` into `{length: 0}`.
+    // 23.1.3.22 Array.prototype.pop. An empty receiver still writes `length`
+    // back (step 3a), which turns `{length: NaN}` into `{length: 0}`.
     method(cx, array_proto, "pop", 0, [](context & c, std::span<value>) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "pop")) { return value::undefined(); }
@@ -555,17 +542,18 @@ void install_array(context & cx) {
             return value::undefined();
         }
         const value out = detail::element_at(c, self, len - 1);
-        // ROOTED ACROSS THE DELETE AND THE LENGTH WRITE. Both can run user
-        // code - a Proxy trap, a `length` setter - and the value being returned
+        // Rooted across the delete and the length write: both can run user
+        // code (a Proxy trap, a `length` setter), and the value being returned
         // is by then held only by this C++ local.
         const context::rooted keep(c, out);
         if (!detail::delete_element(c, self, len - 1)) { return value::undefined(); }
         if (!detail::put_length(c, self, len - 1)) { return value::undefined(); }
         return out;
     });
-    // 23.1.3.25. Every element moves DOWN one, a hole moving down deletes what
-    // it lands on rather than filling it with undefined, and the vacated slot
-    // at the top is deleted before `length` is written.
+    // 23.1.3.27 Array.prototype.shift. Every element moves down one, a hole
+    // moving down deletes what it lands on rather than filling it with
+    // undefined, and the vacated top slot is deleted before `length` is
+    // written.
     method(cx, array_proto, "shift", 0, [](context & c, std::span<value>) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "shift")) { return value::undefined(); }
@@ -606,8 +594,8 @@ void install_array(context & cx) {
         if (!detail::put_length(c, self, len - 1)) { return value::undefined(); }
         return out;
     });
-    // 23.1.3.32. The tail moves UP, walked from the top down so that an
-    // overlapping move never overwrites a source before it is read.
+    // 23.1.3.37 Array.prototype.unshift. The tail moves up, walked from the top
+    // down so an overlapping move never overwrites a source before it is read.
     method(cx, array_proto, "unshift", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "unshift")) { return value::number(0); }
@@ -668,7 +656,7 @@ void install_array(context & cx) {
         out = detail::array_species_create(c, self, count);
         if (out.is_undefined()) { return out; }
         const context::rooted keep(c, out);
-        // The count is the SPAN, not the number of elements found: a hole in
+        // The count is the span, not the number of elements found: a hole in
         // the middle leaves an undefined behind rather than shortening the
         // result, which is what `A.length = n` at the end of 23.1.3.28 says.
         if (array_object * result = detail::dense_array_this(out)) {
@@ -683,16 +671,14 @@ void install_array(context & cx) {
         (void)detail::put_length(c, out, count);
         return out;
     });
-    // 23.1.3.29, THE WHOLE OF IT, and the ORDER is the point: the deleted range
-    // is copied out first, then the tail is shifted - left through ascending
-    // indices and right through descending ones, so an overlap never overwrites
-    // a source before it is read - then the inserted items are written, and
-    // `length` last.
+    // 23.1.3.31 Array.prototype.splice, in the specification's order: the
+    // deleted range is copied out, the tail is shifted (ascending when it moves
+    // left, descending when it moves right, so an overlap never overwrites an
+    // unread source), the inserted items are written, and `length` is set last.
     //
-    // THREE CASES FOR THE COUNT, not two. `splice()` with no argument at all
-    // deletes NOTHING (step 6); only `splice(i)` deletes to the end (step 7).
-    // The old spelling tested `a.size() > 1` for both and so read the
-    // no-argument call as "delete everything from index 0".
+    // The delete count has three cases: `splice()` with no arguments deletes
+    // nothing (step 6), `splice(i)` deletes to the end (step 7), and otherwise
+    // the second argument is clamped.
     method(cx, array_proto, "splice", 2, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         value removed = c.make_array();
@@ -701,12 +687,10 @@ void install_array(context & cx) {
         array_object * dense = detail::dense_array_this(self);
         const double len = dense != nullptr ? static_cast<double>(dense->items.size())
                                             : detail::array_like_length(c, self);
-        // ToIntegerOrInfinity, NOT the static coercion, and BEFORE anything
-        // moves: `splice({valueOf: f})` is ordinary and `splice(i, Infinity)`
-        // is the ordinary way to say "to the end". Infinity does not convert to
-        // an integer at all - that is undefined behaviour rather than a large
-        // number, which UBSan caught going through the old cast silently - so
-        // every bound here is clamped as a DOUBLE and cast afterwards.
+        // ToIntegerOrInfinity (which runs valueOf), before anything moves.
+        // Infinity is a valid count ("to the end") but casting it to an integer
+        // is undefined behaviour, so every bound is clamped as a double and cast
+        // afterwards.
         const double raw_start = integer_arg(c, a, 0);
         const double start =
             raw_start < 0 ? std::max(len + raw_start, 0.0) : std::min(raw_start, len);
@@ -754,22 +738,21 @@ void install_array(context & cx) {
             return removed;
         }
         if (!detail::mutable_receiver(c, self, "splice")) { return removed; }
-        // BOUNDED BY THE WORK, not by `length`. Step 15's shift runs from
-        // actualStart to len-actualDeleteCount, so splicing one element out of
-        // `{length: 4294967296}` at the very end is two operations and not four
-        // billion - which is what S15.4.4.12_A3_T1 asks for - and one that
-        // inserts as many as it deletes shifts nothing at all, whatever the
-        // length (splice/clamps-length-to-integer-limit).
+        // The walk limit is checked against the work done, not `length`. Step
+        // 15's shift runs from actualStart to len - actualDeleteCount, so
+        // splicing one element out of `{length: 4294967296}` at the very end is
+        // two operations, not four billion, and a splice that inserts as many as
+        // it deletes shifts nothing at all, whatever the length.
         if (!detail::generic_walk_ok(c, skipped) ||
             (inserted != skipped && !detail::generic_walk_ok(c, len - start - skipped))) {
             return removed;
         }
         if (out != nullptr) { out->items.clear(); } // ArrayCreate sized it; the copy fills it
         for (double k = 0; out != nullptr && k < skipped; k += 1.0) {
-            // A HOLE STAYS A HOLE IN LENGTH ONLY. CreateDataProperty is skipped
-            // for an absent index and `A.length` is set to the count anyway
-            // (step 14), and an array here cannot hold a hole - so the span is
-            // preserved with an undefined, exactly as `slice` documents.
+            // A hole is kept in length only. CreateDataProperty is skipped for
+            // an absent index and `A.length` is set to the count anyway (step
+            // 14); the span is preserved here with an undefined, as `slice`
+            // does.
             out->items.push_back(detail::has_element(c, self, start + k)
                                      ? detail::element_at(c, self, start + k)
                                      : value::undefined());
@@ -808,9 +791,8 @@ void install_array(context & cx) {
         if (!detail::put_length(c, self, len - skipped + inserted)) { return removed; }
         return removed;
     });
-    // `fromIndex`, WHICH BOTH SEARCHES ACCEPTED AND NEITHER READ. `xs.indexOf(v,
-    // 5)` searched from 0, so a scan-from-here loop - the standard way to find
-    // every occurrence - found the first one forever.
+    // indexOf and lastIndexOf honour `fromIndex` (coerced with
+    // ToIntegerOrInfinity; a negative value counts back from the end).
     method(cx, array_proto, "indexOf", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "indexOf")) { return value::number(-1); }
@@ -834,7 +816,7 @@ void install_array(context & cx) {
         if (!detail::coercible_this(c, self, "lastIndexOf")) { return value::number(-1); }
         const double len = detail::array_like_length(c, self);
         if (len == 0) { return value::number(-1); }
-        // The default is the LAST index, not the first, and a negative
+        // The default is the last index, not the first, and a negative
         // fromIndex counts back from the end without clamping up to 0 - it
         // clamps the search away entirely.
         const double n = a.size() > 1 ? integer_arg(c, a, 1) : len - 1;
@@ -862,9 +844,9 @@ void install_array(context & cx) {
         const bool want_nan = target.is_number() && std::isnan(target.as_number());
         for (; k < len; k += 1.0) {
             // SameValueZero (7.2.11), not strict equality: `includes` is the
-            // one search that FINDS A NaN, which is the whole reason it exists
-            // beside `indexOf`. And it does not skip a hole - it reads one as
-            // undefined - so `[, 1].includes(undefined)` is true.
+            // one search that finds a NaN, which is why it exists beside
+            // `indexOf`. It also does not skip a hole but reads one as
+            // undefined, so `[, 1].includes(undefined)` is true.
             const value item = detail::element_at(c, self, k);
             if (want_nan ? (item.is_number() && std::isnan(item.as_number()))
                          : item.strict_equals(target)) {
@@ -877,22 +859,20 @@ void install_array(context & cx) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "join")) { return c.string(std::string{}); }
         const double len = detail::array_like_length(c, self);
-        // AN ABSENT SEPARATOR AND AN EXPLICIT `undefined` BOTH MEAN ",". The
-        // argument COUNT was tested instead, so `[1, 2].join(undefined)` was
-        // "1undefined2".
+        // An absent separator and an explicit `undefined` both mean ",".
         const std::string sep = has_index(a, 0) ? c.to_string(a[0]) : std::string{","};
         std::string out;
         for (double k = 0; k < len; k += 1.0) {
             if (k > 0) { out += sep; }
-            // null and undefined join as EMPTY, not as "null"/"undefined".
+            // null and undefined join as empty, not as "null"/"undefined".
             const value item = detail::element_at(c, self, k);
             if (!item.is_nullish()) { out += c.to_string(item); }
         }
         return c.string(out);
     });
-    // 23.1.3.32. Every element is asked for its OWN `toLocaleString`, which is
-    // the only difference from `join(",")` and is what makes a Date or a Number
-    // in an array format itself.
+    // 23.1.3.32 Array.prototype.toLocaleString. Every element is asked for its
+    // own `toLocaleString`, which is the only difference from `join(",")` and is
+    // what makes a Date or a Number in an array format itself.
     method(cx, array_proto, "toLocaleString", 0, [](context & c, std::span<value>) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "toLocaleString")) { return c.string(std::string{}); }
@@ -908,10 +888,10 @@ void install_array(context & cx) {
         }
         return c.string(out);
     });
-    // 23.1.3.1, THE WHOLE OF IT: ArraySpeciesCreate(O, 0), then the receiver
-    // and each argument is spread when IsConcatSpreadable says so - its own
-    // @@isConcatSpreadable if that is not undefined, else IsArray (through a
-    // Proxy, refusing a revoked one) - every element through HasProperty and
+    // 23.1.3.2 Array.prototype.concat: ArraySpeciesCreate(O, 0), then the
+    // receiver and each argument is spread when IsConcatSpreadable says so (its
+    // own @@isConcatSpreadable if defined, else IsArray, which sees through a
+    // Proxy and refuses a revoked one), every element through HasProperty and
     // [[Get]], a hole staying a hole, and `length` set last.
     method(cx, array_proto, "concat", 1, [](context & c, std::span<value> a) {
         const value self = detail::array_this(c);
@@ -922,13 +902,13 @@ void install_array(context & cx) {
         const context::rooted keep(c, out);
         array_object * result = detail::dense_array_this(out);
         double n = 0;
-        // One element, or one spread. False means a throw is already in flight
+        // Appends one element, or one spread. False means a throw is pending
         // and the caller must stop.
         const auto append = [&](value item) {
             bool spreadable = false;
             if (item.is_object_like()) {
-                // [[Get]] on a revoked proxy is a TypeError (10.5.8 step 2) -
-                // raised here once, rather than by the lookup and again by
+                // [[Get]] on a revoked proxy is a TypeError (10.5.8 step 2),
+                // raised here once rather than by the lookup and again by
                 // IsArray.
                 if (item.is_kind(heap_kind::proxy) &&
                     static_cast<proxy_object *>(item.as_heap())->handler.is_null()) {
@@ -974,7 +954,7 @@ void install_array(context & cx) {
                 if (walk.threw()) { return false; }
                 if (!present) {
                     if (result == nullptr) { continue; } // a species object: no property
-                    // A HOLE STAYS A HOLE: the slot exists in `items` as a
+                    // A hole stays a hole: the slot exists in `items` as a
                     // placeholder and element_attrs says it is not a property.
                     const auto at = static_cast<std::size_t>(n);
                     if (result->items.size() <= at) {
@@ -998,10 +978,10 @@ void install_array(context & cx) {
         if (!detail::put_length(c, out, n)) { return out; }
         return out;
     });
-    // 23.1.3.26, in place and generic. The swap is HasProperty-then-Get on BOTH
-    // ends: a hole opposite an element DELETES the far side rather than filling
-    // it with undefined, which is the only thing that distinguishes reverse
-    // from "read it all and write it back".
+    // 23.1.3.26 Array.prototype.reverse, in place and generic. The swap is
+    // HasProperty-then-Get on both ends: a hole opposite an element deletes the
+    // far side rather than filling it with undefined, which is the only thing
+    // that distinguishes reverse from "read it all and write it back".
     method(cx, array_proto, "reverse", 0, [](context & c, std::span<value>) {
         const value self = detail::array_this(c);
         if (!detail::coercible_this(c, self, "reverse")) { return self; }
@@ -1023,9 +1003,9 @@ void install_array(context & cx) {
             const value lower_value =
                 lower_there ? detail::element_at(c, self, lower) : value::undefined();
             if (walk.threw()) { return self; }
-            // ROOTED ACROSS THE SECOND READ. A getter on the far end allocates,
-            // an allocation can collect, and what the near end just answered is
-            // by then held only by this C++ local.
+            // Rooted across the second read: a getter on the far end can
+            // allocate and trigger a collection, and what the near end just
+            // answered is by then held only by this C++ local.
             const context::rooted keep(c, lower_value);
             const bool upper_there = detail::has_element(c, self, upper);
             if (walk.threw()) { return self; }
@@ -1046,8 +1026,8 @@ void install_array(context & cx) {
         return self;
     });
 
-    // The rest of the prototype, in the order it was always installed - one
-    // file each; the two halves share only what is passed here.
+    // The callback-taking methods and iterators (array_iteration.cpp); the two
+    // files share only what is passed here.
     install_array_iteration(cx, array_ctor, array_proto);
 
     link_constructor(cx, array_proto, "Array", 1, value::object(array_ctor));

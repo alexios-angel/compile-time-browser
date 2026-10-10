@@ -1,12 +1,13 @@
-// compiler_impl - capture analysis.
+//===- ctbrowser/lib/Script/compile/capture.cpp - Capture analysis --------===//
 //
-// Which functions capture which names, answered by an EULER TOUR:
-// a function's descendants are exactly those whose tick lies inside its
+// compiler_impl's capture analysis: which functions capture which names, and
+// which names a scope must hoist. Captures are answered by an Euler tour: a
+// function's descendants are exactly those whose tick lies inside its
 // half-open range. `tour` and `mentions_arguments` are the two hottest
-// functions in a page render - see docs/performance.md.
+// functions in a page render; see docs/performance.md. The class is declared
+// in compiler_impl.hpp beside this file.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -47,22 +48,21 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
     const vp::node & n = ast_.nodes[static_cast<std::size_t>(idx)];
     const bool opens = boundary || is_function_node(n);
     const std::int32_t inner = opens ? tick++ : enclosing;
-    // RECORDED AGAINST `inner`, INCLUDING WHEN THIS NODE OPENED IT. A field
-    // initialiser's boundary IS the node itself - `class A { val = v; }`
-    // makes `v` the whole initialiser - so skipping the opener loses the
-    // only mention there is, and the enclosing local never gets boxed.
-    // vm_objects caught exactly that: `function build(v) { class A { val =
-    // v; } ... }` read undefined. A real function node is never an ident,
-    // so this costs it nothing.
+    // Recorded against `inner` even when this node opened it: a field
+    // initialiser such as `class A { val = v; }` is its own boundary (`v` is
+    // the whole initialiser), so skipping the opener would lose the only
+    // mention of `v` and leave the enclosing local unboxed, reading as
+    // undefined. A real function node is never an ident, so this costs it
+    // nothing.
     if (n.kind == vp::nk::ident) { mentions_[std::string{n.text}].push_back(inner); }
-    // A DIRECT EVAL MENTIONS EVERY NAME IN SCOPE: its source can read and
+    // A direct eval mentions every name in scope: its source can read and
     // write any binding of this function and of the ones around it, so all of
     // their locals must be cells it can be handed (is_captured). Recorded
     // against the function the call is in.
     if (is_direct_eval_call(n)) { eval_ticks_.push_back(inner); }
-    // `new.target` - or an eval, which may say it - under the name of the
-    // hidden local that carries it into arrows (new_target_local), so a
-    // function asks is_captured before walking its body for one.
+    // `new.target`, or an eval, which may say it, is recorded under the name
+    // of the hidden local that carries it into arrows (new_target_local), so
+    // a function asks is_captured before walking its body for one.
     if (n.kind == vp::nk::new_target || is_direct_eval_call(n)) {
         mentions_[std::string{new_target_local}].push_back(inner);
     }
@@ -73,20 +73,18 @@ void compiler_impl::tour(std::int32_t idx, std::int32_t enclosing, std::int32_t 
             n.text, [&](std::string_view name) { mentions_[std::string{name}].push_back(inner); });
     }
     // An object shorthand `{ b }` is an IdentifierReference (13.2.5.5) whose
-    // name lives in the prop node's TEXT, with no ident child - so, like a
-    // template hole, nothing below records it. Missing it left a name captured
-    // ONLY through a shorthand unboxed: is_captured answered false, so no
-    // new_cell was emitted, and the boxing resolve_upvalue then does after the
-    // fact turned every direct read into a cell_get on a plain register -
-    // undefined. `for (const b of xs) { f(() => ({ b })); use(b); }` read
-    // undefined (shadow-dom/attach-shadow-non-html-namespace.html).
+    // name is the prop node's text, with no ident child, so, like a template
+    // hole, nothing below records it. Without this, a name captured only
+    // through a shorthand is never given a new_cell, and the boxing
+    // resolve_upvalue does afterwards turns every direct read into a cell_get
+    // on a plain register, as in `for (const b of xs) { f(() => ({ b })); }`.
     if (n.kind == vp::nk::prop && n.c == 2) { mentions_[std::string{n.text}].push_back(inner); }
-    // An instance field's initialiser compiles into its OWN function - that
-    // is what makes each instance get its own value - so anything it
+    // An instance field's initialiser compiles into its own function (that
+    // is what makes each instance get its own value), so anything it
     // mentions is captured exactly as if it had been written inside one.
     // Without this the initialiser reads an unboxed enclosing local and
     // finds undefined. Slot 1 is `b`, which for a field is the initialiser.
-    // A STATIC field or a `static { }` block compiles into the class's
+    // A static field or a `static { }` block compiles into the class's
     // `<static>` function for the same reason (its `this` is the class), so
     // slot 1 opens a boundary for those too.
     const bool field_init = n.kind == vp::nk::class_member && (n.c == 0 || n.c == 3);
@@ -165,7 +163,7 @@ bool compiler_impl::contains_direct_eval(std::int32_t idx) const {
 bool compiler_impl::own_direct_eval(std::int32_t idx) const {
     if (current_ast_ != &ast_) { return false; }
     const interval where = range_of(idx);
-    // eval_ticks_ holds the tick of the function each call is IN.
+    // eval_ticks_ holds the tick of the function each call is in.
     return !where.empty() && std::ranges::binary_search(eval_ticks_, where.lo);
 }
 
@@ -187,10 +185,10 @@ bool compiler_impl::arrow_wants_new_target(std::int32_t idx, bool in_arrow) cons
 bool compiler_impl::is_captured(std::string_view name) const {
     const interval where = frames_.back().captures;
     if (where.empty()) { return false; }
-    // A direct eval in this function, or in one inside it, can reach every
-    // named local here - `lo` INCLUSIVE, since an eval in the function itself
-    // does. Not a pattern parameter's register: boxing it made the pattern
-    // destructure the cell ("object is not iterable").
+    // A direct eval in this function, or in one nested inside it, can reach
+    // every named local here, so `lo` is inclusive. eval_reachable excludes a
+    // pattern parameter's unnamed register: boxing it would make the pattern
+    // destructure the cell instead of the value.
     if (const auto e = std::ranges::lower_bound(eval_ticks_, where.lo);
         e != eval_ticks_.end() && *e < where.hi && eval_reachable(name)) {
         return true;
@@ -233,11 +231,9 @@ void compiler_impl::collect_function_names(std::span<const std::int32_t> stmts,
 void compiler_impl::collect_declared_names(std::int32_t body) {
     if (body < 0) { return; }
     const vp::node & n = at(body);
-    // A NESTED FUNCTION'S vars ARE ITS OWN. The walk used to descend through
-    // a function declaration statement into its body, so `function f() { var
-    // i }` made `i` a name of the enclosing scope too - harmless while the
-    // list only fed was_predeclared, a phantom global once the script's list
-    // became program::hoisted_vars.
+    // Stop at nested functions and classes: their `var`s belong to them.
+    // Descending would make `function f() { var i }` add `i` to this scope,
+    // which becomes a phantom global through program::hoisted_vars.
     if (is_function_node(n) || n.kind == vp::nk::class_decl) { return; }
     if (n.kind == vp::nk::var_decl) {
         for (const std::int32_t d : kids(n)) { fn().declared.push_back(std::string{at(d).text}); }
@@ -247,7 +243,7 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
         for (const std::int32_t s : kids(n)) { collect_declared_names(s); }
         return;
     }
-    // loops and conditionals can declare too
+    // Loops and conditionals can declare too.
     for (const std::int32_t slot : child_slots(n)) {
         if (slot >= 0 && at(slot).kind != vp::nk::func_decl && at(slot).kind != vp::nk::func_expr &&
             at(slot).kind != vp::nk::arrow) {
@@ -257,17 +253,14 @@ void compiler_impl::collect_declared_names(std::int32_t body) {
 }
 
 void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
-    // A PROGRAM'S top level counts too, not only a function's block. It
-    // never used to: a classic script's top-level declarations are globals,
-    // so there was nothing to pre-declare. A MODULE's are locals, and a
-    // function declared there has to be a binding before `export { f }` can
-    // find it - which it could not, and the importer was told the module
-    // had no such export.
+    // A program body counts as well as a function block: in a module,
+    // top-level declarations are locals, and `export { f }` needs `f` to be
+    // a binding already.
     if (body < 0 || (at(body).kind != vp::nk::block && at(body).kind != vp::nk::program)) {
         return;
     }
-    // A NAMED FUNCTION EXPRESSION'S OWN NAME is not one of its body's
-    // bindings - it lives in a scope outside them (15.2.5 step 4) - so any
+    // A named function expression's own name is not one of its body's
+    // bindings (it lives in a scope outside them, 15.2.5 step 4), so any
     // declaration of the name in the body shadows it: `function me() { var
     // me; }` has a `me` that is undefined, and assignable.
     const auto bound = [this](std::string_view name) {
@@ -287,18 +280,15 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
         fn().predeclared.push_back(std::move(name));
     };
     for (const std::int32_t outer : kids(at(body))) {
-        // `export const x = 1` and `export function f() {}` DECLARE, and
-        // the declaration is wrapped. Looking only at the wrapper hoists
-        // nothing, so `export function f` was never a binding here - and
-        // then `export { f }` could not find it to publish, which read as
-        // "has no export named f" on the importing side.
-        // `export default <expr>` carries the EXPRESSION in `a` and says
-        // so with `c == 1`, so unwrapping it hands the loop an expression
-        // where it expects a statement. It binds one name of its own.
+        // `export const x = 1` and `export function f() {}` wrap a
+        // declaration; unwrap it so `export { f }` can find the binding.
+        // `export default <expr>` (c == 1) holds an expression in `a`
+        // instead, which must not be unwrapped, and binds only the default
+        // name.
         if (at(outer).kind == vp::nk::export_decl && at(outer).c == 1) {
             hoist(std::string{default_binding});
-            // ...AND A NAMED ONE BINDS ITS NAME TOO (16.2.3.7: the
-            // declaration's BoundNames) - `export default function F() {}`
+            // A named default export binds its name too (16.2.3.7: the
+            // declaration's BoundNames): `export default function F() {}`
             // and `export default class C {}` are declarations of F and C,
             // which `export { F as G }` may name.
             if (const std::int32_t named = default_export_name(outer); named >= 0) {
@@ -320,7 +310,7 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
             const immutability readonly = declared_immutability(at(stmt));
             for (const std::int32_t d : kids(at(stmt))) {
                 const std::uint32_t ready = lexical ? at(d).end : 0;
-                if (at(d).b >= 0) { // a shape: hoist every name inside it
+                if (at(d).b >= 0) { // A pattern: hoist every name inside it.
                     // ...with no static dead zone: `const {a, b = a} = o`
                     // initialises `a` before `b`'s default reads it, which a
                     // single offset cannot say.
@@ -334,57 +324,51 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
                 }
             }
         } else if (at(stmt).kind == vp::nk::import_decl) {
-            // AN IMPORT IS A DECLARATION, so its names are hoisted like any
-            // other. Allocating them inside the statement instead put them
-            // ABOVE the statement's register mark, and `release_to(mark)`
-            // handed them straight back - so `import { a }` survived by
-            // luck and `import { a, b }` did not: the next statement's
-            // temporary landed on top of `b`. The same trap
-            // declare_pattern_names records for destructuring.
-            // Immutable, as every import binding is (InitializeEnvironment:
-            // an import binding, or CreateImmutableBinding for a namespace).
+            // Imports are declarations, so they are hoisted. A local allocated
+            // inside the statement would sit above its register mark, and
+            // `release_to(mark)` would hand it to the next statement's
+            // temporaries (the same trap declare_pattern_names describes for
+            // destructuring). Import bindings are immutable
+            // (InitializeEnvironment: an import binding, or
+            // CreateImmutableBinding for a namespace).
             for (const std::int32_t spec : kids(at(stmt))) {
                 hoist(std::string{at(spec).text}, 0, immutability::strict);
             }
         } else if (at(stmt).kind == vp::nk::func_decl) {
-            // A nested function declaration is a BINDING IN ITS SCOPE, and
+            // A nested function declaration is a binding in its scope, and
             // it has to exist before its own body compiles or a recursive
             // call inside it resolves to a global instead of to itself.
             hoist(std::string{at(stmt).text});
         } else if (at(stmt).kind == vp::nk::class_decl) {
-            // A CLASS DECLARATION IS A BINDING TOO, and it has to be
-            // hoisted for a reason worth stating: a local first declared
-            // while an EXPRESSION is being compiled sits above the
-            // statement's register mark, so the statement releases it and
-            // the next statement's temporaries reuse the slot. `class S {}`
-            // followed by two `new S()` therefore worked once and then
-            // found an object in the register the second time.
+            // A class declaration is a binding too, and must be hoisted: a
+            // local first declared while an expression is being compiled sits
+            // above the statement's register mark, so the statement releases
+            // it and the next statement's temporaries reuse the slot.
             hoist(std::string{at(stmt).text}, at(stmt).end, immutability::none, true);
         }
     }
     if (lexical_only) { return; }
-    // And every `var` in a NESTED block, which the loop above cannot see -
-    // it walks this body's own statements only. `hoist` returns early on a
+    // And every `var` in a nested block, which the loop above cannot see,
+    // since it walks this body's own statements only. `hoist` returns early on a
     // name already declared, so the statements just handled cost a lookup.
-    std::vector<std::string> vars; // every `var` name below this body, any depth
+    std::vector<std::string> vars; // Every `var` name below this body.
     const auto hoist_var = [&](std::string name) {
         vars.push_back(name);
         hoist(std::move(name));
     };
     for (const std::int32_t stmt : kids(at(body))) { hoist_nested_vars(stmt, hoist_var); }
-    // ANNEX B.3.3 (sloppy code only): a function declared in a nested block
-    // takes a var binding of this function as well - created at entry when
-    // nothing else of that name exists, and WRITTEN when the declaration is
-    // evaluated (B.3.3.1 steps 1.a.ii.2 and 1.a.ii.3, which are two separate
-    // things: with a `var` or another function declaration of the name the
-    // binding is already there, and the write still happens).
+    // Annex B.3.3 (sloppy code only): a function declared in a nested block
+    // takes a var binding of this function as well, created at entry when
+    // nothing else of that name exists, and written when the declaration is
+    // evaluated (B.3.3.1 steps 1.a.ii.2 and 1.a.ii.3 are separate: with a
+    // `var` or another function declaration of the name the binding is
+    // already there, and the write still happens).
     //
-    // It is refused only for a name a PARAMETER or a LEXICAL declaration of
-    // this body already binds - "replacing the declaration with a
-    // VariableStatement would produce an Early Error" - which is what "a
-    // local that is neither a var nor one of this body's own functions"
-    // means here, the parameters and the body's let/const/class having been
-    // declared above.
+    // It is refused only for a name a parameter or a lexical declaration of
+    // this body already binds ("replacing the declaration with a
+    // VariableStatement would produce an Early Error"). That is what "a local
+    // that is neither a var nor one of this body's own functions" means here,
+    // since the parameters and the body's let/const/class were declared above.
     if (!fn().is_strict) {
         std::vector<std::string> var_scoped = vars;
         for (const std::int32_t stmt : kids(at(body))) {
@@ -394,17 +378,17 @@ void compiler_impl::predeclare_locals(std::int32_t body, bool lexical_only) {
         each_block_function(
             body,
             [&](std::string name, std::int32_t decl) {
-                // NEVER `arguments`: the arguments object binding is not
+                // Never `arguments`: the arguments object binding is not
                 // something a block's function may create or overwrite
                 // (B.3.3.1 step 1.a.ii.2, "and F is not `arguments`"), and
-                // hoisting a local of that name shadowed the object itself.
+                // hoisting a local of that name would shadow the object.
                 if (name == "arguments") { return; }
                 const bool fresh = !bound(name);
                 if (fresh) {
-                    // AND IT IS VAR-SCOPED FROM NOW ON. Two blocks declaring
-                    // one name are two applicable declarations: the second
-                    // finds the binding the first made and only skips
-                    // CREATING it again (step 1.a.ii.2 guards the creation,
+                    // The name is var-scoped from here on. Two blocks
+                    // declaring one name are two applicable declarations: the
+                    // second finds the binding the first made and only skips
+                    // creating it again (step 1.a.ii.2 guards the creation,
                     // not the write), so `{ function h() {} } { function h()
                     // {} }` ends with the second.
                     var_scoped.push_back(name);
@@ -445,8 +429,8 @@ void compiler_impl::hoist_captured_lexicals(const vp::node & block) {
                 find_local_in_current_scope(decl.text) != nullptr) {
                 continue;
             }
-            // Read by a function compiled before the declaration - in an
-            // earlier statement or declarator - which would otherwise
+            // Read by a function compiled before the declaration (in an
+            // earlier statement or declarator), which would otherwise
             // resolve the name to some other binding.
             const bool before =
                 std::ranges::any_of(stmts.first(i),
@@ -456,7 +440,7 @@ void compiler_impl::hoist_captured_lexicals(const vp::node & block) {
                 });
             if (!before) { continue; }
             // As predeclare_locals makes a function body's own: in its
-            // dead zone for this frame until the declarator has run - the
+            // dead zone for this frame until the declarator has run, at the
             // offset its statement knows it by (compile_stmt).
             const std::uint16_t r = declare_local(std::string{decl.text});
             fn().locals.back().initialized_at = decl.end;
@@ -464,7 +448,7 @@ void compiler_impl::hoist_captured_lexicals(const vp::node & block) {
             fn().locals.back().lexical = true;
             proto().emit(instruction{op::load_undef, r});
             if (fn().locals.back().boxed) { proto().emit(instruction{op::new_cell, r}); }
-            // A closure may run before OR after this declaration. Its
+            // A closure may run before or after this declaration. Its
             // runtime readiness travels in an ordinary captured cell.
             const std::string flag = "@tdz:" + std::string{decl.text};
             fn().locals.back().ready_flag = flag;

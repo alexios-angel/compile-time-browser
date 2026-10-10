@@ -1,11 +1,10 @@
-// ctbrowser.script context - the prototype chain and the object-shape
-// operations the opcodes call: own keys, accessors, spread, `in`, `instanceof`.
+//===- chain.cpp - Prototype chain operations -------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,396-line vm/objects.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// The prototype chain and the object-shape operations the opcodes call: own
+// keys, accessors, spread, `in`, `instanceof`. All functions here are members
+// of `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cstddef>
 #include <cstdint>
@@ -20,18 +19,20 @@ namespace ctbrowser::script {
 // Defined in lookup.cpp beside the read that needs it most.
 object_object * typed_array_prototype(context & cx, element_kind kind);
 
+/// The keys a for-in over \p source visits (EnumerateObjectProperties,
+/// 14.7.5.9): own enumerable string keys in definition order, then the
+/// inherited enumerable ones that are not shadowed. Returns an array.
 value context::own_keys(value source) {
-    // A PROXY ENUMERATES ITS TARGET: no handler here defines ownKeys or
-    // getOwnPropertyDescriptor, and an absent trap is the target's own
-    // [[OwnPropertyKeys]] (10.5.11 step 6) - the same fall-through
-    // own_property and Object.keys already take. `for (k in el.dataset)`
-    // walked nothing while `Object.keys(el.dataset)` walked the store.
+    // A proxy enumerates its target. No handler here defines ownKeys or
+    // getOwnPropertyDescriptor, and an absent trap falls through to the
+    // target's [[OwnPropertyKeys]] (10.5.11 step 6), as own_property and
+    // Object.keys do.
     if (source.is_kind(heap_kind::proxy)) {
         const value keys = own_keys(static_cast<proxy_object *>(source.as_heap())->target);
-        // A REALM'S GLOBAL OBJECT OWNS ITS BINDINGS TOO, which live in the
+        // A realm's global object owns its bindings too, which live in the
         // table rather than on the target: `for (k in globalThis)` names an
         // eval's `var` and a plain assignment's global as its traps describe
-        // them - enumerable unless an intrinsic or an interface object, and
+        // them: enumerable unless an intrinsic or an interface object, and
         // never a `let`. A declared name has a placeholder on the target
         // already, and one the target owns was answered above.
         for (const auto & realm : realms_) {
@@ -61,9 +62,9 @@ value context::own_keys(value source) {
     value out = make_array();
     auto * keys = static_cast<array_object *>(out.as_heap());
     if (source.is_object()) {
-        // In DEFINITION ORDER, data and accessors interleaved - which is what a
+        // In definition order, data and accessors interleaved, which is what a
         // page sees from for-in and has to match Object.keys. for-in
-        // enumerates STRING keys only, and ENUMERABLE ones only: 13.7.5.15
+        // enumerates string keys only, and enumerable ones only: 13.7.5.15
         // filters on [[Enumerable]], which is why a built-in method never turns
         // up in a `for (k in Math)`. A String wrapper's indices are own and
         // enumerable (10.4.3.1), and come first.
@@ -81,7 +82,7 @@ value context::own_keys(value source) {
         const std::size_t n = arr->items.size();
         for (std::size_t i = 0; i < n; ++i) {
             // A hole is not a property and a non-enumerable element is not
-            // enumerated - see array_object::element_attrs.
+            // enumerated; see array_object::element_attrs.
             if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
@@ -92,7 +93,7 @@ value context::own_keys(value source) {
         // integer keys first, ascending, then the strings).
         if (arr->named) {
             arr->named->each_own_enumerable_key([&](const std::string & name) {
-                // An accessor ELEMENT's pair also lives here, under its
+                // An accessor element's pair also lives here, under its
                 // index; it was reported above.
                 if (std::uint32_t at = 0; !object_object::array_index_key(name, at)) {
                     keys->items.push_back(string(name));
@@ -120,10 +121,10 @@ value context::own_keys(value source) {
             }
         }
     }
-    // ...AND THE PROTOTYPE CHAIN (14.7.5.9 EnumerateObjectProperties), for
+    // Then the prototype chain (14.7.5.9 EnumerateObjectProperties), for
     // every kind of object: an inherited enumerable key is visited once,
-    // unless an own or nearer property of the same name shadows it - a
-    // non-enumerable one shadows too. `for (k in body)` reaching the
+    // unless an own or nearer property of the same name shadows it (a
+    // non-enumerable one shadows too). `for (k in body)` reaching the
     // Window-forwarded handlers on HTMLBodyElement.prototype is the case a page
     // notices; an enumerable property a page put on Object.prototype,
     // Array.prototype or Function.prototype is the one test262 asks about.
@@ -133,6 +134,7 @@ value context::own_keys(value source) {
     value up = source.is_object()  ? static_cast<object_object *>(source.as_heap())->prototype
                : source.is_array() ? static_cast<array_object *>(source.as_heap())->prototype
                                    : value::null();
+    // A page can make the chain cyclic; the cap stops the walk.
     for (int depth = 0; depth < 4096 && up.is_object(); ++depth) {
         auto * parent = static_cast<object_object *>(up.as_heap());
         chain.push_back(parent);
@@ -147,8 +149,8 @@ value context::own_keys(value source) {
             chain.push_back(table);
         }
     }
-    // Nothing inherited is enumerable - the usual case, every built-in
-    // prototype - and nothing needs a shadow set.
+    // Usually nothing inherited is enumerable (true of every built-in
+    // prototype), and then no shadow set is needed.
     bool inherits = false;
     for (object_object * table : chain) {
         table->each_own_enumerable_key([&](const std::string &) { inherits = true; });
@@ -175,8 +177,9 @@ value context::own_keys(value source) {
     return out;
 }
 
+/// Defines accessor \p name on \p target, an object or a class constructor.
 void context::define_accessor(value target, const std::string & name, value getter, value setter) {
-    // DefinePropertyOrThrow (7.3.8) - a class's `static get prototype()`
+    // DefinePropertyOrThrow (7.3.8): a class's `static get prototype()`
     // meets the constructor's non-configurable `prototype`, and
     // ValidateAndApplyPropertyDescriptor refuses it: the TypeError.
     if (target.is_kind(heap_kind::function)) {
@@ -189,31 +192,29 @@ void context::define_accessor(value target, const std::string & name, value gett
     if (target.is_object()) {
         static_cast<object_object *>(target.as_heap())->define_accessor(name, getter, setter);
     } else if (target.is_kind(heap_kind::function)) {
-        // a `static get` on a class, which IS the constructor closure
+        // A `static get` on a class, which is the constructor closure.
         static_cast<closure_object *>(target.as_heap())->define_accessor(name, getter, setter);
     }
 }
 
+/// CopyDataProperties (7.3.25) from \p source onto \p target, as object
+/// spread `{...source}` does.
 void context::copy_own_properties(value target, value source) {
     if (!target.is_object()) { return; }
     auto * into = static_cast<object_object *>(target.as_heap());
     if (source.is_object()) {
-        // A COPY OF THE SOURCE'S ENTRIES FIRST: `set` can reallocate the
-        // target's storage, and target and source may be the same object.
+        // Copy the source's entries first: `set` can reallocate the target's
+        // storage, and target and source may be the same object.
         //
-        // ENUMERABLE OWN PROPERTIES ONLY. `{...o}` is CopyDataProperties
-        // (7.3.25), which skips a non-enumerable one - so spreading a class
-        // instance no longer drags its prototype's plumbing along.
+        // Enumerable own properties only: `{...o}` is CopyDataProperties
+        // (7.3.25). Symbol keys are copied too, unlike in Object.keys or
+        // for-in, because CopyDataProperties uses OwnPropertyKeys, which
+        // reports both (test262 spread-obj-symbol-property.js).
         //
-        // A SYMBOL KEY IS COPIED, unlike in Object.keys or for-in:
-        // CopyDataProperties takes OwnPropertyKeys, which reports both. That is
-        // the one place the enumerable walk must NOT filter symbols, and
-        // filtering them cost four tests (…/spread-obj-symbol-property.js).
+        // An accessor is read rather than copied: the spec does a Get, so what
+        // lands on the target is the getter's answer as a data property.
         //
-        // ...and an accessor is READ rather than copied: the spec does a Get,
-        // so what lands on the target is the getter's answer as a data property.
-        //
-        // EACH ANSWER IS ROOTED until it is stored: the next getter's call is a
+        // Each answer is rooted until it is stored: the next getter's call is a
         // safepoint, and outside a native nothing else holds a fresh object a
         // getter returned. Pushed onto `temporaries_` as it arrives (rooted_values
         // takes a finished span); the guard drops exactly these again.
@@ -223,8 +224,8 @@ void context::copy_own_properties(value target, value source) {
             ~unroot() { cx.temporaries_.resize(std::min(base, cx.temporaries_.size())); }
         } const keep_entries{*this, temporaries_.size()};
         std::vector<std::pair<std::string, value>> entries;
-        // A KEY A GETTER DELETED OR HID is skipped: each key is asked
-        // [[GetOwnProperty]] again at its turn - only when the source has an
+        // A key a getter deleted or hid is skipped: each key is asked
+        // [[GetOwnProperty]] again at its turn, but only when the source has an
         // accessor, since nothing else in this walk runs page code.
         auto * from = static_cast<object_object *>(source.as_heap());
         const bool getters = !from->accessors.entries.empty();
@@ -239,17 +240,17 @@ void context::copy_own_properties(value target, value source) {
         });
         for (const auto & [name, item] : entries) { into->set(name, item); }
     } else if (source.is_array()) {
-        // THE KEYS ARE TAKEN ONCE (the length as it stands) but EACH ONE IS
-        // READ AT ITS TURN, as CopyDataProperties does [[GetOwnProperty]] then
+        // The keys are taken once (the length as it stands), but each one is
+        // read at its turn, as CopyDataProperties does [[GetOwnProperty]] then
         // Get per key: an index getter that deletes or replaces a later
-        // element is seen - a deleted one skipped, a replaced one's new value
-        // copied - and no snapshot of the elements exists for it to go stale
+        // element is seen (a deleted one skipped, a replaced one's new value
+        // copied), and no snapshot of the elements exists for it to go stale
         // or be collected under. Without accessors nothing runs in the loop,
         // so the per-turn re-read is the same plain vector read.
         auto * arr = static_cast<array_object *>(source.as_heap());
         const std::size_t count = arr->items.size();
         for (std::size_t i = 0; i < count; ++i) {
-            if (i >= arr->items.size()) { continue; } // a getter shortened it
+            if (i >= arr->items.size()) { continue; } // A getter shortened it.
             if (!arr->element_attrs.empty() || arr->has_hole_run()) {
                 const std::uint8_t a = arr->element_attrs_at(static_cast<std::uint32_t>(i));
                 if ((a & array_object::elem_hole) != 0 || (a & attr_enumerable) == 0) { continue; }
@@ -263,11 +264,10 @@ void context::copy_own_properties(value target, value source) {
         }
         if (arr->named) { copy_own_properties(target, value::object(arr->named.get())); }
     } else if (source.is_kind(heap_kind::proxy)) {
-        // A PROXY IS ASKED, trap by trap, as CopyDataProperties (7.3.25) has
-        // it: OwnPropertyKeys through `ownKeys`, then for each key
-        // [[GetOwnProperty]] and - an enumerable one only - [[Get]]. It
-        // copied nothing at all. With no `ownKeys` trap its target's keys
-        // are the list, read off the target itself.
+        // A proxy is asked trap by trap, as CopyDataProperties (7.3.25)
+        // requires: `ownKeys` for the key list, then [[GetOwnProperty]] for
+        // each key and [[Get]] for the enumerable ones. With no `ownKeys` trap,
+        // the target's own keys are copied directly.
         auto * p = static_cast<proxy_object *>(source.as_heap());
         const std::size_t before = unwinds();
         const auto threw = [&] { return throw_pending() || unwinds() != before; };
@@ -309,8 +309,8 @@ void context::copy_own_properties(value target, value source) {
         }
     } else if (source.is_string()) {
         // ToObject(source) (7.3.25 CopyDataProperties step 3): a String
-        // object, whose own enumerable properties are its indices - `{...
-        // "ab"}` is {0: "a", 1: "b"} - counted in the unit `length` and
+        // object, whose own enumerable properties are its indices (`{...
+        // "ab"}` is {0: "a", 1: "b"}), counted in the unit `length` and
         // charAt count here (lookup_index answers the same one-unit strings).
         const string_object text{static_cast<string_object *>(source.as_heap())->text};
         for (std::size_t i = 0; i < text.length(); ++i) {
@@ -319,16 +319,17 @@ void context::copy_own_properties(value target, value source) {
     }
 }
 
+/// [[GetPrototypeOf]] for an object, array or function; undefined otherwise.
 value context::get_prototype(value target) {
     if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->prototype; }
     if (target.is_array()) { return static_cast<array_object *>(target.as_heap())->prototype; }
     // A closure's own [[Prototype]]: the parent class `extends` chained it
-    // to, else Function.prototype (10.2.5 / OrdinaryGetPrototypeOf) - which
+    // to, else Function.prototype (10.2.5 / OrdinaryGetPrototypeOf), which
     // is what `super.x` inside a static method starts from.
     if (target.is_kind(heap_kind::function)) {
         const value link = static_cast<closure_object *>(target.as_heap())->proto_link;
         if (!link.is_null()) { return link; }
-        // ...else the intrinsic its shape names: %GeneratorFunction.prototype%
+        // Otherwise the intrinsic its shape names: %GeneratorFunction.prototype%
         // for a `function*`, and so on (function_proto_kind).
         object_object * table = prototype(function_proto_kind(target));
         if (table == nullptr) { table = prototype(proto_kind::function); }
@@ -337,6 +338,8 @@ value context::get_prototype(value target) {
     return value::undefined();
 }
 
+/// The object `super.x` looks up from in a method whose [[HomeObject]] is
+/// \p home: home's prototype, or Object.prototype for an implicit chain.
 value context::super_base(value home) {
     const value up = get_prototype(home);
     if (up.is_null() && home.is_object()) {
@@ -350,19 +353,20 @@ void context::set_prototype(value target, value proto) {
     if (target.is_array()) { static_cast<array_object *>(target.as_heap())->prototype = proto; }
 }
 
+/// HasProperty (7.3.11), the `in` operator, for a key given as a value.
 bool context::has_property(value target, value key) {
     if (key.is_string()) {
         const std::string & name = static_cast<string_object *>(key.as_heap())->text;
         if (is_private_key(name)) [[unlikely]] { return has_property(target, name); }
     }
-    // A PROXY ANSWERS `in` ITSELF, or hands it to the target.
+    // A proxy answers `in` itself, or hands it to the target.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         bool failed = false;
         const value trap = proxy_trap(target, "has", &failed);
         if (failed || throw_pending()) { return false; }
         if (trap.is_callable()) {
-            // The trap gets a PROPERTY KEY (ToPropertyKey): the index a
+            // The trap gets a property key (ToPropertyKey): the index a
             // generic walk asks about arrives as "3", never as 3.
             const value property = key.is_number() ? string(to_string(key)) : key;
             const value args[2] = {p->target, property};
@@ -390,13 +394,15 @@ bool context::has_property(value target, value key) {
             }
             return answered;
         }
-        // 10.5.7 step 7: target.[[HasProperty]] - not a [[Get]], so no
+        // 10.5.7 step 7: target.[[HasProperty]], not a [[Get]], so no
         // getter on the target runs.
         return has_property(p->target, to_string(key));
     }
     return has_property(target, to_string(key));
 }
 
+/// HasProperty (7.3.11) for a key given as a string; private names do the
+/// brand check of `#x in o`.
 bool context::has_property(value target, const std::string & name) {
     // `#x in o` (13.10.1): the brand check, not the chain walk.
     if (is_private_key(name)) [[unlikely]] {
@@ -407,22 +413,13 @@ bool context::has_property(value target, const std::string & name) {
         return find_private_element(target, name).has_value();
     }
     if (target.is_kind(heap_kind::proxy)) { return has_property(target, key_value(name)); }
-    // --- HasProperty, 7.3.11: THE WHOLE CHAIN, not the own table ----------
-    //
-    // `in` used to answer about own DATA properties of an object_object and
-    // about array indices, and about nothing else - so `'toString' in {}` was
-    // false, `'x' in obj` was false for an accessor, `'length' in [1]` was
-    // false, and an inherited property was invisible to the operator whose
-    // entire job is to see one. It is also what ToPropertyDescriptor asks with,
-    // which is how a descriptor object built by `new Con()` over a prototype
-    // carrying a `writable` getter described nothing at all.
-    //
-    // own_property is the shared [[GetOwnProperty]] over all four tables, so
-    // this is that walked up the chain: the explicit prototype links first,
-    // then the implicit tables property lookup falls back to.
+    // HasProperty (7.3.11) walks the whole prototype chain: own_property (the
+    // shared [[GetOwnProperty]] over all four tables) at each explicit
+    // prototype link, then the implicit tables that property lookup falls back
+    // to. ToPropertyDescriptor relies on this too.
     property_descriptor found;
     if (own_property(target, name, found)) { return true; }
-    // 10.4.5.2: a typed array answers a numeric key itself - an element it
+    // 10.4.5.2: a typed array answers a numeric key itself; an element it
     // does not have is absent, whatever its prototypes hold.
     if (target.is_array() &&
         static_cast<array_object *>(target.as_heap())->elements != element_kind::none &&
@@ -440,20 +437,20 @@ bool context::has_property(value target, const std::string & name) {
         link = static_cast<object_object *>(link.as_heap())->prototype;
     }
     // A prototype that is not a plain object (`foo.prototype = [1]`) answers
-    // for the rest of the chain - see lookup_property.
+    // for the rest of the chain; see lookup_property.
     if (link.is_heap() && !link.is_object() && !link.is_string()) {
         return has_property(link, name);
     }
     // An explicit null [[Prototype]] (object_object::prototype) ends the chain
     // without the implicit Object.prototype.
     if (explicit_chain && link.is_undefined()) { return false; }
-    if (target.is_array() && explicit_chain) { // see instance_of
+    if (target.is_array() && explicit_chain) { // See instance_of.
         object_object * table = prototype(proto_kind::object);
         return table != nullptr &&
                (table->find(name) != nullptr || table->find_accessor(name) != nullptr);
     }
-    // A TYPED array's implicit chain starts at its KIND's prototype -
-    // Float64Array.prototype, which the lookup reads first too - and only
+    // A typed array's implicit chain starts at its kind's prototype
+    // (Float64Array.prototype, which the lookup reads first too), and only
     // then reaches %TypedArray%.prototype and the tables below.
     if (target.is_array() &&
         static_cast<array_object *>(target.as_heap())->elements != element_kind::none) {
@@ -474,7 +471,7 @@ bool context::has_property(value target, const std::string & name) {
             return true;
         }
     }
-    // ...and a function's STATIC chain, which is a third kind of link again.
+    // Finally a function's static chain (proto_link), a third kind of link.
     for (value up = target; up.is_callable();) {
         if (up.is_kind(heap_kind::function)) {
             auto * fn = static_cast<closure_object *>(up.as_heap());
@@ -490,14 +487,14 @@ bool context::has_property(value target, const std::string & name) {
     return false;
 }
 
-// 13.10.2 InstanceofOperator, and 7.3.22 OrdinaryHasInstance after it.
-//
-// The right-hand side must be an object; its @@hasInstance, when it has one,
-// answers (ToBoolean of a call); otherwise it must be callable. The intrinsic
-// %Function.prototype[@@hasInstance]% IS OrdinaryHasInstance, so finding it -
-// which is what every ordinary `x instanceof F` does - skips the call and
-// walks the chain directly (builtins/objects/function.cpp has the method
-// itself, written over the public operations).
+/// 13.10.2 InstanceofOperator, and 7.3.22 OrdinaryHasInstance after it.
+///
+/// The right-hand side must be an object; its @@hasInstance, when it has one,
+/// answers (ToBoolean of a call); otherwise it must be callable. The intrinsic
+/// %Function.prototype[@@hasInstance]% is OrdinaryHasInstance, so finding it
+/// (which is what every ordinary `x instanceof F` does) skips the call and
+/// walks the chain directly (builtins/objects/function.cpp has the method
+/// itself, written over the public operations).
 bool context::instance_of(value target, value ctor) {
     if (!ctor.is_object_like()) {
         throw_error("TypeError", "Right-hand side of 'instanceof' is not an object");
@@ -534,7 +531,7 @@ bool context::instance_of(value target, value ctor) {
             return instance_of(target, *bound);
         }
     }
-    // Step 3: a primitive is an instance of nothing - `5 instanceof Number`
+    // Step 3: a primitive is an instance of nothing: `5 instanceof Number`
     // is false however many methods a number resolves.
     if (!target.is_object_like()) { return false; }
     value wanted = value::undefined();
@@ -544,9 +541,8 @@ bool context::instance_of(value target, value ctor) {
         wanted = lookup_property(ctor, "prototype");
         if (throw_pending() || unwinds() != before) { return false; }
     } else if (ctor.is_kind(heap_kind::native)) {
-        // A BUILT-IN constructor is a native, and every one of them is now
-        // something a page can extend - `class E extends Error`. Without this,
-        // `e instanceof Error` was false for every one.
+        // A built-in constructor is a native, and a page can extend any of
+        // them (`class E extends Error`), so its `prototype` is read here.
         if (value * p = static_cast<native_object *>(ctor.as_heap())->find("prototype")) {
             wanted = *p;
         }
@@ -557,21 +553,20 @@ bool context::instance_of(value target, value ctor) {
         return false;
     }
     if (!wanted.is_object()) { return false; }
-    // A PROXY IS ASKED THROUGH TO ITS TARGET. 7.3.21 OrdinaryHasInstance calls
-    // `[[GetPrototypeOf]]`, and a proxy's forwards to the object behind it - so
+    // A proxy is asked through to its target. 7.3.21 OrdinaryHasInstance calls
+    // `[[GetPrototypeOf]]`, and a proxy's forwards to the object behind it, so
     // `x instanceof C` for a proxy is a question about that object's chain and
     // not about the proxy, which has no prototype field at all. `window` is a
-    // proxy and so is every live DOM collection, and `document.images
-    // instanceof HTMLCollection` was false for exactly this reason while the
-    // target carried the right prototype the whole time. Bounded, because a
-    // proxy of a proxy is legal and a cycle must not be.
+    // proxy and so is every live DOM collection (`document.images instanceof
+    // HTMLCollection`). Bounded, because a proxy of a proxy is legal and a
+    // cycle must not hang.
     value subject = target;
     for (int hops = 0; hops < 8 && subject.is_kind(heap_kind::proxy); ++hops) {
         auto * p = static_cast<proxy_object *>(subject.as_heap());
-        // ...UNLESS IT ANSWERS ITSELF: a `getPrototypeOf` trap is
+        // Unless it answers itself: a `getPrototypeOf` trap is
         // [[GetPrototypeOf]] (10.5.1), and its answer is where the walk goes
-        // on - held to the target when the target is not extensible (steps
-        // 8-11), which is a TypeError otherwise.
+        // on. When the target is not extensible the answer must be the
+        // target's real prototype (steps 8-11), or it is a TypeError.
         bool failed = false;
         const value trap = proxy_trap(subject, "getPrototypeOf", &failed);
         if (failed || throw_pending() || unwinds() != before) { return false; }
@@ -595,7 +590,7 @@ bool context::instance_of(value target, value ctor) {
                 object_object * table = implicit_prototypes(p->target)[0];
                 actual = table != nullptr ? value::object(table) : value::null();
             }
-            if (actual.is_undefined()) { actual = value::null(); } // an explicit null
+            if (actual.is_undefined()) { actual = value::null(); } // An explicit null.
             if (!actual.same_value(answered)) {
                 throw_error("TypeError", "'getPrototypeOf' on proxy: proxy target is "
                                          "non-extensible but the trap did not return its "
@@ -605,13 +600,12 @@ bool context::instance_of(value target, value ctor) {
         }
         if (!answered.is_object_like()) { return false; }
         if (answered.as_heap() == wanted.as_heap()) { return true; }
-        return instance_of(answered, ctor); // the walk goes on from `answered`
+        return instance_of(answered, ctor); // The walk goes on from `answered`.
     }
-    // The EXPLICIT chain first - a page's own classes, and every builtin whose
-    // instances carry a prototype (Error, Map, Blob).
-    // ...and an array's own, when it has one (array_object::prototype), and a
-    // function's proto_link - `class B extends A` for B itself, and a dynamic
-    // function made under `class F extends Function` (`f instanceof F`).
+    // The explicit chain first: an object's `prototype` field (a page's classes
+    // and builtins such as Error, Map and Blob), an array's `prototype` when it
+    // has one, or a function's proto_link (`class B extends A`, or a function
+    // made under `class F extends Function`).
     value link = subject.is_object()  ? static_cast<object_object *>(subject.as_heap())->prototype
                  : subject.is_array() ? static_cast<array_object *>(subject.as_heap())->prototype
                  : subject.is_kind(heap_kind::function)
@@ -625,34 +619,27 @@ bool context::instance_of(value target, value ctor) {
         link = static_cast<object_object *>(link.as_heap())->prototype;
     }
     // A prototype that is not a plain object (`foo.prototype = [1]`) carries
-    // the rest of the chain - see lookup_property.
+    // the rest of the chain; see lookup_property.
     if (link.is_heap() && !link.is_object() && !link.is_string()) {
         if (link.as_heap() == wanted.as_heap()) { return true; }
-        return instance_of(link, ctor); // ctor's own @@hasInstance was the intrinsic
+        return instance_of(link, ctor); // ctor's own @@hasInstance was the intrinsic.
     }
-    if (explicit_chain && link.is_undefined()) { return false; } // an explicit null
+    if (explicit_chain && link.is_undefined()) { return false; } // An explicit null.
     // An array's explicit chain ended at the implicit Object.prototype: the
     // kind's tables are not behind it (Object.setPrototypeOf(arr, o) took
     // Array.prototype out of the chain).
     if (!subject.is_object() && explicit_chain) {
         return prototype(proto_kind::object) == wanted.as_heap();
     }
-    // Then the IMPLICIT one. An array, a function, a string and a plain object
-    // have no prototype field to walk - their chain is the tables property
-    // lookup falls back to - so instanceof answered false for every builtin
-    // while answering correctly for a page's own classes.
-    //
-    // OBJECT-LIKE ONLY. `5 instanceof Number` and `'x' instanceof String` are
-    // FALSE in JavaScript however many methods a primitive resolves -
-    // instanceof asks about a prototype chain and a primitive does not have
-    // one. Applying the fallback to everything made both of those true, which
-    // is the mirror image of the bug being fixed.
+    // Then the implicit chain: an array, function or plain object with no
+    // prototype field uses the tables that property lookup falls back to.
+    // Primitives are skipped, because `5 instanceof Number` is false.
     if (subject.is_object_like()) {
         for (object_object * table : implicit_prototypes(subject)) {
             if (table != nullptr && table == wanted.as_heap()) { return true; }
         }
     }
-    // A TYPED ARRAY's chain starts at its kind's own prototype (23.2.7),
+    // A typed array's chain starts at its kind's own prototype (23.2.7),
     // which is not one of the implicit tables.
     if (subject.is_array()) {
         auto * arr = static_cast<array_object *>(subject.as_heap());

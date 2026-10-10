@@ -1,14 +1,19 @@
-// compiler_impl - the `with` statement.
+//===- with.cpp - with statement and plain name access ----------*- C++ -*-===//
+//
+// compiler_impl members for the `with` statement, and the plain name reads
+// and writes it wraps: locals, upvalues, globals, the temporal-dead-zone
+// ready flags, and the strict-mode checks on a global write.
 //
 // 14.11: `with (o) body` evaluates `o`, makes an Object Environment Record
 // of it, and runs the body with that record in front of the scope chain. The
 // shape here is described at `with_scope` in compiler_impl.hpp: the object is
 // a hidden boxed local, and every identifier the body resolves emits a
 // HasProperty on it (with the @@unscopables veto) before its ordinary
-// resolution. Nothing new in the VM: `has_property`, `get_prop`, `set_prop`
-// and two conditional jumps are the whole of it, which is what keeps this a
-// compiler change - and keeps the price on the pages that use `with`, which
-// is next to none of them (strict code and modules cannot).
+// resolution. No VM support is needed: `has_property`, `get_prop`,
+// `set_prop` and two conditional jumps are the whole of it, so only pages
+// that use `with` pay for it (strict code and modules cannot).
+//
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -17,8 +22,8 @@ namespace ctbrowser::script::detail {
 void compiler_impl::compile_with(const vp::node & n) {
     // The object, in a scope of its own so the hidden local dies with the
     // statement. Evaluated first (step 1), then ToObject: null and undefined
-    // are the TypeError, and a primitive is left as it is - `has_property`
-    // answers false for one, so its properties are simply not seen.
+    // are a TypeError, and a primitive is left as it is: `has_property`
+    // returns false for one, so its properties are simply not seen.
     push_scope();
     const std::string name = "@with:" + std::to_string(with_scopes_.size() + 1) + ":" +
                              std::to_string(frames_.size() - 1) + ":" +
@@ -30,7 +35,7 @@ void compiler_impl::compile_with(const vp::node & n) {
     emit_throw("TypeError", "Cannot convert undefined or null to object");
     patch_here(is_object);
     // Boxed whatever the capture index says: a closure made inside the body
-    // captures the CELL, and function declarations hoisted to the body's
+    // captures the cell, and function declarations hoisted to the body's
     // start are made before this value exists.
     fn().locals.back().boxed = true;
     proto().emit(instruction{op::new_cell, obj});
@@ -57,7 +62,7 @@ std::vector<const compiler_impl::with_scope *> compiler_impl::applicable_with_sc
     if (with_scopes_.empty()) { return applicable; }
     const auto [declared_in, position] = declaring_frame(name);
     // The scopes that may bind the name, innermost first, up to the first
-    // one the name is declared INSIDE - a local of a deeper frame, or one of
+    // one the name is declared inside: a local of a deeper frame, or one of
     // the same frame declared after the with's own hidden local.
     for (std::size_t i = with_scopes_.size(); i-- > 0;) {
         const with_scope & w = with_scopes_[i];
@@ -80,15 +85,15 @@ bool compiler_impl::emit_with_object(std::string_view name, std::uint16_t obj) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t candidate = alloc_reg();
         emit_plain_read(w->name, candidate);
-        // HasProperty(o, name) - the whole chain, through a proxy's trap.
+        // HasProperty(o, name): the whole chain, through a proxy's trap.
         const std::uint16_t key = alloc_reg();
         emit_string(key, std::string{name});
         const std::uint16_t has = alloc_reg();
         proto().emit(instruction{op::has_property, has, key, candidate});
         const std::size_t missing = proto().emit(instruction{op::jump_if_false, has});
-        // ...unless o[@@unscopables] is an object whose `name` is truthy.
-        // A non-object there has no properties, so `get_prop` on it reads
-        // undefined and the veto does not fire - which is 9.1.1.2.1 step 4.
+        // Unless o[@@unscopables] is an object whose `name` is truthy. A
+        // non-object there has no properties, so `get_prop` on it reads
+        // undefined and the veto does not fire (9.1.1.2.1 step 4).
         const std::uint16_t unscopables = alloc_reg();
         proto().emit(instruction{op::get_prop, unscopables, candidate,
                                  name_operand(CTBROWSER_SYMBOL_KEY("unscopables"))});
@@ -108,11 +113,11 @@ bool compiler_impl::emit_with_object(std::string_view name, std::uint16_t obj) {
     return true;
 }
 
-// 9.1.1.2.5 SetMutableBinding of an object Environment Record: `stillExists`
-// is asked again at the write, and a binding the object lost in between - the
-// getter a compound assignment read through deleted it - is the ReferenceError
-// in strict code (a strict function inside the `with`; the statement itself
-// cannot be strict). Sloppy code writes the property back.
+/// 9.1.1.2.5 SetMutableBinding of an object Environment Record: `stillExists`
+/// is checked again at the write. A binding the object lost in between (say,
+/// the getter a compound assignment read through deleted it) is a
+/// ReferenceError in strict code (a strict function inside the `with`; the
+/// statement itself cannot be strict). Sloppy code writes the property back.
 void compiler_impl::emit_with_still_bound(std::uint16_t obj, std::string_view name) {
     if (!fn().is_strict) { return; }
     const std::uint32_t mark = reg_mark();
@@ -125,6 +130,12 @@ void compiler_impl::emit_with_still_bound(std::uint16_t obj, std::string_view na
     patch_here(present);
     release_to(mark);
 }
+
+// The temporal dead zone: each let/const/class binding that can be read
+// before its declarator runs has a hidden boolean local named "@tdz:<name>".
+// binding_ready_flag finds it (empty when the binding needs no check),
+// emit_ready_check throws the ReferenceError while it is false, and
+// initialize_lexical sets it once the declarator has run.
 
 std::string compiler_impl::binding_ready_flag(std::string_view name) {
     const auto [level, position] = binding_position(name);
@@ -140,6 +151,7 @@ void compiler_impl::emit_ready_check(std::string_view flag) {
     const std::uint16_t ready = alloc_reg();
     emit_plain_read(flag, ready);
     const std::size_t initialized = proto().emit(instruction{op::jump_if_true, ready});
+    // substr(5) strips the "@tdz:" prefix to recover the binding's name.
     emit_throw("ReferenceError",
                "Cannot access '" + std::string{flag.substr(5)} + "' before initialization");
     patch_here(initialized);
@@ -169,9 +181,9 @@ void compiler_impl::emit_plain_read(std::string_view name, std::uint16_t dst, bo
     }
     // `arguments` is not synthesised here: compile_function_body made it a
     // real local at entry, so it resolved above as a local or an upvalue.
-    // Reaching this point means the mention is at TOP LEVEL, where a script
-    // has no arguments and reading the name is an ordinary global lookup -
-    // which is what a browser does too.
+    // Reaching this point means the mention is at top level, where a script
+    // has no arguments and reading the name is an ordinary global lookup, as
+    // in a browser.
     proto().emit(instruction::with_bx(typeof_lookup ? op::get_global_typeof : op::get_global, dst,
                                       name_operand(std::string{name})));
 }
@@ -195,13 +207,14 @@ void compiler_impl::emit_plain_write(std::string_view name, std::uint16_t src) {
     emit_global_write(name, src);
 }
 
-// THE ONE PLACE A GLOBAL IS WRITTEN, for a name that resolved to nothing
-// nearer: a plain assignment, a compound one, an update, a for-in/of head.
+/// The one place a global is written, for a name that resolved to nothing
+/// nearer: a plain assignment, a compound one, an update, a for-in/of head.
 void compiler_impl::emit_global_write(std::string_view name, std::uint16_t src) {
-    // 19.1: `NaN`, `Infinity` and `undefined` are { false, false, false } on
-    // the global object. The globals table has no attributes, so the refusal
-    // is decided here: a sloppy write is dropped, a strict one is the
-    // TypeError of PutValue - and neither reaches op::set_global.
+    // 19.1: `NaN`, `Infinity` and `undefined` are non-writable,
+    // non-enumerable and non-configurable on the global object. The globals
+    // table has no attributes, so the refusal is decided here: a sloppy write
+    // is dropped, a strict one is PutValue's TypeError, and neither reaches
+    // op::set_global.
     if (name == "undefined" || name == "NaN" || name == "Infinity") {
         if (fn().is_strict) {
             emit_throw("TypeError",
@@ -213,14 +226,14 @@ void compiler_impl::emit_global_write(std::string_view name, std::uint16_t src) 
     proto().emit(instruction::with_bx(op::set_global, src, intern_name(std::string{name})));
 }
 
-// 6.2.5.6 PutValue step 3.a: in strict code, assigning to a name that resolves
-// nowhere is a ReferenceError rather than a new global. Emitted only for an
-// assignment - a declaration's first write sets declaring_ - and only in
-// strict code, as a call of strict_assign_check_name (op::set_global itself
-// may not throw). The write that follows still runs when the check passes.
+/// 6.2.5.6 PutValue step 3.a: in strict code, assigning to a name that
+/// resolves nowhere is a ReferenceError rather than a new global. Emitted only
+/// for an assignment (a declaration's first write sets declaring_) and only in
+/// strict code, as a call of strict_assign_check_name (op::set_global itself
+/// may not throw). The write that follows still runs when the check passes.
 void compiler_impl::emit_strict_assign_check(std::string_view name) {
     if (!fn().is_strict || declaring_) { return; }
-    // NOT AT A MODULE'S TOP LEVEL, deliberately (docs/script.md, strict
+    // Deliberately skipped at a module's top level (docs/script.md, strict
     // mode): ctcompile's module fixtures publish to their host through
     // `OUT = ...` and rely on the write.
     if (module_scope_ && frames_.size() == 1) { return; }

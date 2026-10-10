@@ -1,24 +1,20 @@
-// ctbrowser.script builtins - Promise.
+//===- ctbrowser/lib/Script/builtins/async.cpp - Promise builtins ---------===//
 //
-// One of five files carved out of a 4,118-line builtins.cpp on 2026-08-09.
-// Everything shared - the argument helpers, namespace detail, and these
-// functions' declarations - is in internal.hpp. The promise machinery itself
-// - the resolving functions, the two jobs, PerformPromiseThen, the shared
-// prototype - is this file's alone (JSON, which shared the file, is json.cpp
-// since 2026-09-12).
+// Promise (ECMA-262 27.2), AggregateError, the async-iterator prototypes
+// (27.1), and the isNaN, isFinite and String globals, all installed by
+// install_promise. Bare section numbers in this file are ECMA-262.
 //
-// REWRITTEN TO 27.2 ON 2026-09-12. The first version fulfilled a promise with
-// whatever `resolve` was handed - a promise, a thenable, anything - adopted a
-// handler's returned promise inline, read its input list as an Array rather
-// than an iterable, and knew nothing of species or subclassing; test262's
-// built-ins/Promise measured 34% on it. What is here now is the
-// specification's algorithm: CreateResolvingFunctions with [[AlreadyResolved]],
-// NewPromiseResolveThenableJob as a SEPARATE job (so `Promise.resolve(thenable)`
-// takes two ticks and a handler returning a promise takes three),
-// NewPromiseCapability over any constructor, SpeciesConstructor in `then` and
-// `finally`, and the four combinators through the iterator protocol with
-// IteratorClose on an abrupt step. The object SHAPE is unchanged - the VM
-// reads it by name - and is described below.
+// The promise algorithm follows the specification: resolving functions with
+// [[AlreadyResolved]], NewPromiseResolveThenableJob as a separate job (so
+// `Promise.resolve(thenable)` takes two ticks and a handler that returns a
+// promise takes three), NewPromiseCapability over any constructor, and the
+// combinators driven by the iterator protocol with IteratorClose on an abrupt
+// step. The resolving functions, jobs and PerformPromiseThen live in
+// async/promise_reactions.cpp; shared argument helpers are in internal.hpp.
+// The VM reads promise objects through fixed private keys, so their slots
+// must not change.
+//
+//===----------------------------------------------------------------------===//
 
 #include "collections/iterator_internal.hpp"
 #include "internal.hpp"
@@ -36,10 +32,11 @@ using detail::promise::slot;
 
 namespace {
 
-// THE ERROR `Promise.any` REJECTS WITH when every input rejected. context::
-// make_error builds it on the AggregateError prototype install_aggregate_error
-// registers; `errors` is the own data property 20.5.7.1.1 step 5 installs, in
-// input order. No `message`: 27.2.4.3.1 step 8.d.iii.1 makes one with none.
+/// Returns the error `Promise.any` rejects with when every input rejected.
+/// context::make_error builds it on the AggregateError prototype that
+/// install_aggregate_error registers; `errors` is the own data property
+/// 20.5.7.1.1 step 5 installs, in input order. It has no own `message`:
+/// 27.2.4.3.1 step 8.d.iii.1 makes one with none.
 [[nodiscard]] value aggregate_error(context & cx, value errors) {
     const value made = cx.make_error("AggregateError", "");
     auto * o = static_cast<object_object *>(made.as_heap());
@@ -48,12 +45,12 @@ namespace {
     return made;
 }
 
-// 20.5.7 AggregateError(errors, message, options): a NativeError in shape -
-// [[Prototype]] %Error%, prototype under %Error.prototype% with its own
-// `name` and `message`, callable without `new` - plus the `errors` list,
-// iterated (any iterable) into a fresh array. Installed here rather than in
-// objects/errors.cpp because Promise.any is what needs it; skipped when a
-// global of that name already exists.
+/// Installs 20.5.7 AggregateError(errors, message, options): a NativeError in
+/// shape ([[Prototype]] %Error%, prototype under %Error.prototype% with its own
+/// `name` and `message`, callable without `new`) plus the `errors` list,
+/// iterated (any iterable) into a fresh array. Installed here rather than in
+/// objects/errors.cpp because Promise.any is what needs it; skipped when a
+/// global of that name already exists.
 void install_aggregate_error(context & cx) {
     if (cx.has_global("AggregateError")) { return; }
     object_object * proto = detail::new_table(cx);
@@ -115,6 +112,7 @@ void install_aggregate_error(context & cx) {
     cx.define_global("AggregateError", value::object(ctor));
 }
 
+/// Which promise combinator a `combinator` walk implements.
 enum class combine : std::uint8_t {
     all,
     all_settled,
@@ -123,15 +121,19 @@ enum class combine : std::uint8_t {
     all_keyed,
     all_settled_keyed
 };
+/// True for the combinators that walk an object's keys (allKeyed and
+/// allSettledKeyed) rather than an iterable.
 [[nodiscard]] constexpr bool keyed(combine k) {
     return k == combine::all_keyed || k == combine::all_settled_keyed;
 }
+/// True for the combinators that record a {status, value|reason} object per
+/// input instead of the bare value.
 [[nodiscard]] constexpr bool settles_each(combine k) {
     return k == combine::all_settled || k == combine::all_settled_keyed;
 }
 
-// CreateKeyedPromiseCombinatorResultObject (Promise.allKeyed): a
-// null-prototype object, one own data property per key, in key order.
+/// CreateKeyedPromiseCombinatorResultObject (Promise.allKeyed): a
+/// null-prototype object, one own data property per key, in key order.
 [[nodiscard]] value keyed_result(context & cx, value keys, value values) {
     object_object * record = detail::new_table(cx);
     record->prototype = value::undefined(); // explicit null, see object_object::prototype
@@ -143,13 +145,13 @@ enum class combine : std::uint8_t {
     return value::object(record);
 }
 
-// The element functions of 27.2.4.1.3 / 27.2.4.2.2-3 / 27.2.4.3.2: each
-// writes its outcome into its own slot ONCE ([[AlreadyCalled]]) and the last
-// to arrive settles the capability. State lives in one object every element
-// function retains - a `value` in a lambda capture is not a root - and so
-// does [[AlreadyCalled]]: allSettled's fulfilled and rejected functions for
-// one index SHARE the record (27.2.4.2.1 step 8.k-t), so it is a per-index
-// slot in the state's `called` list rather than a capture.
+/// Makes one element function of 27.2.4.1.3 / 27.2.4.2.2-3 / 27.2.4.3.2. Each
+/// writes its outcome into its own slot once ([[AlreadyCalled]]) and the last
+/// to arrive settles the capability. State lives in one object every element
+/// function retains (a `value` in a lambda capture is not a GC root), and so
+/// does [[AlreadyCalled]]: allSettled's fulfilled and rejected functions for
+/// one index share the record (27.2.4.2.1 step 8.k-t), so it is a per-index
+/// slot in the state's `called` list rather than a capture.
 [[nodiscard]] value element_fn(context & cx, combine kind, value state, std::size_t index,
                                bool rejected) {
     auto * fn = cx.allocate<native_object>(
@@ -193,11 +195,11 @@ enum class combine : std::uint8_t {
     return value::object(fn);
 }
 
-// Promise.all / allSettled / any / race, 27.2.4.1-3 and 27.2.4.5: one walk.
-// The capability is made first (its TypeError propagates); everything after
-// it is IfAbruptRejectPromise - run under one fence, and an abrupt step that
-// did not come from the iterator itself closes the iterator before the
-// capability is rejected.
+/// Promise.all / allSettled / any / race (27.2.4.1-3 and 27.2.4.5) and the
+/// keyed variants, as one walk. The capability is made first (its TypeError
+/// propagates); everything after it is IfAbruptRejectPromise: it runs under
+/// one fence, and an abrupt step that did not come from the iterator itself
+/// closes the iterator before the capability is rejected.
 [[nodiscard]] value combinator(context & cx, combine kind, std::span<value> a) {
     const value ctor = cx.current_this();
     if (!ctor.is_object_like()) {
@@ -221,7 +223,7 @@ enum class combine : std::uint8_t {
             c.throw_error("TypeError", "Promise resolve is not a function");
             return value::undefined();
         }
-        // The items: an iterator's values, or (allKeyed) the own ENUMERABLE
+        // The items: an iterator's values, or (allKeyed) the own enumerable
         // properties of an object, each key's enumerability re-read as it is
         // reached.
         std::vector<std::string> own_keys;
@@ -345,18 +347,22 @@ enum class combine : std::uint8_t {
 
 // --- CreateAsyncFromSyncIterator, 27.1.6 -----------------------------------
 //
-// What `for await` and `yield*` in an async generator wrap a SYNC iterator in:
+// What `for await` and `yield*` in an async generator wrap a sync iterator in:
 // `next`/`return`/`throw` each answer a promise of the record, and a promise
 // in the record's `value` is awaited before the record is delivered
-// (AsyncFromSyncIteratorContinuation, 27.1.6.4). The three live on ONE
-// prototype table - %AsyncFromSyncIteratorPrototype%, whose own [[Prototype]]
-// is %AsyncIteratorPrototype% - and read the sync iterator off `this`.
+// (AsyncFromSyncIteratorContinuation, 27.1.6.4). The three live on one
+// prototype table, %AsyncFromSyncIteratorPrototype%, whose own [[Prototype]]
+// is %AsyncIteratorPrototype%, and read the sync iterator off `this`.
 
+/// Private slots on an async-from-sync wrapper: the sync iterator and its
+/// `next` method, read once when the wrapper is made.
 constexpr std::string_view sync_iterator_slot = CTBROWSER_PRIVATE_KEY("SyncIterator");
 constexpr std::string_view sync_next_slot = CTBROWSER_PRIVATE_KEY("SyncNext");
 
-// 27.1.6.4. `close_on_rejection` is the ES2025 addition: a rejected `value`
-// closes the sync iterator before the rejection is reported.
+/// AsyncFromSyncIteratorContinuation, 27.1.6.4: settles `cap` with the
+/// iterator result `result` once its `value` has been awaited, and returns the
+/// capability's promise. `close_on_rejection` is the ES2025 addition: a
+/// rejected `value` closes the sync iterator before the rejection is reported.
 [[nodiscard]] value continuation(context & cx, value result, const capability & cap,
                                  value sync_iterator, bool close_on_rejection) {
     const detail::completion parts = detail::fenced(cx, [&](context & c) -> value {
@@ -417,9 +423,10 @@ constexpr std::string_view sync_next_slot = CTBROWSER_PRIVATE_KEY("SyncNext");
     return cap.promise;
 }
 
-// %AsyncIteratorPrototype%, 27.1.3: one method, @@asyncIterator answering
-// `this`. %AsyncGeneratorPrototype% and %AsyncFromSyncIteratorPrototype% both
-// inherit from it. Kept on Promise.prototype under a private key.
+/// %AsyncIteratorPrototype%, 27.1.3: @@asyncIterator answering `this`, plus
+/// @@asyncDispose. %AsyncGeneratorPrototype% and
+/// %AsyncFromSyncIteratorPrototype% both inherit from it. Made on first use and
+/// cached on Promise.prototype under a private key.
 constexpr std::string_view async_iterator_key = CTBROWSER_PRIVATE_KEY("AsyncIteratorPrototype");
 [[nodiscard]] object_object * async_iterator_prototype(context & cx) {
     object_object * promise_proto = detail::promise::promise_prototype(cx);
@@ -487,6 +494,8 @@ constexpr std::string_view async_iterator_key = CTBROWSER_PRIVATE_KEY("AsyncIter
     return table;
 }
 
+/// %AsyncFromSyncIteratorPrototype% (27.1.6.2): next, return and throw. Made on
+/// first use and cached on Promise.prototype under async_from_sync_key.
 [[nodiscard]] object_object * async_from_sync_prototype(context & cx) {
     object_object * promise_proto = detail::promise::promise_prototype(cx);
     if (const value * held = promise_proto->find(detail::promise::async_from_sync_key);
@@ -604,7 +613,10 @@ constexpr std::string_view async_iterator_key = CTBROWSER_PRIVATE_KEY("AsyncIter
 
 } // namespace
 
-// Promise
+/// Installs Promise and its statics, AggregateError, the async-iterator
+/// prototypes and the VM's promise hooks (factory, settler, async GetIterator,
+/// promise_reject_name), then Iterator, WeakRef/FinalizationRegistry,
+/// disposables, isNaN, isFinite and String.
 void install_promise(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -615,9 +627,9 @@ void install_promise(context & cx) {
         async_gen->prototype = value::object(async_iterator_prototype(cx));
     }
     // What `await` and an async function's return need: a pending promise, a
-    // way to settle one, and PromiseResolve(%Promise%, v). The VM can READ a
-    // promise - it always could - but making and settling run this library's
-    // own logic, queue included. The settler RESOLVES (27.2.1.3.2) rather
+    // way to settle one, and PromiseResolve(%Promise%, v). The VM reads promise
+    // slots itself, but making and settling a promise run this library's own
+    // logic, job queue included. The settler resolves (27.2.1.3.2) rather
     // than fulfils, so an async body that returns a thenable adopts it.
     cx.set_promise_factory([](context & c, value v, bool rejected) {
         if (rejected) {
@@ -652,7 +664,7 @@ void install_promise(context & cx) {
         }
         // 7.4.3 GetIterator(async): GetMethod(@@asyncIterator) - a value that
         // is neither undefined, null nor callable is the TypeError right
-        // there, and @@iterator is asked only when the method is ABSENT.
+        // there, and @@iterator is asked only when the method is absent.
         const value async = c.lookup_property(source, CTBROWSER_SYMBOL_KEY("asyncIterator"));
         if (c.throw_pending()) { return value::undefined(); }
         if (async.is_callable()) {
@@ -687,25 +699,25 @@ void install_promise(context & cx) {
         detail::promise::settle(c, made, arg_at(a, 0), true);
         return made;
     });
-    // 27.2.3.1 Promise(executor). The executor runs IMMEDIATELY and is handed
+    // 27.2.3.1 Promise(executor). The executor runs immediately and is handed
     // resolve and reject; a promise it does not settle stays pending until
-    // something later calls one of them. p5.js opens with it:
+    // something later calls one of them, for example:
     //
     //   new Promise((resolve) => {
     //     if (document.readyState === 'complete') { resolve(); }
     //     else { window.addEventListener('load', resolve, false); }
     //   })
     //
-    // Callable AND a namespace: the statics are installed on it directly with
-    // detail::method, so each is { writable, enumerable: FALSE, configurable }
-    // as clause 27.2.4 has them.
+    // Promise is also a namespace: the statics are installed on it directly
+    // with detail::method, so each is {writable, enumerable: false,
+    // configurable} as clause 27.2.4 has them.
     auto * promise_new = cx.allocate<native_object>("Promise", [](context & c, std::span<value> a) {
         // 27.2.3.1 step 1: NewTarget undefined is a TypeError. A native has no
         // NewTarget; what it has is the instance `new` (or a subclass's
-        // `super()`) made for it. "An object that is not already a promise"
-        // rather than constructing_this's "an EMPTY object", because this
-        // engine runs a derived class's field initialisers BEFORE the body,
-        // so `class P extends Promise { x = 1 }` arrives with `x` set.
+        // `super()`) made for it. The test is "an object that is not already a
+        // promise" rather than constructing_this's "an empty object", because
+        // this engine runs a derived class's field initialisers before the
+        // body, so `class P extends Promise { x = 1 }` arrives with `x` set.
         const value self = c.current_this();
         if (!self.is_object() || is_promise(self)) {
             c.throw_error("TypeError", "Promise constructor cannot be invoked without 'new'");
@@ -730,9 +742,9 @@ void install_promise(context & cx) {
         return promise;
     });
     proto->define(detail::promise::intrinsic_key, value::object(promise_new), attr_none);
+    install_aggregate_error(cx);
     // 27.2.4.7 Promise.resolve / 27.2.4.6 Promise.reject: over `this`, so a
     // subclass's static makes a subclass instance.
-    install_aggregate_error(cx);
     method(cx, promise_new, "resolve", 1, [](context & c, std::span<value> a) {
         const value ctor = c.current_this();
         if (!ctor.is_object_like()) {
@@ -754,11 +766,11 @@ void install_promise(context & cx) {
         detail::promise::settle_capability(c, cap, arg_at(a, 0), true);
         return cap.promise;
     });
-    // 27.2.4.9 Promise.try: the callback runs NOW; a throw is a rejected
-    // promise of `this`, and a return goes through PromiseResolve - so a
+    // 27.2.4.9 Promise.try: the callback runs now; a throw is a rejected
+    // promise of `this`, and a return goes through PromiseResolve, so a
     // promise the callback hands back is returned as it is when its
-    // constructor is `this`, not wrapped in a second one (the 2026 "avoid
-    // wrapping" revision; before it, the capability was made first).
+    // constructor is `this`, not wrapped in a second one (the specification's
+    // 2026 "avoid wrapping" revision).
     method(cx, promise_new, "try", 1, [](context & c, std::span<value> a) {
         const value ctor = c.current_this();
         if (!ctor.is_object_like()) {
@@ -801,7 +813,7 @@ void install_promise(context & cx) {
         return combinator(c, combine::all_settled_keyed, a);
     });
     // 27.2.4.8 Promise.withResolvers: `new Promise(executor)` turned inside
-    // out - the same promise and the same two functions, handed back as an
+    // out: the same promise and the same two functions, handed back as an
     // object instead of to a callback.
     method(cx, promise_new, "withResolvers", 0, [](context & c, std::span<value>) {
         capability cap;
@@ -829,21 +841,16 @@ void install_promise(context & cx) {
     detail::constant(promise_new, "prototype", value::object(proto));
     link_constructor(cx, proto, "Promise", 1, value::object(promise_new));
     cx.define_global("Promise", value::object(promise_new));
-    // Iterator and the iterator helpers: after install_generator's tables
-    // exist, which is any point in this function. builtins.cpp is not this
-    // file's to edit; the call belongs there.
+    // Iterator and the iterator helpers (collections/iterator.cpp). They need
+    // install_generator's prototype tables, which already exist when this runs.
     install_iterator(cx);
-    // WeakRef and FinalizationRegistry (collections/weak.cpp). ctcompile's
-    // escape-cycle test pinned their ABSENCE as the divergence ND-2 until
-    // 2026-09-13 (its 73d4e034 retired the three probes;
-    // ctcompile/docs/native-divergences.md says so), which is what kept this
-    // call commented out for a day.
+    // WeakRef and FinalizationRegistry (collections/weak.cpp).
     install_weak_refs(cx);
     install_disposable(cx);
 
-    // 19.2.2 and 19.2.3, both of arity 1: ? ToNumber(number) - through
-    // ToPrimitive, so a valueOf runs and a throw from it (or a Symbol, or a
-    // BigInt) propagates rather than reading as NaN.
+    // isNaN and isFinite (19.2.3 and 19.2.2), both of arity 1: ? ToNumber(number)
+    // goes through ToPrimitive, so a valueOf runs and a throw from it (or a
+    // Symbol, or a BigInt) propagates rather than reading as NaN.
     detail::global_fn(cx, "isNaN", 1, [](context & c, std::span<value> a) {
         const value v = arg_at(a, 0);
         if (!numeric_arg(c, v)) { return value::undefined(); }
@@ -858,21 +865,19 @@ void install_promise(context & cx) {
         if (c.throw_pending()) { return value::undefined(); }
         return value::boolean(std::isfinite(n));
     });
-    // `String` is a NAMESPACE as well as a coercion, the same way Number is.
-    // `String.fromCharCode.apply(null, bytes)` is how a page turns a byte array
-    // into text - 27 uses in p5.js - and it read undefined and applied it.
+    // `String` is both a conversion function and a namespace for statics
+    // (fromCharCode, fromCodePoint, raw), like Number.
     {
         auto * string_ctor =
             cx.allocate<native_object>("String", [](context & c, std::span<value> a) {
-                // A SYMBOL IS DESCRIBED, NOT COERCED. `String(sym)` is the one
+                // A symbol is described, not coerced. `String(sym)` is the one
                 // conversion the specification allows on a symbol (22.1.1.1
                 // step 2) and it yields "Symbol(description)". Everything else
                 // here goes through `to_string`, which for a symbol returns its
-                // internal KEY - that is deliberate and load-bearing, because
-                // computed property access resolves `o[sym]` through the same
-                // call, so it cannot be changed without separating
-                // ToPropertyKey from ToString. Special-casing the explicit
-                // conversion is the part that can be had cheaply.
+                // internal key. That is deliberate: computed property access
+                // resolves `o[sym]` through the same call, so it cannot change
+                // without separating ToPropertyKey from ToString. Special-casing
+                // the explicit conversion here is the cheap part.
                 const value self = c.current_this();
                 const bool constructing = detail::constructing_this(self);
                 value made = c.string(std::string{});
@@ -886,10 +891,9 @@ void install_promise(context & cx) {
                 // exotic object `Object("ab")` builds, see detail::wrap_primitive.
                 return constructing ? detail::wrap_primitive(c, self, made) : made;
             });
-        // detail::method, not `set`: clause 17 makes every one of these
-        // { writable: true, enumerable: FALSE, configurable: true }, and `set`
-        // gave them the default attributes - so `Object.keys(String)` listed
-        // fromCharCode and fromCodePoint and `for (k in String)` walked them.
+        // detail::method, not `set`: ECMA-262 clause 17 makes built-in methods
+        // non-enumerable ({writable: true, enumerable: false, configurable:
+        // true}), and `set` would make them enumerable.
         const auto stat = [&](const char * name, double arity, native_fn fn) {
             detail::method(cx, string_ctor, name, arity, std::move(fn));
         };
@@ -912,11 +916,9 @@ void install_promise(context & cx) {
             const context::stack_mark before = c.mark_stack();
             std::string out;
             for (std::size_t i = 0; i < a.size(); ++i) {
-                // 22.1.2.2 step 2c: a code point must be an INTEGER in
-                // [0, 0x10FFFF] and anything else is a RangeError. to_uint32
-                // wrapped instead, so `String.fromCodePoint(-1)` produced the
-                // encoding of 0xFFFFFFFF and `fromCodePoint(1.5)` produced one
-                // for 1.
+                // 22.1.2.2 step 2c: a code point must be an integer in
+                // [0, 0x10FFFF]; anything else is a RangeError (not wrapped as
+                // to_uint32 would).
                 if (!numeric_arg(c, a[i])) { return value::undefined(); }
                 const double code = c.to_number_value(a[i]);
                 if (detail::threw_since(c, before)) { return value::undefined(); }
@@ -928,12 +930,8 @@ void install_promise(context & cx) {
             }
             return c.string(out);
         });
-        // `String.raw`, 22.1.2.4. It is the tag every template-literal library
-        // reaches for and it is also callable directly, which is the only way
-        // this engine can reach it - the compiler still refuses a TAGGED
-        // template (docs/script.md names it), so `String.raw({raw: [...]}, ...)`
-        // is the whole surface. 25 of the 30 test262 files read "TypeError:
-        // raw is undefined, not a function" before this.
+        // `String.raw`, 22.1.2.4: the tag for template literals, and also
+        // callable directly as `String.raw({raw: [...]}, ...subs)`.
         stat("raw", 1, [](context & c, std::span<value> a) {
             const context::stack_mark before = c.mark_stack();
             const value cooked = arg_at(a, 0);
@@ -953,7 +951,7 @@ void install_promise(context & cx) {
                 out += string_arg(c, segment);
                 if (detail::threw_since(c, before)) { return value::undefined(); }
                 if (k + 1 == count) { break; }
-                // One substitution BETWEEN each pair of literals, and running
+                // One substitution between each pair of literals, and running
                 // out of them ends the interpolation rather than the string:
                 // `String.raw({raw: ['a','b','c']}, 'x')` is "axbc".
                 const std::size_t at = static_cast<std::size_t>(k) + 1;
@@ -970,15 +968,10 @@ void install_promise(context & cx) {
         }
         cx.define_global("String", value::object(string_ctor));
     }
-    // `Number` is installed by install_number, which gives it the statics as
-    // well as the coercion. Defining it again here would replace the whole
-    // thing with a bare function and silently drop Number.isFinite and its
-    // siblings - which is exactly what it used to do.
-    //
-    // `Boolean` is the same, and it WAS being redefined here, one line under
-    // that warning: install_boolean gives it a prototype and this replaced it
-    // with a bare coercion, so `Object.getPrototypeOf(true) === Boolean.prototype`
-    // was false and `true.toString()` found nothing.
+    // Do not define `Number` or `Boolean` here: install_number and
+    // install_boolean create them with their statics and prototypes, and a bare
+    // conversion function here would replace them (dropping Number.isFinite,
+    // and breaking `Object.getPrototypeOf(true) === Boolean.prototype`).
 }
 
 } // namespace ctbrowser::script::builtins_detail

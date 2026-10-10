@@ -1,11 +1,10 @@
-// ctbrowser.script context - running a program: the top-level entry, and the
-// re-entrant one a dynamic import needs.
+//===- ctbrowser/lib/Script/vm/call/run.cpp - Running a program -----------===//
 //
-// One of five files carved out of a 1,171-line vm/call.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// Running a program: the top-level entry, the re-entrant one a dynamic import
+// needs, and global declaration instantiation. All functions here are members
+// of `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <algorithm>
 #include <cstddef>
@@ -15,16 +14,11 @@
 
 namespace ctbrowser::script {
 
-// RUNNING A PROGRAM WHILE ONE IS ALREADY RUNNING, which `run` cannot do and
-// must not pretend to: `execute` CLEARS `frames_` and reassigns `registers_`,
-// because it is the entry point for a whole turn. A dynamic import is the first
-// thing that ever needed a program evaluated from inside the interpreter, and
-// calling `run` there wiped the importing module's own frame - so the module
-// stopped dead at the `import(...)` and every statement after it silently never
-// ran. Nothing threw; the loop simply found no frames left and finished.
-//
-// This is `call`'s shape rather than `run`'s: push a frame on top of what is
-// already there and run down to the depth it started at.
+/// Runs \p prog from inside the interpreter (used by dynamic import). Unlike
+/// run(), whose execute() clears `frames_` and resets `registers_` for a new
+/// turn, this pushes a frame on top of the current stack and runs back down to
+/// the starting depth, so the importer continues after `import(...)`.
+/// Microtasks are not drained.
 run_result context::run_reentrant(const program & prog) {
     run_result result;
     if (!prog.ok) {
@@ -38,16 +32,15 @@ run_result context::run_reentrant(const program & prog) {
     const std::size_t new_base = registers_.size();
     registers_.resize(new_base + entry.frame_size + 8u, value::undefined());
     const std::size_t depth = frames_.size();
-    // THE PROGRAM POINTER IS SAVED AND RESTORED. `call` reads it to decide
+    // The program pointer is saved and restored. `call` reads it to decide
     // whether a closure can be entered at all, and leaving it pointing at the
-    // imported module would make every later call in the IMPORTING one look up
+    // imported module would make every later call in the importing one look up
     // its function protos in the wrong program.
     const program * const outer_program = program_;
     program_ = &prog;
-    // AND THE SAME QUESTION FOR A MODULE EVALUATING INSIDE ITS IMPORTER. This
-    // is the third place that entered a program's top level by pushing a frame
-    // of its own; leaving it out would mean an imported module's compiled body
-    // was interpreted purely because of who imported it.
+    // Run the compiled (ahead-of-time) body when there is one, as execute()
+    // and invoke() do, so an imported module runs compiled no matter who
+    // imported it.
     if (value produced = value::undefined();
         enter_compiled(*this, entry, value::undefined(), registers_.data() + new_base, new_base, 0u,
                        receiver, /*constructing*/ false, produced)) {
@@ -61,14 +54,17 @@ run_result context::run_reentrant(const program & prog) {
     (void)run_loop(depth);
     program_ = outer_program;
     if (registers_.size() >= new_base) { registers_.resize(new_base); }
-    // NO drain_microtasks HERE. The checkpoint belongs to the end of a turn,
-    // and this is the middle of one - draining now would run the importer's own
+    // No drain_microtasks here. The checkpoint belongs to the end of a turn,
+    // and this is the middle of one: draining now would run the importer's own
     // pending handlers before its next statement.
     result.ok = !failed_;
     result.error = error_;
     return result;
 }
 
+/// GlobalDeclarationInstantiation (16.1.7) for a classic script, or
+/// EvalDeclarationInstantiation for a global eval. Returns false after
+/// throwing when a declaration is refused.
 bool context::global_declaration_instantiation(const program & prog) {
     if (prog.eval_code) { return !prog.eval_global || eval_declaration_instantiation(prog); }
     if (prog.kind != script_kind::classic ||
@@ -81,8 +77,8 @@ bool context::global_declaration_instantiation(const program & prog) {
         return false;
     };
     // HasRestrictedGlobalProperty (9.1.1.4.14): a non-configurable own
-    // property of the global object - `undefined`, `NaN`, one a page defined
-    // so - may not be shadowed by a `let`. Asked of the proxy's target, as
+    // property of the global object (`undefined`, `NaN`, or one a page defined
+    // that way) may not be shadowed by a `let`. Asked of the proxy's target, as
     // declare_global_var asks it.
     value holder = realm.global_this;
     if (holder.is_kind(heap_kind::proxy)) {
@@ -111,8 +107,8 @@ bool context::global_declaration_instantiation(const program & prog) {
     // steps 8-12): a function may replace a configurable property or a
     // writable, enumerable data one; any other name needs the global object
     // extensible unless it already owns one. A TypeError otherwise, before a
-    // single binding exists. Read from the two stores behind the traps - the
-    // target, then the table - because the traps' own invariant check refuses
+    // single binding exists. Read from the two stores behind the traps (the
+    // target, then the table), because the traps' own invariant check refuses
     // a table name once the target is not extensible.
     const bool extensible = !holder.is_heap() || is_extensible(holder);
     const auto global_own = [&](const std::string & name, property_descriptor & out) {
@@ -151,10 +147,12 @@ bool context::global_declaration_instantiation(const program & prog) {
     return true;
 }
 
+/// EvalDeclarationInstantiation (19.2.1.3) for a global eval.
+/// Returns false after throwing when a declaration is refused.
 bool context::eval_declaration_instantiation(const program & prog) {
     realm_record & realm = current_realm();
     // Step 3.a: a var or function name the global environment has as a
-    // lexical binding - a `let x` of a script, and then `eval('var x')`. Not
+    // lexical binding (a `let x` of a script, and then `eval('var x')`). Not
     // an Annex B block function's, which is skipped instead (B.3.2.3,
     // annex_b_skipped).
     const auto annex_b = [&](const std::string & name) {
@@ -202,24 +200,25 @@ bool context::eval_declaration_instantiation(const program & prog) {
             return false;
         }
     }
-    // NOT recorded as var names: an eval's bindings are configurable, and a
+    // Not recorded as var names: an eval's bindings are configurable, and a
     // later script's `let` of the same name shadows them (16.1.7 step 3.c's
-    // NOTE - only a restricted, non-configurable global property collides).
+    // note: only a restricted, non-configurable global property collides).
     return true;
 }
 
-// B.3.2.2 step 12.b.i / B.3.2.3 step 11.b.ii: an Annex B block function's
-// name becomes a global var only when the global environment has no lexical
-// binding of it and CanDeclareGlobalVar(F) - an own property of the global
-// object (the target's or the table's), or an extensible one - allows it.
-// Otherwise it is fnDefinable false, and skipped without an error.
-//
-// KNOWN WRONG: the declaration's evaluation still copies the function into
-// the global of that name (compile_function_decl emits the set_global
-// whatever this decides), so `let f = 1` and then `{ function f() {} }` in
-// another script or an eval leaves f the function rather than 1. Skipping
-// that write needs the copy's instruction told apart from a `f = x`, which
-// is the same op::set_global.
+/// Returns true when Annex B block function \p name must not become a global
+/// var. B.3.2.2 step 12.b.i / B.3.2.3 step 11.b.ii: the name becomes a global
+/// var only when the global environment has no lexical binding of it and
+/// CanDeclareGlobalVar(F) allows it (an own property of the global object, the
+/// target's or the table's, or an extensible global). Otherwise it is
+/// fnDefinable false, and skipped without an error.
+///
+/// Known bug: the declaration's evaluation still copies the function into
+/// the global of that name (compile_function_decl emits the set_global
+/// whatever this decides), so `let f = 1` and then `{ function f() {} }` in
+/// another script or an eval leaves f the function rather than 1. Skipping
+/// that write needs the copy's instruction told apart from a `f = x`, which
+/// is the same op::set_global.
 bool context::annex_b_skipped(const program & prog, const std::string & name) {
     if (!std::ranges::binary_search(prog.annex_b_names, name)) { return false; }
     realm_record & realm = current_realm();
@@ -234,6 +233,8 @@ bool context::annex_b_skipped(const program & prog, const std::string & name) {
     return !realm.globals.contains(name);
 }
 
+/// Runs \p prog as a whole turn: declaration instantiation, the top level,
+/// then the microtask checkpoint.
 run_result context::run(const program & prog) {
     run_result result;
     if (!prog.ok) {
@@ -243,8 +244,8 @@ run_result context::run(const program & prog) {
     }
     failed_ = false;
     error_.clear();
-    // See program::hoisted_vars: the script's `var`s exist before it starts
-    // - once GlobalDeclarationInstantiation has found nothing to refuse. Its
+    // See program::hoisted_vars: the script's `var`s exist before it starts,
+    // once GlobalDeclarationInstantiation has found nothing to refuse. Its
     // refusal is thrown with no frame and no handler, as execute() would
     // leave them, so a dead program's `try` cannot catch it.
     frames_.clear();
@@ -258,66 +259,45 @@ run_result context::run(const program & prog) {
         }
         result.returned = execute(prog, prog.functions[0]);
     }
-    // THE END OF THE TURN. A script's promise handlers run after its last
-    // statement, not between two of them - so the checkpoint is here, once the
+    // The end of the turn. A script's promise handlers run after its last
+    // statement, not between two of them, so the checkpoint is here, once the
     // top level has finished.
     drain_microtasks();
-    // AND A FAILED SCRIPT'S QUEUE DIES WITH IT. `drain_microtasks` stops on
-    // `failed_`, so a script that threw left its already-queued jobs in the
-    // queue - and once a page's classic scripts became separate programs, the
-    // NEXT script's checkpoint ran them, after that script's synchronous code.
-    // A handler belonging to a script that is over should not surface in the
-    // middle of the following one.
-    //
-    // CHROME WOULD RUN THEM, and that difference is real: an uncaught throw
-    // does not cancel a microtask checkpoint there. It is not matched here
-    // because `raise` and an uncaught throw set the same `failed_` - the
-    // call-stack ceiling and the allocation ceiling look exactly like a page
-    // exception from this function - and draining after a resource ceiling
-    // would run more JavaScript precisely where the ceiling exists to stop it.
-    // Telling the two apart is the fix; dropping the queue is the safe half of
-    // it, and this comment is the record of which half was taken.
+    // Drop the microtask queue of a script that failed. `drain_microtasks`
+    // stops on `failed_`, so the jobs would otherwise run during the next
+    // script, after its synchronous code. Chrome would still run them after an
+    // uncaught throw; we cannot, because `failed_` is also set by `raise` for
+    // the call-stack and allocation limits, and draining then would run more
+    // JavaScript exactly where the limit is meant to stop it.
     if (failed_) { microtasks_.clear(); }
     result.ok = !failed_;
     result.error = error_;
     return result;
 }
 
+/// Resets the stacks and runs \p entry, the top level of \p prog, compiled
+/// when it has a compiled body and interpreted otherwise.
 value context::execute(const program & prog, const function_proto & entry) {
     registers_.assign(entry.frame_size + 8u, value::undefined());
     frames_.clear();
-    // AND THE HANDLER STACK, WHICH FRAMES_.CLEAR() DOES NOT IMPLY. A VM-level
-    // `raise` - the call-stack ceiling, the allocation ceiling - returns out of
-    // run_loop WITHOUT unwinding, because the loop's condition is
-    // `frames_.size() > stop_depth && !failed_` and it simply stops. Any `try`
-    // that was live at that moment stays on `handlers_` recording frame 0.
-    //
-    // A SECOND TOP-LEVEL PROGRAM ON THIS CONTEXT THEN HAS A FRAME 0 TOO, so
-    // `unwind_to_handler` accepts the dead program's handler: it only rejects
-    // one whose frame has returned. It writes the thrown value into the wrong
-    // frame's register and sets `ip` to an ADDRESS OUT OF THE OTHER PROGRAM'S
-    // BYTECODE, and the interpreter carries on from there. Measured: a page
-    // whose first script exhausts the stack inside a `try` and whose second
-    // alerts 1..8 then throws produced 1,2,3,4,5,6,7,8,3,4,5,6,7,8 - the throw
-    // swallowed, six statements run twice - and padding the first script moved
-    // where the second one resumed.
-    //
-    // It became reachable when a page's classic scripts stopped being one
-    // program: before that, a raise in the first script ended the only top
-    // level and nothing else ran on the dirtied context.
+    // Clear the handler stack as well. A VM-level `raise` (call-stack or
+    // allocation limit) leaves run_loop without unwinding, so a `try` that was
+    // live stays on `handlers_` pointing at frame 0. The next program on this
+    // context also has a frame 0, and unwind_to_handler would accept the stale
+    // handler and jump to an address in the other program's bytecode.
     handlers_.clear();
     thrown_ = value::undefined();
     program_ = &prog;
-    // Script this belongs to the realm, including in a strict classic script.
+    // A classic script's `this` is the realm's global object, even in strict
+    // mode.
     // Modules have no top-level receiver. Never reload the writable globalThis
     // binding here: an earlier script may have replaced or cleared it.
     const value receiver =
         prog.kind == script_kind::classic ? current_realm().global_this : value::undefined();
-    // A COMPILED TOP LEVEL, IF THIS PROGRAM HAS ONE, and for ctcompile that is
-    // the ordinary case rather than an exotic one: a page's `<script>` IS a top
-    // level, so a backend that compiles anything compiles this. Asked after the
-    // reset above, so a compiled body enters a context in the state it expects,
-    // and before the frame push, because ct_aot_enter pushes its own.
+    // Run the compiled top level if this program has one, which for ctcompile
+    // is the ordinary case: a page's `<script>` is a top level. Checked after
+    // the reset above, so a compiled body enters a context in the state it
+    // expects, and before the frame push, because ct_aot_enter pushes its own.
     if (value produced = value::undefined();
         enter_compiled(*this, entry, value::undefined(), registers_.data(), 0u, 0u, receiver,
                        /*constructing*/ false, produced)) {
@@ -326,12 +306,12 @@ value context::execute(const program & prog, const function_proto & entry) {
     call_frame entered{&entry, 0, 0, 0, 0, nullptr, receiver, 0};
     entered.realm = &current_realm();
     frames_.push_back(entered);
-    // Per-frame string interning: a literal in a loop should allocate once,
-    // not once per iteration.
+    // Literal caches are per program: a string or BigInt literal in a loop
+    // allocates once, not once per iteration.
     string_cache_.clear();
     bigint_cache_.clear();
-    // A TOP-LEVEL PROGRAM IS A C++ ENTRY LIKE ANY OTHER. Marking it is what
-    // makes the transition INSIDE it attributable: without this, `executing_`
+    // A top-level program is a C++ entry like any other. Marking it is what
+    // makes the transitions inside it attributable: without this, `executing_`
     // is still `cxx` for the whole run, so an interpreted script calling a
     // compiled function would be counted as C++ reaching it directly. The
     // interpreter is what is running; say so.

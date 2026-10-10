@@ -1,12 +1,12 @@
-// early errors - bound names and scopes: BoundNames, LexicallyDeclaredNames,
-// and the one statement list check every scope-opening construct goes through.
+//===- scopes.cpp - Bound names and scopes --------------------------------===//
 //
-// One of six files carved out of a 1,476-line compile/early_errors.cpp on
-// 2026-09-08 - the checker was one class with every member inline, as
-// compile.cpp was before it became compile/. The class is declared in
-// checker.hpp beside this, in ctbrowser::script::detail::early; the bodies are
-// where they were, in the file that owns the concern. early_errors.hpp, the
-// public face of the pass, did not change.
+// Early errors for bound names and scopes: BoundNames, LexicallyDeclaredNames,
+// the statement-list check every scope-opening construct goes through, and
+// the module-level export checks. The `checker` class is declared in
+// checker.hpp; each file in this directory implements the members for one
+// concern. Section numbers are ECMA-262's.
+//
+//===----------------------------------------------------------------------===//
 
 #include "checker.hpp"
 
@@ -16,11 +16,8 @@
 
 namespace ctbrowser::script::detail::early {
 
-// --- scopes ---------------------------------------------------------------
-
-// --- bound names ---------------------------------------------------------
-// Every name a binding position introduces: a plain identifier, or every
-// name inside a destructuring pattern. 8.2.1 BoundNames.
+/// Every name a binding position introduces: a plain identifier, or every
+/// name inside a destructuring pattern. 8.2.1 BoundNames.
 void checker::bound_names(std::int32_t idx, binding_kind how, std::vector<binding> & out) const {
     if (idx < 0) { return; }
     const vp::node & n = at(idx);
@@ -55,10 +52,10 @@ void checker::bound_names(std::int32_t idx, binding_kind how, std::vector<bindin
 
 namespace {
 
-// IsStringWellFormedUnicode (6.1.4) of a string LITERAL's value, read from
-// its lexeme: every lead surrogate - escaped as \uD83D or \u{D83D}, or a
-// lone one in the WTF-8 source - must be followed by a trail, and no trail
-// may stand alone. Escapes other than \u cannot make a surrogate.
+/// IsStringWellFormedUnicode (6.1.4) of a string literal's value, read from
+/// its lexeme: every lead surrogate (escaped as \uD83D or \u{D83D}, or a
+/// lone one in the WTF-8 source) must be followed by a trail, and no trail
+/// may stand alone. Escapes other than \u cannot make a surrogate.
 [[nodiscard]] bool literal_well_formed(std::string_view lexeme) {
     if (lexeme.size() < 2) { return true; }
     const std::string_view body = lexeme.substr(1, lexeme.size() - 2);
@@ -88,7 +85,7 @@ namespace {
         for (; k < body.size() && ctbrowser::hex_value(body[k]) >= 0 && (braced || digits < 4);
              ++k, ++digits) {
             cp = cp * 16 + static_cast<char32_t>(ctbrowser::hex_value(body[k]));
-            if (cp > 0x10FFFF) { return true; } // not this rule's to refuse
+            if (cp > 0x10FFFF) { return true; } // Not this rule's to refuse.
         }
         if (braced) { ++k; }
         i = k;
@@ -99,8 +96,10 @@ namespace {
 
 } // namespace
 
-// The lexical declarations a statement list makes DIRECTLY - not through a
-// nested block, which is a scope of its own. 8.2.5 LexicallyDeclaredNames.
+/// The lexical declarations a statement list makes directly, not through a
+/// nested block, which is a scope of its own. 8.2.5 LexicallyDeclaredNames.
+/// `using` and `await using` declarations are recorded as let_: they are
+/// lexical, and no rule here treats them differently.
 void checker::lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
                             std::vector<binding> & out) const {
     for (std::int32_t s : stmts) {
@@ -115,9 +114,9 @@ void checker::lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
             out.push_back(binding{n.text, binding_kind::class_, s});
         } else if (n.kind == nk::func_decl && !n.text.empty() &&
                    (kind == list_kind::block || (kind == list_kind::script && module_()))) {
-            // A MODULE'S TOP LEVEL IS LEXICAL (16.2.1: LexicallyDeclaredNames
+            // A module's top level is lexical (16.2.1: LexicallyDeclaredNames
             // of a Module's ModuleItemList is TopLevelLexicallyDeclaredNames
-            // PLUS its function declarations), which is the one place this
+            // plus its function declarations), which is the one place this
             // differs from a script: `function x() {} function x() {}` is a
             // redeclaration in a module and legal in a script.
             out.push_back(binding{n.text, binding_kind::function_, s});
@@ -135,32 +134,30 @@ void checker::lexical_names(std::span<const std::int32_t> stmts, list_kind kind,
     }
     return "declaration";
 }
-// (`using` and `await using` are let_ for every rule here: lexical, and
-// never a duplicate of anything.)
 
-// ONE STATEMENT LIST, WITH ITS OWN LEXICAL SCOPE, and the var names it
-// hands back to the scope above.
-//
-// 14.2.1 (Block), 16.1.1 (Script) and 15.2.1 (FunctionBody) all say the
-// same two things, and this is where both are checked:
-//   - LexicallyDeclaredNames must not contain a duplicate;
-//   - LexicallyDeclaredNames and VarDeclaredNames must not intersect.
-// VarDeclaredNames reaches through nested blocks and stops at a function,
-// which is exactly what the return value carries upward.
-//
-// `outer` is the FormalParameters of the function whose body this is, or a
-// catch parameter (15.2.1 and 14.15.1 state the same rule for both), or
-// null.
+/// Checks one statement list with its own lexical scope, and returns the var
+/// names it hands back to the scope above.
+///
+/// 14.2.1 (Block), 16.1.1 (Script) and 15.2.1 (FunctionBody) all say the
+/// same two things, and this is where both are checked:
+///   - LexicallyDeclaredNames must not contain a duplicate;
+///   - LexicallyDeclaredNames and VarDeclaredNames must not intersect.
+/// VarDeclaredNames reaches through nested blocks and stops at a function,
+/// which is exactly what the return value carries upward.
+///
+/// `outer` is the FormalParameters of the function whose body this is, or a
+/// catch parameter (15.2.1 and 14.15.1 state the same rule for both), or
+/// null.
 std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, list_kind kind,
                                          const std::vector<binding> * outer,
                                          const char * outer_what) {
     std::vector<binding> lex;
     lexical_names(stmts, kind, lex);
 
-    // Duplicate lexical names. The one relaxation: in sloppy mode two
-    // FunctionDeclarations of one name in a block are legal (B.3.2.1), and
-    // this engine has no strict mode - so a duplicate is only refused when
-    // at least one side is a let, const or class.
+    // Duplicate lexical names. The one relaxation (B.3.2.4): in sloppy code
+    // two plain function declarations of one name in a block are legal.
+    // Strict code, or a generator or async function on either side, makes it
+    // the duplicate 14.2.1 refuses.
     if (lex.size() > 1) {
         std::unordered_map<std::string_view, std::size_t> seen;
         seen.reserve(lex.size());
@@ -168,9 +165,8 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
             const auto [it, fresh] = seen.emplace(lex[i].name, i);
             if (fresh) { continue; }
             const binding & first = lex[it->second];
-            // B.3.2.4: the relaxation is for two PLAIN function declarations
-            // in sloppy code; a generator or an async function on either
-            // side, or strict code, is the duplicate 14.2.1 refuses.
+            // `c` holds the parser's function flags (bit 0 async, bit 1
+            // generator); a plain function has none set.
             const auto plain = [&](const binding & b) {
                 return b.how == binding_kind::function_ && at(b.node).c <= 0;
             };
@@ -215,23 +211,22 @@ std::vector<binding> checker::check_list(std::span<const std::int32_t> stmts, li
     return vars;
 }
 
-// 16.2.1, the two static semantics of a Module's ModuleItemList that no
-// other production has:
-//   - ExportedNames must not contain a duplicate. `export { x }; export { x }`
-//     and `export default x; export { y as default }` name one export twice,
-//     and a module with two of a name cannot be linked.
-//   - every ExportedBinding must be declared by this module. `export { X }`
-//     for an X the module never binds is a SyntaxError, not a lookup that
-//     fails later - and it was a compiler refusal here, which is a different
-//     answer to a different question.
-// `vars` is what check_list handed back for the top level: its `var`s and,
-// in a script, its function declarations.
+/// 16.2.1, the two static semantics of a Module's ModuleItemList that no
+/// other production has:
+///   - ExportedNames must not contain a duplicate. `export { x }; export { x }`
+///     and `export default x; export { y as default }` name one export twice,
+///     and a module with two of a name cannot be linked.
+///   - Every ExportedBinding must be declared by this module. `export { X }`
+///     for an X the module never binds is a SyntaxError, not a lookup that
+///     fails later.
+/// `vars` is what check_list handed back for the top level: its `var`s and,
+/// in a script, its function declarations.
 void checker::check_module_items(std::int32_t root, const std::vector<binding> & vars) {
     const std::span<const std::int32_t> items = kids(at(root));
     std::vector<binding> declared = vars;
     lexical_names(items, list_kind::script, declared);
-    // 16.2.1.1: the ModuleItemList's LexicallyDeclaredNames - imports and a
-    // named default export among them - may not repeat, nor name a var. The
+    // 16.2.1.1: the ModuleItemList's LexicallyDeclaredNames (imports and a
+    // named default export among them) may not repeat, nor name a var. The
     // names lexical_names already compared are in `declared`; these two kinds
     // it cannot see are compared against them, and each other, as they join.
     const auto declare = [&](std::string_view name, std::int32_t node) {
@@ -270,13 +265,13 @@ void checker::check_module_items(std::int32_t root, const std::vector<binding> &
                 declare(at(spec).text, spec);
             }
         }
-        // `export default function f() {}` BINDS f as well as exporting
+        // `export default function f() {}` binds f as well as exporting
         // `default` (16.2.3.7: the HoistableDeclaration's BoundNames), and a
         // named `export default class C {}` binds C. The parser reads either
         // in expression position, where lexical_names mostly cannot see the
         // name - so it is declared here unless lexical_names already recorded
         // this very node, which would report it as its own duplicate.
-        // `export default y` names an EXPRESSION, which binds nothing.
+        // `export default y` names an expression, which binds nothing.
         if (item.kind == nk::export_decl && item.c == 1 && item.a >= 0 &&
             !at(item.a).text.empty() &&
             (at(item.a).kind == nk::func_expr || at(item.a).kind == nk::class_decl) &&
@@ -320,8 +315,8 @@ void checker::check_module_items(std::int32_t root, const std::vector<binding> &
             const vp::node & one = at(spec);
             exported.push_back(
                 binding{one.a >= 0 ? at(one.a).text : one.text, binding_kind::const_, spec});
-            // WITHOUT `from` the local name must exist here; with one it is
-            // the OTHER module's business and is resolved at link time.
+            // Without `from` the local name must exist here; with one it is
+            // the other module's business and is resolved at link time.
             if (item.text.empty() && !is_declared(one.text)) {
                 report(quoted(one.text) + " is exported and is not declared in this module", spec);
             }
@@ -382,7 +377,7 @@ void checker::check_identifier_reference(std::string_view name, std::int32_t nod
 
 namespace {
 // An identifier as the lexer left it may still spell its code points with
-// `\uXXXX` or `\u{...}` escapes; the rules below are about the NAME, so
+// `\uXXXX` or `\u{...}` escapes; the rules below are about the name, so
 // `var \u0070ublic` in strict code is `public`, reserved (12.7.1.1: an
 // escaped reserved word is still that word). ASCII is all a reserved word
 // can be, so anything past it just stays as it was written.
@@ -420,9 +415,9 @@ void checker::check_strict_binding(std::string_view spelled, std::int32_t node, 
     const std::string decoded =
         spelled.find('\\') == std::string_view::npos ? std::string{} : unescape_identifier(spelled);
     const std::string_view name = decoded.empty() ? spelled : std::string_view{decoded};
-    // A BINDING THAT IS NOT AN IDENTIFIER AT ALL - the parser takes whatever
+    // A binding that is not an identifier at all: the parser takes whatever
     // token stands where a name should, so `var 1 = 1` and `function (1, 1)`
-    // arrived as bindings named "1" (13.1 BindingIdentifier: IdentifierStart
+    // arrive as bindings named "1" (13.1 BindingIdentifier: IdentifierStart
     // is a letter, `$`, `_`, an escape or a non-ASCII code point).
     if (trusted && !name.empty()) {
         const auto first = static_cast<unsigned char>(name.front());
@@ -432,7 +427,7 @@ void checker::check_strict_binding(std::string_view spelled, std::int32_t node, 
             return;
         }
     }
-    // A BINDING named with a reserved word is one the parser took leniently
+    // A binding named with a reserved word is one the parser took leniently
     // (`var default`) or an escaped spelling; either is the SyntaxError, and
     // no valid program declares one.
     if (trusted && reserved_word(name)) {

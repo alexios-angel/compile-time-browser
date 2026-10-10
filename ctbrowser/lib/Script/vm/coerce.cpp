@@ -1,8 +1,10 @@
-// ctbrowser.script context - the coercions - ToNumber, ToString, ToPrimitive and the comparisons.
+//===- ctbrowser/lib/Script/vm/coerce.cpp - Type coercions ------*- C++ -*-===//
 //
-// One of four files carved out of a 3,232-line vm.cpp on 2026-08-09. All
-// members of `context`, declared in include/ctbrowser/script/vm.hpp - so
-// they split across translation units with nothing to declare.
+// The coercions (ToNumber, ToString, ToPrimitive), the binary operators built
+// on them, and the equality and relational comparisons. All functions here are
+// members of `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cmath>
 #include <cstddef>
@@ -18,6 +20,7 @@
 
 namespace ctbrowser::script {
 
+/// ToBoolean (7.1.2).
 bool context::truthy(value v) {
     if (v.is_boolean()) { return v.as_boolean(); }
     if (v.is_nullish()) { return false; }
@@ -30,57 +33,61 @@ bool context::truthy(value v) {
     if (v.is_kind(heap_kind::bigint)) {
         return static_cast<bigint_object *>(v.as_heap())->digits != 0;
     }
-    return true; // every other object is truthy
+    return true; // Every other object is truthy.
 }
 
+/// ToNumber for a primitive \p v; an object gives NaN without calling into
+/// script (see to_number_value for the full conversion).
 double context::to_number(value v) {
     if (v.is_number()) { return v.as_number(); }
     if (v.is_boolean()) { return v.as_boolean() ? 1 : 0; }
     if (v.is_null()) { return 0; }
     if (v.is_undefined()) { return std::nan(""); }
     if (v.is_string()) {
-        // string_to_number, not std::stod: stod reads LC_NUMERIC for the decimal
-        // separator, throws to report a failure this VM then had to catch, and
-        // accepted neither "+5" nor the radix prefixes. See core/number_format.hpp.
+        // string_to_number, not std::stod: stod reads LC_NUMERIC for the
+        // decimal separator, reports failure by throwing, and accepts neither
+        // "+5" nor the radix prefixes. See core/number_format.hpp.
         return string_to_number(static_cast<string_object *>(v.as_heap())->text);
     }
     return std::nan("");
 }
 
-// Number::exponentiate, 6.1.6.1.3. Three special cases and then libm.
-//
-// C99 F.10.4.4 makes `pow(+-1, y)` exactly 1 for EVERY y, on the reasoning that
-// 1 to any power is 1 even when the power is unknown. JavaScript takes the
-// opposite view for an unknown or infinite exponent, and it matters: `1 ** NaN`
-// coming back as 1 is a number a page will keep computing with, where NaN is a
-// value `isNaN` can catch.
+/// Number::exponentiate, 6.1.6.1.3. Three special cases and then libm.
+///
+/// C99 F.10.4.4 makes `pow(+-1, y)` exactly 1 for every y, on the reasoning that
+/// 1 to any power is 1 even when the power is unknown. JavaScript takes the
+/// opposite view for an unknown or infinite exponent, and it matters: `1 ** NaN`
+/// coming back as 1 is a number a page will keep computing with, where NaN is a
+/// value `isNaN` can catch.
 double context::exponentiate(double base, double exponent) {
     if (std::isnan(exponent)) { return std::nan(""); }
-    // Even NaN to the zeroth power is 1 - this is checked before the base.
+    // Even NaN to the zeroth power is 1, so this is checked before the base.
     if (exponent == 0) { return 1; }
     if (std::isinf(exponent) && std::fabs(base) == 1) { return std::nan(""); }
     return std::pow(base, exponent);
 }
 
+/// ToString (7.1.17), except that a symbol yields its property key (this is
+/// also ToPropertyKey). Objects go through ToPrimitive with the string hint.
 std::string context::to_string(value v) {
     if (v.is_undefined()) { return "undefined"; }
     if (v.is_null()) { return "null"; }
     if (v.is_boolean()) { return v.as_boolean() ? "true" : "false"; }
     // number_to_string, not std::to_string(double), which is `%f` to six
-    // decimals - so this returned "0.333333" for 1/3, "0" for anything smaller
-    // than about 1e-7, and 309 literal digits for the largest double. It is also
+    // decimals: "0.333333" for 1/3, "0" for anything smaller than about 1e-7,
+    // and 309 literal digits for the largest double. It is also
     // locale-dependent. See core/number_format.hpp.
     if (v.is_number()) { return number_to_string(v.as_number()); }
     if (v.is_string()) { return static_cast<string_object *>(v.as_heap())->text; }
-    // The KEY, not the description: this is what makes `o[sym]` reach a slot
+    // The key, not the description: this is what makes `o[sym]` reach a slot
     // no literal can name, since a computed property goes through here.
     if (v.is_kind(heap_kind::symbol)) { return static_cast<symbol_object *>(v.as_heap())->key; }
-    // The DIGITS, without the trailing `n` - `String(1n)` is "1", and the
+    // The digits, without the trailing `n`: `String(1n)` is "1", and the
     // suffix is literal syntax rather than part of the value.
     if (v.is_kind(heap_kind::bigint)) {
         return bigint_to_string(static_cast<bigint_object *>(v.as_heap())->digits);
     }
-    // ONE LEVEL OF C++ RE-ENTRY, and everything past this point is capable of
+    // One level of C++ re-entry, and everything past this point is capable of
     // it: an array's elements can include the array, and an object converts
     // through a `toString` that can ask to convert the same object again. See
     // context::reentry_scope.
@@ -95,47 +102,23 @@ std::string context::to_string(value v) {
         }
         return out;
     }
-    // A FUNCTION CONVERTS THROUGH ITS `toString` LIKE ANYTHING ELSE, and this
-    // line said otherwise: `String(f)`, `'' + f` and `${f}` were all the bare
-    // word "function" whatever f was, so two different functions stringified
-    // ALIKE and a page could not tell them apart.
-    //
-    // `Function.prototype.toString` already hands back the real source text -
-    // `function_proto` carries the span and the program keeps its bytes - so
-    // the shortcut was not standing in for a missing answer, it was hiding one
-    // that was already there. It is what makes `f.toString()` and `String(f)`
-    // agree, which is what a library reading its own source relies on: p5's
-    // Friendly Error System, every `('' + fn).indexOf('native code')` feature
-    // probe, and the parameter-name scrapers that a DI container is built on
-    // all take the second spelling.
-    //
-    // A NATIVE still says `function () { [native code] }`, because that is what
-    // its `toString` returns and every engine says the same.
-    // AN OBJECT CONVERTS THROUGH ITS OWN `toString`, then `valueOf`.
-    //
-    // That is ToPrimitive, and it is not a nicety: a class that defines
-    // toString does so precisely because it expects `'' + x`, a template hole
-    // and String(x) to use it. Returning the tag regardless turned every such
-    // object into "[object Object]" - which for colorjs, whose colour spaces
-    // print as "HSB (hsb)", made an error message name the wrong thing and a
-    // page's own labels come out as tags.
+    // Functions and other objects convert through ToPrimitive with the string
+    // hint, so a user `toString` is honoured (`'' + x`, template holes and
+    // String(x) all use it), and `String(f)` agrees with `f.toString()`, which
+    // returns the function's source text. Libraries rely on this: feature
+    // probes like `('' + fn).indexOf('native code')`, p5's Friendly Error
+    // System and DI containers that scrape parameter names. A native function
+    // prints as `function () { [native code] }`, as in every engine.
     return to_primitive_string(v);
 }
 
-// `toString` then `valueOf`, either of which may be inherited. Bounded: a
-// method that hands back another object falls through to the tag rather than
-// recursing, which is what the spec does after trying both.
-// ToPrimitive with the DEFAULT hint: `valueOf`, then `toString`, and whatever
-// comes back is a primitive the operator can work on. `+` needs this before it
-// can even decide what it means - `{valueOf: () => 42} + 1` is 43 and
-// `{toString: () => 'x'} + 1` is "x1", and which one it is depends on what the
-// object hands back rather than on the object being an object.
-// ToPrimitive, 7.1.1: the object's @@toPrimitive first, then OrdinaryToPrimitive
-// (7.1.1.1) in the hint's order. FALSE means a TypeError is in flight - an
-// exotic method that is not callable or answers an object, or neither ordinary
-// method answering a primitive. Every ToPrimitive below is this one walk, so
-// `[].join.call({toString: () => ({}), valueOf: () => ({})})` refuses once
-// rather than falling back to "[object Object]" in one place and NaN in another.
+/// ToPrimitive (ECMA-262 7.1.1): the object's @@toPrimitive first, then
+/// OrdinaryToPrimitive (7.1.1.1) in the order \p hint ("default", "number" or
+/// "string") gives. Returns false when a TypeError is pending: the exotic
+/// method is not callable or returns an object, or neither `toString` nor
+/// `valueOf` returns a primitive. Every ToPrimitive in this file goes through
+/// this one function, so a conversion fails the same way everywhere instead of
+/// falling back to "[object Object]" in one place and NaN in another.
 bool context::to_primitive_hint(value v, const char * hint, value & out) {
     const value exotic = lookup_property(v, CTBROWSER_SYMBOL_KEY("toPrimitive"));
     if (throw_pending()) { return false; }
@@ -167,19 +150,18 @@ bool context::to_primitive_hint(value v, const char * hint, value & out) {
     return false;
 }
 
+/// ToPrimitive with the default hint, as `+` and `==` need it: the operator
+/// can only decide what it means once both sides are primitive
+/// (`{valueOf: () => 42} + 1` is 43, `{toString: () => 'x'} + 1` is "x1").
+/// Returns undefined when the conversion threw.
 value context::to_primitive(value v) {
     const reentry_scope guard{*this};
     if (guard.overflowed()) { return value::undefined(); }
-    // A BIGINT IS ALREADY A PRIMITIVE, heap-allocated though it is. Letting it
-    // into the valueOf/toString walk below turns it into a STRING the moment
-    // BigInt.prototype carries those methods - which is exactly what made
-    // `1n + 2n` evaluate to "12" once it did.
-    //
-    // AND SO IS A SYMBOL (7.1.1 step 2 answers any primitive as itself). It
-    // was walked through its toString into "Symbol(x)" while nothing refused
-    // one; now the operators that take this answer refuse a symbol themselves
-    // (binary_op, compare_relational - 7.1.17 and 7.1.4 are the TypeError),
-    // so it passes through as what it is.
+    // BigInt and Symbol are primitives even though they are heap-allocated, so
+    // they are returned as-is (ECMA-262 7.1.1 step 2). Sending a BigInt through
+    // valueOf/toString would turn `1n + 2n` into "12". The operators that
+    // cannot take a Symbol (binary_op, compare_relational) throw the TypeError
+    // themselves.
     if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint) ||
         v.is_kind(heap_kind::symbol)) {
         return v;
@@ -188,21 +170,21 @@ value context::to_primitive(value v) {
     return to_primitive_hint(v, "default", out) ? out : value::undefined();
 }
 
-// The numeric half of the same rule: `valueOf` then `toString`. An object that
-// defines valueOf means it to be used in arithmetic - that is the only reason to
-// define one - and without this every such object was NaN.
+/// ToNumber (7.1.4) including objects: ToPrimitive with the number hint
+/// (`valueOf` then `toString`), then ToNumber of the result. BigInt and Symbol
+/// throw a TypeError and give NaN.
 double context::to_number_value(value v) {
     const reentry_scope guard{*this};
     if (guard.overflowed()) { return std::nan(""); }
-    // A BIGINT REFUSES IMPLICIT CONVERSION TO A NUMBER, and that refusal is the
+    // A BigInt refuses implicit conversion to a Number, and that refusal is the
     // type's whole safety property: `+1n`, `Math.abs(1n)` and `1n * 2` all land
     // here, and each would silently round past 2^53. `Number(1n)` is the
-    // EXPLICIT conversion and does not come through this path.
+    // explicit conversion and does not come through this path.
     if (v.is_kind(heap_kind::bigint)) {
         throw_error("TypeError", "Cannot convert a BigInt value to a number");
         return std::nan("");
     }
-    // AND A SYMBOL REFUSES IT OUTRIGHT (7.1.4 step 2): `+sym`, `-sym`,
+    // A Symbol refuses it outright too (7.1.4 step 2): `+sym`, `-sym`,
     // `sym * 1`. A built-in's argument helpers refuse one before they get
     // here (numeric_arg, internal.hpp), so this is the operators' refusal.
     if (v.is_kind(heap_kind::symbol)) {
@@ -216,8 +198,8 @@ double context::to_number_value(value v) {
         throw_error("TypeError", "Cannot convert a BigInt value to a number");
         return std::nan("");
     }
-    // A SYMBOL OUT OF ToPrimitive - `Object(Symbol())`, a valueOf answering
-    // one - is 7.1.4's TypeError; a bare symbol argument is the caller's
+    // A Symbol out of ToPrimitive (`Object(Symbol())`, or a valueOf returning
+    // one) is 7.1.4's TypeError; a bare symbol argument is the caller's
     // numeric_arg check, for the reason internal.hpp gives.
     if (out.is_kind(heap_kind::symbol)) {
         throw_error("TypeError", "Cannot convert a Symbol value to a number");
@@ -226,9 +208,11 @@ double context::to_number_value(value v) {
     return to_number(out);
 }
 
+/// ToString of an object: ToPrimitive with the string hint, then ToString.
+/// Gives "[object Object]" when the conversion threw or recursed too deeply.
 std::string context::to_primitive_string(value v) {
     // Guarded in its own right as well as through to_string, its only caller
-    // today: this is the half of the cycle that CALLS, so a second caller must
+    // today: this is the half of the cycle that calls, so a second caller must
     // not be able to reach it uncounted.
     const reentry_scope guard{*this};
     if (guard.overflowed()) { return "[object Object]"; }
@@ -237,11 +221,12 @@ std::string context::to_primitive_string(value v) {
     return to_string(out);
 }
 
+/// The `typeof` operator (13.5.3).
 std::string_view context::type_of(value v) {
     if (v.is_kind(heap_kind::symbol)) { return "symbol"; }
     if (v.is_kind(heap_kind::bigint)) { return "bigint"; }
     if (v.is_undefined()) { return "undefined"; }
-    if (v.is_null()) { return "object"; } // the famous wart, preserved
+    if (v.is_null()) { return "object"; } // The famous wart, preserved.
     if (v.is_boolean()) { return "boolean"; }
     if (v.is_number()) { return "number"; }
     if (v.is_string()) { return "string"; }
@@ -249,6 +234,7 @@ std::string_view context::type_of(value v) {
     return "object";
 }
 
+/// IsLooselyEqual (`==`, 7.2.14).
 bool context::loose_equals(value a, value b) {
     if (a.is_nullish() && b.is_nullish()) { return true; }
     if (a.is_nullish() || b.is_nullish()) { return false; }
@@ -259,7 +245,7 @@ bool context::loose_equals(value a, value b) {
         return static_cast<string_object *>(a.as_heap())->text ==
                static_cast<string_object *>(b.as_heap())->text;
     }
-    // `1n == 1` IS TRUE while `1n === 1` is false - loose equality compares the
+    // `1n == 1` is true while `1n === 1` is false: loose equality compares the
     // mathematical values across the two numeric types, which is exactly the
     // distinction the two operators exist to draw.
     {
@@ -279,7 +265,7 @@ bool context::loose_equals(value a, value b) {
                 static_cast<bigint_object *>(b.as_heap())->digits, a.as_number());
             return o && *o == 0;
         }
-        // Against a STRING, the string is converted to a BigInt: `1n == "1"`.
+        // Against a string, the string is converted to a BigInt: `1n == "1"`.
         if (a_big && b.is_string()) {
             const std::optional<bigint> parsed =
                 bigint_from_string(static_cast<string_object *>(b.as_heap())->text);
@@ -302,18 +288,16 @@ bool context::loose_equals(value a, value b) {
         if (throw_pending()) { return false; }
         return a_object ? loose_equals(primitive, b) : loose_equals(a, primitive);
     }
-    return to_number(a) == to_number(b); // the coercing cases
+    return to_number(a) == to_number(b); // The coercing cases.
 }
 
-// THE SEVEN NON-RE-ENTERING BINARY OPERATIONS. Phase 5's extraction, and the
-// row in aot_helpers.def names this function by name.
-//
-// Every one of them was the same eleven lines in run_loop.cpp: try the BigInt
-// arm, and otherwise convert statically and combine. They are here so that the
-// interpreter and a compiled body run the SAME code rather than two
-// implementations that agree today - which is the entire point of the phase,
-// and the reason its discipline is one helper per commit with the suite green
-// in between.
+/// The seven binary operations that never call back into script: add (on
+/// values already known to be primitives) and the six bitwise/shift operators.
+/// Each tries the BigInt arm, and otherwise converts statically and combines;
+/// nothing is converted with valueOf/toString here. The interpreter and
+/// AOT-compiled code both call this function (ct_aot_binary_op_static in
+/// include/ctbrowser/aot/helpers/values-and-properties.def), so both run the
+/// same code instead of two implementations that only happen to agree.
 value context::binary_op_static(op kind, value lhs, value rhs) {
     if (value made; bigint_binary(kind, lhs, rhs, made)) { return made; }
     switch (kind) {
@@ -329,17 +313,16 @@ value context::binary_op_static(op kind, value lhs, value rhs) {
         return value::number(static_cast<double>(to_uint32(lhs) >> (to_uint32(rhs) & 31U)));
     default: break;
     }
-    // NOT REACHABLE FROM THE INTERPRETER, which only ever passes the seven, and
+    // Not reachable from the interpreter, which only ever passes the seven, and
     // deliberately not an assert: this is also the AOT entry point, and an
     // image carrying a bad op_kind is untrusted input rather than a bug in this
     // file. Undefined is what every other unreachable arm in this VM returns.
     return value::undefined();
 }
 
-// UNARY MINUS. The body is VM_CASE(negate) unchanged, in the order it had.
-// Both arms matter and neither is the other's fast path: the BigInt arm
-// allocates and cannot throw catchably; the Number arm re-enters through
-// to_number_value and cannot allocate.
+/// Unary minus. The BigInt arm allocates a new BigInt; the Number arm goes
+/// through to_number_value, which may call valueOf/toString but never
+/// allocates.
 value context::negate_value(value v) {
     // -0n is 0n, not -0: a BigInt has one zero.
     if (v.is_kind(heap_kind::bigint)) {
@@ -349,7 +332,9 @@ value context::negate_value(value v) {
     return value::number(-to_number_value(v));
 }
 
-// BITWISE NOT, likewise VM_CASE(bit_not) unchanged.
+/// ToPrimitive with the number hint, for an operand of a numeric operator.
+/// Primitives (including BigInt and Symbol) are returned unchanged; returns
+/// null when the conversion threw, so callers must check for a throw.
 value context::numeric_operand(value v) {
     if (!v.is_heap() || v.is_string() || v.is_kind(heap_kind::bigint) ||
         v.is_kind(heap_kind::symbol)) {
@@ -360,6 +345,8 @@ value context::numeric_operand(value v) {
     return out;
 }
 
+/// Converts both operands with numeric_operand, left then right, into \p l and
+/// \p r. Returns false when either conversion threw or yielded a Symbol.
 bool context::numeric_operands(value lhs, value rhs, value & l, value & r) {
     // See binary_op for why a landed throw is asked of unwinds() as well.
     const std::size_t unwound = unwinds();
@@ -380,8 +367,10 @@ bool context::numeric_operands(value lhs, value rhs, value & l, value & r) {
     return numeric(lhs, l) && numeric(rhs, r);
 }
 
+/// Bitwise NOT (`~`). The operand must already be a primitive (see
+/// numeric_operand).
 value context::bit_not_value(value v) {
-    // ~1n is -2n, on the unbounded two's-complement value - there is no ToInt32
+    // ~1n is -2n, on the unbounded two's-complement value: there is no ToInt32
     // step, because a BigInt has no width to truncate to.
     if (v.is_kind(heap_kind::bigint)) {
         return value::object(
@@ -390,40 +379,43 @@ value context::bit_not_value(value v) {
     return value::number(~to_int32(v));
 }
 
-// THE SEVEN RE-ENTERING BINARY OPERATIONS. Phase 5's second extraction, and its
-// row names this function.
-//
-// Every arm below is the handler it came from, unchanged. What is worth reading
-// twice is what is NOT uniform: concat never consults the BigInt arm, and
-// add_generic consults it only after both sides are primitive and only when
-// neither is a string.
+/// The binary operations that may call back into script, because they convert
+/// objects through valueOf/toString first: concat (template literals),
+/// add_generic (`+`), sub, mul, div, mod and pow, plus the bitwise operators
+/// when their operands are not yet known to be primitives. AOT-compiled code
+/// reaches this function through ct_aot_binary_op.
+///
+/// The cases differ in one way worth noticing: concat never consults the
+/// BigInt arm, and add_generic consults it only after both sides are
+/// primitive and neither is a string.
 value context::binary_op(op kind, value lhs, value rhs) {
-    // CONCAT FIRST, because it is the one that must not reach bigint_binary at
-    // all: coerce.cpp's switch has no case for it, so `${1n}` would fall to the
-    // default arm and throw "BigInts have no unsigned right shift". It is
-    // emitted only by template literals and is unconditionally two ToStrings.
-    // THE LEFT OPERAND'S THROW STOPS THE OPERATOR. A throw from a user
-    // valueOf/toString has LANDED on its handler by the time the conversion
-    // returns - throw_pending cannot see it - so converting the right operand
-    // anyway ran it a second time and threw over no handler at all:
-    // `try { o < o } catch {}` was uncaught (Temporal's valueOf/basic.js).
-    // unwinds() is the counter that sees it. A throw ALREADY pending is not
-    // the operand's: IteratorClose calls a `return()` whose `n += 1` runs
-    // while the TypeError that closed the iterator is still in flight.
+    // If the left operand's conversion throws, the operator stops. A throw from
+    // a user valueOf/toString has already reached its handler by the time the
+    // conversion returns, so throw_pending() cannot see it; converting the
+    // right operand anyway would run user code again with no handler
+    // (test262 Temporal valueOf/basic.js: `try { o < o } catch {}`).
+    // unwinds() counts landed throws, so `threw` compares it. A throw that was
+    // already pending on entry is not the operand's: IteratorClose calls a
+    // `return()` while the TypeError that closed the iterator is still in
+    // flight.
     const std::size_t unwound = unwinds();
     const bool pending = throw_pending();
     const auto threw = [this, unwound, pending] {
         return (!pending && throw_pending()) || unwinds() != unwound;
     };
-    // A SYMBOL IS NEVER IMPLICITLY A STRING OR A NUMBER (7.1.17 step 2,
+    // A Symbol is never implicitly a string or a number (7.1.17 step 2,
     // 7.1.4 step 2): a template substitution, `+`, `-` and the relational
-    // operators all refuse one. to_string cannot - it is ToPropertyKey too,
-    // and hands a symbol's key back - so the operators ask here.
+    // operators all refuse one. to_string cannot (it is ToPropertyKey too,
+    // and hands a symbol's key back), so the operators check here.
     const auto refuse_symbol = [this](value a, value b, const char * to) {
         if (!a.is_kind(heap_kind::symbol) && !b.is_kind(heap_kind::symbol)) { return false; }
         throw_error("TypeError", std::string{"Cannot convert a Symbol value to a "} + to);
         return true;
     };
+    // Concat is handled first because it must never reach bigint_binary: that
+    // switch has no concat case, so `${1n}` would hit its default arm and throw
+    // "BigInts have no unsigned right shift". Template literals emit concat,
+    // and it is always two ToStrings.
     if (kind == op::concat) {
         if (refuse_symbol(lhs, lhs, "string")) { return value::undefined(); }
         std::string left = to_string(lhs);
@@ -433,11 +425,11 @@ value context::binary_op(op kind, value lhs, value rhs) {
     }
 
     if (kind == op::add_generic) {
-        // JS `+`: string concatenation if EITHER side is a string, numeric
+        // JS `+`: string concatenation if either side is a string, numeric
         // addition otherwise. The one operator whose meaning is decided by its
         // operands, which is why it is not folded into `add`.
         //
-        // BOTH SIDES ARE MADE PRIMITIVE FIRST, and only then does the operator
+        // Both sides are made primitive first, and only then does the operator
         // decide what it is. An object's own valueOf or toString is what settles
         // it, so `{valueOf: () => 42} + 1` is 43 while `{toString: () => 'x'} + 1`
         // is "x1".
@@ -448,10 +440,9 @@ value context::binary_op(op kind, value lhs, value rhs) {
         if (refuse_symbol(l, r, l.is_string() || r.is_string() ? "string" : "number")) {
             return value::undefined();
         }
-        // BEFORE the string-or-number decision: `1n + 1n` is addition and
+        // Before the string-or-number decision: `1n + 1n` is addition and
         // `1n + 1` is a TypeError, neither of which is either arm below. Note
-        // `1n + "a"` IS concatenation, so the string test still gets first
-        // refusal.
+        // `1n + "a"` is concatenation, so the string test still comes first.
         if (!l.is_string() && !r.is_string()) {
             if (value made; bigint_binary(op::add_generic, l, r, made)) { return made; }
         }
@@ -459,17 +450,16 @@ value context::binary_op(op kind, value lhs, value rhs) {
         return value::number(to_number(l) + to_number(r));
     }
 
-    // 13.15.3 ApplyStringOrNumericBinaryOperator: ToNumeric of BOTH operands
-    // first - ToPrimitive with hint number, left then right - and only then
-    // the BigInt/Number decision. `{valueOf() { return 2n; }} - 1n` is 1n; it
-    // was the mixing TypeError, because the object reached bigint_binary
-    // unconverted.
+    // ECMA-262 13.15.3 ApplyStringOrNumericBinaryOperator: ToNumeric of both
+    // operands first (ToPrimitive with the number hint, left then right), and
+    // only then the BigInt-or-Number decision, so
+    // `{valueOf() { return 2n; }} - 1n` is 1n.
     value l = value::undefined();
     value r = value::undefined();
     if (!numeric_operands(lhs, rhs, l, r)) { return value::undefined(); }
     if (value made; bigint_binary(kind, l, r, made)) { return made; }
-    // `to_number_value`, NOT `to_number`: ToNumber runs valueOf/toString on
-    // an object - none is left here - and a Symbol is its TypeError.
+    // `to_number_value`, not `to_number`: ToNumber runs valueOf/toString on
+    // an object (none is left here), and a Symbol is its TypeError.
     switch (kind) {
     case op::sub: return value::number(to_number_value(l) - to_number_value(r));
     case op::mul: return value::number(to_number_value(l) * to_number_value(r));
@@ -478,11 +468,10 @@ value context::binary_op(op kind, value lhs, value rhs) {
     // `**` is context::exponentiate, not libm's pow: the specification's edge
     // cases for it do not agree with C's.
     case op::pow: return value::number(exponentiate(to_number_value(l), to_number_value(r)));
-    // THE BITWISE SIX, as VM_CASE(bit_and) and its siblings run them: ToNumeric
-    // of both - a Symbol's TypeError, an object's valueOf - and then the
-    // static operator. Here so that a compiled tier lowering them through
-    // ct_aot_binary_op gets the interpreter's answer, not binary_op_static's,
-    // which converts nothing.
+    // The six bitwise operators, after ToNumeric of both operands (a Symbol's
+    // TypeError, an object's valueOf). They are listed here so that
+    // AOT-compiled code calling ct_aot_binary_op gets the interpreter's
+    // result; calling binary_op_static directly would skip the conversion.
     case op::bit_and:
     case op::bit_or:
     case op::bit_xor:
@@ -496,6 +485,9 @@ value context::binary_op(op kind, value lhs, value rhs) {
     return value::undefined();
 }
 
+/// Applies \p kind when either operand is a BigInt, writing the result (or
+/// undefined after a throw) to \p out and returning true. Returns false when
+/// neither operand is a BigInt. Mixing a BigInt with another type throws.
 bool context::bigint_binary(op kind, value a, value b, value & out) {
     const bool a_big = a.is_kind(heap_kind::bigint);
     const bool b_big = b.is_kind(heap_kind::bigint);
@@ -535,7 +527,7 @@ bool context::bigint_binary(op kind, value a, value b, value & out) {
     case op::shl: give_or_throw(bigint_shl(x, y), "Maximum BigInt size exceeded"); break;
     case op::shr: give_or_throw(bigint_shr(x, y), "Maximum BigInt size exceeded"); break;
     default:
-        // An operator with no BigInt meaning at all - `>>>` is the one the
+        // An operator with no BigInt meaning at all. `>>>` is the one the
         // specification names, because an unsigned shift needs a width and a
         // BigInt has none.
         throw_error("TypeError", "BigInts have no unsigned right shift");
@@ -545,22 +537,18 @@ bool context::bigint_binary(op kind, value a, value b, value & out) {
     return true;
 }
 
-// Abstract Relational Comparison, 7.2.13.
-//
-// THIS USED TO BE `to_number(a) < to_number(b)` AND NOTHING ELSE, which makes
-// every relational comparison between two strings FALSE - `"a" < "b"`, `"b" >
-// "a"`, `"abc" < "abd"`, all of them - because ToNumber of a non-numeric string
-// is NaN and every comparison against NaN is false. It is not a small corner:
-// `["b","a","c"].sort((x, y) => x < y ? -1 : 1)` returned its input untouched,
-// and any page ordering names, keys or dates as text got silence rather than an
-// error. `===` was unaffected, which is why it survived so long.
-//
-// Returning an ordering rather than a bool is what lets all four operators
-// share one comparison: `unordered` is the specification's `undefined` result,
-// and `std::is_lt`/`is_lteq`/`is_gt`/`is_gteq` are each false for it, which is
-// exactly the required NaN behaviour.
+/// IsLessThan, the abstract relational comparison (7.2.13).
+///
+/// Two strings compare by code unit, not as numbers: ToNumber of a
+/// non-numeric string is NaN, so a numeric-only comparison would make
+/// `"a" < "b"` false and break any sort of text.
+///
+/// Returning an ordering rather than a bool is what lets all four operators
+/// share one comparison: `unordered` is the specification's `undefined` result,
+/// and `std::is_lt`/`is_lteq`/`is_gt`/`is_gteq` are each false for it, which is
+/// exactly the required NaN behaviour.
 std::partial_ordering context::compare_relational(value a, value b) {
-    // ToPrimitive with the NUMBER hint, LEFT OPERAND FIRST. The order is
+    // ToPrimitive with the number hint, left operand first. The order is
     // observable because `valueOf` can have side effects, and it stays
     // source-order for `>` and `>=` because the caller passes the operands in
     // the order they were written.
@@ -570,32 +558,32 @@ std::partial_ordering context::compare_relational(value a, value b) {
     const auto threw = [this, unwound, pending] {
         return (!pending && throw_pending()) || unwinds() != unwound;
     };
-    // WITH THE NUMBER HINT (7.2.13 steps 1-2: ToPrimitive(x, NUMBER)), which
-    // is numeric_operand's: the default hint turned two Dates into their
-    // strings - a Date's @@toPrimitive answers "default" as "string" - so
-    // `d1 < d2` compared weekday names.
+    // The number hint (7.2.13 steps 1-2: ToPrimitive(x, NUMBER)) is
+    // numeric_operand's. The default hint would be wrong: a Date's
+    // @@toPrimitive treats "default" as "string", so `d1 < d2` would compare
+    // weekday names.
     const value pa = numeric_operand(a);
     if (threw()) { return std::partial_ordering::unordered; }
     const value pb = numeric_operand(b);
     if (threw()) { return std::partial_ordering::unordered; }
-    // ToNumeric of a symbol (7.2.13 step 4 - two strings are the only pair
+    // ToNumeric of a symbol (7.2.13 step 4; two strings are the only pair
     // compared without it) is the TypeError, as in binary_op.
     if (pa.is_kind(heap_kind::symbol) || pb.is_kind(heap_kind::symbol)) {
         throw_error("TypeError", "Cannot convert a Symbol value to a number");
         return std::partial_ordering::unordered;
     }
-    // A BIGINT COMPARES AGAINST A NUMBER even though it cannot be added to one:
-    // `1n < 2` is true. The comparison is EXACT rather than going through a
+    // A BigInt compares against a Number even though it cannot be added to one:
+    // `1n < 2` is true. The comparison is exact rather than going through a
     // double, because a bigint past 2^53 must not round into equality with the
-    // number beside it - which is the one loss the type exists to prevent.
+    // number beside it, which is the one loss the type exists to prevent.
     {
         const bool a_big = pa.is_kind(heap_kind::bigint);
         const bool b_big = pb.is_kind(heap_kind::bigint);
         if (a_big || b_big) {
             std::optional<int> order;
-            // AGAINST A STRING, the string becomes a BigInt (StringToBigInt,
-            // 7.2.13 steps 3.a-3.b): exactly - "9007199254740993" is not the
-            // double 2^53 - and a string that is no integer ("0.", "1e3") makes
+            // Against a string, the string becomes a BigInt (StringToBigInt,
+            // 7.2.13 steps 3.a-3.b) exactly ("9007199254740993" is not the
+            // double 2^53), and a string that is no integer ("0.", "1e3") makes
             // the comparison undefined, which is false every way round.
             const auto exact = [](const bigint & x, const bigint & y) {
                 return x < y ? -1 : (x > y ? 1 : 0);
@@ -631,8 +619,8 @@ std::partial_ordering context::compare_relational(value a, value b) {
     if (pa.is_string() && pb.is_string()) {
         const std::string & x = static_cast<string_object *>(pa.as_heap())->text;
         const std::string & y = static_cast<string_object *>(pb.as_heap())->text;
-        // CODE UNIT order (7.2.13 step 3), which UTF-8's byte order is not
-        // once a surrogate pair meets U+E000-U+FFFF - utf16::compare.
+        // Code unit order (7.2.13 step 3), which UTF-8's byte order is not
+        // once a surrogate pair meets U+E000-U+FFFF; hence utf16::compare.
         const int r = utf16::compare(x, y);
         return r < 0   ? std::partial_ordering::less
                : r > 0 ? std::partial_ordering::greater
