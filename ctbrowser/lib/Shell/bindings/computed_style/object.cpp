@@ -5,9 +5,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "internal.hpp"
-
+#include <ctbrowser/core/algorithms.hpp>
+#include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/style/css/properties.hpp>
 #include <ctbrowser/style/css/selector.hpp>
+
+#include <memory>
 
 namespace ctbrowser::shell {
 
@@ -379,6 +382,34 @@ value dom_bindings::computed_style_object(context & cx, node_id id, atom pseudo)
         }
     }
     return value::object(held);
+}
+
+page::page_view dom_bindings::view_of_page() const {
+    page::page_view view;
+    view.doc = doc_;
+    view.atoms = atoms_;
+    view.styles = styles_;
+    view.selector_engine = selector_engine_;
+    view.boxes = boxes_;
+    view.fragments = fragments_;
+    view.viewport_width = viewport_width_;
+    view.viewport_height = viewport_height_;
+    view.viewport_scroll = viewport_scroll();
+    view.scroll_offset_of = [this](node_id id) { return scroll_offset_of(id); };
+    view.animated_values = [this](node_id id, float font_size,
+                                  const std::function<std::string_view(std::string_view)> & under) {
+        return animated_values(id, font_size, under);
+    };
+    return view;
+}
+
+std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(node_id id) {
+    return computed_style_entries(id, {});
+}
+
+std::vector<std::pair<std::string, std::string>> dom_bindings::computed_style_entries(
+    node_id id, const style::computed_style_ptr & pseudo) {
+    return page::computed_style_entries(view_of_page(), id, pseudo);
 }
 
 void dom_bindings::install_computed_style(context & cx) {

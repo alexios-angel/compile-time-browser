@@ -83,13 +83,6 @@ struct located {
     point translation;
 };
 
-/// A box's bounds and the transform that maps them into the viewport.
-struct box_geometry {
-    rect bounds;
-    transform to_viewport;
-    [[nodiscard]] rect bounding_rect() const;
-};
-
 /// A named native method to install on a prototype.
 struct operation {
     std::string name;

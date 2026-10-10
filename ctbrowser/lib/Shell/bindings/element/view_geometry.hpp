@@ -13,11 +13,7 @@ namespace ctbrowser::shell::detail {
 /// lib/Style/css/properties/table.cpp.
 using style::css::css_name_of;
 
-/// True for an inline box as CSSOM View §7 uses the term (`display: inline`).
-/// Inline-level blocks and replaced boxes are excluded because they have their
-/// own client edges.
-[[nodiscard]] inline bool is_inline_box(const layout::fragment & f) noexcept {
-    return f.box != nullptr && f.box->kind == layout::box_kind::inline_;
-}
+/// The CSSOM View "inline box" test; see ctbrowser/page/client_rects.hpp.
+using page::is_inline_box;
 
 } // namespace ctbrowser::shell::detail

@@ -1,8 +1,8 @@
 //===- computed_style/internal.hpp - Computed style helpers -----*- C++ -*-===//
 //
-// Private to lib/Shell/bindings/computed_style/; not installed.
+// Private to lib/Page/; not installed.
 //
-// dom_bindings' `getComputedStyle`: what the cascade and layout between them
+// getComputedStyle's values: what the cascade and layout between them
 // decided about one element. tools/check/css-parity.py compares it against
 // Chrome property by property.
 //
@@ -59,7 +59,9 @@
 #include <cmath>
 #include <cstdint>
 #include <ctbrowser/core/algorithms.hpp>
-#include <ctbrowser/shell/bindings.hpp>
+#include <ctbrowser/page/client_rects.hpp>
+#include <ctbrowser/page/computed_style.hpp>
+#include <ctbrowser/paint/values.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 #include <memory>
 #include <optional>
@@ -69,10 +71,9 @@
 #include <utility>
 #include <vector>
 
-namespace ctbrowser::shell::detail {
+namespace ctbrowser::page::detail {
 
-// Helpers shared by more than one file of bindings/computed_style/, defined in
-// serialize.cpp.
+// Helpers shared by more than one file of lib/Page/, defined in serialize.cpp.
 
 /// Resolves a border width (`thin`, `medium`, `thick` or a length) to px.
 [[nodiscard]] float border_width_px(std::string_view text, float font_size);
@@ -114,4 +115,4 @@ struct transform_basis {
 /// first, then px lengths, then `inset`.
 [[nodiscard]] std::string shadow_text(std::string_view text, float font_size, bool box);
 
-} // namespace ctbrowser::shell::detail
+} // namespace ctbrowser::page::detail

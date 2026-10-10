@@ -81,19 +81,6 @@ struct css_sheet_record {
     std::vector<std::size_t> rules; // Indices into css_rule_store_.
 };
 
-/// Whether a `<link>` is a stylesheet: one answer for the cascade and the
-/// object model (HTML 4.6.7 and 4.2.4.4). `rel` is a space-separated token
-/// list matched ASCII case-insensitively; the `disabled` attribute keeps the
-/// sheet from being obtained at all; an `alternate stylesheet` is fetched (its
-/// `load` fires) but does not apply and is not in `document.styleSheets`
-/// unless the link was explicitly enabled, the flag `link.disabled = false`
-/// sets when it removes the attribute.
-enum class link_sheet {
-    none,
-    alternate,
-    active
-};
-
 } // namespace binding_detail
 
 } // namespace ctbrowser::shell

@@ -1,6 +1,6 @@
 //===- computed_style/serialize.cpp - Value serialisation -------*- C++ -*-===//
 //
-// dom_bindings: how a computed value is written down. Numbers as CSSOM's
+// How a computed value is written down. Numbers as CSSOM's
 // shortest round-tripping decimal, colours in the one form both engines
 // normalise to, transforms as matrices, shadows in canonical order, and
 // keywords folded.
@@ -13,7 +13,7 @@
 
 #include <numbers>
 
-namespace ctbrowser::shell {
+namespace ctbrowser::page {
 
 using namespace detail;
 
@@ -435,4 +435,4 @@ std::string transform_matrix_text(std::string_view text, const transform_basis &
 
 } // namespace detail
 
-} // namespace ctbrowser::shell
+} // namespace ctbrowser::page

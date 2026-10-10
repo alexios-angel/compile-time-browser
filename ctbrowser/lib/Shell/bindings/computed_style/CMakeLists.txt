@@ -1,8 +1,5 @@
-# Sources of getComputedStyle: the CSSStyleDeclaration object and its values.
+# getComputedStyle's CSSStyleDeclaration object. Its values come from
+# ctbrowser-page (lib/Page/computed_style/).
 target_sources(ctbrowser-shell PRIVATE
-  entries.cpp
-  geometry.hpp
-  internal.hpp
   object.cpp
-  serialize.cpp
 )

@@ -16,30 +16,6 @@ namespace ctbrowser::shell {
 
 using namespace detail;
 
-/// Classifies a <link> as an active, alternate or non-stylesheet. Shared with
-/// browser::collect_author_styles so the cascade and the CSSOM agree on which
-/// links are stylesheets. `rel` is a space-separated token list compared ASCII
-/// case-insensitively.
-dom_bindings::link_sheet dom_bindings::link_sheet_state(std::string_view rel,
-                                                        bool disabled_attribute,
-                                                        bool explicitly_enabled) {
-    bool stylesheet = false;
-    bool alternate = false;
-    std::size_t at = 0;
-    while (at < rel.size()) {
-        const std::size_t start = rel.find_first_not_of(html_whitespace, at);
-        if (start == std::string_view::npos) { break; }
-        std::size_t end = rel.find_first_of(html_whitespace, start);
-        if (end == std::string_view::npos) { end = rel.size(); }
-        const std::string_view token = rel.substr(start, end - start);
-        if (ascii_iequals(token, "alternate")) { alternate = true; }
-        if (ascii_iequals(token, "stylesheet")) { stylesheet = true; }
-        at = end;
-    }
-    if (!stylesheet || disabled_attribute) { return link_sheet::none; }
-    return alternate && !explicitly_enabled ? link_sheet::alternate : link_sheet::active;
-}
-
 std::string_view dom_bindings::preferred_sheet_title() {
     if (css_preferred_title_.empty() && cx_ != nullptr) { sync_style_sheets(*cx_); }
     return css_preferred_title_;
@@ -47,20 +23,6 @@ std::string_view dom_bindings::preferred_sheet_title() {
 
 bool dom_bindings::link_explicitly_enabled(node_id id) const {
     return std::ranges::find(enabled_links_, id.key()) != enabled_links_.end();
-}
-
-std::string dom_bindings::resolve_sheet_href(std::string_view base, std::string_view reference) {
-    if (base.empty() || reference.empty() || is_data_url(reference) ||
-        parse_absolute(reference).valid || reference.front() == '/') {
-        return std::string{reference};
-    }
-    if (parse_absolute(base).valid) { return resolve(base, reference); }
-    // A relative base is a path the registry resolves from the page's
-    // directory, so its imports live beside it. A data: base has no directory.
-    if (is_data_url(base)) { return std::string{reference}; }
-    const std::size_t slash = base.rfind('/');
-    if (slash == std::string_view::npos) { return std::string{reference}; }
-    return std::string{base.substr(0, slash + 1)} + std::string{reference};
 }
 
 std::string dom_bindings::author_style_text() {

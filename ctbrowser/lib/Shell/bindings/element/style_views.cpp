@@ -6,7 +6,6 @@
 // HTMLElement, SVGElement and MathMLElement prototypes.
 //
 //===----------------------------------------------------------------------===//
-#include "../computed_style/internal.hpp"
 #include "internal.hpp"
 
 #include "view_geometry.hpp"
@@ -21,10 +20,7 @@ using namespace detail;
 /// The cascade's value for `property` on element `id`, trimmed, or "" when
 /// there is no cascade or no value.
 std::string_view dom_bindings::cascade_value(node_id id, std::string_view property) const {
-    if (styles_ == nullptr) { return {}; }
-    const auto found = styles_->find(style::engine::key_of(id));
-    if (found == styles_->end() || !found->second) { return {}; }
-    return trim(found->second->get(atoms_->intern(property)), html_whitespace);
+    return page::cascade_value(styles_, *atoms_, id, property);
 }
 
 /// CSSOM View's "potentially scrollable" test for the body element: it has a

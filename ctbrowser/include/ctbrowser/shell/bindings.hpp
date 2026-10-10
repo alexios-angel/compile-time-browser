@@ -81,11 +81,14 @@ public:
     /// `style::computed_style` holds only the declarations that matched, as
     /// text, with no inheritance and no initial values. So a keyword comes from
     /// the style map, a resolved length from the box tree, and a used size from
-    /// the fragment; see lib/Shell/bindings/computed_style/.
+    /// the fragment; see lib/Page/computed_style/.
     void observe_styles(const style::style_map * styles) { styles_ = styles; }
 
     /// The box tree, for getComputedStyle; see observe_styles.
     void observe_boxes(const layout::box_node * boxes) { boxes_ = boxes; }
+    /// The trees and viewport getComputedStyle and the client rects are read
+    /// from, as last observed: what ctbrowser/page answers its queries over.
+    [[nodiscard]] page::page_view view_of_page() const;
     /// The viewport size in CSS pixels, for innerWidth and media queries.
     void observe_viewport(int width, int height);
 
@@ -275,7 +278,7 @@ private:
     /// coordinates and tree order.
     [[nodiscard]] std::vector<rect> client_rects_of(node_id self);
 
-    using box_geometry = binding_detail::box_geometry;
+    using box_geometry = page::box_geometry;
     [[nodiscard]] std::vector<box_geometry> client_boxes_of(node_id self,
                                                             std::string_view box) const;
     void install_window_scrolling(context & cx, script::object_object & window);
@@ -659,13 +662,19 @@ public:
     void install_style_sheets(context & cx);
     void install_sheet_property(context & cx, script::object_object & obj, node_id id);
 
-    using link_sheet = binding_detail::link_sheet;
+    /// What a `<link>` is to the cascade and the object model; see
+    /// ctbrowser/page/author_styles.hpp, which the cascade's walk shares.
+    using link_sheet = page::link_sheet;
     [[nodiscard]] static link_sheet link_sheet_state(std::string_view rel, bool disabled_attribute,
-                                                     bool explicitly_enabled);
+                                                     bool explicitly_enabled) {
+        return page::link_sheet_state(rel, disabled_attribute, explicitly_enabled);
+    }
     [[nodiscard]] bool link_explicitly_enabled(node_id id) const;
     [[nodiscard]] std::string_view preferred_sheet_title();
     [[nodiscard]] static std::string resolve_sheet_href(std::string_view base,
-                                                        std::string_view reference);
+                                                        std::string_view reference) {
+        return page::resolve_sheet_href(base, reference);
+    }
 
     /// Where CSSOM edits reach the cascade. insertRule, deleteRule and
     /// replaceSync change the object model only; re-running the cascade is the

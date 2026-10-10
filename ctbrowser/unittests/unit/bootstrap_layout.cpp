@@ -30,8 +30,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <ctbrowser.hpp>
-
 #include "check.hpp"
 #include "engine.hpp"
 
@@ -45,8 +43,17 @@
 #include <string_view>
 
 using namespace ctbrowser;
-using ctbrowser::shell::browser;
-using ctbrowser::shell::browser_options;
+
+// The page the table is measured on: the browser for the interpreter, and a
+// page with no script engine for the native build (`bootstrap_layout.native`),
+// which links no VM. Both are set up and loaded the same way below.
+#ifdef CTBROWSER_TEST_NATIVE
+using fixture_page = ctbrowser::page::static_page;
+using fixture_options = ctbrowser::page::static_page_options;
+#else
+using fixture_page = ctbrowser::shell::browser;
+using fixture_options = ctbrowser::shell::browser_options;
+#endif
 
 namespace {
 
@@ -75,7 +82,7 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
         return {};
     }
 
-    browser page_browser{browser_options{viewport_width, viewport_height}};
+    fixture_page page_browser{fixture_options{viewport_width, viewport_height}};
     // Where `../../vendor/bootstrap/bootstrap.css` resolves from. The asset
     // registry probes ".", then the base path, then two levels above it
     // (shell/page/assets.hpp), and the test's working directory is the source

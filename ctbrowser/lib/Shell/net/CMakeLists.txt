@@ -1,8 +1,11 @@
-# Networking: HTTP over libcurl, the fetch policy, and the WHATWG URL parser
-# with its generated IDNA and NFC tables (the .inc files).
-target_sources(ctbrowser-shell PRIVATE
+# Networking. ctbrowser-net is the part with no transport: the WHATWG URL
+# parser with its generated IDNA and NFC tables (the .inc files) and the fetch
+# policy, which ctbrowser-page reads assets through as well. HTTP over libcurl
+# (net.cpp) stays in ctbrowser-shell.
+add_library(ctbrowser-net)
+target_sources(ctbrowser-net PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
+target_sources(ctbrowser-net PRIVATE
   idna_table.inc
-  net.cpp
   nfc_table.inc
   policy.cpp
   url.cpp
@@ -10,6 +13,14 @@ target_sources(ctbrowser-shell PRIVATE
   url_internal.hpp
   url_parser.cpp
   url_unicode.cpp
+)
+target_compile_features(ctbrowser-net PUBLIC cxx_std_23)
+ctbrowser_target(ctbrowser-net)
+target_link_libraries(ctbrowser-net PUBLIC ctbrowser-core)
+add_library(ctbrowser::net ALIAS ctbrowser-net)
+
+target_sources(ctbrowser-shell PRIVATE
+  net.cpp
 )
 
 add_subdirectory(idna_table)
