@@ -360,6 +360,22 @@ def check_umd(args, node, reference, compilers, nm):
     except Exception as error:
         declared = None
         mismatches.append(f"umd-declared-define: preparation failed: {error}")
+    # Because the fold proves `define`, `exports` and `module` absent, their
+    # typeof loads no longer exist in the plain UMD IR, and the source
+    # mutations and the explicit-false hard-read control below edit the
+    # `exports` load.
+    # Their subject is the wrapper with `var exports;` in front: the
+    # declaration keeps `exports` a realm binding, so its typeof load
+    # survives with the same lookup mode, still ahead of every branch, and
+    # the full contract still proves the unmutated program.
+    try:
+        _, mutable_prepared, mutable, _ = prepare_umd(
+            args, "umd-declared-exports", "var exports;\n" + source
+        )
+        mutable_config = umd_contract(args, mutable, "umd-declared-exports", values)
+    except Exception as error:
+        mutable = None
+        mismatches.append(f"umd-declared-exports: preparation failed: {error}")
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         flags = options + " host-max-steps=1000000"
         for field, admitted in (("absent_bindings", True), ("undefined_bindings", False)):
@@ -367,6 +383,9 @@ def check_umd(args, node, reference, compilers, nm):
             mismatches.append(
                 expect(specialized, name, without(config, field, name), flags, admitted)
             )
+        if mutable:
+            name = f"umd-{policy}-declared-exports"
+            mismatches.append(expect(mutable, name, mutable_config, flags, True))
         if not declared:
             continue
         name = f"umd-{policy}-declared-define"
@@ -411,7 +430,7 @@ def check_umd(args, node, reference, compilers, nm):
             host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, specialized
         ):
             raise RuntimeError(f"umd-{policy}: fresh forged reports changed emitted C++")
-        for name, (text, reason) in umd_mutations(specialized.read_text()).items():
+        for name, (text, reason) in umd_mutations(mutable.read_text()).items():
             subject = args.work / f"umd-{policy}-{name}.mlir"
             unprinted = subject.with_suffix(".unprinted.mlir")
             unprinted.write_text(text)
@@ -419,7 +438,9 @@ def check_umd(args, node, reference, compilers, nm):
             # mutation that inserts a result before existing calls would break
             # the operand-preservation comparison.
             host.run([args.opt, str(unprinted), "-o", str(subject)])
-            refused(subject, f"umd-{policy}-{name}-stale", config, flags, "fingerprint mismatch")
+            refused(
+                subject, f"umd-{policy}-{name}-stale", mutable_config, flags, "fingerprint mismatch"
+            )
             fresh = umd_contract(args, subject, f"umd-{policy}-{name}", values)
             refused(subject, f"umd-{policy}-{name}", fresh, flags, reason)
 
@@ -452,7 +473,7 @@ def check_umd(args, node, reference, compilers, nm):
     text, replacements = re.subn(
         r'(ctjs.load_global "exports" \{)typeof_lookup = true(\})',
         r"\1typeof_lookup = false\2",
-        prepared.read_text(),
+        mutable_prepared.read_text(),
     )
     if replacements != 1:
         raise RuntimeError("explicit hard-read control lost its actual source lookup mode")
