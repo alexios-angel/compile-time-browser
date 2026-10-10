@@ -9,9 +9,10 @@
 // That is what lets the same test run on two engines. ctcompile compiles ahead
 // of time, so it can only compile JavaScript that exists as source at build
 // time - which these files are - and a native engine will call the compiled
-// functions directly. tools/check/check-workload.py's native-run stage runs the
-// same CTest with CTBROWSER_TEST_ENGINE=native. Until ctcompile can provide that
-// engine, selecting it fails loudly instead of quietly running the VM.
+// functions directly. tools/check/check-workload.py's native-run stage will run
+// each test as `<name>.native`: the same executable with
+// CTBROWSER_TEST_ENGINE=native. Until ctcompile can provide that engine,
+// selecting it fails loudly instead of quietly running the VM.
 //
 // WHAT THE SEAM DOES NOT COVER YET: loading the page, ticking frames, reading
 // pixels and dispatching input still go through ctbrowser::shell::browser, which

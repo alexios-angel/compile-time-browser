@@ -2,7 +2,8 @@
 // THE API-SURFACE PAWL, shared by the four *_api.cpp corpus tests.
 //
 // Each of them loads a bundle, runs the probes in its <corpus>-api-probe.js,
-// and gets one JSON report back through alert(). What happens to that report
+// and gets one JSON report back: from support/engine.hpp's call() in p5, Phaser
+// and Babylon, through alert() in webgl2. What happens to that report
 // is the same in every corpus: parse it BY HAND, check every probe is accounted
 // for, print the summary, and hold the recorded surface - a recorded pass that
 // now fails is a FAIL, a new pass prints ADVANCE, a known failure is the work

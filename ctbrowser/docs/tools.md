@@ -38,7 +38,9 @@ with it.
   writer. NOT a ctest, deliberately; see `docs/plans/bootstrap.md`.
 - `tools/check/css-dump.js` — the dump both engines run, prepended with `PROPS`
   by the above. Walks `documentElement.children` and never a complex selector,
-  because ctbrowser's selector engine is the thing under test.
+  because ctbrowser's selector engine is the thing under test. `bootstrap_layout`
+  is its second caller: it loads the file and calls `css_dump_table()` through
+  `test/support/engine.hpp`.
 - `tools/check/ctdrive-reply.py` — does `ctdrive` return a large `eval` reply
   intact? Two cases, and the second is the only one that can fail: a client that
   reads continuously keeps the kernel buffer draining, so an unlooped `send()`

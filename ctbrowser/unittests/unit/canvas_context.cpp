@@ -1,8 +1,9 @@
 // THE CANVAS CONTEXTS THROUGH THE BINDINGS: the 2D transform and path family,
 // text alignment, the fill rule, every composite operation, ImageData, `clip()`
-// and a canvas as an image source - and that `getContext('webgl')` constructs
-// and refuses cleanly. widgets_basics.cpp asks the same canvas what it DRAWS;
-// this asks what a script GETS BACK.
+// and a canvas as an image source - and `getContext('webgl')`'s buffer sizes and
+// its null after '2d'. widgets_basics.cpp asks the same canvas what it DRAWS;
+// this asks what a script GETS BACK. Whether a p5 WEBGL sketch constructs and
+// refuses cleanly moved to test/corpus/p5/p5_page.cpp on 2026-10-09.
 //
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in

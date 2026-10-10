@@ -1,9 +1,10 @@
 // INPUT REACHING SCRIPT, AND REAL PAGES RESPONDING TO IT: keyboard and mouse
 // events delivered to listeners with the legacy `keyCode` and `which`,
-// `preventDefault` stopping the browser's own handling, p5.js's event system
-// driven by real events, and MDN's breakout, pong and the invaders page played
-// by injecting input and asserting that the frames change. Every page here is
-// one nobody wrote for this engine.
+// `preventDefault` stopping the browser's own handling, and MDN's breakout,
+// pong and the invaders page played by injecting input and asserting that the
+// frames change. Every page here is one nobody wrote for this engine. p5.js's
+// event system driven by real events moved to test/corpus/p5/p5_page.cpp on
+// 2026-10-09.
 //
 // One of eight files carved out of unittests/unit/bindings_basics.cpp on
 // 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in

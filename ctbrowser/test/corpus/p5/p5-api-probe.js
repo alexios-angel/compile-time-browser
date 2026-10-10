@@ -31,7 +31,7 @@
 // for. Checked one at a time afterwards, every one reproduced on its own.
 // Never conclude a failure was noise without reproducing it in isolation.
 
-// Probe groups are loaded first by p5_api.cpp.
+// Probe groups are loaded first by p5_api.html.
 
 // The runner. Each probe gets the same sketch and a clean-ish canvas; a throw
 // is recorded against its name and the next probe still runs, because the
