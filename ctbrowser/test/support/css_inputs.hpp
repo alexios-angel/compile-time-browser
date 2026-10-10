@@ -58,10 +58,12 @@ enum class css_input_kind : std::uint8_t {
 };
 
 /// One input as the native build compiled it. `text` is the input, or for a
-/// file the path the test names. Exactly one answer is set, by kind.
+/// file the path the test names, in chunks joined in order: a generated file
+/// cannot hold a 90000-byte input as one string literal. Exactly one answer is
+/// set, by kind.
 struct compiled_css_input {
     css_input_kind kind = css_input_kind::tokens;
-    std::string_view text;
+    ctbrowser::style::css::text_chunks text{};
     const ctbrowser::style::css::compiled_tokens * tokens = nullptr;
     const ctbrowser::style::css::compiled_sheet * sheet = nullptr;
     bool supported = false;
@@ -115,6 +117,16 @@ inline void ask(css_input_kind kind, std::string_view text) {
 }
 
 #ifdef CTBROWSER_TEST_NATIVE
+/// Whether `chunks` joined are `text`, compared piece by piece.
+[[nodiscard]] inline bool same_text(ctbrowser::style::css::text_chunks chunks,
+                                    std::string_view text) {
+    for (const std::string_view chunk : chunks) {
+        if (!text.starts_with(chunk)) { return false; }
+        text.remove_prefix(chunk.size());
+    }
+    return text.empty();
+}
+
 /// The compiled answer for one input. An input the build did not compile
 /// ends the test: there is nothing to answer with, and the parser is not
 /// there to fall back to.
@@ -122,7 +134,7 @@ inline void ask(css_input_kind kind, std::string_view text) {
                                                          std::string_view text) {
     // ponytail: a linear scan; a test has a hundred-odd inputs.
     for (const compiled_css_input & input : compiled_css_inputs) {
-        if (input.kind == kind && input.text == text) { return input; }
+        if (input.kind == kind && same_text(input.text, text)) { return input; }
     }
     std::printf("FAIL %s input not compiled into this executable: [%s] - list it in the "
                 "test's .inputs.json\n",
@@ -264,7 +276,9 @@ inline void check_css_inputs([[maybe_unused]] const std::string & manifest_path)
     std::set<detail::css_input> available;
 #ifdef CTBROWSER_TEST_NATIVE
     for (const compiled_css_input & input : compiled_css_inputs) {
-        available.emplace(input.kind, std::string{input.text});
+        std::string text;
+        for (const std::string_view chunk : input.text) { text += chunk; }
+        available.emplace(input.kind, std::move(text));
     }
 #else
     std::string why;

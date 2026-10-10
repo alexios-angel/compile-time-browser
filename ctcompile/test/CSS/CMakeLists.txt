@@ -27,3 +27,6 @@ target_sources(ctcompile-test-css_emit PRIVATE
   "${CMAKE_CURRENT_BINARY_DIR}/bootstrap.hpp"
 )
 target_include_directories(ctcompile-test-css_emit PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
+# The negative control for css_syntax.native's gate (cmake/NativeWorkloads.cmake).
+ctcompile_test_sources(ctcompile-test-css_parse_control ParseControl.cpp)
