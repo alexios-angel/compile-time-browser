@@ -81,7 +81,7 @@ public:
     /// `style::computed_style` holds only the declarations that matched, as
     /// text, with no inheritance and no initial values. So a keyword comes from
     /// the style map, a resolved length from the box tree, and a used size from
-    /// the fragment; see lib/Shell/bindings/computed_style/.
+    /// the fragment; see lib/Page/computed_style/.
     void observe_styles(const style::style_map * styles) { styles_ = styles; }
 
     /// The box tree, for getComputedStyle; see observe_styles.
@@ -275,7 +275,7 @@ private:
     /// coordinates and tree order.
     [[nodiscard]] std::vector<rect> client_rects_of(node_id self);
 
-    using box_geometry = binding_detail::box_geometry;
+    using box_geometry = page::box_geometry;
     [[nodiscard]] std::vector<box_geometry> client_boxes_of(node_id self,
                                                             std::string_view box) const;
     void install_window_scrolling(context & cx, script::object_object & window);
@@ -343,6 +343,9 @@ private:
         node_id id);
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
         node_id id, const style::computed_style_ptr & pseudo);
+    /// The trees and viewport the page queries (computed style, client rects)
+    /// read, as this document's bindings last observed them.
+    [[nodiscard]] page::page_view view_of_page() const;
 
     void install_dom_exception(context & cx);
     void install_abort(context & cx);

@@ -39,53 +39,8 @@ namespace ctbrowser::shell {
 
 using ctbrowser::paint::bitmap;
 
-/// A 2x3 affine transform, the shape canvas uses.
-struct transform {
-    float a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
-
-    [[nodiscard]] point apply(float x, float y) const noexcept {
-        return point{a * x + c * y + e, b * x + d * y + f};
-    }
-    [[nodiscard]] transform then(const transform & next) const noexcept {
-        return transform{a * next.a + b * next.c,          a * next.b + b * next.d,
-                         c * next.a + d * next.c,          c * next.b + d * next.d,
-                         e * next.a + f * next.c + next.e, e * next.b + f * next.d + next.f};
-    }
-    [[nodiscard]] static transform translation(float x, float y) noexcept {
-        return transform{1, 0, 0, 1, x, y};
-    }
-    [[nodiscard]] static transform scaling(float x, float y) noexcept {
-        return transform{x, 0, 0, y, 0, 0};
-    }
-    [[nodiscard]] bool invertible() const noexcept {
-        const float det = a * d - b * c;
-        return det != 0 && std::isfinite(det);
-    }
-    /// The inverse, or the identity when there is none. Pages compose
-    /// transforms with it: p5's beginClip expresses a clip path relative to
-    /// where the clip began as `getTransform().inverse().multiply(...)`.
-    ///
-    /// A singular matrix (zero determinant) has no inverse; browsers return
-    /// the identity, which keeps a page's arithmetic finite rather than NaN.
-    [[nodiscard]] transform inverse() const noexcept {
-        const float det = a * d - b * c;
-        if (det == 0) { return transform{}; }
-        const float inv = 1.0f / det;
-        return transform{
-            d * inv, -b * inv, -c * inv, a * inv, (c * f - d * e) * inv, (b * e - a * f) * inv};
-    }
-    [[nodiscard]] static transform rotation(float radians) noexcept {
-        const float s = std::sin(radians);
-        const float c = std::cos(radians);
-        return transform{c, s, -s, c, 0, 0};
-    }
-    /// An upper bound on how far one user unit can stretch on screen: the
-    /// longer column length, which bounds the larger singular value. Used only
-    /// to pick how many segments a curve needs, so an over-estimate is harmless.
-    [[nodiscard]] float scale_bound() const noexcept {
-        return std::sqrt(std::max(a * a + b * b, c * c + d * d));
-    }
-};
+/// The 2x3 affine transform, ctbrowser/core/geometry.hpp's.
+using ctbrowser::transform;
 
 // --- paint --------------------------------------------------------------
 //

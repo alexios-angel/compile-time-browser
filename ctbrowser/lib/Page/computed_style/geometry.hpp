@@ -11,7 +11,7 @@
 
 #include <ctbrowser/shell/metrics.hpp>
 
-namespace ctbrowser::shell::detail {
+namespace ctbrowser::page::detail {
 /// The box generated for element `id` under `root`, or null if it has none.
 [[nodiscard]] inline const layout::box_node * box_for(const layout::box_node * root, node_id id) {
     if (root == nullptr || !id) { return nullptr; }
@@ -175,9 +175,10 @@ struct computed_probe {
     const bool border_box = at.box->border_box;
     if (horizontal) {
         // ponytail: text is measured in the built-in 8x8 face, not the page's
-        // fonts, because the bindings are not handed the browser's measure.
+        // fonts, because page_view carries no measure.
         // Hand it over when an animated intrinsic width over text must be exact.
-        const float border = layout::intrinsic_border_width(*at.box, c, e, font8x8_metrics(), len);
+        const float border =
+            layout::intrinsic_border_width(*at.box, c, e, shell::font8x8_metrics(), len);
         return border_box ? border : border - e.horizontal_inner();
     }
     const float inner = e.vertical_inner();
@@ -592,4 +593,4 @@ std::optional<std::string> resolved_geometry(std::string_view property, std::str
     return std::nullopt;
 }
 
-} // namespace ctbrowser::shell::detail
+} // namespace ctbrowser::page::detail

@@ -37,6 +37,7 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/page/page.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/script/script.hpp>
@@ -204,21 +205,9 @@ struct interface_pair {
     return held.is_undefined() ? value::null() : held;
 }
 
-/// The absolute bounds of the first fragment for \p id in tree order, or
-/// nothing when the node has no fragment. A fragment's bounds are relative to
-/// its containing block, so this is fragment::find with the offsets
-/// accumulated. \p dx and \p dy are the offset of \p at's containing block.
-[[nodiscard]] inline std::optional<rect> absolute_rect_of(const layout::fragment & at, node_id id,
-                                                          float dx = 0, float dy = 0) noexcept {
-    const rect box = at.absolute_bounds(dx, dy);
-    if (at.source == id) { return box; }
-    for (const layout::fragment & child : at.children) {
-        if (const std::optional<rect> hit = absolute_rect_of(child, id, box.x, box.y)) {
-            return hit;
-        }
-    }
-    return std::nullopt;
-}
+/// The absolute bounds of the first fragment for a node; see
+/// ctbrowser/page/client_rects.hpp.
+using page::absolute_rect_of;
 
 /// \p bytes as the u8 array the typed-array builtins recognise.
 [[nodiscard]] inline value make_u8_array(context & cx, std::span<const std::byte> bytes) {

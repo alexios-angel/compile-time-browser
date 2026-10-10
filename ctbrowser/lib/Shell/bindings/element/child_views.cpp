@@ -6,7 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "../computed_style/internal.hpp"
 #include "internal.hpp"
 
 #include "view_geometry.hpp"

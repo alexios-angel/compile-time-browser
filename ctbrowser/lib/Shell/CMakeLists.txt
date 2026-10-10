@@ -63,7 +63,7 @@ if(CTBROWSER_EMBED_FONTS)
 endif()
 target_link_libraries(ctbrowser-shell PUBLIC ctbrowser-core ctbrowser-dom ctbrowser-style
                                              ctbrowser-layout ctbrowser-paint ctbrowser-raster
-                                             ctbrowser-script Boost::headers)
+                                             ctbrowser-page ctbrowser-script Boost::headers)
 # PRIVATE: boost/url is 1.2 MB of headers and nothing that links the engine
 # should have to parse it, the same rule net.hpp states for curl.h. No source
 # file includes boost/url any more (net/url*.cpp is a hand-written WHATWG URL
