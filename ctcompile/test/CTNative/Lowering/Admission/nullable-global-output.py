@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Execute nullable global observations without changing their source type proof."""
 
-from pathlib import Path
 import re
-import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "Ownership"))
-from native_owned_global_maps.driver_common import boundary, host, owned
-
+from CTNative.Exports import boundary
 from CTNative.harness import build_and_run, native_args, native_tools, node_globals
+from CTNative.HostContract import contract as host
+from CTNative.Ownership import globals as owned
 
 SOURCE = r"""function scalar(which) {
     return which === 0 ? void 0 : which === 1 ? null : which === 2 ? -0 :
