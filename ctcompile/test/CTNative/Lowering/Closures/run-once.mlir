@@ -66,13 +66,13 @@
 //
 // IIFE: emitc.global static @static_value :
 // IIFE-NOT: ctnative.cell_reason
-// IIFE: emitc.get_global @static_value
+// IIFE: get_global @static_value :
 // OBSERVATION: r=21
 
 // --- A UMD-shaped wrapper calling its factory once ---------------------------
 //
 // UMD: emitc.global static @static_value :
-// UMD: emitc.get_global @static_value
+// UMD: get_global @static_value :
 
 // --- A UMD wrapper with CommonJS and AMD arms ------------------------------
 //
