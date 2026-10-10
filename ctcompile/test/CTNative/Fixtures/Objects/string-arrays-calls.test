@@ -1,0 +1,19 @@
+# Differential test of string-arrays-calls.js: an array of Strings passed to
+# a function is a std::span<const ctnative::js_string>, a returned array is
+# moved out, and the caller's call result is a local vector it owns. The C++
+# is compiled against public Core, checked for interpreter symbols with nm,
+# run, and every global compared with the interpreter's (compilation-unit.py).
+# The negative prefixes the printed String `result`, by name, and requires
+# the comparison to fail naming it. compile-clean.py checks a warning-free
+# build on both toolchains.
+
+# RUN: python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/string-arrays-calls.js --out %t/string-arrays-calls.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/string-arrays-calls.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/string-arrays-calls.emitc.mlir --js %S/string-arrays-calls.js --work %t --name string_arrays_calls --core-build %build
+# RUN: not %compilation_unit --module %t/string-arrays-calls.emitc.mlir --js %S/string-arrays-calls.js --work %t --name string_arrays_calls_negative --core-build %build --mutate result --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# RUN: %compile_clean --module %t/string-arrays-calls.emitc.mlir --work %t --name string_arrays_calls
+
+# CHECK-DAG: #include <span>
+# CHECK-DAG: std::span<const ctnative::js_string>
+# CHECK-DAG: std::move(
+# NEGATIVE: global 'result' differs

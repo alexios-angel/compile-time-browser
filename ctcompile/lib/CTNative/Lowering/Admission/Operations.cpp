@@ -17,21 +17,49 @@ namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
 
-/// Admits an operation on an array of Strings (isStringArray), a vector call
-/// on one, or split on a String; nullopt when `o` is none of these.
+/// Admits an operation on an element array (isElementArray: Strings or
+/// tuples), a tuple literal or a tuple read, a vector call on one, or split
+/// on a String; nullopt when `o` is none of these.
 std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) {
     using namespace ctjs;
     using VectorCall = TypeInference::VectorCall;
     const auto isString = [&](mlir::Value v) {
         return carrierOf(self.typeOf(v)) == carrier::string;
     };
-    const auto array = [&](mlir::Value v) { return isStringArray(v, self.typeOf(v)); };
+    const auto array = [&](mlir::Value v) { return isElementArray(v, self.typeOf(v)); };
+    // Whether `value` may be stored into the element array `into`: a String
+    // into an array of Strings, a tuple literal into an array of tuples.
+    const auto fits = [&](mlir::Value into, mlir::Value value) {
+        auto vector = llvm::dyn_cast_or_null<VecType>(self.typeOf(into));
+        if (vector && llvm::isa<TupleType>(vector.getElementType())) {
+            return TypeInference::isTupleLiteral(value) &&
+                   carrierOf(self.typeOf(value)) == carrier::tuple;
+        }
+        return isString(value);
+    };
     if (isVectorCallPlumbing(o)) { return true; }
+    if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
+        literal && TypeInference::isTupleLiteral(literal.getResult())) {
+        return carrierOf(self.typeOf(literal.getResult())) == carrier::tuple ||
+               self.refuse("a two-element row whose positions are " +
+                           printed(self.typeOf(literal.getResult())) +
+                           ", not Strings, Numbers or Number|String");
+    }
+    if (auto append = llvm::dyn_cast<AppendOp>(o);
+        append && TypeInference::isTupleLiteral(append.getArray())) {
+        return true; // The tuple literal checked its positions.
+    }
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+        read && carrierOf(self.typeOf(read.getObject())) == carrier::tuple) {
+        const int64_t position = TypeInference::constantIndex(read.getKey());
+        return (position == 0 || position == 1) ||
+               self.refuse("a two-element row read at a position that is not 0 or 1");
+    }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o)) {
         if (array(literal.getResult())) {
             for (mlir::Value element : literal.getElements()) {
-                if (!isString(element)) {
-                    return self.refuse("an array of Strings given an element of type " +
+                if (!fits(literal.getResult(), element)) {
+                    return self.refuse("an element array given an element of type " +
                                        printed(self.typeOf(element)));
                 }
             }
@@ -56,7 +84,7 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return self.refuse("an array of Strings: " + why);
     }
     if (auto append = llvm::dyn_cast<AppendOp>(o); append && array(append.getArray())) {
-        return isString(append.getElement()) ||
+        return fits(append.getArray(), append.getElement()) ||
                self.refuse("an array of Strings appended a " +
                            printed(self.typeOf(append.getElement())));
     }
@@ -65,7 +93,7 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         if (key == "length") { return true; }
         if (key.empty()) { return self.numeric(read.getKey(), "array index"); }
         return self.refuse(
-            ("an array of Strings read through the named property `" + key + "`").str());
+            ("an element array read through the named property `" + key + "`").str());
     }
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
         load && load.getName() == "__ctbrowser_regexp") {
@@ -74,18 +102,37 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     }
     auto call = llvm::dyn_cast<CallOp>(o);
     if (!call) { return std::nullopt; }
+    // A method of a vector of Strings or tuples whose uses the element-vector
+    // proof refuses: give the proof's reason rather than "not native yet".
+    if (const auto kind = TypeInference::vectorCallOf(call);
+        (kind == VectorCall::push || kind == VectorCall::join || kind == VectorCall::sort) &&
+        !array(call.getReceiver())) {
+        const carrier receiver = carrierOf(self.typeOf(call.getReceiver()));
+        std::string why;
+        if ((receiver == carrier::stringVector || receiver == carrier::tupleVector) &&
+            TypeInference::elementVectorAliases(call.getReceiver(), &why).empty()) {
+            return self.refuse("an element array: " + why);
+        }
+    }
     switch (TypeInference::vectorCallOf(call)) {
     case VectorCall::push:
         if (!array(call.getReceiver())) { return std::nullopt; }
-        return isString(call.getArgs()[0]) || self.refuse("an array of Strings pushed a " +
-                                                          printed(self.typeOf(call.getArgs()[0])));
+        return fits(call.getReceiver(), call.getArgs()[0]) ||
+               self.refuse("an array of " + printed(self.typeOf(call.getReceiver())) +
+                           " pushed a " + printed(self.typeOf(call.getArgs()[0])));
     case VectorCall::join:
-        if (!array(call.getReceiver())) { return std::nullopt; }
+        if (!array(call.getReceiver()) ||
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
+            return std::nullopt;
+        }
         return call.getArgs().empty() || isString(call.getArgs()[0]) ||
                self.refuse("join's separator is " + printed(self.typeOf(call.getArgs()[0])) +
                            ", not a String");
     case VectorCall::sort:
-        return array(call.getReceiver()) ? std::optional<bool>{true} : std::nullopt;
+        return array(call.getReceiver()) &&
+                       carrierOf(self.typeOf(call.getReceiver())) == carrier::stringVector
+                   ? std::optional<bool>{true}
+                   : std::nullopt;
     case VectorCall::split:
     case VectorCall::splitSpace: {
         if (!isString(call.getReceiver())) { return std::nullopt; }
@@ -852,6 +899,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
+            // An element array is lent to the callee as a std::span.
+            !isElementArray(operands[i], typeOf(operands[i])) &&
             !numeric(operands[i], "argument")) {
             return false;
         }

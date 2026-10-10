@@ -12,6 +12,10 @@
 # source is added by Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-page LIBS ctbrowser::page)
 
+# The Array.prototype callback methods (CTNative/Runtime/Array.hpp); its source
+# is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-array-callbacks LIBS ctbrowser::core)
+
 set(_native_ctbrowser "${CTCOMPILE_MONOREPO_ROOT}/ctbrowser")
 set(_native_gate "${_native_ctbrowser}/cmake/run-without-vm.cmake")
 set(_native_gate_nm "${CMAKE_NM}")

@@ -140,8 +140,20 @@ carrier carrierOf(mlir::Type type) {
     // Generic mutable arrays keep their numeric-content proof. Arrays of
     // strings and of borrowed DOM elements have their own carriers and
     // admission rules.
+    // A tuple has a carrier when it has two positions and each is a String, a
+    // Number or a Number|String, which is what a std::pair of them can hold.
+    if (auto tuple = llvm::dyn_cast<TupleType>(type)) {
+        const auto position = [](mlir::Type part) {
+            const carrier c = carrierOf(part);
+            return c == carrier::string || c == carrier::number || c == carrier::numberString;
+        };
+        return tuple.getElements().size() == 2 && llvm::all_of(tuple.getElements(), position)
+                   ? carrier::tuple
+                   : carrier::none;
+    }
     if (auto elements = llvm::dyn_cast<VecType>(type)) {
         auto element = elements.getElementType();
+        if (carrierOf(element) == carrier::tuple) { return carrier::tupleVector; }
         if (llvm::isa<DOMElementType>(element)) { return carrier::domElementVector; }
         if (carrierOf(element) == carrier::string) { return carrier::stringVector; }
         if (auto opt = llvm::dyn_cast<OptType>(element)) { element = opt.getElementType(); }
@@ -150,9 +162,35 @@ carrier carrierOf(mlir::Type type) {
     return carrier::none;
 }
 
-bool isStringArray(mlir::Value v, mlir::Type type) {
-    return carrierOf(type) == carrier::stringVector &&
+bool isElementArray(mlir::Value v, mlir::Type type) {
+    const carrier c = carrierOf(type);
+    return (c == carrier::stringVector || c == carrier::tupleVector) &&
            !TypeInference::elementVectorAliases(v).empty();
+}
+
+std::string elementSpelling(mlir::Type type) {
+    switch (carrierOf(type)) {
+    case carrier::string: return kStringType.str();
+    case carrier::number: return kNumberType.str();
+    case carrier::numberString: return kNumberStringType.str();
+    case carrier::tuple: {
+        auto tuple = llvm::cast<TupleType>(type);
+        return "std::pair<" + elementSpelling(tuple.getElements()[0]) + ", " +
+               elementSpelling(tuple.getElements()[1]) + ">";
+    }
+    default: return {};
+    }
+}
+
+std::string elementArraySpelling(mlir::Type type) {
+    auto vector = llvm::dyn_cast_or_null<VecType>(type);
+    return vector ? "std::vector<" + elementSpelling(vector.getElementType()) + ">" : std::string{};
+}
+
+std::string elementSpanSpelling(mlir::Type type) {
+    auto vector = llvm::dyn_cast_or_null<VecType>(type);
+    return vector ? "std::span<const " + elementSpelling(vector.getElementType()) + ">"
+                  : std::string{};
 }
 
 bool isVectorCallPlumbing(mlir::Operation * o) {
