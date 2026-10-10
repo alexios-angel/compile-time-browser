@@ -22,17 +22,20 @@
 // at all without a DOM. p5's bundle runs headless up to a point and only then
 // wants a page. That difference is why `ran` and `page` are one rung here
 // rather than two.
+//
+// ITS JAVASCRIPT IS IN FILES, not in strings here: phaser_ratchet.html is the
+// page, and every question asked of it is a function in phaser_ratchet.js,
+// called through support/engine.hpp.
 
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "engine.hpp"
 #include "ratchet.hpp"
 
 #include <chrono>
 #include <cstdio>
 #include <string>
-#include <string_view>
-#include <vector>
 
 namespace {
 
@@ -84,6 +87,17 @@ private:
     std::chrono::steady_clock::time_point mark_ = std::chrono::steady_clock::now();
 };
 
+// The test's page, which lists the bundle and phaser_ratchet.js by their paths
+// from test/corpus/phaser/.
+void open_page(ctbrowser::shell::browser & page) {
+    page.assets().set_base_path("test/corpus/phaser");
+    // UNCONFINED, explicitly: `../../../vendor/` climbs out of the base path,
+    // which a confined registry refuses. Trusted in-tree fixture - never do
+    // this for a page from the network.
+    page.assets().set_confine(false);
+    page.load_html(read_file("test/corpus/phaser/phaser_ratchet.html"));
+}
+
 [[nodiscard]] measurement measure(const std::string & source) {
     measurement m;
     stopwatch clock;
@@ -113,12 +127,7 @@ private:
     // AS A PAGE, from here on. Phaser calls document.createElement before it
     // does anything else, so there is no headless rung to measure.
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
-    page.assets().add(
-        "phaser.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
-                               reinterpret_cast<const std::byte *>(source.data() + source.size())});
-    page.load_html(R"(<html><head><meta charset="utf-8">
-      <script src="phaser.js"></script></head><body></body></html>)");
+    open_page(page);
     m.page_ms = clock.ms();
     if (!page.script_error().empty()) {
         m.fail_at(rung_page, page.script_error());
@@ -128,30 +137,16 @@ private:
 
     // Everything past here is asked THROUGH the page, because the answers only
     // it has.
-    const auto ask = [&page](std::string_view expression) {
-        return ctbrowser_test::ask(page, expression);
-    };
+    const auto engine = ctbrowser_test::make_engine(page);
 
-    const std::string defines = ask("typeof Phaser !== 'undefined' && !!Phaser.Game");
+    const std::string defines = engine->call("phaser_ratchet_defines");
     if (defines != "true") {
         m.fail_at(rung_defines, "Phaser is not defined after the bundle ran: " + defines);
         return m;
     }
     m.reached(rung_defines);
 
-    // A Game with a headless-ish config. AUTO would pick a renderer; CANVAS is
-    // asked for by name so a WebGL gap cannot be mistaken for a Game gap.
-    const std::string game = ask(R"JS((function () {
-        window.__phase = '';
-        window.__game = new Phaser.Game({
-            type: Phaser.CANVAS, width: 200, height: 200, banner: false, audio: {noAudio: true},
-            scene: {
-                create: function () { window.__phase += 'create;'; },
-                update: function () { window.__phase += 'update;'; }
-            }
-        });
-        return 'constructed';
-    })())JS");
+    const std::string game = engine->call("phaser_ratchet_game");
     if (game != "constructed") {
         m.fail_at(rung_game, "new Phaser.Game(...) did not construct: " + game);
         return m;
@@ -162,7 +157,7 @@ private:
     // what lets its loop run at all.
     for (int i = 0; i < 30; ++i) { page.tick(16); }
 
-    const std::string phase = ask("window.__phase || '<empty>'");
+    const std::string phase = engine->call("phaser_ratchet_phase");
     if (phase.find("create;") == std::string::npos) {
         m.fail_at(rung_create, "create() never ran: phase=" + phase);
         return m;
@@ -185,13 +180,7 @@ private:
     // needs SDL to build and this test must not. The golden comparison is still
     // that example's job - this rung asks the weaker, unmissable question: did
     // any of it land at all.
-    (void)ask(R"JS((function () {
-        var scene = window.__game.scene.scenes[0];
-        var g = scene.add.graphics();
-        g.fillStyle(0xff0000, 1);
-        g.fillRect(0, 0, 60, 60);
-        return 'drew';
-    })())JS");
+    (void)engine->call("phaser_ratchet_draw");
     for (int i = 0; i < 5; ++i) { page.tick(16); }
 
     // The canvas is found by walking the document for the element Phaser made,
@@ -232,30 +221,12 @@ private:
 // Reported rather than ratcheted, because it is a separate claim from how far
 // the bundle gets and belongs beside it rather than inside its ladder.
 [[nodiscard]] std::string keyboard_verdict() {
-    const std::string source = read_file("vendor/phaser/phaser.js");
-    if (source.empty()) { return "phaser.js is missing"; }
+    if (read_file("vendor/phaser/phaser.js").empty()) { return "phaser.js is missing"; }
 
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{200, 200}};
-    page.assets().add(
-        "phaser.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
-                               reinterpret_cast<const std::byte *>(source.data() + source.size())});
-    page.load_html(R"(<html><head><meta charset="utf-8">
-      <script src="phaser.js"></script></head><body></body></html>)");
-    (void)page.run_script(R"JS((function () {
-        window.__seen = 'none';
-        new Phaser.Game({
-            type: Phaser.CANVAS, width: 100, height: 100, banner: false,
-            audio: { noAudio: true },
-            scene: {
-                create: function () { this.cursors = this.input.keyboard.createCursorKeys(); },
-                update: function () {
-                    if (this.cursors.left.isDown) { window.__seen = 'left'; }
-                    else if (this.cursors.right.isDown) { window.__seen = 'right'; }
-                }
-            }
-        });
-    })())JS");
+    open_page(page);
+    const auto engine = ctbrowser_test::make_engine(page);
+    (void)engine->call("phaser_ratchet_keyboard");
     for (int i = 0; i < 30; ++i) { page.tick(16); }
 
     // Held down across several frames, because Phaser polls state per frame -
@@ -265,13 +236,7 @@ private:
     for (int i = 0; i < 5; ++i) { page.tick(16); }
     (void)page.handle(ctbrowser::input_event::key_release("ArrowLeft"));
 
-    const std::size_t before = page.bindings().console_output().size();
-    (void)page.run_script("console.log('=' + String(window.__seen));");
-    const auto & said = page.bindings().console_output();
-    for (std::size_t i = said.size(); i-- > before;) {
-        if (said[i].starts_with("=")) { return said[i].substr(1); }
-    }
-    return "<no answer>";
+    return engine->call("phaser_ratchet_seen");
 }
 
 } // namespace
