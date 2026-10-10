@@ -162,6 +162,7 @@ struct lowering {
         llvm::SmallVector<std::string> where;      ///< The JavaScript sites, in first-seen order.
         unsigned instantiations = 0;               ///< Distinct (name, type) keys in this family.
         std::string name;                          ///< E.g. ctn_at_hit; unique in the module.
+        std::string className; ///< The JavaScript class an instance site belongs to, or "".
     };
     /// One creation site: its family, and the C++ types its own fields took.
     /// Field types are per site; field names and the class name are per family.

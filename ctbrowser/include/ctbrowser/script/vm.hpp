@@ -1110,6 +1110,7 @@ private:
     std::size_t scope_depth_ = 0;
     /// See set_realm_template.
     string_flat_map<value> realm_template_;
+    string_flat_map<value> realm_template_internals_;
     string_flat_map<bool> realm_template_builtin_;
     string_flat_map<value> realm_template_platform_prototypes_;
     string_flat_map<bool> intrinsic_names_; // See mark_globals_builtin.

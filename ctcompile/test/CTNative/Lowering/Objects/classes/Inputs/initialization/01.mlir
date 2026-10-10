@@ -301,9 +301,9 @@ function method() {
 }
 var a = method();
 
-// A single explicit write is enough to replace the host binding, even if the
-// closed source resolver can identify that replacement function exactly.
-// Node never invokes the implementation hook: a=0 there, a=1 in the VM.
+// A page's write of the old class-helper name binds an ordinary global. The
+// VM keeps its class helpers internal, so neither Node nor the VM ever calls
+// the replacement: a=0 in both.
 //--- helper-override.js
 function helper_override() {
     var calls = 0;
@@ -313,8 +313,8 @@ function helper_override() {
 }
 var a = helper_override();
 
-// The second class must observe the replacement after the first used the
-// initial host function. An initial binding assertion is not immutability.
+// The same after a first class: the second class does not call the
+// replacement either.
 //--- helper-late.js
 function helper_late() {
     var calls = 0;
@@ -325,7 +325,8 @@ function helper_late() {
 }
 var a = helper_late();
 
-// A property write through a saved realm alias mutates the same global.
+// A property write through a saved realm alias writes the same ordinary
+// global, which no class definition reads.
 //--- helper-global-alias.js
 function helper_global_alias() {
     var calls = 0;

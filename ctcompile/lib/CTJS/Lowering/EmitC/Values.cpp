@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Lowering.h"
+#include "ctcompile/CTJS/Import/EngineGlobals.h"
 
 namespace ctcompile::ctjs::emitc_detail {
 
@@ -243,7 +244,13 @@ bool lowering::convertValues(mlir::Operation & op, mlir::OpBuilder & build,
     // its value directly, so classify its status before using that value.
     // Names are passed as bytes and a length (see bytes_and_length()).
     if (auto global = mlir::dyn_cast<LoadGlobalOp>(op)) {
-        const auto [text, length] = bytes_and_length(build, where, global.getName());
+        // An engine helper is read by its VM name (EngineGlobals.h); a
+        // script's own global of the same IR name keeps it.
+        const llvm::StringRef helper = global->hasAttr(kEngineReservedUse)
+                                           ? llvm::StringRef{}
+                                           : engineHelperVMName(global.getName());
+        const auto [text, length] =
+            bytes_and_length(build, where, helper.empty() ? global.getName() : helper);
         if (global.getTypeofLookup()) {
             const mlir::Value loaded = opaque_call(build, where, value, "ct_aot_global_get_soft",
                                                    {scope.frame, text, length});

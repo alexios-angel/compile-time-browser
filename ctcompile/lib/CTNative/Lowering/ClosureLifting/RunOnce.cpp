@@ -263,16 +263,20 @@ closureLifter::trialOutcome closureLifter::trialLift() {
 /// whether it changed the module. It runs before the lift, so that lift sees
 /// those closures without the captures; which closures it would refuse is
 /// what a trial lift of a copy of the module answers.
-bool closureLifter::makeRunOnceCellsStatic(liftReport & out) {
+bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
     llvm::SmallVector<ctjs::CreateCellOp> boxes;
     module.walk([&](ctjs::CreateCellOp cell) {
-        if (cell->hasAttr(kNativeStaticCell)) { return; }
+        if (cell->hasAttr(kNativeStaticCell) || (!functions && holdsAFunction(cell))) { return; }
         if (llvm::any_of(cell.getResult().getUses(),
                          [](mlir::OpOperand & use) { return classify(use) == cellUse::capture; })) {
             boxes.push_back(cell);
         }
     });
-    if (boxes.empty()) { return false; }
+    if (boxes.empty() || (functions && llvm::none_of(boxes, [](ctjs::CreateCellOp cell) {
+                              return holdsAFunction(cell);
+                          }))) {
+        return false;
+    }
 
     // Who names each function: its creating closures, and its symbol users.
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp>> creators;
