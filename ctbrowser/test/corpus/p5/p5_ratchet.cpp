@@ -30,6 +30,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "engine.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -101,7 +102,7 @@ struct measurement {
     // edits that have nothing to do with the blocker. So the recorded string is
     // the first line - the message - and the rest is printed but not compared.
     std::string trace;
-    std::string said; // what the page alerted back, for the questions only it can answer
+    std::string said; // what the page answered, for the questions only it can answer
     void fail_at(int rung, std::string why) {
         if (stopped) { return; }
         level = rung - 1;
@@ -209,6 +210,35 @@ private:
     return {};
 }
 
+// THE BUNDLE AS BOTH PAGES SPELL IT: its real path from test/corpus/p5/, so
+// each page names a file that exists. The ratchet registers the bytes it
+// measured under exactly this name, and the asset registry is asked before the
+// disk, so the page runs what the ladder lexed, parsed and compiled - in a
+// bisect run, the carved fragment rather than the file the path names.
+constexpr const char * bundle_src = "../../../vendor/p5/p5.js";
+
+// The ratchet's own page for one mode - p5_ratchet-min.html or
+// p5_ratchet-full.html - loaded the way a workload test loads a page it owns.
+// Empty when it loaded cleanly, otherwise why not: the first script error, or
+// that the page itself cannot be read.
+[[nodiscard]] std::string load_page(ctbrowser::shell::browser & page, bool minified) {
+    const std::string file =
+        minified ? "test/corpus/p5/p5_ratchet-min.html" : "test/corpus/p5/p5_ratchet-full.html";
+    const std::string html = read_file(file);
+    if (html.empty()) { return "cannot read " + file; }
+    // WHERE p5_ratchet.js RESOLVES FROM: the page's own directory. The asset
+    // registry probes ".", then the base path, then two levels above it
+    // (shell/page/assets.hpp), and the test's working directory is ctbrowser/.
+    // The bundle never gets that far: it is registered as `bundle_src`.
+    page.assets().set_base_path("test/corpus/p5");
+    // UNCONFINED, explicitly, so a name relative to the working directory - a
+    // --sketch probe's - still resolves as it did before the page had a base
+    // path. Trusted in-tree fixture - never do this for a page from the network.
+    page.assets().set_confine(false);
+    page.load_html(html);
+    return page.script_error();
+}
+
 [[nodiscard]] measurement measure(const std::string & source, bool minified = true) {
     measurement m;
     stopwatch clock;
@@ -292,8 +322,9 @@ private:
     // means rung 8 is proved by rungs 6 and 7 rather than being a separate
     // exercise.
     ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+    const auto engine = ctbrowser_test::make_engine(page);
     page.assets().add(
-        "p5.js",
+        bundle_src,
         std::vector<std::byte>{reinterpret_cast<const std::byte *>(source.data()),
                                reinterpret_cast<const std::byte *>(source.data() + source.size())});
     // `IS_MINIFIED` IS A MODE, not a trick.
@@ -312,15 +343,12 @@ private:
     // Neither reaches the network: the fetch is guarded, and a test that
     // reached out would fail for reasons that have nothing to do with this
     // code, which is why CTBROWSER_NETWORK=0 exists everywhere else here.
-    const std::string prelude =
-        minified ? R"(<script>var IS_MINIFIED = true;</script>)" : std::string{};
-    page.load_html("<html><head>" + prelude +
-                   R"(<script src="p5.js"></script></head><body></body></html>)");
+    const std::string loaded = load_page(page, minified);
     m.run_ms = clock.lap();
     std::printf("     page    %7.1f ms\n", m.run_ms);
-    if (!page.script_error().empty()) {
-        std::printf("     !! %s\n", page.script_error().c_str());
-        m.fail_at(level_ran, page.script_error());
+    if (!loaded.empty()) {
+        std::printf("     !! %s\n", loaded.c_str());
+        m.fail_at(level_ran, loaded);
         return m;
     }
     m.reached(level_ran);
@@ -328,10 +356,9 @@ private:
     // --- and is there a p5? ------------------------------------------------
     //
     // Asked from inside the page, because that is the only place its globals
-    // live. run_script reports whether it RAN, so the answer comes back as an
-    // alert - the one channel a page has that the host can read directly.
-    page.set_alert_hook([&m](const std::string & said) { m.said = said; });
-    (void)page.run_script("alert(typeof p5);");
+    // live. Each question is a function in p5_ratchet.js, and the engine seam
+    // (test/support/engine.hpp) brings its answer back as a string.
+    m.said = engine->call("p5_ratchet_typeof_p5");
     if (m.said != "function") {
         const std::string why = "`p5` is " +
                                 (m.said.empty() ? std::string{"unreachable"} : m.said) +
@@ -345,38 +372,15 @@ private:
 
     // --- and does a SKETCH run? --------------------------------------------
     //
-    // Instance mode rather than global: a sketch function gets its own p5, so
-    // the test says exactly what it is asking for instead of relying on p5
-    // having installed 200 names as globals.
-    //
-    // Progress is recorded in a global string rather than returned, because
-    // setup and draw are called BY p5, from inside its own machinery - there is
-    // nothing for the test to take a return value from.
-    (void)page.run_script(R"(
-        var __ran = '';
-        var __err = '';
-        try {
-          new p5(function (s) {
-            s.setup = function () { s.createCanvas(100, 100); __ran += 'setup;'; };
-            s.draw = function () {
-              // Two colours nothing else in the pipeline produces, so finding
-              // them in the buffer cannot be a coincidence.
-              s.background(10, 20, 30);
-              s.noStroke();
-              s.fill(200, 100, 50);
-              s.rect(20, 20, 40, 40);
-              __ran += 'draw;';
-            };
-          });
-        } catch (e) { __err = '' + (e && e.message ? e.message : e); }
-    )");
+    // p5_ratchet_construct builds one; p5_ratchet.js says why in instance mode,
+    // and why its progress is a global string rather than a return value.
+    (void)engine->call("p5_ratchet_construct");
     if (!page.script_error().empty()) {
         std::printf("     !! %s\n", page.script_error().c_str());
         m.fail_at(level_constructs, page.script_error());
         return m;
     }
-    page.set_alert_hook([&m](const std::string & said) { m.said = said; });
-    (void)page.run_script("alert(__err || 'ok');");
+    m.said = engine->call("p5_ratchet_construct_error");
     if (m.said != "ok") {
         const std::string why = "new p5(sketch) threw: " + m.said;
         std::printf("     !! %s\n", why.c_str());
@@ -388,7 +392,7 @@ private:
     // A frame has to actually RUN for draw to be called: setup and draw are
     // driven by requestAnimationFrame, which is the page's own loop.
     for (int frame = 0; frame < 5; ++frame) { page.tick(16); }
-    (void)page.run_script("alert(__ran);");
+    m.said = engine->call("p5_ratchet_progress");
     if (m.said.find("setup;") == std::string::npos) {
         const std::string why = "setup() did not run (saw \"" + m.said + "\")";
         std::printf("     !! %s\n", why.c_str());
@@ -535,6 +539,7 @@ int main(int argc, char ** argv) {
     if (argc > 2 && std::string{argv[1]} == "--sketch") {
         const std::string bundle = read_file("vendor/p5/p5.js");
         ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
+        const auto engine = ctbrowser_test::make_engine(page);
         // A few assets a --sketch probe can load, so the loaders can be tried
         // without reaching the network.
         const auto bake = [&](const char * name, const char * text) {
@@ -547,23 +552,26 @@ int main(int argc, char ** argv) {
         bake("data.json", R"({"name":"probe","n":4})");
         bake("lines.txt", "one\ntwo\nthree");
         bake("table.csv", "a,b\n1,2\n3,4");
-        page.assets().add("p5.js",
+        page.assets().add(bundle_src,
                           std::vector<std::byte>{
                               reinterpret_cast<const std::byte *>(bundle.data()),
                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
-        page.load_html(R"(<html><head><script>var IS_MINIFIED = true;</script>)"
-                       R"(<script src="p5.js"></script></head><body></body></html>)");
-        if (!page.script_error().empty()) {
-            std::printf("load error: %s\n", page.script_error().c_str());
+        const std::string loaded = load_page(page, true);
+        if (!loaded.empty()) {
+            std::printf("load error: %s\n", loaded.c_str());
             return 1;
         }
-        page.set_alert_hook(
-            [](const std::string & said) { std::printf("alert: %s\n", said.c_str()); });
-        const bool ok = page.run_script(read_file(argv[2]));
+        // The probe is a file no page lists, so it is LOADED into this one, and
+        // what it alerts is read back off the page afterwards, in order.
+        const std::size_t before = page.alerts().size();
+        const std::string ran = engine->load(argv[2]);
         // More frames than the ladder runs: a probe usually wants to see what
         // the loop settles into, not what it does on its first tick.
         for (int frame = 0; frame < 30; ++frame) { page.tick(16); }
-        std::printf("ran=%d error=%s\n", int(ok), page.script_error().c_str());
+        for (std::size_t i = before; i < page.alerts().size(); ++i) {
+            std::printf("alert: %s\n", page.alerts()[i].c_str());
+        }
+        std::printf("ran=%d error=%s\n", int(ran.empty()), page.script_error().c_str());
         return 0;
     }
 

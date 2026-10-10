@@ -1,0 +1,18 @@
+<html>
+<head>
+    <!-- p5_ratchet.cpp's p5-min ladder: IS_MINIFIED is defined, as p5's own
+         minified build defines it. The bundle is the one the ratchet measured:
+         the test registers those bytes under this same path and the registry
+         is asked before the disk - so in a bisect run it is the fragment. -->
+    <!-- FIRST, so the bundle stays the page's LAST script: p5's sketch checker
+         (verifierUtils.getUserCode) fetches and parses the page's last script
+         element as the sketch's own source, and here that has always been p5.js. -->
+    <script src="p5_ratchet.js"></script>
+    <script>
+        var IS_MINIFIED = true;
+
+    </script>
+    <script src="../../../vendor/p5/p5.js"></script>
+</head>
+<body></body>
+</html>
