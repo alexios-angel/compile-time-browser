@@ -15,10 +15,10 @@
 //                        |
 //                      boxed  (top)
 //
-// strview sits below str of the same encoding. The containers (vec, map, set,
-// owned, shared, weak) are not rungs on that ladder: they meet structurally
-// with their own kind and widen to a variant against anything else, which
-// keeps the ladder finite. symbol, dom_element, object_identity,
+// strview sits below str of the same encoding. The containers (vec, tuple,
+// map, set, owned, shared, weak) are not rungs on that ladder: they meet
+// structurally with their own kind and widen to a variant against anything
+// else, which keeps the ladder finite. symbol, dom_element, object_identity,
 // global_object, method_table and closure are proof-gated nominal types
 // outside the chain: they meet only with themselves and widen to a variant
 // against anything else.
@@ -316,6 +316,28 @@ def CTNative_VecType : CTNative_WrapperType<"Vec", "vec", (ins "::mlir::Type":$e
     why every construction of it in a later phase has to be able to point at
     one.
   }];
+}
+
+def CTNative_TupleType : CTNative_Type<"Tuple", "tuple"> {
+  let summary = "`std::pair<T0, T1>` - a short array literal read only at constant indices";
+  let description = [{
+    A JavaScript array used as a fixed-size record, such as the
+    `[name, value]` rows css-dump.js keeps in a list. The proof that an
+    array is one (its length never changes and every read uses a constant
+    index) is the element-vector proof's, in
+    lib/CTNative/Analysis/Inference/Vectors.cpp; the type records the
+    conclusion, one element type per position.
+
+    IT MEETS POSITION BY POSITION with a tuple of the same arity, like the
+    other containers meet with their own kind, and widens to a variant
+    against anything else, including a tuple of another arity. The C++
+    spelling is `std::pair` because only two positions are lowered; the
+    verifier allows any arity of at least two so the lattice does not have
+    to change when a wider record is lowered.
+  }];
+  let parameters = (ins ArrayRefParameter<"::mlir::Type">:$elements);
+  let assemblyFormat = "`<` $elements `>`";
+  let genVerifyDecl = 1;
 }
 
 def CTNative_MapType : CTNative_Type<"Map", "map"> {

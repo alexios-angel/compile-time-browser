@@ -1,8 +1,8 @@
-//===- CTNativeTypes.cpp - ctnative dialect types and their verifier ------===//
+//===- CTNativeTypes.cpp - ctnative dialect types and their verifiers -----===//
 //
 // Instantiates the TableGen-generated ctnative types (storage, parsers,
-// printers), registers them with the dialect, and defines the one hand-written
-// type verifier, VariantType::verify.
+// printers), registers them with the dialect, and defines the two hand-written
+// type verifiers, TupleType::verify and VariantType::verify.
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,8 +37,25 @@ void CTNativeDialect::registerTypes() {
         >();
 }
 
-/// The only ctnative type with a verifier. It enforces a canonical form rather
-/// than a well-formedness rule.
+/// A tuple has at least two positions, each a type: a one-element array literal
+/// is an ordinary array, and a null position would print as nothing.
+/// ctcompile/test/CTNative/IR/tuple-form.mlir checks the arity clause; hand-written
+/// IR cannot spell a null position.
+::mlir::LogicalResult TupleType::verify(
+    ::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
+    ::llvm::ArrayRef<::mlir::Type> elements) {
+    if (elements.size() < 2) {
+        return emitError() << "a tuple needs at least two elements; a one-element array "
+                              "literal is an ordinary array";
+    }
+    if (::llvm::is_contained(elements, ::mlir::Type{})) {
+        return emitError() << "a tuple element may not be null";
+    }
+    return ::mlir::success();
+}
+
+/// The variant verifier. It enforces a canonical form rather than a
+/// well-formedness rule.
 ///
 /// Every clause below rejects a type that is a second spelling of one that
 /// already exists: `variant` nests, `bottom` and `opt` lift out of a union,

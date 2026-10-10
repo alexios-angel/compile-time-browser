@@ -1,7 +1,8 @@
 // THE VARIANT VERIFIER, ONE expected-error PER CLAUSE.
 //
-// `!ctnative.variant` is the only ctnative type with a verifier, and what it
-// enforces is a canonical form rather than well-formedness. Every clause below
+// What the `!ctnative.variant` verifier enforces is a canonical form rather
+// than well-formedness (the other ctnative type verifier, the tuple's, is
+// checked in tuple-form.mlir). Every clause below
 // rejects a type that is a second spelling of one that already exists: a
 // variant nests, `bottom` and `opt` lift out, `json` and `boxed` absorb.
 //

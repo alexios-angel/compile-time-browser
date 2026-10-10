@@ -302,6 +302,34 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.map<!ctnative.str<utf8>, !ctnative.num<i32>>",
      "!ctnative.map<!ctnative.str<utf16>, !ctnative.num<f64>>",
      "!ctnative.map<!ctnative.str<utf16>, !ctnative.num<f64>>", "both parameters, independently"},
+    {"!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<i32>>",
+     "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "tuples of one arity meet position by position"},
+    {"!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.str<utf8>>",
+     "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.variant<!ctnative.num<f64>, "
+     "!ctnative.str<utf8>>>",
+     "a css-dump row: the name position stays a String, the value position is "
+     "the union of what each path put there"},
+    {"!ctnative.tuple<!ctnative.bool, !ctnative.bool>",
+     "!ctnative.tuple<!ctnative.bool, !ctnative.bool, !ctnative.bool>",
+     "!ctnative.variant<!ctnative.tuple<!ctnative.bool, !ctnative.bool, !ctnative.bool>, "
+     "!ctnative.tuple<!ctnative.bool, !ctnative.bool>>",
+     "another arity is another record, so the two are alternatives"},
+    {"!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.bool>>",
+     "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.variant<!ctnative.bool, "
+     "!ctnative.num<f64>>>>",
+     "an absent row stays possible, and the lift stays outside the tuple"},
+    {"!ctnative.vec<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<i32>>>",
+     "!ctnative.vec<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
+     "!ctnative.vec<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
+     "a vector of rows meets through both containers"},
+    {"!ctnative.tuple<!ctnative.str<utf8>, !ctnative.bool>", "!ctnative.vec<!ctnative.bool>",
+     "!ctnative.variant<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.bool>, "
+     "!ctnative.vec<!ctnative.bool>>",
+     "a tuple and a vector are different containers"},
 
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
@@ -353,6 +381,10 @@ const char * const kSampleTypes[] = {
     "!ctnative.object_identity",
     "!ctnative.opt<!ctnative.object_identity>",
     "!ctnative.map<!ctnative.object_identity, !ctnative.num<f64>>",
+    "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<i32>>",
+    "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.bool>",
+    "!ctnative.tuple<!ctnative.bool, !ctnative.bool, !ctnative.bool>",
+    "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
 };
 
 //===--------------------------------------------------------------------===//
