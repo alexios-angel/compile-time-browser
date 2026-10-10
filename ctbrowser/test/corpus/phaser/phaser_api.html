@@ -1,0 +1,17 @@
+<!-- The page test/corpus/phaser/phaser_api.cpp runs the probes in: the bundle,
+     the test's harness, then the probe groups and their runner. The harness
+     comes BEFORE the groups, which push onto the list it starts.
+
+     NO DOCTYPE, deliberately. The probes have always run in quirks mode, and
+     a doctype would change the page they run in. -->
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="../../../vendor/phaser/phaser.js"></script>
+    <script src="phaser_api.js"></script>
+    <script src="phaser-api-probe/01-scene-and-rendering.js"></script>
+    <script src="phaser-api-probe/02-utilities-and-plugins.js"></script>
+    <script src="phaser-api-probe.js"></script>
+</head>
+<body></body>
+</html>
