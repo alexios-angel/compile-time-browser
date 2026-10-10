@@ -1,6 +1,7 @@
 target_sources(ctbrowser-style PUBLIC FILE_SET HEADERS FILES
   boolean.hpp
   calc.hpp
+  compiled.hpp
   keyframes.hpp
   media.hpp
   media_fwd.hpp

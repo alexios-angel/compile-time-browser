@@ -119,6 +119,8 @@ struct attribute_match {
     /// compare with the one the DOM stored on the attribute.
     ns_prefix ns = ns_prefix::unset;
     atom ns_uri;
+    [[nodiscard]] friend bool operator==(const attribute_match &,
+                                         const attribute_match &) = default;
 };
 
 /// Structural pseudo-classes: questions about the element's position rather
@@ -218,6 +220,7 @@ struct pseudo_ref {
     std::vector<std::string> ranges;
     /// `:heading(1, 2)`'s levels; empty for the bare `:heading`.
     std::vector<std::int32_t> levels;
+    [[nodiscard]] friend bool operator==(const pseudo_ref &, const pseudo_ref &) = default;
 };
 
 /// One compound selector, such as `div#id.a.b[x=y]:hover`: a tag, an id, some
@@ -267,6 +270,7 @@ struct compound {
     /// author's selector from it. Independent of never_matches: `:has(a)` is
     /// matched but not representable.
     bool dropped = false;
+    [[nodiscard]] friend bool operator==(const compound &, const compound &) = default;
 };
 
 /// Specificity as the spec's (a, b, c) triple, packed so the cascade's
@@ -308,6 +312,8 @@ struct compiled_selector {
     /// `:where(:scope)` plus a descendant combinator, so `.a { }` inside
     /// `@scope (.a)` never styles the root while `:scope { }` does.
     bool explicit_scope = false;
+    [[nodiscard]] friend bool operator==(const compiled_selector &,
+                                         const compiled_selector &) = default;
 };
 
 /// One rule as the engine files it: a selector and its declaration block, with

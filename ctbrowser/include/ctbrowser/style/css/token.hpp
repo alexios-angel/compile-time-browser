@@ -77,6 +77,7 @@ struct css_token {
     std::uint32_t text = 0; // Offset into token_stream::pool.
     std::uint32_t length = 0;
     double number = 0; // Number, percentage and dimension only.
+    [[nodiscard]] friend bool operator==(const css_token &, const css_token &) = default;
 };
 
 /// The output of tokenize(): the text pool and the tokens that index it.
@@ -111,6 +112,7 @@ struct token_stream {
         if (t.type == token_type::at_keyword && !raw.empty()) { return raw.substr(1); }
         return raw;
     }
+    [[nodiscard]] friend bool operator==(const token_stream &, const token_stream &) = default;
 };
 
 /// §4.2's name-start and name code points. Any byte >= 0x80 counts: a UTF-8

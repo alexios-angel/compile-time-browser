@@ -129,6 +129,7 @@ struct media_query {
     bool negated = false;
     bool malformed = false; // An unparseable query is `not all`: it never matches.
     std::string condition;  // The `<media-condition>` after the type, or empty.
+    [[nodiscard]] friend bool operator==(const media_query &, const media_query &) = default;
 };
 
 /// A comma-separated query list (an OR), plus the index of the enclosing
@@ -136,6 +137,8 @@ struct media_query {
 struct media_condition {
     std::uint32_t parent = 0;
     std::vector<media_query> queries;
+    [[nodiscard]] friend bool operator==(const media_condition &,
+                                         const media_condition &) = default;
 };
 
 /// One `[<container-name>]? <container-query>?` (CSS Conditional 5 §3): the
@@ -146,6 +149,8 @@ struct media_condition {
 struct container_query {
     std::string name;
     std::string condition;
+    [[nodiscard]] friend bool operator==(const container_query &,
+                                         const container_query &) = default;
 };
 
 /// One `@container <container-condition>#`: a comma list, which holds when any
@@ -154,6 +159,8 @@ struct container_query {
 struct container_condition {
     std::uint32_t parent = 0;
     std::vector<container_query> queries;
+    [[nodiscard]] friend bool operator==(const container_condition &,
+                                         const container_condition &) = default;
 };
 
 } // namespace ctbrowser::style::css

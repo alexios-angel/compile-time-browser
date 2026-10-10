@@ -23,6 +23,7 @@ struct keyframe_block {
     std::vector<double> offsets;         // Each in [0, 1].
     std::uint32_t first_declaration = 0; // Index into stylesheet::declarations.
     std::uint32_t declaration_count = 0;
+    [[nodiscard]] friend bool operator==(const keyframe_block &, const keyframe_block &) = default;
 };
 
 /// One `@keyframes` rule.
@@ -35,6 +36,8 @@ struct keyframes_block {
     /// layer (CSS Cascade 5 §6.4.3).
     std::uint32_t layer = 0;
     std::vector<keyframe_block> frames; // In source order.
+    [[nodiscard]] friend bool operator==(const keyframes_block &,
+                                         const keyframes_block &) = default;
 };
 
 } // namespace ctbrowser::style::css
