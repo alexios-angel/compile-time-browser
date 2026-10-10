@@ -1030,9 +1030,13 @@ deliver Shell mutation observers, custom-element callbacks, events or rendering.
 
 The focused `CTNative/Browser/dom/dom.test` lit case compiles and executes real
 DOM clients with GCC and the configured C++23 Clang, both printing layouts and
-optimization policies. It checks document domains, detached subtree lifetime,
-ordered mutations, String/Boolean conversion, validation failures, refusal
-controls and absence of Script symbols. Selector clients additionally link Style;
+optimization policies. Under a host manifest both policies emit the same program,
+and a module with nothing to deduce prints the same C++ in both layouts, so
+`dom.standalone` builds and runs each distinct program once per compiler, with
+the headers every program shares precompiled once. It
+checks document domains, detached subtree lifetime, ordered mutations,
+String/Boolean conversion, validation failures, refusal controls and absence of
+Script symbols. Selector clients additionally link Style;
 other actions keep DOM/Core-only linkage. Query checks cover live interactive
 state, atom-table mismatches, shadow boundaries and cross-document misses.
 Boolean actions also exclude scalar

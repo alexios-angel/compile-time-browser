@@ -1765,8 +1765,10 @@ MIXED_OWNED_CHECKS = r"""
 
 def mixed_selectors(args, compilers):
     includes, libraries = dom.link_options(args, selectors=True)
-    executions = refused = 0
-    for label, text in MIXED_SELECTOR_SOURCES.items():
+
+    def check_case(case):
+        label, text = case
+        executions = refused = 0
         ir, contract = dom.prepare(args, f"custom-{label}", text, 2, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for owned, optimize, manifest in dom.variants(contract):
@@ -1799,7 +1801,9 @@ def mixed_selectors(args, compilers):
                     success=False,
                 )
                 refused += 1
-    return executions, refused
+        return executions, refused
+
+    return tuple(map(sum, zip(*dom.parallel(check_case, MIXED_SELECTOR_SOURCES.items()))))
 
 
 def refusals():
@@ -2369,8 +2373,10 @@ def protected_attribute(args, compilers, includes, libraries):
             "^bb0(%ignored: !ctjs.value):\n        %observed = ctjs.unary typeof %ignored",
         ),
     }
-    executions = refused = 0
-    for label, text in cases.items():
+
+    def check_case(case):
+        label, text = case
+        executions = refused = 0
         accepted = label in ("valid", "digit-name")
         ir = args.work / f"protected-attribute-{label}.mlir"
         ir.write_text(text)
@@ -2398,13 +2404,18 @@ def protected_attribute(args, compilers, includes, libraries):
                 libraries,
             )
             executions += 2 * len(compilers)
+        return executions, refused
+
+    executions, refused = map(sum, zip(*dom.parallel(check_case, cases.items())))
     print(f"Protected raw DOM attribute: {executions} native executions, {refused} refusals")
 
 
 def normal_throws(args, compilers, includes, libraries, cases):
     """Observe cleanup exceptions and saved body throws across completion paths."""
-    executions = observations = 0
-    for label, text in cases:
+
+    def check_case(case):
+        label, text = case
+        executions = observations = 0
         selecting = "selector" in label
         mixed = label.startswith("mixed-body-throw-")
         mutable = "mutable-" in label
@@ -2745,6 +2756,9 @@ var {name} = (function() {{
                 selected_libraries,
             )
             executions += 2 * len(compilers)
+        return executions, observations
+
+    executions, observations = map(sum, zip(*dom.parallel(check_case, cases)))
     print(
         f"Normal DOM close throw: {executions} native executions, {observations} Node/VM observations"
     )
@@ -4245,8 +4259,10 @@ def saved_throws(args, compilers, includes, libraries):
         exercise(doc, button, [&] { return @ENTRY@(alias); });
         exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
 """
-    executions = refused = observations = 0
-    for label, text, kind, payload, closed in cases:
+
+    def check_case(case):
+        label, text, kind, payload, closed = case
+        executions = refused = observations = 0
         nested_branch_throw = "-branch-throw-" in label
         branch_throw_read = "-branch-throw-read-" in label
         takes_branch_throw = nested_branch_throw and not label.endswith(
@@ -5612,6 +5628,9 @@ var savedThrow, savedExhausted;
                             success=False,
                         )
                         refused += 1
+        return executions, refused, observations
+
+    executions, refused, observations = map(sum, zip(*dom.parallel(check_case, cases)))
     normal_cases = (
         ("normal-throwing-close", source(True).replace("return {};", "throw 2;")),
         (
@@ -5872,8 +5891,7 @@ var savedThrow, savedExhausted;
         "unsupported-selector-inside-final-argument-reuse",
         "unsupported-terminal-selector-write-reuse",
     }
-    admitted = 0
-    for label, text in (
+    historical = (
         (
             *closes("postwrite", postwrite_throwing_source),
             (
@@ -7689,7 +7707,11 @@ var savedThrow, savedExhausted;
             )
             for kind, suffix in (("getter", "getter"), ("method", "throws"))
         )
-    ):
+    )
+
+    def admit(case):
+        label, text = case
+        refused = admitted = 0
         accepted = label in accepted_normal_closes
         ir, contract = dom.prepare(args, label, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
@@ -7710,6 +7732,10 @@ var savedThrow, savedExhausted;
                     )
                 refused += not accepted
                 admitted += accepted
+        return refused, admitted
+
+    historical_refused, admitted = map(sum, zip(*dom.parallel(admit, historical)))
+    refused += historical_refused
     print(
         f"Saved primitive DOM throw: {executions} native executions, {refused} refusals, "
         f"{observations} Node/VM observations, {admitted} historical source admissions"
@@ -7725,7 +7751,10 @@ def main():
     saved_throws(args, compilers, includes, libraries)
     executions, refused = mixed_selectors(args, compilers)
     admitted = 0
-    for label, text, breaking, results, resetting, closed in POSITIVES:
+
+    def check_positive(case):
+        label, text, breaking, results, resetting, closed = case
+        executions = refused = 0
         selecting = label in SELECTOR_SOURCES
         selected_includes, selected_libraries = (
             dom.link_options(args, selectors=True) if selecting else (includes, libraries)
@@ -7846,13 +7875,20 @@ def main():
                         success=False,
                     )
                     refused += 1
+        return executions, refused
+
+    positive_executions, positive_refused = map(sum, zip(*dom.parallel(check_positive, POSITIVES)))
+    executions += positive_executions
+    refused += positive_refused
     for name, text in COMPILE_ONLY.items():
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         for optimize in (False, True):
             dom.lower(args, ir, contract, f"compile-only-{name}-{optimize}", optimize=optimize)
             admitted += 1
-    for name, text in refusals().items():
+
+    def refuse(case):
+        name, text = case
         if name in (
             "body-throw",
             "body-throw-boolean-snapshot",
@@ -7864,11 +7900,13 @@ def main():
             "body-throw-close-throws",
             "body-throw-close-getter",
         ):
-            continue  # Executed above, with the original source unchanged.
+            return 0  # Executed above, with the original source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, contract, f"refused-{name}")
-        refused += 2
+        return 2
+
+    refused += sum(dom.parallel(refuse, refusals().items()))
     print(
         f"Closed custom DOM iteration: {executions} native executions, {refused} refusals; "
         f"{admitted} nonexecuted source admissions; "

@@ -617,7 +617,9 @@ def main():
     args = dom.parse_args(__doc__, oracles=True)
     compilers = args.compilers
     includes, libraries = dom.link_options(args)
-    for name, source in SOURCES.items():
+
+    def check_source(case):
+        name, source = case
         string_read = name.startswith("write-string-read-")
         boolean_read = name.startswith("write-boolean-read-conditional-prefix-")
         nullable_number = name.startswith("write-nullable-number-conditional-prefix-")
@@ -1019,6 +1021,8 @@ def main():
                         success=False,
                         max_steps=0,
                     )
+
+    dom.parallel(check_source, SOURCES.items())
     refusals = {
         "write-number-invalid-name": "try { anchor.setAttribute('bad name', 42); throw anchor; } catch (error) { return error === anchor; }",
         "write-number-mixed-join": "const saved = anchor.hasAttribute('data-closed') ? 42 : anchor; try { anchor.setAttribute('data-written', saved); throw anchor; } catch (error) { return error === anchor; }",
@@ -1445,7 +1449,9 @@ def main():
             ),
         }
     )
-    for name, body in refusals.items():
+
+    def refuse(case):
+        name, body = case
         ir, contract = dom.prepare(
             args,
             name,
@@ -1472,6 +1478,8 @@ def main():
                     optimize=optimize,
                     success=False,
                 )
+
+    dom.parallel(refuse, refusals.items())
     check_outer_catches(args)
     print("confined node catch checks passed")
 
@@ -1695,7 +1703,9 @@ def check_outer_catches(args):
         exercise(foreign_doc, other_button, [&] { return @ENTRY@(foreign); });
         (void)pressed;
     """
-    for name, source in (OUTER_SOURCES | RAW_HELPER_SOURCES).items():
+
+    def check_source(case):
+        name, source = case
         script = (
             source
             + """
@@ -1797,6 +1807,8 @@ var outcome0 = observe(false), outcome1 = observe(true);
                     success=False,
                     max_steps=0,
                 )
+
+    dom.parallel(check_source, (OUTER_SOURCES | RAW_HELPER_SOURCES).items())
 
 
 if __name__ == "__main__":
