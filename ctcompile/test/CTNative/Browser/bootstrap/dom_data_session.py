@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Gate the pinned Bootstrap Data program with three document-owned input keys."""
+"""Check that the pinned Bootstrap Data program lowers to native C++ when its three
+probe keys are DOM element inputs."""
 
 import hashlib
 import json
@@ -19,14 +20,19 @@ from Target.Cpp.harness import FLAGS, function_body
 
 KEYS = ("element", "other", "absent")
 ALLOCATIONS = "var element = {}; var other = {}; var absent = {};"
+# For each of (element, other, absent), the KEYS index whose object it uses: the
+# five ways three keys can share objects (all distinct, one of three pairs equal,
+# all equal).
 ALIASES = ((0, 1, 2), (0, 0, 2), (0, 1, 0), (0, 1, 1), (0, 0, 0))
 
 
 def input_adapter(text):
     """Replace only the three probe allocations and their global aliases with inputs.
 
-    The JavaScript pin and every vendor operation remain unchanged. This is a
-    test input adapter over the imported script, not a source admission rewrite.
+    The JavaScript pin and every vendor operation stay unchanged. The adapter only
+    turns the imported script's three key objects into entry arguments so the test
+    can pass DOM elements; it does not change what the compiler is asked to admit.
+    Returns (adapted IR text, per-key description of the replaced sites).
     """
     match = re.search(r"ctjs.func @_script_\$0\((.*?)\)(.*?)(?=\n  ctjs.func |\n})", text, re.S)
     if not match or len(re.findall(r"%[\w.$-]+: !ctjs.value", match[1])) != 3:
@@ -295,8 +301,9 @@ def main():
                 raise RuntimeError(f"{name}: missing complete native source refusal")
 
     refuse(subject, contract, "budget", budget=0)
-    # The last payload set now targets another input. Equal inputs still work;
-    # distinct inputs leave the following .value read without an object.
+    # Retarget the last payload set at another input. Equal inputs still work;
+    # distinct inputs leave the following .value read without an object, so the
+    # proof must refuse this variant.
     last_set = list(re.finditer(r"ctjs.call_direct @fn\$4\([^\n]+", adapted))[-1]
     changed = last_set[0].replace("%dom_element", "%dom_other")
     if changed == last_set[0]:

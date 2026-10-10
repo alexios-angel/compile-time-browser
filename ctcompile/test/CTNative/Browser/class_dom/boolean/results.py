@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Carry Boolean arm results through class captures without losing state snapshots."""
+"""Check that a captured callback returning a Boolean from an `if`/`?:` arm
+compiles natively and matches Node and the VM, keeps the state snapshots it
+returns, and that non-Boolean or effectful variants are refused."""
 
 import hashlib
 import re
@@ -13,7 +15,7 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
-# Preserve both source baselines measured before result-bearing class transport.
+# The writer returns the old value of `seen` and flips it.
 RESULT = "return seen ? (seen = false, true) : (seen = true, false);"
 METHOD = captures.METHOD.replace("seen = true;", RESULT)
 REPEATED = METHOD.replace(
@@ -22,8 +24,8 @@ REPEATED = METHOD.replace(
     "    target.setAttribute('first', snap1); target.setAttribute('second', snap2);\n"
     "    target.setAttribute('third', snap3);",
 )
-# This source's early return already forms a complete result-bearing If before
-# class transport; it does not require a nested return or completion cell.
+# The early `return` already lowers to one `scf.if` that yields the result, so
+# this case needs no nested return or completion cell.
 EARLY = conditionals.METHOD.replace(
     conditionals.WRITE, "if (!seen) { seen = true; return true; } return false;"
 )
@@ -48,6 +50,9 @@ CASES = {
         "return seen ? (seen = off, on) : (seen = on, off);",
     ),
 }
+# SHA-256 of the generated JavaScript for these four cases, pinned so an edit
+# to the shared templates (captures, conditionals) cannot silently change what
+# this test compiles.
 SOURCE_HASHES = {
     "original-helper-result": "cbb816c38edf148a7d97ff50abfdb8e1500e6e36f96696f614351bc2be34fcd7",
     "stateful-helper-result": "4d1f45cef62a755065a9e379c69436ce2b87b0c17c4a22f9fbf5b9e49ecb24cd",
@@ -70,6 +75,7 @@ BAD = {
 
 
 def observations(name):
+    """Return the (attribute, value) writes one item.run() makes for case name."""
     result = []
     if name in ("repeated-results", "nested-results"):
         result = [("first", "false"), ("second", "true"), ("third", "false")]
@@ -82,6 +88,7 @@ def observations(name):
 
 
 def shape(text, name="stateful-helper-result"):
+    """Return (writer, branch): the writer closure and its result-yielding `scf.if`."""
     if name == "mixed-results":
         *_, leaves, _, _ = mixed.shape(text)
         writer = next(leaf for leaf in leaves if "ctjs.store_upvalue" in leaf[0])
@@ -106,6 +113,7 @@ def shape(text, name="stateful-helper-result"):
 
 
 def result_roots(text):
+    """captures.roots() plus a root of the branch result, as (label, valid, invalid)."""
     yield from captures.roots(text)
     writer, branch = shape(text)
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", writer[0])[1]
@@ -119,6 +127,7 @@ def result_roots(text):
 
 
 def early_roots(text):
+    """Yield (label, valid, invalid) roots placed before or after each arm's frame exit."""
     writer, branch = shape(text, "early-return")
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", writer[0])[1]
     callee = re.findall(r"(%\w+): !ctjs.value", writer[0].split("\n")[0])[2]
@@ -134,6 +143,7 @@ def early_roots(text):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     yield from captures.mutations(text)
     writer, branch = shape(text)
     first_yield = re.search(r"^      scf\.yield (%\w+) : !ctjs.value", branch[0], re.M)
@@ -159,8 +169,8 @@ def mutations(text):
         "callee-yield",
         text[: writer.start() + branch.start()] + changed + text[writer.start() + branch.end() :],
     )
-    # A verifier-valid non-value result must not acquire Boolean authority
-    # merely because its producer is a Truthy operation.
+    # An i1 result is valid IR but not a JS value; it must not count as a
+    # Boolean result just because a ctjs.truthy produced it.
     changed = branch[0].replace("-> (!ctjs.value)", "-> (i1)")
     changed = re.sub(
         r"^      scf\.yield (%\w+) : !ctjs.value",
@@ -175,6 +185,7 @@ def mutations(text):
 
 
 def verifier_mutations(text):
+    """Yield (label, IR) pairs with a wrong yield arity that the verifier rejects."""
     writer, branch = shape(text)
     first_yield = re.search(r"^      scf\.yield (%\w+) : !ctjs.value", branch[0], re.M)
     changed = branch[0].replace(first_yield[0], "      scf.yield", 1)

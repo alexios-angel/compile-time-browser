@@ -27,7 +27,7 @@ function alternate(mode, count, accumulator) {
 function alternates(count) {
     return alternate(false, count, count) + alternate(true, count, count);
 }
-// A changing static numeric seed triggers the whistle, retaining generic work.
+// A seed that grows each call trips the supercompiler's termination check; generic code remains.
 function growing(seed, count) {
     if (count <= 0) {
         return seed;

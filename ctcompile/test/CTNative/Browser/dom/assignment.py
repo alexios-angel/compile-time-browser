@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fresh DOM result assignments preserve order and own original M's values."""
+"""Test assigning Bootstrap's data-attribute parser results to a fresh object, natively.
+
+`M` is the unmodified vendored Bootstrap normalizeData function: it turns an
+attribute string into a Boolean, Number, null or parsed JSON. Each source
+writes M's results into a fresh object. The native code must match Node and
+the VM (same property order, same values) and own those values after the DOM
+changes; each REFUSALS body must not compile natively.
+"""
 
 import json
 import re
@@ -11,10 +18,11 @@ from CTNative.Browser.dom.dataset import BOOTSTRAP_FILTER, PREFIX_INTRINSICS
 from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 
+# M applied to a data attribute, as Bootstrap's getDataAttribute does.
 GET = "M(t.getAttribute('data-bs-config'))"
 LATER = "M(t.getAttribute('data-bs-later'))"
 BODIES = {
-    # Preserve the former refusal: fresh local member reads already forward M's value.
+    # Control: reading the member back from a fresh local object forwards M's value.
     "member_read": f"const e = {{}}; e.saved = {GET}; return e.saved;",
     "assign_value": f"const e = {{}}; e.saved = {GET}; return e;",
     "assign_optional": "const e = {}; e.nil = null; e.flag = t.hasAttribute('data-bs-config'); "
@@ -31,12 +39,12 @@ BODIES = {
     "e['2'] = 2; return e;",
     "assign_spread": f"const i = {GET}; const e = {{...('object' == typeof i ? i : {{}})}}; "
     f"e.saved = {LATER}; e['2'] = 'last index'; return e;",
-    # Preserve the former refusal body and its original dataset observations.
+    # Loops that write one dynamic key per dataset entry.
     "loop_dynamic_key": "const e = {}; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e[n] = M(t.dataset[n]); }} return e;",
     "loop_dynamic_all": "const e = {}; "
     "for (const n of Object.keys(t.dataset)) { e[n] = M(t.dataset[n]); } return e;",
-    # Preserve the interrupted prefix_result probe's original body.
+    # Bootstrap's key normalization (strip `bs`, lower-case the first letter).
     "normalized_result": "const result = {}; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ let i = n.replace(/^bs/, ''); "
     "i = i.charAt(0).toLowerCase() + i.slice(1); result[i] = M(t.dataset[n]); } return result;",
@@ -47,6 +55,7 @@ SOURCES = {
     name: f"function {name}(t) {{ {values.BOOTSTRAP_M if 'M(' in body else ''} {body} }}\n"
     for name, body in BODIES.items()
 }
+# Attribute values for the data-bs-config fixtures; None means the attribute is absent.
 INPUTS = (
     None,
     "",
@@ -64,6 +73,7 @@ INPUTS = (
     "%",
     "not%20json",
 )
+# Source name -> list of attribute sets, one native and oracle run each.
 FIXTURES = {
     name: [
         ([] if value is None else [("data-bs-config", value)])
@@ -73,7 +83,7 @@ FIXTURES = {
     for name in SOURCES
 }
 FIXTURES["assign_order"] = FIXTURES["assign_order"][:2]
-# Every normalized value is the last overwrite, with zero-trip controls first.
+# Every normalized value is the last overwrite; the zero-iteration controls come first.
 FIXTURES["assign_loop"] = [
     [],
     [("data-bs-config", "ignored"), ("data-other", "ignored")],
@@ -186,6 +196,9 @@ FIXTURES["normalized_result"] = [
         [("data-bsfoo", "3"), ("data-bs-foo", "1"), ("data-bs__proto__", value)],
     )
 ]
+# Bodies the native compiler must refuse: dynamic or __proto__ keys and
+# prototype mutation can redirect a write away from a plain own property, and
+# an escaping, aliased or captured target can be observed after the DOM changes.
 REFUSALS = {
     "dynamic_key": f"const e = {{}}; e[t.getAttribute('key')] = {GET}; return e;",
     "prototype_key": f"const e = {{}}; e['__proto__'] = {GET}; return e;",
@@ -281,6 +294,9 @@ for name, old, new in (
 
 
 def oracle_source(accessors):
+    """Return (JS source, labels): every FIXTURES run against a stand-in element
+    that traces dataset and attribute reads. With `accessors`, dataset entries
+    are getters that record their own reads."""
     source = "".join(SOURCES.values()) + values.OBSERVE
     labels = []
     descriptor = (
@@ -353,6 +369,7 @@ var {label} = (function() {{
 
 
 def oracles(args):
+    """Run oracle_source under Node and the VM; return the expected observations."""
     expected = None
     for accessors in (True, False):
         source, labels = oracle_source(accessors)
@@ -364,10 +381,10 @@ def oracles(args):
             expected = observed
         else:
             assert observed == expected, (observed, expected)
-    # The VM's Object.keys currently invokes enumerable accessors. Keep the
-    # full getter trace in Node above; compare unchanged entry sources and
-    # values with plain data properties in both oracles. Dataset getter counts
-    # and source getAttribute/hasAttribute ordering remain checked in both.
+    # The VM's Object.keys invokes enumerable accessors, so only Node checks the
+    # getter trace (above). Both oracles compare the results with plain data
+    # properties, and both still check the dataset getter counts and the order
+    # of getAttribute/hasAttribute calls.
     vm = args.work / "assignment-vm.js"
     vm.write_text(source)
     actual = run([args.reference, vm]).stdout
@@ -377,6 +394,9 @@ def oracles(args):
 
 
 def client(name, symbol, owned):
+    """Return C++ that runs every FIXTURES[name] entry through `symbol`, checks
+    it makes no DOM writes, then changes the attribute and destroys the
+    document before printing the results, so they must own their values."""
     setup = (
         f"{symbol}_session session; auto & doc = session.document();"
         if owned
@@ -423,20 +443,22 @@ def client(name, symbol, owned):
 
 
 def check_output(args, output, expected):
+    """Compare the native program's observations with the oracle's, including
+    each object's raw key order."""
     actual = output.splitlines()
     assert len(actual) == len(expected), (len(actual), len(expected))
     for index, (value, wanted) in enumerate(zip(actual, expected)):
         assert value.split(":", 1)[0] == wanted.split(":", 1)[0], (value, wanted)
         if not wanted.startswith("object:{"):
             continue
-        # Keep the constructed target's raw key order (and duplicate keys)
-        # observable before adapting the public parsed-tree representation.
+        # Compare the native object's raw key order, duplicates included, before
+        # the normalizing pass below re-serializes it.
         keys = [key for key, _ in json.loads(value[7:], object_pairs_hook=list)]
         wanted_keys = [key for key, _ in json.loads(wanted[7:], object_pairs_hook=list)]
         assert keys == wanted_keys, (index, keys, wanted_keys)
-    # Core JSON deliberately retains parse order, including nested numeric
-    # names. Observe it with JS enumeration, preserving ordinary key order
-    # and every value/type; source-object insertion order was checked above.
+    # The core JSON type keeps parse order, nested numeric names included.
+    # Re-serialize each object through JS so it enumerates in JS key order,
+    # then compare values and types; insertion order was checked above.
     observed = run(
         [
             args.node,
@@ -543,7 +565,7 @@ def main():
                     compilers[1],
                     path,
                     path.with_suffix(".sanitized"),
-                    # Avoid inlining every fixture into the combined lifetime check.
+                    # Keep the fixtures out of line in the combined sanitizer build.
                     flags=[*flags, "-fno-inline-functions"],
                     libraries=libraries,
                     sanitize=True,

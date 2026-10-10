@@ -14,7 +14,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/reachability.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=UNPRUNED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/reachability.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-prune-unreachable | FileCheck %s --check-prefix=SOURCE --implicit-check-not='ctjs.func private @seed$1__specialized'
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/reachability.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-prune-unreachable --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-
+// Tests --ctnative-prune-unreachable: roots, unknown references, budgets, and partial evaluation.
 // ROOTS: ctnative.reachability_summary = {removed = 3 : i64, retained = 8 : i64
 // ROOTS: ctjs.func @entry
 // ROOTS: ctjs.store_global "published"
@@ -124,12 +124,12 @@ module {
   // PE: ctjs.return
   ctjs.func private @initialize(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0 as IEEE-754 bits
     %result = ctjs.call_direct @helper(%u, %u, %u, %one)
     ctjs.return %result
   }
   ctjs.func private @helper(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %input: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0 as IEEE-754 bits
     %result = ctjs.binary mul %input, %two
     ctjs.return %result
   }
@@ -150,17 +150,17 @@ module {
   // BOXED-LABEL: ctjs.func private @original$1
   // BOXED: ctjs.store_global "boxedEffect"
   ctjs.func private @original$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0 as IEEE-754 bits
     ctjs.store_global "boxedEffect", %one
     ctjs.return %one
   }
   // BOXED-LABEL: ctjs.func private @variant
   ctjs.func private @variant(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0 as IEEE-754 bits
     ctjs.return %one
   }
   ctjs.func private @orphan(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32, ctnative.specialized_from = "original$1"} {
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0 as IEEE-754 bits
     ctjs.return %one
   }
 }

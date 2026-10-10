@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Execute guarded closest borrows against real DOM/Style and reject unchecked uses."""
+"""Run null-checked element.closest() results natively against the real DOM.
+
+A closest() result used only inside an `if (a)` guard must lower to calls to
+the public DOM and Style helpers and run on owned and borrowed documents;
+unguarded, wrongly guarded, returned or retained results must be refused.
+"""
 
 import re
 
@@ -143,7 +148,7 @@ REFUSALS = {
     "dataset": "const a=first.closest('button'); if(a) return Object.keys(a.dataset).length; return 0;",
 }
 
-# A former refusal: both arms of the join are Elements, so `b` is never null.
+# Must lower: both arms of the join are Elements, so `b` is never null.
 # jsdom (with :hover by state) answers false, true, false, true and writes nothing.
 JOINED = "const a=first.closest('button'); const b=a ? a : first; return b.matches(':hover');"
 JOINED_CHECKS = r"""
@@ -244,7 +249,8 @@ def main():
     stale = dict(contract, module_sha256="0" * 64)
     if "fingerprint mismatch" not in dom.lower(args, ir, stale, "stale", success=False):
         raise RuntimeError("closest accepted a stale host contract")
-    # Printed proof claims do not make the wrong branch safe.
+    # A forged ctnative.dom_nonnull attribute on the module must not make the
+    # null arm of "absent-arm" safe; the pass must re-derive the fact.
     forged, manifest = dom.prepare(
         args, "forged", "function bad(first, second) { " + REFUSALS["absent-arm"] + " }", 2
     )

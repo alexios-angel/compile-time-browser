@@ -1,2 +1,2 @@
-# Gate private DOM Data storage against the unchanged source proof and real documents.
+# A private per-element JS data store (a Map keyed by element) lowers to native storage.
 # RUN: python3 %S/data_session.py %dom_driver --node %node --reference %native_reference

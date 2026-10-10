@@ -1,9 +1,21 @@
+//===- DOM/Dataset.h - element.dataset key proofs ---------------*- C++ -*-===//
+//
+// Host-contract tests for DOMEntryAnalysis on `Object.keys(el.dataset)`, the
+// Bootstrap-style filter over those keys, and the `/^bs/` prefix strip that
+// follows it. Included by HostContract.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
 
 namespace ctcompile::test::host_contract {
 
+/// Tests `Object.keys(el.dataset).filter(k => k.startsWith("bs") &&
+/// !k.startsWith("bsConfig"))`: the dataset snapshot and both callback arms
+/// must be proved, the source left unchanged, and every smaller budget must
+/// exhaust without leaking evidence.
 inline void checkDOMDatasetFilter(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(
@@ -114,6 +126,9 @@ module {
               "filter analysis preserves the original complete source");
         check(DOMEntryAnalysis(*module, contract, proof.steps()).proved(),
               "filter proof reproduces its exact completion budget");
+        // Every budget below the proof's own step count must exhaust and
+        // withhold all evidence, so a partial proof is never mistaken for a
+        // complete one. The same sweep recurs below for each fixture.
         for (unsigned budget = 0; budget < proof.steps(); ++budget) {
             DOMEntryAnalysis limited(*module, contract, budget);
             check(limited.exhausted() && noEvidence(*module, limited),
@@ -277,6 +292,8 @@ module {
           "fresh fingerprint and spoofed callback reports cannot forge a filter receiver");
 }
 
+/// Tests `Object.keys(el.dataset)` as the whole entry (the dataset snapshot
+/// proof), then runs checkDOMDatasetFilter.
 inline void checkDOMDataset(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     constexpr llvm::StringLiteral source = R"MLIR(
@@ -366,6 +383,7 @@ module {
     checkDOMDatasetFilter(context);
 }
 
+/// Tests `"bsTitle".replace(/^bs/, "")`: the string-prefix RegExp proof.
 inline void checkDOMStringPrefix(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(

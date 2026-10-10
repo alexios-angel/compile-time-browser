@@ -1,2 +1,2 @@
-# Branch-local initialization preserves the exact synchronous Boolean lifetime.
+# A Boolean cell initialized in one branch arm lowers natively; uses outside it are refused.
 # RUN: python3 %S/scopes.py %dom_driver --node %node --reference %native_reference

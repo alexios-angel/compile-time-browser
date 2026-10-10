@@ -1,27 +1,27 @@
-// THE OPERAND RULES, AND THE TWO `why...()` CATCH-ALLS.
+// The operand-related refusal messages of the native lowering, and cases that
+// used to be refused here and now compile natively:
 //
-// Three families that between them account for most of the refusals a program
-// slightly outside the tier will ever see, and none of which had a pin - plus
-// the one refusal that cites an obligation by number:
+//   1. `admission::numeric`: one message used from several call sites, each
+//      passing a different `where`; that word in front of "operand is" is the
+//      only thing that names the refusing operation, so a rewrite that lost
+//      the `where` argument would make every one of them say the same thing.
+//      The examples below that once hit it now lower; a wider
+//      Boolean/Number/String union is refused earlier by the carrier check.
+//   2. The carrier check in `admission::function` ("a value of type T from
+//      `OP`"), which runs after every operation and catches values that no
+//      per-operation rule refused.
+//   3. The final fallback of whyOpen and whyNotDense ("... escapes - it
+//      reaches `OP`"). Both helpers name the first use that disqualified the
+//      literal, and both end in a fallback that names the operation instead of
+//      an escape route. The routes are tested in Objects/struct.mlir and
+//      Objects/array.mlir; this file tests the fallbacks.
 //
-//   1. `admission::numeric` - ONE message with several call sites, each passing a
-//      different `where`. The word in front of "operand is" is the only thing
-//      that tells a reader which operation refused, so a rewrite that lost the
-//      `where` argument would leave every one of them saying the same thing
-//      and no test would notice. Its original examples below are now native;
-//      the remaining broad union is rejected earlier by the carrier sweep.
-//   2. the carrier check in `admission::function`, "a value of type T from
-//      `OP`" - the sweep after every operation, which catches what the arms
-//      let through. It is the most common refusal in this file's own probes
-//      and it was pinned nowhere.
-//   3. the LAST alternative of whyOpen and whyNotDense, "... escapes - it
-//      reaches `OP`". Both helpers name the first use that disqualified the
-//      literal, and both end in a catch-all that names the operation instead
-//      of a route. The routes are pinned (native-struct.mlir,
-//      native-array.mlir); the catch-alls were not, and a reader who meets one
-//      is exactly the reader who most needs it to say something true.
+// It also pins the one refusal that cites an obligation by number (O-4, the
+// array literal created inside a loop).
 //
-// ONE PROGRAM PER FILE; see the header of shape-field-names.mlir for why.
+// One program per split-file input: a refusal spreads to callers and callees,
+// so two cases in one program could pass for the wrong reason (see the header
+// of Objects/shape-field-names.mlir).
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/binary.js 2>/dev/null \
@@ -64,11 +64,11 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=FRAMESLOT
 
-// --- former numeric() refusals and a wider unsupported union --------------------------------------------
+// --- numeric() cases that now lower, and a wider union that does not ---------
 //
-// String and Boolean/String union subtraction and generic addition are native.
-// A broader Boolean/Number/String union fails the carrier sweep at its join;
-// preserve all former sources as positives.
+// Subtraction on a String or Boolean/String union and generic addition are
+// native. A Boolean/Number/String union fails the carrier check at its join.
+// Each program below was once refused.
 // BINARY: ctjs.func {{.*}}@badd$1
 // BINARY-SAME: ctnative.not_native = "a value of type !ctnative.variant<!ctnative.bool, !ctnative.num<i32>, !ctnative.str<utf8>> from `scf.if`"
 
@@ -76,10 +76,10 @@
 // UNION: call_opaque "ctnative::to_number"{{.*}}!emitc.opaque<"ctnative::boolean_string">{{.*}} -> !emitc.opaque<"ctnative::js_num">
 // OPTIONAL: member_call_opaque {{.*}} "to_number"() : !emitc.opaque<"ctnative::nullable_string">, () -> !emitc.opaque<"ctnative::js_num">
 
-// --- a formerly refused Boolean global ------------------------------------
+// --- a Boolean global ---------------------------------------------------------
 //
-// Preserve the original source as Boolean observations become native. The
-// equality result keeps its Boolean tag through storage and exact output.
+// A Boolean global is printed natively. The equality result keeps its Boolean
+// tag through storage and output.
 //
 // STORE-NOT: ctnative.not_native
 // STORE: emitc.func @main()
@@ -87,28 +87,28 @@
 // STORE: emitc.func @eqbool_1
 // STORE-NOT: ctnative.not_native
 
-// --- the carrier sweep: a value no arm objected to, with no carrier ---------
+// --- the carrier check: a value no arm objected to, with no carrier --------
 //
 // `boxed` is what a call into the open world returns. No arm in `admission::op`
-// refuses ctjs.call_direct - its arguments were all numbers - so it is the
-// per-value sweep afterwards that catches the RESULT, and the message names
+// refuses ctjs.call_direct (its arguments were all numbers), so it is the
+// per-value check afterwards that catches the result, and the message names
 // the type and the operation that produced it rather than any rule.
 //
 // CARRIER: ctjs.func {{.*}}@_script_$0
 // CARRIER-SAME: ctnative.not_native = "a value of type !ctnative.boxed from `ctjs.call_direct`"
 
-// --- whyOpen's catch-all ----------------------------------------------------
+// --- whyOpen's fallback -----------------------------------------------------
 //
-// `!o` on an object literal: not a get, not a set, not a loop edge, not a
-// return - so the helper falls through to naming the operation that took it.
+// `!o` on an object literal is not a get, a set, a loop edge or a return, so
+// the helper falls through to naming the operation that took it.
 //
 // OBJREACH: ctjs.func {{.*}}@nt$1
 // OBJREACH-SAME: ctnative.not_native = "an object literal that escapes - it reaches `ctjs.unary`"
 
-// --- whyNotDense's catch-all ------------------------------------------------
+// --- whyNotDense's fallback -------------------------------------------------
 //
-// `a.push(n)` where `push` is reached as a PROPERTY and called: the array is
-// the receiver of a ctjs.call, which is neither an append nor a read.
+// `a.push(n)` reads `push` as a property and calls it: the array is the
+// receiver of a ctjs.call, which is neither an append nor a read.
 //
 // ARRREACH: ctjs.func {{.*}}@ap$1
 // ARRREACH-SAME: ctnative.not_native = "an array literal that escapes - it reaches `ctjs.call`"
@@ -120,35 +120,35 @@
 
 // --- whyNotDense's loop-carried route ---------------------------------------
 //
-// The OBJECT half of this pair is pinned by native-struct.mlir; the ARRAY half
-// is a separate string in a separate helper and was pinned by nothing.
+// The object version of this message is tested in Objects/struct.mlir; the
+// array version comes from a separate helper and is tested here.
 //
 // LOOPARRAY: ctjs.func {{.*}}@ab$1
 // LOOPARRAY-SAME: ctnative.not_native = "an array literal that is loop-carried - more than one value reaches the variable that holds it (assigned again inside a loop, or on only one path before it)"
 
-// --- formerly refused Number bitwise operators -----------------------------
+// --- Number bitwise operators -----------------------------------------------
 //
-// Preserve both original source bodies as positives. Unary ~ and binary |
-// operate on js_num, whose overloads implement JavaScript's 32-bit conversion.
+// Both programs lower: unary ~ and binary | operate on js_num, whose overloads
+// implement JavaScript's 32-bit conversion.
 //
-// `x | y`, `x >> y` and `x >>> y` arrive as ctjs.binary - the VM ToNumerics
-// their operands - and the BinaryOp arm admits every bitwise kind with numeric
-// operands, so its own default ("a bitwise or string operator is not native
-// yet") is reachable from no JavaScript operator. It is left unpinned rather
-// than pinned against a construct that does not produce it.
+// `x | y`, `x >> y` and `x >>> y` arrive as ctjs.binary (the VM converts their
+// operands with ToNumeric), and the BinaryOp arm admits every bitwise kind with
+// numeric operands, so its own default ("a bitwise or string operator is not
+// native yet") is reachable from no JavaScript operator. It is left unpinned
+// rather than pinned against a construct that does not produce it.
 //
 // TILDE: bitwise_not {{.*}} : (!emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
 // BITS: bitwise_or {{.*}} : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
-// --- obligation O-4: one literal, one frame slot ----------------------------
+// --- array literal inside a loop: one literal, one frame slot ---------------
 //
-// A vector site made INSIDE a loop body would declare its std::vector inside
-// that block and the storage would end at the closing brace. The refusal is
-// the only one in the file that cites an obligation by number, which is what
-// makes it worth pinning: the number is how a reader gets from the message
-// back to part 24, and a reworded message that dropped it would break that
-// link with nothing to notice.
+// A vector made inside a loop body would declare its std::vector inside that
+// block, so its storage would end at the closing brace. The message cites
+// obligation O-4 (see the comment above the check in
+// lib/CTNative/Lowering/Admission/Operations.cpp); this test keeps that
+// citation in the message, so a reader can get from the refusal back to the
+// rule.
 //
 // FRAMESLOT: ctjs.func {{.*}}@la$1
 // FRAMESLOT-SAME: ctnative.not_native = "an array literal created inside a branch or a loop - its storage has to be one frame slot (obligation O-4)"

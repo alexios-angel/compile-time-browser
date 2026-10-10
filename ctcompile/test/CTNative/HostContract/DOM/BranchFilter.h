@@ -1,3 +1,12 @@
+//===- DOM/BranchFilter.h - Branch-local filter callbacks -------*- C++ -*-===//
+//
+// Host-contract tests for expandDOMHelpers (DOM source preparation): nested
+// helper inlining, fresh local data objects, and `filter` callbacks created
+// inside one arm of a branch. Included by HostContract.cpp through
+// checkDOMBranchFilter.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -6,6 +15,12 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Tests nested helper expansion: a helper whose invoke/unwind fallbacks wrap a
+/// decodeURIComponent + JSON.parse chain is inlined into the entry with both
+/// exception paths kept; captures, loops and omitted arguments are handled;
+/// and throwing helpers (plain, else-branch, nested, mixed-type payloads)
+/// inline while keeping each throw and its saved payload. Every smaller step
+/// budget must fail with a budget error.
 inline void checkDOMNestedHelpers(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(
@@ -474,6 +489,9 @@ module {
     }
 }
 
+/// Tests that helper expansion leaves fresh local data objects and their
+/// ordered property writes unchanged (same fingerprint), and refuses objects
+/// used as keys, stored into elements, read back, or stored to globals.
 inline void checkDOMDataSource(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(
@@ -554,6 +572,11 @@ module {
     check(completed, "bounded nested data-object preparation reaches completion");
 }
 
+/// Tests that expandDOMHelpers keeps a `filter` callback created inside one
+/// branch arm with its exact identity, so DOMEntryAnalysis can re-prove it;
+/// that escaping, captured, repeated or loop-local callbacks are refused
+/// without rewriting the source; and that every smaller step budget fails
+/// closed. Also runs checkDOMNestedHelpers and checkDOMDataSource.
 inline void checkDOMBranchFilter(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::scf::SCFDialect>();

@@ -1,28 +1,28 @@
-// WHAT THE OBJECT-ARGUMENT RULE REFUSES, AND WHY EACH ONE IS ITS OWN SENTENCE.
+// What the object-argument rule refuses, one program per failed condition.
 //
-// The rule admits an argument on three conditions and every one of them has a
-// program here that fails it, plus the fixpoint that condition 2 needs. These
-// are the negative half of the slice: a carrier that admitted everything would
-// be a guess, and a tier whose whole contract is "anything unproved is a
-// compile-time diagnostic" has to be able to show the diagnostics.
+// The rule admits an object literal passed as an argument only when (1) the
+// callee is one known function, (2) every call passes that parameter an object
+// literal, and (3) the callee reads the parameter, and only through constant
+// keys. Each condition has a failing program here, plus the fixpoint condition 2
+// needs. Anything unproved must be a compile-time diagnostic, so each says why.
 //
-// EVERY MESSAGE HERE USED TO BE "an object literal that escapes - it is passed
-// to a call", which is true of all five and says nothing about which one this
-// program is. The condition that failed is a property of the CALLEE - which
-// parameter, read how, called from where - and the use-list walk that meets the
-// escape has none of it, so `argumentCensus` writes the sentence onto the
-// literal as `ctnative.object_reason`, the same idiom as
-// `ctnative.closure_reason` and `ctnative.cell_reason`.
+// The failed condition is a property of the callee (which parameter, read how,
+// called from where), which the use-list walk that meets the escape cannot
+// see. So `argumentCensus` writes the specific reason onto the literal as
+// `ctnative.object_reason`, the same idiom as `ctnative.closure_reason` and
+// `ctnative.cell_reason`. A generic "passed to a call" message would be true
+// of all five programs and would not say which condition failed for this
+// one.
 //
-// AND THEY LAND ON THE ctjs.call_direct ARM, NOT THE ctjs.call ONE, in four of
-// the five. A callee whose parameter this rule refused is still a closure the
-// PLAIN lift takes - its uses are all calls of it - so by the time admission
+// Four of the five refusals land on the ctjs.call_direct arm, not the ctjs.call
+// one. A callee whose parameter this rule refused is still a closure the
+// plain lift takes (its uses are all calls of it), so by the time admission
 // asks, the call has already become a ctjs.call_direct. Only `opaque`, whose
 // callee is a global with two stores and so never resolves, still has a
 // ctjs.call at that point. Both arms are covered here for that reason.
 //
-// ONE PROGRAM PER FILE, because a refusal is contagious in both directions - a
-// refused callee refuses its caller and a refused caller refuses its callee -
+// One program per file, because a refusal is contagious in both directions (a
+// refused callee refuses its caller and a refused caller refuses its callee),
 // so a file that pinned an acceptance and a refusal together would pin neither.
 //
 // RUN: split-file %s %t
@@ -41,111 +41,111 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/otheropen.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=OTHEROPEN
-// AND THE CENSUS, which is a MEASUREMENT the option ships rather than a rule.
-// It is asserted here because a distribution nobody checks is a distribution
-// that rots: this program has one method-bearing literal and one blocking use,
-// and the label says which.
+// The census is a measurement the option reports, not a rule. It is asserted
+// so its numbers stay right: this program has one method-bearing literal and
+// one blocking use, and the label says which.
+//
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/census.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              '--ctnative-lower-to-emitc=census=1' -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CENSUS
-// AND THE SAME CENSUS OVER A SITE THE CLOSED WORLD ALREADY NAMED, which is the
-// one that can silently change bucket. --ctjs-resolve-globals rewrites a call
-// whose callee is a create_closure into a ctjs.call_direct, and the census is
-// what the plan's next lever is chosen from - so the label has to be the SAME
-// label, not an undifferentiated `call_direct.argument`.
+// The same census over a call the closed-world pass already resolved.
+// --ctjs-resolve-globals rewrites a call whose callee is a create_closure into
+// a ctjs.call_direct; the census label must still name the reason (callee
+// known vs opaque), not an undifferentiated `call_direct.argument`.
+//
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/census-named.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              '--ctnative-lower-to-emitc=census=1' -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CENSUSNAMED
 
-// --- CONDITION 1: THE CALLEE IS NOT ONE FUNCTION ---------------------------
+// --- Condition 1: the callee is not one function -----------------------------
 //
 // `sink` is a global with two stores, so --ctjs-resolve-globals leaves the call
 // dispatching through a `load_global` and the lift has no callee to give the
 // address to.
 //
-// THIS IS THE SHAPE THE CORPORA ARE MADE OF, AND THE REASON THE WIDENING MOVES
-// NO CORPUS NUMBER. `--ctnative-lower-to-emitc=census=1` over bootstrap, p5 and
-// phaser finds 994 method-bearing literals refused as open, and every one of
-// the 53 argument uses among their blocking uses has an OPAQUE callee - 53 of
-// 53, with `call.argument.parameter-is-read-only` at zero and
-// `call_direct.argument` at zero. 51 literals are blocked by nothing else. So
-// the rule below is right and buys nothing there, which is a measurement and
-// not a disappointment: the fixture is what shows the carrier works.
+// This is the common shape in real programs. `--ctnative-lower-to-emitc=census=1`
+// over the bootstrap, p5 and phaser workloads finds 994 method-bearing
+// literals refused as open, and all 53 argument uses among their blocking uses
+// have an opaque callee, with `call.argument.parameter-is-read-only` and
+// `call_direct.argument` both at zero.
+// 51 of those literals are blocked by nothing else.
+// So this rule admits none of them there; this fixture is what shows it
+// works.
 //
 // OPAQUE: ctjs.func {{.*}}@opaque$2
 // OPAQUE-SAME: ctnative.not_native = "an object literal that escapes - it is passed to a call whose callee is not one function this rewrite can name, so there is no parameter to give the object's address to"
 
-// --- CONDITION 3: THE PARAMETER IS REACHED SOME OTHER WAY -------------------
+// --- Condition 3: the parameter is returned, not only read -------------------
 //
-// `return p` hands the pointer back, and the pointer names the CALLER's frame.
+// `return p` hands the pointer back, and the pointer names the caller's frame.
 // The same lifetime question the receiver refuses when a method returns `this`,
-// reached through an argument: there is no owner to introduce here - no
-// unique_ptr, no shared_ptr, no allocation - so the answer is a refusal.
+// reached through an argument: there is no owner to introduce here (no
+// unique_ptr, no shared_ptr, no allocation), so the answer is a refusal.
 //
 // ESCAPES: ctjs.func {{.*}}@escapes$1
 // ESCAPES-SAME: ctnative.not_native = "an object literal that escapes - it is passed to a parameter that reaches it through something other than a constant key - that needs an owner, and this slice introduces none"
 
-// --- CONDITION 3: THE PARAMETER IS NEVER READ -------------------------------
+// --- Condition 3: the parameter is never read --------------------------------
 //
 // An object parameter nothing reads still has to be spelled in the signature,
-// and `double take_N(ctn_x *)` with no use of it is `-Wunused-parameter` under
-// -Werror - which Phase 63 Step 7 makes a ctcompile bug and not a warning. The
+// and `double take_N(ctn_x *)` with no use of it trips -Wunused-parameter;
+// generated C++ is compiled with -Werror, so any warning is a ctcompile bug. The
 // receiver clause makes the same decision the other way round: the lift marks
-// `ctnative.receiver` only when `%arg0` is READ.
+// `ctnative.receiver` only when `%arg0` is read.
 //
 // UNREAD: ctjs.func {{.*}}@unread$1
 // UNREAD-SAME: ctnative.not_native = "an object literal that escapes - it is passed to a parameter nothing reads, and an object parameter that is never read is `-Wunused-parameter` in the generated C++"
 
-// --- CONDITION 2: A LITERAL AT ONE CALL, A NUMBER AT ANOTHER ----------------
+// --- Condition 2: a literal at one call, a number at another -----------------
 //
 // One parameter is one C++ type. `take(o)` and `take(2)` want `ctn_x *` and
-// `double` for one position, and there is no spelling for both - a template
-// would be a specialised callee, which is Phase 63's monomorphism proof and not
-// a lift.
+// `double` for one position, and there is no spelling for both. A template
+// would need per-call-site specialisation of the callee, which this rewrite
+// does not attempt.
 //
 // MIXED: ctjs.func {{.*}}@mixed$1
 // MIXED-SAME: ctnative.not_native = "an object literal that escapes - it is passed to a parameter that is an object literal at this call and something else at another, so the parameter has no single C++ type"
 
-// --- CONDITION 2, THE FIXPOINT: THE OTHER LITERAL IS OPEN -------------------
+// --- Condition 2, the fixpoint: the other literal is open --------------------
 //
-// THE FIXPOINT'S OWN TEST, and the reason `argumentCensus` is a loop rather
-// than a pass. `o` and `bad` are both `{x}` and both passed to the same
-// read-only parameter, so on the first round the slot is a candidate and BOTH
-// of them read as closed - each one's argument use excused by the slot, the
+// This is the fixpoint's own test, and the reason `argumentCensus` is a loop
+// rather than a single pass. `o` and `bad` are both `{x}` and both passed to the same
+// read-only parameter, so on the first round the slot is a candidate and both
+// of them read as closed: each one's argument use excused by the slot, the
 // slot excused by the two of them. `bad` is then reached through a dynamic key,
 // which nothing about the slot can fix, so the slot is dropped and `o`'s
 // argument use stops being excused with it.
 //
-// WHAT THE LOOP ACTUALLY BUYS, MEASURED RATHER THAN PREDICTED. The prediction
-// was a crash: admit `o`, give the parameter a `ctn_x *`, then ask `shapeAt`
-// for a literal admission had refused. It is not - deleting the loop leaves the
-// program REFUSED, with `field `` is not a C identifier`, because the dynamic
+// What the loop buys, as measured. The expected failure without it was a
+// crash: admit `o`, give the parameter a `ctn_x *`, then ask `shapeAt`
+// for a literal admission had refused. It is not: deleting the loop leaves the
+// program refused, with `field `` is not a C identifier`, because the dynamic
 // key on `bad` joins an empty field name into the group the two now share. So
-// the loop buys the MESSAGE, exactly as the receiver lift's second ask of
+// the loop buys the message, exactly as the receiver lift's second ask of
 // `this` does, and the correctness backstop is the call-site arm of admission,
 // which asks `isClosedObject` of every object operand again.
 //
 // OTHEROPEN: ctjs.func {{.*}}@otheropen$1
 // OTHEROPEN-SAME: ctnative.not_native = "an object literal that escapes - it is passed to a parameter whose other object literal is not itself a closed shape, so the two would not agree on one class"
 
-// --- THE CENSUS, AS A REMARK ------------------------------------------------
+// --- The census, as a remark -------------------------------------------------
 //
-// `census.js` is the shape the whole slice is about, with the argument use made
-// unliftable so that it stays refused: a method-bearing literal whose ONLY
+// `census.js` is the shape the object-argument rule targets, with the argument
+// use made unliftable so that it stays refused: a method-bearing literal whose only
 // blocking use is an argument to a call this rewrite cannot name. That is the
-// bucket the corpora are full of, and this asserts that the census names it -
+// bucket real programs are full of, and this asserts that the census names it:
 // one literal, one method field, one blocking use, `call.argument.callee-opaque`
 // as the sole blocker and as the root.
 //
 // CENSUS: ctnative census: 1 method-bearing literal(s) refused as open, holding 1 method field(s); blocking uses: call.argument.callee-opaque=1; sole blocker: call.argument.callee-opaque=1; sole blocker by method field: call.argument.callee-opaque=1; root of the nesting: call.argument.callee-opaque=1
 
-// AND THE NAMED SITE KEEPS ITS BUCKET. The IIFE's callee IS a create_closure,
+// The named site keeps its bucket. The IIFE's callee is a create_closure,
 // so --ctjs-resolve-globals turns the call into a ctjs.call_direct and the
 // literal's blocking use moves from operand 2 of a ctjs.call to operand 3 of a
-// ctjs.call_direct. The label must still say WHY - the parameter escapes,
-// because it is returned - and not merely that the operation was a direct call.
+// ctjs.call_direct. The label must still say why (the parameter escapes,
+// because it is returned), not merely that the operation was a direct call.
 // Without `blockingLabel`'s call_direct arm this reads
 // `call_direct.argument=1`, and the callee-known / callee-opaque distinction
 // the census exists to draw is gone for every site the resolver names.
@@ -205,9 +205,9 @@ function blocked() {
 var a = blocked();
 
 //--- census-named.js
-// The callee is the closure two tokens back, so the closed world NAMES this
+// The callee is the closure two tokens back, so the closed world names this
 // call. `p` is returned, so the slot is not a read-only object parameter and
-// the literal stays open - which is what puts it in the census at all.
+// the literal stays open, which is what puts it in the census at all.
 function blockednamed() {
     var o = { x: 1, bump: function (n) { return this.x + n; } };
     var kept = (function (p) { return p; })(o);

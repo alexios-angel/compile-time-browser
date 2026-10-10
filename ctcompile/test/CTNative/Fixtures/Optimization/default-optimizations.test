@@ -1,10 +1,10 @@
-# THE NATIVE ENTRY'S DEFAULT OPTIMIZATIONS, AS A GATE. Both the normal defaults
-# and the explicitly disabled baseline must compile standalone and agree with
-# the interpreter on effects and primitives; the two switches disable only what
-# they name; and no opt-in transformation (specialization, partial evaluation,
-# supercompilation, deforestation) is ever on by default. pipeline.cmake is the
-# same script the build runs over every fixture, so the modules here are what
-# the build would write with each setting.
+# Checks the native pipeline's default optimizations. With the defaults and
+# with them disabled, the program must compile standalone and agree with the
+# interpreter on effects and primitive values; each of the two switches
+# (PRECOMPUTE, PRUNE_UNREACHABLE) disables only the stage it names; and no
+# opt-in transformation (specialization, partial evaluation, supercompilation,
+# deforestation) is on by default. pipeline.cmake is the script the build runs
+# over every fixture, so these modules are what the build writes per setting.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/default-optimizations.js -DOPTIMIZATION_REPORT=ON -DOUTPUT=%t/enabled.mlir -P %S/../../Checks/pipeline.cmake
@@ -26,9 +26,9 @@
 # RUN: not grep ctnative.reachability_summary %t/explicit-precompute.mlir
 # RUN: not grep -E 'ctnative.(specialized_from|partial_evaluated|supercompile_summary|deforest_summary)' %t/enabled.mlir %t/disabled.mlir %t/no-precompute.mlir %t/no-prune.mlir %t/explicit-precompute.mlir
 #
-# Both arms through the differential gate, printing the same eight
-# observations; and the two generated files DIFFER, or this fixture did not
-# exercise the policy.
+# Both modules pass the differential test and print the same eight globals,
+# and their generated C++ differs; if it did not, this fixture would not
+# exercise the optimizations at all.
 # RUN: %compilation_unit --module %t/enabled.mlir --js %S/default-optimizations.js --work %t --name defaults-enabled
 # RUN: %compilation_unit --module %t/disabled.mlir --js %S/default-optimizations.js --work %t --name defaults-disabled
 # RUN: %t/native-unit-defaults-enabled/unit > %t/enabled.out

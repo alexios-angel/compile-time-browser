@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Execute an explicitly bound source document against public DOM/Style."""
+"""Compile JS functions that read the global `document` to native C++.
+
+The manifest's `current_document_parameter` names the element argument whose
+owning document stands in for `document`. Each function (documentElement,
+querySelector) runs against the public DOM and Style libraries, and the
+unsafe uses in REFUSALS must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 
@@ -30,6 +36,9 @@ QUERY_SOURCE = """function query(anchor, expected) {
 }
 """
 
+# Shared with all.py: checks that no `document` binding outlives its scope,
+# then binds an outer document so in_outer_document() can verify that each
+# call restores it, whether it returns or throws.
 CURRENT_DOCUMENT_CHECKS = r"""
         bool unbound = false;
         try { (void)ctnative::document.documentElement(); }
@@ -135,6 +144,8 @@ QUERY_CHECKS = r"""
         assert(doc.remove_attribute(button, atoms.intern("data-invalid")));
 """
 
+# Shared with all.py: invalid or stale element arguments and a style engine
+# from another atom table must be rejected before any write.
 INPUT_CHECKS = r"""
         (void)doc.take_writes();
         const auto text = doc.create_text("invalid input");
@@ -181,6 +192,8 @@ OWNED_CHECKS = r"""
         assert(foreign_rejected && owned.take_writes().empty());
 """
 
+# Ways to replace, detach, leak or misuse `document` and its members that the
+# compiler must refuse.
 REFUSALS = {
     "replace-document": "document=element; return false;",
     "replace-root": "document.documentElement=element; return false;",
@@ -243,6 +256,7 @@ def main():
             dom.standalone(args, native, name, client, compilers, includes, libraries)
             missing = dict(manifest)
             del missing["current_document_parameter"]
+            # Each bad manifest or zero step budget must be refused.
             for suffix, bad, budget in (
                 ("unbound", missing, None),
                 ("wrong-index", dict(manifest, current_document_parameter=2), None),
@@ -267,7 +281,7 @@ def main():
         ir, manifest = dom.prepare(args, name, source, 2)
         manifest["current_document_parameter"] = 0
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2
+        refusals += 2  # dom.refuse lowers with and without optimization.
     print(
         f"Bound document root/query: {16 * len(cases)} native executions, {refusals} refusals; DOM/Core/Style only"
     )

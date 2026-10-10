@@ -1,6 +1,6 @@
-// Part 24 Stage 53E (the printing policy) and 53F (the pins), as turned on
-// at Phase 62½-E. `auto` is an attribute the policy pass sets; the fork's
-// emitter is its one consumer and prints the pin after each deduction.
+// --ctnative-print-deduced marks declarations that may print as `auto` with
+// `ctnative.deduced`. Our fork of the MLIR C++ emitter is the only reader: it prints
+// `auto` and follows each one with a CTCOMPILE_PIN static_assert of the deduced type.
 // The pipe carries debug info, or the emitter would see the positions in
 // the piped text instead of the locations written here.
 //
@@ -11,32 +11,32 @@
 
 emitc.include <"cmath">
 emitc.func @f(%a: f64, %b: f64) -> f64 {
-  // never deduced: a literal initialiser (`auto x = 0;` would be int)
+  // Never deduced: a literal initializer (`auto x = 0;` would be int).
   %k = "emitc.constant"() {value = 2.0 : f64} : () -> f64
-  // deduced, pinned at its JavaScript site
+  // Deduced, and pinned at its JavaScript site.
   %s = emitc.add %a, %b : (f64, f64) -> f64 loc("fixture.js":3:7)
-  // deduced; no loc written, so the site is where this line sits in this file
+  // Deduced; no loc is written, so the site is where this line sits in this file.
   %p = emitc.mul %s, %k : (f64, f64) -> f64
-  // deduced, a bool
+  // Deduced, as a bool.
   %c = emitc.cmp lt, %p, %a : (f64, f64) -> i1
-  // never deduced: a declaration with no initialiser, and a load
+  // Never deduced: a declaration with no initializer, and a load.
   %v = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
   emitc.assign %p : f64 to %v : <f64>
   %l = emitc.load %v : <f64>
-  // deduced
+  // Deduced.
   %r = emitc.conditional %c, %p, %l : f64
   emitc.return %r : f64
 }
 
-// C++ promotes bool ^ bool to int; retain the explicit bool conversion.
+// C++ promotes bool ^ bool to int; keep the explicit bool conversion.
 emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
   %r = emitc.bitwise_xor %a, %b : (i1, i1) -> i1
   emitc.return %r : i1
 }
 
-// --- the IR keeps every type; only the attribute is added ------------------
+// --- The IR keeps every type; only the attribute is added -----------------
 //
-// (ops inside emitc.func print without their dialect prefix)
+// Ops inside emitc.func print without their dialect prefix.
 //
 // CHECK: module attributes {ctnative.deduced_count = 4 : i64}
 // CHECK: emitc.include <"cmath">
@@ -55,7 +55,7 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 // CHECK-NOT: ctnative.deduced
 // CHECK: return
 
-// --- the C++: auto where marked, a pin after each, the type everywhere else -
+// --- The C++: auto where marked, a pin after each, the type everywhere else -
 //
 // CPP: #include <cmath>
 // CPP-NEXT: #include <type_traits>
@@ -82,11 +82,11 @@ emitc.func @boolean_xor(%a: i1, %b: i1) -> i1 {
 // CPP-NEXT: bool [[XR:v[0-9]+]] = [[XA]] ^ [[XB]];
 // CPP-NEXT: return [[XR]];
 
-// --- the mutation: the first deduced double pinned as int32_t ---------------
+// --- The mutation: the first deduced double pinned as int32_t ---------------
 //
 // MUT: auto [[S:v[0-9]+]] = {{.*}} + {{.*}};
 // MUT-NEXT: CTCOMPILE_PIN([[S]], "fixture.js:3:7", int32_t);
 
-// --- a mutation that lands nowhere is a failure, not a pass ---------------
+// --- A mutation that lands nowhere is a failure, not a pass ---------------
 //
 // NOMUT: mutate=9 names no deduced number declaration; the module has 3

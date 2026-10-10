@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Check diagnostic snapshots and source callback effects without erasing either."""
+"""Check that the host-prefix specializer follows provider diagnostics.
+
+Each case wraps a factory-private Map in methods on `host.slot`; some build a
+message from the Map's keys and pass it to a `console.error` recorder
+callback. Node is the oracle for every observed global and the reference
+interpreter must agree with it. The specializer must summarize the expected
+provider calls, report each callback and its global writes, and leave the
+reusable method bodies unchanged.
+"""
 
 import argparse
 from dataclasses import dataclass, field
@@ -37,22 +45,32 @@ METHODS = {
 RECORDER = (
     "callCount = callCount + 1; lastMatch = message === " + json.dumps(MESSAGE) + " ? 41 : 99;"
 )
-# (Map.keys is a live one-use iterator whose `next` is looked up, and
-# Map.prototype carries its @@toStringTag, since 2026-09-12, as in Node:
-# iterator_reuse, iterator_override and object_coercion agree with Node now; a
-# fractional Number key names a property since 91e7c17ff, so fractional_index
-# does too; Map and Set iterators are live since 55ff045ad, so iterator_mutation
-# reads the late entry as Node does.)
-# Pin these separate expectations only on refused diagnostic paths. Supported
-# immediate snapshots and recorder callbacks must agree with Node exactly.
+# Cases whose interpreter result is expected to differ from Node, as
+# {case name: {global: value}}. Only refused diagnostic paths may appear here;
+# supported snapshots and recorder callbacks must match Node exactly. Empty
+# because the interpreter currently agrees with Node on every case.
 INTERPRETER_DIVERGENCES = {}
 
 
 @dataclass
 class Case:
+    """One provider scenario compiled to a JS program.
+
+    `steps` holds (expression, expected, provider) triples built by `call` and
+    `statement`; each step with an expected value is stored in a `traceN`
+    global and compared against Node and the interpreter. `methods` adds or
+    replaces factory methods as {name: (parameters, body)}; `recorder` is the
+    body of `console.error` unless `console` replaces the whole object.
+    `initial_count` initializes `callCount`, and `final_count` and
+    `final_match` are the expected `callCount` and `lastMatch` at the end.
+    `completed` overrides how many provider calls must be summarized, `calls`
+    how many calls must be resolved, and `boundary` names the function where
+    analysis stops. `invalid` requires a report with no facts, `error` names
+    the exception Node must throw, `callbacks` lists the expected callback rows
+    as (target, {global: value}), and `callback_mode` enables callback following.
+    """
+
     name: str
-    # Expected values are source observations. A third element marks calls
-    # whose normal-return provider summaries should complete.
     steps: list
     methods: dict = field(default_factory=dict)
     recorder: str = RECORDER
@@ -120,10 +138,12 @@ class Case:
 
 
 def call(expression, expected):
+    """A provider call whose result Node and the specializer must agree on."""
     return expression, expected, True
 
 
 def statement(text):
+    """A plain JS statement that is run but not observed."""
     return text, None, False
 
 
@@ -288,8 +308,9 @@ def cases():
                     "return Array.from(keys)[0];",
                 )
             },
-            # Its nested source closure already exceeds the factory identity
-            # proof, before the attempted iterator customization is reached.
+            # The factory contains a nested closure (`keys.next = function...`),
+            # so the factory is not summarized: the analysis stops at the factory
+            # call (`fn`) and completes no provider call.
             completed=0,
             calls=1,
             boundary="fn",
@@ -389,6 +410,7 @@ def cases():
 
 
 def oracle(node, folder, case, js):
+    """Run `js` in Node and require the case's expected globals and error."""
     driver = folder / "node.cjs"
     request = folder / "node-input.json"
     driver.write_text(mutations.NODE)
@@ -415,6 +437,7 @@ def oracle(node, folder, case, js):
 
 
 def reference_value(value):
+    """`value` as the reference interpreter prints it, or None if not printed."""
     encoded = mutations.primitive(value)
     kind = encoded["kind"]
     if kind in {"undefined", "null"}:
@@ -429,6 +452,7 @@ def reference_value(value):
 
 
 def interpreter(reference, folder, case, js):
+    """Run `js` in the reference interpreter and require Node's globals."""
     if case.error:
         # The reference printer does not expose globals after an exception.
         # Node checks the observable partial effects in these refusal cases.
@@ -464,6 +488,7 @@ def no_facts(report, label):
 
 
 def check_report(case, report, before, after):
+    """Check the specializer's report and its output IR against `case`."""
     if case.invalid:
         no_facts(report, case.name)
         return
@@ -554,6 +579,9 @@ def check_report(case, report, before, after):
 
 
 def controls(args, prepared):
+    """Negative controls: callbacks are followed only when asked, missing
+    options or intrinsics yield no facts, rewritten input and forged module
+    attributes are ignored, and the work-budget threshold rolls back cleanly."""
     original = prepared["repeated_callback"]
     manifest = contract(args.opt, original)
     for label, options in [("legacy", BASE), ("arguments-only", DIAGNOSTICS)]:
@@ -617,9 +645,9 @@ def controls(args, prepared):
     ):
         raise RuntimeError("forged annotations crossed a write-then-throw callback")
 
-    # Locate the public completion threshold instead of mirroring an internal
-    # step count. The last insufficient limit has attempted snapshots and
-    # global writes, yet every usable fact must roll back with the transaction.
+    # Find the smallest work limit that completes instead of mirroring the
+    # internal step count. The largest limit that fails has already attempted
+    # snapshots and global writes, yet every fact must roll back with it.
     mutations.budget_threshold(
         args,
         original,

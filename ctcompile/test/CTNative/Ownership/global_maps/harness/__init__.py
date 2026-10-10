@@ -1,16 +1,14 @@
-"""The checks: emitted-C++ censuses, the lifetime harnesses, standalone execution
-and the budget bisection.
-
-Split out of native-owned-global-maps.py on 2026-09-08, verbatim.
-"""
+"""Checks for the owned global-map fixtures: scans of the emitted C++, the
+lifetime harnesses, standalone execution and the proof-budget bisection."""
 
 from .scalar_maps import *
 from .objects import *
 from .entries import *
 from .fields import *
 
-# The object-argument cases with an object-key lifetime observer (object
-# payloads have one too), and each saved-size case's observer and its check.
+# OBJECT_ARGUMENT_LIFETIMES: the object-argument cases that get an object-key
+# lifetime harness (object-payload cases get one too). SIZE_LIFETIMES maps each
+# saved-size case to (C++ harness generator, check that builds and runs it).
 OBJECT_ARGUMENT_LIFETIMES = frozenset(
     {
         "object_argument_exact",
@@ -34,6 +32,9 @@ SIZE_LIFETIMES = {
 
 
 def standalone(args, output, name, value, compilers, nm):
+    """Translate `output` to C++ (explicit and deduced types), check the emitted
+    signatures, build it with each compiler, run it standalone and run every
+    lifetime harness that applies to `name`."""
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
@@ -328,10 +329,10 @@ def standalone(args, output, name, value, compilers, nm):
             object_argument_lifetime(args, cpp, name, mode, compilers[1])
 
 
-# A STAR IMPORT OF THIS PACKAGE exports what its modules define and import, as
-# the module this package was did - not the submodules themselves, which as
-# attributes of a package would otherwise go along and shadow names such as
-# `globals` in every module that star-imports it.
+# `from harness import *` should export the names the submodules define and
+# import, not the submodules themselves: a submodule attribute named like a
+# builtin (`globals`, say) would otherwise shadow it in every module that
+# star-imports this package.
 import types as _types
 
 __all__ = [

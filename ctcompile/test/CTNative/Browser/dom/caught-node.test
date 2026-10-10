@@ -1,2 +1,2 @@
-# A direct catch consumes its node before the caller's document can die.
+# A DOM node thrown and caught in one function lowers to native code with no C++ exception.
 # RUN: python3 %S/caught_node.py %dom_driver --node %node --reference %native_reference

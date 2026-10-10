@@ -1,6 +1,14 @@
+"""Checks for Map-stored leaf objects with String fields.
+
+Covers the census, Node and interpreter observations, refusals with their
+exact repairs, and tag mutations of the emitted C++.
+"""
+
 from .common import *
 from ..harness.leaf_objects import check_leaf_readback_calls
 
+# String-field cases that are also run through string_field_observer_source,
+# which watches field identity and saved reads across later calls.
 STRING_FIELD_OBSERVERS = (
     "leaf_object_string_field",
     "field_string_alias_write",
@@ -15,6 +23,8 @@ def check_string_field_census(args, ir, name):
 
 
 def check_string_field_observations(args, node, reference):
+    """Require Node and the interpreter to print each case's typed trace, and
+    require every listed source mutation to change what Node prints."""
     cases = string_field_cases()
     for name, row in cases.items():
         js = args.work / f"{name}-field-observed.js"
@@ -96,6 +106,10 @@ def check_string_field_observations(args, node, reference):
 
 
 def check_string_field_refusals(args, positives):
+    """For each refused String-field case: require refusal in both optimization
+    modes, require its repair edit to give the admitted positive, and require
+    forged leaf evidence to be refused with a stale manifest, a fresh one, and
+    on a rerun of the refused output."""
     for name, row in string_field_cases().items():
         if row["admitted"]:
             continue
@@ -179,6 +193,9 @@ def check_string_field_refusals(args, positives):
 
 
 def check_string_field_tag_mutations(args, compilers, nm):
+    """Replace a String field store in the emitted C++ with null or undefined and
+    require the native String read check to terminate the program (exit 211,
+    set by the injected std::set_terminate handler)."""
     for name, replacement in (
         ("field_string_read", "ctnative::nullable_string{}"),
         ("field_string_empty", "ctnative::nullable_string{}"),
@@ -186,6 +203,7 @@ def check_string_field_tag_mutations(args, compilers, nm):
     ):
         for mode in ("explicit", "deduced"):
             original = (args.work / f"{name}.{mode}.cpp").read_text()
+            # 76616c7565 is the hex spelling of the field name "value".
             pattern = r"ctnative::object_set_field_76616c7565\((\w+), (\w+)\);"
             matches = list(re.finditer(pattern, original))
             if len(matches) != 1:
@@ -226,10 +244,17 @@ def check_string_field_tag_mutations(args, compilers, nm):
                 )
 
 
+# Fixtures from other families that store String fields and are checked here
+# with their pinned sources: one is admitted, the other is still refused for
+# its mixed Object/String Map.
 HISTORICAL_STRING_FIELD_CARRIERS = {"leaf_readback_unknown_alias_field", "nullable_payload_object"}
 
 
 def string_field_method_graph(text, function, prepared):
+    """Return the body of ctjs.func `function` as lines with SSA names replaced
+    by stable labels (receiver, capture0, actual0, value<N>), so the raw and
+    prepared forms of one method can be compared operand by operand. Prepared
+    methods take their capture as an extra leading argument."""
     body = re.search(
         r"^  ctjs\.func(?: private)? @" + re.escape(function) + r"\([^\n]*\n(.*?)^  \}",
         text,
@@ -261,6 +286,9 @@ def string_field_method_graph(text, function, prepared):
 
 
 def check_historical_string_field_preparation(text, original, name):
+    """Require nullable_payload_object to stay owned yet refused for its mixed
+    Object/String Map, with its 11 source calls, method bodies, published call
+    order and producer-to-consumer results unchanged by preparation."""
     diagnostic = (
         "native Map needs supported keys and numeric, boolean, closed mixed, owning-string, "
         "object-identity union or acyclic Map values; inferred "
@@ -318,6 +346,8 @@ def check_historical_string_field_preparation(text, original, name):
 
 
 def check_historical_string_field_carriers(args, positives, node, reference, compilers, nm):
+    """Check the HISTORICAL_STRING_FIELD_CARRIERS fixtures: observations, their
+    repairs, lowering in both modes, and refusal of forged leaf evidence."""
     controls = {
         "leaf_readback_unknown_alias_field": leaf_readback_refusals()[
             "leaf_readback_unknown_alias_field"

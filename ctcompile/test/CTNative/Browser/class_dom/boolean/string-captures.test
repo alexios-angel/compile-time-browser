@@ -1,2 +1,2 @@
-# Fixed Strings feed exact String equality; retained state and results stay Boolean.
+# Fixed Strings may feed === tests; captured state and results stay Boolean.
 # RUN: python3 %S/string_captures.py %dom_driver --node %node --reference %native_reference

@@ -65,8 +65,8 @@
 //--- scalars.mlir
 module {
   ctjs.func @scalars(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0
     %sum = ctjs.binary add %one, %two
     %product = ctjs.binary_static add %sum, %sum
     %negative = ctjs.unary neg %product

@@ -1,3 +1,10 @@
+"""Leaf-object sources for the native owned-global-Map tests.
+
+A hosted closure keeps plain objects in a Map. Each table lists programs that
+must compile, refusals that must not, and the repair that turns each refusal
+back into a compiling source. Builds on nullable_maps.py.
+"""
+
 from .nullable_maps import *
 
 LEAF_OBJECT_SOURCE = """var host = {};
@@ -14,6 +21,8 @@ var trace = host.slot.size();
 
 
 def leaf_object_sources():
+    """Return {name: hosted source} for programs that store leaf objects in a Map
+    and must compile natively."""
     number = LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = {value: 1};")
     fields = LEAF_OBJECT_SOURCE.replace(
         "const item = {};",
@@ -26,16 +35,19 @@ def leaf_object_sources():
     )
     lifetime = lifetime.replace("var trace =", "host.slot.erase('y'); var trace =")
     return {
-        # These first two programs preserve the exact seven-call/five-function
-        # continuation measured in e533a865, including repeated live keys.
+        # The first two programs must stay byte-for-byte unchanged: they are
+        # pinned to seven calls and five functions (LEAF_OBJECT_CALLS,
+        # LEAF_OBJECT_FUNCTIONS), and set() is called twice with the same key
+        # so a repeated live key is covered.
         "leaf_object_plain": hosted(LEAF_OBJECT_SOURCE, 2),
         "leaf_object_number_field": hosted(number, 2),
         "leaf_object_scalar_writes": hosted(fields, 2),
         "leaf_object_alias": hosted(
             fields.replace("state.set(key, item);", "const alias = item; state.set(key, alias);"), 2
         ),
-        # An independently called deleting sibling provides a numeric ABI for
-        # the saved-callable observer. No object crosses a published boundary.
+        # Adds an erase() method that deletes a key and returns the Map's size
+        # as a Number, so the test observes a delete without any object
+        # leaving the closure.
         "leaf_object_lifetime": hosted(lifetime, 1),
         "leaf_object_number_repair": hosted(
             LEAF_OBJECT_SOURCE.replace("const item = {};", "const item = 1;"), 2
@@ -70,6 +82,11 @@ LEAF_OBJECT_FIELDS = {
 
 
 def leaf_object_refusals():
+    """Return {name: (source, expected trace, replacement, original, repair, calls)}.
+
+    Replacing `replacement` with `original` in `source` gives the source of the
+    `repair` case. The other *_refusals functions use the same row layout.
+    """
     number = leaf_object_sources()["leaf_object_number_field"][0]
     repaired = leaf_object_sources()["leaf_object_identity_repair"][0]
     body = "const item = {value: 1}; state.set(key, item); return state.size;"
@@ -128,9 +145,8 @@ def leaf_object_refusals():
             "leaf_object_number_field",
             calls,
         )
-    # The exact saved/distinct/deleted identity continuation remains separate
-    # from write-only leaf ownership. Each repair restores the same complete
-    # numeric-returning source, rather than erasing or trusting forged reads.
+    # Identity comparisons against a value saved from the Map. Their repair is
+    # leaf_object_identity_repair, a complete source that returns a Number.
     for name, expression, value, calls in (
         ("saved_identity", "saved === item", 1, 8),
         ("distinct_identity", "saved === {value: 1}", 0, 8),
@@ -149,9 +165,12 @@ def leaf_object_refusals():
 
 
 def leaf_readback_sources():
-    # These preserve the sixteen measured next.json sources from 5d2d843a.
-    # Keep the two post-delete reads as refusals. The comparison-only fresh
-    # allocations now use an independent strict-comparison identity census.
+    """Return {name: hosted source} for programs that store an object in the Map
+    and read it back."""
+    # Sixteen fixed sources form the core of this table. The two that read
+    # after a delete stay refusals (leaf_readback_refusals). Cases that only
+    # compare a fresh allocation with `===` are admitted by a separate
+    # strict-equality identity check.
     base = leaf_object_sources()["leaf_object_identity_repair"][0]
     old = "const item = {value: 1}; state.set(key, item); return state.size;"
     empty = "const item = {}; state.set(key, item); const saved = state.get(key); "
@@ -292,9 +311,9 @@ LEAF_READBACK_CALLS.update(
     {name + "_checked": LEAF_READBACK_CALLS[name] for name in LEAF_READBACK_CHECKED_RETURNS}
 )
 
-# Keep the exact formerly nullable own-field sources; their initialized reads
-# now have an independent per-read presence proof. The schema still joins all
-# stored value types, including explicitly written Undefined.
+# Own-field reads of initialized fields. Each read is proved present on its
+# own; the field's schema type still joins every stored value type, including
+# an explicitly written undefined.
 LEAF_FIELD_RESULTS = {"local_field_get", *LEAF_READBACK_CHECKED_RETURNS}
 LEAF_COMPARISON_REPAIRS = {
     "local_identity_distinct_fresh": "local_identity_saved",
@@ -305,6 +324,8 @@ LEAF_READBACK_UNOWNED = set()
 
 
 def leaf_field_result_refusals():
+    """Field reads refused because the field's schema type is not a single
+    scalar; same row layout as leaf_object_refusals()."""
     positive = leaf_readback_sources()
     rows = {}
     for name, repaired, old, replacement in (
@@ -330,6 +351,8 @@ def leaf_field_result_refusals():
 
 
 def leaf_readback_refusals():
+    """Read-back programs that must be refused; same row layout as
+    leaf_object_refusals()."""
     positive = leaf_readback_sources()
     field = positive["local_field_get_guarded"][0]
     tested = positive["local_field_readback_test"][0]
@@ -443,8 +466,11 @@ def leaf_readback_refusals():
     return rows
 
 
-# Exact thirty-one-source continuation measured in 60b744e1. Hashes include
-# the final newline; historical sources and repairs are never rewritten.
+# SHA-256 pins for sources that must never change. LEAF_ABSENCE_SIX_HASHES pins
+# the six identity cases reused from leaf_readback_sources and
+# leaf_readback_refusals; LEAF_ABSENCE_HISTORY pins thirty-one absence cases as
+# (raw calls, prepared calls, sha256). Each hash covers the whole source,
+# including its final newline.
 LEAF_ABSENCE_SIX_HASHES = {
     "local_identity_distinct_fresh": "be194b3ff4db536532aea5c24b8cffe7827bb16f1fb5869bacb45f1198159b46",
     "historical_object_distinct_identity": "16df1ce7541f6bd86916457f0b6e30944789cd24b27f753a6046f648d3fbb70f",
@@ -615,6 +641,8 @@ LEAF_ABSENCE_HISTORY = {
 
 
 def leaf_absence_cases():
+    """Return {name: row} for programs that read a key after it may have been
+    deleted, cleared or overwritten, so the read may see `undefined`."""
     positives, refusals = leaf_readback_sources(), leaf_readback_refusals()
     rows = {}
     for name, digest in LEAF_ABSENCE_SIX_HASHES.items():
@@ -862,7 +890,9 @@ def leaf_absence_sources():
         for name, row in leaf_absence_cases().items()
         if name not in LEAF_ABSENCE_UNOWNED and name not in existing
     }
-    # Preserve both original refusal aliases as independently compiled sources.
+    # The deleted-identity programs in LEAF_ABSENCE_PROMOTED_REFUSALS are rows of
+    # leaf_object_refusals/leaf_readback_refusals, but they compile, so the
+    # driver skips them as refusals and they are added here as positive sources.
     for name, row in {**leaf_object_refusals(), **leaf_readback_refusals()}.items():
         if name in LEAF_ABSENCE_PROMOTED_REFUSALS:
             result[name] = row[0], "host", row[1]
@@ -870,6 +900,8 @@ def leaf_absence_sources():
 
 
 def leaf_absence_refusals():
+    """Absence cases that must be refused (LEAF_ABSENCE_UNOWNED); same row layout
+    as leaf_object_refusals()."""
     cases = leaf_absence_cases()
     rows = {}
     edits = {

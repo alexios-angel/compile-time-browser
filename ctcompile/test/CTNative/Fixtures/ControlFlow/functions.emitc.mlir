@@ -1,17 +1,17 @@
-// THE FIRST NATIVE ARTEFACT - ctcompile Phase 62½-D, the compilation-unit gate.
+// A hand-written native EmitC module for functions.js.
 //
-// HAND-WRITTEN, AND THAT IS THE POINT. This module is what the Phase 62½-C
-// lowering is expected to produce for native-fixture.js, written BEFORE that
-// lowering exists so that the gate (check-native-unit.cmake) is proven on
-// something before there is anything to gate. It is the specification of the
-// lowering's output shape: when the lowering lands, its output for the same
-// program should be this module up to value names, and the gate should not
-// have to change.
+// It shows the shape the native lowering (--ctnative-lower-to-emitc) produces
+// for plain numeric JavaScript, and it is a fixture for the compilation-unit
+// check (CTNative/Checks/compilation-unit.py). Because it is hand-written, that
+// check is tested independently of the lowering: the module must compile
+// standalone, link nothing from ctbrowser, and print the same globals as the
+// interpreter. The lowering's output for functions.js should match this module
+// up to value names.
 //
-// THE SHAPE:
+// The shape:
 //   * one `emitc.func` per JavaScript function, over `f64` (num<f64>), `i32`
 //     (num<i32>) and `i1` (bool); the top level is `emitc.func @main() -> i32`
-//   * one `emitc.global` per numeric top-level `var`, UNINITIALISED: a `var`
+//   * one `emitc.global` per numeric top-level `var`, uninitialised: a `var`
 //     starts undefined and its value comes from `main`, so no initial value is
 //     part of the program
 //   * a mutable local is an `emitc.variable` (an lvalue), read with `emitc.load`
@@ -31,29 +31,29 @@
 //     library only; i32 -> f64 is emitc.cast at the use that needs it
 //   * callees precede callers, because the C++ needs a declaration first
 //
-// THE OUTPUT CONVENTION - defined here, checked by check-native-unit.cmake:
+// The output convention, checked by CTNative/Checks/compilation-unit.py (which
+// defines the full version for every value kind):
 //   At the end of `main`, after the last top-level statement, every numeric
 //   global is printed, one per line, in ascending bytewise order of its name,
 //   as
 //       std::printf("%s=%.17g\n", "<name>", (double) <global>);
 //   and `main` returns 0. %.17g round-trips a double exactly, so the comparison
-//   with the interpreter is on the double's VALUE, not on JavaScript's
-//   shortest-representation string - Number-to-String is a runtime concern for
-//   a later phase. The reference side (NativeReference.cpp) prints the
-//   interpreter's double the same way. One exception: the sign of a NaN is not
-//   observable in JavaScript, x86 arithmetic produces negative NaNs and
-//   constant folding produces positive ones, so the gate compares `-nan` and
-//   `nan` as equal.
+//   with the interpreter is on the double's value, not on JavaScript's
+//   shortest-representation string. The interpreter side
+//   (test/Runtime/Reference/Interpreter.cpp) prints its double the same way.
+//   One exception: the sign of a NaN is not observable in JavaScript, x86
+//   arithmetic produces negative NaNs and constant folding positive ones, so
+//   the check compares `-nan` and `nan` as equal.
 //
-// WHAT IS NOT HERE, deliberately: nothing from ctbrowser/. No include, no
-// helper, no `ct_aot_*`. The gate compiles this standalone and runs `nm` on
-// the result; a `ctbrowser::script::` symbol in it is the failure the whole
-// phase exists to define.
+// Nothing from ctbrowser/ appears here: no include, no helper, no `ct_aot_*`
+// call. The check compiles this module standalone and runs `nm` on the result;
+// a `ctbrowser::script::` symbol in it would mean the program is not native,
+// and the check fails on it.
 
-// AS A LIT TEST this file asserts the SHAPE of the emitted C++ and never a
-// value: the values are the interpreter's to judge, in check-native-unit.cmake.
-// The implicit check-not is the gate's rule in one word - nothing of
-// ctbrowser's reaches the translation unit.
+// As a lit test this file checks only the shape of the emitted C++, never a
+// value; values are compared with the interpreter by compilation-unit.py
+// below. --implicit-check-not=ctbrowser enforces that nothing from ctbrowser
+// reaches the translation unit.
 //
 // RUN: ctjs-translate --mlir-to-cpp %s | FileCheck %s --implicit-check-not=ctbrowser
 //
@@ -76,14 +76,14 @@
 // CHECK: std::printf("%s=%.17g\n", "third", {{v[0-9]+}});
 // CHECK: return {{v[0-9]+}};
 //
-// AND THE GATE ITSELF (Phase 62½-D, CTNative/Checks/compilation-unit.py): this
-// module compiled standalone, shown by nm to reach no interpreter, run, and
-// compared global by global with the interpreter; then its two negative
-// proofs - one global off by one must FAIL naming the global, and the same
-// C++ plus one object that reaches the interpreter (Runtime/Reference/
-// VmLinked.cpp, linked against the engine) must FAIL the symbol check. And
-// Phase 63 Step 7: the emitted file compiles clean on both toolchains, and
-// with one unused variable inserted both refuse it (compile-clean.py).
+// compilation-unit.py compiles this module standalone, checks with nm that it
+// reaches no interpreter symbol, runs it and compares each global with the
+// interpreter. Two negative runs prove the check can fail: one global off by
+// one must fail naming that global, and the same C++ linked with one object
+// that reaches the interpreter (Runtime/Reference/VmLinked.cpp, linked against
+// the engine) must fail the symbol check. compile-clean.py checks that the
+// emitted file builds warning-free with GCC and Clang, and that both reject it
+// once an unused variable is added.
 //
 // RUN: %compilation_unit --module %s --js %S/functions.js --work %t --name fixture
 // RUN: not %compilation_unit --module %s --js %S/functions.js --work %t --name fixture_off_by_one --mutate fib20 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
@@ -113,7 +113,7 @@ module {
 
   // function fib(n) { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }
   //
-  // RECURSION, and an early return: both arms assign the result lvalue and the
+  // Recursion and an early return: both arms assign the result lvalue and the
   // one `emitc.return` reads it after the `if`.
   emitc.func @fib(%n: i32) -> i32 attributes {ctnative.provenance = "function fib, native-fixture.js (module written by hand)"} {
     %r = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<i32>
@@ -136,7 +136,7 @@ module {
 
   // function sum_to(n) { var s = 0; for (var i = 1; i <= n; i = i + 1) { s = s + i; } return s; }
   //
-  // A COUNTED LOOP is `emitc.for`; its test is `<`, so `i <= n` is `i < n + 1`.
+  // A counted loop is `emitc.for`; its test is `<`, so `i <= n` is `i < n + 1`.
   emitc.func @sum_to(%n: i32) -> i32 attributes {ctnative.provenance = "function sum_to, native-fixture.js (module written by hand)"} {
     %s = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<i32>
     %zero = "emitc.constant"() <{value = 0 : i32}> : () -> i32
@@ -161,9 +161,9 @@ module {
   //     return steps;
   // }
   //
-  // A PRE-TESTED LOOP is `if (c) do { body } while (c)`, and the parameter is
+  // A pre-tested loop is `if (c) do { body } while (c)`, and the parameter is
   // reassigned so it is copied into an lvalue on entry. `n / 2` makes `n` a
-  // double even though every value it takes is integral - JavaScript division
+  // double even though every value it takes is integral: JavaScript division
   // is not integer division, and the inference must not pretend it is.
   emitc.func @collatz_steps(%n0: f64) -> i32 attributes {ctnative.provenance = "function collatz_steps, native-fixture.js (module written by hand)"} {
     %n = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
@@ -227,7 +227,7 @@ module {
 
   // function is_between(x, lo, hi) { return x >= lo && x < hi; }
   //
-  // A BOOLEAN-VALUED FUNCTION: `i1` in, `bool` out in the C++.
+  // A boolean-valued function: `i1` in, `bool` out in the C++.
   emitc.func @is_between(%x: f64, %lo: f64, %hi: f64) -> i1 attributes {ctnative.provenance = "function is_between, native-fixture.js (module written by hand)"} {
     %ge = emitc.cmp ge, %x, %lo : (f64, f64) -> i1
     %lt = emitc.cmp lt, %x, %hi : (f64, f64) -> i1
@@ -241,9 +241,9 @@ module {
   //     return 1;
   // }
   //
-  // THREE RETURNS become three assignments to one lvalue, nested so that every
-  // path assigns it exactly once - the C++ compiler's -Wsometimes-uninitialized
-  // is part of the gate and a path that skips the assignment would trip it.
+  // Three returns become three assignments to one lvalue, nested so that every
+  // path assigns it exactly once. compile-clean.py builds with -Wall -Werror,
+  // so Clang's -Wsometimes-uninitialized would reject a path that skipped it.
   emitc.func @clamp01(%x: f64) -> f64 attributes {ctnative.provenance = "function clamp01, native-fixture.js (module written by hand)"} {
     %r = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
     %zero = "emitc.constant"() <{value = 0.0 : f64}> : () -> f64
@@ -263,7 +263,7 @@ module {
     emitc.return %out : f64
   }
 
-  // THE TOP LEVEL. Every `var x = ...` is a call and a store to the global; the
+  // The top level. Every `var x = ...` is a call and a store to the global; the
   // constants are typed by what the callee's parameter was proved to be.
   emitc.func @main() -> i32 attributes {ctnative.provenance = "the top level, native-fixture.js (module written by hand)"} {
     // var fib20 = fib(20);
@@ -322,7 +322,7 @@ module {
 
     // var clamped = clamp01(negate(third)) + clamp01(2) + clamp01(0.25);
     //
-    // A GLOBAL READ BACK: `third` is the global, not the temporary above.
+    // A global read back: `third` is the global, not the temporary above.
     %third_now = emitc.load %g_third : !emitc.lvalue<f64>
     %neg_third = emitc.call @negate(%third_now) : (f64) -> f64
     %c_a = emitc.call @clamp01(%neg_third) : (f64) -> f64
@@ -334,7 +334,7 @@ module {
     %g_clamped = emitc.get_global @clamped : !emitc.lvalue<f64>
     emitc.assign %s_abc : f64 to %g_clamped : !emitc.lvalue<f64>
 
-    // --- THE OUTPUT CONVENTION: every numeric global, sorted by name --------
+    // --- the output convention: every numeric global, sorted by name --------
     %fmt = emitc.literal "\"%s=%.17g\\n\"" : !emitc.ptr<!emitc.opaque<"const char">>
 
     %o_clamped = emitc.load %g_clamped : !emitc.lvalue<f64>

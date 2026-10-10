@@ -1,7 +1,11 @@
-"""sources map key mutations: continued from sources_map_key_sizes."""
+"""Global Map size/join cases where keys are set, deleted or cleared after a
+branch joins. Builds on key_sizes.py.
+"""
 
 from .key_sizes import *
 
+# (raw call count, sha256 of source) pins for the join-size cases; case_adder
+# asserts each generated source still matches byte for byte.
 JOIN_SIZE_HISTORY = {
     "joined_delete_disjoint_false": (
         15,
@@ -52,6 +56,8 @@ JOIN_SIZE_HISTORY = {
 
 
 def join_size_cases():
+    """Return {name: row} for Maps whose size is read after an if/else that
+    deletes or sets different keys on each arm."""
     rows = {}
 
     add = case_adder(rows, JOIN_SIZE_HISTORY)
@@ -160,8 +166,8 @@ host.slot.size(); var trace = host.slot.set(7, FLAG);
         1,
         15,
     )
-    # The saved one remains immutable while current size grows to two, the
-    # selected owning leaf is deleted, and the Map is finally reseeded.
+    # The saved size (1) stays fixed while the current size grows to two, the
+    # leaf it selected is deleted, and the Map is finally reseeded.
     lifetime = base.replace(
         field,
         "state.clear(); state.set(1, item); state.set(3, item); "
@@ -178,7 +184,8 @@ def join_size_sources():
     return admitted_sources(join_size_cases())
 
 
-# The twelve measured after-join mutation sources retain their exact bytes.
+# (raw call count, sha256 of source) pins for the after-join mutation cases;
+# case_adder asserts each generated source still matches byte for byte.
 MUTATION_SIZE_HISTORY = {
     "joined_disjoint_set_false": (
         16,
@@ -232,6 +239,8 @@ MUTATION_SIZE_HISTORY = {
 
 
 def mutation_size_cases():
+    """Return {name: row} for Maps mutated again after the branches join, before
+    the saved size is used."""
     rows = {}
 
     add = case_adder(rows, MUTATION_SIZE_HISTORY)
@@ -350,8 +359,8 @@ def mutation_size_cases():
         1,
         19,
     )
-    # Saved two selects a leaf while the current size is one; later deletion
-    # and clear must not change that owning saved value or its scalar snapshot.
+    # A saved size of 2 selects a leaf while the current size is one; a later
+    # delete and clear must not change the saved leaf or the saved size.
     add(
         "joined_mutation_saved_lifetime",
         base.replace(

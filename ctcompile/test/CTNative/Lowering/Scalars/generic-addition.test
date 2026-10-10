@@ -1,6 +1,6 @@
-# Generic + chooses concatenation or arithmetic from proved primitive tags.
-# String/Number results survive calls, joins, later coercions and global stores.
-# Node's type and Object.is checks distinguish String digits, NaN and signed zero.
+# Generic `+` picks concatenation or arithmetic from the operands' known primitive types.
+# String-or-Number results survive calls, joins, later coercions and global stores.
+# Node's typeof and Object.is checks tell apart String digits, NaN and signed zero.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

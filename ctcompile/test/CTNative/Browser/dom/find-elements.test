@@ -1,2 +1,2 @@
-# Original Bootstrap R.find snapshots admit proved bounded element consumers.
+# Loops over unmodified Bootstrap SelectorEngine.find (R.find) results compile natively.
 # RUN: python3 %S/find_elements.py %dom_driver

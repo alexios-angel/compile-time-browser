@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Carry exact conditional Boolean captures through lifting and SSA state proof."""
+"""Check that a class method conditionally writing a captured Boolean
+(`if (!seen) { seen = true; }`) compiles natively and matches Node and the VM,
+and that unsupported variants and hand-mutated IR are refused."""
 
 import hashlib
 import json
@@ -13,7 +15,8 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
-# Preserve the exact real-JS source measured before conditional leaf transport.
+# main() pins the `conditional-writer` source by SHA-256; keep WRITE and the
+# base METHOD byte-for-byte so that pin still matches.
 WRITE = "if (!seen) { seen = true; }"
 METHOD = captures.METHOD.replace("seen = true;", WRITE)
 CASES = {
@@ -37,9 +40,9 @@ CASES = {
 BAD = {
     "nonboolean-store": METHOD.replace("seen = true;", "seen = 'true';"),
     "computed-store": METHOD.replace("seen = true;", "seen = !seen;"),
-    # The original extra-capture source is positive in the mixed-capture test.
-    # Original conditional-early-return and helper-result-if sources are
-    # positive in the Boolean-results test after structured result transport.
+    # Not refused here because they compile: the extra-capture source is covered
+    # in mixed_captures.py ("extra-condition"), and the early-return and
+    # helper-result-if sources in results.py.
     "loop-leaf": METHOD.replace(WRITE, "while (!seen) { seen = true; }"),
     "nested-callback": METHOD.replace(
         WRITE, "if (!seen) { const nested = () => { seen = true; }; nested(); seen = true; }"
@@ -48,7 +51,7 @@ BAD = {
     "escaping": METHOD.replace("mark();", "target.saved = mark; mark();"),
     "deferred": METHOD.replace("mark();", "setTimeout(mark, 0);"),
     "effect-then": METHOD.replace("seen = true;", "seen = true; ambient();"),
-    # The original calls all start with false, so this arm is never selected.
+    # Every call in CALLS starts with seen == false, so this arm never runs.
     "effect-else": METHOD.replace(WRITE, WRITE + " else { ambient(); }"),
     "effect-nested-skipped": METHOD.replace(
         WRITE, "if (seen) { if (seen) { ambient(); } } " + WRITE
@@ -61,6 +64,7 @@ BAD = {
 
 
 def events(name):
+    """Return the (attribute, value) writes one item.run() makes for case name."""
     result = [("middle", "false")] if name == "else-stores" else []
     result += [
         ("before", "true"),
@@ -72,6 +76,7 @@ def events(name):
 
 
 def oracle(args, name, text):
+    """Run the entry with and without aliasing in the VM and Node; both must agree."""
     if name == "arm-state":
         return arms.oracle(args, "arm-only-state", text)
     text += "var result = true;\n"
@@ -92,6 +97,7 @@ def oracle(args, name, text):
 
 
 def checks(name):
+    """C++ assertions for the native harness, matching oracle()."""
     if name == "arm-state":
         return arms.checks("arm-only-state")
     text = r"""
@@ -124,6 +130,8 @@ def checks(name):
 
 
 def shape(text, name="conditional-writer"):
+    """Return the writer closure, checking its store sits in an `scf.if` on a
+    truthy test and that the `if` yields no result."""
     if name == "arm-state":
         *_, leaves = arms.shape(text)
         writer = next(body for body in leaves if "ctjs.store_upvalue" in body[0])
@@ -137,6 +145,7 @@ def shape(text, name="conditional-writer"):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     yield from captures.mutations(text)
     writer = shape(text)
     branch = re.search(r"^    scf\.if (%\w+) \{\n.*?^    \}$", writer[0], re.M | re.S)
@@ -167,8 +176,8 @@ def mutations(text):
         + writer[0][condition.end() :]
     )
     yield "unproved-i1-condition", text[: writer.start()] + changed + text[writer.end() :]
-    # All nested arms are real source operations; the bound cannot ignore a
-    # branch just because it carries no additional capture or effect.
+    # Wrap the branch in 64 more `scf.if`s. The nesting limit counts every
+    # arm, even ones that add no capture or effect.
     nested = branch[0]
     for _ in range(64):
         nested = f"    scf.if {branch[1]} {{\n{nested}\n    }}"
@@ -179,6 +188,7 @@ def mutations(text):
 
 
 def nested_root(text):
+    """Return IR with a `ctjs.root` of the writer's callee inside the store's arm."""
     writer = shape(text)
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", writer[0])[1]
     callee = re.findall(r"(%\w+): !ctjs.value", writer[0].split("\n")[0])[2]
@@ -192,6 +202,8 @@ def main():
     executions = refusals = 0
     for name, method in CASES.items():
         text = callbacks.source(method + captures.CALLS)
+        # Pin the generated `conditional-writer` source so an edit to the shared
+        # helpers (captures, callbacks) cannot silently change what this test covers.
         if name == "conditional-writer":
             assert hashlib.sha256(text.encode()).hexdigest() == (
                 "ef07e8ff2cb61d4d8cfbeafd00a6e44b20b85d8f0824fd08ea3b8b3fef18cb16"

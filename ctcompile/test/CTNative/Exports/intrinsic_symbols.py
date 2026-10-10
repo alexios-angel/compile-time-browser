@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Check Symbol-only native exports against Node/VM without a DOM input or runtime."""
+"""Test native (C++) exports of JS functions that use the Symbol and String intrinsics.
+
+Every CASES program must give the same observations in Node and in the ctjs VM.
+It must then lower to exactly one typed native export, with no DOM or VM
+dependency, and its C++ client checks must pass. REFUSALS and the other
+refuse() calls must be rejected by the native compiler, and a fingerprint
+check rejects an IR edited after its contract was made.
+
+A "witness" below is a program the native compiler used to refuse, kept
+byte-identical so that it keeps proving the refusal was lifted: it must now
+compile and match Node.
+"""
 
 import json
 import math
@@ -157,7 +168,8 @@ SCALAR_EQUALITY = """function scalarEquality(left, right, flag, other) {
     (left !== undefined && flag !== undefined ? '1' : '0');
 }
 """
-# The same input tuples drive Node/VM and the typed native clients.
+# Each tuple: (name suffix, JS arguments, C++ arguments, expected bit string).
+# The same tuples drive Node/VM and the typed native clients.
 EQUALITY_INPUTS = (
     ("Zero", "0, -0, false, true", "0.0, -0.0, false, true", "1100001101011"),
     ("One", "1, 1, true, true", "1.0, 1.0, true, true", "1100110001011"),
@@ -179,7 +191,7 @@ HELPER_EQUALITY = """function helperEquality(number, flag, count) {
   return strict(matched, flag) && !strict(number, flag);
 }
 """
-# Preserve the complete former global-helper refusal as its first positive.
+# Witness: a global helper returning a Symbol.
 GLOBAL_HELPER = "function helper() { return Symbol.iterator; } function bad() { return helper(); }"
 GLOBAL_STATE = """function globalState(first, second, text, count, enabled) {
   const key = cycleGlobal(first, second, count);
@@ -261,7 +273,7 @@ function describeGlobalLocal(value) {
   return describe(value);
 }
 """
-# Preserve the three complete former capture refusals as native witnesses.
+# Witnesses (3): nested functions that capture a Symbol parameter.
 CAPTURE_WITNESSES = {
     "local": "function bad(key) { function helper() { return key; } return helper(); }\n",
     "global": "function helper(value) { function nested() { return value; } return nested(); } function bad(key) { return helper(key); }",
@@ -277,8 +289,9 @@ CAPTURE_SELECTED = """function captureState(first, second, text, count, enabled)
   return enabled ? make() : cycle();
 }
 """
-# Conditional callee transport remains a separate refusal. Exercise the
-# same captured inputs through exact calls and ordinary result branches.
+# The native compiler still refuses `cond ? make() : cycle()`, a call whose
+# callee is chosen by a condition. These variants call each captured helper
+# directly and branch only on the result.
 CAPTURE_MUTABLE_RESULT = CAPTURE_SELECTED.replace(
     "  return enabled ? make() : cycle();",
     "  let key = cycle();\n  if (enabled) key = make();\n  return key;",
@@ -332,7 +345,7 @@ DESCRIPTION_GUARDS = {
 """,
 }
 NESTED_PREFIX_WITNESSES = {
-    # Preserve both complete former nested-concatenation refusal sources.
+    # Witnesses (2): startsWith on a nested string concatenation.
     "concatenated-prefix-nested-left": "function bad(key, text) { return text.startsWith(('b' + 's') + 'Config'); }\n",
     "concatenated-prefix-nested-right": "function bad(key, text) { return text.startsWith('b' + ('s' + 'Config')); }\n",
 }
@@ -426,7 +439,7 @@ STRING_INDICES = {
 """,
 }
 STRING_SLICES = {
-    # Preserve the complete former slice-end refusal as its first positive.
+    # Witness: slice with a literal end bound.
     "string-slice-end": "function bad(text, index) { return text.slice(0, 2); }\n",
     "string-slice-bounds": """function stringSliceBounds(text, first, middle, tail) {
   return text.slice(0, 1) === first && text.slice(1, 2) === middle &&
@@ -444,7 +457,7 @@ STRING_SLICES = {
 """,
 }
 SIGNED_SLICES = {
-    # Preserve both complete former negative-bound refusals as native witnesses.
+    # Witnesses (2): slice with a negative literal bound.
     "string-slice-negative": "function bad(text, index) { return text.slice(-1); }\n",
     "string-slice-end-negative": "function bad(text, index) { return text.slice(0, -1); }\n",
     "string-signed-slices": """function stringSignedSlices(text, last, head, middle) {
@@ -464,7 +477,7 @@ SIGNED_SLICES = {
 """,
 }
 SIGNED_CHARAT = {
-    # Preserve the complete former negative-index refusal as its first positive.
+    # Witness: charAt with a negative literal index.
     "string-charat-negative": "function bad(text, index) { return text.charAt(-1); }\n",
     "string-signed-charat": """function stringSignedCharAt(text, first) {
   return text.charAt(-1) === '' && text.charAt(-4294967295) === '' &&
@@ -479,7 +492,8 @@ SIGNED_CHARAT = {
 }
 """,
 }
-# Keep all seven former fractional refusal programs byte-identical.
+# Witnesses (7): fractional literal indices. Each value is (source, expected
+# results for "", "a" and "abc").
 FRACTIONAL_WITNESSES = {
     "string-index-charat-fraction": (
         "function bad(text, index) { return text.charAt(1.5); }\n",
@@ -532,7 +546,7 @@ FRACTIONAL_INDICES = {
 }
 """,
 }
-# Preserve all sixteen complete former magnitude/infinity refusal programs.
+# Witnesses (16): huge, infinite and NaN literal indices.
 WIDE_WITNESSES = {
     name: (
         f"function bad(text, index) {{ return text.{expression}; }}\n",
@@ -580,7 +594,7 @@ WIDE_INDICES = {
 """,
 }
 DEFAULT_WITNESSES = {
-    # Preserve both complete former missing-argument refusals as native witnesses.
+    # Witnesses (2): charAt() and slice() with no argument.
     "string-index-charat-missing": (
         "function bad(text, index) { return text.charAt(); }\n",
         ("", "a", "a"),
@@ -607,7 +621,7 @@ DEFAULT_INDICES = {
 """,
 }
 UNDEFINED_WITNESSES = {
-    # Preserve the three complete former explicit-undefined refusal bodies.
+    # Witnesses (3): an explicit `undefined` index.
     "default-index-charat-undefined": (
         "function bad(text) { return text.charAt(undefined); }\n",
         ("", "a", "a"),
@@ -646,7 +660,7 @@ UNDEFINED_INDICES = {
 """,
 }
 PRIMITIVE_WITNESSES = {
-    # Preserve both complete former null-index refusal bodies.
+    # Witnesses (2): a `null` index.
     "undefined-index-charat-coercion": (
         "function bad(text) { return text.charAt(null); }\n",
         ("", "a", "a"),
@@ -687,7 +701,7 @@ PRIMITIVE_INDICES = {
 """,
 }
 DIVISION_WITNESSES = {
-    # Keep both complete former arithmetic-index refusal bodies unchanged.
+    # Witnesses (2): an index computed by division (0 / 0 and its relatives).
     "wide-index-charat-nan-expression": (
         "function bad(text, index) { return text.charAt(0 / 0); }\n",
         ("", "a", "a"),
@@ -723,7 +737,8 @@ DIVISION_INDICES = {
 """,
 }
 SUBTRACTION_WITNESSES = {
-    # Preserve the complete former division-index arithmetic refusal body.
+    # Witness, named for the division family where it was first listed; it
+    # exercises subtraction (1e999 - 1e999, which is NaN).
     "division-index-other-arithmetic": (
         "function bad(text, index) { return text.charAt(1e999 - 1e999); }\n",
         ("", "a", "a"),
@@ -759,7 +774,8 @@ SUBTRACTION_INDICES = {
 """,
 }
 MULTIPLICATION_WITNESSES = {
-    # Preserve the complete former subtraction-index arithmetic refusal body.
+    # Witness, named for the subtraction family where it was first listed; it
+    # exercises multiplication (0 * 1e999, which is NaN).
     "subtraction-index-other-arithmetic": (
         "function bad(text, index) { return text.charAt(0 * 1e999); }\n",
         ("", "a", "a"),
@@ -859,7 +875,8 @@ ADDITION_INDICES = {
 """,
 }
 POWER_WITNESSES = {
-    # Preserve the complete former addition-index arithmetic refusal body.
+    # Witness, named for the addition family where it was first listed; it
+    # exercises exponentiation (0 ** 1).
     "addition-index-other-arithmetic": (
         "function bad(text, index) { return text.charAt(0 ** 1); }\n",
         ("", "a", "a"),
@@ -893,7 +910,7 @@ POWER_INDICES = {
 """,
 }
 NEGATED_WITNESSES = {
-    # Preserve all six complete former outer-negation refusal sources.
+    # Witnesses (6): a negated arithmetic index such as -(0 / 0).
     "division-index-negated-expression": (
         "function bad(text, index) { return text.slice(-(0 / 0)); }\n",
         ("", "a", "abc"),
@@ -950,7 +967,7 @@ NEGATED_INDICES = {
 """,
 }
 SIGNED_OPERAND_WITNESSES = {
-    # Preserve all eleven complete former signed-operand refusal sources.
+    # Witnesses (11): arithmetic with a negated operand such as 0 - (-1).
     "subtraction-index-negated-operand": (
         "function bad(text, index) { return text.charAt(0 - (-1)); }\n",
         ("", "", "b"),
@@ -1030,7 +1047,7 @@ SIGNED_OPERAND_INDICES = {
 """,
 }
 NESTED_WITNESSES = {
-    # Preserve all ten complete former nested-arithmetic refusal sources.
+    # Witnesses (10): nested arithmetic such as (0 / 0) / 1.
     "division-index-nested-expression": (
         "function bad(text, index) { return text.charAt((0 / 0) / 1); }\n",
         ("", "a", "a"),
@@ -1107,7 +1124,7 @@ NESTED_INDICES = {
 """,
 }
 NEGATED_PRIMITIVE_WITNESSES = {
-    # Preserve the four complete former negated primitive refusal sources.
+    # Witnesses (4): a negated primitive such as -null.
     "primitive-index-negated-null": (
         "function bad(text, flag) { return text.charAt(-null); }\n",
         ("", "a", "a"),
@@ -1156,7 +1173,7 @@ NEGATED_PRIMITIVE_INDICES = {
 """,
 }
 DOUBLE_NEGATED_WITNESSES = {
-    # Preserve the four complete former double literal negation refusals.
+    # Witnesses (4): a doubly negated literal such as -(-1).
     "signed-slice-nested-negation": (
         "function bad(text, index) { return text.slice(-(-1)); }\n",
         ("", "", "bc"),
@@ -1204,12 +1221,12 @@ DOUBLE_NEGATED_INDICES = {
 }
 """,
 }
-# Thirty former refusals, byte-identical, whose literal index census confined
-# an exact Number. Since 847718fbd a Neg or arithmetic over Number operands is
-# itself a proved Number, so it may escape, compare or go unused, and the String
-# index lowering converts that same value at run time. Expected values are
-# Node's for NUMBER_ESCAPE_INPUTS. Boolean and null leaves still refuse for
-# escaping their bounds (negated-primitive-index-leaf-escape and its siblings).
+# Witnesses (30): each stores a negated or computed Number index in a local
+# that it also returns, compares or leaves unused. Negation and arithmetic on
+# Number operands give a proved Number, so the native String charAt/slice can
+# take that value at run time. Expected values are Node's for
+# NUMBER_ESCAPE_INPUTS. Boolean and null operands are still refused
+# ("escapes its bounds"), e.g. negated-primitive-index-leaf-escape.
 NUMBER_ESCAPE_INPUTS = (("", 0), ("a", 0), ("abc", 0), ("", -1))
 NUMBER_ESCAPE_WITNESSES = {
     name: (f"function bad(text, index) {{ {body} }}\n", expected)
@@ -1473,6 +1490,8 @@ PARAMETER_TYPES = {
     "string-double-negated-indices": ["string", "string", "string", "string"],
     "description-capture-double-negated-index": ["symbol"],
 }
+# Each case: (JS source, C++ client checks where @ENTRY@ names the export,
+# expected stdout).
 CASES = {
     "state": (
         STATE,
@@ -1540,7 +1559,7 @@ CASES = {
 """,
         "true\n",
     ),
-    # The former refused source body is unchanged, including its direct return.
+    # Witness, including its direct return of the description.
     "description": (
         "function bad() { return Symbol.iterator.description; }\n",
         """
@@ -1640,7 +1659,8 @@ CASES = {
 """,
         "true\n",
     ),
-    # The original parameter refusal source now has an explicit category contract.
+    # Witness: once refused for its untyped parameter; PARAMETER_TYPES now gives
+    # the parameter's type in the contract.
     "parameters": (
         "function bad(value) { return Symbol.iterator; }",
         'assert(@ENTRY@(ctnative::Symbol()) == ctnative::Symbol.iterator); std::cout << "true\\n";',
@@ -2149,6 +2169,7 @@ for name, (source, expected) in (
 
 
 def number_escape_check(call, value):
+    """A C++ condition that holds when `call` returns the Node value `value`."""
     if isinstance(value, bool):
         return call if value else "!" + call
     if isinstance(value, str):
@@ -2219,7 +2240,8 @@ CASES["description-capture-default-index"] = (
     *CASES["description-type-guard"][1:],
 )
 for name, (source, _) in UNDEFINED_WITNESSES.items():
-    # The former charAt/slice default refusals have one source parameter.
+    # Witnesses with a single `text` parameter reuse the two-parameter checks
+    # with the index argument removed.
     method = "charat" if name == "default-index-charat-undefined" else "slice"
     checks = CASES[f"string-index-{method}-missing"][1]
     if len(PARAMETER_TYPES[name]) == 1:
@@ -2381,7 +2403,7 @@ CASES["description-capture-double-negated-index"] = (
     DOUBLE_NEGATED_INDICES["description-capture-double-negated-index"],
     *CASES["description-type-guard"][1:],
 )
-# The complete former refused programs now execute unchanged.
+# Witnesses (2): a fresh Symbol's typeof and Symbol.prototype.toString.
 for name, body, expected in (
     ("fresh", "return typeof Symbol();", "symbol"),
     ("method", "return Symbol.iterator.toString();", "Symbol(Symbol.iterator)"),
@@ -2391,8 +2413,8 @@ for name, body, expected in (
         f'assert(@ENTRY@().value() == "{expected}"); std::cout << "true\\n";',
         "true\n",
     )
-# Families whose accepted cases need the String intrinsic; the first group also
-# gets a missing-String refusal control.
+# Families whose accepted cases need the String intrinsic. MISSING_STRING
+# families also get a control that is refused when String is not provided.
 MISSING_STRING = (
     DESCRIPTION_GUARDS,
     STRING_METHODS,
@@ -2462,6 +2484,7 @@ FORBIDDEN = re.compile(
 
 
 def prepare(args, name, source, *, entry_name=None, parameter_types=None):
+    """Import `source` and build a Core-only contract that provides Symbol."""
     ir, contract = dom.prepare(args, name, source, 0, entry_name=entry_name)
     del contract["element_parameters"]
     contract.update(provider="ctbrowser-intrinsics-v1", initial_intrinsics=["Symbol"])
@@ -2505,6 +2528,10 @@ def witnesses(kind, cases, start, argument=", 0"):
 
 
 def oracle(args):
+    """Run every observer program in the VM and in Node; each must print true.
+
+    Returns the number of observations.
+    """
     source = (
         STATE
         + OBSERVE
@@ -3113,8 +3140,10 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
     )
     expected = "".join(f"symbol{i:02}{name}=true\n" for i, name in enumerate(observations, 1))
     actual = run([args.reference, str(vm)]).stdout
-    # The VM has matched Node here since its Unicode casing (8f61dcf9c) and
-    # UTF-16 String indices (2b710a0d2); native uses the same Core API.
+    # The VM prints the observation globals in sorted order, so compare against
+    # the sorted expectation. Node, below, prints them in declaration order.
+    # Both must agree on every value, including Unicode casing and UTF-16
+    # indices.
     if actual != "".join(sorted(expected.splitlines(keepends=True))):
         raise RuntimeError(f"VM Symbol export observations differ: {actual}")
     node = args.work / "oracle.cjs"
@@ -3131,6 +3160,12 @@ var symbol183StringUnicodeNestedPrefix = stringNestedPrefix('bs\u00e9') === 'pre
 
 
 def standalone(args, native, name, checks, expected, compilers, includes, libraries):
+    """Compile one native export with each compiler and run its C++ checks.
+
+    Both the explicit-signature IR and the --ctnative-print-deduced IR are
+    translated. Two cases also run a deliberately broken copy, to show that
+    their assertions can fail.
+    """
     text = native.read_text()
     entries = dom.NATIVE.findall(text)
     if (
@@ -3259,12 +3294,15 @@ def main():
     refusals = 0
 
     def refuse(ir, contract, name, **options):
+        """Lower `ir`, require a refusal, and return the refusal message."""
         nonlocal refusals
         result = dom.lower(args, ir, contract, name, success=False, **options)
         refusals += 1
         return result
 
     def family(prefix, params, types, bodies, *, string=False, expect=None):
+        """Each body, wrapped as bad(params), must be refused with and without
+        optimisation; `expect` = (name, text) also checks one refusal's message."""
         for name, body in bodies.items():
             ir, contract = prepare(
                 args,
@@ -3291,6 +3329,9 @@ def main():
         case=None,
         noun=None,
     ):
+        """Refuse an accepted case under tight step budgets, then edit one
+        literal in its IR (`old` to `new`) and require a fingerprint-mismatch
+        refusal."""
         what = what or label.replace("-", " ")
         ir, contract = accepted[case or "description-capture-" + label]
         if isinstance(budgets, int):
@@ -3604,7 +3645,9 @@ def main():
         },
         string=True,
     )
-    # Number attributes store IEEE-754 bits: change the literal 2 to 1.
+    # #ctjs.number attributes hold the IEEE-754 bit pattern of the double:
+    # 4611686018427387904 is 2.0 and 4607182418800017408 is 1.0. Change a 2.0
+    # literal to 1.0.
     stale(
         "string-index",
         "String index",
@@ -3632,7 +3675,7 @@ def main():
         },
         string=True,
     )
-    # Change only the literal end bound from 3 to 2, preserving the start.
+    # Change only the literal end bound from 3.0 (4613937818241073152) to 2.0.
     stale(
         "string-slice",
         "String slice",
@@ -3651,8 +3694,8 @@ def main():
             "end-dynamic": "return text.slice(0, -index);",
             "start-coercion": "return text.slice(-'1');",
             "end-object": "return text.slice(0, -{valueOf() { return 1; }});",
-            # negation-escape is a Number witness now; a negated Boolean still
-            # escapes the literal index census.
+            # A negated Number bound that escapes is accepted (see
+            # NUMBER_ESCAPE_WITNESSES); a negated Boolean is still refused.
             "primitive-negation-escape": "const bound=-true; text.slice(bound); return bound;",
             "replacement": "String.prototype.slice=0; return text.slice(-1);",
             "first-unit-authority": "return text.slice(-1).toLowerCase();",
@@ -3660,7 +3703,7 @@ def main():
         string=True,
         expect=("primitive-negation-escape", "escapes its bounds"),
     )
-    # Source -3 is an original literal 3 followed by its own Neg operation.
+    # The source's -3 is a literal 3.0 followed by a Neg op; change the 3.0 to 2.0.
     stale(
         "signed-slice",
         "signed String slice",
@@ -3686,7 +3729,7 @@ def main():
         },
         string=True,
     )
-    # Change the literal magnitude 1 to 2 while retaining its original Neg.
+    # Change the literal magnitude 1.0 to 2.0, keeping its Neg op.
     stale(
         "signed-charat",
         "signed charAt",
@@ -3712,7 +3755,7 @@ def main():
         },
         string=True,
     )
-    # Change only the literal 0.75 to 1.5 under its original Neg operation.
+    # Change only the literal 0.75 to 1.5, keeping its Neg op.
     stale(
         "fractional-index",
         part="magnitude",
@@ -3737,7 +3780,8 @@ def main():
         },
         string=True,
     )
-    # Replace literal +infinity with 1, retaining the original Neg operation.
+    # Replace the literal +Infinity (9218868437227405312) with 1.0, keeping its
+    # Neg op. The control after it swaps +Infinity for NaN (9221120237041090560).
     stale(
         "wide-index",
         part="infinity",

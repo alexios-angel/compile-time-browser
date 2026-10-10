@@ -11,9 +11,9 @@
 // RUN: ctjs-opt %t/prototype.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=PROTO
 // RUN: ctjs-opt %t/primitives.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=PRIMITIVE
 // RUN: ctjs-opt %t/unknown.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=UNKNOWN
-
-// The graph has one child shared by two entries. A dead plain object and a
-// dead Map disappear. The observers' heap arguments remain runtime values.
+// --ctnative-partial-evaluate runs pure helpers at compile time and rebuilds the object graph
+// they return from constants. In sharedSeed one child is shared by two entries, a dead object
+// and a dead Map disappear, and the observers' heap arguments remain runtime values.
 // HEAP-LABEL: ctjs.func private @sharedSeed$1
 // HEAP-SAME: ctnative.partial_evaluated = {evaluated_nodes = 4 : i64, residual_nodes = 2 : i64
 // HEAP: %[[ROOT:[0-9]+]] = ctjs.construct
@@ -50,8 +50,8 @@
 // REPEAT: ctjs.construct
 // REPEAT-LABEL: ctjs.func private @observeSharing$2
 // REPEAT-SAME: ctnative.partial_eval_reason = "callers do not supply one set of constant arguments"
-
-
+// Each split file below checks one refusal reason or budget option. Some inputs carry forged
+// ctnative.partial_evaluated attributes: the pass must recompute them, never trust them.
 //--- cycle.mlir
 module {
   // CYCLE-LABEL: ctjs.func private @cycle
@@ -128,8 +128,8 @@ module {
   // BUDGET: cf.cond_br
   ctjs.func private @loop(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %zero = ctjs.constant #ctjs.number<0>
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
-    %three = ctjs.constant #ctjs.number<4613937818241073152>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
+    %three = ctjs.constant #ctjs.number<4613937818241073152> // 3.0
     cf.br ^test(%zero : !ctjs.value)
   ^test(%n: !ctjs.value):
     %less = ctjs.compare lt %n, %three
@@ -200,7 +200,7 @@ module {
   // PRIMITIVE-SAME: ctnative.partial_evaluated =
   // PRIMITIVE: ctjs.constant #ctjs.boolean<false>
   ctjs.func private @nanType(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %nan = ctjs.constant #ctjs.number<9222246136947933187>
+    %nan = ctjs.constant #ctjs.number<9222246136947933187> // NaN, bits 0x7FFC000000000003
     %result = ctjs.unary typeof %nan
     ctjs.return %result
   }

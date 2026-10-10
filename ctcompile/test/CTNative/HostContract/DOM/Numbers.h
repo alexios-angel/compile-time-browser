@@ -1,3 +1,10 @@
+//===- DOM/Numbers.h - Number(attribute).toString() proofs ------*- C++ -*-===//
+//
+// Host-contract tests for DOMEntryAnalysis proving the Number intrinsic and
+// Number.prototype.toString on a getAttribute result.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -5,6 +12,11 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Tests that DOMEntryAnalysis proves `Number(el.getAttribute(x)).toString()`
+/// only when the contract names the Number intrinsic, the module fingerprint
+/// matches and no path can replace Number or re-enter. It also checks that
+/// forged attributes and partial (budget-limited) analyses never produce
+/// evidence.
 inline void checkDOMNumbers(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
@@ -70,7 +82,8 @@ module {
         check(extended && DOMEntryAnalysis(*module, *extended).proved(),
               "Number proof accepts additional supported intrinsic identities");
         if (!extended) { llvm::consumeError(extended.takeError()); }
-        // Map is a DOM identity (local Maps); Error is still closed-source only.
+        // Map is a DOM initial intrinsic (for page-local Maps). Error is accepted
+        // only together with the class-preparation intrinsics, so it is rejected here.
         for (llvm::StringRef invalid :
              {"[\"Error\"]", "[\"Number.prototype.toString\"]", "[\"Number\",\"Number\"]",
               "[\"Number\",\"Error\"]", "[false]", "null"}) {

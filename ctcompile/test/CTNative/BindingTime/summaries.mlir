@@ -78,8 +78,8 @@ module {
 
 //--- joins.mlir
 module {
-  // BTA joins static arms conservatively. The two possible literal keys must
-  // not turn into one exact own-field name merely because the call is static.
+  // Binding-time analysis joins static branches conservatively: two possible literal
+  // keys must not become one exact own-field name just because the call is static.
   // JOIN-LABEL: ctjs.func private @joined
   // JOIN: ctjs.call_direct @keys{{.*}}ctnative.binding_time = "static"
   // JOIN: ctjs.get_property {{.*}}ctnative.binding_time = "dynamic"
@@ -108,7 +108,7 @@ module {
 
 //--- recursive.mlir
 module {
-  // Literal normal returns do not bootstrap purity/completion in an SCC.
+  // In a recursive cycle, literal returns cannot seed a purity or completion fact.
   // The recursive call and its heap invalidation stay dynamic even though
   // a constant after the call still has a static SSA value.
   // RECURSIVE-LABEL: ctjs.func private @first

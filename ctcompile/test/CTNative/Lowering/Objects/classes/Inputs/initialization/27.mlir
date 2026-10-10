@@ -1,4 +1,4 @@
-// Separate Maps borrow the same record; clearing one cannot detach either saved alias.
+// Two Maps hold the same instance; clearing one leaves both get results usable.
 //--- class-map-record-shared-owner.js
 function class_map_record_shared_owner() {
     const left = new Map(), right = new Map();
@@ -14,7 +14,7 @@ function class_map_record_shared_owner() {
 }
 var a = class_map_record_shared_owner();
 
-// Original-owner methods and saved field writes must update the same record after replacement.
+// After the entry is replaced, a method on the original and a get result write one object.
 //--- class-map-record-owner-method-write.js
 function class_map_record_owner_method_write() {
     const values = new Map();
@@ -34,7 +34,7 @@ function class_map_record_owner_method_write() {
 }
 var a = class_map_record_owner_method_write();
 
-// Multiple generations of one key retain their own owners through deletion and reinsertion.
+// Delete and reinsert of one key: each earlier get result keeps its own object.
 //--- class-map-record-reinsert-aliases.js
 function class_map_record_reinsert_aliases() {
     const values = new Map();
@@ -54,7 +54,7 @@ function class_map_record_reinsert_aliases() {
 }
 var a = class_map_record_reinsert_aliases();
 
-// A completed owner does not make a get present after clear.
+// Refused: get after clear returns undefined even though the instance still exists.
 //--- class-map-record-read-after-clear.js
 function class_map_record_read_after_clear() {
     const values = new Map();
@@ -66,7 +66,7 @@ function class_map_record_read_after_clear() {
 }
 var a = class_map_record_read_after_clear();
 
-// Returning a saved get result requires ownership beyond the declaring entry frame.
+// Refused: returning a get result lets it outlive the function that created the instance.
 //--- class-map-record-returned-alias.js
 function class_map_record_returned_alias() {
     const values = new Map();
@@ -81,7 +81,7 @@ var returned = class_map_record_returned_alias();
 returned.n = 9;
 var a = returned.n;
 
-// Capturing a saved alias in a returned closure also extends its lifetime past the owner frame.
+// Refused: a returned closure capturing a get result outlives the function owning it.
 //--- class-map-record-captured-alias.js
 function class_map_record_captured_alias() {
     const values = new Map();

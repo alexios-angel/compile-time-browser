@@ -1,4 +1,10 @@
-"""Keep the original browser UMD source at the native ownership boundary."""
+"""Compile Bootstrap's unmodified browser UMD wrapper to native code and check it.
+
+The wrapper publishes globalThis.bootstrap. The host-prefix pass must select
+its browser branch, the native program must print the same observations as
+the JS with no VM symbols linked, and every source mutation, missing contract
+field, stale fingerprint and too-small step budget must be refused.
+"""
 
 import hashlib
 import importlib.util
@@ -14,6 +20,12 @@ from ..harness.map_results import run_sanitized_lifetime
 
 
 def umd_source():
+    """Return (UMD source, expected observations, host-prefix module).
+
+    Extracts the browser UMD wrapper from the vendored Bootstrap bundle with
+    tools/check/bootstrap-data-probe.py and fails if it is no longer the
+    pinned 3218-byte program. parents[6] is the repository root.
+    """
     root = Path(__file__).resolve().parents[6]
     modules = []
     for name in ("bootstrap-data-probe", "bootstrap-host-prefix"):
@@ -35,6 +47,8 @@ def umd_source():
 
 
 def umd_contract(args, ir, name, observations):
+    """Write the host contract for the UMD program: which globals are absent and
+    which are observed, with globalThis.bootstrap as the owned root."""
     config = args.work / f"{name}.contract.json"
     value = host.manifest(
         args.opt, ir, absent=("define", "exports", "module", "self"), undefined=("undefined",)
@@ -50,6 +64,10 @@ def umd_contract(args, ir, name, observations):
 
 
 def prepare_umd(args):
+    """Prepare the UMD source and run the host-prefix pass on it.
+
+    Returns (js, prepared IR, specialized IR, expected observations).
+    """
     source, values, prefix = umd_source()
     js, prepared, functions = boundary.prepare(args, "umd-browser", source.removesuffix("\n"))
     if js.read_bytes() != source.encode() or functions != 7:
@@ -98,6 +116,7 @@ def observe_umd(args, js, values):
 
 
 def umd_mutations(text):
+    """Return {name: (mutated IR, expected refusal reason)} for the UMD wrapper."""
     match = re.search(r"ctjs\.func @fn\$2\(.*?(?=\n  ctjs\.func |\n})", text, re.S)
     if not match:
         raise RuntimeError("UMD mutations lost the actual wrapper")
@@ -149,6 +168,8 @@ def umd_mutations(text):
 
 
 def execute_umd(args, output, name, expected, values, compilers, nm):
+    """Translate `output` to C++, check its 23 Data calls, and run it standalone
+    and under the sanitized lifetime harness."""
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     source, _, _ = umd_source()
@@ -166,6 +187,7 @@ def execute_umd(args, output, name, expected, values, compilers, nm):
             [methods_by_value[callee] for callee, _ in calls if callee in methods_by_value]
             != expected_calls
             or len(expected_calls) != 23
+            # 76616c7565 is the hex spelling of the field name "value".
             or len(re.findall(r"ctnative::object_get_field_76616c7565\(", cpp)) != 1
         ):
             raise RuntimeError(f"{name}/{mode}: changed the 23 Data calls or payload field read")
@@ -180,8 +202,9 @@ def execute_umd(args, output, name, expected, values, compilers, nm):
             if result.stdout != expected or result.stderr:
                 raise RuntimeError(f"{name}/{mode}: standalone UMD observation mismatch")
 
-        # Reuse the exact Data lifetime observer, changing only its appended
-        # access to the UMD publication. The emitted source above stays intact.
+        # Reuse the lifetime observer from the Bootstrap Data test, pointing its
+        # final access at g_globalThis->bootstrap (where UMD publishes) instead
+        # of g_host->slot. The emitted C++ is not edited.
         observed, separator, observer = recorder_lifetime_cpp(cpp, values, True).rpartition(
             "\nint main() {"
         )
@@ -202,6 +225,7 @@ def execute_umd(args, output, name, expected, values, compilers, nm):
 
 
 def check_umd_preparation(args, compilers, nm):
+    """Check UMD-shaped wrappers that preparation may admit or must refuse."""
     source = (
         SOURCE.replace(
             "var host = {};",
@@ -257,6 +281,7 @@ def check_umd_preparation(args, compilers, nm):
 
 
 def check_umd(args, node, reference, compilers, nm):
+    """Run the full browser UMD check described in the module docstring."""
     js, prepared, specialized, values = prepare_umd(args)
     expected = observe_umd(args, js, values)
     raw_config = umd_contract(args, prepared, "umd-raw", values)
@@ -331,15 +356,19 @@ def check_umd(args, node, reference, compilers, nm):
             subject = args.work / f"umd-{policy}-{name}.mlir"
             unprinted = subject.with_suffix(".unprinted.mlir")
             unprinted.write_text(text)
-            # Canonical SSA names keep operand-preservation comparisons exact
-            # when the mutation inserts another result before existing calls.
+            # Reprint through opt so SSA names are canonical; otherwise a
+            # mutation that inserts a result before existing calls would break
+            # the operand-preservation comparison.
             host.run([args.opt, str(unprinted), "-o", str(subject)])
             refused(subject, f"umd-{policy}-{name}-stale", config, flags, "fingerprint mismatch")
             fresh = umd_contract(args, subject, f"umd-{policy}-{name}", values)
             refused(subject, f"umd-{policy}-{name}", fresh, flags, reason)
 
-    # Prefix specialization must stop at a hard absent read even when its only
-    # SSA user is TypeOf. Native refusal alone cannot detect an earlier bad fold.
+    # The host-prefix pass may fold `typeof exports` only when the load is in
+    # typeof mode, where an absent global gives "undefined". A plain read of an
+    # absent global throws ReferenceError, so the pass must stop there even when
+    # a TypeOf op is its only user. Check the pass's report directly, because a
+    # later native refusal would hide a wrong fold.
     ordinary_sources = {
         "comma": source.replace("typeof exports", "typeof (0, exports)", 1),
         "alias": source.replace(

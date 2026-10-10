@@ -1,4 +1,4 @@
-// Nested unused yields preserve the selected child and skip repeated creation.
+// Nested `has(...) || set(...)` with unused results keeps the first inner Map; no re-create.
 //--- class-map-record-nested-shortcircuit-repeat.js
 function probe() {
     const outer = new Map();
@@ -18,7 +18,7 @@ function probe() {
 }
 var a = probe();
 
-// Result-carrying branches route each literal key to its distinct child owner.
+// `has(k) && get(k)` results give each literal outer key its own inner Map.
 //--- class-map-record-nested-shortcircuit-distinct.js
 function probe() {
     const outer = new Map();
@@ -37,7 +37,7 @@ function probe() {
 }
 var a = probe();
 
-// Cached selected results survive outer cleanup without changing saved owners.
+// `has`/`get` results saved in variables survive deleting the outer entry.
 //--- class-map-record-nested-shortcircuit-cached.js
 function probe() {
     const outer = new Map();
@@ -59,7 +59,7 @@ function probe() {
 }
 var a = probe();
 
-// Caller-controlled truth cannot select child topology at compile time.
+// Refused: `flag || set(...)` depends on a caller's flag, unknown at compile time.
 //--- class-map-record-nested-shortcircuit-dynamic-branch.js
 function probe(flag) {
     const outer = new Map();
@@ -72,7 +72,7 @@ function probe(flag) {
 }
 var a = probe(true) * 10 + probe(false);
 
-// A selected set result carries the outer identity beyond its owning entry.
+// Refused: returning the `set` result returns the outer Map past this function.
 //--- class-map-record-nested-shortcircuit-returned-outer.js
 function probe() {
     const outer = new Map();
@@ -84,7 +84,7 @@ function probe() {
 }
 var a = probe().get("element").get("bs.item").n;
 
-// Boxing an outer set result is observable identity transport, not a dead yield.
+// Refused: storing the `set` result in an object keeps the outer Map, so it is used.
 //--- class-map-record-nested-shortcircuit-boxed-outer.js
 function probe() {
     const outer = new Map();
@@ -97,7 +97,7 @@ function probe() {
 }
 var a = probe();
 
-// Even a dead set result cannot enter an observed branch-result identity union.
+// Refused: a never-taken `set` is still a possible value of the used `||` result.
 //--- class-map-record-nested-shortcircuit-observed-dead-set.js
 function probe() {
     const outer = new Map();
@@ -110,7 +110,7 @@ function probe() {
 }
 var a = probe();
 
-// An unselected registration branch still cannot call user code.
+// Refused: a never-taken `||` branch still calls the user function `make()`.
 //--- class-map-record-nested-shortcircuit-dead-call.js
 function probe() {
     const outer = new Map();
@@ -124,7 +124,7 @@ function probe() {
 }
 var a = probe();
 
-// Dead branch coercion cannot disappear before the complete effect census.
+// Refused: a never-taken `||` branch still contains `+new Map()`, a conversion.
 //--- class-map-record-nested-shortcircuit-dead-coercion.js
 function probe() {
     const outer = new Map();
@@ -137,7 +137,7 @@ function probe() {
 }
 var a = probe();
 
-// A selected missing get does not become a child owner through a branch result.
+// Refused: get after delete returns undefined; the `||` must not produce an inner Map.
 //--- class-map-record-nested-shortcircuit-missing-outer.js
 function probe() {
     const outer = new Map();
@@ -151,7 +151,7 @@ function probe() {
 }
 var a = probe();
 
-// A present child is not proof that its requested record exists.
+// Refused: the inner Map exists, but the inner key does not.
 //--- class-map-record-nested-shortcircuit-missing-inner.js
 function probe() {
     const outer = new Map();
@@ -165,7 +165,7 @@ function probe() {
 }
 var a = probe();
 
-// Captured observers need their own order proof across conditional registration.
+// Refused: a closure reading the outer Map needs its calls and their order checked.
 //--- class-map-record-nested-shortcircuit-captured-observer.js
 function probe() {
     const outer = new Map();
@@ -178,7 +178,7 @@ function probe() {
 }
 var a = probe();
 
-// Flattening a selected arm must not promote a record's region lifetime.
+// Refused: the instance is created inside a `&&` branch, so it cannot outlive it.
 //--- class-map-record-nested-shortcircuit-region-owner.js
 function probe() {
     const outer = new Map();
@@ -189,7 +189,7 @@ function probe() {
 }
 var a = probe();
 
-// A record reached through a selected child still cannot leave its owner.
+// Refused: an instance read through an `&&`-selected inner Map escapes into a global.
 //--- class-map-record-nested-shortcircuit-record-escaped.js
 var retained;
 function probe() {

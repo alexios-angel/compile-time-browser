@@ -1,5 +1,5 @@
-// The native entry owns the conservative defaults, even without a wrapper.
-// Precomputation must run before reachability: selecting this branch removes
+// Tests that --ctnative-lower-to-emitc runs precomputation and reachability
+// pruning by default. Precomputation must run first: selecting this branch removes
 // the only edge to a private function. Without pruning, that newly uncalled
 // body's parameters have no native proof; the unsimplified baseline has a caller.
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DEFAULT --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func --implicit-check-not=ctnative.specialized_from --implicit-check-not=ctnative.partial_evaluated --implicit-check-not=ctnative.supercompile_summary
@@ -47,8 +47,8 @@
 module {
   ctjs.func @entry$0(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
-    %forty = ctjs.constant #ctjs.number<4630826316843712512>
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %forty = ctjs.constant #ctjs.number<4630826316843712512> // 40.0 as IEEE-754 bits
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0 as IEEE-754 bits
     %answer = ctjs.binary add %forty, %two
     %false = ctjs.constant #ctjs.boolean<false>
     %take = ctjs.truthy %false

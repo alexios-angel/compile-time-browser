@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Compose confined Map captures with the complete native DOM class proof."""
+"""Test class methods and helpers that capture a Map local to the native DOM entry.
+
+The Map never escapes the entry, so the native lowering may compile it along
+with every class body. Each CASES source must match Node and the reference VM
+and run natively; each unsafe variant (in `bad`) must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import run
@@ -33,6 +38,7 @@ CASES = {
   return item.read();""",
 }
 
+# Helpers also capture fixed primitives next to the Map.
 CASES["constants"] = """const state = new Map();
   const amount = 1, label = 'x', enabled = true, empty = null, absent = void 0;
   const lookup = key => state.get(key) === amount;
@@ -47,6 +53,7 @@ CASES["constants"] = """const state = new Map();
   const value = item.read(element);
   const valid = item.valid();
   return value && valid;"""
+# The same, with the Map read forwarded through a second helper.
 CASES["constant-chain"] = (
     CASES["constants"]
     .replace("  class Item", "  const wrap = key => lookup(key);\n  class Item")
@@ -64,6 +71,7 @@ CHECKS = r"""
 
 
 def source(body):
+    """Wrap `body` as the probe(element) entry function."""
     return "function probe(element) {\n" + body + "\n}\n"
 
 
@@ -96,14 +104,14 @@ def main():
                 libraries,
                 allow_nullable_scalar=True,
             )
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(
             args,
             ir,
             dict(contract, initial_intrinsics=["__ctbrowser_class_defined"]),
             name + "-undeclared",
         )
-        refusals += 2
+        refusals += 2  # Map is not a declared intrinsic: refused under both policies.
         dom.lower(args, ir, declared, name + "-budget", success=False, max_steps=0)
         refusals += 1
     bad = {
@@ -157,7 +165,8 @@ def main():
             ),
         }
     )
-    # Constant transport does not authorize arithmetic on a possibly absent Map read.
+    # A forwarded constant does not make arithmetic on a Map read safe: the
+    # read may be undefined.
     for name in ("constants", "constant-chain"):
         bad[name + "-arithmetic"] = (
             CASES[name]

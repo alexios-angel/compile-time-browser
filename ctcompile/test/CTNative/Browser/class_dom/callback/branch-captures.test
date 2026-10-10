@@ -1,2 +1,2 @@
-# Conditional captures keep their original initialization, effects and lifetime proof.
+# Callbacks created and called inside an if-arm, capturing fixed primitives, compile natively.
 # RUN: python3 %S/branch_captures.py %dom_driver --node %node --reference %native_reference

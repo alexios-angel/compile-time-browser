@@ -13,7 +13,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/specialization.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize | FileCheck %s --check-prefix=SOURCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/dispatch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate | FileCheck %s --check-prefix=DISPATCH
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/dispatch.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
-
+// #ctjs.number<N> holds a double's IEEE-754 bits; zeros.mlir relies on +0.0 and -0.0 differing.
 // SOURCE-LABEL: ctjs.func @_script_$0
 // SOURCE: %[[GENERIC:[0-9]+]] = ctjs.load_global "mixed"
 // SOURCE: ctjs.call_direct @mixed$2({{.*}}, %[[GENERIC]],
@@ -37,8 +37,8 @@ module {
   // BUDGET: ctnative.specialization_summary = {cloned_ops = 0 : i64, limited_calls = 2 : i64, redirected_calls = 0 : i64, variants = 0 : i64}
   ctjs.func @entry(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %input: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0
     // MEMO: ctjs.call_direct @scale(
     %generic = ctjs.call_direct @scale(%u, %u, %u, %one, %input)
     // MEMO: ctjs.call_direct @scale__specialized(
@@ -68,8 +68,8 @@ module {
   ctjs.func @entry(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %input: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
     %one = ctjs.constant #ctjs.number<4607182418800017408>
-    %positive = ctjs.constant #ctjs.number<0>
-    %negative = ctjs.constant #ctjs.number<9223372036854775808>
+    %positive = ctjs.constant #ctjs.number<0> // +0.0
+    %negative = ctjs.constant #ctjs.number<9223372036854775808> // -0.0
     %generic = ctjs.call_direct @combine(%u, %u, %u, %one, %input)
     %first = ctjs.call_direct @combine(%u, %u, %u, %positive, %input)
     %second = ctjs.call_direct @combine(%u, %u, %u, %negative, %input)
@@ -190,12 +190,12 @@ module {
   // DIRECT-LABEL: ctjs.func private @formula$1(
   // DIRECT: ctjs.binary mul %arg3,
   ctjs.func private @formula$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %input: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %ten = ctjs.constant #ctjs.number<4621819117588971520>
+    %ten = ctjs.constant #ctjs.number<4621819117588971520> // 10.0
     %value = ctjs.binary mul %input, %ten
     ctjs.return %value
   }
   ctjs.func private @variant(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %input: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %twenty = ctjs.constant #ctjs.number<4626322717216342016>
+    %twenty = ctjs.constant #ctjs.number<4626322717216342016> // 20.0
     ctjs.return %twenty
   }
 }

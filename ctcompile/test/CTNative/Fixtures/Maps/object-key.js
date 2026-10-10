@@ -1,4 +1,4 @@
-// Empty object keys carry owning identity across calls and factory lifetimes.
+// Empty objects used as Map keys keep their identity across calls and returns.
 function makeKey() {
     return {};
 }

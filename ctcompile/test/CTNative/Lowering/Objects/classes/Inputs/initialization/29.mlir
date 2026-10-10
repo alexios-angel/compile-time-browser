@@ -1,4 +1,4 @@
-// Saved Map aliases expose the owner's complete ordered own-field snapshot.
+// getOwnPropertyNames on a get result lists all the object's fields in creation order.
 //--- class-map-record-alias-snapshot-order.js
 function class_map_record_alias_snapshot_order() {
     const values = new Map();
@@ -11,7 +11,7 @@ function class_map_record_alias_snapshot_order() {
 }
 var a = class_map_record_alias_snapshot_order();
 
-// A method called through an alias snapshots the same receiver as the owner.
+// getOwnPropertyNames(this) in a method called on a get result sees the original object.
 //--- class-map-record-alias-snapshot-method.js
 function class_map_record_alias_snapshot_method() {
     const values = new Map();
@@ -29,7 +29,7 @@ function class_map_record_alias_snapshot_method() {
 }
 var a = class_map_record_alias_snapshot_method();
 
-// Preserve the disposal loop while clearing the original owner's fields through an alias.
+// Keep the dispose loop that nulls every field of the original object via a get result.
 //--- class-map-record-alias-snapshot-dispose.js
 function class_map_record_alias_snapshot_dispose() {
     const values = new Map();
@@ -48,7 +48,7 @@ function class_map_record_alias_snapshot_dispose() {
 }
 var a = class_map_record_alias_snapshot_dispose();
 
-// Overwrite and deletion preserve each saved owner's keys and later field writes.
+// After overwrite and delete, each get result keeps its own field names and later writes.
 //--- class-map-record-alias-snapshot-overwrite-delete.js
 function class_map_record_alias_snapshot_overwrite_delete() {
     const values = new Map();
@@ -67,7 +67,7 @@ function class_map_record_alias_snapshot_overwrite_delete() {
 }
 var a = class_map_record_alias_snapshot_overwrite_delete();
 
-// An inherited method snapshots the same ordered fields on its saved leaf receiver.
+// An inherited method lists the Leaf instance's fields in order through a get result.
 //--- class-map-record-alias-snapshot-inherited.js
 function class_map_record_alias_snapshot_inherited() {
     const values = new Map();
@@ -87,7 +87,7 @@ function class_map_record_alias_snapshot_inherited() {
 }
 var a = class_map_record_alias_snapshot_inherited();
 
-// Adding a key through a copied alias invalidates snapshots on the original owner.
+// Refused: a field added through a copy of a get result changes the original's field list.
 //--- class-map-record-alias-snapshot-added.js
 function class_map_record_alias_snapshot_added() {
     const values = new Map();
@@ -101,7 +101,7 @@ function class_map_record_alias_snapshot_added() {
 }
 var a = class_map_record_alias_snapshot_added();
 
-// The method census must include an alias call that adds a previously absent field.
+// Refused: a method on a get result adds a field, so the class's full field set must grow.
 //--- class-map-record-alias-snapshot-method-added.js
 function class_map_record_alias_snapshot_method_added() {
     const values = new Map();
@@ -118,7 +118,7 @@ function class_map_record_alias_snapshot_method_added() {
 }
 var a = class_map_record_alias_snapshot_method_added();
 
-// Deleting a field through an alias changes the owner's snapshot length and order.
+// Refused: deleting a field through a get result changes the original's field list.
 //--- class-map-record-alias-snapshot-deleted.js
 function class_map_record_alias_snapshot_deleted() {
     const values = new Map();
@@ -132,7 +132,7 @@ function class_map_record_alias_snapshot_deleted() {
 }
 var a = class_map_record_alias_snapshot_deleted();
 
-// Snapshot proof cannot authorize publishing this before construction completes.
+// Refused: the constructor stores `this` in the Map before all its fields are written.
 //--- class-map-record-alias-snapshot-constructor-publication.js
 function class_map_record_alias_snapshot_constructor_publication() {
     const values = new Map();

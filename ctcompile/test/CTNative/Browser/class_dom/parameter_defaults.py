@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Select uncaptured parameter defaults without freezing supplied arguments."""
+"""Test parameter defaults (`enabled = !0`) on a parameter no callback captures.
+
+The frontend lowers a default to "if the argument is undefined, store the
+default into the parameter's cell". The native lowering may select the value
+directly, but a supplied argument, the default's side effects and any read of
+the parameter before the selection (a snapshot) must stay distinct. CASES must
+match Node and the reference VM natively; BAD sources and mutated IR must be
+refused.
+"""
 
 import json
 import re
@@ -10,8 +18,9 @@ from CTNative.Browser.class_dom import callbacks
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run, threshold
 
-# The inner formal shadows the outer one. Conservative frontend name analysis
-# boxes the outer parameter, but the callback captures only the fixed label.
+# The callback's formal `enabled` shadows the method's. The frontend's
+# conservative name analysis boxes the outer parameter, but the callback
+# captures only the fixed `label`.
 METHOD = """class Item {
   run(target, enabled = !0) {
     const label = 'done';
@@ -32,6 +41,7 @@ CALLS = """
   const fifth = item.run(element, false);
   return first && second && third && fourth && fifth;
 """
+# Selects the default by hand and records whether the argument was missing.
 SNAPSHOT = METHOD.replace("enabled = !0", "enabled").replace(
     "    const label",
     "    const snapshot = enabled;\n"
@@ -39,6 +49,7 @@ SNAPSHOT = METHOD.replace("enabled = !0", "enabled").replace(
     "    target.setAttribute('snapshot', snapshot === void 0);\n"
     "    const label",
 )
+# The defaulted function is a top-level arrow function the method calls.
 HELPER = (
     "const invoke = (target, enabled = !0) => {"
     + METHOD.split("run(target, enabled = !0) {", 1)[1].rsplit("}", 2)[0]
@@ -73,6 +84,7 @@ BAD = {
     "returned-callback": METHOD.replace("return local(target)", "return local"),
     "timer": METHOD.replace("return local(target)", "return setTimeout(local, 0)"),
 }
+# The top-level `scf.if` that stores the default, with its two arms.
 BRANCH = re.compile(
     r"^    scf\.if (%\w+) \{\n(?P<then>.*?)^    \} else \{\n(?P<else>.*?)^    \}",
     re.M | re.S,
@@ -80,6 +92,12 @@ BRANCH = re.compile(
 
 
 def shape(text, snapshot=False):
+    """Find the default selection in `text`.
+
+    Return (the scf.if match, its cell_set match, the formal the cell starts
+    from, the function's start offset). With `snapshot`, also assert that the
+    snapshot read and the later effect stay where the source put them.
+    """
     branch = BRANCH.search(text)
     assert branch, "default lost its top-level conditional store"
     store = re.search(r"ctjs\.cell_set (%\w+), (%\w+)", branch["then"])
@@ -98,6 +116,8 @@ def shape(text, snapshot=False):
 
 
 def observations(name):
+    """Return the expected (attribute, value) writes on the first element, the
+    second element, and the first element when it is passed as both arguments."""
     first, second, alias = [], [], []
     for owner, supplied in (
         (first, False),
@@ -125,6 +145,8 @@ def observations(name):
 
 
 def checks(name):
+    """Return the C++ checks that compare the native entry's DOM writes with
+    observations(name)."""
     first, second, alias = observations(name)
     result = r"""
         (void)classes;
@@ -161,6 +183,7 @@ def checks(name):
 
 
 def oracle(args, name, text):
+    """Check observations(name) under the reference VM and Node."""
     first, second, alias = observations(name)
     observation = text + f"var first = {callbacks.ELEMENT}, second = {callbacks.ELEMENT};\n"
     observation += "var result = probe(first, second);\n"
@@ -181,6 +204,8 @@ def oracle(args, name, text):
 
 
 def mutations(text):
+    """Yield (label, IR) edits of the default selection that must be refused:
+    a different guard, initial value or arm, a second write or an early read."""
     branch, store, formal, start = shape(text)
     prefix = text[start : branch.start()]
     truth = re.search(rf"{re.escape(branch[1])} = ctjs\.truthy (%\w+)", prefix)
@@ -229,7 +254,13 @@ def mutations(text):
 
 
 def root_variants(text, cell, start):
-    """Keep root placement and malformed-frame controls verifier-valid."""
+    """Return IR variants that add a `ctjs.root` of `cell`, keyed by name.
+
+    "valid" roots the cell in its own frame right after creation and must
+    still lower. "after-frame-exit" roots it after the frame has exited and
+    "repeated-frame" roots it in a second, unrelated frame; both pass the
+    verifier but must be refused.
+    """
     end = text.find("\n  }", start)
     body = text[start:end]
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", body)[1]
@@ -244,8 +275,8 @@ def root_variants(text, cell, start):
     return {
         "valid": insert(created, f"    ctjs.root {cell} in {frame}"),
         "after-frame-exit": insert(exited, f"{exited[1]}ctjs.root {cell} in {frame}"),
-        # The extra frame is an independent malformed-frame control; the
-        # after-exit variant above specifically exercises root retention.
+        # A malformed-frame control independent of the root's position; the
+        # after-exit variant above tests the root's lifetime.
         "repeated-frame": insert(
             created,
             "    %foreign_frame = ctjs.frame_enter 1\n"
@@ -256,6 +287,12 @@ def root_variants(text, cell, start):
 
 
 def budget_boundary(args, ir, contract, *, subject="Class parameter-default"):
+    """Find the smallest host-max-steps budget at which `ir` lowers natively.
+
+    Asserts that budget 0 refuses, 1000000 succeeds, and the budget one below
+    the threshold refuses with "budget exhausted" and leaves the source
+    operations unchanged. Returns the number of refusals observed.
+    """
     config = args.work / "budget-boundary.json"
     config.write_text(json.dumps(contract) + "\n")
     original = source_operations(args, ir.read_text())
@@ -309,13 +346,14 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks(name), args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.exhaust(args, ir, declared, name, [0, 8], "{budget} did not exhaust default proof")
-        refusals += 4
+        refusals += 4  # Two undeclared-intrinsic refusals and two exhausted budgets (0, 8).
         if name == "original":
             refusals += budget_boundary(args, ir, declared)
             _, store, _, start = shape(ir.read_text())
+            # The same cell, rooted in its own frame, must still lower.
             rooted = args.work / "rooted-default.mlir"
             rooted.write_text(root_variants(ir.read_text(), store[1], start)["valid"])
             rooted_contract = dict(declared, module_sha256=dom.fingerprint(args.opt, rooted))

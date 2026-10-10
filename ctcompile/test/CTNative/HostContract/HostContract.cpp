@@ -1,10 +1,13 @@
-// Host contract live proof queries: slot flow across a direct call, the
-// uncaptured and captured exported getters, and the two-parameter setter.
+//===- HostContract.cpp - Host contract tests -------------------*- C++ -*-===//
 //
-// SPLIT 2026-09-08: checkSeededMapResults moved to HostContractSeededMaps.cpp
-// (its own executable), and the fixtures, `check`, `contractFor`, `replaced` and
-// the shared two-method Map fixture builders moved to Fixtures.h.
-// Everything else is verbatim, in its original order.
+// Host contract analysis tests: slot flow across a direct call (main),
+// intrinsic parameters, the session provider, DOM entry proofs, callable
+// proofs under work budgets, and captured getters and setters. The DOM/ and
+// other headers included below hold further checks run from main. The Map
+// result tests are in SeededMaps/, and the shared fixtures, `contractFor` and
+// `replaced` are in Fixtures.h.
+//
+//===----------------------------------------------------------------------===//
 
 #include "ClassIntrinsics.h"
 #include "DOM/BranchFilter.h"
@@ -27,6 +30,9 @@ using namespace ctcompile::test::host_contract;
 
 namespace {
 
+/// Checks the ctbrowser-intrinsics-v1 provider: typed entry parameters
+/// (symbol, string, number, boolean) from JSON or the C++ API, and refusal of
+/// documents, forged identities, bad categories, wrong arity and exhausted budgets.
 void checkIntrinsicParameters(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     constexpr const char * source = R"MLIR(
@@ -107,6 +113,8 @@ module {
           "budget exhaustion withholds intrinsic parameter authority");
 }
 
+/// Checks closed-source-session-v1: it reuses the closed-source proof, rejects
+/// DOM positions and current-document bindings, and differs from closedSource.
 void checkSessionProvider(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     auto module = parsed(context, callableFixture, "session provider fixture parses");
@@ -165,6 +173,8 @@ void checkSessionProvider(mlir::MLIRContext & context) {
           "typed session input cannot combine borrowed DOM and closed-source ownership");
 }
 
+/// Checks DOMEntryAnalysis on an exported `toggle` function that changes an
+/// element's class list and attributes, including declared helper intrinsics.
 void checkDOMEntry(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     constexpr const char * source = R"MLIR(
@@ -514,6 +524,8 @@ module {
     }
 }
 
+/// Checks the callable proof for callableFixture's uncaptured `get` method,
+/// including work-budget exhaustion and forged or stale inputs.
 void checkCallables(mlir::MLIRContext & context) {
     auto module = parsed(context, callableFixture, "uncaptured exported getter fixture parses");
     if (!module) { return; }
@@ -618,6 +630,8 @@ void checkCallables(mlir::MLIRContext & context) {
     std::printf("host callable proof: %u charged steps and incomplete budgets checked\n", steps);
 }
 
+/// Checks a captured `put` method that takes its Map key and value as
+/// parameters, on top of `shared` (see sharedMapWithPutCall in Fixtures.h).
 void checkCapturedParameters(mlir::MLIRContext & context, const std::string & shared) {
     auto source =
         replaced(shared, "@put$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
@@ -759,6 +773,8 @@ void checkCapturedParameters(mlir::MLIRContext & context, const std::string & sh
     }
 }
 
+/// Checks getters and setters that capture a Map cell: proof conditions, a
+/// sibling method sharing the Map, and Map cycles that must be refused.
 void checkCapturedCallables(mlir::MLIRContext & context) {
     auto source = capturedGetterSource();
     const auto query = [&](const std::string & program, bool expected, unsigned reads = 1,
@@ -875,7 +891,6 @@ void checkCapturedCallables(mlir::MLIRContext & context) {
         }
     }
     checkCapturedParameters(context, shared);
-    // checkSeededMapResults(context, shared) is HostContractSeededMaps.cpp now.
 
     constexpr llvm::StringLiteral set = R"MLIR(
     %entryKey = ctjs.constant #ctjs.string<"x">

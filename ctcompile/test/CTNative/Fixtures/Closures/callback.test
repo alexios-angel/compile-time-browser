@@ -1,14 +1,14 @@
-# THE NATIVE GATE OVER callback.js. The modules are the build's: Native.cmake's
-# ctcompile_add_native_pipeline lowers this program through the closed world,
-# the lift and the lowering (refusing to write a module while any function
-# carries `ctnative.not_native`), then applies the printing policy and its
-# mutation. Each is gated here: compiled standalone with no ctbrowser library,
-# shown by nm to reach no interpreter, run, and compared global by global with
-# the interpreter's own answer (compilation-unit.py); compiled clean on both
-# toolchains with a provenance comment over every definition (compile-clean.py);
-# and the printed pins paired, spelling-only, and shown to bite (print-deduced.py).
-# A trailing global on a RUN line under `not` is the off-by-one negative proof:
-# the mutation must fail naming that global, so the gate's teeth stay in the suite.
+# Native differential test of callback.js. Native.cmake's
+# ctcompile_add_native_pipeline builds the modules: it runs closed-world
+# analysis, closure lifting and native lowering (and writes no module while
+# any function carries `ctnative.not_native`), then applies the printing
+# policy and its seeded mutation. The RUN lines check that the C++ compiles
+# standalone with no ctbrowser library, links no interpreter symbol (by nm),
+# and prints the interpreter's value for every global (compilation-unit.py);
+# that it compiles warning-free on both toolchains with a provenance comment
+# over every definition (compile-clean.py); and that the plain and deduced
+# printings differ only in type spelling and the mutated one fails (print-deduced.py).
+# A `not ... --mutate G` line corrupts global G and requires the check to name G.
 
 # RUN: %compilation_unit --module %{obj}/callbacks.pipeline.emitc.mlir --js %S/callback.js --work %t --name callbacks
 # RUN: not %compilation_unit --module %{obj}/callbacks.pipeline.emitc.mlir --js %S/callback.js --work %t --name callbacks_off_by_one --mutate startup42 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE

@@ -1,7 +1,19 @@
+//===- CapturedMapClear.cpp - Map clear proofs ------------------*- C++ -*-===//
+//
+// Host-contract proofs for a captured Map that calls the standard `clear`
+// method before a `get`. Mirrors Analysis/Ownership/GlobalSharedMap/Captured/
+// Clear.cpp, but asserts through HostContractAnalysis instead.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Checks that a `get` after `clear()` on a captured Map is proved Undefined,
+/// that saved values survive the clear, and that aliasing writes, unknown
+/// effects, nonstandard clear calls, out-of-scope SSA edits and every step
+/// budget short of completion withhold the proof. \p source is the
+/// LeafObjectPayloads fixture; \p prepared selects its call_direct form.
 void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & source, bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     auto fixture = choiceMapSource(source, prepared,
@@ -24,6 +36,8 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
         "    %undefined = ctjs.constant #ctjs.undefined\n"
         "    %numericKey = ctjs.constant #ctjs.number<0>\n"
         "    %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n";
+    // #ctjs.number holds IEEE-754 bits: 9223372036854775808 (0x8000000000000000)
+    // is -0.0.
     const auto base =
         replaced(replaced(fixture, write, write + setup + clear + read),
                  "    ctjs.return %size\n  }\n}\n", "    ctjs.return %loaded\n  }\n}\n");
@@ -37,6 +51,9 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
                                "      %twice = ctjs.call %clearer(%state)\n"
                                "      scf.yield\n    }\n";
     const auto bothArms = replaced(base, clear, branch);
+    // Checks a proved query's callable edges: all four functions, each with the
+    // captured Map's complete operation lists, and the getter's formal typed by
+    // \p resultMask from the call's put-result operand.
     const auto census = [&](mlir::ModuleOp module, const HostContractAnalysis & query,
                             unsigned resultMask) {
         const auto strings = Alternatives::forTag(mlir::TypeID::get<ctjs::StringAttr>());
@@ -77,6 +94,8 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
                 if (edge.arguments.size() == 1) {
                     complete &=
                         edge.arguments.front().alternatives == returned &&
+                        // The put result: operand 4 of call_direct (this, new, callee,
+                        // state, input), operand 2 of ctjs.call (callee, this, input).
                         edge.arguments.front().actual == edge.call->getOperand(prepared ? 4 : 2);
                 }
             } else {
@@ -199,11 +218,15 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
     variant(replaced(pathDependent, "%setter(%state, %selected, %value)",
                      "%setter(%state, %numericKey, %value)"),
             true, "a path-independent disjoint key proves the exact cross-arm absence repair");
+    // One row per variant() call above; update this when adding a case.
     check(rows == 29, "all clear admission, saved-value, alias and branch controls ran");
 
-    // Both source and prepared queries recheck SSA dominance independently of
-    // complete-looking reports, even when a misplaced fluent receiver still
-    // exactly matches the method's object operand.
+    // Both source and prepared queries recheck SSA dominance instead of trusting
+    // forged reports, even when a misplaced fluent receiver (the result of a
+    // then-arm `set`) is the same Map as the method's object operand. Each
+    // `kind` moves one operand to a value defined only in the then-arm: 0 the
+    // scalar compare, 1 the callee, 2 the scf.if condition, 3 the Map receiver.
+    // `sibling` targets the else-arm instead of the function body.
     unsigned scopeMutations = 0;
     for (const bool sibling : {false, true}) {
         for (const unsigned kind : {0u, 1u, 2u, 3u}) {
@@ -323,6 +346,8 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
         auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         const unsigned completion = query.steps();
+        // 20000 is a ceiling well above this fixture's step count; every smaller
+        // budget is then tried and must exhaust without a partial proof.
         check(query.proved() && completion < 20000, "clear proof has bounded complete work");
         if (!query.proved() || completion >= 20000) { continue; }
         for (unsigned budget = 0; budget < completion; ++budget) {
@@ -373,6 +398,8 @@ void checkCapturedMapClear(mlir::MLIRContext & context, const std::string & sour
             check(!fresh.proved() && !fresh.exhausted() && withheld(*module, fresh),
                   "fresh fingerprints and forged empty reports cannot repair an invalid clear");
         };
+        // Live edits: receiver -> %this, an extra %aliasKey argument, and the
+        // method name changed to "delete".
         clearCall->setOperand(1, setter.getBody().front().getArgument(0));
         refuse();
         clearCall->setOperands(originalOperands);

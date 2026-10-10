@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Check live entry-object identities and transactional provider field effects."""
+"""Check that the specializer tracks objects stored in a factory-private Map.
+
+Each case stores plain objects (and nested Maps) in the Map and reads, compares
+and edits their fields through `host.slot` methods. The specializer must give
+each live object one stable identity, report field reads and writes, roll back
+facts when a call does not complete, and never rewrite the reusable method
+bodies. Node and the reference interpreter are the oracles for every value.
+"""
 
 import argparse
 from dataclasses import dataclass, field
@@ -39,6 +46,9 @@ NESTED = {
 
 @dataclass
 class Step:
+    """One program step; `provider` marks a call the specializer must summarize,
+    and `identity` names the object such a call returns."""
+
     expression: str
     expected: object = None
     provider: bool = False
@@ -46,19 +56,36 @@ class Step:
 
 
 def call(expression, expected, identity=None):
+    """A summarized provider call; `identity` names the object it returns."""
     return Step(expression, expected, True, identity)
 
 
 def observe(expression, expected):
+    """An observed expression that is not a provider call."""
     return Step(expression, expected)
 
 
 def statement(expression):
+    """A plain JS statement that is run but not observed."""
     return Step(expression)
 
 
 @dataclass
 class Case:
+    """One generated program: `steps` run after a factory installs the provider
+    object on `host.slot`.
+
+    `methods` adds or replaces METHODS; `first_object` and `second_object`
+    initialize `objectA` and `objectB`. `twice` calls the factory twice (two
+    independent Maps); `completed` overrides how many provider calls are
+    expected to be summarized; `calls` overrides the expected resolved-call
+    count; `boundary` names the function where analysis must stop. `error` is
+    the exception Node must throw, `callback` the body of a `console.error`
+    recorder (which enables callback following), and `final_count` the
+    expected `callCount`. `opaque_delete` keeps `removeField`, whose delete
+    lowers to an opaque host call.
+    """
+
     name: str
     steps: list
     methods: dict = field(default_factory=dict)
@@ -516,6 +543,7 @@ def cases():
 
 
 def oracle(node, folder, case, js):
+    """Run `js` in Node and require the case's error and observations."""
     driver, request = folder / "node.cjs", folder / "node-input.json"
     driver.write_text(mutations.NODE)
     request.write_text(
@@ -532,6 +560,7 @@ def oracle(node, folder, case, js):
 
 
 def interpreter(reference, folder, case, js):
+    """Run `js` in the reference interpreter and require the same globals."""
     if case.error:
         return {"checked": False, "reason": "reference printer stops on thrown completion"}
     result = host.run([str(reference), str(js)])
@@ -560,11 +589,13 @@ def no_facts(report, label):
 
 
 def check_report(case, report, before, after):
+    """Check the specializer's report and its output IR against `case`."""
     if not report["valid"] or report["full_host_contract_claimed"]:
         raise RuntimeError(f"{case.name}: wrong complete-host boundary: {report}")
     if case.opaque_delete:
-        # The frontend now implements delete through an opaque host helper.
-        # Keep the original source and require the complete context to withhold facts.
+        # The frontend lowers `delete` to a call of an opaque host helper, so
+        # the analysis must stop at that call: require that exact boundary and
+        # no facts.
         if (
             report["boundary"]
             != "call lacks one closed source invocation context at `ctjs.call_direct`"
@@ -707,6 +738,9 @@ def check_report(case, report, before, after):
 
 
 def controls(args, prepared):
+    """Negative controls: the provider facts disappear without each required
+    option, without a declared Map intrinsic, on already-rewritten input, and
+    when module attributes are forged; then the budget threshold is checked."""
     original = prepared["basic"]
     manifest = contract(args.opt, original)
     legacy, _, _ = mutations.specialize(
@@ -765,9 +799,10 @@ def controls(args, prepared):
     if report["summarized_provider_calls"] != 1 or report["runtime_provider_mutations"] != 1:
         raise RuntimeError("forged object facts crossed a write-then-throw boundary")
 
-    # The full threshold is discovered from completion, rather than duplicating
-    # internal charges. Every incomplete run discards even prior summaries, and
-    # the last insufficient limit has attempted Map, object and global effects.
+    # Find the completion threshold instead of duplicating internal work
+    # charges. Every incomplete run must discard all summaries, including the
+    # largest failing limit, which has already attempted Map, object and global
+    # effects.
     for name in ("nested_retention", "combined_transaction"):
         source = prepared[name]
         case = next(case for case in cases() if case.name == name)

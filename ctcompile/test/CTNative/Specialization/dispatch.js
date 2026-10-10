@@ -1,5 +1,5 @@
-// The generic entry still receives both tuples through boxed dispatch.
-// The write keeps the caller and the formula's heap prefix from folding away.
+// drive() calls formula() with two different constants; the generic formula must still serve
+// both calls through boxed dispatch. The write to `effect` keeps both functions from folding.
 function formula(input) {
     const record = {
         value: input * 10

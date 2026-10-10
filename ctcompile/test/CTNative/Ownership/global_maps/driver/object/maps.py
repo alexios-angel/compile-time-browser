@@ -1,3 +1,13 @@
+"""Global-Map ownership checks for absent (undefined) Map results and for
+object keys and values held in a Map.
+
+Each check runs the JS under Node and the reference interpreter, lowers it to
+native code, and verifies that a one-line source edit (a "repair" or a
+"blind" mutation) changes the observed result, so each observation is proven
+to depend on the code under test. Forged IR facts must be refused under the
+stale contract and, under a fresh contract, must not change the emitted C++.
+"""
+
 from ..common import *
 from ..globals import (
     check_leaf_absence_census,
@@ -5,6 +15,8 @@ from ..globals import (
 )
 from ..fields import string_field_method_graph
 
+# Every case name primitive_absence_carrier_cases() must produce; checked at
+# the end of it so a case cannot drop out silently.
 PRIMITIVE_ABSENCE_CARRIERS = {
     "seeded_cleared",
     "seeded_deleted",
@@ -22,6 +34,11 @@ PRIMITIVE_ABSENCE_CARRIERS = {
 
 
 def primitive_absence_carrier_cases():
+    """Return {name: case} for the Map programs whose result may be absent.
+
+    Each case holds the source, its traced value, a one-fragment repair and
+    the expected call shape of the prepared IR.
+    """
     cases = {}
     mixed_string = "!ctnative.opt<!ctnative.variant<!ctnative.bool, !ctnative.str<utf8>>>"
 
@@ -41,6 +58,9 @@ def primitive_absence_carrier_cases():
     ):
         if source.count(old) != 1:
             raise RuntimeError(f"{name}: lost its exact absence repair")
+        # sequence: expected (callee, argument count) of each stored call, in order.
+        # dependencies: (consumer, producer) index pairs into that list where
+        # the consumer's last argument is the producer's result.
         sequence = (
             [("fn$3", 4), ("fn$4", 5), ("fn$3", 4)]
             if functions == 5
@@ -149,6 +169,7 @@ def primitive_absence_carrier_cases():
 
 
 def check_primitive_absence_preparation(text, original, case, name):
+    """Check that preparation kept every call, operand and Map action of `case`."""
     calls = re.findall(
         r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
         r"\{ctnative\.stored_call = 1 : i32\}",
@@ -190,6 +211,10 @@ def check_primitive_absence_preparation(text, original, case, name):
 
 
 def check_primitive_absence_carriers(args, node, reference, compilers, nm):
+    """Run every absent-result case through Node, the interpreter and lowering."""
+    # Cases the native lowering admits: it must emit nullable-key Map storage
+    # and the binary must run standalone. Every other case must be refused with
+    # the specific reason checked below.
     promoted = {
         "seeded_cleared",
         "seeded_deleted",
@@ -334,10 +359,13 @@ process.stdout.write('trace=undefined\n');
 
 
 def check_primitive_absence_observations(args, node, reference):
+    """Check that the absent-result observer sees every check, and each mutation."""
     source = primitive_absence_sources()["result_seeded_empty_deleted"][0]
     observed = primitive_absence_observer_source(source)
     js = args.work / "primitive-absence-observed.js"
     js.write_text(observed)
+    # The observer sets one bit of `trace` per independent observation; 255
+    # means all eight held.
     if (
         host.run([node, "-e", boundary.NODE, str(js)]).stdout != "trace=255\n"
         or host.run([str(reference), str(js)]).stdout != "trace=255\n"
@@ -363,6 +391,7 @@ def check_primitive_absence_observations(args, node, reference):
 
 
 def check_primitive_absence_forgeries(args, saved, node, reference):
+    """Check that forged Map-presence facts are refused or leave the C++ unchanged."""
     name = "result_seeded_empty_deleted"
     ir, config, output = saved[name]
     expected_cpp = comparable_provenance(
@@ -420,6 +449,7 @@ def check_primitive_absence_forgeries(args, saved, node, reference):
 
 
 def check_leaf_object_observations(args, node, reference):
+    """Check that each leaf-object observer notices every listed source mutation."""
     for name, (source, _, _) in leaf_object_sources().items():
         if name in {"leaf_object_number_repair", "leaf_object_string_repair"}:
             continue
@@ -459,6 +489,7 @@ def check_leaf_object_observations(args, node, reference):
 
 
 def check_leaf_object_forgeries(args, saved, names=None):
+    """Check that forged leaf-object facts are refused or leave the C++ unchanged."""
     for name in names or ("leaf_object_plain", "leaf_object_scalar_writes", "leaf_object_lifetime"):
         ir, config, output = saved[name]
         functions = (
@@ -504,6 +535,7 @@ def check_leaf_object_forgeries(args, saved, names=None):
 
 
 def check_leaf_object_mixed_key_preparation(text, original, name):
+    """Check that preparing the mixed String/object key source kept its calls."""
     if len(source_calls(original)) != 8 or len(source_calls(text)) != 8:
         raise RuntimeError(f"{name}: changed the eight-call mixed-key source")
     for operation in ("ctjs.create_object", "ctjs.construct"):
@@ -545,6 +577,7 @@ def check_leaf_object_mixed_key_preparation(text, original, name):
 
 
 def check_leaf_object_refusals(args, positives, node, reference, controls=None):
+    """Check that each refused leaf-object case is refused and its repair is admitted."""
     if controls is None:
         controls = {
             name: row
@@ -596,8 +629,10 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
                     )
                     preserved(input_ir.read_text(), failed.read_text(), label)
                     return failed
-                # The complete caller owner still has no mixed String/object
-                # key carrier. Keep all earlier calls and the later allocation.
+                # leaf_object_later_actual uses String and object keys in one
+                # Map, and native Map has no key type that holds both, so
+                # lowering must refuse it while keeping every earlier call and
+                # the later allocation intact.
                 failed = owned.lower(
                     args, input_ir, label, current_config, options=options, cleanup=False
                 )
@@ -662,6 +697,7 @@ def check_leaf_object_refusals(args, positives, node, reference, controls=None):
 
 
 def check_leaf_readback_carriers(args, positives, node, reference, controls, compilers, nm):
+    """Check the cases that read a stored object back out of the Map."""
     for name, (source, value, old, replacement, repair, source_call_count) in controls.items():
         js, ir, count = boundary.prepare(args, name, source)
         if count != 5 or len(source_calls(ir.read_text())) != source_call_count:
@@ -728,6 +764,7 @@ def check_leaf_readback_carriers(args, positives, node, reference, controls, com
 
 
 def check_leaf_readback_observations(args, node, reference):
+    """Check that each readback trace changes when its observed fragment is blinded."""
     positives = leaf_readback_sources()
     for name, old, replacement in (
         ("local_identity_saved", "saved === item", "saved !== item"),
@@ -797,6 +834,7 @@ def check_leaf_readback_observations(args, node, reference):
 
 
 def check_comparison_identity_observations(args, node, reference):
+    """Check the strict-identity (===) cases against their saved-object repairs."""
     positives = leaf_readback_sources()
     for name, repair in LEAF_COMPARISON_REPAIRS.items():
         source, _, value = positives[name]

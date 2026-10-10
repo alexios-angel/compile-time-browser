@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Scalarize one Boolean cell borrowed by exact synchronous DOM helpers."""
+"""Scalarize one Boolean cell shared by synchronous DOM helper functions.
+
+A local `let seen = false` is captured by helper closures that read and write
+it. Each case is run by Node and the reference VM, lowered to native C++ and
+executed, and invalid variants must be refused with the source IR intact.
+"""
 
 import json
 import re
@@ -123,7 +128,6 @@ CASES = {
         {"before": True, "after": True},
         False,
     ),
-    # The original conditional-store refusal now has a complete borrower proof.
     "conditional-store": (
         program(
             helpers=HELPERS.replace(
@@ -323,8 +327,9 @@ def oracle(args, name, body, attributes, expected):
 
 
 OPERATIONS = re.compile(
-    # Successful refusals use custom syntax; pass errors print generic quoted
-    # operations. Count all source operations, including ordinary call effects.
+    # A refused module is printed in custom syntax, while a pass error prints
+    # the module in generic syntax with quoted operation names. Match both and
+    # count every source operation, including ordinary calls.
     r'^\s*(?:%[^=\n]+ = )?"?((?:ctjs|scf)\.[a-z_]+)\b',
     re.M,
 )
@@ -335,8 +340,9 @@ def source_operations(args, text):
     _, diagnostic, retained = text.partition("note: see current operation:")
     if diagnostic:
         text = retained.strip()
-    # Custom assembly omits implicit empty yields; generic assembly prints
-    # them. Normalize both sides so rollback checks include those state edges.
+    # Custom assembly omits implicit empty scf.yield ops; generic assembly
+    # prints them. Reprint both sides generically so the rollback comparison
+    # also covers those yields.
     generic = run([args.opt, "--mlir-print-op-generic"], input_text=text).stdout
     operations = OPERATIONS.findall(generic)
     assert operations, generic
@@ -425,8 +431,9 @@ def main():
                 max_steps=1000000,
             )
             if name.startswith("effect-"):
-                # The state proof can finish before the original unknown effect
-                # fails DOM reproof. Every original cell/call must survive.
+                # The Boolean-cell proof may succeed before the final DOM check
+                # rejects the unknown call, so the refusal must leave every
+                # original cell and call in the module.
                 assert source_operations(args, diagnostic) == original, diagnostic
             refusals += 1
     for name, text in {

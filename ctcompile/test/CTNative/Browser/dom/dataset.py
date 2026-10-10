@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Proved HTML/SVG dataset snapshots, filtering, iteration and present values."""
+"""Compile Bootstrap-style `element.dataset` code to native C++ and check it.
+
+Each JS function in SOURCES (Object.keys, the Bootstrap `bs` filter, for-of,
+value reads and the M normalizer) is lowered with the dataset intrinsics,
+compiled with every compiler on HTML and SVG elements, and compared with Node
+and the reference VM. Every shape in REFUSALS must be refused.
+"""
 
 import json
 import re
@@ -18,6 +24,8 @@ BODIES = {
     "dataset_reread": "Object.keys(element.dataset); element.setAttribute('data-later', 'x'); "
     "element.removeAttribute('data-bs-z'); return Object.keys(element.dataset);",
 }
+# Verbatim snippets of vendored Bootstrap; main() asserts each still appears in
+# the vendored file, so a Bootstrap upgrade that changes them fails loudly.
 BOOTSTRAP_FILTER = (
     'Object.keys(t.dataset).filter(t => t.startsWith("bs") && !t.startsWith("bsConfig"))'
 )
@@ -118,8 +126,9 @@ NORMALIZED_TEXT = VALUE_TEXT | {
     "bsBadJson": "not%20json",
     "bsConfig": "true",
 }
-# Web IDL's named-property order is attribute order, including numeric names.
-# Chrome independently measures this order; an ordinary object is the wrong double.
+# dataset keys come back in attribute order, numeric names included (Web IDL
+# named properties; Chrome agrees). A plain JS object would list "2" and "10"
+# first, so the Node oracle uses a Proxy whose ownKeys returns this list.
 KEYS = ["bsZ", "10", "2", "01", "", "__proto__", "Foo", "foo-Bar"]
 ATTRS = [
     "data-bs-z",
@@ -131,7 +140,7 @@ ATTRS = [
     "data--foo",
     "data-foo--bar",
 ]
-# (attribute names, exposed keys, keys retained by the original predicate).
+# (attribute names, dataset keys they expose, keys Bootstrap's PREDICATE keeps).
 FILTER_CASES = [
     (
         [
@@ -482,7 +491,9 @@ var {label} = (function() {{
     node = args.work / "dataset-node.js"
     node.write_text(source + "".join(f"console.log({name});\n" for name in names))
     expected = run([args.node, node]).stdout.splitlines()
-    # Original M supplies the new expectations; keep the older hand-checked rows.
+    # For NORMALIZED_SOURCES the expected values come from running Bootstrap's
+    # own M (normalizeData) under Node. Every other row keeps its hand-written
+    # expectation, and the assert below checks it against Node.
     offset = 0
     for name, values in wanted.items():
         if name in NORMALIZED_SOURCES:
@@ -694,6 +705,8 @@ def main():
                     namespace = name + ("_session" if owned else "_free")
                     bodies.append(f"namespace {namespace} {{\n{body}\n}}\n")
                     clients.append(client(namespace + "::" + entry, owned, name))
+                    # Each client runs every fixture on an HTML and an SVG
+                    # element, so each expected line appears twice.
                     wanted += [value for value in expected[name] for _ in range(2)]
             path = args.work / f"combined-{optimize}-{layout}.cpp"
             path.write_text(
@@ -746,6 +759,9 @@ def main():
                 f"refuse-{name}-{provider}",
             )
             refusals += 2
+    # Negative controls on valid sources: lowering must fail when the contract
+    # leaves out a needed intrinsic or parameter role ("premise"), or when the
+    # analysis step budget (max_steps) is too small to finish ("budget").
     _, ir, contract = next(item for item in prepared if item[0] == "dataset_guarded_values")
     for provider in dom.PROVIDERS:
         for optimize in (False, True):

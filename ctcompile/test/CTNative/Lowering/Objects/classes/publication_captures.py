@@ -1,4 +1,14 @@
-"""Keep constructor prefix captures when sinking terminal Data registration."""
+"""Class preparation of a constructor that ends by registering `this` in a Map.
+
+The programs embed Bootstrap's Data store `e` and end the constructor with
+`e.set(element, key, this)`, the "publication". Class preparation may move that
+registration out of the constructor only if the code before it (which may call
+captured helpers such as `add`) is safe to keep. Each variant in sources() must
+give the same answer under Node, the reference interpreter and the native
+build, which must not link ctbrowser::script. Each program in the `bad` tables
+in main() changes one thing that makes this unsafe and must be refused by
+class preparation.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import prepare_js, run
@@ -7,6 +17,7 @@ from CTNative.Lowering.Objects.classes import initialization as classes
 
 
 def sources():
+    """Return {variant name: (JS source, expected `a`)} for the accepted programs."""
     vendor = dom.BOOTSTRAP.read_text()
     data = (
         vendor[
@@ -37,6 +48,9 @@ def sources():
 var a = probe();
 """
     )
+    # Expected `a` = saved.n * 100 + current.n * 10 + own-field count:
+    # add(2) = 3, add(7) = 8 and one field give 381; with `twice`, 6 and 16 give
+    # 761. An inherited leaf adds a `tag` field, so its answer is one more.
     single = source.replace("  const twice = n => n * 2;\n", "")
     programs = {
         "holder": (single, 381),
@@ -163,6 +177,7 @@ def main():
                 for index in range(len(args.compilers)):
                     binary = args.work / f"{name}{optimize}.{layout}.{index}"
                     assert "ctbrowser::script" not in run([args.nm, "-C", str(binary)]).stdout
+        # With a zero step budget the same program must be refused.
         classes.prepare(args, name + "-budget", ir, manifest, success=False, options="max-steps=0")
         refusals += 1
     original = sources()["holder"][0]

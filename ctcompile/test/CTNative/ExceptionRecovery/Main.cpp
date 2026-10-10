@@ -1,3 +1,11 @@
+//===- Main.cpp - Exception-recovery test driver ----------------*- C++ -*-===//
+//
+// Entry point of ctcompile-test-exception-recovery. It takes a lit file whose
+// "//--- NAME.js" sections hold the JavaScript fixtures and runs every test in
+// Completion.cpp, Guards.cpp and the Completion/ directory on them.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 #include "check.hpp"
@@ -24,6 +32,9 @@ int main(int argc, char ** argv) {
         auto tail = (*file)->getBuffer().split(("//--- " + name + ".js\n").str()).second;
         return tail.split("//--- ").first;
     };
+    // Each testSource call takes the fixture name, its source, the number of
+    // calls in the try block, the value `mark` holds when the throw lands, and
+    // the thrown payload.
     for (auto mode : {ExceptionRecoveryMode::CheckedInvocations,
                       ExceptionRecoveryMode::EffectCheckedInvocations}) {
         testSource(context, "assignment", source("assignment"), 1, 10, 32, mode);

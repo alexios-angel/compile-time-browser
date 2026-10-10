@@ -1,4 +1,4 @@
-// Child membership and size distinguish partial removal from empty-parent cleanup.
+// Inner-Map membership and size tell a partial removal from removing an emptied element.
 //--- class-map-record-nested-cleanup-direct.js
 function probe() {
     const outer = new Map();
@@ -35,7 +35,7 @@ function probe() {
 }
 var a = probe();
 
-// A second outer identity can mutate the same child before the first observes it.
+// A second outer Map can change the shared inner Map before the first one reads it.
 //--- class-map-record-nested-cleanup-shared-outer-child.js
 function probe() {
     const outer = new Map(), otherOuter = new Map(), child = new Map();
@@ -50,7 +50,7 @@ function probe() {
 }
 var a = probe();
 
-// Cleanup cannot merge object-key identity with a literal String membership proof.
+// Cleanup cannot treat an object key as proved by the literal String-key proof.
 //--- class-map-record-nested-cleanup-object-key.js
 function probe() {
     const outer = new Map(), child = new Map(), key = {};
@@ -64,7 +64,7 @@ function probe() {
 }
 var a = probe();
 
-// Number keys remain distinct from String keys at the child membership boundary.
+// Number key 1 and String key "1" stay distinct in the inner Map.
 //--- class-map-record-nested-cleanup-number-key.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -78,7 +78,7 @@ function probe() {
 }
 var a = probe();
 
-// Deleting a saved borrow does not let a record outlive its defining region.
+// Deleting a saved record from the Map does not let it outlive its declaring block.
 //--- class-map-record-nested-cleanup-region-owner.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -94,7 +94,7 @@ function probe() {
 }
 var a = probe();
 
-// Every Data slot is called; constructor publication and saved aliases survive cleanup.
+// Every Data method is called; constructor registration and saved aliases survive cleanup.
 //--- class-map-record-nested-cleanup-holder.js
 function probe() {
     const outer = new Map();
@@ -132,7 +132,7 @@ function probe() {
 }
 var a = probe();
 
-// A failed child delete cannot clean up; cached child observations retain their time.
+// A delete of a missing key cleans nothing up; values read before cleanup keep their time.
 //--- class-map-record-nested-cleanup-shortcircuit.js
 function probe() {
     const outer = new Map();
@@ -161,7 +161,7 @@ function probe() {
 }
 var a = probe();
 
-// Child contents must not be inferred from a caller-controlled key.
+// The inner Map's contents cannot be inferred from a caller-controlled key.
 //--- class-map-record-nested-cleanup-dynamic-key.js
 function probe(key) {
     const outer = new Map(), child = new Map();
@@ -175,7 +175,7 @@ function probe(key) {
 }
 var a = probe("bs.item") * 100 + probe("other");
 
-// An unknown branch can change child membership before parent cleanup.
+// A caller-controlled branch can change the inner Map before the element is removed.
 //--- class-map-record-nested-cleanup-dynamic-branch.js
 function probe(flag) {
     const outer = new Map(), child = new Map();
@@ -189,7 +189,7 @@ function probe(flag) {
 }
 var a = probe(true) * 100 + probe(false);
 
-// Emptying a child does not authorize an escaped outer identity.
+// Emptying an inner Map does not make an escaped outer Map safe.
 //--- class-map-record-nested-cleanup-outer-escaped.js
 var retained;
 function probe() {
@@ -204,7 +204,7 @@ function probe() {
 }
 var a = probe();
 
-// An escaped child must retain its owner proof even after its last record is removed.
+// An escaped inner Map keeps its ownership proof even after its last record is removed.
 //--- class-map-record-nested-cleanup-child-escaped.js
 var retained;
 function probe() {
@@ -219,7 +219,7 @@ function probe() {
 }
 var a = probe();
 
-// Removing the last stored borrow does not extend the record's stack lifetime.
+// Removing the last stored reference does not extend the record's stack lifetime.
 //--- class-map-record-nested-cleanup-record-escaped.js
 var retained;
 function probe() {
@@ -234,7 +234,7 @@ function probe() {
 }
 var a = probe();
 
-// A dead child branch still contains a call outside the Map-only proof.
+// A branch that never runs still contains a call beyond Map operations.
 //--- class-map-record-nested-cleanup-dead-call.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -252,7 +252,7 @@ function probe() {
 }
 var a = probe();
 
-// Coercing a child is an effect even when a known nonempty size skips the branch.
+// Coercing the inner Map is an effect even when a known nonempty size skips the branch.
 //--- class-map-record-nested-cleanup-dead-coercion.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -267,7 +267,7 @@ function probe() {
 }
 var a = probe();
 
-// An unused Data slot remains an observer of the captured Map.
+// Data's unused `inspect` method still reads the captured Map.
 //--- class-map-record-nested-cleanup-unused-slot.js
 function probe() {
     const outer = new Map();
@@ -293,7 +293,7 @@ function probe() {
 }
 var a = probe();
 
-// A live holder cannot have its called slots retired when it escapes.
+// A Data holder that escapes probe() keeps every called method: none may be removed.
 //--- class-map-record-nested-cleanup-holder-escaped.js
 var retained;
 function probe() {
@@ -320,7 +320,7 @@ function probe() {
 }
 var a = probe();
 
-// A throw between child deletion and parent cleanup leaves distinct catch observations.
+// A throw between deleting the record and removing the element leaves distinct catch state.
 //--- class-map-record-nested-cleanup-exception.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -341,7 +341,7 @@ function probe() {
 }
 var a = probe();
 
-// Recursive removal is not an ordered helper call in the captured owner's entry.
+// A recursive remove() is not a fixed, ordered call in the Map's owning function.
 //--- class-map-record-nested-cleanup-reentry.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -361,7 +361,7 @@ function probe() {
 }
 var a = probe();
 
-// An observed lookup after removal needs a separate nullable-record proof.
+// A lookup after removal needs a separate proof that the record may be undefined.
 //--- class-map-record-nested-cleanup-missing-inner.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -374,7 +374,7 @@ function probe() {
 }
 var a = probe();
 
-// A dead set result still observes the outer identity through its result union.
+// An unused set() result still exposes the outer Map through the `||` result.
 //--- class-map-record-nested-cleanup-observed-dead-set.js
 function probe() {
     const outer = new Map(), child = new Map();

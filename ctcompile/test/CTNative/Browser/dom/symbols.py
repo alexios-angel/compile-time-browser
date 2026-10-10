@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Prove well-known Symbol reads and compare their DOM effects with Node/VM."""
+"""Compile well-known Symbol reads to native code and compare their DOM effects with Node/VM.
+
+Symbol values keep their identity in native code (`ctnative::Symbol.<key>`)
+while the program drives public DOM calls. Fresh symbols, joins, loops and
+descriptions are also run, and every entry in REFUSALS must be refused.
+"""
 
 import json
 
@@ -7,7 +12,8 @@ from CTNative.Browser.dom import dom
 from CTNative.HostContract.contract import fingerprint
 from CTNative.harness import forge_module, run
 
-# Independent language inventory: a missing catalog entry must fail this check.
+# Every well-known Symbol, listed here independently of the compiler's catalog
+# so that a key missing from that catalog fails this test.
 KEYS = (
     "iterator",
     "asyncIterator",
@@ -71,6 +77,7 @@ CHECKS = (
 """
 )
 
+# Entry bodies the native lowering must refuse, keyed by test name.
 REFUSALS = {
     "global-replacement": "Symbol=element; return false;",
     "member-replacement": "Symbol.hasInstance=Symbol.iterator; return false;",
@@ -93,6 +100,8 @@ REFUSALS = {
 }
 
 
+# Entry bodies that move a symbol through a fresh value, a return, a join or a
+# loop; each must compile and run natively.
 TRANSPORT = {
     "fresh": "return typeof Symbol();",
     "symbol-return": "return Symbol.iterator;",
@@ -178,8 +187,11 @@ DESCRIPTION_CHECKS = r"""
 
 
 def oracle(args):
-    # This receiver records calls; actual platform behavior is checked by the
-    # native client against public DOM. Both execute the identical source body.
+    """Run the sources on the VM reference and on Node with a recording receiver.
+
+    The receiver only records calls; real platform behavior is checked by the
+    native client against the public DOM. Both run the identical source body.
+    """
     assertions = " && ".join(
         f"saved[{json.dumps(name)}] === {json.dumps(value)}" for name, value in OBSERVATIONS.items()
     )
@@ -345,6 +357,8 @@ def main():
     )
     contract.update(module_sha256=fingerprint(args.opt, forged), initial_intrinsics=["Symbol"])
     dom.lower(args, forged, contract, "forged-refused", success=False)
+    # Native executions: 2 optimize settings x 3 sources (symbols, state,
+    # descriptions) x 2 layouts x 2 compilers, plus 4 per TRANSPORT body.
     print(
         f"Symbol DOM: {len(OBSERVATIONS)} attributes and 2 returns agree with Node/VM; "
         f"{24 + 4 * len(TRANSPORT)} native executions, {2 * len(REFUSALS) + 6} refusals, 1 mutation; DOM/Core only"

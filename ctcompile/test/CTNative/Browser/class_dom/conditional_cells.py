@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Scalarize a single conditional local store without losing its computed value."""
+"""Test a boxed local that is assigned exactly once, inside an `if` arm, and read only there.
+
+The frontend boxes `value` into a cell (ctjs.create_cell); the native lowering
+may turn that cell back into a plain scalar when its one store and all its reads
+share the arm. Each CASES source must match Node and the reference VM natively;
+BAD sources and mutated IR break the single-store shape and must be refused.
+"""
 
 import itertools
 import json
@@ -11,8 +17,10 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary, root_
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
-# The shadowed callback formal forces conservative boxing without capturing
-# the outer value. Its computed assignment and every read stay in one arm.
+# The callback's formal `value` shadows the outer `let value`; the frontend's
+# conservative name analysis still boxes the outer one, although the callback
+# captures only `label`. The outer value's one assignment and every read stay
+# in the `if (enabled)` arm.
 METHOD = """class Item {
   run(target, enabled) {
     let value;
@@ -97,11 +105,17 @@ BAD = {
     ),
     "timer": METHOD.replace("return local(target);", "setTimeout(local, 0); return true;"),
 }
+# (first element ready, second element ready, probe called on one element twice).
 SCENARIOS = [(first, second, False) for first, second in itertools.product((False, True), repeat=2)]
 SCENARIOS += [(False, False, True), (True, True, True)]
 
 
 def shape(text):
+    """Find the cell created from undefined and set exactly once inside an scf.if.
+
+    Return (cell, its cell_set match, function start, function end) as offsets
+    into `text`, after asserting it is read after the store and never captured.
+    """
     for store in re.finditer(r"^( {6,})ctjs\.cell_set (%\w+), (%\w+)", text, re.M):
         start = text.rfind("\n  ctjs.func ", 0, store.start())
         end = text.find("\n  }", store.end())
@@ -121,6 +135,8 @@ def shape(text):
 
 
 def observations(name, first, second, aliased):
+    """Return the expected [(attribute, value), ...] writes on the two
+    elements for one SCENARIOS entry, in the order CALLS makes them."""
     ready = [first, first if aliased else second]
     events = [[], []]
     for selected in (1, 0):
@@ -137,6 +153,7 @@ def observations(name, first, second, aliased):
 
 
 def checks(name):
+    """Return the C++ checks that run every SCENARIOS entry against the real DOM."""
     result = r"""
         (void)classes;
         (void)pressed;
@@ -174,6 +191,7 @@ def checks(name):
 
 
 def oracle(args, name, text):
+    """Check every SCENARIOS entry under the reference VM and Node."""
     text += "var result = true;\n"
     for first, second, aliased in SCENARIOS:
         text += f"var first = {callbacks.ELEMENT}, second = {callbacks.ELEMENT};\n"
@@ -197,6 +215,7 @@ def oracle(args, name, text):
 
 
 def mutations(text):
+    """Yield (label, IR) edits of the "then" case that the lowering must refuse."""
     cell, store, start, end = shape(text)
     yield "second-write", text[: store.end()] + "\n" + store[0] + text[store.end() :]
     yield (
@@ -251,14 +270,15 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks(name), args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.exhaust(
             args, ir, declared, name, [0, 8], "{budget} did not exhaust conditional-cell proof"
         )
-        refusals += 4
+        refusals += 4  # Two undeclared-intrinsic refusals and two exhausted budgets (0, 8).
         if name == "then":
             refusals += budget_boundary(args, ir, declared, subject="Class conditional-cell")
+            # The same cell, explicitly rooted, must still lower.
             rooted = args.work / "rooted-cell.mlir"
             rooted.write_text(root_variants(ir.read_text(), cell, start)["valid"])
             rooted_contract = dict(declared, module_sha256=dom.fingerprint(args.opt, rooted))
@@ -276,6 +296,7 @@ def main():
         )
         if name.startswith("loop-"):
             assert "scf.while" in ir.read_text(), "loop refusal lost its actual loop"
+        # A refused effect case must leave the source operations unchanged.
         original = source_operations(args, ir.read_text()) if name.startswith("effect-") else None
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
         for owned, optimize, manifest in dom.variants(declared):

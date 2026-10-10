@@ -1,2 +1,2 @@
-# A callback created inside an If stays within that arm over initialized owner state.
+# A callback created inside an if-arm and used only there compiles natively.
 # RUN: python3 %S/scopes.py %dom_driver --node %node --reference %native_reference

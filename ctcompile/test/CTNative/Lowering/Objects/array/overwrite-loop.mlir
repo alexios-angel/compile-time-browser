@@ -1,7 +1,7 @@
-// The unchanged called source now uses the existing bounded contents proof:
-// LiftToSCF recovers the exact 1/0 guard and upstream moves the guarded body
-// out of the header. No poison, nested header control or escape exemption.
-// Both policies also run through the registered native differential gate.
+// overwrite-loop.js lowers fully native through the bounded array-contents proof.
+// LiftToSCF recovers the loop's 1/0 guard exactly, and MLIR's own SCF patterns
+// move the guarded body out of the loop header, so no poison value, nested header
+// control or escape exemption is needed. The native fixture test runs it too.
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/overwrite-loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/overwrite-loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s

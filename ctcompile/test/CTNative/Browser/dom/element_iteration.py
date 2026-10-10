@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Execute proved element for-of loops through typed public browser snapshots."""
+"""Compile for-of loops over querySelectorAll and Bootstrap's R.find results to
+plain native loops over element snapshots, run them against the public DOM
+and Style libraries, and check that unsafe variants are refused."""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import without_intrinsic
 from CTNative.Browser.dom import find_elements as indexed
 from CTNative.Browser.dom.document.basics import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
 
+# INTRINSICS[4:] are the VM's iterator-protocol helpers; a native lowering must
+# not call any of them.
 INTRINSICS = [
     "Array",
     "Element",
@@ -18,6 +22,10 @@ INTRINSICS = [
 
 
 def source(kind):
+    """find_elements' indexed loop for `kind`, rewritten as a for-of loop.
+
+    "direct" calls anchor.querySelectorAll instead of R.find.
+    """
     text = indexed.source("explicit" if kind == "direct" else kind)
     text = (
         text.replace(
@@ -40,6 +48,8 @@ def source(kind):
     return text
 
 
+# Loops that leak or store a member, mutate the snapshot, use a custom
+# iterator, or replace an iterator helper or a method R.find relies on.
 REFUSALS = {
     "unguarded-root-use": "for (const node of R.find('*')) node.matches('*'); "
     "return document.documentElement.matches('*');",
@@ -61,7 +71,9 @@ REFUSALS = {
     "for (const node of R.find('*',anchor)) node.matches('*'); return 0;",
 }
 
-# Admitted since b4aa79b57; see native_dom_find_elements.UNGUARDED_DEFAULT.
+# A loop over R.find('*') with no anchor is admitted because the native code
+# checks the document root at the selector call; see
+# find_elements.UNGUARDED_DEFAULT for the full rationale.
 UNGUARDED_DEFAULT = {
     "unguarded-default": (
         "for (const node of R.find('*')) node.matches('*'); return 0;",
@@ -127,7 +139,7 @@ def main():
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2
+        refusals += 2  # dom.refuse lowers with and without optimization.
     indexed.unguarded_default(args, UNGUARDED_DEFAULT, INTRINSICS, compilers, includes, libraries)
     print(f"Element for-of: 72 native executions, {refusals} refusals; DOM/Core/Style only")
 

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Inline exact conditional Boolean borrowers before re-proving state edges."""
+"""Test helpers that conditionally write a captured Boolean cell (Boolean "borrowers").
+
+A helper like `mark = () => { const before = seen; if (!seen) seen = true;
+return before; }` borrows the caller's `seen` cell. The native lowering inlines
+it into its caller before re-proving the cell's state. Each case is written as
+hand-made ctjs IR plus the equivalent JavaScript, which is checked against Node
+and the VM before the IR is lowered natively; the bad programs must be refused
+and the malformed ones rejected by the verifier.
+"""
 
 import subprocess
 
@@ -9,7 +17,9 @@ from CTNative.Browser.dom.boolean import cells
 from CTNative.Browser.dom.boolean import origins
 from CTNative.Browser.dom.boolean import scopes
 
+# The helper's store: seen = true.
 WRITE = "%yes = ctjs.constant #ctjs.boolean<true>\nctjs.cell_set %cell, %yes"
+# mark$3: read the cell, store true only if it was false, return the old value.
 CONDITIONAL = (
     """%read = ctjs.cell_get %cell
 %pending = ctjs.unary not %read
@@ -32,6 +42,7 @@ JS = (
     .replace("const before = pending();\nmark();", "const before = mark();")
     .replace("const after = pending();", "const after = mark();")
 )
+# Stores true, then stores false or true in the two arms.
 BOTH = (
     CONDITIONAL.replace("ctjs.truthy %pending", "ctjs.truthy %read")
     .replace(WRITE, WRITE.replace("<true>", "<false>"))
@@ -41,6 +52,7 @@ BOTH = (
         "%preset = ctjs.constant #ctjs.boolean<true>\nctjs.cell_set %cell, %preset\nscf.if %condition",
     )
 )
+# The owner with a third mark() call, written to the `again` attribute.
 THREE = OWNER.replace(
     "%key =", "%again = ctjs.call_direct @mark$3(%u, %u, %u, %seen)\n%key ="
 ).replace(
@@ -48,11 +60,13 @@ THREE = OWNER.replace(
     '%again_key = ctjs.constant #ctjs.string<"again">\n'
     "%third_write = ctjs.call %setter(%element, %again_key, %again)\n%equal =",
 )
+# The store sits in a second, always-true `if` and roots the cell there.
 NESTED = CONDITIONAL.replace(
     WRITE,
     "%same = ctjs.compare strict_eq %read, %read\n%inner = ctjs.truthy %same\n"
     "scf.if %inner {\n" + WRITE + "\nctjs.root %cell in %frame\nscf.yield\n}",
 )
+# The `if` yields the old value from both arms.
 RETAINED_RESULT = CONDITIONAL.replace(
     "scf.if %condition {", "%selected = scf.if %condition -> (!ctjs.value) {"
 ).replace(
@@ -60,6 +74,7 @@ RETAINED_RESULT = CONDITIONAL.replace(
     "scf.yield %read : !ctjs.value\n} else {\nscf.yield %read : !ctjs.value\n}",
 )
 SELECTED_RESULT = RETAINED_RESULT.replace("ctjs.return %read", "ctjs.return %selected")
+# The `if` yields the old and the new value; a second `if` selects between them.
 MULTIPLE_RESULTS = """%read = ctjs.cell_get %cell
 %pending = ctjs.unary not %read
 %condition = ctjs.truthy %pending
@@ -92,6 +107,7 @@ NESTED_RESULTS = MULTIPLE_RESULTS.replace(
     "  scf.yield %selected#1 : !ctjs.value\n}\n"
     "scf.yield %nested : !ctjs.value",
 )
+# Unconditional store; only the returned value goes through the `if`.
 RESULT_ONLY = """%read = ctjs.cell_get %cell
 %pending = ctjs.unary not %read
 %condition = ctjs.truthy %read
@@ -103,6 +119,9 @@ ctjs.cell_set %cell, %yes
   scf.yield %pending : !ctjs.value
 }
 ctjs.return %selected"""
+# name -> (fixture module, MLIR program, JavaScript source, *arguments for
+# that fixture's oracle() and checks(): (attributes, result) for cells,
+# (options,) for branches and scopes).
 CASES = {
     "return-snapshots": (
         cells,
@@ -153,7 +172,8 @@ CASES = {
         scopes.CASES["nested-state"][1].replace("const mark = () => { seen = true; };", JS_MARK),
         {"nested_state": True},
     ),
-    # Preserve the exact previously refused result-bearing helper source.
+    # A helper that returns a value yielded through its conditional; the
+    # lowering once refused this exact source and must keep accepting it.
     "retained-result": (
         cells,
         cells.program(OWNER, cells.function("mark$3", RETAINED_RESULT)),
@@ -224,16 +244,19 @@ CASES = {
 
 
 def nest(body, count, predicate="condition"):
+    """Wrap `body` in `count` nested `scf.if %predicate` regions."""
     for _ in range(count):
         body = f"scf.if %{predicate} {{\n" + body + "\nscf.yield\n}"
     return body
 
 
 def program(helper=CONDITIONAL, owner=OWNER, extra=""):
+    """Return a module with `owner` as the entry and `helper` as mark$3."""
     return cells.program(owner, cells.function("mark$3", helper) + extra)
 
 
 def bad_programs():
+    """Return name -> module that verifies but that the lowering must refuse."""
     ambient = '%ambient = ctjs.load_global "ambient"\n%u = ctjs.constant #ctjs.undefined\n%effect = ctjs.call %ambient(%u)\n'
     bad = {
         "before-init": program(owner=OWNER.replace("ctjs.cell_set %seen, %no\n", "")),
@@ -246,6 +269,7 @@ def bad_programs():
         "cell-as-condition": program(
             CONDITIONAL.replace("ctjs.truthy %pending", "ctjs.truthy %cell")
         ),
+        # 4607182418800017408 is the IEEE-754 bit pattern of the Number 1.0.
         "numeric-condition": program(
             CONDITIONAL.replace(
                 "%condition =",
@@ -379,12 +403,15 @@ def bad_programs():
             extra=cells.function("unused$9", CONDITIONAL.replace(WRITE, ambient + WRITE))
         ),
     }
+    # Proof attributes written into the input IR must not be trusted.
     bad["forged-facts"] = bad["cell-as-condition"].replace(
         "upvalue_count = 0 : i32",
         "upvalue_count = 0 : i32, ctnative.cell_args = array<i32: 0>, ctnative.carried = true",
     )
+    # 65 nested ifs in one helper: past the 64-level nesting limit.
     bad["too-deep"] = program(CONDITIONAL.replace(WRITE, nest(WRITE, 64)))
-    # Both source bodies fit their own depth limit; the inlined body would not.
+    # Owner and helper each nest 32 deep, under the 64-level combined limit in
+    # LocalState.cpp on their own; inlined together they reach it.
     deep_owner = (
         "%u = ctjs.constant #ctjs.undefined\n%no = ctjs.constant #ctjs.boolean<false>\n%seen = ctjs.create_cell %no\n%condition = ctjs.truthy %no\n"
         + nest("%called = ctjs.call_direct @mark$3(%u, %u, %u, %seen)", 32)
@@ -416,7 +443,7 @@ def main():
             dom.standalone(
                 args, native, label, fixture.checks(*expected), args.compilers, includes, libraries
             )
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.exhaust(
             args, ir, contract, name, [0, 8], "{budget} did not exhaust conditional borrower proof"
         )
@@ -445,6 +472,7 @@ def main():
             if name.startswith("combined-depth-"):
                 assert "combined conditional depth exhausted" in diagnostic, diagnostic
             refusals += 1
+    # Malformed IR that the ctjs verifier itself must reject.
     for name, text in {
         "nested-return": program(CONDITIONAL.replace(WRITE, "ctjs.return %read\n" + WRITE)),
         "yield-result": program(CONDITIONAL.replace("scf.yield", "scf.yield %read : !ctjs.value")),

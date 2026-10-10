@@ -1,25 +1,25 @@
-// THE NATIVE GATE'S PROGRAM - ctcompile Phase 62½-D.
+// Fixture for the native (GC-free) C++ target; see functions.emitc.mlir.
 //
 // Numbers and booleans only: functions with parameters, recursion, a counted
 // `for`, a pre-tested `while`, `if`/`else`, every arithmetic operator, the
-// comparisons, unary minus - and answers that are integral, fractional, NaN,
+// comparisons, unary minus, and answers that are integral, fractional, NaN,
 // +Infinity, -Infinity and -0. Nothing here allocates: no string, no object,
-// no array, no closure over mutable state. That is the subset Phase 62½-C
-// lowers first, and native-fixture.emitc.mlir is what that lowering is
-// expected to produce for THIS file.
+// no array, no closure over mutable state. This is the smallest subset the
+// native lowering handles, and functions.emitc.mlir is the expected lowering
+// of this file.
 //
-// TEN NUMERIC GLOBALS WITH TEN DISTINCT ANSWERS, so a wrong one cannot hide
+// Ten numeric globals with ten distinct answers, so a wrong one cannot hide
 // behind a right one. The eight functions are globals too; the reference
 // counts them and skips them.
 //
-// NAMES ARE CHOSEN TO BE VALID C++ AT GLOBAL SCOPE. A JavaScript global called
-// `nan`, `inf` or a function called `remainder` collides with <cmath> once it
-// is a C++ global. The lowering will need a mangling rule for that; this file
-// avoids the collision so that the gate is testing the gate.
+// Names are valid C++ at global scope. A JavaScript global called `nan` or
+// `inf`, or a function called `remainder`, would collide with <cmath> once it
+// becomes a C++ global. This file avoids those names so that a failure here
+// means the lowering is wrong, not that the names collided.
 //
-// The answers, worked out by hand and NOT asserted anywhere - the interpreter
-// is the reference, by definition. They are here so a reader can tell a wrong
-// fixture from a wrong compiler:
+// The answers, worked out by hand and not asserted anywhere (the interpreter is
+// the reference). They are here so a reader can tell a wrong fixture from a
+// wrong compiler:
 //   fib20 = 6765            sum100 = 5050          collatz27 = 111
 //   third = 0.33333333333333331                    negzero = -0
 //   inf_pos = inf           inf_neg = -inf         not_a_number = nan

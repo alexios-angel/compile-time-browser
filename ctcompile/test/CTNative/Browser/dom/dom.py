@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
-"""Compile typed actions and queries against the real DOM/Core/Style.
+"""Compile small JS DOM functions to native C++ and run them against the real
+ctbrowser DOM, Core and Style libraries.
 
-This is an action-only browser entry gate, not original Bootstrap construction,
-Data storage, event delivery or native initialization of the vendor bundle.
+Each entry (classList and attribute toggles, identity, contains, matches,
+closest) is lowered with and without optimization, compiled with GCC and
+Clang, and checked by a C++ client. Variants the compiler cannot prove safe
+must be refused with a diagnostic. This covers only these standalone
+functions, not Bootstrap's own initialization, data storage or event delivery.
+
+Sibling drivers in this directory import PROVIDERS, BOOTSTRAP, variants(), the
+C++ check templates and the prepare/lower/standalone helpers from here.
 """
 
 import argparse
@@ -29,8 +36,10 @@ from CTNative.harness import (
 )
 from CTNative.HostContract.contract import fingerprint
 
+# The vendored, unmodified Bootstrap bundle; drivers pin excerpts of it.
 BOOTSTRAP = Path(__file__).resolve().parents[5] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
 
+# JS entries main() compiles; each pairs with the same-named *_CHECKS template.
 ACTION = """function toggle(element) {
   const active = element.classList.toggle('active');
   element.setAttribute('aria-pressed', active);
@@ -116,9 +125,15 @@ INVALID_SELECTOR = """function invalidSelector(element) {
   return true;
 }
 """
+# NATIVE matches a lowered native function; VM matches any use of the VM runtime,
+# which a native program must not contain.
 NATIVE = re.compile(r"\bemitc\.func @([^ (]+)\(")
 VM = re.compile(r"ctbrowser::(?:script|aot)::|\bct_aot_|ctbrowser/(?:script/|aot/aot\.hpp)")
 
+# C++ test client appended to each translated entry. @CHECKS@ runs 16 times
+# against fresh fixtures: `button` (class "btn") with child `span` in `doc`,
+# `other_button` in an unrelated `foreign_doc`, and element_refs `element`,
+# `alias` (a copy of element) and `foreign`.
 CLIENT = r"""
 #include <cassert>
 #include <exception>
@@ -162,7 +177,8 @@ SELECTOR_CHECKS_PREAMBLE = r"""
                                 style::engine & engine) {
             return in_outer_document([&] { return @ENTRY@(@ARGUMENTS@, engine); });
         };"""
-# An owned session is neither copyable nor movable, and runs 16 lifetimes.
+# The head of an owned-session client: the session type is neither copyable nor
+# movable, and the body runs 16 lifetimes.
 SESSION_PREAMBLE = r"""
 int main() {
     using namespace ctbrowser;
@@ -173,6 +189,8 @@ int main() {
     static_assert(!std::is_move_assignable_v<session_type>);
     for (int lifetime = 0; lifetime < 16; ++lifetime) {"""
 
+# The @CHECKS@ bodies for the entries above: each states the DOM writes and
+# results the native entry must produce, including for foreign and stale input.
 ACTION_CHECKS = r"""
         for (const bool active : {true, false}) {
             assert(static_cast<bool>(@ENTRY@(alias)) == active);
@@ -524,8 +542,10 @@ INVALID_SELECTOR_CHECKS = r"""
 
 
 def parse_args(description, *, oracles=False, switches=()):
-    """The Browser drivers' command line; args.compilers is the host pair with
-    --clang (the configured DOM's compiler) in the Clang slot."""
+    """Parse the Browser drivers' command line.
+
+    args.compilers is the host compiler pair with --clang (the compiler the
+    DOM library was configured with) in the Clang slot."""
     parser = argparse.ArgumentParser(description=description)
     tools = ("translate", "opt", "clang") + (("node", "reference") if oracles else ())
     for name in tools:
@@ -543,18 +563,25 @@ def parse_args(description, *, oracles=False, switches=()):
     return args
 
 
+# The two DOM host providers: a borrowed document, and a session that owns one.
 PROVIDERS = ("ctbrowser-dom-v1", "ctbrowser-dom-session-v1")
 
 
 def variants(contract):
-    """(owned, optimize, manifest): both DOM providers - owned is the session
-    one - under both policies, each with its own copy of `contract`."""
+    """Yield (owned, optimize, manifest) for each DOM provider (owned=True is the
+    session provider) with optimize False and True; each manifest is a copy of
+    `contract` with its provider set."""
     for owned, provider in enumerate(PROVIDERS):
         for optimize in (False, True):
             yield bool(owned), optimize, dict(contract, provider=provider)
 
 
 def prepare(args, name, source, parameters, *, entry_name=None, generic=False):
+    """Import `source` to `name`.mlir and return (ir, contract).
+
+    The contract is a host manifest for the one source entry (named
+    `entry_name` when given) whose first `parameters` arguments are elements.
+    """
     js = args.work / f"{name}.js"
     ir = args.work / f"{name}.mlir"
     js.write_text(source)
@@ -589,6 +616,14 @@ def prepare(args, name, source, parameters, *, entry_name=None, generic=False):
 
 
 def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=None):
+    """Run the ctnative-lower-to-emitc pipeline on `ir` with `contract` as the
+    host manifest.
+
+    With success=True, return the path of the lowered module. With
+    success=False the lowering must refuse: either opt fails with an `error:`,
+    or it succeeds while marking every source function `ctnative.not_native`
+    and emitting no native function. Return the diagnostic text.
+    """
     config = args.work / f"{name}.json"
     output = args.work / f"{name}.native.mlir"
     config.write_text(json.dumps(contract, indent=2) + "\n")
@@ -622,8 +657,8 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
 
 
 def refuse(args, ir, manifest, label, reason=None):
-    """Lower `ir` under both policies as `label`-False/-True; each must refuse,
-    naming `reason` when one is given."""
+    """Lower `ir` with and without optimization as `label`-False/-True; each must
+    refuse, naming `reason` when one is given."""
     for optimize in (False, True):
         name = f"{label}-{optimize}"
         diagnostic = lower(args, ir, manifest, name, optimize=optimize, success=False)
@@ -642,6 +677,11 @@ def exhaust(args, ir, manifest, label, budgets, message):
 
 
 def link_options(args, *, selectors=False, core_only=False):
+    """Return (includes, libraries) for linking a native program against the
+    ctbrowser build in args.build, read from its CMakeCache.txt.
+
+    `selectors` adds the Style library; `core_only` drops the DOM library.
+    """
     cache = dict(
         re.findall(
             r"^([A-Za-z0-9_]+):[^=\n]+=(.*)$", (args.build / "CMakeCache.txt").read_text(), re.M
@@ -699,7 +739,7 @@ def parallel(check, cases):
 # source location names its file, {label}.deduced.mlir, in a static_assert
 # message. Under a host manifest ctnative-lower-to-emitc ignores `optimize`
 # (LowerToEmitC.cpp skips its default optimizations for a host contract), so a
-# driver's two policies emit one program, and a module with nothing to deduce
+# driver's optimized and unoptimized runs emit one program, and a module with nothing to deduce
 # prints the same C++ in both layouts. Building and running such a program again
 # could only repeat its first answer.
 _built = set()
@@ -730,6 +770,7 @@ PRELUDE = (
 ).split()
 
 
+# Cached so each compiler and flag set precompiles the header only once.
 @functools.cache
 def _prelude(compiler, flags, work):
     digest = hashlib.sha256("\0".join((compiler, *flags)).encode()).hexdigest()[:16]
@@ -764,6 +805,13 @@ def standalone(
     allow_undefined=False,
     allow_nullable_scalar=False,
 ):
+    """Translate the lowered `native` module to C++, append CLIENT with `checks`,
+    and build and run it with each compiler.
+
+    Both the module and its --ctnative-print-deduced form are checked. The
+    module must hold exactly one typed entry, no VM symbol and no scalar value
+    carrier unless `allow_undefined` or `allow_nullable_scalar` permits one.
+    """
     text = native.read_text()
     entries = NATIVE.findall(text)
     if (
@@ -925,6 +973,7 @@ def main():
     diagnostic = lower(args, stale, contract, "stale", success=False)
     if "fingerprint mismatch" not in diagnostic:
         raise RuntimeError("stale DOM contract did not name the fingerprint mismatch")
+    # (name, source, text the refusal must contain).
     refusals = [
         (
             "unknown-receiver",
@@ -1056,6 +1105,9 @@ def main():
         ("missing-parameter", dict(contract, element_parameters=[])),
     ):
         lower(args, action, changed, name, success=False)
+    # The 7 extra refusal controls are: raw-written-undefined, the
+    # manifest-less action, stale, fresh-forged, and the three contract
+    # mutations (unknown-provider, supplied-proof, missing-parameter).
     print(
         f"native DOM: {len(entries)} action/identity/attribute/query/error entries, "
         f"both policies/layouts, GCC/Clang, DOM/Core and selector-only Style; {len(refusals) + 7} refusal controls"

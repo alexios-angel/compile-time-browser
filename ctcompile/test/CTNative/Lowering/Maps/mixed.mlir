@@ -3,7 +3,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-binding-time-analysis -o /dev/null
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate -o /dev/null
 // RUN: python3 %S/mixed.py --fixtures %t --work %t/run --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference
-
+// Mixed-type Maps: mixed.py runs mixed.js natively and checks each *-refused.js case.
 //--- mixed.js
 function numberKeys() {
     const map = new Map();

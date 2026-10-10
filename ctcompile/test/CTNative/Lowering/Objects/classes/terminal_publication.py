@@ -1,4 +1,10 @@
-"""Check leaf/helper and deferred base publication with initialization boundaries."""
+"""Run initialization.py on the fixtures about where a constructor publishes `this`.
+
+"Publication" is a constructor storing `this` somewhere outside itself (a Map
+record, a base-class registry). This narrows initialization.OBSERVATIONS to the
+SELECTED fixtures, the throwing arms and the inherited-leaf, helper and
+inherited-base families, then runs the full initialization check on them.
+"""
 
 from CTNative.Lowering.Objects.classes import initialization as check
 
@@ -32,5 +38,6 @@ check.OBSERVATIONS = {
         )
     )
 }
+# 43 fixtures come from the three name-prefix families above.
 assert len(check.OBSERVATIONS) == len(SELECTED) + 43
 check.main()

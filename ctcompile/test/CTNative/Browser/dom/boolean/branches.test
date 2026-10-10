@@ -1,2 +1,2 @@
-# One local Boolean follows dynamic If arms while preserving original results.
+# One private Boolean cell updated by helpers called from DOM-dependent `if` arms.
 # RUN: python3 %S/branches.py %dom_driver --node %node --reference %native_reference

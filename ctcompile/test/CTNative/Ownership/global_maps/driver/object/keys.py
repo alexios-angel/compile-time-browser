@@ -1,3 +1,11 @@
+"""Global-Map checks for programs that pass an object (fresh or held in a global)
+to a published host method that uses it as a Map key.
+
+Builds on driver/object/maps.py: the observers must notice each mutation, the
+prepared IR must keep every object allocation and call actual, and the
+emitted signature must not reuse the original source's ownership proof.
+"""
+
 from ..common import *
 from ..fields import (
     string_field_method_graph,
@@ -9,6 +17,7 @@ from ...harness.objects import object_payload_observer_source
 
 
 def check_object_argument_observations(args, node, reference):
+    """Check that each object-argument observer notices every listed mutation."""
     cases = object_argument_cases()
     for name, row in cases.items():
         undefined_globals = row.get("undefined_globals", ())
@@ -120,6 +129,7 @@ def check_object_argument_observations(args, node, reference):
 
 
 def check_object_argument_census(args, ir, name):
+    """Check the function, call and allocation counts of an object-argument case."""
     row = object_argument_cases().get(name)
     if row is None:
         return
@@ -174,6 +184,7 @@ def check_object_argument_census(args, ir, name):
 
 
 def check_object_argument_preparation(text, original, name):
+    """Check that preparation kept the Map method body and every call actual."""
     row = object_argument_cases()[name]
     if len(source_calls(text)) != row["prepared_calls"] or string_field_method_graph(
         original, "fn$3", False
@@ -235,6 +246,7 @@ def check_object_argument_preparation(text, original, name):
 
 
 def check_object_argument_controls(args, saved):
+    """Run the forgery, stale-proof and step-budget controls on the admitted cases."""
     check_leaf_object_forgeries(args, saved, object_argument_sources())
     for name in object_argument_sources():
         _, config, output = saved[name]

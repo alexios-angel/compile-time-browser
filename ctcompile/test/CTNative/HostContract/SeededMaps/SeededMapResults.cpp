@@ -1,7 +1,19 @@
+//===- SeededMapResults.cpp - Seeded Map get results ------------*- C++ -*-===//
+//
+// Host-contract proofs for a captured Map seeded with `set` and read back with
+// `get` in the same method, including Map `size` lower bounds. Also runs the
+// ConditionalMapResults checks on the same fixture.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Seeds a captured Map with `set(0, 1.0)` inside get$2 and reads it back with
+/// `get(0)`, passing the result to put$3. Checks which later operations (has,
+/// delete, writes that may alias, size reads, budget exhaustion, live edits)
+/// keep or drop the proved result type. Number constants are IEEE-754 bit
+/// patterns: 4607182418800017408 is 1.0 and 4611686018427387904 is 2.0.
 void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shared) {
     auto source =
         replaced(shared, "@put$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value)",
@@ -26,6 +38,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
     %probeKey = ctjs.constant #ctjs.number<0>
     %answer = ctjs.call %mapGetter(%state, %probeKey)
 )MLIR");
+    // Converts the source-form program to the prepared form: closures capture
+    // %state directly and every call becomes call_direct with that environment.
     const auto prepare = [](std::string text) {
         for (const char * name : {"get$2", "put$3"}) {
             text = replaced(text, "captures %cell", "captures %state");
@@ -53,6 +67,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                         "    %answer = ctjs.call_direct @get$2(%owned, %u, %getter, "
                         "%getEnvironment)");
     };
+    // True when \p query exposes no callable or property facts.
     const auto empty = [](mlir::ModuleOp module, const HostContractAnalysis & query) {
         bool withheld = query.callables().empty();
         module.walk([&](mlir::Operation * operation) {
@@ -106,6 +121,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
             check(hostContractFingerprint(*module) == contract.moduleSha256,
                   "presence and result proofs leave source calls and operands unchanged");
             const unsigned completion = query.steps();
+            // 15000 is a ceiling well above this fixture's step count.
             check(completion < 15000, "seeded presence proof stays within its fixture work limit");
             if (completion < 15000) {
                 for (unsigned budget = 0; budget < completion; ++budget) {
@@ -308,8 +324,9 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
 )MLIR";
             variant(replaced(source, seedLine, deleteOther), true,
                     "deleting a distinct literal preserves the earlier entry");
-            // An initial size has no nonempty proof. Keep this genuinely
-            // possibly aliasing even after nonempty snapshots are understood.
+            // The key is the Map's `size` read before the seed write, so it may be 0
+            // and alias the seeded key 0. Keep this a may-alias write even if Map
+            // sizes become trackable later.
             const std::string dynamicMutation = R"MLIR(
     %sizeKey = ctjs.constant #ctjs.string<"size">
     %dynamicKey = ctjs.get_property %state[%sizeKey]
@@ -424,6 +441,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
             variant(replaced(twoEntries, "%seedKey = ctjs.constant #ctjs.number<0>",
                              "%seedKey = ctjs.constant #ctjs.boolean<false>"),
                     true, "independent primitive tags also prove pairwise key disjointness");
+            // -0.0, -1.0, 0.5 and a NaN: none can equal a nonzero size.
             for (const char * bits : {"9223372036854775808", "13830554455654793216",
                                       "4602678819172646912", "9221120237041090561"}) {
                 auto outside =
@@ -436,6 +454,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                         "negative zero, negative, subunit and NaN keys cannot equal nonempty size");
             }
             if (!multiple) {
+                // The nonempty fixture with \p count distinct number keys 0..count-1
+                // seeded, probing key \p probe.
                 const auto cardinalityFixture = [&](unsigned count, unsigned probe) {
                     std::string seeds;
                     for (unsigned i = 1; i < count; ++i) {
@@ -458,6 +478,8 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                 };
                 variant(cardinalityFixture(3, 2), true,
                         "three definite keys establish a stronger bound than nonempty");
+                // The analysis examines at most kMaxPrimitiveMapSizeCandidates (64)
+                // distinct keys when bounding size.
                 variant(cardinalityFixture(64, 63), true,
                         "the candidate cap includes all 64 independently distinct witnesses");
                 variant(cardinalityFixture(65, 64), false,
@@ -482,6 +504,7 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                     const auto sizeContract = mapContractFor(*checked);
                     HostContractAnalysis complete(*checked, sizeContract);
                     const unsigned sizeCompletion = complete.steps();
+                    // 15000 is a ceiling well above this fixture's step count.
                     check(complete.proved() && sizeCompletion < 15000,
                           "complete size proof stays within the fixture work limit");
                     if (!complete.proved() || sizeCompletion >= 15000) { continue; }
@@ -541,9 +564,10 @@ void checkSeededMapResults(mlir::MLIRContext & context, const std::string & shar
                                   "%probeKey = ctjs.constant #ctjs.string<\"seed\">");
             variant(replaced(stringSeed, seedLine, dynamicMutation), true,
                     "independent number/string tags prove a runtime mutation key is disjoint");
-            // Both zero encodings and every NaN payload denote the same Map key.
-            // A different payload tag after an aliasing write must replace the old
-            // fact; an aliasing delete must remove it, even with unequal attributes.
+            // +0 and -0 (9223372036854775808) are the same Map key, as are NaNs with
+            // different payloads. A write of a new type through the equal key must
+            // replace the old fact, and a delete through it must remove the entry,
+            // even though the constant attributes differ.
             for (const auto & [seedBits, aliasBits] :
                  {std::pair{"0", "9223372036854775808"},
                   std::pair{"9221120237041090561", "9221120237041090562"}}) {

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Gate copied optional String DOM reads against source and the public DOM/Core API."""
+"""JavaScript fixtures for the native DOM String tests (strings.py).
+
+Functions that read an attribute (`getAttribute` returns a String or null) and
+must compile to C++ calling the public ctbrowser DOM API, with results matching
+Node and the VM. harness.py and provenance.py extend this module.
+"""
 
 import argparse
 import json
@@ -41,7 +46,8 @@ WIDE = r"""function readWideName(element) {
 # Annex B gives the block function a local binding; its self-copy is not a second export.
 HOST_LOCAL_FUNCTION_COPY = "const key = 'x'; function host_refusal(element) { return element.getAttribute(key); } host_refusal = host_refusal;"
 
-# Keep the original refusal sources byte-for-byte when admitting their graphs.
+# Sources the native compiler once refused and now accepts. Keep them
+# byte-for-byte so the test still covers the exact shapes that used to fail.
 CAPTURE_RETURNS = {
     "helper_branch_call_in_arm": "function invalid(element) { function read(target) { function attribute(node) { return node.getAttribute('x'); } if (target.hasAttribute('x')) return attribute(target); return null; } return read(element); }\n",
     "host_local_function_copy": "{\n" + HOST_LOCAL_FUNCTION_COPY + "\n}\n",
@@ -68,6 +74,9 @@ SOURCES = (
     ("wide", WIDE, 1),
     *((name, source, 1) for name, source in CAPTURE_RETURNS.items()),
 )
+# name -> (entry body, expected). `expected` has one digit per initial value of
+# attribute `x`: absent (null), '', 'a\0b', '\u00e9' (see BOOLEAN_OBSERVATIONS
+# in harness.py); '1' means the entry returns true for that input, '0' false.
 BOOLEAN_CASES = {
     "set_value": ("element.setAttribute('y', element.getAttribute('x')); return true;", "1111"),
     "boolean": ("return !element.getAttribute('x');", "1100"),
@@ -178,7 +187,9 @@ BOOLEAN_CASES.update(
         ),
     }
 )
-# Preserve the original three-return source while proving LLVM completion dispatch.
+# A helper with three `return`s: lowering must dispatch on which return was
+# taken (the completion code). Keep the text unchanged; provenance.py mutates
+# its lowered IR at exact anchors.
 HELPER_COMPLETION_SOURCE = """function observe(target) {
     function read(name) {
       if (target.getAttribute(name) === null) return false;
@@ -188,6 +199,8 @@ HELPER_COMPLETION_SOURCE = """function observe(target) {
     return read('x');
   }
   return observe(element);"""
+# Same format as BOOLEAN_CASES; each entry reaches the DOM through local helper
+# functions, captures or object methods. Merged into BOOLEAN_CASES below.
 HELPER_CASES = {
     "helper_branch_completion_dispatch": (HELPER_COMPLETION_SOURCE, "0100"),
     "helper_completion_effects": (
@@ -579,12 +592,16 @@ HELPER_CASES = {
         "1000",
     ),
 }
-# Preserve Bootstrap's complete helper, including its replacement callback.
+# Bootstrap's F (it turns camelCase data keys into kebab-case), copied verbatim
+# with its replacement callback; strings.py checks the vendored bundle still
+# contains it.
 BOOTSTRAP_F = """    function F(t) {
         return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`)
     }
 """
-# These original H methods form the String-only slice before live M normalization.
+# Bootstrap's data-attribute writers (methods of object `H` in the minified
+# bundle), copied verbatim. They only write Strings; the reader that converts
+# values (Bootstrap's `M` normaliser) is deliberately left out.
 BOOTSTRAP_H_WRITES = """        setDataAttribute(t, e, i) {
             t.setAttribute(`data-bs-${F(e)}`, i)
         },
@@ -597,7 +614,9 @@ BOOTSTRAP_H_ACTION = """  H.setDataAttribute(element, 'config', 'first');
   const saved = element.getAttribute('data-bs-config');
   H.removeDataAttribute(element, 'config');
   return saved !== element.getAttribute('data-bs-toggle');"""
-# Keep the newly admitted refusal source unchanged, both directly and in the oracle wrapper.
+# A once-refused source (Bootstrap's F used with two different names), now
+# accepted. It is used unchanged both as a test entry and inside a Node/VM
+# oracle wrapper (regex_mixed_constants).
 REGEXP_MIXED_SOURCE = (
     "function invalid(element) { "
     + BOOTSTRAP_F
@@ -608,6 +627,8 @@ REGEXP_CAPTURED_SOURCE = (
     + BOOTSTRAP_F
     + " function read(target, name) { return target.getAttribute('data-bs-' + F(name)); } return read(element, 'config'); }\n"
 )
+# Same format as BOOLEAN_CASES: String.prototype.replace with a regexp,
+# mostly through Bootstrap's F. Merged into HELPER_CASES below.
 REGEXP_CASES = {
     "helper_regex_direct": (
         """const key = 'data-bs-' + 'config'.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`);

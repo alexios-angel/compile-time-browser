@@ -1,5 +1,5 @@
-// The same program must agree with the interpreter with native defaults on
-// and off. Known return values never authorize removing the effectful calls.
+// Must agree with the interpreter with native default optimizations on and
+// off. A call whose result is known still has effects and must not be removed.
 var trace = 0;
 
 function record(value) {

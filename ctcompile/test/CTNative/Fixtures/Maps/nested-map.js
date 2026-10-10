@@ -1,4 +1,4 @@
-// Nested Maps retain child identities and own their storage without cycles.
+// Nested Maps keep their children's identities and own their storage (no cycles).
 function leaf(value) {
     var map = new Map();
     map.set("value", value);

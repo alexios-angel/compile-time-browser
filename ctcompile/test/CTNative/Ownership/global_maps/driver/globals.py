@@ -1,9 +1,19 @@
+"""Checks for scalar and constant global cases.
+
+Compares the MLIR before and after callable preparation, runs mutation tests on
+the stores in the emitted C++, and verifies that refused cases become
+admissible after their one-line repair.
+"""
+
 from CTNative.harness import find_compilers
 
 from .common import *
 
 
 def check_numeric_global_preparation(text, original, name):
+    """Check that preparing a saved-global case kept its eight source calls (in
+    the entry, fn$3 once and fn$4 three times), their receiver and capture
+    provenance, the global stores and the arithmetic feeding `trace`."""
     entry = text.split("\n  }", 1)[0]
     calls = re.findall(
         r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
@@ -57,7 +67,8 @@ def check_numeric_global_preparation(text, original, name):
 
 
 def scalar_string_literal(text, mlir=False):
-    """Compare literal bytes despite MLIR hex and C++ octal spellings."""
+    """Decode a quoted literal spelled with MLIR hex escapes (`mlir`) or C++
+    octal escapes or raw string, so both spellings compare as the same text."""
     if text.startswith('R"('):
         return text[3:-2]
     out = bytearray()
@@ -79,7 +90,9 @@ def scalar_string_literal(text, mlir=False):
 
 
 def scalar_global_graph(text, name):
-    """Compare current scalar dataflow before and after callable preparation."""
+    """Return the entry function's scalar dataflow (global loads and stores,
+    host calls, arithmetic) as events with SSA names replaced, so the graph can
+    be compared before and after callable preparation."""
     entry = text.split("\n  }", 1)[0]
     values, properties, captures = {}, {}, {}
     events, calls, binaries = [], 0, 0
@@ -161,6 +174,8 @@ def scalar_global_graph(text, name):
 
 
 def check_scalar_global_preparation(text, original, name):
+    """Require preparation to keep the scalar dataflow graph and the count of
+    each structural operation."""
     before, after = scalar_global_graph(original, name), scalar_global_graph(text, name)
     if before != after or not before:
         raise RuntimeError(
@@ -178,6 +193,9 @@ def check_scalar_global_preparation(text, original, name):
 
 
 def check_scalar_global_source(ir, name):
+    """Check that a scalar or constant global case's IR evaluates every host
+    call in the source, starting with `size`, and keeps its global stores and
+    alias edges. Other names are skipped."""
     if (
         name not in NUMERIC_ENTRY_SAVED_GLOBALS
         and name not in scalar_global_cases()
@@ -287,6 +305,8 @@ def check_scalar_global_source(ir, name):
 
 
 def check_scalar_global_emission(args, ir, name):
+    """Check that the emitted C++ main() of a scalar or constant global case, in
+    both layouts, follows the MLIR's scalar dataflow graph."""
     if (
         name not in NUMERIC_ENTRY_SAVED_GLOBALS
         and name not in scalar_global_sources()
@@ -419,6 +439,9 @@ def check_scalar_global_emission(args, ir, name):
 
 
 def check_scalar_global_carriers(args, positives, node, reference):
+    """For each SCALAR_GLOBAL_CARRIERS case: check its observation, that the
+    repair edit gives the admitted positive, and that it is refused with and
+    without forged evidence while its scalar dataflow survives."""
     cases = scalar_global_cases()
     for name in sorted(SCALAR_GLOBAL_CARRIERS):
         case = cases[name]
@@ -502,6 +525,8 @@ def check_scalar_global_carriers(args, positives, node, reference):
 
 
 def check_constant_global_observations(args, node, reference):
+    """Require Node and the interpreter to print every constant case's globals
+    with their types, and every listed mutation to change that output."""
     for name, row in constant_global_cases().items():
         js = args.work / f"{name}-observed.js"
         js.write_text(row["source"])
@@ -532,8 +557,9 @@ def check_constant_global_observations(args, node, reference):
         )
         if not types or list(map(int, types.groups())) != counts:
             raise RuntimeError(f"{name}: reference lost its independently observed scalar tags")
-    # A trace-only observer would miss substitutions in the historical copy.
-    # Every mutation must instead change the complete value-and-tag observation.
+    # Each edit below must change the printed value or type of some global, not
+    # only `trace`; checking `trace` alone would miss an edit to `copy` in
+    # constant_exact_historical.
     for name, old, replacement in (
         ("constant_exact_historical", "const copy = fixed;", "const copy = 0;"),
         ("constant_feeds_trace", "const copy = fixed;", "const copy = first;"),
@@ -570,9 +596,10 @@ def check_constant_global_observations(args, node, reference):
 
 
 def check_boolean_observation_mutations(args, compilers, nm):
-    # Mutate only an emitted store after all source proofs and successful native
-    # executions. A missing store or a numerically equal value of another tag
-    # must fail the final observation instead of printing a plausible Boolean.
+    """Edit Boolean global stores in the emitted C++ after the native runs have
+    passed. A missing store, or a numerically equal value with another type
+    tag, must fail the final observation instead of printing a plausible
+    Boolean."""
     check_scalar_observation_mutations(
         args,
         compilers,
@@ -590,6 +617,7 @@ def check_boolean_observation_mutations(args, compilers, nm):
 
 
 def check_string_observation_mutations(args, compilers, nm):
+    """The String counterpart of check_boolean_observation_mutations."""
     check_scalar_observation_mutations(
         args,
         compilers,
@@ -609,6 +637,10 @@ def check_string_observation_mutations(args, compilers, nm):
 
 
 def check_scalar_observation_mutations(args, compilers, nm, mutations):
+    """For each (case, binding, replacement), replace the unique store to
+    g_<binding> in the emitted C++ (None drops it) and require the program to
+    print the globals before it and then exit 211 from the injected
+    std::set_terminate handler."""
     for name, binding, replacement in mutations:
         kind = (
             "missing"
@@ -655,6 +687,10 @@ def check_scalar_observation_mutations(args, compilers, nm, mutations):
 
 
 def check_constant_global_refusals(args, positives, node, reference):
+    """For each refused constant case: check that its repair gives an admitted
+    positive, that it is refused in both modes with its exact reason (except
+    constant_undefined_candidate, which is admitted and run), and that forged
+    evidence and reruns stay refused."""
     cases = constant_global_cases()
     for name in sorted(CONSTANT_GLOBAL_UNOWNED | CONSTANT_GLOBAL_CARRIERS):
         row = cases[name]
@@ -663,8 +699,9 @@ def check_constant_global_refusals(args, positives, node, reference):
         if repair in constant_global_sources():
             old, replacement = row["removed_text"], row["replacement_text"]
         else:
-            # Literal substitution alone does not repair an unsupported global.
-            # Restore both declarations to the exact independently gated source.
+            # Replacing one literal does not make an unsupported global
+            # admissible; rewrite both declarations so the source equals
+            # scalar_constant_only, which is checked as a positive on its own.
             old = source.rsplit("\n", 2)[-2]
             replacement = "const fixed = 7; const copy = fixed;"
             repair = "scalar_constant_only"
@@ -772,6 +809,9 @@ def check_constant_global_refusals(args, positives, node, reference):
 
 
 def check_leaf_absence_census(args, ir, name):
+    """Check the raw and prepared source-call counts of a leaf-absence,
+    leaf-clear, numeric-entry, scalar or constant global case, and that
+    two-branch cases keep both scf.if arms. Other names are skipped."""
     case = {
         **leaf_absence_cases(),
         **leaf_clear_cases(),

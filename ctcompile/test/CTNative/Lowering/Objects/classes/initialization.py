@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
-"""Keep class initialization, mutable helper effects and native admission distinct."""
+"""Check class-initialization lowering against Node and the reference interpreter.
+
+Each fixture in OBSERVATIONS runs under Node and the reference interpreter, is
+imported to the ctjs dialect, and must be refused when lowered to EmitC as is.
+After --ctnative-specialize-class-initialization, fixtures in POSITIVES must
+lower completely and run natively with Node's result; fixtures in
+PREPARED_ONLY prepare but native lowering must still refuse them.
+"""
 
 from CTNative.Lowering.Objects.classes.initialization_inputs import *
 
 from CTNative.harness import native_args, without_intrinsic
 
-# Fixed primitive cells retain their exact literals through class/helper copies.
+# OBSERVATIONS maps a fixture name to (Node result, reference-interpreter
+# result): the value each engine prints as `a=`, or None if that run must fail
+# (see initialization_inputs.py). POSITIVES lists the fixtures that must lower
+# fully to native code; PREPARED_ONLY lists the ones that prepare but stay
+# refused.
+#
+# Captured variables that only ever hold one primitive literal keep that
+# literal when the class or helper body is copied.
 OBSERVATIONS.update(
     {
         "inherited-primitive-captures": (34, 34),
@@ -23,7 +37,8 @@ POSITIVES.update(
     }
 )
 
-# The standalone reference has no console binding; actual conflicts throw there.
+# Key-conflict fixtures: the reference interpreter has no `console`, so these
+# fixtures report a conflict by throwing rather than by logging it.
 CONFLICT_OBSERVATIONS = {
     "class-map-record-nested-conflict-direct": (594414, 594414),
     "class-map-record-nested-conflict-holder": (15927, 15927),
@@ -98,7 +113,8 @@ OWN_FIELDS = {
 }
 OBSERVATIONS.update(OWN_FIELDS)
 OBSERVATIONS["bootstrap-base-data"] = (7, 7)
-# An exact class's always-throwing static read ends its constructor arm.
+# A constructor branch that reads a static getter which always throws ends
+# there, so code after the read in that branch is dead.
 THROWING_ARMS = {
     "inherited-own-fields-iterate-throwing-arm" + suffix: (7, 7)
     for suffix in ("", "-subclass", "-static-shadow", "-returning", "-escape-before", "-own-getter")
@@ -131,7 +147,8 @@ OBSERVATIONS.update(
         "static-call-this-new-this": (7, 7),
     }
 )
-# Constructor arms decided by the same-truthiness constant actual at every `new`.
+# Constructor branches that a constant argument decides, where every `new`
+# call site passes a constant of the same truthiness.
 OBSERVATIONS.update(
     {
         "own-fields-branch-decided-falsy": (7, 7),
@@ -141,7 +158,8 @@ OBSERVATIONS.update(
     }
 )
 POSITIVES.update({"own-fields-branch-decided-falsy", "own-fields-branch-decided-truthy"})
-# Bootstrap's type check: Object.entries of a fresh empty static getter object.
+# Mirrors Bootstrap's Config._typeCheckConfig, which calls Object.entries on
+# the object returned by a static DefaultType getter (a fresh, empty object).
 OWN_ENTRIES = {
     name: (7, 7)
     for name in (
@@ -160,7 +178,7 @@ OBSERVATIONS.update(OWN_ENTRIES)
 ENTRIES_FRESH = "class Object.entries requires a fresh empty static getter object"
 ENTRIES_PATH = "class Object.entries requires a proved method with a closed effect-free path"
 POSITIVES.update({"own-entries-default-type", "inherited-own-entries-default-type"})
-# Static methods no read reaches are removed before the class proof.
+# Static methods that no reachable code reads are removed before the class analysis.
 UNREAD_STATICS = {
     name: (7, 7)
     for name in (
@@ -174,7 +192,9 @@ UNREAD_STATICS = {
 }
 OBSERVATIONS.update(UNREAD_STATICS)
 POSITIVES.update({"static-unread-new-this", "static-unread-chain", "static-unread-nested"})
-# A decided arm's pure helper call goes; a helper no running body calls is not censused.
+# When a constructor branch is decided at compile time, a pure helper call in
+# the branch that is not taken is removed. A helper that no live code calls is
+# left out of the class analysis.
 DECIDED_HELPERS = {
     name: (7, 7)
     for name in (
@@ -195,7 +215,8 @@ POSITIVES.update(
         "helper-decided-holder-slot",
     }
 )
-# A base constructed only through leaf super calls leaves its snapshot to the leaf.
+# A base class constructed only through a derived class's super() call: its
+# own-property snapshot is taken in the derived class's constructor.
 DEFERRED = {
     "inherited-own-fields-iterate-deferred-arm": (7, 7),
     "inherited-own-fields-iterate-deferred-loop": (7, 7),
@@ -218,8 +239,9 @@ DEFERRED = {
 }
 OBSERVATIONS.update(DEFERRED)
 OBSERVATIONS["bootstrap-base-button"] = (7, 7)
-# The element helpers' only calls go with the arms they decide, so the helpers
-# are erased and the leaf program lowers completely.
+# The element helpers' only calls sit in constructor branches decided at
+# compile time, so those calls are removed, the helpers are erased and the
+# derived-class program lowers completely.
 POSITIVES.update(
     {"own-fields-branch-helper-nested", "inherited-own-fields-iterate-deferred-helper"}
 )
@@ -238,7 +260,9 @@ POSITIVES.update(
         "own-fields-branch-helper-truthy",
     }
 )
-# B's own method keeps W's throwing NAME; only the prepared copy is pinned.
+# BaseComponent's (B) own method still reaches Config's (W) throwing NAME
+# getter, so this fixture prepares but native lowering still refuses that
+# method (checked in main).
 PREPARED_ONLY.add("inherited-static-getters-component-method")
 POSITIVES.update(
     {
@@ -267,8 +291,9 @@ POSITIVES.update(
 
 
 def check_nested_helper_root(args, source, manifest, name="nested-helper-root"):
-    # Ordinary helpers retain their frames across direct-call conversion.
-    # Root only the captured wrapper, leaving every constructor frame untouched.
+    # Insert a ctjs.root only into the captured wrapper (the one helper that
+    # loads an upvalue); constructor frames stay untouched. Ordinary helpers
+    # keep their frames when their calls become direct calls.
     functions = re.compile(r"^  ctjs.func\b[^\n]*\n.*?^  }\n", re.M | re.S)
     text = source.read_text()
     helpers = [
@@ -355,7 +380,8 @@ def check_captured_key_inputs(args, source, manifest):
         + f"ctjs.call_direct @{symbol}({', '.join(wrong)})"
         + text[call.end() :],
     }
-    # A non-call symbol use inside a function is separate from module attributes.
+    # Also reference the helper from an op attribute inside a function: a
+    # symbol use that is not a call, distinct from the module-attribute case.
     variants["operation-reference"], count = re.subn(
         r"(ctjs.constant #ctjs.undefined)(\n)", rf"\1 {{test.key_ref = @{symbol}}}\2", text, count=1
     )
@@ -443,7 +469,9 @@ def check_record_map_inputs(args, prepared):
         "    ctjs.return %undefined\n  }\n" + forged[end:]
     )
     for label, changed in variants.items():
-        # Rejected live contents cannot inherit a previous record Map proof.
+        # Forge the record-Map attributes on the construct: a mutated program
+        # must be refused even when it carries the marks a successful proof
+        # would leave.
         changed = re.sub(
             r"(?m)^(\s*%\w+ = ctjs.construct %\w+\(%\w+\))$",
             r"\1 {ctnative.map_records, ctnative.map_site}",
@@ -481,8 +509,11 @@ def main():
         body = f"        static get {name}() {{\n            return {{}}\n        }}"
         if body not in bootstrap or body not in defaults:
             raise RuntimeError(f"Bootstrap Config {name} getter source pin changed")
-    # Keep every original Config method, even though this entry only reads Default.
-    # Its iterator/throw exits remain a separate proof boundary from local dispatch.
+    # In the minified Bootstrap bundle, `W` is Config, `B extends W` is
+    # BaseComponent, `U extends B` is Button and `H` is Manipulator.
+    # Copy all of W, not just the Default getter this fixture reads: W's other
+    # methods (including the throwing NAME getter) must still be analysed
+    # separately from the call that the fixture makes.
     start = bootstrap.index("    class W {")
     end = bootstrap.index("    class B extends W {", start)
     (args.fixtures / "bootstrap-config-defaults.js").write_text(
@@ -491,11 +522,13 @@ def main():
         + "\n    var instance = new W();\n    var result = W.Default;\n"
         "    result.n = 7;\n    return result.n;\n}\nvar a = configDefaults();\n"
     )
-    # Include the original helper separately; retain the W-only refusal above.
+    # Copy Bootstrap's helper `r` into its own declaration, so the Config-only
+    # fixture above keeps nothing but its own refusal.
     helper = bootstrap.split("        r = ", 1)[1].split(",\n        a = ", 1)[0]
     declaration = "const r = " + helper + ";\n"
-    # Keep the complete original W/B classes and helpers. A missing element
-    # exercises B's real early exit after super, without invented H calls.
+    # Copy Config (W) and BaseComponent (B) with their helpers unchanged.
+    # Constructing B with a null element takes B's own early exit after
+    # super(), so no Manipulator (H) call has to be invented.
     element = bootstrap.split("        a = ", 1)[1].split(",\n        l = ", 1)[0]
     base_end = bootstrap.index("    const z = t => {", end)
     (args.fixtures / "bootstrap-base.js").write_text(
@@ -508,8 +541,8 @@ def main():
         + "\n    var instance = new B(null, null);\n"
         "    return instance._element === void 0 ? 7 : 9;\n}\nvar a = bootstrapBase();\n"
     )
-    # Add the original shared Map and complete Data holder without changing the
-    # existing ambient-e control. Only the declaration separator becomes a ';'.
+    # Prepend Bootstrap's shared Map and the full Data object to the base
+    # fixture. Only the trailing ',' of the copied declaration becomes ';'.
     data = (
         bootstrap[
             bootstrap.index("    const t = new Map,") : bootstrap.index(
@@ -533,8 +566,9 @@ def main():
         .read_text()
         .replace("function bootstrapBase() {\n", "function bootstrapBase() {\n" + data, 1)
     )
-    # Button extends B and overrides NAME: B's arm reaches the Data holder only
-    # through U, so B's own-key snapshot waits for U's super normalization.
+    # Button (U) extends BaseComponent (B) and overrides NAME. B's constructor
+    # reaches the shared Data map only when U calls super(), so the analysis
+    # must take B's own-property snapshot after U's super call is normalized.
     button = bootstrap[
         bootstrap.index("    class U extends B {") : bootstrap.index(
             '    P.on(document, "click.bs.button.data-api"'
@@ -552,8 +586,9 @@ def main():
     (args.fixtures / "bootstrap-config-r-defaults.js").write_text(
         declaration + (args.fixtures / "bootstrap-config-defaults.js").read_text()
     )
-    # Defining H and its original normalization helpers does not grant DOM or
-    # callable-holder authority to the class proof. Keep all four H methods.
+    # Add Bootstrap's Manipulator object (H) and its value-normalization
+    # helpers. Their presence alone must not let the class analysis assume DOM
+    # access or callable holders. Copy all four H methods unchanged.
     helpers = bootstrap[bootstrap.index("    function M(t) {") : start]
     combined = (args.fixtures / "bootstrap-config-r-defaults.js").read_text()
     (args.fixtures / "bootstrap-config-r-h-defaults.js").write_text(
@@ -600,9 +635,10 @@ def main():
                 str(raw),
                 "--ctjs-resolve-globals",
                 "--ctjs-lift-to-scf",
-                # Explicit super guards can put grouped SCF results in a
-                # cf.switch default edge; its custom parser rejects %n#i there.
-                # Generic assembly preserves every operation and operand.
+                # Print these fixtures in generic MLIR form. With explicit
+                # super guards, grouped scf results (%n#i) can end up in a
+                # cf.switch default edge, which cf.switch's custom parser
+                # rejects. The generic form keeps every op and operand.
                 *(
                     ["--mlir-print-op-generic"]
                     if name.startswith(("inherited-", "override-", "bootstrap-base"))
@@ -687,8 +723,9 @@ def main():
             "class-map-record-constructor-inherited",
             "class-map-record-nested-constructor-inherited",
         ):
-            # Declare the mutable implementation hooks emitted by the source.
-            # Their identities do not establish ancestry or super semantics.
+            # Declare the class-runtime hooks the importer emits for
+            # inheritance. They are mutable globals, so knowing them does not
+            # prove what the super chain is.
             manifest["initial_intrinsics"] += [
                 "__ctbrowser_class_heritage",
                 "__ctbrowser_bind_this",
@@ -915,8 +952,9 @@ def main():
         if name == "class-map-record-nested-constructor-direct":
             preparation_refusals += check_constructor_publication_inputs(args, structured, manifest)
         if name.startswith("class-map-record-") and name in POSITIVES:
-            # Super normalization removes the imported ReferenceError guards;
-            # the inherited source still constructs its Map and leaf record.
+            # Normalizing super() removes the imported ReferenceError guards;
+            # the inherited source still constructs its Map and the derived
+            # class's record.
             constructions = (
                 2
                 if name
@@ -928,7 +966,8 @@ def main():
                 else text.count("ctjs.construct")
             )
             if name.startswith("class-map-record-nested-"):
-                # Exact routing erases only the outer Map, preserving all owners.
+                # Preparation removes only the outer Map construction; every
+                # record that owns a child stays.
                 constructions -= 1
             if name in (
                 "class-map-record-nested-conditional-repeat",
@@ -1067,8 +1106,9 @@ def main():
             )
             preparation_refusals += 1
         if name == "inherited-method":
-            # A fresh leaf prototype may precede the base's method producers.
-            # Preparation must insert inherited slots after those definitions.
+            # Move the derived class's prototype ahead of the base's method
+            # definitions: preparation must still insert inherited slots after
+            # those definitions.
             text = structured.read_text()
             objects = re.findall(r'^ +%\w+ = "ctjs.create_object"\(\)[^\n]+\n', text, re.M)
             if len(objects) != 2:
@@ -1115,14 +1155,15 @@ def main():
             ):
                 operations = ("ctjs.construct",)
             elif name == "class-map-inherited":
-                # Super guard Error constructions disappear during normalization.
+                # Normalizing super() removes the guard Error constructions.
                 operations = ("ctjs.load_upvalue",)
             elif name in (
                 "inherited-own-fields-iterate-throwing-arm",
                 "inherited-own-fields-iterate-throwing-arm-own-getter",
             ):
-                # Super normalization drops the guard's throw. The getter's stays,
-                # the dead arm keeps its writes, and dispose clears only `n`.
+                # Normalizing super() drops the guard's throw. The throwing
+                # getter's throw stays, the dead branch keeps its writes, and
+                # dispose clears only `n`.
                 operations = ()
                 if (
                     after.count("ctjs.throw") != 1
@@ -1132,8 +1173,9 @@ def main():
                 ):
                     raise RuntimeError(f"{name}: dead arm or folded snapshot changed")
             elif name == "inherited-static-getters-component-method":
-                # Super normalization drops the guard throws. W's NAME keeps its
-                # throw for B's own method; Alert's copy selects "alert".
+                # Normalizing super() removes the guard throws. Config's NAME
+                # getter keeps its throw because BaseComponent's own method can
+                # still reach it. Alert's specialized copy returns "alert".
                 operations = ()
                 if (
                     after.count("ctjs.throw") != 1
@@ -1353,11 +1395,14 @@ def main():
                     ]
                 )
                 if name == "inherited-static-getters-component-method":
-                    # Alert and its copy lower; only B's own method and W's
-                    # throwing NAME, which no B instance reaches, stay refused.
+                    # Alert and its specialized copy lower to native code.
+                    # Only BaseComponent's own method and Config's throwing
+                    # NAME getter are refused; no BaseComponent instance
+                    # reaches them.
                     native_text = native.read_text()
                     refused = re.findall(r"ctjs.func (?:private )?@(\w+)\$", native_text)
-                    # Private reachability pruning may drop both when optimizing.
+                    # With optimization on, pruning unreachable private
+                    # functions may drop both.
                     if (
                         sorted(refused) not in (["fn", "fn"], [] if optimize else None)
                         or len(REFUSAL.findall(native_text)) != len(refused)

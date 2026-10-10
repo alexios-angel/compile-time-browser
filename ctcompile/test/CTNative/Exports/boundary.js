@@ -1,6 +1,6 @@
 /* beautify ignore:start */
-// Four imported functions. The entire startup prefix is understood, but
-// publication still needs a native owner and a live proof of future callees.
+// Imports as four functions. Host-prefix analysis understands all of startup, but the
+// published table still needs a native owner and a proof of every later callee.
 var host = {};
 (function(factory) {
     host.slot = factory();

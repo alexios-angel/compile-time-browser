@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Check transactional private Map state; source methods stay runtime."""
+"""Check that the host-prefix specializer follows a factory-private Map.
+
+Each case builds a factory whose methods wrap one private `new Map`, calls
+them through `host.slot`, and checks that the specializer summarizes each
+completed call with the right result, read and mutation counts and Map
+identity, stops at the expected boundary, and publishes no facts when it
+cannot prove the Map stays private. Source method bodies must never be
+rewritten. Node is the oracle for every observed value.
+"""
 
 import argparse
 from dataclasses import dataclass, field
@@ -31,6 +39,21 @@ METHODS = {
 
 @dataclass
 class Case:
+    """One generated program and its expected specializer report.
+
+    steps: (JS expression, expected value) pairs; None runs it unobserved.
+    extra_methods: methods added to or replacing METHODS, {name: (params, body)}.
+    setup / before: JS placed after the factory / before the prelude.
+    twice: call the factory twice (`first` and `host.slot`).
+    mutable: declare the Map with `let` instead of `const`.
+    completed: summarized provider calls expected (default: every observation).
+    calls: resolved calls expected (default derived in check_report).
+    boundary: function the analysis must stop at, or None.
+    invalid: the report must carry no facts at all.
+    error: Node exception name expected, e.g. "TypeError".
+    literalize: fold literal 0/0 and -0 into constants (see literalize_keys).
+    """
+
     name: str
     steps: list
     extra_methods: dict = field(default_factory=dict)
@@ -421,6 +444,7 @@ def cases():
 
 
 def primitive(value):
+    """`value` in the {kind, value} encoding that the NODE driver prints."""
     if isinstance(value, dict):
         return value
     if isinstance(value, bool):
@@ -439,6 +463,8 @@ def primitive(value):
     return {"kind": "string", "value": value}
 
 
+# Node driver: runs the program in a fresh vm context and prints the error
+# name and the requested globals in the `primitive` encoding.
 NODE = r"""const fs = require('node:fs');
 const vm = require('node:vm');
 const input = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -460,6 +486,7 @@ process.stdout.write(JSON.stringify({node: process.version, error, observations}
 
 
 def oracle(node, folder, case, js):
+    """Run `js` in Node and require the case's error and observations."""
     driver = folder / "node.cjs"
     specification = folder / "node-input.json"
     driver.write_text(NODE)
@@ -479,6 +506,7 @@ def oracle(node, folder, case, js):
 
 
 def attribute(text):
+    """Decode a printed #ctjs constant attribute into the `primitive` encoding."""
     if text == "#ctjs.undefined":
         return UNDEFINED
     if text == "#ctjs.null":
@@ -496,9 +524,12 @@ def attribute(text):
 
 
 def literalize_keys(text):
-    # This fixture tests Map key equality rather than primitive precomputation.
-    # Preserve the Node source, but normalize only its literal 0/0 and -0 in
-    # the script entry to exact CTJS constants before the checked fingerprint.
+    """Replace the script's literal `0 / 0` and `-0` with NaN and -0 constants.
+
+    The same_value_zero case tests Map key equality, not constant folding, so
+    only the prepared IR is rewritten (Node still runs the original source).
+    This happens before the manifest fingerprints the IR.
+    """
     pattern = r"ctjs\.func @_script_\$0\(.*?(?=\n  ctjs\.func |\n})"
     match = re.search(pattern, text, re.S)
     if not match:
@@ -511,12 +542,14 @@ def literalize_keys(text):
         if found[2] not in zeroes or found[3] not in zeroes:
             raise RuntimeError("fixture normalization encountered nonzero division")
         changed["nan"] += 1
+        # 9221120237041090560 is 0x7FF8000000000000, the IEEE-754 quiet NaN.
         return f"{found[1]} = ctjs.constant #ctjs.number<9221120237041090560>"
 
     def negation(found):
         if found[2] not in zeroes:
             raise RuntimeError("fixture normalization encountered nonzero negation")
         changed["zero"] += 1
+        # 9223372036854775808 is 0x8000000000000000, the IEEE-754 -0.0.
         return f"{found[1]} = ctjs.constant #ctjs.number<9223372036854775808>"
 
     body = re.sub(r"(%\w+) = ctjs.binary div (%\w+), (%\w+)", division, body)
@@ -527,6 +560,7 @@ def literalize_keys(text):
 
 
 def contract(opt, ir, extra_observations=(), intrinsics=("Map",)):
+    """A host manifest for `ir` observing every `traceN` global it stores."""
     observations = sorted(set(re.findall(r'ctjs.store_global "(trace\d+)"', ir.read_text())))
     observations += extra_observations
     if not observations:
@@ -540,6 +574,7 @@ def contract(opt, ir, extra_observations=(), intrinsics=("Map",)):
 
 
 def specialize(opt, ir, manifest, path, **options):
+    """prefix.specialize with stale outputs removed and a report required."""
     path.with_suffix(".report.json").unlink(missing_ok=True)
     path.with_suffix(".out.mlir").unlink(missing_ok=True)
     report, output, result = prefix.specialize(opt, ir, manifest, path, **options)
@@ -591,6 +626,7 @@ def budget_threshold(args, source, manifest, options, label, no_facts, complete)
 
 
 def no_facts(report, label):
+    """Require an invalid report that publishes no usable fact."""
     fields = (
         "selected_branches",
         "resolved_calls",
@@ -606,6 +642,7 @@ def no_facts(report, label):
 
 
 def check_report(case, report, before, after):
+    """Check the specializer's report and its output IR against `case`."""
     if case.invalid:
         no_facts(report, case.name)
         return
@@ -613,6 +650,8 @@ def check_report(case, report, before, after):
         raise RuntimeError(f"{case.name}: wrong complete-host boundary: {report}")
     rows = report["provider_calls"]
     expected_count = case.summaries()
+    # By default every summarized call and every factory() call adds one
+    # resolved call to a fixed one.
     expected_calls = (
         case.calls if case.calls is not None else expected_count + (2 if case.twice else 1) + 1
     )
@@ -680,8 +719,8 @@ def check_report(case, report, before, after):
     ):
         if before.count(operation) != after.count(operation):
             raise RuntimeError(f"{case.name}: runtime {operation} changed")
-    # The caller may be rewritten; no source method, including mutation/error
-    # branches that this particular invocation did not take, may be rewritten.
+    # The caller may be rewritten, but no source method may be, including the
+    # mutation and error branches this invocation did not take.
     for name in METHODS | case.extra_methods:
         pattern = r"ctjs\.func @" + name + r"\$\d+\(.*?(?=\n  ctjs\.func |\n})"
         if re.search(pattern, before, re.S)[0] != re.search(pattern, after, re.S)[0]:
@@ -689,6 +728,11 @@ def check_report(case, report, before, after):
 
 
 def controls(args, prepared):
+    """Negative controls on top of the per-case checks: read-only mode must not
+    follow mutations, dropping publication or read following must yield no
+    facts, a re-run on rewritten IR must not reuse old state, forged module
+    attributes must be ignored, an undeclared Map intrinsic must authorize
+    nothing, and the work-limit threshold must be sharp."""
     original, _ = prepared["replacement"]
     manifest = contract(args.opt, original)
     readonly, _, _ = specialize(
@@ -750,9 +794,9 @@ def controls(args, prepared):
     if no_provider["provider_calls"] or no_provider["runtime_provider_mutations"]:
         raise RuntimeError("an undeclared Map provider authorized mutations")
 
-    # Discover the completion threshold without copying internal step counts.
-    # Every lower work limit must withhold earlier completed summaries and any
-    # transaction-local mutations or nested allocations, including late limits.
+    # Find the completion threshold instead of copying internal step counts.
+    # Every lower work limit must withhold all summaries, mutations and nested
+    # allocations, including ones completed before the limit ran out.
     budget_case, _ = prepared["nested_identity"]
     budget_threshold(
         args,

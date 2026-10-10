@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Require immediate materialization before a Map iterator becomes a native array."""
+"""Lit test: a Map iterator lowers natively only when consumed immediately.
+
+`Array.from(map.keys())` with no intervening Map mutation becomes a native array
+snapshot. Every other use of the iterator (raw access, delayed consumption,
+consuming twice, returning it) must be refused, in every pass mode, on a rerun,
+and even when the input carries forged snapshot attributes.
+"""
 
 import re
 
@@ -8,6 +14,8 @@ from CTNative.harness import native_args, run
 
 
 def lower(args, source, name, count, passes, *, admitted=0):
+    """Run `passes` on `source` and check exactly `admitted` of `count` functions
+    became native; with none admitted, check the iterator refusal left the IR intact."""
     output = args.work / f"{name}.native.mlir"
     run([args.opt, str(source), *passes, "-o", str(output)])
     text = output.read_text()
@@ -87,8 +95,9 @@ def main():
         if node_result != f"trace={expected}\n":
             raise RuntimeError(f"{name}: Node source witness changed: {node_result}")
         vm_result = run([str(reference), str(js)]).stdout
-        # Refused sources need no native/VM equivalence claim. In particular,
-        # the VM's iterator storage/consumption semantics may keep improving.
+        # Compare the VM with Node only for these cases. Every case is refused
+        # natively, so the rest (delayed_*, twice) need no VM-equivalence check,
+        # and the VM's live-iterator semantics for them may still change.
         if name in {
             "raw_length",
             "raw_index",
@@ -116,8 +125,8 @@ def main():
         for mode in ("plain", "partial"):
             lower(args, forged, f"{name}-forged-{mode}", count, modes[mode])
 
-    # A named iterator with only inert builtin lookup before consumption is
-    # equivalent to the nested expression. Both arrays outlive Map mutation.
+    # A named iterator consumed before any Map mutation is equivalent to the
+    # nested expression and lowers natively. Both arrays outlive map.clear().
     source = (
         base + "const it = map.keys(); const keys = Array.from(it); "
         "const values = Array.from(map.values()); map.clear(); "

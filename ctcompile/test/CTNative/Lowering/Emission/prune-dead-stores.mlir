@@ -1,15 +1,15 @@
-// Part 24 Phase 63 Step 7: a variable nothing reads is erased with its
+// --ctnative-prune-dead-stores: a variable nothing reads is erased with its
 // assigns and whatever that leaves dead; a variable that is read stays.
 //
 // RUN: ctjs-opt --ctnative-prune-dead-stores %s | FileCheck %s
 // RUN: ctjs-opt '--ctnative-prune-dead-stores=report=true' %s 2>&1 | FileCheck --check-prefix=REPORT %s
 
 emitc.func @f(%a: f64) -> f64 {
-  // read after being set: stays, with its assign
+  // Read after being set: stays, with its assign.
   %kept = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
-  // set on a path, never read: goes, and the product feeding it goes with it
+  // Set on a path, never read: goes, and the product feeding it goes with it.
   %dead = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
-  // declared, never touched: goes
+  // Declared, never touched: goes.
   %unused = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<f64>
   emitc.assign %a : f64 to %kept : <f64>
   %two = "emitc.constant"() {value = 2.0 : f64} : () -> f64
@@ -19,10 +19,10 @@ emitc.func @f(%a: f64) -> f64 {
   emitc.return %r : f64
 }
 
-// THE O-3 STACK SLOT MUST SURVIVE THIS PASS. A closed-shape object literal is
+// An object literal's stack slot must survive this pass. A closed-shape object literal is
 // one emitc.variable of a class type whose uses are emitc.member, never a
-// direct assign - so "every use is an assign to it" is false and it is not
-// write-only. Pinned because the failure mode is silent: prune the slot and
+// direct assign, so "every use is an assign to it" is false and it is not
+// write-only. This is tested because the failure is silent: prune the slot and
 // the program still compiles and prints a wrong number.
 emitc.func @slot(%a: f64) -> f64 {
   %obj = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_0">>
@@ -41,7 +41,7 @@ emitc.func @slot(%a: f64) -> f64 {
 // CHECK-NOT: emitc.variable
 // CHECK-NOT: mul
 
-// AND THE SLOT, WHICH IS THE ONE VARIABLE THIS PASS MUST NEVER TOUCH.
+// The slot is the one variable this pass must never touch.
 //
 // CHECK-LABEL: emitc.func @slot
 // CHECK: %[[OBJ:.*]] = "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_shape_0">>

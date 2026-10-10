@@ -1,6 +1,6 @@
-# Primitive equality preserves source tags; loose equality converts only the
-# mixed primitive cases required by JavaScript. Original refusal witnesses run
-# unchanged in separate units so their convert declarations remain independent.
+# Primitive == and === keep each operand's JS type; == converts only in the mixed
+# primitive cases JavaScript requires. number-witness.js and boolean-witness.js
+# compile as separate units so their two convert() functions stay independent.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

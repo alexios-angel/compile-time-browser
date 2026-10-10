@@ -10,7 +10,7 @@
 // RUN: ctjs-opt %t/pending.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=PENDING
 // RUN: ctjs-opt %t/unknown.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=UNKNOWN
 // RUN: ctjs-opt %t/cycle.mlir '--ctnative-partial-evaluate=max-nodes=1' | FileCheck %s --check-prefix=BUDGET
-
+// The HEAP checks: closures.js's factories fold at compile time; makeSnapshot's cell holds 42.0.
 // HEAP-LABEL: ctjs.func private @makeRetained$1
 // HEAP-SAME: ctnative.partial_evaluated =
 // HEAP-NOT: ctjs.create_object
@@ -29,7 +29,7 @@
 // BTA-LABEL: ctjs.func private @makeRetained$1
 // BTA: ctjs.create_closure
 // BTA-SAME: ctnative.binding_time = "static"
-
+// Each split file below is one reason the pass must refuse to fold a factory.
 //--- mutable.mlir
 module {
   // MUTABLE-LABEL: ctjs.func private @factory$1
@@ -39,7 +39,7 @@ module {
   // MUTABLE: ctjs.cell_set
   ctjs.func private @factory$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
     %cell = ctjs.create_cell %u
     ctjs.cell_set %cell, %one
     ctjs.cell_set %cell, %one

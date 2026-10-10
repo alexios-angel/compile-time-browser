@@ -1,5 +1,5 @@
-// These callers deliberately supply different arguments. Only each factory's
-// initialization prefix is static; its boundary and suffix execute at runtime.
+// These callers pass different arguments on purpose. Only each `*Seed` function's prefix
+// before its argument is used runs at compile time; the rest runs natively.
 function mixedSeed(input) {
     const scratch = {
         amount: 10

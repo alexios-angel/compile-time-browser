@@ -1,13 +1,13 @@
-// THE FIRST PROGRAM THAT GOES ALL THE WAY: JavaScript in, a GC-free binary
-// out, its printed globals compared with the interpreter's - part 24 Phase
-// 62½, stages C and D together.
+// End-to-end fixture for the native (GC-free) target: JavaScript in, a binary
+// out, its printed globals compared with the interpreter's.
 //
-// No functions yet: a call needs the closed world of stage A to type its
-// parameters, and that lands on its own branch. Everything here is what
-// stage C proves today - numbers, booleans, globals, loops and branches -
-// and every global below is assigned before it is read, because an
-// unassigned numeric global is NaN natively and `undefined` in the
-// interpreter, which the reference prints differently on purpose.
+// Numbers, booleans, globals, loops and branches, with no functions. Every
+// global below is assigned before it is read, because an unassigned numeric
+// global is NaN natively and `undefined` in the interpreter, which the
+// reference prints differently on purpose.
+//
+// globals.test runs it through the native differential pipeline (Native.cmake).
+
 var total = 0;
 var count = 0;
 while (count < 10) {
@@ -17,11 +17,11 @@ while (count < 10) {
 var ratio = total / count;
 var neg = -ratio;
 var big = 2 ** 31;
-// `**` IS NOT std::pow. Number::exponentiate answers NaN when the base has
-// magnitude one and the exponent is NaN or infinite; C++ answers 1. Undefined
-// is this tier's NaN, so `1 ** undefined` reaches the same difference from
-// ordinary JavaScript. Both of these printed 1 natively and NaN in the
-// interpreter, on a program nothing refused.
+// `**` is not std::pow. Number::exponentiate answers NaN when the base has
+// magnitude one and the exponent is NaN or infinite, where C++ answers 1.
+// Undefined is NaN in native code, so `1 ** undefined` would reach the same
+// difference from ordinary JavaScript. These globals check that the native
+// code prints NaN, as the interpreter does.
 var one_to_nan = 1 ** (0 / 0);
 var one_to_inf = 1 ** (1 / 0);
 var minus_one_to_inf = (0 - 1) ** (1 / 0);

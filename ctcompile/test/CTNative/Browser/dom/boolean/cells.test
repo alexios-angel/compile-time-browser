@@ -1,2 +1,2 @@
-# One owner-local Boolean is shared by exact synchronous borrowed-cell helpers.
+# A local Boolean captured by synchronous DOM helper closures lowers to a native scalar.
 # RUN: python3 %S/cells.py %dom_driver --node %node --reference %native_reference

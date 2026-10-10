@@ -1,11 +1,16 @@
-"""sources map keys: continued from sources_map_key_mutations."""
+"""Object-argument Map key cases for the global_maps ownership tests.
+
+Builds on map/key_mutations.py.
+"""
 
 from .key_mutations import *
 
 
 def object_argument_cases():
-    # Keep the exact 20d4806e continuation, including the entry allocation and
-    # Bootstrap's t.has(e). A discarded allocation is a separate owner boundary.
+    # This is the object_argument_exact source, pinned by its sha256 (20d4806e...)
+    # at the end of this function. It reproduces Bootstrap's `t.has(e)` lookup on
+    # an object the caller allocates. A variant that discards that allocation is
+    # a different ownership case and needs its own row.
     base = """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
@@ -213,7 +218,8 @@ var trace = host.slot.get({});
         True,
     )
     rows["object_argument_object_payload"]["object_payload"] = True
-    # A scalar key cannot retain the caller's object if its payload owner is lost.
+    # Storing the caller's object as the payload of a scalar key keeps it alive
+    # only while that entry owns it; erase() and clear() drop the owner.
     payload = named.replace(
         "return { get(e) { return t.has(e) ? 1 : 0; } };",
         """return {
@@ -294,7 +300,8 @@ var trace = host.slot.get({});
     var trace = host.slot.get(alias);
 }""",
     )
-    # Keep both the original block-const source and its true-global companion.
+    # Two pinned variants: `key` declared with block-scoped const, and the same
+    # source with a true global `var key`.
     add("siblings_named", siblings, 15, 11, True, functions=7)
     add(
         "siblings_global",
@@ -331,7 +338,8 @@ var trace = host.slot.get({});
         0,
         functions=7,
     )
-    # Keep the original five-function setter/getter refusal source and name.
+    # Reuse the five-function setter/getter source from parameter_refusals()
+    # under its existing row name; its digest is pinned below.
     historical = parameter_refusals()["parameter_object"]
     rows["parameter_object"] = dict(
         source=historical,
@@ -346,6 +354,9 @@ var trace = host.slot.get({});
     assert rows["parameter_object"]["sha256"] == (
         "7b592b8354bb285a71e0b9fc72ab6f811c567156b1f6294f06bab9fcd0fa135c"
     )
+    # These sources are pinned by sha256 so that rows and recorded results keyed
+    # on them cannot drift silently; editing a pinned source means updating its
+    # digest deliberately.
     assert rows["object_argument_key_write"]["sha256"].startswith("7381e2fb")
     assert rows["object_argument_seeded"]["sha256"].startswith("5eba229d")
     assert rows["object_argument_siblings_named"]["sha256"] == (

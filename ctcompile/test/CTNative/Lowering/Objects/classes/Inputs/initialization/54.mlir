@@ -1,5 +1,5 @@
-// Every construction of a class nothing extends passes an actual with the same
-// truthiness, so the constructor arm on that formal runs the same way each time.
+// Every `new` of a class nothing extends passes an argument with the same truthiness,
+// so the constructor's branch on that parameter goes the same way each time.
 //--- own-fields-branch-decided-falsy.js
 function own_fields_branch_decided_falsy() {
     class Shape {
@@ -10,7 +10,7 @@ function own_fields_branch_decided_falsy() {
 }
 var a = own_fields_branch_decided_falsy();
 
-// Both actuals are truthy: the field is always present.
+// Both arguments are truthy: the field is always present.
 //--- own-fields-branch-decided-truthy.js
 function own_fields_branch_decided_truthy() {
     class Shape {
@@ -21,7 +21,7 @@ function own_fields_branch_decided_truthy() {
 }
 var a = own_fields_branch_decided_truthy();
 
-// Actuals that disagree leave the arm to run time.
+// Arguments that disagree leave the branch to be decided at run time.
 //--- own-fields-branch-decided-mixed.js
 function own_fields_branch_decided_mixed() {
     class Shape {
@@ -32,7 +32,7 @@ function own_fields_branch_decided_mixed() {
 }
 var a = own_fields_branch_decided_mixed();
 
-// A class that is extended has constructions through super as well.
+// An extended class is also constructed through super(), and those calls count too.
 //--- inherited-own-fields-branch-decided-extended.js
 function inherited_own_fields_branch_decided_extended() {
     class Shape {

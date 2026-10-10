@@ -1,3 +1,11 @@
+//===- DOM/IteratorClose.h - Iterator close normalization -------*- C++ -*-===//
+//
+// Host-contract tests for normalizeDOMIteratorClose, which turns a
+// try/catch-wrapped `__ctbrowser_iter_close` call into a ctjs.invoke.
+// Included by HostContract.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -7,8 +15,16 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Checks normalizeDOMIteratorClose: a `__ctbrowser_iter_close` call inside a
+/// try whose catch ignores the error is rewritten into a single ctjs.invoke
+/// with both outcomes resuming, under both DOM providers. Variants that
+/// observe the error, change the abrupt flag, add effects, exhaust the step
+/// budget or lack the host-contract prerequisites must leave the module
+/// unchanged.
 inline void checkDOMIteratorClose(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
+    // #ctjs.number<4607182418800017408> is the bit pattern of 1.0 (and
+    // 4611686018427387904 below is 2.0); the checks read them back as doubles.
     const std::string source = R"MLIR(
 module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {

@@ -1,2 +1,2 @@
-# Element query snapshots retain document-owned identities and static membership.
+# querySelectorAll snapshots keep element identity and do not change as the DOM changes.
 # RUN: python3 %S/query_all.py %dom_driver

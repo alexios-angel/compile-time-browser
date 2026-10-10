@@ -1,6 +1,6 @@
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc --ctnative-lower-to-emitc | FileCheck %s
-// Input identity/field tags cannot authorize prototype mutation.
+// Forged identity and field-group attributes must not admit a key whose __proto__ is set.
 module {
   // CHECK: ctjs.func @open_key
   // CHECK-SAME: ctnative.not_native =

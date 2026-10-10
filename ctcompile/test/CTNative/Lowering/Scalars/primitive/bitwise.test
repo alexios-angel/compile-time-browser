@@ -1,5 +1,5 @@
-# Number bitwise operators use JavaScript 32-bit conversion and masked shifts.
-# Other admitted primitives convert through the existing typed Number boundary.
+# Number bitwise operators use JavaScript 32-bit conversion and masked shifts. Other
+# primitives convert with ToNumber first; BigInt, Symbol and object operands are refused.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

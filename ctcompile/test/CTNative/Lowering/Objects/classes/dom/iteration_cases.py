@@ -1,4 +1,13 @@
-"""class dom iteration cases: continued from class_dom_cases."""
+"""Class + DOM dataset-iteration test cases for the class lowering test.
+
+Continues cases.py (imported with *) and is continued by text_cases.py.
+Each *_CASES entry maps a test name to (JS function body, expected bits): the
+bits are the expected truthiness of the result when the element's `x`
+attribute is null, '', 'a\\0b' and '\\u00e9' (see basics.py check_oracles).
+Each *_REFUSALS entry maps a test name to a body the compiler must refuse.
+Several entries move from a *_REFUSALS dict to a *_CASES dict with .pop()
+once the compiler can prove them.
+"""
 
 from CTNative.Lowering.Objects.classes.dom.cases import *
 
@@ -46,7 +55,9 @@ FILTER_REFUSALS = {
         "const count =", "datasetKeys({}); const count ="
     ),
 }
-# Complete vendor H stays a refusal until every original holder slot is proved.
+# BOOTSTRAP_H is Bootstrap's data-attribute helper object `H`, copied
+# verbatim. FULL_H calls only getDataAttribute and is still refused: H's other
+# methods are never called, so their parameters cannot be proved.
 BOOTSTRAP_H = """    const H = {
         setDataAttribute(t, e, i) {
             t.setAttribute(`data-bs-${F(e)}`, i)
@@ -79,7 +90,9 @@ FULL_H = (
 """
 )
 FILTER_REFUSALS["class_filter_full_h"] = FULL_H
-# Original H slot and M/F bodies, with a class result supplying the source observation.
+# Bootstrap's getDataAttribute with its M (value normaliser) and F (key
+# normaliser) helpers unchanged; the attribute name passed in comes from a
+# class method's result.
 H_CAPTURE_CLASS = (
     ATTRIBUTE_HELPERS
     + CLASS
@@ -132,7 +145,7 @@ H_CAPTURE_CASES["class_h_capture_later_key"] = (
     H_CAPTURE_REFUSALS.pop("class_h_capture_later_key"),
     "1000",
 )
-# The class method is the original H slot's only caller.
+# The class method is the only caller of Bootstrap's H.getDataAttribute.
 H_OBJECT_CLASS = (
     ATTRIBUTE_HELPERS
     + """class Shape {
@@ -288,8 +301,9 @@ FILTER_CASES["class_holder_conditional_use"] = (
     FILTER_REFUSALS.pop("class_holder_conditional_use"),
     "1000",
 )
-# Bounded composition: original M and predicate share one slot's callee.
-# Complete H's dynamic-key loop and unused slots remain separate proof obligations.
+# A single holder method that calls both Bootstrap's M and the dataset filter
+# predicate. Bootstrap's full H (with its dataset-key loop and unused
+# methods) is covered separately, by class_filter_full_h.
 H_COMBINED_CLASS = (
     BOOTSTRAP_M
     + """const H = {
@@ -495,8 +509,9 @@ DYNAMIC_REFUSALS.update(
         ),
     }
 )
-# Direct entry helpers use the same original callback and receiver census as
-# captured helpers; argument effects and returned snapshots keep source order.
+# A plain top-level helper function gets the same checks on its callback and
+# `this` as a helper stored on an object; side effects in its arguments and
+# its saved results must stay in source order.
 DYNAMIC_HELPER_METHOD = (
     "function readDataset(t) { " + DYNAMIC_BODY + "}\n"
     "class Shape { constructor(t) { this.element = t; } "
@@ -560,7 +575,8 @@ DYNAMIC_REFUSALS.update(
         ),
     }
 )
-# Each sequential iterator reuses the complete proof of its original prefix.
+# Calling the same dataset-loop helper several times in a row is supported:
+# each call is proved like the first.
 for name in (
     "class_dynamic_repeated",
     "class_dynamic_method_repeated",
@@ -662,8 +678,9 @@ DYNAMIC_REFUSALS.update(
         ).replace("const keys =", "if (t.hasAttribute('skip')) return ''; const keys ="),
     }
 )
-# Conditional prefixes retain their original guards; the complete entry still
-# proves both arms and their joined state before publishing native code.
+# An early `return` guarded by a condition before the loop is accepted: the
+# compiler keeps the guard and checks both branches. The bits differ for the
+# inverse guard, which returns '' when x is null.
 for name, bits in (
     ("class_dynamic_parameter_early", "1000"),
     ("class_dynamic_helper_early", "1000"),
@@ -674,7 +691,8 @@ for name, bits in (
     ("class_dynamic_conditional_nested_loop", "1000"),
 ):
     DYNAMIC_CASES[name] = (DYNAMIC_REFUSALS.pop(name), bits)
-# Repeated helpers keep their identity and saved results across branch transport.
+# A helper called again inside conditional branches stays the same function,
+# and a result saved before the branch is still correct after they rejoin.
 CONDITIONAL_SEQUENTIAL = DYNAMIC_REFUSALS.pop("class_dynamic_conditional_sequential")
 DYNAMIC_CASES.update(
     {
@@ -752,8 +770,9 @@ DYNAMIC_REFUSALS.update(
         ),
     }
 )
-# Dataset keys are Strings, but their contents are unknown during compilation.
-# Keep the entire original F, including the callback, in every specimen.
+# Dataset keys are strings whose contents are unknown at compile time. Every
+# case keeps Bootstrap's F (camelCase-to-kebab key normaliser) unchanged,
+# including its replace callback.
 F_DATASET = strings.BOOTSTRAP_F + DYNAMIC_HOLDER.replace(
     "joined = joined + t.dataset[n] + '|';", "joined = joined + F(n) + '|';"
 ).replace("=== 'value|'", "=== 'bs-toggle|'")
@@ -802,7 +821,9 @@ F_DATASET_REFUSALS = {
     "class_f_dataset_pattern_changed": F_DATASET.replace("/[A-Z]/g", "/[a-z]/g"),
     "class_f_dataset_flags_changed": F_DATASET.replace("/[A-Z]/g", "/[A-Z]/gi"),
 }
-# Mutation inside a traversal still needs the existing backedge alias proof.
+# Writing an attribute inside the dataset loop is still refused: the compiler
+# cannot yet prove the write does not change the keys being iterated. Writing
+# after the loop is accepted.
 F_DATASET_REFUSALS["class_f_dataset_saved"] = F_DATASET_CASES.pop("class_f_dataset_saved")[0]
 F_DATASET_CASES["class_f_saved_after_loop"] = (
     F_DATASET.replace(

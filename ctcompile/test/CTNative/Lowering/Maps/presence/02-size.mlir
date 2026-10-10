@@ -1,7 +1,7 @@
-// Keep every reaching path in refusal controls; default specialization can
-// prove the single closed call even when a different argument would fail.
+// A nested `outer.get(k).size` is native only if Map size/clear/delete prove k is present on
+// every reaching path. PRESENCE refusals use optimize=false, or specializing probe() could prove k.
 // RUN: split-file %s %t
-// The sole closed flag selects a safe path under the default pipeline.
+// Default pipeline: the only call fixes `flag`, so the get is proved and result must be 1.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/zero_one_clearing_arm.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/selected.mlir
 // RUN: FileCheck %s --check-prefix=ZERO --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/selected.mlir
 // RUN: %compilation_unit --module %t/selected.mlir --js %t/zero_one_clearing_arm.js --work %t/selected --name zero_one_clearing_arm

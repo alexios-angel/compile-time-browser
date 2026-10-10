@@ -1,4 +1,12 @@
-"""Execute checked published Map methods and live primitive results without the VM."""
+"""lit driver for the global-Map ownership tests.
+
+Each positive program publishes a global Map through host methods. It is
+compiled to native C++ without the script VM, built and run, and its output is
+compared with Node and the reference interpreter. The controls then check that
+the lowering refuses what it cannot prove: no manifest, a stale fingerprint
+(source edited after the proof), forged proof attributes, a rerun on
+already-lowered output, and too small a step budget.
+"""
 
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -19,15 +27,16 @@ def parallel(function, items):
 
 
 def main():
+    """Run one --group, or else every positive program and then CONTROLS."""
     args, node, reference, compilers, nm = setup()
     if args.group:
         GROUPS[args.group](args, node, reference, compilers, nm)
         return
     positives = positive_cases()
     check_source_observations(args, node, reference, positives)
-    # Four hundred independent programs, each built by both compilers in both
-    # layouts, and every file one of them writes is named for it - but they
-    # are one lit case, so lit's pool cannot spread them.
+    # Several hundred independent programs, each built by both C++ compilers in
+    # both layouts and writing only files named after itself. They are one lit
+    # case, so lit cannot spread them across CPUs; run them in parallel here.
     saved = dict(
         zip(
             positives,
@@ -314,7 +323,8 @@ def ordinary_controls(args, node, reference, compilers, nm, positives, saved):
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         methods.refused(args, rejected, name, fresh)
-    # Preserve the historical source and observe its actual Undefined tag.
+    # Keep this source unchanged: it returns state.get('missing'), and the
+    # observed trace must be the real `undefined`.
     for name, body in {
         "nullable_result": "state.set('x', 1); return state.get('missing');",
     }.items():
@@ -646,7 +656,8 @@ def size_refusals(args, node, reference, compilers, nm, positives, saved):
 
 
 def mixed_reads(args, node, reference, compilers, nm, positives, saved):
-    """Historical String fields, mixed nullable reads and the missing return result."""
+    """String-field carrier programs, mixed nullable Map reads, and a getter with
+    no return statement (its implicit undefined is used as a Map key)."""
     check_historical_string_field_carriers(args, positives, node, reference, compilers, nm)
     # A result contract does not narrow Map storage or supply an implemented
     # callable signature. Preserve the prepared producer/consumer operands.
@@ -750,8 +761,9 @@ def mixed_reads(args, node, reference, compilers, nm, positives, saved):
                     admitted=0,
                 )
                 check_call_preservation(forged_text, rerun.read_text(), forged_name + "-rerun")
-    # Preserve the original implicit Undefined result and both live uses as
-    # Map keys. The final size distinguishes one shared key from fresh values.
+    # The getter has no return, so it yields undefined; both uses of that
+    # result are Map keys. The final size tells one shared key from two fresh
+    # ones.
     js, missing, count = boundary.prepare(
         args,
         "result_missing_return",

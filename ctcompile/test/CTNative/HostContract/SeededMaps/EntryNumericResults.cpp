@@ -1,7 +1,20 @@
+//===- EntryNumericResults.cpp - Map results in arithmetic ------*- C++ -*-===//
+//
+// Host-contract proofs for Map setter results that the entry function feeds
+// through Number arithmetic into later setter calls.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Rewrites \p shared so put$3 takes its key as a parameter and the entry adds
+/// the results of several `put` calls before passing the sum to another `put`.
+/// Checks HostContractAnalysis proves exactly the Number cases, refuses
+/// non-Number operands, and withholds the proof under out-of-scope IR edits
+/// and every step budget short of completion. Runs on the source form and the
+/// prepared (call_direct) form. 4607182418800017408 is the IEEE-754 bit
+/// pattern of 1.0.
 void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & shared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     const std::string setterName = "put$3";
@@ -29,6 +42,8 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
     source = replaced(source, "    ctjs.store_global \"trace\", %answer",
                       "    %combined = ctjs.binary add %sum, %thirdResult\n"
                       "    ctjs.store_global \"trace\", %combined");
+    // mapContractFor, plus `savedSum` as an observed global when the module
+    // stores one.
     const auto requested = [](mlir::ModuleOp module) {
         auto contract = mapContractFor(module);
         module.walk([&](ctjs::StoreGlobalOp store) {
@@ -63,6 +78,7 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                 program = replaced(program, call, direct);
             }
         }
+        // IR text for one more `put` call named \p name with argument \p actual.
         const auto invoke = [&](const std::string & name, const std::string & actual) {
             std::string text = "    %" + name + "Putter = ctjs.get_property %owned[%putKey]\n";
             if (prepared) {
@@ -83,6 +99,9 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                                     "    %savedSum = ctjs.load_global \"savedSum\"\n");
         saved = replaced(saved, thirdActual,
                          prepared ? "%thirdPutterEnv, %savedSum)" : "%owned, %savedSum)");
+        // Checks a proved query has \p count callable edges in source order, each
+        // setter edge typed Number (or untyped when \p mixedObject, where one
+        // actual is a fresh object).
         const auto census = [&](mlir::ModuleOp module, const HostContractAnalysis & query,
                                 unsigned count, bool mixedObject = false) {
             const auto edges = query.callables();
@@ -166,6 +185,8 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                          prepared ? "%thirdPutterEnv, %actual)" : "%owned, %actual)"),
                 true, "ordinary entry arithmetic does not require a result-fed method argument");
         for (const bool before : {false, true}) {
+            // The Number constants are +0, -0.0, quiet NaN and +Infinity; all are
+            // Numbers. A fresh object is accepted too but leaves the formal untyped.
             for (const auto & [definition, expected] :
                  {std::pair{"ctjs.constant #ctjs.number<0>", true},
                   {"ctjs.constant #ctjs.number<9223372036854775808>", true},
@@ -215,9 +236,12 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
             variant(replaced(program, "    %combined =", branch + "    %combined ="), false,
                     "an unknown Number category cannot select a branch and hide an invalid call");
         }
+        // One row per variant() call above; update this when adding a case.
         check(rows == 41,
               "all numeric categories, saved operands and complete-census controls ran");
 
+        // Move an operand of the outer addition, or of the else-arm addition, to a
+        // value defined only in the then-arm; the proof must be withdrawn.
         unsigned scopeMutations = 0;
         for (const std::string selector : {"unknown", "true", "false"}) {
             for (const bool sibling : {false, true}) {
@@ -288,9 +312,9 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                 }
             }
         }
-        // An scf.if result owns a value only through correctly scoped yield
-        // operands. Constant source conditions cannot authorize a sibling's SSA
-        // definition, including when that malformed arm would be inactive.
+        // An scf.if result is valid only if each arm yields a value defined in that
+        // arm. A constant condition does not make it acceptable to yield the other
+        // arm's value, even from the arm that never runs.
         for (const char * selector : {"true", "false"}) {
             for (const bool mutateElse : {false, true}) {
                 const std::string selection =
@@ -347,9 +371,9 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                 check(HostContractAnalysis(*module, contract).proved(),
                       "restoring the exact original yield repairs the independent proof");
                 ++scopeMutations;
-                // Clone the valid i1 producer into the then arm. It cannot
-                // become the enclosing conditional's own condition, even when
-                // its operand still denotes the same constant Boolean.
+                // Clone the condition's producer into the then-arm. It cannot
+                // become the enclosing scf.if's own condition, even though its
+                // operand is the same constant Boolean.
                 const auto originalCondition = branch.getCondition();
                 mlir::OpBuilder builder(branch.getThenRegion().front().getTerminator());
                 auto * localCondition = builder.clone(*originalCondition.getDefiningOp());
@@ -377,6 +401,8 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                 ++scopeMutations;
             }
         }
+        // 12 operand moves (3 selectors x 2 targets x 2 sources) plus 8 yield and
+        // predicate edits (2 selectors x 2 arms x 2).
         check(scopeMutations == 20,
               "all known/unknown numeric scopes, yield directions and predicate scopes ran");
         for (const auto & [text, label] : {std::pair{program, "direct"}, {saved, "saved"}}) {
@@ -385,6 +411,7 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
             auto contract = requested(*module);
             HostContractAnalysis complete(*module, contract);
             const unsigned completion = complete.steps();
+            // 18000 is a ceiling well above this fixture's step count.
             check(complete.proved() && completion < 18000,
                   "numeric dependency proof is bounded and complete");
             if (!complete.proved() || completion >= 18000) { continue; }
@@ -456,6 +483,8 @@ void checkEntryNumericResults(mlir::MLIRContext & context, const std::string & s
                 check(HostContractAnalysis(*module, contract).proved(),
                       "restoring a numeric dependency restores the whole proof");
             };
+            // Operand indices differ by form: call_direct is (this, new, callee,
+            // state, arg) and ctjs.call is (callee, this, arg).
             mutation(combined, 0, entry.getBody().front().getArgument(0));
             mutation(addition, 0, addition.getResult());
             mutation(addition, 1, lastCall->getResult(0));

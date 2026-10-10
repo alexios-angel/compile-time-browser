@@ -6,8 +6,10 @@ import re
 from CTNative.Browser.dom import dom
 from CTNative.harness import run
 
-# Codex's minimal witness: a saved alias survives delete and reinsertion and
-# writes through to the original owner, around a real DOM write.
+# The base program: a record read back from the Map (`saved`) must stay an
+# alias of the original object after the key is deleted and reinserted, so
+# writing through it updates `first`; a real DOM write sits in between. The
+# @...@ placeholders are filled per case in CASES.
 WITNESS = """const state = new Map();
   @DECL@
   const first = @MAKE7@;
@@ -41,7 +43,8 @@ CASES = {
   element.setAttribute('x', 'done');
   const present = state.has(element);
   return first.n === 8 && present;""",
-    # The record may be built before its Map, as class publication leaves it.
+    # The record may be created before its Map, which is the order a class
+    # constructor that stores `this` into a Map produces.
     "late-map": """const first = {n: 7};
   const state = new Map();
   state.set('x', first);
@@ -60,6 +63,9 @@ CASES = {
   return first.count === 3 && other.on === false && present;""",
 }
 
+# C++ appended to each standalone native test: call the compiled entry with the
+# element, an alias of it and an element from another document, then check the
+# attribute write landed.
 CHECKS = r"""
         (void)classes;
         (void)pressed;
@@ -71,6 +77,8 @@ CHECKS = r"""
 """
 
 LITERAL = CASES["literal"]
+# Variants of the literal case the native lowering must refuse: name -> (source,
+# expected diagnostic substring, or None when any refusal will do).
 BAD = {
     "returned": (
         LITERAL.replace("return a === 8 && b === 9;", "return first;"),
@@ -137,9 +145,12 @@ BAD = {
 
 
 def source(body):
+    """Wrap `body` as the entry function `probe(element)`."""
     return "function probe(element) {\n  " + body + "\n}\n"
 
 
+# A plain-object stand-in for an element, passed to probe() by the Node and
+# VM oracles.
 ELEMENT = (
     "{attributes: {}, setAttribute(k, v) { this.attributes[k] = String(v); },"
     " getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; }}"
@@ -147,6 +158,7 @@ ELEMENT = (
 
 
 def intrinsics(body):
+    """Return the intrinsics the host contract must declare for `body`."""
     return (["__ctbrowser_class_defined"] if "class " in body else []) + ["Map"]
 
 

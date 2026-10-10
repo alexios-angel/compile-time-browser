@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Execute static bound-document snapshots against public DOM/Style."""
+"""Compile document.querySelectorAll, read through an alias of `document`, to
+native code and run it against the public DOM and Style libraries, for both
+parameter orders, both DOM providers and with and without optimization.
+Bad manifests and the programs in REFUSALS must be refused."""
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.document.basics import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
@@ -168,6 +171,8 @@ OWNED_CHECKS = r"""
         }
 """
 
+# The element-query refusals rewritten to query `document`, plus ways to
+# replace or alias `document` and its method that the compiler must refuse.
 REFUSALS = {
     name: body.replace("element.querySelectorAll", "document.querySelectorAll")
     for name, body in ELEMENT_REFUSALS.items()
@@ -215,6 +220,7 @@ def main():
             dom.standalone(args, native, name, client, compilers, includes, libraries)
             missing = dict(manifest)
             del missing["current_document_parameter"]
+            # Each bad manifest or zero step budget must be refused.
             for suffix, bad, budget in (
                 ("unbound", missing, None),
                 ("stale", dict(manifest, module_sha256="0" * 64), None),
@@ -237,7 +243,7 @@ def main():
         )
         manifest["current_document_parameter"] = 0
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2
+        refusals += 2  # dom.refuse lowers with and without optimization.
     print(
         f"Document.querySelectorAll: 32 native executions, {refusals} refusals; DOM/Core/Style only"
     )

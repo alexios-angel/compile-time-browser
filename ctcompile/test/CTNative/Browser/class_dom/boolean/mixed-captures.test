@@ -1,2 +1,2 @@
-# Consume fixed Boolean slots only after the complete original mutable-state proof.
+# Callbacks capturing fixed Boolean constants and one shared mutable cell compile natively.
 # RUN: python3 %S/mixed_captures.py %dom_driver --node %node --reference %native_reference

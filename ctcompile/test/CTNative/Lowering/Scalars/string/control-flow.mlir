@@ -1,8 +1,8 @@
 // CFG structuring can use one poison for dead slots with different carriers.
 // Verification must succeed before canonicalization can remove those slots.
 // In particular, an empty string in one slot must not retype a numeric use of
-// the same poison. While backedges target before-region arguments, whose
-// types may differ from the results at the same index.
+// the same poison. Backedges also target the scf.while before-region
+// arguments, whose types may differ from the results at the same index.
 //
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc=optimize=false | FileCheck %s --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func --implicit-check-not=ub.poison
 // RUN: ctjs-opt %s "--pass-pipeline=builtin.module(ctnative-lower-to-emitc{optimize=false}, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" | ctjs-translate --mlir-to-cpp > %t.cpp
@@ -75,7 +75,7 @@ ctjs.func @while_backedge$3(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %result#1
 }
 
-// Use the SAME SSA string as a field key and returned data. Two source-level
+// Use the same SSA string as a field key and returned data. Two source-level
 // literals could import as separate constants and miss the erasure defect.
 // CHECK-LABEL: emitc.func @key_data_5() -> !emitc.opaque<"ctnative::js_string">
 ctjs.func @key_data$5(%receiver: !ctjs.value, %new_target: !ctjs.value,
@@ -156,7 +156,7 @@ ctjs.func @control_poison$7(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %result
 }
 
-// The before region changes the backedge even when after only yields.
+// The before region changes the backedge even when the after region only yields.
 // CHECK-LABEL: emitc.func @empty_after_8() -> !emitc.opaque<"ctnative::js_num">
 ctjs.func @empty_after$8(%receiver: !ctjs.value, %new_target: !ctjs.value,
                         %callee: !ctjs.value) -> !ctjs.value

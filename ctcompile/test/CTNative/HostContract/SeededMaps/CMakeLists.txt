@@ -1,3 +1,6 @@
+# One test executable for the host-contract Map result proofs. Main.cpp builds
+# the shared captured-Map fixture from ../Fixtures.h and runs the checks in
+# Tests.h.
 ctcompile_test_sources(ctcompile-test-host-contract-seeded-maps
   Main.cpp
   EntryNumericResults.cpp

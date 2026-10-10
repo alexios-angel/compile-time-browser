@@ -1,3 +1,10 @@
+//===- Main.cpp - Seeded Map host-contract test -----------------*- C++ -*-===//
+//
+// Entry point of the ctcompile-test-host-contract-seeded-maps executable. It
+// builds the shared two-method captured-Map fixture and runs each check; the
+// other checks in this directory are called from these four.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 #include "check.hpp"

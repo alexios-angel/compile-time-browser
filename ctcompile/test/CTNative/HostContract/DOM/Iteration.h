@@ -1,3 +1,11 @@
+//===- DOM/Iteration.h - DOM loop proofs ------------------------*- C++ -*-===//
+//
+// Host-contract tests for DOMEntryAnalysis and normalizeDOMIteration on
+// counted loops over `Object.keys(el.dataset)` and `el.querySelectorAll(...)`.
+// Included by HostContract.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -7,11 +15,19 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Tests DOMEntryAnalysis and normalizeDOMIteration on hand-written ctjs IR
+/// loops over element.dataset keys and querySelectorAll results. Each loop must
+/// be proved with the exact step budget it reports (every smaller budget must
+/// withhold all evidence), and each mutated variant (wrong induction, stale
+/// fingerprint, escaping snapshot, unguarded write) must be refused with no
+/// evidence left on the IR.
 inline void checkDOMIteration(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<mlir::ub::UBDialect>();
+    // A loop counting `Object.keys(element.dataset)`. In the fixtures,
+    // #ctjs.number<4607182418800017408> is the IEEE-754 bit pattern of 1.0.
     const std::string prefix = R"MLIR(
 module {
   ctjs.func @iterate$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -124,6 +140,8 @@ module {
               "nonzero starts, wrong latches, wrong indices and inexact bounds withhold evidence");
     }
 
+    // The same loop over element.querySelectorAll('.selected') instead of
+    // Object.keys(element.dataset).
     const std::string queryPrefix = R"MLIR(
 module {
   ctjs.func @iterate$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -244,8 +262,9 @@ module {
         }
     }
 
-    // Independent importer-shaped element iteration: the proxy's eager copy
-    // is bounded, while a separate observation of the NodeList stays whole.
+    // Element for-of in the shape the JS importer emits: the loop iterates a
+    // capped copy of the NodeList (`ctjs.iterable`), while the separate
+    // `length` read of the original NodeList (%aliasLength) is not capped.
     const auto iterated = replaced(replaced(replaced(queried, "ctjs.compare lt %index, %length",
                                                      "ctjs.compare lt %index, %materialized#1"),
                                             "%key = ctjs.get_property %keys[%index]",
@@ -293,6 +312,8 @@ module {
         });
         input->walk([&](ctjs::ConstantOp constant) {
             auto number = llvm::dyn_cast<ctjs::NumberAttr>(constant.getValue());
+            // Normalization caps the copied length at 2^24, the most proxy
+            // slots the VM materializes (see cappedLength in Snapshot/Bounds.h).
             caps += number && number.getDouble() == double(1U << 24);
         });
         input->walk([&](ctjs::IterableOp) { ++iterables; });
@@ -367,6 +388,8 @@ module {
         }
     }
 
+    // Copying dataset values into a fresh object (target[key] = dataset[key])
+    // must be proved to write each key at most once.
     const std::string memberRead = "%value = ctjs.get_property %dataset[%key]";
     const std::string valueSource = replaced(
         source, "        %nextCount =", "        " + memberRead + "\n        %nextCount =");
@@ -453,6 +476,8 @@ module {
         check(hostContractFingerprint(*input) == request.moduleSha256,
               "refused snapshot assignment keeps the full source");
     }
+    // Keys filtered by startsWith('bs') and stripped with /^bs/: removing that
+    // prefix keeps keys distinct only because the filter guaranteed it.
     const std::string filteredKeys = R"MLIR(
     %u = ctjs.constant #ctjs.undefined
     %rawKeys = ctjs.call %keysMethod(%Object, %dataset)

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Keep publication evidence separate from native ownership and callable proofs.
+"""Check that host-publication analysis results do not by themselves make code native.
 
-These are measured boundary tests. Update the admission expectations only when
-an explicit live consumer implements the corresponding ownership/call gate.
+A host proof or prefix rewrite says what a global holds; it does not give the
+native backend an owner for that global or a proof that a call is safe. The
+expected native/refused counts below change only when the lowering pass gains
+a consumer that supplies that ownership or call proof.
 """
 
 import json
@@ -31,6 +33,7 @@ process.stdout.write('trace=' + String(trace) + '\n');
 
 
 def prepare(args, name, source):
+    """Write `source` to <name>.js, import and prepare it, and count its functions."""
     js = args.work / f"{name}.js"
     prepared = args.work / f"{name}.prepared.mlir"
     js.write_text(source + "\n")
@@ -39,6 +42,9 @@ def prepare(args, name, source):
 
 
 def native(args, ir, name, denominator, *, claimed=0, options=""):
+    """Run native lowering on `ir` and check that exactly `claimed` of the
+    `denominator` source functions became native and every other one carries a
+    named refusal. Returns the output path and the refusal reasons."""
     output = args.work / f"{name}.native.mlir"
     host.run(
         [
@@ -63,6 +69,8 @@ def native(args, ir, name, denominator, *, claimed=0, options=""):
 
 
 def follow(args, ir, name):
+    """Run host-prefix specialization with every follow option on. Returns the
+    JSON report and the rewritten module's path."""
     contract = dict(host.manifest(args.opt, ir), initial_intrinsics=["Map"], realm_global_this=True)
     config = args.work / f"{name}.contract.json"
     report = args.work / f"{name}.prefix.json"
@@ -117,8 +125,8 @@ def main():
             raise RuntimeError(f"{name}: native refusal no longer names the table storage boundary")
         prepared[name] = ir, count, reasons
 
-    # Even a complete positive slot query does not currently own its global
-    # root. A future consumer must retain the escape verdict and supply an owner.
+    # A complete, positive host slot proof does not give the global an owner:
+    # the native refusals stay the same with the proof attributes attached.
     ir, count, reasons = prepared["scalar"]
     contract = host.manifest(args.opt, ir)
     report, reported, _ = host.analyze(
@@ -139,8 +147,8 @@ def main():
     if with_report != reasons:
         raise RuntimeError("scalar: report attributes supplied native ownership")
 
-    # Complete host analysis now identifies the actual current uncaptured
-    # getter. Its per-call evidence alone does not supply native ownership.
+    # Host analysis identifies the getter that plain_table's method table
+    # holds. That per-call proof alone does not give the table a native owner.
     ir, _, _ = prepared["plain_table"]
     report, _, _ = host.analyze(
         args.opt, ir, host.manifest(args.opt, ir), args.work / "plain-table-proof"
@@ -153,9 +161,12 @@ def main():
     ):
         raise RuntimeError(f"plain_table: missing the complete current getter proof: {report}")
 
-    # The checked source graph now reaches the owning method-table carrier and
-    # the complete native call component. The standalone/lifetime gate lives
-    # in native-owned-global-methods.py; no-manifest admission above stays 1/3.
+    # With the host manifest, all three functions of plain_table are admitted:
+    # the global method table gets an owning native slot and its getter is
+    # called natively. Execution and lifetime of that output are tested in
+    # test/CTNative/Ownership/global-methods.py. Without the manifest (above)
+    # only 1 of the 3 is admitted. A rerun on the lowered output must not reuse
+    # the manifest, because its module fingerprint no longer matches.
     config = args.work / "plain-table-proof.json"
     checked, checked_reasons = native(
         args, ir, "plain-table-owned-proof", 3, claimed=3, options=f"host-manifest={config}"
@@ -182,8 +193,9 @@ def main():
     ):
         raise RuntimeError("plain_table: semantic native mutation reused the earlier manifest")
 
-    # The complete owning graph requires an explicit standard Map identity.
-    # Source allocation, closure and publication still execute at runtime.
+    # The published fixture's owning proof needs the manifest to declare Map as
+    # the standard intrinsic. The prefix rewrite that follows must keep the
+    # allocation, closure and publication operations, which still run at runtime.
     ir, count, reasons = prepared["published"]
     complete, _, _ = host.analyze(
         args.opt, ir, host.manifest(args.opt, ir), args.work / "published-complete-proof"
@@ -257,8 +269,9 @@ def main():
     if repeated_reasons != reasons:
         raise RuntimeError("published: rerun consumed its earlier diagnostic annotations")
 
-    # A claimed complete proof copied onto the real published source is not a
-    # live export proof. Global R3 and the table's storage refusal still apply.
+    # A forged module attribute claiming a complete host proof must not be
+    # trusted: the refusals for storing into a global and for the method table's
+    # storage still apply, with the same reasons as without it.
     forged = args.work / "published-forged.mlir"
     forged.write_text(
         forge_module(

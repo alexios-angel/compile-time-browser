@@ -1,4 +1,4 @@
-// A captured three-argument helper expands before selecting its nested child.
+// A captured register(element, key, item) helper is inlined before its inner Map is chosen.
 //--- class-map-record-nested-captured-direct.js
 function probe() {
     const outer = new Map();
@@ -18,7 +18,7 @@ function probe() {
 }
 var a = probe();
 
-// Each invocation substitutes both literal keys without merging child owners.
+// Each call substitutes its own literal keys; the two inner Maps stay separate.
 //--- class-map-record-nested-captured-distinct.js
 function probe() {
     const outer = new Map();
@@ -38,7 +38,7 @@ function probe() {
 }
 var a = probe();
 
-// All called holder slots retain saved child/record owners through recreation.
+// Every Data method is called; saved inner Maps and records stay valid across remove/set.
 //--- class-map-record-nested-captured-holder.js
 function probe() {
     const outer = new Map();
@@ -62,7 +62,7 @@ function probe() {
 }
 var a = probe();
 
-// Map-only short-circuit regions retain their results after helper expansion.
+// `||` and `&&` regions that only touch Maps keep their results after inlining.
 //--- class-map-record-nested-captured-shortcircuit.js
 function probe() {
     const outer = new Map();
@@ -80,7 +80,7 @@ function probe() {
 }
 var a = probe();
 
-// Caller-controlled truth cannot select a captured helper's child topology.
+// A caller-controlled flag decides whether the helper replaces the inner Map.
 //--- class-map-record-nested-captured-dynamic-branch.js
 function probe(flag) {
     const outer = new Map();
@@ -96,7 +96,7 @@ function probe(flag) {
 }
 var a = probe(true) * 10 + probe(false);
 
-// Removing a routed child does not prove a later outer get present.
+// Deleting the outer entry means a later outer.get() is not proved present.
 //--- class-map-record-nested-captured-missing-outer.js
 function probe() {
     const outer = new Map();
@@ -127,7 +127,7 @@ function probe() {
 }
 var a = probe();
 
-// Captured expansion cannot erase an outer Map that escapes its entry.
+// Inlining the captured helper cannot remove an outer Map that escapes probe().
 //--- class-map-record-nested-captured-outer-escaped.js
 var retained;
 function probe() {
@@ -144,7 +144,7 @@ function probe() {
 }
 var a = probe();
 
-// A saved child still borrows a record whose declaring frame is local.
+// An escaped inner Map still holds a record owned by probe()'s frame.
 //--- class-map-record-nested-captured-child-escaped.js
 var retained;
 function probe() {
@@ -161,7 +161,7 @@ function probe() {
 }
 var a = probe();
 
-// The record itself cannot outlive its owner through the expanded route.
+// The record itself cannot escape its owning frame through the inlined helper.
 //--- class-map-record-nested-captured-record-escaped.js
 var retained;
 function probe() {
@@ -178,7 +178,7 @@ function probe() {
 }
 var a = probe();
 
-// A holder observed after its frame cannot have its live slots retired.
+// A Data holder that escapes probe() keeps every method: none may be removed.
 //--- class-map-record-nested-captured-holder-escaped.js
 var retained;
 function probe() {
@@ -198,7 +198,7 @@ function probe() {
 probe();
 var a = retained.get("element", "bs.item").n;
 
-// The complete body census includes a user call in an unselected region.
+// The proof scans the whole helper body, including a call in a branch that never runs.
 //--- class-map-record-nested-captured-dead-call.js
 function probe() {
     const outer = new Map();
@@ -214,7 +214,7 @@ function probe() {
 }
 var a = probe();
 
-// Dead coercion is not a Map-only effect even when no runtime call reaches it.
+// Coercion in a branch that never runs still counts as an effect beyond Map operations.
 //--- class-map-record-nested-captured-dead-coercion.js
 function probe() {
     const outer = new Map();
@@ -230,7 +230,7 @@ function probe() {
 }
 var a = probe();
 
-// Recursive reentry is not an ordered call in the captured Map's owner block.
+// A recursive register() call is not a fixed, ordered call in the Map's owning function.
 //--- class-map-record-nested-captured-reentry.js
 function probe() {
     const outer = new Map();
@@ -248,7 +248,7 @@ function probe() {
 }
 var a = probe();
 
-// An entry helper proof cannot extend a nested region's record lifetime.
+// A record created in a nested block cannot outlive that block through the helper.
 //--- class-map-record-nested-captured-region-owner.js
 function probe() {
     const outer = new Map();
@@ -265,7 +265,7 @@ function probe() {
 }
 var a = probe();
 
-// Three-argument constructor publication needs its own selected-owner proof.
+// A constructor registering `this` through the helper needs its own inner-Map proof.
 //--- class-map-record-nested-captured-constructor.js
 function probe() {
     const outer = new Map();

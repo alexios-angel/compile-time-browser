@@ -1,2 +1,2 @@
-# Original Bootstrap R.find preserves guarded and checked current-document root receivers.
+# Unmodified Bootstrap SelectorEngine.find (R.find) checks its default document root.
 # RUN: python3 %S/default.py %dom_driver

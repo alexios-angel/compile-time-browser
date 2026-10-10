@@ -1,4 +1,5 @@
-"""Captured outer Maps retain fresh and reused child Map owners."""
+"""Nested-Map ownership cases: a captured outer Map that owns fresh or reused
+child Maps."""
 
 import hashlib
 import json
@@ -12,7 +13,15 @@ from ..harness import *
 
 
 def nested_map_cases():
-    # These are bounded ownership witnesses, not Bootstrap's exact Data source.
+    """Return nested-Map ownership cases keyed by `nested_map_<name>`.
+
+    Each row holds the JS `source`, its expected host `calls` and `functions`
+    counts, a sha256 pin of the source, whether the native compiler should
+    prove ownership (`admitted`/`owner`), and flags describing what the case
+    exercises (child Map `retained`, `reused`, `separate`, `dynamic`, ...).
+    """
+    # Small programs shaped like Bootstrap's dom/data.js (a Map of per-element
+    # Maps) that exercise ownership; they are not that file's code.
     base = """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
@@ -348,7 +357,8 @@ var trace = host.slot.get('value');
         separate=True,
         dynamic=True,
     )
-    # Preserve the original programs when admitting their exact nullable output.
+    # These programs stay unchanged; they are admitted with their nullable
+    # (possibly undefined) result.
     for name in (
         "conditional_unknown_contents",
         "conditional_alias_delete",
@@ -366,7 +376,8 @@ var trace = host.slot.get('value');
             name = "cross_" + mutation + "_" + order
             row = rows["nested_map_" + name]
             row.update(separate=True, nullable=True, replacement=mutation == "unseeded")
-            # A separate source observes actual absence without rewriting a method.
+            # A separate `_undefined` source calls poison() first so the get()
+            # really observes absence, without rewriting any method.
             source = row["source"].replace(
                 "var trace = host.slot.get();", "host.slot.poison();\nvar trace = host.slot.get();"
             )
@@ -411,8 +422,9 @@ var trace = host.slot.get('value');
     )
     rows["nested_map_previous_observed"]["expected_trace"] = True
     rows["nested_map_dynamic_nullable_observed"]["expected_trace"] = True
-    # Caller fields are a separate flat-Map boundary. No child-content or
-    # returned-object authority follows from these scalar-result methods.
+    # Fields of a caller-owned object stored in a flat Map are a separate case.
+    # Methods that return only scalars prove nothing about child contents or
+    # about objects they might return.
     payload = (
         object_argument_cases()["object_argument_scalar_key_payload"]["source"]
         .replace("var key = {};", "var key = {value: 64};")
@@ -448,8 +460,9 @@ var trace = host.slot.get('value');
         ("number_last", payload + "host.slot.get(7);\n", 11, 64, True, False),
     )
     for name, source, calls, expected, mixed, alias in variants:
-        # Preserve the first conditional-entry probes: the field access in
-        # their selected arm is outside the unconditional caller proof.
+        # Keep these conditional-entry cases unchanged: the field access in the
+        # taken branch is not covered by the ownership proof for unconditional
+        # callers, so they are expected to be refused.
         add("caller_payload_" + name, source, calls, functions=6)
         rows["nested_map_caller_payload_" + name]["expected_trace"] = expected
         source = source.replace(
@@ -498,7 +511,8 @@ var trace = host.slot.get('value');
     ):
         add("caller_payload_" + name, source, calls, functions=functions)
         rows["nested_map_caller_payload_" + name]["expected_trace"] = expected
-    # Keep mixed child contents separate from owning method results and fields.
+    # A child Map holding mixed value types (Number, object), kept separate
+    # from the cases about owning method results and fields.
     mixed_child = """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const t = new Map;
@@ -612,8 +626,8 @@ host.slot.poison(); trace = host.slot.get();
         expected_trace=True,
         observations={"traceMissing": False, "traceNumber": True, "traceObject": True},
     )
-    # These separate probes retain real returned values; admission is measured
-    # independently from the Boolean-result child-content programs above.
+    # These cases return the stored value itself rather than a Boolean, and
+    # are admitted on their own, independently of the Boolean-result cases above.
     returned = (
         mixed_child.replace(
             "if (!t.has(1)) { return false; }\n            return t.get(1).get('value') === 64;",
@@ -653,13 +667,16 @@ host.slot.poison(); trace = host.slot.get();
         observations={"traceMissing": True, "traceNumber": True, "traceObject": 64},
     )
     original_field = rows["nested_map_mixed_child_returned_field"]["source"]
+    # Pin the exact source (length and sha256) so later edits to the shared
+    # mixed_child text cannot silently change this case.
     assert len(original_field.encode()) == 595
     assert hashlib.sha256(original_field.encode()).hexdigest() == (
         "9d4c8b9c5e52297f6dd7f37f2a3a8c1a955f0d8348912cf35365de1ec00f57a0"
     )
-    # Strict identity refines this exact lexical result, never every later get().
-    # Script-scope const is a global in this importer, so each saved result lives
-    # in its own block; the public scalar observations remain ordinary globals.
+    # A strict `===` comparison narrows only this one saved result, never every
+    # later get(). The importer treats script-scope const as a global, so each
+    # saved result lives in its own block; the trace* observations stay
+    # ordinary globals.
     for name, expression in (
         ("same", "saved === key ? saved.value : 0"),
         ("reversed", "key === saved ? saved.value : 0"),
@@ -745,8 +762,8 @@ host.slot.poison(); trace = host.slot.get();
                 mixed_child_kind="returned",
                 entry_fields=3,
             )
-    # A later call's exact result never inherits an earlier object's fields.
-    # Recreating the child executes the same constructor at another invocation.
+    # A later call's result never inherits field facts from an earlier object.
+    # Recreating the child runs the same constructor in another invocation.
     removal = original_field.replace(
         "        get() {", "        remove() { t.delete(1); return 0; },\n        get() {"
     )

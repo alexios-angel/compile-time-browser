@@ -1,8 +1,8 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/direct-callbacks.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables
 
-// The checker names selected callback calls in source-derived IR, preserving
-// their actual callback values. Both forms must lower and run identically.
+// direct-callbacks.py lowers positive.js with its callback calls left indirect,
+// resolved to direct calls, or mixed; all must lower and run identically.
 
 //--- positive.js
 var direct42 = (function invoke(factory, value) {
@@ -32,7 +32,7 @@ module {
     %undefined = ctjs.constant #ctjs.undefined
     %wrapper = ctjs.create_closure %callee[1] this %undefined
     %factory = ctjs.create_closure %callee[2] this %undefined
-    %number = ctjs.constant #ctjs.number<4631107791820423168>
+    %number = ctjs.constant #ctjs.number<4631107791820423168>  // 42.0
     %result = ctjs.call_direct @wrapper$1(%undefined, %undefined, %wrapper, %factory, %number)
     // EXTRA_CALLER
     ctjs.store_global "result", %result

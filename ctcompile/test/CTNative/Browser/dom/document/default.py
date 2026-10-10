@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Execute original Bootstrap R.find defaults with checked document-root receivers."""
+"""Compile Bootstrap's SelectorEngine.find (minified `R.find`) with its
+default root to native code.
+
+R.find(selector) defaults its root to document.documentElement. The native
+code must return 0 or throw when there is no root, use the current root of
+the anchor's document, and keep attribute writes made before an invalid
+selector throws. Each source in REFUSALS must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import without_intrinsic
@@ -19,6 +26,9 @@ BODY = """  if (anchor.hasAttribute('data-invalid')) {
 
 
 def source(negated):
+    """Wrap BODY in findDefault. With `negated`, anchor is the second
+    parameter, the guard is `!document.documentElement`, and the default root
+    argument is passed explicitly as `undefined`."""
     declaration = f"  const R={{{FIND}}};\n"
     if negated:
         return (
@@ -269,6 +279,9 @@ CHECKED_EFFECTS = r"""
             assert(!tested.read().has_attribute(anchor, after));
 """
 
+# Bodies whose R.find call is not guarded by a document root check. They are
+# admitted because the native code checks the root itself: with no root, the
+# selector call throws before any effect.
 CHECKED_ROOTS = {
     "unguarded-default": "return R.find('*').length;",
     "unrelated-query-guard": "if(document.querySelector('*')) return R.find('*').length; return 0;",
@@ -278,6 +291,7 @@ CHECKED_ROOTS = {
 
 
 def checked_checks(name):
+    """CHECKED_CHECKS with the expected counts, writes and effects for `name`."""
     writes = "assert(writes.empty());"
     if name == "unguarded-after-branch":
         writes = """assert(writes.size() == 1 && writes[0].node == anchor &&
@@ -294,6 +308,8 @@ def checked_checks(name):
     )
 
 
+# Programs that leak the root or snapshot, replace the globals R.find relies
+# on, or call R.find with arguments the compiler cannot prove.
 REFUSALS = {
     "root-escape": "if(document.documentElement) return document.documentElement; return false;",
     "snapshot-escape": "if(document.documentElement) return R.find('*'); return false;",
@@ -358,6 +374,7 @@ def main():
             ).replace("@ARGUMENTS@", "expected, anchor" if anchor else "anchor, expected")
             dom.standalone(args, native, name, client, compilers, includes, libraries)
             executions += 4
+            # Checked-root cases only need the zero step budget control.
             if not case.startswith("default-root-"):
                 dom.lower(
                     args,
@@ -404,7 +421,7 @@ def main():
             current_document_parameter=0, initial_intrinsics=["Array", "Element", "Function"]
         )
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2
+        refusals += 2  # dom.refuse lowers with and without optimization.
     print(
         f"Bootstrap checked default root: {executions} native executions, {refusals} refusals; DOM/Core/Style only"
     )

@@ -1,2 +1,2 @@
-# Scalar records execute with real DOM owners; prepared class/local-Map provider proofs recheck live IR and retain the native ownership refusal.
+# Bootstrap's Map-based Data helper, used from a class or a record, in a native DOM Data session.
 # RUN: python3 %S/data.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

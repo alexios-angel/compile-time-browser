@@ -1,3 +1,12 @@
+//===- ProviderState.cpp - Provider state tests -----------------*- C++ -*-===//
+//
+// Unit test for the host-contract provider state (Provider/State.h): private
+// Map key equality (SameValueZero, canonical +0), insertion order, snapshots,
+// refusals, and that every operation either completes within its work budget
+// or leaves the state unchanged.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../lib/CTNative/HostContract/Provider/State.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 
@@ -16,6 +25,7 @@ using ctcompile::ctnative::host_detail::providerMapProvenance;
 using ctcompile::ctnative::host_detail::providerState;
 using ctcompile::ctnative::host_detail::providerValue;
 
+/// A script that allocates one Map; it supplies the provenance operations.
 constexpr const char * fixture = R"MLIR(
 module {
   ctjs.func @script$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -28,8 +38,10 @@ module {
 }
 )MLIR";
 
+/// A work budget that never runs out.
 constexpr auto unlimited = [](unsigned) { return true; };
 
+/// Structural equality for provider values, value lists and whole states.
 bool same(providerValue a, providerValue b) {
     return a.kind == b.kind && a.id == b.id && a.literal == b.literal;
 }
@@ -63,10 +75,12 @@ bool same(const providerState & a, const providerState & b) {
     return true;
 }
 
+/// A number constant holding `value`.
 providerValue number(mlir::MLIRContext & context, double value) {
     return providerValue::constant(ctjs::NumberAttr::get(&context, std::bit_cast<uint64_t>(value)));
 }
 
+/// A number constant with the raw IEEE-754 bit pattern `value`.
 providerValue bits(mlir::MLIRContext & context, uint64_t value) {
     return providerValue::constant(ctjs::NumberAttr::get(&context, value));
 }
@@ -75,20 +89,24 @@ providerValue string(mlir::MLIRContext & context, llvm::StringRef value) {
     return providerValue::constant(ctjs::StringAttr::get(&context, value));
 }
 
+/// The value stored under `key` in `map`; the entry must exist.
 providerValue read(const providerState & state, unsigned map, providerValue key) {
     const auto value = state.lookup(map, key, unlimited);
     check(value && *value, "known entry is found");
     return value && *value ? **value : providerValue{};
 }
 
+/// Allocates a private Map with `provenance` and returns its id.
 unsigned create(providerState & state, providerMapProvenance provenance) {
     const auto id = state.create(provenance, unlimited);
     check(id.has_value(), "private Map allocation succeeds");
     return id.value_or(0);
 }
 
-// Sweep the externally observable completion boundary; no internal work formula
-// is reproduced. Each failed operation must preserve all preexisting state.
+/// Runs `operation` on a copy of `initial` with budgets 0, 1, 2, ... until it
+/// completes, giving up at 4096. Every failed attempt must leave the copy
+/// unchanged, and some budget above 0 must succeed. The test does not depend
+/// on how the implementation counts work.
 template <typename Operation>
 void cutoffs(const providerState & initial, Operation operation, const char * message) {
     unsigned completed = 0;
@@ -110,10 +128,13 @@ void cutoffs(const providerState & initial, Operation operation, const char * me
     check(completed != 0, message);
 }
 
+/// Key equality (SameValueZero, canonical +0) and insertion order.
 void keysAndOrder(mlir::MLIRContext & context, providerMapProvenance provenance) {
     providerState state;
     const unsigned map = create(state, provenance);
     const auto zero = number(context, 0.0), negativeZero = number(context, -0.0);
+    // Two NaNs: positive quiet NaN with payload 1, and negative signaling NaN
+    // with payload 2.
     const auto nanA = bits(context, UINT64_C(0x7ff8000000000001));
     const auto nanB = bits(context, UINT64_C(0xfff0000000000002));
     const auto one = number(context, 1.0), two = number(context, 2.0);
@@ -133,8 +154,8 @@ void keysAndOrder(mlir::MLIRContext & context, providerMapProvenance provenance)
         providerValue::constant(ctjs::NullAttr::get(&context)),
         providerValue::object(0),
         providerValue::object(1),
-        bits(context, UINT64_C(0x7ff0000000000000)),
-        bits(context, UINT64_C(0xfff0000000000000)),
+        bits(context, UINT64_C(0x7ff0000000000000)), // +Infinity.
+        bits(context, UINT64_C(0xfff0000000000000)), // -Infinity.
         string(context, llvm::StringRef("x\0y", 3)),
         string(context, "x")};
     unsigned ordinal = 0;
@@ -179,6 +200,7 @@ void keysAndOrder(mlir::MLIRContext & context, providerMapProvenance provenance)
           "literal equality does not depend on MLIR attribute identity");
 }
 
+/// Key snapshots: order, identity, independence from later mutation.
 void keySnapshots(mlir::MLIRContext & context, providerMapProvenance provenance) {
     providerState state;
     const unsigned map = create(state, provenance);
@@ -223,6 +245,8 @@ void keySnapshots(mlir::MLIRContext & context, providerMapProvenance provenance)
           "changing a snapshot's key records cannot mutate another snapshot or the source Map");
 }
 
+/// Nested private Maps, cycle refusal, unsupported keys and payloads, and
+/// transactions that leave the committed state untouched.
 void graphAndRefusals(mlir::MLIRContext & context, providerMapProvenance provenance) {
     providerState state;
     const unsigned first = create(state, provenance), second = create(state, provenance);
@@ -283,6 +307,8 @@ void graphAndRefusals(mlir::MLIRContext & context, providerMapProvenance provena
           "transaction writes leave the independently copied committed state unchanged");
 }
 
+/// Every operation either completes within its work budget or publishes
+/// nothing and leaves the state unchanged (see `cutoffs`).
 void budgets(mlir::MLIRContext & context, providerMapProvenance provenance) {
     providerState initial;
     const unsigned first = create(initial, provenance), second = create(initial, provenance);

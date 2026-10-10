@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exercise emitted DOM key storage independently of the Data session provider."""
+"""Compile and run the ctnative Map runtime with DOM element_ref keys directly.
+
+No JavaScript pipeline is involved: a hand-written C++ client exercises both map
+layouts (associative and ordered), built with GCC and with Clang under ASan/UBSan.
+"""
 
 import argparse
 import os
@@ -12,8 +16,8 @@ from CTNative.harness import find_compilers, run
 from Target.Cpp.harness import FLAGS
 
 ROOT = Path(__file__).resolve().parents[5]
-# The runtime as a DOM program includes it, with the identity struct a program
-# would spell after the include.
+# Include the runtime the way a generated DOM program does, followed by the
+# identity_object definition that generated code would supply.
 PREAMBLE = r"""
 #define CTNATIVE_DOM 1
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
@@ -156,7 +160,8 @@ def main():
     configured = re.search(
         r"^CMAKE_CXX_COMPILER:[^=\n]+=(.*)$", (args.build / "CMakeCache.txt").read_text(), re.M
     ).group(1)
-    # Match Native.cmake: the older scalar-test Clang lacks DOM std::expected.
+    # Match Native.cmake: use the configured Clang, else the std-embed Clang, because
+    # the system Clang used for scalar tests lacks the std::expected the DOM needs.
     clang = Path(configured)
     if "clang" not in clang.name:
         clang = ROOT / "tools/clang-std-embed/bin/clang++"

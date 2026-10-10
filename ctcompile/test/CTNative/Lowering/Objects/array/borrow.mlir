@@ -1,9 +1,9 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/borrow.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --original %S/shrink.mlir --fixtures %t --work %t.executables
 
-// The original alias.js in shrink.mlir stays byte-for-byte pinned by the
-// driver. Different lengths distinguish the selected arm; writes and reads
-// through the borrow must still observe the two original owning vectors.
+// borrow.py also runs alias.js from shrink.mlir, pinned by SHA-256 so it cannot
+// change. Different array lengths show which arm was selected; writes and reads
+// through the borrowed alias must still reach the two owning vectors.
 
 //--- unequal.js
 function selected(flag) {

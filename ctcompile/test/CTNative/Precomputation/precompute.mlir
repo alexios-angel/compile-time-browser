@@ -6,9 +6,9 @@
 // RUN: ctjs-opt %t/unknown.mlir --ctnative-precompute | FileCheck %s --check-prefix=UNKNOWN
 // RUN: ctjs-opt %t/literals.mlir '--ctnative-precompute=max-steps=0' | FileCheck %s --check-prefix=BUDGET
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/symbolic.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-precompute | FileCheck %s --check-prefix=SOURCE
-
-// The source fixture also has an independent native/reference pipeline. Calls
-// remain even when every consumer of their literal or boolean result folds.
+// The SOURCE checks read Fixtures/Optimization/symbolic.js, also checked end to end by its own
+// native-vs-reference test. Here, calls must remain even when every consumer of their
+// literal or boolean result folds.
 // SOURCE-LABEL: ctjs.func private @symbolicBoolean$2
 // SOURCE: ctjs.call_direct @recordBoolean$1
 // SOURCE-NOT: ctjs.compare strict_eq
@@ -34,7 +34,7 @@
 
 //--- literals.mlir
 module {
-  // The VM NaN-boxing tag collision still denotes a number at this boundary.
+  // NaN bits that collide with a VM NaN-boxing tag are still a Number, so NaN === NaN is false.
   // LITERALS-LABEL: ctjs.func @nan
   // LITERALS-NOT: ctjs.compare
   // LITERALS: %[[FALSE:.*]] = ctjs.constant #ctjs.boolean<false>
@@ -43,7 +43,7 @@ module {
   // BUDGET-LABEL: ctjs.func @nan
   // BUDGET: ctjs.compare strict_eq
   ctjs.func @nan(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %nan = ctjs.constant #ctjs.number<9222246136947933187>
+    %nan = ctjs.constant #ctjs.number<9222246136947933187> // NaN, bits 0x7FFC000000000003
     %equal = ctjs.compare strict_eq %nan, %nan
     ctjs.return %equal
   }
@@ -54,8 +54,8 @@ module {
   // LITERALS: %[[ZERO:.*]] = ctjs.constant #ctjs.number<0>
   // LITERALS: ctjs.return %[[ZERO]]
   ctjs.func @zero(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %negative = ctjs.constant #ctjs.number<9223372036854775808>
-    %positive = ctjs.constant #ctjs.number<0>
+    %negative = ctjs.constant #ctjs.number<9223372036854775808> // -0.0
+    %positive = ctjs.constant #ctjs.number<0> // +0.0
     %sum = ctjs.binary add %negative, %positive
     ctjs.return %sum
   }
@@ -64,7 +64,7 @@ module {
   // LITERALS: %[[INFINITY:.*]] = ctjs.constant #ctjs.number<18442240474082181120>
   // LITERALS: ctjs.return %[[INFINITY]]
   ctjs.func @infinity(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
     %negative = ctjs.constant #ctjs.number<9223372036854775808>
     %result = ctjs.binary div %one, %negative
     ctjs.return %result
@@ -76,7 +76,7 @@ module {
   // LITERALS: ctjs.return %[[TRUE]]
   ctjs.func @coercion(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %text = ctjs.constant #ctjs.string<"40">
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0
     %expected = ctjs.constant #ctjs.string<"402">
     %sum = ctjs.binary add %text, %two
     %equal = ctjs.compare strict_eq %sum, %expected
@@ -161,7 +161,7 @@ module {
     %first = ctjs.call_direct @effect(%u, %u, %u, %runtime)
     %two = ctjs.constant #ctjs.number<4611686018427387904>
     %answer = ctjs.binary add %first, %two
-    %expected = ctjs.constant #ctjs.number<4631107791820423168>
+    %expected = ctjs.constant #ctjs.number<4631107791820423168> // 42.0
     %same = ctjs.compare strict_eq %answer, %expected
     %take = ctjs.truthy %same
     scf.if %take {
@@ -177,7 +177,7 @@ module {
   // EFFECTS: ctjs.store_global "trace", %arg3
   ctjs.func private @effect(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %runtime: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     ctjs.store_global "trace", %runtime
-    %forty = ctjs.constant #ctjs.number<4630826316843712512>
+    %forty = ctjs.constant #ctjs.number<4630826316843712512> // 40.0
     ctjs.return %forty
   }
 }

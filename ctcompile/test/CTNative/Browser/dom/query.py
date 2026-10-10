@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Check native Element.querySelector against the shared public selector engine."""
+"""Compile Element.querySelector to native code, run it against the public DOM
+and selector engine, and check that unsafe uses are refused.
+
+prototype_query.py reuses SOURCE, CHECKS and OWNED_CHECKS."""
 
 from CTNative.Browser.dom import dom
 
+# Queries a button, guards the nullable result, and checks an invalid selector
+# throws after the first write and before the second.
 SOURCE = """function query(element, expected) {
   if (element.hasAttribute('data-invalid')) {
     element.setAttribute('data-before', 'yes');
@@ -103,6 +108,8 @@ def main():
             raise RuntimeError("querySelector bypassed its native method object")
         checks = CHECKS + (OWNED_CHECKS if owned else "")
         dom.standalone(args, native, name, checks, compilers, includes, libraries)
+    # An unguarded or escaping result, missing, coercing or extra arguments, an
+    # escaping NodeList, and a detached method must each be refused.
     refusals = (
         "return element.querySelector('button').matches(':scope');",
         "return element.querySelector('button');",

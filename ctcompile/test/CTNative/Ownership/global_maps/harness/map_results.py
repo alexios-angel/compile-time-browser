@@ -1,7 +1,9 @@
-"""The checks: emitted-C++ censuses, the lifetime harnesses, standalone execution
-and the budget bisection.
+"""Helpers that check the C++ emitted for the global-Map ownership tests.
 
-Split out of native-owned-global-maps.py on 2026-09-08, verbatim.
+check_result_calls verifies the order of Map method calls in the native entry;
+the nullable_* helpers build programs that probe each result; lifetime and
+shared_lifetime wrap the generated `main` with weak-pointer probes that prove
+each Map is freed exactly when its last owner is.
 """
 
 import json
@@ -15,8 +17,12 @@ from ..sources import *
 
 
 def comparable_provenance(cpp, input_ir):
-    # Reparsed forged input has a different filename but the same source
-    # locations. Keep every line/column, other comment byte and emitted token.
+    """Return `cpp` with the input filename in `// ctcompile:` location comments
+    replaced by `<input>`.
+
+    A forged, reparsed input has a different filename but the same source
+    locations, so after this every line, column and emitted token must match.
+    """
     filename = re.compile(r"(?<!\S)" + re.escape(str(input_ir)) + r"(?=:\d+:\d+(?:\D|$))")
     return "".join(
         filename.sub("<input>", line) if line.startswith("// ctcompile:") else line
@@ -25,6 +31,8 @@ def comparable_provenance(cpp, input_ir):
 
 
 def instrument_maps(cpp, *, declarations=""):
+    """Rename `main` to ctnative_test_entry and record every Map allocation as a
+    weak pointer in ctn_test_maps, so an appended `main` can check lifetimes."""
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("Map lifetime observer needs exactly one entry")
@@ -50,6 +58,10 @@ def run_sanitized_lifetime(source, binary, compiler):
 
 
 def check_result_calls(cpp, name, mode):
+    """Check that the native `main` of case `name` calls the Map's get/set/size
+    methods in the expected order, passing each getter result straight to the
+    next setter, and keeps the live map_get/map_delete calls instead of a
+    precomputed summary."""
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry:
         raise RuntimeError(f"{name}/{mode}: missing native entry for result-call census")
@@ -277,15 +289,22 @@ def check_result_calls(cpp, name, mode):
             )
         if name in {**nullable_host_result_sources(), **nullable_nested_result_sources()}:
             branches = 2
-        # Canonicalization can use ?: for the pure Null/Undefined selection.
-        # The executed identity observer also checks both results separately.
+        # fn_4 is the emitted C++ for the Map getter method; count its if/?:
+        # selections, one per distinct result the getter can return.
+        # Canonicalization may turn the pure null/undefined choice into ?:, and
+        # nullable_identity_cpp checks both results at run time.
         if not getter or len(re.findall(r"\bif\s*\(|\?", getter[1])) != branches:
             raise RuntimeError(f"{name}/{mode}: lost the {branches} live getter selections")
 
 
 def nullable_observer_source(source, name):
-    # Observation runs in the independent engines after the unchanged startup.
-    # The published body needs no extra comparison or observer proof to do so.
+    """Append a snippet that runs after the original program and calls
+    host.slot.get/set with each recorded case.
+
+    Bit `index` of `trace` is set when case `index` returns its expected value,
+    so one number reports every case when run under Node and the reference
+    interpreter.
+    """
     observed = source + "\n(function() { trace = 0;\n"
     for index, (arguments, tag, value) in enumerate(NULLABLE_OBSERVATIONS[name]):
         expected = (
@@ -312,6 +331,8 @@ def nullable_observer_source(source, name):
 
 
 def nullable_identity_cpp(cpp, name):
+    """C++ counterpart of nullable_observer_source: call each case on g_host and
+    return 91 + index for the first result whose tag or value is wrong."""
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("nullable identity observer needs exactly one entry")
@@ -350,6 +371,8 @@ def source_calls(text):
 
 
 def contract(args, ir, name, binding="host"):
+    """Write the owned-binding contract for `name` with Map as an intrinsic and,
+    for scalar-global cases, the saved globals listed as observations."""
     config = owned.contract(args, ir, name, binding)
     value = json.loads(config.read_text())
     value["initial_intrinsics"] = ["Map"]
@@ -365,14 +388,17 @@ def contract(args, ir, name, binding="host"):
         None,
     )
     if case:
-        # Requested output is only an observer; live owner/type checks still
-        # derive every saved scalar independently from the current program.
+        # Listing the saved globals as observations only asks the compiler to
+        # expose them; it tells the ownership and type analyses nothing, and
+        # they still prove each value from the program.
         value["observations"] = sorted(["trace", *scalar_global_values(case)])
     config.write_text(json.dumps(value, indent=2) + "\n")
     return config
 
 
 def resolve_getter(args, ir):
+    """Write a copy of `ir` whose one `ctjs.call` of the `get` property is
+    already a ctjs.call_direct to the fourth function, as a control input."""
     text = ir.read_text()
     targets = re.findall(r"^\s*ctjs\.func (?:private )?@([^\s(]+)", text, re.M)
     end = text.index("\n  }\n")
@@ -402,8 +428,8 @@ def lifetime(args, cpp, name, mode, value, compiler):
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", inline_runtime(cpp))
     if count != 1:
         raise RuntimeError("lifetime harness needs exactly one entry")
-    # Observe the real runtime Map allocation without adding a strong owner.
-    # A constant getter or leaked environment cannot pass these weak witnesses.
+    # Record each runtime Map allocation as a weak pointer, which adds no owner.
+    # A constant getter or a leaked environment fails these checks.
     changed = (
         "#include <memory>\n#include <vector>\n"
         "static std::vector<std::weak_ptr<const void>> ctn_test_maps;\n" + changed
@@ -418,6 +444,8 @@ def lifetime(args, cpp, name, mode, value, compiler):
     )
     if count != 2:
         raise RuntimeError("Map allocation lifetime observer no longer matches both helpers")
+    # Each nonzero exit code (90-97) names the first lifetime check that failed,
+    # so a failing run can be read off its status alone.
     changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
@@ -459,9 +487,9 @@ int main() {
     return 0;
 }
 """
-    # The growing-key method changes its Map on EVERY invocation. The saved
-    # environment has had one extra call, so sharing the reentry allocation or
-    # replacing later calls with a startup summary cannot satisfy this witness.
+    # The growing-key method changes its Map on every call. The saved
+    # environment has had one extra call, so sharing the second entry's
+    # allocation or replacing later calls with a startup summary fails here.
     growing = name in {"growing", "result_seeded_growing"}
     changed = changed.replace("SAVED_FIRST", "2" if growing else str(value))
     changed = changed.replace("SAVED_NEXT", "index + 3" if growing else str(value))
@@ -472,6 +500,8 @@ int main() {
 
 
 def shared_lifetime(args, cpp, name, mode, compiler):
+    """Check that a getter/setter pair sharing one Map keeps it alive only while
+    either callable does; exit codes 90-100 name the first failed check."""
     changed = instrument_maps(cpp)
     changed += r"""
 int main() {
@@ -521,9 +551,9 @@ int main() {
 }
 """
     if name == "shared_parameter":
-        # This is a typed C++ caller, not permission for arbitrary JS exports.
-        # New keys after startup must flow through the real formal. The Map
-        # also owns string bytes after the caller mutates its original buffer.
+        # A typed C++ caller, not a general JS export. New keys after startup
+        # must flow through the real parameter, and the Map must own its own
+        # copy of the string after the caller overwrites its buffer.
         changed = changed.replace(
             "CHECK_SIGNATURE",
             """

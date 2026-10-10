@@ -1,5 +1,5 @@
-// Keep every reaching path in refusal controls; default specialization can
-// prove the single closed call even when a different argument would fail.
+// Negative tests: each split file below must be refused, because Map.get needs a has()
+// proof on every path that survives all intervening effects (PRESENCE).
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Maps/presence.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/n01_cached_has_delete.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
@@ -32,24 +32,24 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/n28_recursive_callee_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/n29_returned_closure_clear.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=PRESENCE
 
-// MUTATION: emitc.func
-// MUTATION-DAG: call_opaque "ctnative::map_size"
-// MUTATION-DAG: call_opaque "ctnative::map_set"
-// MUTATION-DAG: call_opaque "ctnative::map_get_present"
+// The PRESENCE cases run with optimize=false: the default call specialization
+// can prove the one call it sees even when a different argument would fail,
+// which would hide the refusal under test.
+//
+// The NATIVE run checks that Fixtures/Maps/presence.js, where every get is
+// properly guarded, lowers natively. n19's finally block is refused earlier,
+// as unstructured control flow (the FLOW prefix).
 
-// JOIN: emitc.func
-// JOIN-DAG: call_opaque "ctnative::map_size"
-// JOIN-DAG: call_opaque "ctnative::map_get_present"
 
-// DELETE: emitc.func
-// DELETE-DAG: call_opaque "ctnative::map_delete"
-// DELETE-DAG: call_opaque "ctnative::map_get_present"
 
-// EXACT: emitc.func
-// EXACT: call_opaque "ctnative::map_get_present"
 
-// ZERO: emitc.func
-// ZERO: call_opaque "ctnative::map_get_present"
+
+
+
+
+
+
+
 
 // NATIVE: emitc.func @ensure_2
 // NATIVE: call_opaque "ctnative::map_get_present"
@@ -57,7 +57,7 @@
 // FLOW: ctnative.not_native = "unstructured control flow"
 
 //--- n01_cached_has_delete.js
-// Independent presence-proof review: A saved true has does not survive deletion of its key.
+// A saved true has does not survive deletion of its key.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -72,7 +72,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n02_cached_has_clear.js
-// Independent presence-proof review: A saved true has does not survive clear.
+// A saved true has does not survive clear.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -87,7 +87,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n03_delete_inside_true_arm.js
-// Independent presence-proof review: Deleting after the has test invalidates its active true-arm refinement.
+// Deleting after the has test invalidates its active true-arm refinement.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -103,7 +103,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n04_ssa_alias_delete.js
-// Independent presence-proof review: A local alias deletes the same runtime Map.
+// A local alias deletes the same runtime Map.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -119,7 +119,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n05_set_alias_clear.js
-// Independent presence-proof review: The result of set is the same receiver, so clearing it invalidates presence.
+// The result of set is the same receiver, so clearing it invalidates presence.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -135,7 +135,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n06_callee_clear.js
-// Independent presence-proof review: A closed direct callee can mutate the receiver through its parameter.
+// A closed direct callee can mutate the receiver through its parameter.
 function erase(map) { map.clear(); return 0; }
 function probe(flag) {
 var outer = new Map();
@@ -151,7 +151,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n07_captured_clear.js
-// Independent presence-proof review: A lifted closure mutates the same captured Map between has and get.
+// A lifted closure mutates the same captured Map between has and get.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -167,7 +167,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n08_same_schema_other_allocation.js
-// Independent presence-proof review: Sharing a formal gives first and second one schema, not one identity.
+// Sharing a formal gives first and second one schema, not one identity.
 function touch(map) { return map.size; }
 function probe(flag) {
 var first = new Map();
@@ -183,7 +183,7 @@ var first = new Map();
 var result = probe();
 
 //--- n09_wrong_literal_key.js
-// Independent presence-proof review: Presence of one string key proves nothing about another string.
+// Presence of one string key proves nothing about another string.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -196,7 +196,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n10_reassigned_key.js
-// Independent presence-proof review: The has and get use different SSA values after assigning the key binding.
+// The has and get use different SSA values after assigning the key binding.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -212,7 +212,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n11_captured_key_write.js
-// Independent presence-proof review: A captured mutable string key changes after the has observation.
+// A captured mutable string key changes after the has observation.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -229,7 +229,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n12_one_branch_inserts.js
-// Independent presence-proof review: The join has an absent predecessor even though the other branch inserts.
+// The join has an absent predecessor even though the other branch inserts.
 function probe(flag) {
 var outer = new Map();
     var child = new Map();
@@ -240,7 +240,7 @@ var outer = new Map();
 var result = probe(false);
 
 //--- n13_has_or_unrelated_true.js
-// Independent presence-proof review: A true OR can come from the unrelated flag while has is false.
+// A true OR can come from the unrelated flag while has is false.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -254,7 +254,7 @@ var outer = new Map();
 var result = probe(true);
 
 //--- n14_negated_has.js
-// Independent presence-proof review: The true arm of not-has establishes absence, not presence.
+// The true arm of not-has establishes absence, not presence.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -268,7 +268,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n15_cached_has_loop_backedge.js
-// Independent presence-proof review: The first iteration clears the map before the same saved guard is reused.
+// The first iteration clears the map before the same saved guard is reused.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -286,7 +286,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n16_zero_iteration_insert.js
-// Independent presence-proof review: A loop-body set does not dominate the zero-iteration exit.
+// A loop-body set does not dominate the zero-iteration exit.
 function probe(flag) {
 var outer = new Map();
     var child = new Map();
@@ -297,7 +297,7 @@ var outer = new Map();
 var result = probe(0);
 
 //--- n17_clear_then_break.js
-// Independent presence-proof review: The break exit reaches get with the key removed.
+// The break exit reaches get with the key removed.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -310,7 +310,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n18_clear_then_continue.js
-// Independent presence-proof review: A continue edge carries the invalidation into a later iteration.
+// A continue edge carries the invalidation into a later iteration.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -328,7 +328,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n19_finally_clears.js
-// Independent presence-proof review: A finally block runs after the early-return guard and before the later get.
+// A finally block runs after the early-return guard and before the later get.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -342,7 +342,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n20_short_circuit_effect.js
-// Independent presence-proof review: The right side of AND clears the map after has returned true.
+// The right side of AND clears the map after has returned true.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -355,7 +355,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n21_get_key_callee_effect.js
-// Independent presence-proof review: Evaluating the get argument mutates the receiver after the guard.
+// Evaluating the get argument mutates the receiver after the guard.
 function erase(map) { map.clear(); return 0; }
 function probe(flag) {
 var outer = new Map();
@@ -369,7 +369,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n22_invalidation_one_branch.js
-// Independent presence-proof review: At the join one predecessor has invalidated the saved has fact.
+// At the join one predecessor has invalidated the saved has fact.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -384,7 +384,7 @@ var outer = new Map();
 var result = probe(true);
 
 //--- n23_early_guard_then_clear.js
-// Independent presence-proof review: The surviving arm of an early return still loses presence after mutation.
+// The surviving arm of an early return still loses presence after mutation.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -398,7 +398,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n24_while_exit_absent.js
-// Independent presence-proof review: A while loop exits on false has; its body-true fact must not leak outward.
+// A while loop exits on false has; its body-true fact must not leak outward.
 function probe(flag) {
 var outer = new Map();
     var inner = new Map();
@@ -411,7 +411,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n25_negated_has_or_set.js
-// Independent presence-proof review: Not-has short-circuits OR when absent, so set is skipped.
+// Not-has short-circuits OR when absent, so set is skipped.
 function probe(flag) {
 var outer = new Map();
     var child = new Map();
@@ -422,7 +422,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n26_has_and_set.js
-// Independent presence-proof review: has AND set leaves the absent path absent.
+// has AND set leaves the absent path absent.
 function probe(flag) {
 var outer = new Map();
     var child = new Map();
@@ -433,7 +433,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n27_transitive_callee_clear.js
-// Independent presence-proof review: A direct callee transitively invokes an eraser through another closed function.
+// A direct callee transitively invokes an eraser through another closed function.
 function forward(map) { return erase(map); }
 function erase(map) { map.clear(); return 0; }
 function probe(flag) {
@@ -450,7 +450,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n28_recursive_callee_clear.js
-// Independent presence-proof review: A recursive call graph must propagate its reachable clearing effect to the caller.
+// A recursive call graph must propagate its reachable clearing effect to the caller.
 function first(map, n) { if (n > 0) { return second(map, n - 1); } return 0; }
 function second(map, n) { map.clear(); return first(map, n); }
 function probe(flag) {
@@ -467,7 +467,7 @@ var outer = new Map();
 var result = probe();
 
 //--- n29_returned_closure_clear.js
-// Independent presence-proof review: A returned callable mutates its retained Map capture between has and get.
+// A returned callable mutates its retained Map capture between has and get.
 function makeEraser(map) { return function erase() { map.clear(); return 0; }; }
 function probe(flag) {
 var outer = new Map();

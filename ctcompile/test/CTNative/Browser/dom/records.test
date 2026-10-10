@@ -1,2 +1,2 @@
-# Store scalar-field records in local DOM-entry Maps as borrowed stack records.
+# Records with scalar fields stored in a DOM entry's local Map lower to borrowed stack records.
 # RUN: python3 %S/records.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

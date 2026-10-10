@@ -1,9 +1,9 @@
-// THE FIRST OBJECT ON THE STACK - part 24 Phase 56, stages A and B, through
-// the gate. Every object literal here has a CLOSED shape: it is used only
-// through constant keys, so nothing can add or remove a field, and it never
-// leaves the function that made it - not returned, not stored, not passed -
-// so it lives in that function's frame as a C++ struct by value. The
-// interpreter has the last word on every printed global, as always.
+// Objects that the native compiler keeps on the stack. Every object literal
+// here has a closed shape: it is used only through constant keys, so nothing
+// can add or remove a field, and it never leaves the function that made it
+// (not returned, stored or passed), so it lowers to a C++ struct held by value
+// in that function's frame. The interpreter's output is the reference for
+// every printed global.
 function area() {
     var p = {
         x: 1,
@@ -28,13 +28,13 @@ function swap_sum() {
     b.v = t.hold;
     return a.v * 100 + b.v;
 }
-// AN OBJECT UPDATED IN A LOOP - obligation O-3, one slot however many SSA
+// An object updated in a loop must still be one struct slot, however many SSA
 // values reach it. The importer threads every register live across a loop
-// through the loop's block arguments, so `acc` used to reach the loop op
-// itself and its shape read as open; --ctjs-lift-to-scf now drops that
-// argument (it is fed by the literal and by itself - a trivial phi) before
-// structuring, so every access is on the one literal and it is one struct
-// on the stack, updated in place. native-struct.mlir pins the shape of it.
+// through the loop's block arguments, which would make `acc` reach the loop op
+// itself and its shape read as open; --ctjs-lift-to-scf drops that argument
+// (it is fed only by the literal and by itself: a trivial phi) before
+// structuring, so every access is on the one literal, updated in place.
+// CTNative/Lowering/Objects/struct.mlir checks the lowered shape.
 function accumulate(n) {
     var acc = {
         total: 0,
@@ -67,11 +67,11 @@ function boolean_field(x) {
     }
     return f.big ? 1 : 0;
 }
-// PHASE 56C: ONE SHAPE IS ONE DEFINITION. `{x, y}` is written at THREE sites
-// in this file - once in `area` above and twice here - and they are one class,
-// named for the shape and not for the site. That is what makes a generated
-// struct passable between functions at all; 56B named them ctn_shape_0,
-// ctn_shape_1 and ctn_shape_2 and no two of them were the same type.
+
+// One shape is one definition. `{x, y}` is written at three sites in this file
+// (once in `area` above and twice here), and all three lower to one class
+// named for the shape, not for the site. That is what lets a generated struct
+// be passed between functions.
 function dot() {
     var a = {
         x: 3,
@@ -83,18 +83,18 @@ function dot() {
     };
     return a.x * b.x + a.y * b.y;
 }
-// AND WHERE THE NAMES MATCH AND A TYPE DIFFERS, ONE TEMPLATE. These two agree
-// that the fields are `at` and `hit` and disagree about what `hit` is, so they
-// are one family at two instantiations - `ctn_at_hit<bool>` and
-// `ctn_at_hit<double>` - over a template parametrised on the ONE position they
-// disagree about. Not a variant field: each site is monomorphic here, and only
-// the union of the two is not, so a variant would put a std::visit in front of
-// every read at both sites to pay for a polymorphism neither has.
+
+// Where the field names match and a type differs, one template. These two
+// agree that the fields are `at` and `hit` and disagree about what `hit` is, so
+// they are one family at two instantiations, `ctn_at_hit<bool>` and
+// `ctn_at_hit<double>`, of a template parametrised on the one position they
+// disagree about. Not a variant field: each site is monomorphic, and only the
+// union of the two is not, so a variant would put a std::visit in front of
+// every read at both sites for a polymorphism neither has.
 //
-// A BOOLEAN, NOT A STRING. Phase 56C's written example is "two numeric and one
-// string"; a string has no carrier in this tier yet and the function would be
-// refused before a shape was formed, so the disagreement that IS expressible
-// today is `double` against `bool`.
+// The disagreement is `bool` against `double` to keep this fixture to scalar
+// fields; string fields are tested in
+// CTNative/Lowering/Objects/string-fields.mlir.
 function hit_flag(x) {
     var h = {
         hit: false,
@@ -125,12 +125,12 @@ var dotted = dot();
 var flagged = hit_flag(20) + hit_flag(3);
 var counted = hit_count(7);
 
-// A GLOBAL WRITTEN ONLY INSIDE A HELPER, never mentioned at the top level.
-// `main` prints the globals from a set that used to be filled lazily as each
-// was first touched, and main is lowered first - so this one was declared and
-// never printed, and the differential failed by naming a missing line instead
-// of the ordering that caused it. The census now runs over the whole accepted
-// set before anything is lowered.
+
+// A global written only inside a helper and never mentioned at the top level.
+// The generated `main` must still print it, so the set of printed globals is
+// collected from every function before any function is lowered. Collected
+// lazily instead, `main` (lowered first) would miss `hidden`, and the
+// differential test would report a missing line rather than the cause.
 function stash(x) {
     hidden = x * 2;
     return x;

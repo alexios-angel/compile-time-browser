@@ -73,7 +73,7 @@ function super_order() {
 }
 var a = super_order();
 
-// Uncalled source bodies still need proof; missing properties cannot disappear.
+// Uncalled read() is still checked: super.missing() names a method Base lacks; never drop it.
 //--- inherited-super-missing.js
 function super_missing() {
     class Base { constructor() { this.n = 7; } }
@@ -160,7 +160,7 @@ function super_foreign() {
 }
 var a = super_foreign();
 
-// Target CFG needs a separate call/receiver proof before it can be expanded.
+// A super-called method with branches is not inlined; it would need its own call/receiver checks.
 //--- inherited-super-target-cfg.js
 function super_target_cfg() {
     class Base {

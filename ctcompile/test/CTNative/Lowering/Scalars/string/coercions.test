@@ -1,7 +1,7 @@
 # Primitive conversion stays on the owning String/Number classes and calls
 # public Core formatting/parsing. Parameterized functions keep the operation
 # present when precomputation is disabled; Node checks distinguish NaN, -0,
-# value and type before the native/interpreter differential gate runs.
+# value and type before the native output is compared with the interpreter's.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

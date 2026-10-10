@@ -1,4 +1,4 @@
-// Each exact holder method borrows its captured Map in the record owner's entry block.
+// Methods of a `data` object literal use the captured Map holding a finished instance.
 //--- class-map-record-captured-holder-direct.js
 function captured_holder_direct() {
     const values = new Map();
@@ -15,7 +15,7 @@ function captured_holder_direct() {
 }
 var a = captured_holder_direct();
 
-// Saved aliases still belong to their original records after replacement and deletion.
+// Get results keep referring to their own instances after overwrite and delete.
 //--- class-map-record-captured-holder-overwrite-delete.js
 function captured_holder_overwrite_delete() {
     const values = new Map();
@@ -37,7 +37,7 @@ function captured_holder_overwrite_delete() {
 }
 var a = captured_holder_overwrite_delete();
 
-// Different methods of one holder may capture distinct Map allocations.
+// Different methods of one holder object may capture different Maps.
 //--- class-map-record-captured-holder-distinct.js
 function captured_holder_distinct() {
     const left = new Map(), right = new Map();
@@ -57,7 +57,7 @@ function captured_holder_distinct() {
 }
 var a = captured_holder_distinct();
 
-// The holder can read the receiver only after terminal constructor publication completes.
+// The holder reads the instance after the constructor stored `this` as its last statement.
 //--- class-map-record-captured-holder-constructor.js
 function captured_holder_constructor() {
     const values = new Map();
@@ -71,7 +71,7 @@ function captured_holder_constructor() {
 }
 var a = captured_holder_constructor();
 
-// An escaped holder retains both the captured Map and its borrowed record beyond this frame.
+// Refused: returning the holder keeps the Map and the instance alive past this function.
 //--- class-map-record-captured-holder-escaped.js
 function captured_holder_escaped() {
     const values = new Map();
@@ -84,7 +84,7 @@ function captured_holder_escaped() {
 var holder = captured_holder_escaped();
 var a = holder.read().n;
 
-// A later slot assignment defeats the holder's exact method identity.
+// Refused: `data.read` is reassigned, so the call no longer reaches the original method.
 //--- class-map-record-captured-holder-replaced.js
 function captured_holder_replaced() {
     const values = new Map();
@@ -98,7 +98,7 @@ function captured_holder_replaced() {
 }
 var a = captured_holder_replaced();
 
-// Extracting a method is a separate callable observer, even without receiver use.
+// Refused: `data.read` is taken as a value, making a second way to call it.
 //--- class-map-record-captured-holder-extracted.js
 function captured_holder_extracted() {
     const values = new Map();
@@ -111,7 +111,7 @@ function captured_holder_extracted() {
 }
 var a = captured_holder_extracted();
 
-// Native expansion must not discard the observable method receiver.
+// Refused: the method reads `this`, so inlining it must keep the holder object.
 //--- class-map-record-captured-holder-receiver.js
 function captured_holder_receiver() {
     const values = new Map();
@@ -123,7 +123,7 @@ function captured_holder_receiver() {
 }
 var a = captured_holder_receiver();
 
-// Constructor-time holder calls cannot publish a receiver before its own writes complete.
+// Refused: the constructor stores `this` through the holder before writing its fields.
 //--- class-map-record-captured-holder-early-publication.js
 function captured_holder_early_publication() {
     const values = new Map();
@@ -137,7 +137,7 @@ function captured_holder_early_publication() {
 }
 var a = captured_holder_early_publication();
 
-// Region calls require control-flow and membership proofs beyond the entry block.
+// Refused: the holder method is called inside an `if`, outside the first block.
 //--- class-map-record-captured-holder-region.js
 function captured_holder_region(flag) {
     const values = new Map();
@@ -150,7 +150,7 @@ function captured_holder_region(flag) {
 }
 var a = captured_holder_region(true);
 
-// The direct call does not authorize retirement of a separately observed holder alias.
+// Refused: `alias` reaches the holder from another function, so it cannot be removed.
 //--- class-map-record-captured-holder-alias-observer.js
 function captured_holder_alias_observer() {
     const values = new Map();
@@ -165,7 +165,7 @@ function captured_holder_alias_observer() {
 }
 var a = captured_holder_alias_observer();
 
-// Expansion cannot restore Map membership after deletion.
+// Refused: a holder's get after delete returns undefined even though the key existed.
 //--- class-map-record-captured-holder-read-after-delete.js
 function captured_holder_read_after_delete() {
     const values = new Map();
@@ -181,7 +181,7 @@ function captured_holder_read_after_delete() {
 }
 var a = captured_holder_read_after_delete();
 
-// A used slot does not license discarding another slot with an unproved ambient effect.
+// Refused: an unused holder method calls an unknown global, so it cannot be discarded.
 //--- class-map-record-captured-holder-unused-ambient.js
 function captured_holder_unused_ambient() {
     const values = new Map();
@@ -196,7 +196,7 @@ function captured_holder_unused_ambient() {
 }
 var a = captured_holder_unused_ambient();
 
-// Every unused slot remains part of the holder census, including a receiver observer.
+// Refused: an unused holder method returning `this` still counts; every method is checked.
 //--- class-map-record-captured-holder-unused-receiver.js
 function captured_holder_unused_receiver() {
     const values = new Map();

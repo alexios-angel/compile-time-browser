@@ -1,4 +1,8 @@
-# Preserve boxed dispatch after native argument specialization and heap PE.
+# Lowers SOURCE (dispatch.js) to C++ in OUTPUT through native argument
+# specialization and heap partial evaluation, failing unless both transformations
+# ran. The generated entries for `formula` and `drive` are renamed ctc_formula and
+# ctc_drive, the names Dispatch.cpp links against. Run with -P by
+# test/cmake/PartialEvaluation.cmake.
 cmake_minimum_required(VERSION 3.20)
 foreach(required TRANSLATE OPT MLIR_TRANSLATE SOURCE OUTPUT)
   if(NOT DEFINED ${required})

@@ -1,4 +1,11 @@
-"""driver recorder: continued from sources_recorders."""
+"""Checks for the Bootstrap Data recorder, snapshot and template global-Map programs.
+
+Each case in sources/recorders.py is observed under Node and the reference
+interpreter, lowered with optimization on and off, checked against forged and
+stale proof attributes and, when admitted, compiled natively and run with a
+lifetime harness that verifies every Map and object is freed once its last
+owner is dropped.
+"""
 
 from .common import observe
 from ..harness.map_results import run_sanitized_lifetime
@@ -6,7 +13,9 @@ from ..sources.recorders import *
 
 
 def typed_lifetime_arguments(cpp):
-    # Adapt only the appended observer; never repair the compiler's own output.
+    """Rewrite string and number literals in the appended observer main() into
+    ctnative::js_string / js_num arguments. The compiler's generated code
+    before it is never touched."""
     generated, marker, observer = cpp.rpartition("\nint main() {")
     if not marker:
         raise RuntimeError("typed lifetime arguments need the appended observer")
@@ -25,8 +34,9 @@ def typed_lifetime_arguments(cpp):
 
 
 def template_lifetime_cpp(cpp, child):
-    # The existing observer records weak allocation witnesses without changing
-    # the generated Map implementation or its ownership.
+    """Append a C++ main() that checks the template program's Map lifetimes."""
+    # instrument_leaf_objects records weak_ptrs to allocations without
+    # changing the generated Map implementation or its ownership.
     changed = instrument_leaf_objects(cpp, allocations=1 if child else 0)
     argument = "element" if child else ""
     method = "remove" if child else "clear"
@@ -101,6 +111,10 @@ int main() {{
 
 
 def recorder_future_body(entry_objects=False):
+    """Return the JS loop body that replays the recorder's set/get/remove calls.
+
+    recorder_lifetime_cpp() rewrites the same text into C++.
+    """
     body = """    remove(element, "bs.alert");
     remove(element, "bs.collapse");
     const before = traceErrorCount;
@@ -153,6 +167,7 @@ def recorder_future_body(entry_objects=False):
 
 
 def recorder_future_source(entry_objects=False):
+    """Return JS that runs recorder_future_body() 1024 times after startup."""
     return (
         "var traceFuture = 1;\n(function(element) {\n"
         "const set = host.slot.set, get = host.slot.get, remove = host.slot.remove;\n"
@@ -163,6 +178,11 @@ def recorder_future_source(entry_objects=False):
 
 
 def recorder_lifetime_cpp(cpp, values, entry_objects=False):
+    """Append a C++ main() that replays recorder_future_body natively and
+    checks that every Map, object and closure is freed in the expected order.
+
+    Each failing check returns a distinct exit code (120-139).
+    """
     changed = instrument_leaf_objects(cpp, allocations=4 if entry_objects else 1)
     equal = "object_strict_equal" if entry_objects else "scalar_strict_equal"
     body = re.sub(
@@ -185,6 +205,8 @@ def recorder_lifetime_cpp(cpp, values, entry_objects=False):
         recorder_future_body(entry_objects),
     )
     if entry_objects:
+        # field_76616c7565 is the native field for the JS property `value`
+        # (the name is hex-encoded: 76 61 6c 75 65 = "value").
         body = (
             body.replace(
                 "const payload = {value: i + 0.5};",
@@ -335,6 +357,7 @@ int main() {
 def template_lifetime(
     args, cpp, name, mode, expected, compilers, nm, child, recorder_values=None, entry_objects=False
 ):
+    """Build the lifetime harness with each compiler and with sanitizers, and run it."""
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(
         recorder_lifetime_cpp(cpp, recorder_values, entry_objects)
@@ -358,6 +381,7 @@ def template_lifetime(
 
 
 def check_recorders(args, node, reference, compilers, nm):
+    """Run every recorder, snapshot and template case end to end and print a summary."""
     cases = {**recorder_cases(), **recorder_refusals(), **snapshot_cases(), **template_cases()}
     observations = 0
 
@@ -380,6 +404,8 @@ for (let i = 0; i < 1024; ++i) {
                 )
             )
             if row.get("recorder"):
+                # The future loop runs 1024 times and logs two console.error
+                # calls per iteration, hence 2048 extra errors.
                 values.update(traceErrorCount=values["traceErrorCount"] + 2048, traceErrorMessage=0)
             observe(args, name + "-future", future, values)
             observations += len(row["values"]) + 1
@@ -389,7 +415,8 @@ for (let i = 0; i < 1024; ++i) {
         observations += len(values)
 
     for name, row in cases.items():
-        # prepare appends one newline; compile the exact pinned source bytes.
+        # boundary.prepare appends one newline, so strip it here to compile the
+        # pinned source bytes exactly.
         js, ir, functions = boundary.prepare(args, name, row["source"].removesuffix("\n"))
         assert js.read_bytes() == row["source"].encode(), name
         assert functions == row["functions"], name
@@ -409,6 +436,9 @@ for (let i = 0; i < 1024; ++i) {
         for policy, options in (("default", ""), ("disabled", "optimize=false")):
             label = name + "-" + policy
             if row.get("recorder") and row["admitted"]:
+                # A budget of 0 or 32 steps is too small to finish the proof and
+                # must refuse with reason "budget"; 100000 finishes it, so a
+                # fixed-undefined row then refuses for its semantic reason.
                 for steps in (0, 32, 100_000) if row.get("fixed_undefined") else (0, 32):
                     refused = methods.refused(
                         args,
@@ -420,8 +450,9 @@ for (let i = 0; i < 1024; ++i) {
                         admitted=0,
                     )
                     check_call_preservation(ir.read_text(), refused.read_text(), label)
-            # Keep exact sources; the longer outer probe needs this budget,
-            # and unsafe-key controls must finish their semantic refusal.
+            # Rows with max_steps need a larger proof budget to finish: admitted
+            # rows to be proved, refused rows to reach their semantic refusal
+            # instead of a budget cutoff.
             if "max_steps" in row:
                 options += f" host-max-steps={row['max_steps']}"
             output = owned.lower(args, ir, label, config, options=options, cleanup=row["admitted"])
@@ -460,8 +491,9 @@ for (let i = 0; i < 1024; ++i) {
             )
             methods.census(checked, functions, label, admitted=functions if row["admitted"] else 0)
             if row.get("fixed_undefined") and not row["admitted"]:
-                # Successful ownership prepares calls even when native emission
-                # refuses. Preserve every call and the exact entry method order.
+                # A successful ownership proof prepares the calls even when native
+                # emission then refuses, so every call and the entry's method
+                # order must be preserved.
                 targets = {"set": "fn$4", "get": "fn$5", "remove": "fn$6"}
                 expected = [
                     targets[method]

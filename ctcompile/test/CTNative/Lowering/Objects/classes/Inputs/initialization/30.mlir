@@ -1,4 +1,4 @@
-// The constructor's final call publishes its initialized receiver in a captured local Map.
+// The constructor's last statement stores the finished `this` in a captured local Map.
 //--- class-map-record-constructor-direct.js
 function class_map_record_constructor_direct() {
     const values = new Map();
@@ -11,7 +11,7 @@ function class_map_record_constructor_direct() {
 }
 var a = class_map_record_constructor_direct();
 
-// A second constructor overwrites the entry while both saved owners remain distinct.
+// A second construction overwrites the entry; both get results stay distinct objects.
 //--- class-map-record-constructor-overwrite.js
 function class_map_record_constructor_overwrite() {
     const values = new Map();
@@ -28,7 +28,7 @@ function class_map_record_constructor_overwrite() {
 }
 var a = class_map_record_constructor_overwrite();
 
-// Disposal snapshots the complete fields after constructor publication has finished.
+// dispose() lists all fields after the constructor has stored `this` in the Map.
 //--- class-map-record-constructor-snapshot-dispose.js
 function class_map_record_constructor_snapshot_dispose() {
     const values = new Map();
@@ -46,7 +46,7 @@ function class_map_record_constructor_snapshot_dispose() {
 }
 var a = class_map_record_constructor_snapshot_dispose();
 
-// Deleting the entry after construction leaves its saved receiver borrowed from the owner.
+// Deleting the entry after construction leaves the get result usable.
 //--- class-map-record-constructor-delete.js
 function class_map_record_constructor_delete() {
     const values = new Map();
@@ -61,7 +61,7 @@ function class_map_record_constructor_delete() {
 }
 var a = class_map_record_constructor_delete();
 
-// Reading through the published alias observes the receiver before n is initialized.
+// Refused: the constructor reads `this` back from the Map before `n` is written.
 //--- class-map-record-constructor-observer.js
 function class_map_record_constructor_observer() {
     const values = new Map();
@@ -79,7 +79,7 @@ function class_map_record_constructor_observer() {
 }
 var a = class_map_record_constructor_observer();
 
-// A throw after publication leaves a reachable receiver even though construction failed.
+// Refused: a throw after storing `this` leaves a half-built object reachable in the Map.
 //--- class-map-record-constructor-throw.js
 function class_map_record_constructor_throw() {
     const values = new Map();
@@ -96,7 +96,7 @@ function class_map_record_constructor_throw() {
 }
 var a = class_map_record_constructor_throw();
 
-// An escaped Map retains its published receiver after the enclosing function returns.
+// Refused: the Map escapes into a global and keeps the instance after the function returns.
 //--- class-map-record-constructor-map-escaped.js
 var retained;
 function class_map_record_constructor_map_escaped() {
@@ -111,7 +111,7 @@ function class_map_record_constructor_map_escaped() {
 var a = class_map_record_constructor_map_escaped();
 a = retained.get("slot").n * 100 + a;
 
-// A helper publishing this still requires the separate complete interprocedural proof.
+// The constructor stores `this` through a helper function instead of calling set directly.
 //--- class-map-record-constructor-helper.js
 function class_map_record_constructor_helper() {
     const values = new Map();
@@ -125,7 +125,7 @@ function class_map_record_constructor_helper() {
 }
 var a = class_map_record_constructor_helper();
 
-// A replacement return makes the constructed result differ from the published receiver.
+// Refused: the constructor returns another object, so `new` differs from the stored `this`.
 //--- class-map-record-constructor-return-object.js
 function class_map_record_constructor_return_object() {
     const values = new Map();
@@ -138,7 +138,7 @@ function class_map_record_constructor_return_object() {
 }
 var a = class_map_record_constructor_return_object();
 
-// A base constructor's terminal publication precedes the derived receiver's added field.
+// Base stores `this` as its last statement, before the derived constructor adds a field.
 //--- class-map-record-constructor-inherited.js
 function class_map_record_constructor_inherited() {
     const values = new Map();
@@ -154,7 +154,7 @@ function class_map_record_constructor_inherited() {
 }
 var a = class_map_record_constructor_inherited();
 
-// A dynamic String key requires more than the literal-key publication proof.
+// The constructor stores `this` under a String key passed in as a parameter.
 //--- class-map-record-constructor-dynamic-key.js
 function class_map_record_constructor_dynamic_key(key) {
     const values = new Map();

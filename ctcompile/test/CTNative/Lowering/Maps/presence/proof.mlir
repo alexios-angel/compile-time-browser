@@ -1,6 +1,6 @@
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc --ctnative-lower-to-emitc | FileCheck %s
-// A forged annotation cannot make a has snapshot survive deletion.
+// A hand-written {ctnative.map_present} cannot make a stale has() result survive a delete().
 module {
   // CHECK: ctjs.func @stale_guard
   // CHECK-SAME: ctnative.not_native = "nested native Map get requires presence on every reaching path for the same instance and key; has observations must survive intervening effects"

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Prove literal !0/!1 Boolean origins without admitting computed state stores."""
+"""Check Boolean cells whose values are written as `!0` and `!1`.
+
+Minifiers spell `true`/`false` as `!0`/`!1`. The cells.py and branches.py
+cases are rerun with those spellings and must still lower natively, while any
+other number, a computed operand or a non-`not` unary stored into the cell must
+be refused.
+"""
 
 import re
 
@@ -9,6 +15,12 @@ from CTNative.Browser.dom.boolean import cells
 
 
 def negated_literals(text):
+    """Rewrite each Boolean constant in `text` as `ctjs.unary not` of a number.
+
+    `true` becomes `!0` and `false` becomes `!1`; 4607182418800017408 is the
+    IEEE-754 bit pattern of 1.0.
+    """
+
     def replace(match):
         indent, value, boolean = match.groups()
         bits = "0" if boolean == "true" else "4607182418800017408"
@@ -23,6 +35,7 @@ def negated_literals(text):
 
 
 def negated_source(text):
+    """Apply the same `!0`/`!1` spelling to the JavaScript oracle source."""
     return text.replace("seen = false", "seen = !1").replace("seen = true", "seen = !0")
 
 
@@ -53,8 +66,9 @@ CASES = {
         {"before": True, "after": False},
         True,
     ),
-    # A raw negative-zero NumberAttr is also numeric zero. The equivalent
-    # JavaScript oracle need not import to the same unary-negation spelling.
+    # 9223372036854775808 is the bit pattern of -0.0, which is also falsy, so
+    # `!-0` is true. The JavaScript oracle writes `!-0`, which the importer
+    # need not spell the same way.
     "signed-zero": (
         cells.program(
             helpers=HELPERS.replace("#ctjs.number<0>", "#ctjs.number<9223372036854775808>")
@@ -75,8 +89,8 @@ for name in ("both-arms", "owner-stores"):
 
 
 def bad_programs():
-    # Re-run the affected ownership/caller/body boundaries with proved
-    # origins present, so a numeric Boolean cannot bypass those checks.
+    # Rerun the ownership, caller and body refusals from cells.py with `!0`/`!1`
+    # literals, so a numeric Boolean spelling cannot bypass those checks.
     original = cells.bad_programs()
     names = (
         "before-init",
@@ -104,6 +118,8 @@ def bad_programs():
         "computed-store",
     )
     bad = {name: negated_literals(original[name]) for name in names}
+    # IEEE-754 bit patterns: 2.0, -1.0, NaN and +Infinity. Only !0 and !1 are
+    # accepted as Boolean origins.
     for name, literal in {
         "two": "#ctjs.number<4611686018427387904>",
         "negative-one": "#ctjs.number<13830554455654793216>",

@@ -1,5 +1,5 @@
-// An exact captured helper applied to the formal decides the arm when it
-// returns the same truthiness for every construction's actual.
+// A captured helper applied to the constructor parameter decides its branch when it
+// returns the same truthiness for the argument of every `new`.
 //--- own-fields-branch-helper-falsy.js
 function own_fields_branch_helper_falsy() {
     const pick = t => typeof t == "string" ? t : null;
@@ -11,7 +11,7 @@ function own_fields_branch_helper_falsy() {
 }
 var a = own_fields_branch_helper_falsy();
 
-// Bootstrap's element/isElement shape: a helper calling a nested helper.
+// Bootstrap's element/isElement shape: a helper that calls a nested helper.
 //--- own-fields-branch-helper-nested.js
 function own_fields_branch_helper_nested() {
     const isElement = t => !(!t || "object" != typeof t) && void 0 !== t.nodeType;
@@ -24,7 +24,7 @@ function own_fields_branch_helper_nested() {
 }
 var a = own_fields_branch_helper_nested();
 
-// A truthy helper result keeps the arm's field.
+// A truthy helper result keeps the branch's field.
 //--- own-fields-branch-helper-truthy.js
 function own_fields_branch_helper_truthy() {
     const pick = t => typeof t == "number" ? t : null;
@@ -36,7 +36,7 @@ function own_fields_branch_helper_truthy() {
 }
 var a = own_fields_branch_helper_truthy();
 
-// Helper results that disagree leave the arm to run time.
+// Helper results that disagree leave the branch to be decided at run time.
 //--- own-fields-branch-helper-mixed.js
 function own_fields_branch_helper_mixed() {
     const pick = t => typeof t == "string" ? t : null;
@@ -60,7 +60,7 @@ function own_fields_branch_helper_object() {
 }
 var a = own_fields_branch_helper_object();
 
-// A property read on the executed path is not evaluated.
+// A helper whose taken path reads a property (t.length) is not evaluated.
 //--- own-fields-branch-helper-property.js
 function own_fields_branch_helper_property() {
     const pick = t => t.length > 0 ? t : null;
@@ -72,8 +72,8 @@ function own_fields_branch_helper_property() {
 }
 var a = own_fields_branch_helper_property();
 
-// Bootstrap's BaseComponent shape: an implicit leaf constructor, a base arm on
-// the element helper and the base's clearing loop, all proved at the leaf.
+// Bootstrap's BaseComponent shape: an implicit subclass constructor, a base branch on
+// the element() helper and the base's clearing loop, all proved at the subclass.
 //--- inherited-own-fields-iterate-deferred-helper.js
 function inherited_own_fields_iterate_deferred_helper() {
     const isElement = t => !(!t || "object" != typeof t) && void 0 !== t.nodeType;

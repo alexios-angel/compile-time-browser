@@ -1,2 +1,2 @@
-# Gate owned synchronous DOM entries; retained Data keys remain outside this contract.
+# Synchronous DOM entries taking element handles compile natively; kept handles are refused.
 # RUN: python3 %S/session.py %dom_driver

@@ -1,6 +1,6 @@
 // RUN: ctjs-opt %s --split-input-file --ctnative-lower-to-emitc | FileCheck %s
-// Public return boundaries and callers outside the function-value flow must
-// not acquire a new signature. Input proof annotations cannot bypass checks.
+// A returned closure keeps its signature when its producer is public (open$2) or its target has a
+// direct caller outside the closure-value flow; a forged ctnative.environment does not bypass that.
 
 module {
   ctjs.func @probe$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -20,7 +20,7 @@ module {
     ctjs.return %fn
   }
   ctjs.func @reader$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<1>
+    %one = ctjs.constant #ctjs.number<1>  // Bit pattern 1: the smallest denormal.
     ctjs.return %one
   }
 }
@@ -44,7 +44,7 @@ module {
     ctjs.return %fn
   }
   ctjs.func @reader$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<1>
+    %one = ctjs.constant #ctjs.number<1>  // Bit pattern 1: the smallest denormal.
     ctjs.return %one
   }
 }

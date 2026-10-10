@@ -1,5 +1,5 @@
-# Bound sibling calls pass the identical existing cell through ordinary lifted
-# parameters. The original nested-sibling source is retained in primitive-cells.
+# Sibling closures that share one captured variable receive that same cell as an ordinary
+# lifted parameter. Different cells, deeper nesting, escape and reassignment are refused.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

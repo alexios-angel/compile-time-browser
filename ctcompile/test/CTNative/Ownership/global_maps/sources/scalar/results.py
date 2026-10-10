@@ -1,8 +1,12 @@
-"""The programs under test and their refusal variants, and the sibling drivers.
+"""Scalar-result Map programs for the owned-global-maps tests, with refusals.
 
-Split out of native-owned-global-maps.py on 2026-09-08 (it was 1,013 lines); the
-definitions are verbatim, only the two sibling-file paths changed, because this
-module lives one directory below them.
+Every program is derived by text replacement from CTNative/Exports/boundary.js,
+which publishes `host.slot` as an object whose methods share one closed-over Map
+`state`. Each `*_sources()` builder returns {row name: (JS source, owner,
+expected trace)} for programs the native lowering must admit; each
+`*_refusals()` builder returns {row name: (JS source, expected trace)} for
+variants it must refuse. `methods` is the sibling driver
+Ownership/global-methods.py, loaded by path because its name has a dash.
 """
 
 import hashlib
@@ -12,8 +16,8 @@ import re
 from pathlib import Path
 from urllib.parse import quote
 
-# global_maps/, two directories up: the driver scripts are its siblings
-# (with_name), and CTNative/ is two levels above it.
+# The global_maps/ directory, two levels up. Its siblings are the Ownership
+# driver scripts (reached with with_name), and CTNative/ is two levels above it.
 DRIVERS = Path(__file__).resolve().parents[2]
 
 spec = importlib.util.spec_from_file_location("methods", DRIVERS.with_name("global-methods.py"))
@@ -21,13 +25,14 @@ methods = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(methods)
 owned, boundary, host = methods.owned, methods.boundary, methods.host
 # The exports fixture is string-template data: every derived source and its
-# pinned hash anchor on its exact bytes, so the beautifier is told to leave it
-# alone and the two marker lines are dropped here.
+# pinned hash depend on its exact bytes, so the fixture tells the JS beautifier
+# to leave it alone, and the two marker lines are dropped here.
 SOURCE = "".join(
     line
     for line in (DRIVERS.parent.parent / "Exports/boundary.js").read_text().splitlines(True)
     if not line.startswith("/* beautify ignore:")
 )
+# SHARED adds a setter that grows the Map, so get() and set() share state.
 SHARED = SOURCE.replace(
     "get() { return state.size; }",
     "get() { return state.size; }, set() { state.set('x', 1); return state.size; }",
@@ -35,17 +40,23 @@ SHARED = SOURCE.replace(
 SHARED = SHARED.replace(
     "var trace = host.slot.get();", "host.slot.set(); var trace = host.slot.get();"
 )
+# PARAMETER makes the setter's Map key a parameter, called with 'x'.
 PARAMETER = SHARED.replace("set() { state.set('x', 1)", "set(key) { state.set(key, 1)")
 PARAMETER = PARAMETER.replace("host.slot.set();", "host.slot.set('x');")
+# CALL_RESULT passes the getter's result as the setter's key.
 CALL_RESULT = PARAMETER.replace("host.slot.set('x');", "host.slot.set(host.slot.get());")
+# SEEDED_RESULT makes the getter seed key 0 and return state.get(0).
 SEEDED_RESULT = CALL_RESULT.replace(
     "get() { return state.size; }", "get() { state.set(0, 1); return state.get(0); }"
 )
+# Long string keys and payloads (132 and 204 characters), also used by other sources.
 STRING_RESULT = "result-key-" * 12
 OTHER_STRING_RESULT = "other-result-key-" * 12
 
 
 def parameter_sources():
+    """Setters whose Map key is a parameter: repeated, numeric, Boolean, aliased and
+    two-parameter actuals."""
     return {
         "shared_parameter": hosted(PARAMETER, 1),
         "shared_parameter_repeated": hosted(
@@ -86,6 +97,8 @@ def parameter_sources():
 
 
 def result_sources():
+    """Setters whose actual is the result of another `host.slot` call: sizes,
+    Booleans, deletes, strings, formals and left-to-right argument order."""
     observed_size = CALL_RESULT.replace(
         "get() { return state.size; },",
         "size() { return state.size; }, get() { return state.has(false); },",
@@ -162,6 +175,7 @@ def result_sources():
 
 
 def seeded_result_sources():
+    """Getters that seed the Map and return `state.get(key)` as the setter's actual."""
     observed_size = CALL_RESULT.replace(
         "get() { return state.size; },",
         "size() { return state.size; }, get() { state.set(0, 1); return state.get(0); },",
@@ -204,6 +218,8 @@ def seeded_result_sources():
 
 
 def key_fact_sources():
+    """Seeded getters with other writes and deletes before the read; the seeded
+    key's value must still be known exactly."""
     return {
         "seeded_earlier_key": hosted(
             SEEDED_RESULT.replace("return state.get(0);", "state.set(1, 2); return state.get(0);"),
@@ -254,6 +270,8 @@ def key_fact_sources():
 
 
 def joined_result_sources():
+    """Seeded getters that also write the dynamic key `state.size`, so the
+    seeded key is known only by joining what each write can alias."""
     dynamic = SEEDED_RESULT.replace(
         "return state.get(0);", "state.set(state.size, 2); return state.get(0);"
     )
@@ -322,6 +340,8 @@ def joined_result_sources():
 
 
 def size_result_sources():
+    """Deletes keyed by a saved or current `state.size` that provably miss or hit
+    a seeded key."""
     saved = SEEDED_RESULT.replace(
         "state.set(0, 1); return state.get(0);",
         "const alias = state; alias.set(0, 1); const saved = alias.size; "
@@ -405,6 +425,8 @@ def size_result_sources():
 
 
 def size_result_refusals():
+    """Deletes keyed by `state.size` that may alias a seeded key, so the read
+    result cannot be proved and the program must be refused."""
     observed_size = SEEDED_RESULT.replace(
         "var trace = host.slot.get();", "var trace = host.slot.set(host.slot.get());"
     )
@@ -498,6 +520,8 @@ def size_result_refusals():
 
 
 def payload_result_sources():
+    """Seeded payloads that are Booleans or strings, including false and the
+    empty string, which are present values rather than missing ones."""
     observed_size = SEEDED_RESULT.replace(
         "get() {", "size() { return state.size; }, get() {"
     ).replace("var trace = host.slot.get();", "var trace = host.slot.size();")
@@ -546,6 +570,8 @@ def payload_result_sources():
 
 
 def payload_result_refusals():
+    """Variants of the false and empty-string payload rows that delete the key
+    before reading it."""
     positives = payload_result_sources()
     return {
         "result_seeded_false_deleted": (
@@ -566,6 +592,7 @@ def payload_result_refusals():
 
 
 def mixed_result_sources():
+    """Maps that hold numeric, Boolean and string keys and values together."""
     observed_size = SEEDED_RESULT.replace(
         "get() {", "size() { return state.size; }, get() {"
     ).replace("var trace = host.slot.get();", "var trace = host.slot.size();")
@@ -625,6 +652,7 @@ def mixed_result_sources():
 
 
 def mixed_result_refusals():
+    """Variants of the mixed-tag rows that delete the key before reading it."""
     positives = mixed_result_sources()
     return {
         "result_seeded_mixed_false_deleted": (

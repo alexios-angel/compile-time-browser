@@ -492,7 +492,7 @@ function static_unused_setter() {
 }
 var a = static_unused_setter();
 
-// Own accessors now precede function metadata in the VM, as in Node.
+// A static getter named `name` or `length` shadows the class's built-in property, as in Node.
 //--- static-name.js
 function static_name() {
     class Shape { static get name() { return "replacement"; } }
@@ -509,7 +509,7 @@ function static_length() {
 }
 var a = static_length();
 
-// Internal home storage precedes the accessor in the current interpreter.
+// The VM's internal `__home` key (a method's home object) wins over a static getter of that name.
 //--- static-home.js
 function static_home() {
     class Shape { static get __home() { return 7; } }
@@ -590,7 +590,7 @@ function method_branch_shadow() {
 }
 var a = method_branch_shadow();
 
-// Constructors and static getters keep their existing linear-body contract.
+// Constructors and static getters are admitted only with straight-line bodies; a branch refuses.
 //--- constructor-branch.js
 function constructor_branch() {
     class Shape { constructor(n) { if (n) { this.n = 7; } else { this.n = 8; } } }

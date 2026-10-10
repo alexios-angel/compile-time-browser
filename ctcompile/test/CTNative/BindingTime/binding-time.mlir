@@ -37,7 +37,7 @@ module {
 
 //--- calls.mlir
 module {
-  // Bottom-up summaries need more than source order: outer precedes inner.
+  // Summaries must be built callee-first, not in source order: @outer precedes @inner.
   // CALLS-LABEL: ctjs.func private @outer
   // CALLS: ctjs.call_direct @inner{{.*}}ctnative.binding_time = "static"
   // CALLS: ctjs.binary add {{.*}}ctnative.binding_time = "static"

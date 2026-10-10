@@ -1,6 +1,6 @@
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-opt %s --ctnative-lower-to-emitc --ctnative-lower-to-emitc | FileCheck %s
-// An input presence annotation cannot turn an absent lookup into a Map value.
+// A forged ctnative.map_present on get(2) must not make the absent entry a Map.
 module {
   // CHECK: ctjs.func @untrusted_presence
   // CHECK-SAME: ctnative.not_native = "nested native Map get requires presence on every reaching path for the same instance and key; has observations must survive intervening effects"

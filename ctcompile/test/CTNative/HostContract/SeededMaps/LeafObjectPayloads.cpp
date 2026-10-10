@@ -1,7 +1,21 @@
+//===- LeafObjectPayloads.cpp - Object payloads in a Map --------*- C++ -*-===//
+//
+// Host-contract proofs for a captured Map whose values are objects: fresh
+// "leaf" objects allocated inside the put method (with only scalar own fields)
+// and objects passed in by the caller. Also builds the fixture the
+// LeafReadbacks, DefiniteMapAbsence and CapturedMapClear checks start from.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Checks that a fresh object allocated inside a Map method and stored as a
+/// value can be owned by the captured Map when it has only scalar own fields,
+/// and that escapes, accessors, prototype changes, object keys and host-object
+/// payloads are refused. Runs once on the source form and once on the
+/// call_direct (prepared) form. 4607182418800017408 is the IEEE-754 bit
+/// pattern of 1.0.
 void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & shared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     auto source =
@@ -58,6 +72,9 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                 program = replaced(program, call, direct);
             }
         }
+        // Checks a proved query has all four callable edges in source order, each
+        // recording put$3's one leaf allocation, field writes and field reads,
+        // with every setter argument typed String.
         const auto edges = [&](mlir::ModuleOp module, const HostContractAnalysis & query) {
             auto setter = module.lookupSymbol<ctjs::FuncOp>("put$3");
             const auto expected = Alternatives::forTag(mlir::TypeID::get<ctjs::StringAttr>());
@@ -214,8 +231,8 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                           "%setter(%state, %entryKey, %payload)");
         variant(formal, false, "a host object actual cannot become a proved local leaf formal");
 
-        // This getter has no local CreateObject. The complete sibling census
-        // must still prevent its unknown payload from becoming a primitive.
+        // The getter allocates nothing itself, but put$3 stores objects into the
+        // same Map, so a `get` of an unknown key must not be typed as primitive.
         const std::string sizeRead = "    %key = ctjs.constant #ctjs.string<\"size\">\n"
                                      "    %answer = ctjs.get_property %state[%key]";
         const std::string payloadRead = "    %key = ctjs.constant #ctjs.string<\"get\">\n"
@@ -232,10 +249,13 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                 "an object-writing sibling vetoes an unknown supposedly primitive get");
         variant(replaced(getter, "    %answer = ctjs.call %reader", reseed), true,
                 "a live exact primitive reseed proves its read despite object-writing siblings");
+        // One row per variant() call above; update this when adding a case.
         check(rows == 25, "every leaf allocation, scalar field and escaping-use control ran");
 
-        // Remove the unused method-local allocation: the caller formal alone
-        // must close primitive contents before any sibling return is checked.
+        // Remove the method's own allocation so the stored value comes only from
+        // the caller's %payload argument (a fresh object made by the entry); the
+        // analysis must account for that payload before it checks what the other
+        // methods return.
         auto caller = replaced(formal, "    %value = ctjs.create_object\n", "");
         caller = replaced(
             caller, "    %actual = ", "    %payloadActual = ctjs.create_object\n    %actual = ");
@@ -307,6 +327,7 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
                          "    ctjs.return %loaded"),
                 false, "storing a caller payload does not authorize its Map.get-derived return",
                 false);
+        // 25 above, plus 2 x 2 x 5 orderings and 7 caller-payload uses.
         check(rows == 52, "every local and caller payload family control ran");
         checkLeafReadbacks(context, program, prepared);
         checkDefiniteMapAbsence(context, program, prepared);
@@ -319,6 +340,7 @@ void checkLeafObjectPayloads(mlir::MLIRContext & context, const std::string & sh
             auto contract = mapContractFor(*module);
             HostContractAnalysis query(*module, contract);
             const unsigned completion = query.steps();
+            // 15000 is a ceiling well above this fixture's step count.
             check(query.proved() && completion < 15000,
                   "leaf family proof has bounded complete work");
             if (!query.proved() || completion >= 15000) { continue; }

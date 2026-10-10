@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Compose original class proofs with typed DOM entries and local fields."""
+"""Test-case tables for the class + DOM lowering test (basics.py).
+
+Classes that read DOM attributes through methods, fields, statics and helpers.
+Each *_CASES entry maps a test name to (JS function body, expected bits); each
+*_REFUSALS entry is a body the native compiler must refuse. iteration_cases.py
+and text_cases.py extend these tables. Imported, not run.
+"""
 
 import argparse
 import json
@@ -40,6 +46,9 @@ ERROR_CLASS = """class Shape {
   }
   return new Shape(element).read();
 """
+# Expected bits: one character per value that basics.py gives the element's
+# `x` attribute, in the order null, '', 'a\0b', '\u00e9'. '1' means the
+# function returns a truthy value for that input.
 CLASS_CASES = {
     "class_error_unused": (ERROR_CLASS, "1000"),
     "class_key": (CLASS + READ, "1000"),
@@ -296,8 +305,9 @@ TWO_ELEMENT_CLASSES = {
     "method_transitive_bad_field_after_good",
 }
 CLASS_REFUSALS = {
-    # Instance calls do not supply argument authority to a static body. The
-    # static is called: an unread one is removed before the proof (8b60703a6).
+    # A proof for instance-method calls says nothing about a static method's
+    # arguments. The static is actually called here, because an uncalled static
+    # is deleted before the proof runs and would not test anything.
     "class_static_shared_dom_helper": """const get = t => t.getAttribute('x');
   class Button {
     constructor(element) { this.element = element; }
@@ -307,7 +317,8 @@ CLASS_REFUSALS = {
   Button.unused(element);
   return new Button(element).read();
 """,
-    # Helpers first seen by a static retain the strict source census.
+    # A helper first reached through a static method still needs every one of
+    # its uses checked; the instance method's proof does not cover it.
     "class_static_shared_dom_transitive": """const get = t => t.getAttribute('x');
   const wrap = t => get(t);
   class Utility { static unused(t) { return wrap(t); } }
@@ -583,10 +594,10 @@ CLASS_REFUSALS.update(
         ),
     }
 )
-# Bootstrap's element helpers, verbatim. On a declared element `a` returns its
-# argument (element facts: `jquery` is outside the VM's element name set), so
-# the constructor arm is decided, the call becomes its argument and both
-# helpers lose their last call.
+# Bootstrap's element helpers, verbatim. Given a declared DOM element, `a`
+# returns it unchanged, because an element has no `jquery` property. So the
+# constructor's `if` always takes the same branch, the call `a(t)` is replaced
+# by `t`, and both helpers end up with no remaining callers.
 BOOTSTRAP_ELEMENT = """r = t => !(!t || "object" != typeof t) && (void 0 !== t.jquery && (t = t[0]), void 0 !== t.nodeType),
         a = t => r(t) ? t.jquery ? t[0] : t : "string" == typeof t && t.length > 0 ? document.querySelector(n(t)) : null"""
 ELEMENT_ARM = (
@@ -603,10 +614,11 @@ ELEMENT_ARM_CASES = {
     "class_element_arm": (ELEMENT_ARM + "  return new Button(element).read();\n", "1000")
 }
 CLASS_CASES.update(ELEMENT_ARM_CASES)
-# Each must refuse where named. An element expando - before or after the
-# construction, or in an unused method - fails the typed DOM proof's write
-# check, a prototype write fails the census, and a non-element actual leaves
-# the arm undecided, so `a` keeps its call and its census.
+# Each must be refused with the named diagnostic. Adding a property to the
+# element (before or after construction, or in an unused method) fails the DOM
+# write check, a prototype write fails the check of the class's uses, and a
+# non-element argument leaves the constructor's branch undecided, so the call
+# to `a` stays and must be checked.
 ELEMENT_ARM_REFUSALS = {
     "element_arm_expando": (
         ELEMENT_ARM + "  element.jquery = 1;\n  return new Button(element).read();\n",
@@ -765,7 +777,7 @@ NUMBER_REFUSALS = {
         "    read()", "    static get NAME() { return Number('0'); }\n    read()"
     ),
 }
-# Keep the complete original helper, including both exception-producing calls.
+# Bootstrap's M helper (BOOTSTRAP_M) unmodified, including both calls that can throw.
 M_CLASS = (
     BOOTSTRAP_M
     + """
@@ -812,7 +824,8 @@ M_REFUSALS = {
         "  return typeof", "  if (false) element.unknown(); return typeof"
     ),
 }
-# The method is M's only caller: no entry call primes the helper proof.
+# The class method is M's only caller; the entry function never calls M
+# directly, so M's proof must come from the method alone.
 M_CAPTURE_CLASS = M_CLASS.replace(
     "return this.element.getAttribute('x');", "return M(this.element.getAttribute('x'));"
 )
@@ -886,10 +899,11 @@ NUMBER_CASES["class_number_captured_helper"] = (
     ),
     "1100",
 )
-# The nested closure is capture-free and called once, after its creation, in
-# its creator's block: a synchronous leaf (7fa3a87b4). Its use of the helper's
-# callee is an inert enclosure, so class preparation retires that identity
-# itself and the leaf joins the helper's complete DOM proof.
+# The nested closure captures nothing and is called once, right after it is
+# created and in the same block, so it can be inlined like straight-line
+# code. It only references the helper's callee without calling it, so class
+# preparation can drop that reference and fold the closure into the helper's
+# DOM proof.
 NUMBER_CASES["class_number_nested_helper"] = (
     NUMBER_CASES["class_number_helper"][0].replace(
         "return Number(text)",
@@ -957,7 +971,9 @@ F_REFUSALS = {
     ),
     "class_f_escape": F_CLASS.replace("read(key) { return F(key); }", "read(key) { return F; }"),
 }
-# Keep original observations when their complete matching-input census admits.
+# These used to be refusals. Every call passes inputs that match, so the
+# compiler now accepts them: move them from F_REFUSALS to F_CASES with their
+# expected bits.
 for name, bits in (
     ("class_f_matching", "0000"),
     ("class_f_matching_later", "0000"),
@@ -1163,7 +1179,7 @@ SHADOWED_HELPER = "const get = target => target.getAttribute('x');\n" + SHADOWED
     "this.element.getAttribute('x')", "get(this.element)"
 )
 SHADOWED_CASES = {
-    # The former refusal source, unchanged.
+    # SHADOWED_CLASS itself: a derived class whose read() shadows the base's.
     "class_shadowed_dom": (SHADOWED_CLASS, "1111"),
     "class_shadowed_key_collision": (
         SHADOWED_CLASS.replace(
@@ -1256,8 +1272,9 @@ SHADOWED_CASES = {
     ),
 }
 SHADOWED_REFUSALS = {
-    # The unconstructed base's original constructor retains its separate
-    # call proof even when a copied leaf body could consume the field.
+    # The base class is never constructed directly, but its constructor's side
+    # effect must still be proved for the super() call, even though the
+    # derived class's copy of the body could use the field.
     "shadowed_constructor_effect": SHADOWED_CLASS.replace(
         "this.element = element;",
         "this.element = element; this.unread = element.setAttribute('effect', 'kept');",
@@ -1292,8 +1309,9 @@ SHADOWED_REFUSALS = {
         "target.getAttribute('x')", "target.unknown()"
     ),
 }
-# These dependencies lose their last call only when their independently
-# probed method is omitted; unrelated unused helper bodies still require proof.
+# Helpers reached only from the shadowed base method lose their last caller
+# once that method is dropped; helper bodies that other code still uses must
+# still be proved.
 SHADOW_HELPER_CASES = {
     "class_shadowed_helper": (SHADOWED_HELPER, "1111"),
     "class_shadowed_helper_chain": (
@@ -1366,7 +1384,8 @@ SHADOW_HELPER_REFUSALS = {
     ),
 }
 UNUSED_FORMAL_CASES = {
-    # Exact former refusal; the key has no source observer.
+    # read() takes a parameter it never reads, so the argument cannot change
+    # what it does.
     "class_shadowed_parameter": (SHADOWED_CLASS.replace("    read()", "    read(key)"), "1111"),
     "class_shadowed_parameters": (
         SHADOWED_CLASS.replace("    read()", "    read(first, second)"),

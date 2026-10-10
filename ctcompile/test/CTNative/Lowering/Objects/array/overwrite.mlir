@@ -1,7 +1,7 @@
-// Current complete own-contents evidence admits direct local Number overwrites.
-// The called fixture also runs through the native differential/compile-clean gate
-// under both optimization policies. array.mlir's original uncalled indexed.js
-// remains a separate control; no body or call was changed there.
+// A local Number array whose contents are fully known may be overwritten by index
+// in native code. The called fixture also runs through the native compile-and-compare
+// test with and without optimization. The split files are refusals (sparse, fractional,
+// negative, unknown index, mixed types, late call) and read-fed sources that are admitted.
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/overwrite.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STORED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/overwrite.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=STORED
@@ -29,7 +29,7 @@
 // INDEX-SAME: ctnative.not_native = "an array literal written through an index
 // MIXED: ctjs.func private @blocked$1
 // MIXED-SAME: ctnative.not_native = "an array whose elements are !ctnative.opt<!ctnative.variant<!ctnative.num<i32>, !ctnative.str<utf8>>>, not numbers"
-// The same original read-fed value/index sources now have complete own reads.
+// Values and indexes that come from reads of the same array are admitted.
 // READ-NOT: ctnative.not_native
 // READ-LABEL: emitc.func @blocked_1()
 // READ: call_opaque "ctnative::vec_at"

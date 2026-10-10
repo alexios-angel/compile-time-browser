@@ -115,7 +115,7 @@ function probe() { var map = new Map([]); return map.size; }
 probe();
 
 //--- returned.js
-// A closed return is supported; publication through a global still is not.
+// Returning a new Map is supported; storing the result in a global is refused.
 function probe() { return new Map(); }
 var exported = probe();
 
@@ -129,7 +129,7 @@ function probe() { var map = new Map(); map.set("nested", new Map()); return map
 probe();
 
 //--- mixed-keys.js
-// A read with a different primitive carrier also widens the key schema.
+// Querying a number-keyed Map with a string key makes the key type mixed, which is refused.
 function probe() { var map = new Map(); map.set(1, 2); return map.has("1"); }
 probe();
 

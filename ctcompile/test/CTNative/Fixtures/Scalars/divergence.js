@@ -1,32 +1,32 @@
-// THE DECLARED DIVERGENCES, AS A PROGRAM THE TIER ACCEPTS - part 24 Phase 63
-// Step 5, the EMITTED half.
+// The documented native/interpreter divergences that the native compiler
+// lowers instead of refusing, written as a program it accepts.
 //
-// ctcompile/docs/native-divergences.md lists every place the native tier's
+// ctcompile/docs/native-divergences.md lists every place the native target's
 // answer legitimately differs, or must not differ, from the interpreter's.
-// Half of that list is refusals, and a refusal is pinned by its text
-// (CTNative/Lowering/divergence-refusals.mlir). The other half is EMITTED:
-// the tier lowers the operation and claims the two sides agree. A claim like
-// that is worth nothing until a binary and an interpreter have both answered,
-// so every witness below is a global this file's differential gate compares -
+// Half of that list is refusals, and a refusal is checked by its text
+// (test/CTNative/Lowering/Admission/divergence-refusals.mlir). The other half
+// is emitted: the compiler lowers the operation and claims both sides agree.
+// That claim means nothing until a binary and the interpreter have both run,
+// so every witness below is a global the differential test compares:
 // ND-4 (`**` and its guard), ND-5 (`%` is fmod), ND-6 (-0 and the printing
 // convention) and ND-7 (undefined carried as NaN, in the three places where
-// that is exact).
+// that is exact). ND-8 (an out-of-range index) closes the file.
 //
-// EVERY GLOBAL HERE IS A NUMBER, and that is a constraint of the gate rather
-// than a style: check-native-unit.cmake compares Number-valued globals line by
-// line, so a boolean or a string global would be skipped by the reference,
-// printed by the binary, and would fail the gate for a reason that has nothing
-// to do with a divergence. Booleans are converted with `? 1 : 0` for that
-// reason and no other.
+// Every global here is a Number, so each comparison is between two doubles
+// printed with `%.17g`; booleans are converted with `? 1 : 0` to keep it so.
+// The differential test (test/CTNative/Checks/compilation-unit.py) also
+// prints other kinds, but a Number comparison is what each divergence claim
+// is about.
 //
-// AND EVERY GLOBAL IS ASSIGNED BEFORE IT IS READ. A never-written global is
-// `undefined` in the interpreter (skipped, not printed) and NaN natively
-// (printed), which is a missing-line failure rather than a wrong answer.
+// Every global is assigned before it is read. A never-written global is
+// `undefined` in the interpreter (not printed) and NaN natively (printed),
+// which would be a missing-line failure rather than a wrong answer, and would
+// say nothing about the divergence under test.
 
-// === ND-4: `**` IS NOT std::pow ===============================================
+// === ND-4: `**` is not std::pow ===============================================
 //
 // Number::exponentiate answers NaN when the base has magnitude one and the
-// exponent is NaN or infinite; C99 pow answers 1 for all of those. The tier
+// exponent is NaN or infinite; C99 pow answers 1 for all of those. The compiler
 // emits the guard rather than refusing the operator, so these five must come
 // back NaN from the binary as well as from the interpreter. `-1 ** x` is a
 // SyntaxError in JavaScript (the unary minus may not be the base of `**`
@@ -36,9 +36,9 @@ var pow_one_inf = 1 ** (1 / 0);
 var pow_one_ninf = 1 ** (-1 / 0);
 var pow_mone_inf = (0 - 1) ** (1 / 0);
 var pow_mone_ninf = (0 - 1) ** (-1 / 0);
-// AND THE CASES THE GUARD MUST NOT CATCH. A guard that answered NaN whenever
-// an exponent was not finite, or whenever a base was one, would pass the five
-// above and be wrong here - so the negative half of the guard is pinned too.
+// The cases the guard must not catch. A guard that answered NaN whenever an
+// exponent was not finite, or whenever a base was one, would pass the five
+// above and be wrong here, so the negative half of the guard is checked too.
 // `pow_nan_zero` is the C99 rule JavaScript agrees with: anything to the zero
 // is 1, NaN included.
 var pow_nan_zero = (0 / 0) ** 0;
@@ -50,11 +50,11 @@ var pow_root = 4 ** 0.5;
 var pow_neg_odd = (0 - 2) ** 3;
 var pow_two_nan = 2 ** (0 / 0);
 
-// === ND-5: `%` IS fmod, IN ALL FOUR SIGN QUADRANTS ============================
+// === ND-5: `%` is fmod, in all four sign quadrants ============================
 //
-// JavaScript's remainder takes the sign of the DIVIDEND, which is C's fmod and
-// is not the modulo of Python or of a mathematician. The two agree exactly,
-// including on the three edge cases below, and this block is what says so.
+// JavaScript's remainder takes the sign of the dividend, which is C's fmod and
+// not the modulo of Python or of a mathematician. The two agree exactly,
+// including on the three edge cases below, and this block shows it.
 var mod_pp = 7.5 % 2;
 var mod_np = (0 - 7.5) % 2;
 var mod_pn = 7.5 % (0 - 2);
@@ -63,7 +63,7 @@ var mod_zero_divisor = 5 % 0;
 var mod_inf_dividend = (1 / 0) % 2;
 var mod_inf_divisor = 5 % (1 / 0);
 
-// === ND-6: -0 IS A DISTINCT VALUE AND SURVIVES THE PRINTING CONVENTION ========
+// === ND-6: -0 is a distinct value and survives the printing convention ========
 //
 // `%.17g` prints -0 as `-0`, so the two sides are compared on the sign of a
 // zero and not only on its magnitude. `negzero_recip` is the arithmetic
@@ -73,19 +73,19 @@ var negzero = 0 * (0 - 1);
 var poszero = 0 * 1;
 var negzero_recip = 1 / (0 * (0 - 1));
 var poszero_recip = 1 / (0 * 1);
-// -0 + 0 IS +0 in IEEE-754 round-to-nearest, in both languages: the one case
+// -0 + 0 is +0 in IEEE-754 round-to-nearest, in both languages: the one case
 // where adding zero is not the identity.
 var negzero_plus_zero = 0 * (0 - 1) + 0;
 var negzero_times_neg = (0 * (0 - 1)) * (0 - 1);
 
-// === ND-7: undefined IS CARRIED AS NaN, WHERE THAT IS EXACT ===================
+// === ND-7: undefined is carried as NaN, where that is exact ===================
 //
 // A field that is read and never written is `undefined` in the interpreter and
-// a NaN double natively. The representation is exact for ARITHMETIC,
-// RELATIONAL comparison and TRUTHINESS, and those three are what this block
-// exercises. It is NOT exact for equality, `typeof` or printing, and the tier
-// refuses all three - divergence-refusals.mlir pins the refusals, because a
-// refusal cannot be witnessed by a program that runs.
+// a NaN double natively. The representation is exact for arithmetic,
+// relational comparison and truthiness, and those three are what this block
+// exercises. It is not exact for equality, `typeof` or printing, and the
+// compiler refuses all three; divergence-refusals.mlir checks the refusals,
+// because a refusal cannot be witnessed by a program that runs.
 function undefined_field() {
     var o = {
         seen: 1
@@ -98,21 +98,21 @@ var u_times = undefined_field() * 0;
 var u_div = undefined_field() / 2;
 var u_mod = undefined_field() % 2;
 var u_pow = undefined_field() ** 2;
-// RELATIONAL: every comparison with undefined is false, and every comparison
+// Relational: every comparison with undefined is false, and every comparison
 // with NaN is false, for the same four operators. That is the whole of the
-// exactness claim, so all four are asked.
+// exactness claim, so all four are tested.
 var u_lt = undefined_field() < 1 ? 1 : 0;
 var u_le = undefined_field() <= 1 ? 1 : 0;
 var u_gt = undefined_field() > 1 ? 1 : 0;
 var u_ge = undefined_field() >= 1 ? 1 : 0;
-// TRUTHINESS: undefined is falsy and NaN is falsy.
+// Truthiness: undefined is falsy and NaN is falsy.
 var u_truthy = 0;
 if (undefined_field()) {
     u_truthy = 1;
 }
 var u_not = !undefined_field() ? 1 : 0;
-// AND AN UNDEFINED-OR-BOOLEAN, whose carrier is `bool` with undefined as
-// false. Same claim, other carrier: exact in a branch and under `!`.
+// An undefined-or-boolean, whose carrier is `bool` with undefined as false.
+// Same claim, other carrier: exact in a branch and under `!`.
 function maybe_flag(x) {
     var f = {
         seen: 1
@@ -125,35 +125,35 @@ function maybe_flag(x) {
 var b_undefined_is_false = maybe_flag(0 - 1);
 var b_set_is_true = maybe_flag(1);
 
-// === ND-8: AN OUT-OF-RANGE INDEX IS undefined, WHICH IS NaN, NOT C++ UB ======
+// === ND-8: an out-of-range index is undefined, which is NaN, not C++ UB ======
 //
-// `a[7]` on a three-element array is `undefined` in JavaScript and UNDEFINED
-// BEHAVIOUR through `std::vector::operator[]` in C++. The tier emits
-// `ctnative::vec_at`, which answers NaN - undefined's carrier - for every
+// `a[7]` on a three-element array is `undefined` in JavaScript and undefined
+// behaviour through `std::vector::operator[]` in C++. The compiler emits
+// `ctnative::vec_at`, which answers NaN (undefined's carrier) for every
 // index that is negative, fractional, or not less than `size()`. That is a
-// guard, so it is witnessed here rather than refused. `+ 0` turns the
-// undefined into a NaN the gate can compare: a global holding undefined is
-// not a Number, and the reference would skip it.
+// guard, so it is witnessed here rather than refused.
 //
-// NO FRACTIONAL INDEX HERE, AND THE OMISSION IS A DEFECT AND NOT A CHOICE.
-// This interpreter TRUNCATES a fractional index - `[10,20,30][0.5]` is 10 -
-// where `vec_at` answers NaN, so a witness of it belongs in the fixture that
-// is registered to FAIL: native-index-truncation-fixture.js. ND-8 in
-// ctcompile/docs/native-divergences.md is the whole story.
+// The calls below cover an index in range, past the end, exactly at the
+// length, negative, NaN and Infinity; each takes a different path through
+// the guard.
+//
+// Fractional indices are not tested here. They have their own fixture,
+// test/CTNative/Fixtures/Objects/index-truncation.js; see ND-8 in
+// ctcompile/docs/native-divergences.md.
 function element(i) {
     var a = [10, 20, 30];
     return a[i];
 }
-// `+ 0` FOR THE PRINT, AND THIS ONE THE COMPILER CANNOT AVOID. A
-// `ctjs.store_global` refuses a value that may be undefined (Phase 59 slice 2
-// step 3, `admission::printable`) because the print convention is `%.17g` of
-// the double and has no spelling for `undefined`. A dense array's element type
-// starts from `undefined` - an index past the end, negative or fractional is
-// undefined, which is the ND-8 guard three lines up - and `i` is a parameter
-// nothing bounds, so `a[i]` is `opt<num>` however this function is called. No
-// dominance fact removes that: it is a real possibility, not imprecision. The
-// five below already carried a `+ 0` for the same reason under the old harness
-// rule; this one did not, because its value is in range.
+// Each result gets `+ 0` so every global is a plain Number. `a[i]` has type
+// opt<num> however this function is called: `i` is a parameter nothing bounds,
+// and an index past the end, negative or fractional reads undefined (the ND-8
+// guard above). That is a real possibility, not imprecision, so even the
+// in-range call needs the `+ 0`.
+//
+// Expected: idx_in_range is 20, and the other five are NaN (undefined's
+// carrier) on both sides. The test does not hard-code these values: it runs
+// this file through the interpreter and compares, so the interpreter is the
+// oracle.
 var idx_in_range = element(1) + 0;
 var idx_past_end = element(7) + 0;
 var idx_at_length = element(3) + 0;

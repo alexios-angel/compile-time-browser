@@ -1,4 +1,9 @@
-"""Numeric-prefix cases for the DOM String gate, using its compiler/native harness."""
+"""Number() conversion cases for attribute strings.
+
+The String DOM test (strings.py) compiles and runs these through its
+compile-and-run harness; other drivers here reuse VALUES, cpp_string() and
+encoded().
+"""
 
 import json
 from urllib.parse import quote_from_bytes
@@ -6,9 +11,11 @@ from urllib.parse import quote_from_bytes
 from CTNative.Browser.dom import dom
 from CTNative.harness import run
 
-# These common cases agree with Node and the existing Core/VM implementation.
-# The inherited repeated-sign, huge-radix and overflow/trailing-text defects are
-# separate oracle work; this table does not assert arbitrary-string compliance.
+# (attribute value or None for absent, Number(value).toString()). These common
+# cases give the same answer in Node and in the ctbrowser VM. The VM's own
+# Number() is still wrong for repeated signs, huge radixes and overflow or
+# trailing text, so those inputs are left out on purpose: this table does not
+# claim full ToNumber compliance.
 VALUES = (
     (None, "0"),
     ("", "0"),
@@ -62,6 +69,8 @@ RESULTS = [
 
 
 def encoded(value):
+    """Print form shared by every oracle: a bool as true/false, a string as
+    "<UTF-8 byte length>:<hex bytes>"."""
     if isinstance(value, bool):
         return "true" if value else "false"
     data = value.encode()
@@ -70,6 +79,8 @@ def encoded(value):
 
 EXPECTED = "".join(encoded(value) + "\n" for value in RESULTS)
 
+# JS helper that calls an entry on a stub element and checks its attribute
+# access trace; Node and the VM both run it.
 ORACLE_HELPER = """
 function numericObserve(entry, original, expected, trace, first) {
   const calls = [];
@@ -102,6 +113,8 @@ function numericObserve(entry, original, expected, trace, first) {
 
 
 def check_oracles(args):
+    """Check that Node and the reference VM agree with RESULTS and the expected
+    attribute access trace for every case and value."""
     observations = []
     for name in CASES:
         for original, text in VALUES:
@@ -148,6 +161,7 @@ def check_oracles(args):
 
 
 def prepare(args):
+    """(name, ir, contract) for each case, with Number declared."""
     return [
         (name, ir, dict(contract, initial_intrinsics=["Number"]))
         for name, source, count in SOURCES
@@ -156,7 +170,10 @@ def prepare(args):
 
 
 def cpp_string(text):
-    # Fixed-width octal escapes preserve UTF-8 bytes without C++ hex continuation.
+    """C++ string literal for the UTF-8 bytes of `text`.
+
+    Fixed-width octal escapes are used because a C++ hex escape would swallow a
+    following hex digit."""
     return '"' + "".join(f"\\{byte:03o}" for byte in text.encode()) + '"'
 
 
@@ -184,6 +201,8 @@ static const std::array<numeric_sample, @COUNT@> numeric_samples{{
     ),
 )
 
+# C++ block for one entry: run every sample, check the result type and DOM
+# writes, and check that a string result outlives its session.
 RUN = r"""
     {
         @SURVIVOR@
@@ -220,6 +239,7 @@ RUN = r"""
 
 
 def client(name, entry, owned):
+    """RUN filled in for `entry`, with the writes and result type for `name`."""
     boolean = name in BOOLEANS
     writes = "assert(writes.empty() && doc.version() == version);"
     if name in MUTATIONS:
@@ -263,6 +283,8 @@ def client(name, entry, owned):
     return result
 
 
+# Variants that shadow, replace or leak Number or its toString, pass unproved
+# arguments, or call unknown code between the read and the conversion.
 REFUSALS = {
     "number_shadowed": f"const Number = element; return Number({GET}).toString();",
     "number_replaced": f"Number = element; return Number({GET}).toString();",
@@ -297,6 +319,8 @@ REFUSALS = {
 
 
 def refusal_checks(args, prepared):
+    """Refuse every REFUSALS case, a manifest that does not declare Number, and
+    an entry named Number; return the number of refusals."""
     cases = []
     for name, body in REFUSALS.items():
         ir, contract = dom.prepare(
@@ -323,4 +347,5 @@ def refusal_checks(args, prepared):
     for name, ir, contract in cases:
         for provider in dom.PROVIDERS:
             dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{provider}", "DOM")
+    # Each case is refused for both providers, with and without optimization.
     return 4 * len(cases)

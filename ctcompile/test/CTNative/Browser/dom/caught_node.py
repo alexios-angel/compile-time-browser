@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Confined node catches preserve identity and reads without a native throw."""
+"""Check that a JS try/catch that throws and catches a DOM node compiles natively.
+
+The throw and catch stay inside one function and must lower to no C++ throw or
+catch, while the caught value is still the same node and still readable.
+Results are compared with Node and the reference VM.
+"""
 
 import json
 from urllib.parse import unquote
@@ -406,6 +411,8 @@ SOURCES = {
 }
 
 
+# (data-number attribute value, expected String(Number(value))) pairs; None
+# means the attribute is absent.
 NUMBER_READ_INPUTS = (
     (None, "0"),
     ("", "0"),
@@ -487,6 +494,8 @@ NUMBER_ARITHMETIC_RESULTS["write-number-read-string-divide-return"] = NUMBER_ARI
 NUMBER_ARITHMETIC_RESULTS["write-number-read-string-prefix-divide-return"] = (
     NUMBER_ARITHMETIC_RESULTS["write-number-read-protected-divide-return"]
 )
+# Sources whose Number read is guarded by a condition: (attribute the
+# condition tests, expected result when that attribute is absent).
 NUMBER_CONDITIONAL_READS = {
     "write-number-read-conditional": ("flag", "0"),
     "write-number-read-conditional-snapshot": ("flag", "0"),
@@ -989,8 +998,9 @@ def main():
                     args, ir, dict(contract, provider=provider), label, optimize=optimize
                 )
                 cpp = run([args.translate, "--mlir-to-cpp", str(native)]).stdout
-                # The existing session wrapper rejects foreign documents with
-                # std::invalid_argument; the source catch emits no C++ exception.
+                # Ignore the one C++ throw the session provider emits for an
+                # element from another document; the JS try/catch itself must
+                # lower to no C++ throw or catch.
                 source_cpp = cpp.replace(
                     'throw std::invalid_argument("DOM element belongs to another session");', ""
                 )
@@ -1098,7 +1108,9 @@ def main():
             "mixed-return-borrow": "const flag = anchor.hasAttribute('data-closed'); try { if (flag) { throw anchor; } } catch (error) { return error; } return false;",
         }
     )
-    # The same effects and callable origins must refuse with a normal protected return.
+    # Repeat the conditional refusals with `return true;` in place of
+    # `throw anchor;`: the same effects must be refused when the protected
+    # block returns normally.
     refusals.update(
         {
             name.replace("conditional-", "conditional-return-", 1): body.replace(
@@ -1393,8 +1405,10 @@ def main():
             if name.startswith("write-boolean-read-conditional-prefix-")
         }
     )
-    # Null never authorizes a Number method; undefined and String arms are not
-    # Number/null alternatives.
+    # Variants of the nullable-Number source that must be refused: an unknown or
+    # side-effecting condition or arm, a coercing arm, an `undefined` or String
+    # arm in place of null, a Number method on a possibly-null value, and a
+    # predicate that is rebound or called on the wrong receiver.
     nullable_number_body = (
         SOURCES["write-nullable-number-conditional-prefix-return"]
         .split("{", 1)[1]
@@ -1490,17 +1504,21 @@ OUTER_SOURCES = {
 }
 
 
-# Each helper's iterator, step and close results, in the order helper_results() replaces them.
+# Source text of the [Symbol.iterator](), next() and return() results, in the
+# order helper_results() replaces them.
 HELPER_RESULTS = ("return this;", "return {done: done, value: anchor};", "throw anchor;")
 
 
 def helper_results(source, *results):
+    """Replace each of HELPER_RESULTS in `source` with the matching `results`."""
     for original, result in zip(HELPER_RESULTS, results, strict=True):
         source = source.replace(original, result)
     return source
 
 
-# Keep the original witnesses intact; each helper gains a live unconditional edge.
+# Variants of OUTER_SOURCES that add extra control flow or constant-folded
+# expressions inside each iterator helper ([Symbol.iterator], next, return);
+# OUTER_SOURCES itself is left unchanged.
 RAW_HELPER_SOURCES = {
     name + "-helper-edges": source.replace("() {", "() { do { break; } while (false);")
     for name, source in OUTER_SOURCES.items()
@@ -1604,7 +1622,8 @@ for suffix, *results in (
         f"{name}-helper-{suffix}": helper_results(source, *results)
         for name, source in OUTER_SOURCES.items()
     }
-# Canonical Strings whose UTF-16 order differs from their WTF-8 byte order.
+# '\uD800\uDC00' (U+10000) sorts before '\uE000' in UTF-16 code units but after
+# it in WTF-8 bytes, so the comparison must use UTF-16 order.
 RAW_HELPER_SOURCES |= {
     name.replace("-helper-string-order", "-helper-unicode-order"): source.replace(
         "'10' < '2'", "'\\uD800\\uDC00' < '\\uE000'"
@@ -1658,8 +1677,9 @@ for suffix, *results in (
     }
 
 
-# Retain the complete source-global witnesses; the initialized provider and
-# absence of source writes must prove the binding before helper projection.
+# Variants that compare against the global `undefined` instead of `false`. The
+# compiler may fold `undefined` only after proving the DOM provider initialized
+# it and the source never assigns it; the original variants stay unchanged.
 RAW_HELPER_SOURCES |= {
     name.replace("-primitive-equality", "-global-undefined"): source.replace(
         "null === false", "null === undefined"

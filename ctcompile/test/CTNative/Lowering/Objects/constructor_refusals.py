@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Pin observable prototype behavior before checking the native refusal boundary."""
+"""Check constructor and prototype fixtures against Node, the interpreter and native lowering.
+
+Each fixture must print its expected `a=` value under Node and the reference
+interpreter. Without --scalars (constructor-refusals.mlir), inherited-call must
+lower to native code and run, and every other fixture except prototype-written
+must be refused by native lowering with a named reason for each function. With
+--scalars (prototype-scalars.mlir), every fixture except primitives must lower
+and run natively.
+"""
 
 import argparse
 from pathlib import Path
@@ -8,11 +16,14 @@ import re
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.harness import CLEANUP, FLAGS, find_compilers, run
 
+# Node driver: runs the fixture in a fresh context and prints its global `a`.
 NODE = """const fs = require('fs'), vm = require('vm');
 const scope = {};
 vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), scope);
 console.log('a=' + scope.a);
 """
+# Fixture name -> the `a=` value Node and the reference interpreter print;
+# None means both must throw TypeError.
 OBSERVATIONS = {
     "prototype-written": 2,
     "inherited-call": 7,
@@ -26,6 +37,7 @@ OBSERVATIONS = {
     "constructor-argument": 7,
     "arrow-constructor": None,
 }
+# The same, for the --scalars fixtures.
 SCALARS = {
     "prototype-written": 2,
     "inherited": 10117,
@@ -38,6 +50,11 @@ SCALARS = {
 
 
 def check_native(args, source, name, expected):
+    """Lower `source` fully to native C++, build it with each compiler and run it.
+
+    Both optimization settings and both type layouts must print `a=<expected>`
+    with no ctbrowser runtime or prototype storage. Returns the number of runs.
+    """
     checked = 0
     raw = args.work / f"{name}.raw.mlir"
     run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
@@ -89,6 +106,7 @@ def check_native(args, source, name, expected):
 
 
 def check_mutable_helper(text):
+    """Assert that `text` still calls __ctbrowser_class_defined through a global load."""
     loaded = re.search(r'(%\w+) = ctjs.load_global "__ctbrowser_class_defined"', text)
     if loaded is None or not re.search(r"ctjs.call " + re.escape(loaded[1]) + r"\(", text):
         raise RuntimeError("the mutable class-definition hook lost its ordinary global call")
@@ -108,6 +126,8 @@ def main():
     checked = 0
     for name, expected in observations.items():
         source = args.fixtures / f"{name}.js"
+        # Node has no __ctbrowser_class_defined hook, so mutable-class-helper
+        # prints 0 there and its real value only in the reference interpreter.
         node_expected = 0 if name == "mutable-class-helper" else expected
         throws = name == "arrow-constructor"
         node = run([args.node, "-e", NODE, str(source)], success=not throws)
@@ -125,7 +145,8 @@ def main():
         if (args.scalars and name != "primitives") or name == "inherited-call":
             checked += check_native(args, source, name, expected)
             continue
-        # The original source now has a positive native gate in prototype-scalars.mlir.
+        # prototype-written lowers to native code; prototype-scalars.mlir checks
+        # that, so there is no refusal to check here.
         if name == "prototype-written":
             continue
         raw = args.work / f"{name}.raw.mlir"

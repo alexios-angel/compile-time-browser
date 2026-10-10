@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Compile the pinned Bootstrap Data probe with methods attached to their owner."""
+"""Compile the pinned Bootstrap Data probe with methods attached to their owner.
+
+Bootstrap's Data store is a Map from elements to Maps of named values, exposed
+as get/set/remove on a host global. The native build must call those methods
+directly on an owning session object, print the same observations as Node,
+keep the right Maps alive under ASan/UBSan, and refuse budget-limited, forged
+and escaping variants.
+"""
 
 import json
 from pathlib import Path
@@ -23,6 +30,7 @@ from CTNative.Ownership.global_maps.driver.umd import (
 
 
 def configure(args, ir, name, values):
+    """Write the host contract for `ir` and mark it as the closed-source session provider."""
     path = umd_contract(args, ir, name, values)
     value = json.loads(path.read_text())
     value["provider"] = "closed-source-session-v1"
@@ -40,6 +48,7 @@ def main():
     config = configure(args, subject, "session", values)
 
     def check_keys(ir):
+        """Require that lowering found exactly the three outer-key objects."""
         if "ctnative.host_outer_key_objects = 3 : i64" not in ir.read_text():
             raise RuntimeError(
                 "Data must separate element/other/absent keys from its object payload"
@@ -107,8 +116,9 @@ static_assert(sizeof(session_type) ==
                 result = host.run([str(binary)])
                 if result.stdout != expected or result.stderr:
                     raise RuntimeError("session differs from the typed Node/VM observations")
-            # The Map family can still be owned after the global publication is
-            # replaced. Calls require that table; no method owns it independently.
+            # The method table and its Maps must stay usable after globalThis is
+            # reset: the caller's handle keeps them alive, and no method owns the
+            # table by itself. Each nonzero exit code names the check that failed.
             lifetime = native.with_suffix(".lifetime.cpp")
             changed, count = re.subn(r"\bmain\(\)", "session_entry()", cpp)
             assert count == 1
@@ -160,6 +170,7 @@ int main() {
                 raise RuntimeError("session reentry/lifetime check failed")
 
         def refuse(ir, manifest, label, extra=flags):
+            """Require that lowering `ir` with `manifest` refuses the session."""
             result = host.run(
                 [args.opt, str(ir), f"--ctnative-lower-to-emitc=host-manifest={manifest} {extra}"],
                 success=False,

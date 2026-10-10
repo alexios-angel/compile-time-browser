@@ -1,4 +1,4 @@
-// Exact outer object identities; equal shapes do not imply equal Map keys.
+// Object element keys: Map keys compare by identity, never by shape or string form.
 //--- class-map-record-nested-object-holder.js
 function probe() {
     const t = new Map,
@@ -36,7 +36,7 @@ function probe() {
 }
 var a = probe();
 
-
+// Two objects of equal shape are distinct keys, and neither equals "[object Object]".
 //--- class-map-record-nested-object-distinct.js
 function probe() {
     const t = new Map,
@@ -68,7 +68,7 @@ function probe() {
 }
 var a = probe();
 
-
+// An object returned from a helper call keeps its identity as a key.
 //--- class-map-record-nested-object-returned-key.js
 function probe() {
     const t = new Map,
@@ -107,7 +107,7 @@ function probe() {
 }
 var a = probe();
 
-
+// A Number element key works like a String one.
 //--- class-map-record-nested-object-number-key.js
 function probe() {
     const t = new Map,
@@ -145,7 +145,7 @@ function probe() {
 }
 var a = probe();
 
-
+// Rebinding `element` to a new object makes later calls use a different key.
 //--- class-map-record-nested-object-changing-key.js
 function probe() {
     const t = new Map,
@@ -184,7 +184,7 @@ function probe() {
 }
 var a = probe();
 
-
+// An extra `inspect` method passes the registry Map to an unknown function.
 //--- class-map-record-nested-object-unused-observer.js
 function probe() {
     const t = new Map,

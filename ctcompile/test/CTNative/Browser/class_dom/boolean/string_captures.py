@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Copy proved fixed Strings into equality tests around local Boolean state."""
+"""Check that a constant String captured next to a mutable Boolean cell can feed
+`===` tests in a callback, natively and against Node and the VM, while the cell
+state and results stay Boolean; other uses of the String are refused."""
 
 import hashlib
 import re
@@ -13,6 +15,7 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
+# The reader's body: compare the fixed String, then return the Boolean state.
 PENDING = "eventName === 'transitionend' ? !seen : seen"
 LOCAL = captures.METHOD.replace(
     "    let seen = false;", "    const eventName = 'transitionend';\n    let seen = false;"
@@ -30,15 +33,20 @@ CASES = {
         "seen = true;", "if (!seen) { if (eventName === 'transitionend') { seen = true; } }"
     ),
 }
+# SHA-256 of the generated source for these cases, pinned so an edit to the
+# shared templates cannot silently change what this test compiles.
 SOURCE_HASHES = {
     "local-string": "d428825418d63d02b4efb9cbd44d690da7adee91e3698f8e32fde6d00f9c26f7",
     "forwarded-string": "f353c255ce729af9022f0d3680f2ee59caa2bb418fddc9c267e1c5ea916d2297",
 }
 BAD = {
-    # Preserve earlier String/Boolean comparisons as refusals.
+    # A String compared with a Boolean (from mixed_captures and forwarded_captures)
+    # is still refused.
     "old-local-mixed-types": mixed.BAD["string-fixed"],
     "old-forwarded-mixed-types": forwarded.BAD["string-fixed"],
-    # Keep an actual state write: a fixed-only String reader is supported.
+    # string-return also writes `seen`, so its reader is not one that only
+    # touches the fixed String (that is supported); main() checks the store.
+    # The cases below use the String in ways the proof does not cover.
     "string-return": LOCAL.replace(PENDING, "{ seen = false; return eventName; }"),
     "string-yield": LOCAL.replace(PENDING, "eventName === 'transitionend' ? eventName : seen"),
     "string-truth": LOCAL.replace(PENDING, "eventName ? !seen : seen"),
@@ -60,16 +68,19 @@ BAD = {
 
 
 def observations(name):
+    """Return the (attribute, value) writes one item.run() makes for case name."""
     if name == "forwarded-unequal":
         return [("before", "false"), ("after", "true")]
     return [("before", "true"), ("after", "false")]
 
 
 def capture_fixture(name):
+    """Return the module whose shape()/roots() fit the case's capture layout."""
     return forwarded if name.startswith("forwarded") else mixed
 
 
 def shape(text, name="local-string"):
+    """The fixture's shape() plus checks that the reader compares the String."""
     result = capture_fixture(name).shape(text)
     reader = result[3][0]
     assert 'ctjs.constant #ctjs.string<"transitionend">' in reader[0], reader[0]
@@ -79,12 +90,13 @@ def shape(text, name="local-string"):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     yield from mixed.mutations(text)
     _, _, _, leaves, _, indices = shape(text)
     reader = leaves[0]
     fixed = re.search(r"^    (%\w+) = ctjs\.load_upvalue (%\w+)\[0\]", reader[0], re.M)
     exited = re.search(r"^    ctjs\.frame_exit %\w+", reader[0], re.M)
-    # A discarded comparison still needs two values of the same proved type.
+    # Even an unused comparison must compare two values of the same proved type.
     yield (
         "unused-mixed-comparison",
         captures.insert(

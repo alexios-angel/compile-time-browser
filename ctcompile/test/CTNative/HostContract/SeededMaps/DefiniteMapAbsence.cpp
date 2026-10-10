@@ -1,7 +1,18 @@
+//===- DefiniteMapAbsence.cpp - Map get after delete ------------*- C++ -*-===//
+//
+// Host-contract proofs that a captured Map's `get` right after an exact
+// `delete` of the same key returns Undefined, and the cases that must refuse.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Checks that a Map read after an exact `delete` of the same key is proved to
+/// return Undefined, and that aliasing writes, reseeding, conditional writes,
+/// live IR edits and every step budget below completion withhold that proof.
+/// \p source is the LeafObjectPayloads fixture; \p prepared selects its
+/// call_direct form.
 void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & source,
                              bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -22,6 +33,9 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
         "    %undefined = ctjs.constant #ctjs.undefined\n"
         "    %numericKey = ctjs.constant #ctjs.number<0>\n"
         "    %negativeZero = ctjs.constant #ctjs.number<9223372036854775808>\n";
+    // #ctjs.number holds IEEE-754 bits: 9223372036854775808 (0x8000000000000000)
+    // is -0.0. Below, 9221120237041090560 (0x7FF8000000000000) is the canonical
+    // quiet NaN and 9221120237041090561 is a NaN with a different payload.
     const auto base =
         replaced(replaced(fixture, write, write + setup + erase + read),
                  "    ctjs.return %size\n  }\n}\n", "    ctjs.return %loaded\n  }\n}\n");
@@ -35,6 +49,9 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
                                "      %twice = ctjs.call %eraser(%state, %entryKey)\n"
                                "      scf.yield\n    }\n";
     const auto bothArms = replaced(base, erase, branch);
+    // Checks a proved query's callable edges: all four functions, each with the
+    // captured Map's complete operation lists, and the getter's formal typed by
+    // \p resultMask from the call's put-result operand.
     const auto census = [&](mlir::ModuleOp module, const HostContractAnalysis & query,
                             unsigned resultMask) {
         const auto strings = Alternatives::forTag(mlir::TypeID::get<ctjs::StringAttr>());
@@ -73,6 +90,8 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
                 if (edge.arguments.size() == 1) {
                     complete &=
                         edge.arguments.front().alternatives == returned &&
+                        // The put result: operand 4 of call_direct (this, new, callee,
+                        // state, input), operand 2 of ctjs.call (callee, this, input).
                         edge.arguments.front().actual == edge.call->getOperand(prepared ? 4 : 2);
                 }
             } else {
@@ -183,10 +202,12 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
                                     replaced(conditionalReseed, reseed, disjointWrite) + read)),
                 true, "a conditional disjoint write preserves independently known absence");
     }
+    // One row per variant() call above; update this when adding a case.
     check(rows == 30, "all definite absence, saved value, alias and branch controls ran");
 
-    // A live query must not consume a then-only read merely because its
-    // primitive category was already visited while scanning the other arm.
+    // A value defined only in the then-arm must be refused when a live edit
+    // moves a use of it after the scf.if or into the else-arm, even though the
+    // analysis already saw an Undefined read of the same type in the else-arm.
     for (const bool sibling : {false, true}) {
         const std::string scoped = "    %flag = ctjs.truthy %choice\n"
                                    "    scf.if %flag {\n"
@@ -225,9 +246,11 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
         check(HostContractAnalysis(*module, contract).proved(),
               "restoring source dominance restores the independent absent-read proof");
     }
-    // The absent read also depends on a live method, receiver and condition.
-    // Mutating their SSA scope must fail even when the key and payload remain
-    // valid and the forged report still claims a definitely absent entry.
+    // The absent read also depends on its method, receiver and condition. Each
+    // `kind` moves one of them to a then-arm-only value (0 the callee, 1 the
+    // scf.if condition, 2 the Map receiver); `sibling` targets the else-arm
+    // instead of the function body. The proof must fail even though the key
+    // and payload stay valid and forged attributes claim the entry is absent.
     unsigned scopeMutations = 0;
     for (const bool sibling : {false, true}) {
         for (const unsigned kind : {0u, 1u, 2u}) {
@@ -311,8 +334,9 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
             } else if (kind == 1) {
                 change(targetBranch, 0, branchFlag.getResult());
             } else {
-                // Mutate both operands, retaining exact callee/receiver equality.
-                // Only the then-only fluent Map's invalid scope rejects this.
+                // Change both operands so the method's object and the call's
+                // receiver stay the same value. Only the then-only scope of that
+                // fluent `set` result makes this invalid.
                 change(reader, 0, branchMap.getResult());
                 change(targetCall, 1, branchMap.getResult());
             }
@@ -337,6 +361,7 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
         auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         const unsigned completion = query.steps();
+        // 20000 is a ceiling well above this fixture's step count.
         check(query.proved() && completion < 20000, "definite absence proof has bounded work");
         if (!query.proved() || completion >= 20000) { continue; }
         for (unsigned budget = 0; budget < completion; ++budget) {
@@ -398,6 +423,7 @@ void checkDefiniteMapAbsence(mlir::MLIRContext & context, const std::string & so
             check(HostContractAnalysis(*module, contract).proved(),
                   "restoring exact deletion restores its independent absence proof");
         };
+        // put$3's %aliasKey parameter; the prepared form adds %state before it.
         const auto aliasKey = setter.getBody().front().getArgument(prepared ? 5 : 4);
         mutation(get, 2, aliasKey);
         // In the two-arm witness, this removes the only exact deletion in

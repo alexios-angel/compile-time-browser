@@ -9,12 +9,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/lexical.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=LEXICAL --implicit-check-not=ctnative.callback}
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/self.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SELF
 // RUN: ctjs-opt --ctnative-lower-to-emitc %t/new-target.mlir | FileCheck %s --check-prefix=NEW-TARGET --implicit-check-not=ctnative.callback}
-
+// Which function arguments lower to a native callback (NATIVE) and which are refused.
 // NATIVE: emitc.func @main() -> i32
 // NATIVE: emitc.func @initialize_{{[0-9]+}}() -> !emitc.opaque<"ctnative::js_num">
 // NATIVE: call @bootstrapFactory_{{[0-9]+}}()
 // NATIVE: emitc.func @bootstrapFactory_{{[0-9]+}}() -> !emitc.opaque<"ctnative::js_num">
-
+// Each refusal names why the argument is not one known, capture-free, call-only callback.
 // ESCAPE: ctjs.func private @fn$1
 // ESCAPE-SAME: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"
 // ESCAPE: ctjs.call_direct @fn$2({{.*}}) {ctnative.callback{{[,}]}}

@@ -1,6 +1,6 @@
-// Owning Map handles across closed calls, returns and lifted captures.
-// Every observation is compared with the ctjs interpreter, including after
-// a factory frame has returned and after unrelated stores are allocated.
+// Map handles passed through direct calls, returns and lifted captures, each
+// owned by exactly one place. Every global is compared with the interpreter's,
+// including after a factory frame has returned and after unrelated allocations.
 function makeStore(seed) {
     var store = new Map();
 

@@ -1,19 +1,19 @@
-// `new` BUILDS A STRUCT IN THE FRAME - the refusals, one program apiece.
+// Constructor lift refusals: one program for each reason `new` cannot build a
+// struct in the caller's frame. The GUARD numbers match the comments in
+// lib/CTNative/Lowering/ClosureLifting/Constructors.cpp.
 //
-// A REFUSAL IS CONTAGIOUS IN BOTH DIRECTIONS, so a lit that pins a refusal and
-// an acceptance in one program pins neither: the call-graph fixpoint marks
-// every caller of a refused function and every callee of one, and the top level
-// calls all of them. split-file is what keeps each of these a statement about
-// its own clause.
+// A refusal spreads in both directions: the call-graph fixpoint refuses every
+// caller and every callee of a refused function, and the top level calls them
+// all. A test that pins a refusal and an acceptance in one program pins
+// neither, so split-file keeps each program about its own clause.
 //
-// FROM JAVASCRIPT, ON PURPOSE, exactly as resolve-globals.mlir is: the rule
-// exists to match what the importer emits for `new`, and hand-written IR would
-// prove only that the rule matches the IR its author imagined.
+// The programs are JavaScript, as in CTJS/Transforms/resolve-globals.mlir,
+// because the rule must match what the importer emits for `new`; hand-written
+// IR would only show that it matches the IR its author imagined.
 //
-// THE ACCEPTING CASES ARE NOT HERE. They are native-constructor-fixture.js,
-// which goes through the compilation-unit gate and is COMPARED AGAINST THE
-// INTERPRETER - the only thing that can catch a `new` that evaluates to the
-// wrong object, because such a module verifies and compiles clean.
+// The accepted constructors are tested in ../../Fixtures/Objects/constructor.js,
+// whose native output is run and compared with the interpreter: a `new` that
+// builds the wrong object still verifies and compiles cleanly.
 
 // RUN: split-file %s %t
 // RUN: python3 %S/constructor_refusals.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --fixtures %t --work %t.controls
@@ -33,76 +33,76 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=OPENINSTANCE
 
-// --- GUARD 3: THE CONSTRUCTOR RETURNS AN OBJECT ------------------------------
+// --- GUARD 3: the constructor returns an object ----------------------------
 //
-// AND THE VM REPLACES THE INSTANCE WHEN IT DOES. `context::construct` ends
-// `return produced.is_object_like() ? produced : self` (Script/vm/call/construct.cpp,
-// and the same line for a native), and `is_object_like()` is
-// `is_object() || is_array() || is_callable() || is_kind(proxy)`
-// (Script/value.hpp). So `new Sneaky()` here evaluates to `{v: 9}` and NOT to
-// the struct this rewrite would build - the one failure mode that produces a
-// module which verifies, compiles clean under -Werror, and prints 1 where the
+// The VM then replaces the instance. `context::construct` ends
+// `return produced.is_object_like() ? produced : self`
+// (ctbrowser/lib/Script/vm/call/construct.cpp, and the same line for a native),
+// and `is_object_like()` is `is_object() || is_array() || is_callable() ||
+// is_kind(proxy)` (include/ctbrowser/script/value/base.hpp). So `new Sneaky()`
+// here evaluates to `{v: 9}`, not to the struct the rewrite builds: a module
+// that verifies, compiles cleanly under -Werror, and prints 1 where the
 // interpreter prints 9.
 //
-// A STRING IS NOT OBJECT-LIKE, which is why the clause asks about the VALUE and
-// not about whether there is a `return` at all.
+// A string is not object-like, which is why the clause asks about the returned
+// value and not about whether there is a `return` at all.
 //
 // RETURNS: ctnative.not_native = "a closure used as a value: its constructor returns a value this pass cannot prove is not an object, and a constructor that returns one REPLACES the instance (context::construct: `produced.is_object_like() ? produced : self`) - so `new` would not evaluate to the struct this rewrite builds"
 
-// --- GUARD 2: `this` ESCAPES THE CONSTRUCTOR ---------------------------------
+// --- GUARD 2: `this` escapes the constructor -------------------------------
 //
-// The receiver is the CALLER'S FRAME, so returning it - or storing it into
-// something that outlives the frame - would hand out a pointer to a local. This
-// is the receiver carrier's condition 3 word for word, asked of a constructor,
-// because it IS that condition.
+// The receiver lives in the caller's frame, so returning it or storing it into
+// something that outlives the frame would hand out a pointer to a local. This
+// is the same rule the method lift applies to a receiver (CONDITION 3,
+// `whyThisLeaks`, in lib/CTNative/Lowering/ClosureLifting/Methods.cpp).
 //
 // ESCAPES: ctnative.not_native = "a closure used as a value: it stores `this` into another object - that needs an owner, and this slice introduces none"
 
-// --- GUARD 1: THE CALLEE IS NOT ONE FUNCTION THIS PASS CAN NAME --------------
+// --- GUARD 1: the callee is not one function this pass can name -------------
 //
-// `Maker` is a global with two stores, so the closed world refuses the name and
+// `Maker` is a global with two stores, so global resolution cannot name it and
 // `ctjs.construct`'s callee stays a `ctjs.load_global`. There is no closure to
 // prove, so there is no constructor to lift.
 //
-// THIS IS ALSO THE SHAPE ALL REAL CODE IS IN, AND THE MEASUREMENT SAYS SO: a
-// top-level `function Point() {}` is stored to a global and `new Point(...)`
-// loads it back, so even singly-bound declarations arrive here. The census over
-// bootstrap, p5 and phaser finds `construct.argument.callee-known` at ZERO and
-// `construct.argument.callee-opaque` at 344 of the 994 open literals' sole
-// blockers - so this slice moves no corpus number, which is a measurement and
-// not a disappointment.
-//
+// Most real code has this shape: a top-level `function Point() {}` is stored
+// to a global and `new Point(...)` loads it back, so even a declaration bound
+// once reaches `new` through a global load and is refused here.
+
+
+
+
+
 // OPAQUE: ctjs.func {{.*}}@opaque$
 // OPAQUE-SAME: ctnative.not_native
 // OPAQUE-NOT: emitc.class
 
-// The original prototype-written.js stays byte-for-byte as a source oracle;
-// the bounded immutable scalar proof admits it in prototype-scalars.mlir.
-// The Python driver checks actual inherited method reads and scalar mutations
-// below. Each source has its own refusal under both optimization policies.
+// prototype-written.js has no FileCheck block: prototype-scalars.mlir checks
+// that it lowers. constructor_refusals.py runs it and every input from
+// inherited-call.js on in Node and the interpreter, and checks that native
+// lowering accepts inherited-call.js and refuses the rest.
 
-// --- AND THE ONE PROTOTYPE READ THAT REALLY DOES DIVERGE ---------------------
+// --- The one prototype read that does diverge ------------------------------
 //
-// AN INSTANCE INHERITS `constructor`, AND IT IS A FUNCTION. `ensure_prototype`
+// An instance inherits `constructor`, and it is a function. `ensure_prototype`
 // gives every instance a table whose `constructor` is the function that owns it
-// (vm/call/construct.cpp), so `p.constructor` is truthy in the interpreter and would be
-// undefined on a struct with no chain - `3` where the interpreter says `4`.
+// (vm/call/construct.cpp), so `p.constructor` is truthy in the interpreter and
+// would be undefined on a struct with no chain: 3 where the interpreter says 4.
 //
-// THE CLAUSE THAT CATCHES IT IS ADMISSION'S OWN AND PREDATES THIS SLICE, which
-// is the finding: a guard of this rule's own ("the instance's `k` is read but
-// never assigned") was written, measured, and DELETED. It refused every
-// unwritten key, and every unwritten key other than the ones Object.prototype
-// answers is undefined in the VM too - exactly as it is for a literal. So it
-// narrowed the tier and prevented no divergence; this case pins the clause that
-// does, asked of an instance rather than a literal.
-//
+// This is caught by the general object-literal admission rule (a field read
+// but never written whose name Object.prototype answers), applied here to an
+// instance. A broader rule refusing every unwritten key is not used: other
+// unwritten keys read undefined in the VM too, so it would refuse correct
+// programs without preventing any divergence.
+
+
+
 // UNWRITTEN: ctnative.not_native = "field `constructor` is read but never written, and Object.prototype answers that name - the interpreter finds a function where this would find undefined"
 
-// --- GUARD 4: THE INSTANCE'S OWN USES DO NOT CLOSE ITS SHAPE ----------------
+// --- GUARD 4: the instance's own uses do not close its shape ----------------
 //
-// The same rule a literal's shape closes by, asked of the value the rewrite is
-// about to make a literal: a dynamic key means no member name, so there is no
-// struct to build.
+// The shape rule an object literal must meet, applied to the value the rewrite
+// is about to turn into a literal: a dynamic key means no member name, so there
+// is no struct to build.
 //
 // OPENINSTANCE: ctnative.not_native = "a closure used as a value: the instance `new` makes does not have a closed shape - every use of it has to be a constant-key read or write, or a receiver this lift carries"
 
@@ -239,9 +239,9 @@ function prototype_replacement() {
 var a = prototype_replacement();
 
 //--- mutable-class-helper.js
-// Node does not invoke this VM implementation hook: a=0 there, a=1 in the VM.
-// Two writes keep the hook's global identity unresolved; dropping its call by
-// spelling alone loses the replacement's observable effect.
+// Node never calls this ctbrowser hook, so a=0 there and a=1 in the VM.
+// The two writes keep the hook's global unresolved, so the call must stay;
+// dropping it because of the name alone would lose the replacement's effect.
 __ctbrowser_class_defined = function first(value) {};
 function mutable_class_helper() {
     var calls = 0;
@@ -273,10 +273,10 @@ var a = constructor_argument();
 
 //--- arrow-constructor.js
 // Adding a prototype property does not make an arrow constructible. Its body
-// never reads lexical this, so the ordinary closure's receiver check cannot
-// substitute for the constructor's constructability check.
-// Node and the interpreter both throw TypeError; require a native refusal under
-// both policies.
+// never reads lexical `this`, so the receiver check for ordinary closures
+// cannot stand in for the constructability check.
+// Node and the interpreter both throw TypeError; native lowering must refuse
+// under both optimization settings.
 function arrow_constructor() {
     var Shape = () => 3;
     Shape.prototype = {kind: 7};

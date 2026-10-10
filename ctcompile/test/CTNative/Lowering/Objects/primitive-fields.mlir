@@ -185,7 +185,7 @@ function borrowed() {
 }
 var a = borrowed();
 
-// `length` is UTF-16 code units over the stored UTF-8: 4, not the 7 bytes (ND-1).
+// `length` counts UTF-16 code units over the stored UTF-8: 4, not the 7 bytes.
 //--- utf8-length.js
 function length() {
     var value = {text: "é😀\0"};
@@ -437,7 +437,7 @@ function forwarded() {
 }
 var a = forwarded();
 
-// The symbol-only call through forward must contribute its nonobject actual.
+// The call through `forward` passes a non-object, and that argument must count too.
 //--- forwarded-mixed-actual.js
 function forwarded() {
     var read = function (value) { return value.text === void 0 ? 1 : 2; };
@@ -454,7 +454,7 @@ function forwarded() {
 }
 var a = forwarded();
 
-// A direct call does not close the census of an escaping callable value.
+// A direct call cannot account for every call of a callable value that escapes.
 //--- forwarded-callable-escape.js
 var escaped;
 function forwarded() {

@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
-"""Prove local, synchronous callbacks without discarding their DOM effects."""
+"""Test local callbacks that a class method creates and calls synchronously.
+
+The native lowering may inline such a callback but must keep its DOM writes in
+order. Each CASES source runs under Node and the reference VM, then lowers to a
+native DOM entry that is compiled and run against a real ctbrowser document.
+Each BAD source lets the callback escape, misuses its call or performs an
+unknown effect, and must be refused. The constants here are shared by the
+drivers in callback/.
+"""
 
 import re
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import run
 
+# The callback: writes `inside` and reads it back.
 LEAF = """node => {
       node.setAttribute('inside', 'done');
       return node.getAttribute('inside') === 'done';
     }"""
+# A method that writes `before`, calls the callback, then writes `after`.
 METHOD = f"""class Item {{
     run(target) {{
       const local = {LEAF};
@@ -19,6 +29,7 @@ METHOD = f"""class Item {{
       return result;
     }}
   }}"""
+# The probe body after the class: run the method on both probe arguments.
 CALLS = """
   const item = new Item();
   const first = item.run(element);
@@ -95,6 +106,9 @@ BAD = {
     ),
 }
 
+# C++ checks for the native entry. @ORDER@ lists the attribute writes one call
+# makes, @STEPS@ is their count, and @PRECHECKS@ is spliced in before the
+# first unconditional call.
 CHECKS = r"""
         (void)classes;
         (void)pressed;
@@ -121,6 +135,8 @@ CHECKS = r"""
         assert(foreign_doc.take_writes().empty());
 """
 
+# @PRECHECKS@ for a callback inside `if (target.hasAttribute('ready'))`: no writes
+# without `ready`, then writes on only the element that has it.
 BRANCH_CHECKS = r"""
         assert(@ENTRY@(element, foreign));
         assert(doc.take_writes().empty() && foreign_doc.take_writes().empty());
@@ -140,6 +156,8 @@ BRANCH_CHECKS = r"""
         (void)doc.take_writes();
 """
 
+# A JavaScript stand-in element for the Node and VM oracles; `trace` records
+# the name of every attribute written.
 ELEMENT = """{attributes: {}, trace: '',
  setAttribute(key, value) { this.attributes[key] = String(value); this.trace += key + ','; },
  hasAttribute(key) { return key in this.attributes; },
@@ -147,10 +165,17 @@ ELEMENT = """{attributes: {}, trace: '',
 
 
 def source(body):
+    """Wrap `body` as the probe(element, other) entry function."""
     return "function probe(element, other) {\n" + body + "\n}\n"
 
 
 def call_variants(args, ir, contract):
+    """Yield (label, IR path, manifest) for rewrites of the one `ctjs.call_direct`.
+
+    "ordinary" turns it into an equivalent `ctjs.call` and must still lower;
+    the others call the wrong function, swap the receiver or new.target, or
+    change the argument count, and must be refused.
+    """
     text = run([args.opt, str(ir), "--mlir-print-op-generic"]).stdout
     calls = list(
         re.finditer(
@@ -234,10 +259,10 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks, args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.lower(args, ir, declared, name + "-budget", success=False, max_steps=0)
-        refusals += 3
+        refusals += 3  # Two undeclared-intrinsic refusals and an exhausted budget of 0.
         if name == "method":
             for label, path, manifest in call_variants(args, ir, declared):
                 for owned, optimize, variant in dom.variants(manifest):

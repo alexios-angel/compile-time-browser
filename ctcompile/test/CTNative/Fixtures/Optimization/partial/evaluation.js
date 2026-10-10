@@ -1,4 +1,4 @@
-// Factory initialization is evaluated; observers still execute at runtime.
+// Each `*Seed` function runs at compile time; the `observe*` functions still run natively.
 function sharedSeed() {
     const scratch = {
         amount: 10
@@ -88,7 +88,7 @@ function branchSeed(choose) {
     }
     return map;
 }
-// ctbrowser's primitive helpers supply these conversion and comparison rules.
+// Each bit is one conversion or comparison rule, applied by ctbrowser's own helpers.
 function primitiveSeed(text) {
     var score = 0;
     if (text + 2 === "402") {

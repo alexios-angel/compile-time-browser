@@ -1,5 +1,5 @@
 # Typed Symbol values have identity, owning descriptions and immutable well-known
-# properties. Without a host contract, source Symbol lowering remains refused.
+# properties. Without a host contract, lowering source that uses Symbol is refused.
 # RUN: split-file %s %t
 # RUN: not %gxx -O2 -c %t/warning.cpp -o %t/warning.o 2>&1 | FileCheck %s --check-prefix=WARNING
 # RUN: %node %t/expected.cjs %t/values.js

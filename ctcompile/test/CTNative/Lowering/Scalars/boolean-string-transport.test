@@ -1,5 +1,5 @@
-# Typed Boolean/String values keep Boolean identity across native boundaries.
-# The two historical refusal witnesses execute unchanged in separate programs.
+# Values that may be a Boolean or a String keep their Boolean identity across native
+# calls, globals and returns; broad-union, container and object-hook must be refused.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

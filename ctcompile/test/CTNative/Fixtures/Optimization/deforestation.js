@@ -1,6 +1,6 @@
-// Snapshot producers and scalar consumers are inferred before elaboration.
-// Conflicting consumers, aliases with mutation, calls and control retain the
-// intermediate vector; simple projections remove it without moving effects.
+// Deforestation: `Array.from(map.keys())` or `.values()` read only by index or
+// `.length` is answered without building the array. A Map mutated through an alias, a call or a
+// capture, an array read by several consumers or across control flow, keeps it; effects never move.
 function absent() {
     return;
 }
@@ -85,7 +85,7 @@ function retainedZeroKey() {
     const map = new Map();
     map.set(-0, 10).set(0, 20);
     const keys = Array.from(map.keys());
-    // The reference preserves the first inserted key's negative sign.
+    // Map.prototype.set normalises -0 to +0, so this is +Infinity.
     return 1 / keys[0];
 }
 

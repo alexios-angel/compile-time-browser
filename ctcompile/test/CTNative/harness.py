@@ -72,6 +72,8 @@ def forge_module(text, attributes):
 
 
 def run(command, *, success=True, environment=None, input_text=None):
+    """Run `command` with a 120 s timeout and return the result; raise unless it
+    exited 0 (or, with `success=False`, unless it failed)."""
     result = subprocess.run(
         command, capture_output=True, text=True, timeout=120, env=environment, input=input_text
     )
@@ -82,6 +84,7 @@ def run(command, *, success=True, environment=None, input_text=None):
     return result
 
 
+# The CMake script that runs the native lowering pipeline, as the build does.
 PIPELINE = Path(__file__).resolve().parent / "Checks/pipeline.cmake"
 
 
@@ -185,7 +188,8 @@ def node_globals(node, js, names):
     return run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), json.dumps(list(names))])
 
 
-# The lifetime gate: AddressSanitizer + UBSan, leaks and use-after-return on.
+# Flags for lifetime checks: AddressSanitizer and UBSan, with leak and
+# use-after-return detection enabled by SANITIZER_ENVIRONMENT.
 SANITIZE = [
     "-O1",
     "-g",

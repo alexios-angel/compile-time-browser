@@ -1,29 +1,29 @@
-// THE ARM THAT CATCHES EVERYTHING ELSE, AND ITS WORDING.
+// The arm that catches every other operation, and its wording.
 //
 //     return refuse(("`" + o->getName().getStringRef() + "` is not native yet").str());
 //
-// It is the last line of `admission::op` and the roadmap the plan asks for:
-// every operation nobody has taught this tier about comes out of it NAMED, so
-// the refusals are a work list rather than a shrug. `rg 'is not native yet'
-// over the test tree found nothing under CTNative before this file - the
-// arm that produces the largest share of DISTINCT reasons was the one nothing
-// pinned.
+// It is the last line of `admission::op` in Admission/Operations.cpp: every
+// operation no earlier arm handles is refused with its name, so the refusal
+// list doubles as a to-do list for native lowering. It produces the largest
+// share of distinct refusal reasons.
 //
-// TWO DEFAULT-ARM OPERATIONS AND TWO HOST BOUNDARIES, `delete` and `in`. Two
-// pin the SHAPE - operation name in backticks, then the fixed tail - which is
-// what a rewrite would break. They are chosen from four different JavaScript
-// constructs so that a change to any one importer path leaves the others.
+// Four programs. Two reach the default arm (`arguments`, `instanceof`) and pin
+// its wording: the operation name in backticks, then the fixed tail. Two
+// (`delete`, `in`) stop earlier: the importer turns them into calls to the
+// opaque host helpers `__ctbrowser_delete` and `__ctbrowser_in_object`, and a
+// host call is refused before the default arm is reached. They use four
+// different JavaScript constructs, so a change to one importer path leaves the
+// others covering the arm.
 //
-// THE ARM IS NOT LIMITED TO ctjs OPERATIONS, and that is deliberate: anything
-// left in the function that no earlier arm claimed is named here, whatever
-// dialect it came from. (Measured: a `while` with an early return reaches the
-// lowering as `scf.index_switch`, refused by this arm as
-// "`scf.index_switch` is not native yet". It is not pinned below because it
-// depends on how upstream's transformCFGToSCF chooses to structure that loop,
-// which is not this project's to fix in place.)
+// The arm is not limited to ctjs operations, deliberately: anything left in
+// the function that no earlier arm claimed is named here, whatever dialect it
+// came from (an upstream scf or cf operation, for example). No such case is
+// pinned below, because which upstream operations reach the lowering depends
+// on how upstream's transformCFGToSCF structures the control flow.
 //
-// ONE PROGRAM PER FILE - a refusal is contagious both ways; see the header of
-// shape-field-names.mlir.
+// One program per split-file input, because a refusal spreads to callers and
+// callees and could hide another; see the header of
+// Objects/shape-field-names.mlir.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/deleted.js 2>/dev/null \
@@ -41,7 +41,7 @@
 
 // --- `delete o.x` -----------------------------------------------------------
 //
-// The frontend retains delete as an opaque helper; no native fallback is granted.
+// The importer turns `delete` into a call of an opaque host helper, refused.
 // DELETE-LABEL: ctjs.func private @deleted$1
 // DELETE-SAME: ctnative.not_native =
 // DELETE: ctjs.load_global "__ctbrowser_delete"

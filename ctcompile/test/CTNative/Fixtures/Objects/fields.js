@@ -1,5 +1,5 @@
-// Scalar component fields survive the exact Bootstrap getter and Map removal.
-// UMD publication and console effects are measured by separate vendor probes.
+// Number fields of instances stored in Bootstrap's Data registry (makeData) keep
+// their values through set, get and remove. Bootstrap's UMD and console paths are tested elsewhere.
 function absent() {
     return;
 }

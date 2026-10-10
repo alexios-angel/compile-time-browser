@@ -11,7 +11,7 @@
 // RUN: ctjs-opt %t/metadata.mlir --ctnative-binding-time-analysis --ctnative-binding-time-analysis | FileCheck %s --check-prefix=METADATA
 
 // Binding-time knowledge is distinct from permission to execute an operation.
-// These adversaries require dynamic effects/control even when individual
+// The cases below must keep effects and control dynamic even when individual
 // operands, a returned scalar or a closure's source code are known.
 
 //--- heap.mlir

@@ -2,9 +2,9 @@
 // RUN: ctjs-opt %t/arguments.mlir --ctnative-precompute | FileCheck %s
 // RUN: ctjs-opt %t/arguments.mlir '--ctnative-precompute=max-steps=0' | FileCheck %s --check-prefix=BUDGET
 // RUN: ctjs-opt %t/alternate.mlir --ctnative-precompute | FileCheck %s --check-prefix=ALTERNATE
-
-// All symbolic callers contribute, including forwarding and effects. A closed
-// null argument removes its guarded property read; calls and stores survive.
+// --ctnative-precompute folds a private function's parameter when every caller, including one
+// forwarding its own parameter, passes the same constant: @guard always gets null, so its test
+// and property read fold while calls and stores stay. The other functions keep their test.
 // CHECK-LABEL: ctjs.func @entry
 // CHECK: ctjs.call_direct @forward
 // CHECK: ctjs.call_direct @guard
@@ -37,7 +37,7 @@
 // BUDGET-LABEL: ctjs.func private @guard
 // BUDGET: ctjs.truthy
 // BUDGET: ctjs.get_property
-
+// In alternate.mlir, a call to @variant through @original$1's closure also counts as a caller.
 //--- arguments.mlir
 module {
   ctjs.func @entry(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {

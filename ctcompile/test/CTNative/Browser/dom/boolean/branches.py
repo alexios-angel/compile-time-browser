@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Carry one private Boolean cell through bounded synchronous DOM branches."""
+"""Test one private Boolean cell whose helpers are called from inside DOM-dependent `if` arms.
+
+The owner calls mark()/reset() on its `seen` cell in branches chosen by
+`element.hasAttribute(...)`. Each case is hand-written ctjs IR plus the
+equivalent JavaScript; the JavaScript must give the same results under Node
+and the VM for every `ready`/`other` combination, and the IR must lower and run
+natively with the same DOM writes. The bad programs must be refused and the
+malformed ones rejected by the verifier.
+"""
 
 import subprocess
 
@@ -8,6 +16,8 @@ from CTNative.Browser.dom.boolean import cells
 from CTNative.Browser.class_dom.callbacks import ELEMENT
 from CTNative.harness import run
 
+# Owner snippets: call mark()/reset() on the cell, fetch setAttribute, and
+# test the element's `ready` attribute.
 MARK = "%ignored = ctjs.call_direct @mark$3(%u, %u, %u, %seen)"
 RESET = "%reset = ctjs.call_direct @reset$4(%u, %u, %u, %seen)"
 SETTER = """%key = ctjs.constant #ctjs.string<"setAttribute">
@@ -17,11 +27,14 @@ PREDICATE = """%has_key = ctjs.constant #ctjs.string<"hasAttribute">
 %ready_key = ctjs.constant #ctjs.string<"ready">
 %ready = ctjs.call %has_fn(%element, %ready_key)
 %condition = ctjs.truthy %ready"""
+# if (ready) mark(); with no else arm.
 MISSING_ELSE = "scf.if %condition {\n  " + MARK + "\n  scf.yield\n}"
 
 
 def owner(branch=MISSING_ELSE, *, predicate=PREDICATE, extra=""):
-    # Make the existing setter available for effects inside either arm.
+    """Return cells.OWNER with its mark() call replaced by `predicate` and `branch`,
+    and `extra` inserted before the final comparison."""
+    # Move the setter lookup up so either arm can write attributes.
     return (
         cells.OWNER.replace(SETTER + "\n", "")
         .replace("%before =", SETTER + "\n%before =")
@@ -30,6 +43,8 @@ def owner(branch=MISSING_ELSE, *, predicate=PREDICATE, extra=""):
     )
 
 
+# Branch bodies used by CASES: both arms call the helpers, a nested `if`
+# resets the cell, the arms yield results, or the owner stores directly.
 BOTH_ARMS = """scf.if %condition {
   %marked = ctjs.call_direct @mark$3(%u, %u, %u, %seen)
   %inside = ctjs.call_direct @pending$2(%u, %u, %u, %seen)
@@ -78,6 +93,8 @@ OWNER_WRITES = """scf.if %condition {
 
 
 def outcome(ready, other, *, nested=False, skipped=False, branch=False, results=False):
+    """Return (expected attribute values, expected probe result) for one
+    combination of the `ready`/`other` attributes under a CASES option set."""
     changed = ready and (not other if nested else True) and not skipped
     attributes = {"branch": not changed} if branch else {}
     attributes.update(before=True, after=not changed)
@@ -86,6 +103,7 @@ def outcome(ready, other, *, nested=False, skipped=False, branch=False, results=
     return attributes, changed
 
 
+# name -> (MLIR program, equivalent JavaScript body, outcome() options).
 CASES = {
     "missing-else": (
         cells.program(owner()),
@@ -138,12 +156,14 @@ CASES = {
         {},
     ),
     "skipped-call": (
-        # This exact branch was a wave3 refusal; it now preserves the initial state.
+        # A branch whose condition is constant false: the call is skipped, so the
+        # cell keeps its initial value. The lowering used to refuse this shape.
         cells.program(cells.OWNER.replace(MARK, "%condition = ctjs.truthy %no\n" + MISSING_ELSE)),
         cells.JS.replace("mark();", "if (false) { mark(); }"),
         {"skipped": True},
     ),
-    # Preserve the exact previously refused conditional borrower source.
+    # Regression: a helper that sets the cell only inside an always-true
+    # `if` must still be accepted as a Boolean borrower.
     "conditional-borrower": (
         cells.program(
             owner(),
@@ -161,6 +181,7 @@ CASES = {
 
 
 def bad_programs():
+    """Return name -> module that verifies but that the lowering must refuse."""
     body = owner()
     ambient = '%ambient = ctjs.load_global "ambient"\n%effect = ctjs.call %ambient(%u)\n'
     bad = {
@@ -221,6 +242,7 @@ def bad_programs():
             )
         ),
     }
+    # 65 nested ifs: deeper than the branch analysis accepts, so it must refuse.
     nested = MARK
     for _ in range(65):
         nested = "scf.if %condition {\n" + nested + "\nscf.yield\n}"
@@ -229,6 +251,8 @@ def bad_programs():
 
 
 def checks(options):
+    """Return C++ checks that run every `ready`/`other` combination twice on
+    both documents and compare the DOM writes with outcome()."""
     text = "(void)classes; (void)pressed;\nforeign_doc.log_writes(true);\n"
     text += "for (int repeat = 0; repeat < 2; ++repeat) {\n"
     for flags in range(4):
@@ -257,6 +281,7 @@ def checks(options):
 
 
 def oracle(args, name, body, options):
+    """Check the JavaScript body against outcome() under the VM and Node."""
     text = "function probe(element) {\n" + body + "\n}\n"
     text += "function verify() {\nconst element = " + ELEMENT + ";\nlet result = true;\n"
     text += "for (let repeat = 0; repeat < 2; ++repeat) {\n"
@@ -297,7 +322,7 @@ def main():
             dom.standalone(
                 args, native, label, checks(options), args.compilers, includes, libraries
             )
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.exhaust(
             args, ir, contract, name, [0, 8], "{budget} did not exhaust Boolean branch proof"
         )
@@ -320,6 +345,7 @@ def main():
             if name.startswith("unknown-effect"):
                 assert cells.source_operations(args, diagnostic) == original, diagnostic
             refusals += 1
+    # Malformed IR that the ctjs verifier itself must reject.
     for name, text in {
         "missing-result": cells.program(
             owner(

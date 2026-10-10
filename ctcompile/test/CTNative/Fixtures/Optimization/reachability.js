@@ -1,6 +1,6 @@
-// The first live call keeps the generic helper's runtime type evidence.
-// The later initializer calls create variants whose only callers disappear
-// during PE; their bodies have no remaining symbolic or numeric references.
+// The first live call keeps the generic `seed` and its runtime type evidence.
+// The calls in `initialize` create variants whose only callers disappear
+// during partial evaluation, leaving their bodies with no references.
 function seed(offset, input) {
     const map = new Map();
     map.set("base", offset * 10);

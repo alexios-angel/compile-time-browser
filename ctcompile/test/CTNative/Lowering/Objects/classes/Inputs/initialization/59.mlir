@@ -1,5 +1,5 @@
-// A static method no read reaches never runs: it is removed before the class
-// proof, so its body's `new this` is never examined.
+// A static method that nothing reads never runs: it is removed before the class
+// proof, so the `new this` in its body is never examined.
 //--- static-unread-new-this.js
 function static_unread_new_this() {
     class Shape {

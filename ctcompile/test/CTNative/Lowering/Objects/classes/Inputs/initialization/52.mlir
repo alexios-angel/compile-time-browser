@@ -1,5 +1,5 @@
-// Bootstrap B's constructor arm reads this.constructor.DATA_KEY, which needs
-// the inherited throwing NAME: an exact class's arm ends at that read.
+// Reduced from Bootstrap's BaseComponent: Leaf's constructor reads this.constructor.NAME, and
+// the inherited static NAME getter throws, so the constructor's `t &&` branch stops at that read.
 //--- inherited-own-fields-iterate-throwing-arm.js
 function inherited_own_fields_iterate_throwing_arm(u) {
     class Base {
@@ -17,7 +17,7 @@ function inherited_own_fields_iterate_throwing_arm(u) {
     return (leaf.n === null) * 7;
 }
 var a = inherited_own_fields_iterate_throwing_arm();
-
+// A subclass of Leaf that is constructed too.
 //--- inherited-own-fields-iterate-throwing-arm-subclass.js
 function inherited_own_fields_iterate_throwing_arm_subclass(u) {
     class Base {
@@ -36,7 +36,7 @@ function inherited_own_fields_iterate_throwing_arm_subclass(u) {
     return (leaf.n === null) * 7 + (new Sub(u).n === 3) * 0;
 }
 var a = inherited_own_fields_iterate_throwing_arm_subclass();
-
+// Leaf shadows NAME with its own static method, so the read no longer throws.
 //--- inherited-own-fields-iterate-throwing-arm-static-shadow.js
 function inherited_own_fields_iterate_throwing_arm_static_shadow(u) {
     class Base {
@@ -55,7 +55,7 @@ function inherited_own_fields_iterate_throwing_arm_static_shadow(u) {
     return (leaf.n === null) * 7;
 }
 var a = inherited_own_fields_iterate_throwing_arm_static_shadow();
-
+// NAME returns instead of throwing, so the branch runs to completion.
 //--- inherited-own-fields-iterate-throwing-arm-returning.js
 function inherited_own_fields_iterate_throwing_arm_returning(u) {
     class Base {
@@ -73,7 +73,7 @@ function inherited_own_fields_iterate_throwing_arm_returning(u) {
     return (leaf.n === null) * 7;
 }
 var a = inherited_own_fields_iterate_throwing_arm_returning();
-
+// `this` escapes into String() before the throwing read.
 //--- inherited-own-fields-iterate-throwing-arm-escape-before.js
 function inherited_own_fields_iterate_throwing_arm_escape_before(u) {
     class Base {

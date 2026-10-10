@@ -1,6 +1,6 @@
-// Part 24 Phase 63 Step 7: a provenance comment above every generated
-// definition. The lowering composes the text as `ctnative.provenance`; the
-// fork's emitter prints it, and nothing else reads it.
+// The C++ emitter prints a `// ctcompile: ...` provenance comment above every
+// generated definition. The lowering stores the text in `ctnative.provenance`;
+// only our fork of the emitter (lib/Target/Cpp) reads it.
 //
 // RUN: ctjs-translate --mlir-to-cpp %s | FileCheck %s
 

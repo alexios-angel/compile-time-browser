@@ -1,4 +1,11 @@
-"""driver nested maps: continued from harness_nested_payloads."""
+"""The nested-Map check of the global-Map ownership driver.
+
+Each case keeps a Map of Maps behind a host object. The check compiles every
+case natively, then verifies the JS observations under Node and the reference
+interpreter, the refusals, the generated C++ signatures and the child-Map
+lifetimes. Builders for the more specialised rows live in
+harness/nested_payloads.py.
+"""
 
 from .common import observe
 from ..harness.map_results import run_sanitized_lifetime
@@ -6,6 +13,13 @@ from ..harness.nested_payloads import *
 
 
 def nested_map_observer(source, row):
+    """Return `source` plus a JS observer that wraps Map.prototype.get or set to
+    record child Maps, then checks their identity, size and reuse for `row`.
+
+    Upper-case words in the template (METHOD, ITEM, STRIDE, OUTER_SIZE,
+    DISTINCT, IDENTITY, FIRST_VALUE, REUSE_CHECK, RECREATE) are placeholders
+    filled from `row` at the end.
+    """
     if row.get("mixed_child"):
         return mixed_child_observer(source, row)
     observed = (
@@ -168,7 +182,10 @@ def nested_map_observer(source, row):
 
 
 def nested_map_lifetime_cpp(cpp, row):
-    # Reuse the existing weak allocation observer; generated ownership is unchanged.
+    """Return `cpp` with a main() that checks child-Map lifetimes through the
+    weak_ptrs that instrument_leaf_objects records, leaving the generated code
+    unchanged. Each failing check returns its own exit code (270-294, 310).
+    Caller-payload, mixed-child and nullable rows use their own builders."""
     if row.get("caller_payload"):
         return caller_payload_lifetime_cpp(cpp, row)
     if row.get("mixed_child"):
@@ -418,8 +435,10 @@ int main() {
 
 
 def nested_map_mutation_lifetime_cpp(cpp, row):
-    # Call the real sibling after publication; neither its tag nor its child
-    # lifetime can be inferred from the initial Number observation.
+    """Lifetime main() for nullable rows. It calls the generated `poison` method
+    after the entry has run, because neither the type of `get`'s result nor
+    whether the child Map is replaced follows from the first Number result.
+    Each failing check returns its own exit code (295-309)."""
     changed = (
         instrument_leaf_objects(cpp, allocations=0)
         + r"""
@@ -503,6 +522,8 @@ int main() {
 
 
 def nested_map_census(args, ir, name, row):
+    """Require the raw and prepared IR to keep the row's function and source-call
+    counts, and preparation to keep the count of each object/global operation."""
     raw = (args.work / f"{name}.raw.mlir").read_text()
     prepared = ir.read_text()
     if len(boundary.FUNCTION.findall(raw)) != row["functions"]:
@@ -523,9 +544,13 @@ def nested_map_census(args, ir, name, row):
 
 
 def nested_map_preserved(original, output, name, prepared=False):
+    """Require a refused nested-Map case to keep its source calls, operations and
+    branch edges. `prepared` output has its calls rewritten to direct calls,
+    so those are compared by target, arity and operand provenance instead."""
     if prepared:
-        # Successful ownership lifts the environment into each direct call. Check
-        # that actual receiver/callee/capture edges and every source effect survive.
+        # Preparation passes the captured environment to each direct call as an
+        # extra argument. Check that each call's receiver, callee and capture
+        # edges and every source effect survive.
         calls = re.findall(
             r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
             r"\{ctnative\.stored_call = 1 : i32\}",
@@ -559,6 +584,7 @@ def nested_map_preserved(original, output, name, prepared=False):
             raise RuntimeError(f"{name}: nullable refusal lost a prepared source call edge")
         if previous or "cross_mixed_" in name:
             number = actuals[0 if previous else 1][-1]
+            # 4630967054332067840 is the bit pattern of the double 41.0.
             if f"{number} = ctjs.constant #ctjs.number<4630967054332067840>" not in entry:
                 raise RuntimeError(f"{name}: mixed refusal lost its original Number actual")
         for op in (
@@ -592,6 +618,8 @@ def nested_map_preserved(original, output, name, prepared=False):
 
 
 def check_nested_maps(args, node, reference, compilers, nm):
+    """Run every nested_map_cases() row: observations and mutations first, then
+    each case's lowering, refusals, emitted C++ and child-Map lifetimes."""
     cases = nested_map_cases()
     observations = mutations = 0
 
@@ -696,6 +724,8 @@ def check_nested_maps(args, node, reference, compilers, nm):
             if row.get("mixed_child_kind") == "returned":
                 replacements.append((" || null;", ";"))
         replacements.extend(row.get("entry_field_mutations", ()))
+        # Apply each source mutation and require the observer to stop printing
+        # trace=1, which shows the observer can tell the mutated program apart.
         for index, (old, replacement) in enumerate(replacements):
             assert row["source"].count(old) == 1, (name, old)
             blinded = args.work / f"{name}-blinded-{index}.js"

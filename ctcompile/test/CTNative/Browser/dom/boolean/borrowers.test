@@ -1,2 +1,2 @@
-# Conditional borrower bodies retain snapshots and acquire proved state edges after inlining.
+# Helpers that conditionally write a captured Boolean are inlined and lowered natively.
 # RUN: python3 %S/borrowers.py %dom_driver --node %node --reference %native_reference

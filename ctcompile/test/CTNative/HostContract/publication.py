@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Check runtime factory retention and current publication identities."""
+"""Test the host-prefix pass with follow-publication=true.
+
+A factory call whose result is published on a host object (`host.slot =
+factory()`) may be summarized: the pass records which runtime resource the
+factory allocates and resolves calls to the method currently stored on the
+slot. The allocations and stores must still run at runtime. Replacing the
+method, an unknown effect, a writable or escaping capture, a replaced Map
+provider, stale or forged metadata, or an exhausted step budget must each
+withhold the summary.
+"""
 
 import argparse
 import json
@@ -15,6 +24,8 @@ FACTORY = "function() { const resource = new Map; return {get: () => resource.si
 
 
 def source(factory=FACTORY, middle="", *, twice=False):
+    """A script that publishes `factory()` on `host.slot` (twice, with `twice`),
+    runs `middle`, then calls `host.slot.get()`."""
     calls = "first = factory(); host.slot = factory();" if twice else "host.slot = factory();"
     mutate_first = "first.get = function firstOnly() { return 7; };" if twice else ""
     return (
@@ -76,9 +87,10 @@ def main():
         prepare_js(args, js, args.work / f"{name}.raw.mlir", ir)
         prepared[name] = ir
 
-    # Normalize the resource initialization into create_cell itself. The
-    # later primitive overwrite is then the cell's sole explicit cell_set.
-    # This distinguishes a final-state proof from counting at most one store.
+    # Fold the resource's initial store into the create_cell itself, so the
+    # later primitive overwrite is the cell's only cell_set. The pass must still
+    # refuse: a proof about the cell's final value, not a count of at most one
+    # store, is what this distinguishes.
     text = prepared["post_capture_overwrite"].read_text()
     initialized = re.search(r"^\s*ctjs.cell_set (%\w+), (%\w+)\s*$", text, re.M)
     if not initialized:
@@ -157,6 +169,7 @@ def main():
     contract = dict(
         host.manifest(args.opt, original), initial_intrinsics=["Map"], realm_global_this=True
     )
+    # Without follow-publication=true the pass must not summarize factories.
     legacy, _, _ = prefix.specialize(args.opt, original, contract, args.work / "legacy")
     if legacy["summarized_factories"] or legacy["resolved_calls"] != 1:
         raise RuntimeError("factory following became implicit")

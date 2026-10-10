@@ -1,9 +1,16 @@
-"""harness nested payloads: continued from sources_nested_maps."""
+"""Builders for the nested-map payload cases.
+
+Each takes a base JS source or generated C++ harness and a case row, and returns
+it rewritten to also check the payload object's identity and lifetime. Builds on
+sources/nested_maps.py.
+"""
 
 from ..sources.nested_maps import *
 
 
 def caller_payload_observer(source, row):
+    """Append a JS observer that sets `trace` to 1 when a caller-owned payload
+    object survives get/erase/clear on the Map as expected."""
     return (
         source
         + """
@@ -49,6 +56,11 @@ def caller_payload_observer(source, row):
 
 
 def caller_payload_lifetime_cpp(cpp, row):
+    """Patch the object-payload lifetime harness for a caller-owned payload.
+
+    field_76616c7565 is the generated field for the property `value` (its name
+    hex-encoded). Each failed check returns a distinct exit code (311-322).
+    """
     changed = object_payload_lifetime_cpp(cpp, "object_argument_scalar_key_payload")
     changed = changed.replace(
         "    auto owner = g_host;",
@@ -106,7 +118,9 @@ def caller_payload_lifetime_cpp(cpp, row):
                 "    if (map->size() != 1 || map->begin()->second.object != ctn_test_objects[0].lock() ||",
             )
         )
-        # The historical helper drops g_key before its Map observation.
+        # object_payload_lifetime_cpp resets g_key before it inspects the map;
+        # move the reset to after the clear() check so the mixed case can still
+        # use g_key.
         changed = changed.replace("} g_key.reset();", "}", 1).replace(
             "    if (clear().value() != 0) { return 265; }",
             "    g_key.reset();\n    if (clear().value() != 0) { return 265; }",
@@ -137,6 +151,11 @@ def caller_payload_lifetime_cpp(cpp, row):
 
 
 def mixed_child_observer(source, row):
+    """JS observer for a map whose child map holds a mixed object/scalar `value`.
+
+    Upper-case placeholders (GET, EXPECTED, POISON_CHECK, ...) are replaced
+    according to row["mixed_child_kind"].
+    """
     kind = row.get("mixed_child_kind", "number")
     expected = {
         "number": "value === 64",
@@ -258,6 +277,8 @@ def mixed_child_observer(source, row):
 
 
 def mixed_child_lifetime_cpp(cpp, row):
+    """C++ counterpart of mixed_child_observer: append a `main` that checks the
+    child map's `value` entry and the lifetimes of both maps."""
     kind = row.get("mixed_child_kind", "number")
     changed = (
         instrument_leaf_objects(cpp)

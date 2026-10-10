@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Gate prepared class and record providers against real DOM Data session owners."""
+"""Test Bootstrap's Map-based Data helper, used from a class or an object record, natively.
+
+The probe keeps Item instances in Bootstrap's element -> key -> instance Map and
+publishes a scalar through `host.slot`, a Map-backed provider owned by the
+native DOM Data session. Each source runs under Node and the reference VM
+first. The published_* families are then prepared (class initialization
+specialized by --ctnative-specialize-class-initialization), proved by the host
+contract analysis, lowered to C++ and run against a real ctbrowser document.
+Each mutated source or IR must be refused. Sources that never publish through
+`host.slot` (the cases in main) prepare but are still refused natively.
+"""
 
 from pathlib import Path
 import re
@@ -14,6 +24,14 @@ from Target.Cpp.harness import FLAGS
 
 
 def source(constructor=False):
+    """Return the JS probe source for the Bootstrap Data test.
+
+    It comes from the class-map-record-nested-vendor-* case in
+    Inputs/initialization/50.mlir and is checked to still contain Bootstrap's
+    real `Data` declaration. `probe` takes the DOM element as a parameter. With
+    `constructor=True` the element is passed through the Item constructor
+    instead of a holder.
+    """
     inputs = Path(__file__).resolve().parents[2] / "Lowering/Objects/classes/Inputs/initialization"
     text = (inputs / "50.mlir").read_text()
     kind = "constructor" if constructor else "holder"
@@ -50,6 +68,8 @@ def source(constructor=False):
 
 
 def published_source(constructor=False):
+    """Return source() inside the DOM Data session source: the probe's result is
+    published through `host.slot` and the trace* globals record each step."""
     prefix = session.source.SOURCE.split("  traceEntered = 1;", 1)[0]
     prefix = prefix.replace("dataEntry(element, other)", "probe(element)").replace(
         "return state.has(key);", "return state.get(key);"
@@ -71,6 +91,8 @@ def published_source(constructor=False):
 
 
 def record_source():
+    """Return the DOM Data session source publishing the field of a plain object
+    record ({n: 15927}) instead of a class instance."""
     return (
         session.source.SOURCE.replace("dataEntry(element, other)", "probe(element)")
         .replace("return state.has(key);", "return state.get(key);")
@@ -84,6 +106,9 @@ def record_source():
     )
 
 
+# C++ client for a native record session: checks the trace* observations,
+# rejects foreign, null, text and stale element inputs before any effect, and
+# reruns after the element is detached. 15927 is replaced by the expected value.
 RECORD_CLIENT = (
     r"""
 #include <array>
@@ -152,9 +177,15 @@ RECORD_CLIENT = (
 )
 
 
+# 15927 is what the holder probe computes (savedFirst.n * 1000 +
+# e.get(...).n * 100 + the flags and sizes it adds up), and 59112 is what the
+# constructor variant computes. Other values below (12927, 21927, 29112) are
+# the same sums with one field changed; the record sources reuse 15927.
 def check_record_executable(
     args, name, native, expected=15927, class_value=None, *, client=RECORD_CLIENT
 ):
+    """Translate `native` (explicit and deduced types) to C++, build it with both
+    compilers and run RECORD_CLIENT against it; return the number of runs."""
     client = client.replace("15927", str(expected))
     if expected in ("true", "false"):
         client = re.sub(
@@ -212,6 +243,7 @@ def check_record_executable(
 
 
 def published_prepare(args, name, text, *, parameters=1):
+    """Prepare `text` with a DOM Data session contract rooted at `host.slot`."""
     ir, contract = dom.prepare(args, name, text, parameters, entry_name="probe")
     contract.update(
         roots=[{"binding": "host", "properties": ["slot"]}],
@@ -227,6 +259,7 @@ def published_prepare(args, name, text, *, parameters=1):
 def published_observation(
     args, name, text, expected=15927, *, snapshot=False, class_result=False, class_value=None
 ):
+    """Run `text` under Node and the reference VM and check the published traces."""
     observed = args.work / f"{name}.oracle.js"
     observed.write_text(
         text
@@ -254,6 +287,8 @@ def published_observation(
 
 
 def published_provider(args, name, prepared, contract, *, adversarial=False):
+    """Prove the prepared provider and check the report; with `adversarial`,
+    also check that forged or mutated IR is refused."""
     report, annotated, _ = host.analyze(
         args.opt, prepared, contract, args.work / (name + "-provider")
     )
@@ -263,6 +298,8 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
         or report["outer_key_objects"] != 0
         or report["observation_stores"] != len(contract["observations"])
         or len(report["slots"]) != 1
+        # Five ctjs.construct sites (the host slot's `state` Map, Bootstrap's
+        # outer and per-element Maps, and the two Items) must all be proved.
         or report["slots"][0]["proved_edges"] != 5
     ):
         raise RuntimeError(f"{name}: incomplete prepared class provider proof: {report}")
@@ -276,8 +313,9 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
     if not adversarial:
         return report, annotated
 
-    # Mutate already prepared IR, carrying its successful report along. Each
-    # fresh fingerprint must still reprove the live graph without preparation.
+    # Adversarial checks: edit the already-prepared IR but keep its old success
+    # report. Each edit gets a new fingerprint, so the analysis must re-run the
+    # proof on the edited IR and refuse; it must never trust the stale report.
     constructor = re.search(r"(?ms)^  ctjs.func @Item\$(\d+)\([^\n]+\n.*?^  }", text)
     if not constructor:
         raise RuntimeError("provider controls lost the retained constructor")
@@ -414,8 +452,9 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
     if rechecked != report:
         raise RuntimeError("forged report changed the recomputed class provider proof")
 
-    # Model the constructor lift without any native proof annotations. Keep
-    # its actual callable, fresh instance and initialization at each source site.
+    # Rewrite each `new Item(...)` by hand into create_object plus a direct call
+    # of the constructor, with no proof annotations. The complete rewrite must
+    # prove; each damaged one below must be refused.
     sites = re.findall(
         rf"(?m)^    (%\w+) = ctjs.construct {creation[1]}\({creation[1]}, (%\w+)\)$", text
     )
@@ -500,6 +539,8 @@ def published_provider(args, name, prepared, contract, *, adversarial=False):
 
 
 def published_families(args):
+    """Check the holder, constructor and alias sources that also publish the
+    class result, then source edits that must be refused during preparation."""
     prepared_count = refusals = observed = executions = 0
     original = (
         published_source()
@@ -598,6 +639,8 @@ def published_families(args):
 
 
 def published_composite_results(args):
+    """Check sources that publish the whole computed result, plus source and IR
+    edits to its arithmetic, Map reads and branches that must be refused."""
     executions = refusals = 0
     for constructor, observations in ((False, False), (True, False), (False, True)):
         name = "published-composite-" + ("constructor" if constructor else "holder")
@@ -623,7 +666,7 @@ def published_composite_results(args):
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
         _, annotated = published_provider(args, name, prepared, checked)
         for optimize in (False, True):
-            # The original unprepared source still needs its complete class proof.
+            # Without preparation, native lowering must refuse the raw source.
             dom.lower(
                 args, ir, contract, f"{name}-raw-{optimize}", optimize=optimize, success=False
             )
@@ -668,8 +711,8 @@ def published_composite_results(args):
             classes.prepare(args, variant, bad_ir, bad_contract, success=False, diagnostic="class ")
             refusals += 1
 
-        # Carry a successful report into altered prepared IR. A fresh digest
-        # authorizes rechecking the source, never trusting the saved categories.
+        # Edit the proved IR but keep its success report. The new fingerprint
+        # makes the analysis re-prove the edited IR, which it must refuse.
         proved = annotated.read_text()
         entry = re.search(
             rf"(?ms)^  ctjs.func (?:private )?@{re.escape(checked['entry'])}\([^\n]+\n.*?^  }}",
@@ -737,6 +780,7 @@ def published_composite_results(args):
 
 
 def published_class_fields(args):
+    """Check sources that publish an Item field written after construction."""
     original = (
         published_source()
         .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
@@ -856,6 +900,7 @@ def published_class_fields(args):
 
 
 def published_constructor_fields(args):
+    """Check sources that publish an Item field set only by the constructor."""
     original = (
         published_source()
         .replace("  traceEntered = 1;", "  classResult = result;\n  traceEntered = 1;")
@@ -869,7 +914,8 @@ def published_constructor_fields(args):
         .replace("new Item(7)", "new Item(7, 19)")
     )
     sources = {
-        # These exact sources previously refused in published_class_fields.
+        # Each source's published field keeps the value the constructor gave it.
+        # All must prove; all but read-snapshot must also run natively.
         "constructor-only": (initialized, 2, 12927),
         "wrong-record": (original.replace("savedFirst.n = 5;", "second.n = 5;"), 2, 12927),
         "early-read": (
@@ -999,6 +1045,8 @@ def published_constructor_fields(args):
 
 
 def element_field_source():
+    """Return published_source() with the element stored in an Item field and
+    `host.slot` keyed through that field."""
     return (
         published_source()
         .replace("constructor(n)", "constructor(n, key)")
@@ -1012,6 +1060,7 @@ def element_field_source():
 
 
 def published_element_fields(args):
+    """Check sources whose `host.slot` key is read back from an Item field."""
     original = element_field_source()
     sources = {
         "retained": original,
@@ -1089,6 +1138,8 @@ def published_element_fields(args):
 
 
 def published_field_registration(args):
+    """Check a constructor that registers the instance under its own element
+    field (`e.set(this.element, ...)`)."""
     original = (
         published_source(True)
         .replace("this.n = n;", "this.n = n; this.element = key;")
@@ -1157,6 +1208,8 @@ def published_field_registration(args):
 
 
 def published_records(args):
+    """Check sources that publish a plain object record's field, without
+    preparation, plus forged reports and edits that must be refused."""
     original = record_source()
     snapshot = original.replace(
         "traceEntered = 1;", "saved = payload.n; traceEntered = 1;"
@@ -1281,6 +1334,8 @@ def published_records(args):
 
 
 def object_constructors(args, constructor):
+    """Run the constructor source with plain-object keys instead of a DOM
+    element natively; return the number of executions."""
     original = (
         constructor.replace("probe(element)", "probe()")
         .replace("    const t", "    const element = {};\n    const t", 1)
@@ -1437,7 +1492,8 @@ def main():
             continue
         prepared_count += 1
         body = prepared.read_text()
-        # Two record constructions and two independently owned child Maps survive.
+        # Both Item constructions and both Bootstrap Map constructions (the outer
+        # Map and the per-element child Map) must survive preparation.
         if body.count("ctjs.construct") != 4 or "ctjs.set_property" not in body:
             raise RuntimeError(f"{name}: preparation erased a record or child owner")
         entry = re.search(

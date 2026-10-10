@@ -1,2 +1,2 @@
-# Proved element for-of uses ordinary native loops over typed browser snapshots.
+# A for-of over elements proved safe compiles to a plain native loop over a snapshot.
 # RUN: python3 %S/element_iteration.py %dom_driver

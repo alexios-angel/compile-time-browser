@@ -1,5 +1,13 @@
 #pragma once
 
+//===- Tests.h - Shared exception-recovery test helpers ---------*- C++ -*-===//
+//
+// Declarations shared by the exception-recovery tests. The helpers are
+// defined in Completion.cpp; each test entry point is defined in Completion.cpp
+// or Guards.cpp and called from Main.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../lib/CTNative/Lowering/Exceptions/Recovery.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/Import/BytecodeImport.hpp"
@@ -37,15 +45,23 @@ namespace ctjs = ctcompile::ctjs;
 using ctcompile::ctnative::lowering_detail::ExceptionRecoveryMode;
 using ctcompile::ctnative::lowering_detail::recoverPrimitiveExceptionRegion;
 
+/// Records a test failure under `label` when `condition` is false, and returns
+/// `condition`.
 bool check(bool condition, llvm::StringRef label);
-// Replaces the first occurrence of `from`, which must be present.
+/// Replaces the first occurrence of `from`, which must be present.
 inline void replaceOnce(std::string & text, llvm::StringRef from, llvm::StringRef to) {
     text.replace(text.find(from.str()), from.size(), to.str());
 }
+/// Returns the printed form of `operation`, used to compare IR byte for byte.
 std::string printed(mlir::Operation * operation);
+/// Returns the module's `guarded$...` function, or null.
 ctjs::FuncOp guarded(mlir::ModuleOp module);
+/// Returns the first direct call in `function`, or null.
 ctjs::CallDirectOp firstCall(ctjs::FuncOp function);
+/// Counts the ctjs.check ops (status edges of fallible operations).
 unsigned countChecks(ctjs::FuncOp function);
+/// Compiles and imports JavaScript `source`. With `resolve`, also runs
+/// global resolution and structured-control lifting.
 mlir::OwningOpRef<mlir::ModuleOp> import(mlir::MLIRContext & context, llvm::StringRef source,
                                          bool resolve = true);
 void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringRef source,

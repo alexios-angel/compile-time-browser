@@ -1,3 +1,12 @@
+//===- ClassIntrinsics.h - Class helper intrinsic tests ---------*- C++ -*-===//
+//
+// Host-contract tests for the class helper intrinsics that class preparation
+// declares (__ctbrowser_class_heritage, __ctbrowser_bind_this,
+// __ctbrowser_init_fields, __ctbrowser_super_get). Included by
+// HostContract.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../../../lib/CTNative/HostContract/Analysis.h"
@@ -5,6 +14,13 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Checks that each class helper intrinsic may be declared in a host contract
+/// and called directly with its exact argument shape, while aliasing,
+/// reflecting, storing, rebinding or miscalling it is refused. Declaring a
+/// helper never proves its effects, manifests for every provider keep the
+/// declared identities, unknown or duplicate identities are rejected, DOM
+/// providers require __ctbrowser_class_defined, and a declared helper cannot
+/// also be listed as absent or undefined.
 inline void checkClassIntrinsics(mlir::MLIRContext & context) {
     using namespace ctnative;
     constexpr const char * source = R"MLIR(

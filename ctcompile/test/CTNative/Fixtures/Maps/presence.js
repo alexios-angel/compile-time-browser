@@ -1,4 +1,4 @@
-// Membership facts follow runtime identity and survive only known safe effects.
+// A `has` check proves a key present only in that Map, and only until something may delete it.
 function leaf(value) {
     const map = new Map();
     map.set("value", value);

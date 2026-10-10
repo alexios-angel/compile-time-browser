@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Prove imported DOM Data inputs and revalidate their private native storage."""
+"""Check the host-contract proof for a Bootstrap-style `Data` registry.
+
+The registry is a closure-private Map keyed by DOM elements that `dataEntry`
+receives as parameters. The proof must accept SOURCE as written and lower it to
+native storage, refuse every variant in `sources` that lets the elements or
+the table escape, and refuse stale fingerprints, exhausted budgets and forged
+report attributes.
+"""
 
 import json
 import re
@@ -59,6 +66,12 @@ for (const key of Object.keys(context).filter(key => key.startsWith('trace')).so
 
 
 def prepare(args, name, source):
+    """Compile `source` to IR and build its DOM Data manifest.
+
+    Checks that preparation kept the source text and the function count, and
+    that exactly one `dataEntry` function exists. Returns the JS path, the IR
+    path, the manifest and the function count.
+    """
     js, ir, count = boundary.prepare(args, name, source.removesuffix("\n"))
     if js.read_text() != source:
         raise RuntimeError(f"{name}: preparation changed the original source")
@@ -77,6 +90,12 @@ def prepare(args, name, source):
 
 
 def check_report(args, ir, requested, name, proved, *, options=""):
+    """Run the host-contract pass and check the report matches `proved`.
+
+    A proof must count both element parameters as outer-key inputs and every
+    observation store; a refusal must give a reason and expose no edges.
+    Either way the pass must leave the source fingerprint unchanged.
+    """
     report, output, _ = host.analyze(args.opt, ir, requested, args.work / name, options=options)
     if report["proved"] != proved or report["provider"] != "ctbrowser-dom-data-session-v1":
         raise RuntimeError(f"{name}: wrong imported input proof: {report}")
@@ -97,6 +116,11 @@ def check_report(args, ir, requested, name, proved, *, options=""):
 
 
 def native_storage(args, ir, requested, name, *, proved=True):
+    """Lower `ir` to EmitC with the manifest, with and without optimization.
+
+    When `proved`, every source function must become an emitc.func; otherwise
+    lowering must fail with the DOM Data diagnostic and write no output.
+    """
     config = args.work / f"{name}.json"
     config.write_text(json.dumps(requested, indent=2) + "\n")
     for optimize in (False, True):
@@ -125,13 +149,15 @@ def native_storage(args, ir, requested, name, *, proved=True):
 def main():
     args = native_args(__doc__)
     js, ir, requested, count = prepare(args, "inputs", SOURCE)
+    # The script body, dataEntry, the IIFE, the factory and its three methods.
     if count != 7:
         raise RuntimeError(f"expected seven complete source functions, got {count}")
     report, annotated = check_report(args, ir, requested, "proved", True)
     native_storage(args, ir, requested, "native-storage")
 
-    # Observe a separate harness. The compiler's input retains the uninvoked
-    # declaration, its complete method family and every source allocation.
+    # Run SOURCE plus OBSERVER under node and the reference interpreter from a
+    # separate file, so the compiler's input stays exactly SOURCE (where
+    # dataEntry is declared but never called).
     observed = args.work / "observed.js"
     observed.write_text(js.read_text() + OBSERVER)
     for command in ([args.node, "-e", NODE, str(observed)], [args.reference, str(observed)]):

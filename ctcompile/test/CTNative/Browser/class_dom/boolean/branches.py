@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Keep class Boolean snapshots and effects across bounded synchronous branches."""
+"""Check that captured Boolean state in a class method stays correct when the
+callback call or the store sits inside a bounded `if`, natively and against Node
+and the VM, and that unsupported variants and hand-mutated IR are refused."""
 
 import json
 import re
@@ -12,7 +14,8 @@ from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
 CASES = {
-    # Preserve the exact source bodies formerly refused by the capture test.
+    # Each case is captures.METHOD with the `mark()` call or a `seen` store moved
+    # inside an `if`, to check the cell proof across bounded branches.
     "conditional-call": captures.METHOD.replace(
         "mark();", "if (target.hasAttribute('ready')) mark();"
     ),
@@ -56,7 +59,8 @@ BAD = {
     "initialization-after-capture": BASE.replace("let seen = false;", "let seen;").replace(
         "const before", "seen = false; const before"
     ),
-    # Original branch-local-creator is a positive in the dedicated scope test.
+    # A callback created inside the branch is accepted; that case lives in
+    # scopes.py as "branch-local-creator".
     "escaping-callback": BASE.replace("mark();", "{ target.saved = mark; mark(); }"),
     "argument": BASE.replace("mark();", "mark(target);"),
     "nonboolean-store": BASE.replace("mark();", "{ mark(); seen = target; }"),
@@ -77,6 +81,8 @@ BAD = {
 
 
 def observations(name, ready, other):
+    """Return (attribute writes, result) of one probe call on an element whose
+    `ready`/`other` attributes are present as given."""
     changed = ready
     events = []
     if name in ("conditional-store", "snapshots"):
@@ -92,6 +98,9 @@ def observations(name, ready, other):
 
 
 def scenarios(name):
+    """Yield (first_flags, second_flags, alias, expected_result, (first_events,
+    second_events)) for each combination of `ready`/`other` attributes, with the
+    probe called on the same element twice (alias) or on two elements."""
     for flags in range(4):
         first = (bool(flags & 1), bool(flags & 2))
         second = (not first[0], not first[1])
@@ -111,6 +120,7 @@ def scenarios(name):
 
 
 def oracle(args, name, text, *, outcome=None):
+    """Run every scenario in the VM and Node; both must report result=true."""
     text += "var result = true;\n"
     for first, second, alias, expected, events in scenarios(outcome or name):
         text += f"var first = {callbacks.ELEMENT}, second = {callbacks.ELEMENT};\n"
@@ -133,6 +143,7 @@ def oracle(args, name, text, *, outcome=None):
 
 
 def checks(name):
+    """C++ assertions for the native harness, one block per scenario."""
     text = r"""
         (void)classes;
         (void)pressed;
@@ -170,6 +181,8 @@ def checks(name):
 
 
 def shape(text, name):
+    """captures.shape() plus checks that the owner keeps its `scf.if` after the
+    closures and the call or cell store the case expects."""
     owner, cell, closures, writer, reader = captures.shape(text)
     branches = list(re.finditer(r"^    (?:%\w+(?::\d+)? = )?scf\.if %\w+", owner[0], re.M))
     assert branches, "source lost its owner-level conditional"
@@ -184,6 +197,7 @@ def shape(text, name):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     yield from captures.mutations(text)
     owner, cell, closures, writer, _ = shape(text, "conditional-call")
     name = re.search(r"@([^ (]+)", writer[0])[1]
@@ -194,7 +208,8 @@ def mutations(text):
         re.M,
     )
     assert call, owner[0]
-    # A valid nested If chain isolates the new depth bound from the frontend.
+    # Wrap the call in 64 more valid `scf.if`s so only the 64-level nesting limit
+    # in BooleanCaptures.cpp can refuse it; the JS frontend cannot produce this.
     predicate = re.search(r"^    scf\.if (%\w+)", owner[0], re.M)[1]
     nested = call[0]
     for _ in range(64):
@@ -211,7 +226,7 @@ def mutations(text):
         f"    scf.if %early {{\n      ctjs.cell_set {cell}, {store[1]}\n    }}\n"
     )
     yield "branch-before-initialization", captures.insert(text, owner, store.start(), earlier)
-    # Exact operand roles remain mandatory inside a newly admitted arm.
+    # Inside an accepted arm the cell may still only be used as a cell, not stored.
     yield (
         "conditional-cell-escape",
         captures.insert(text, owner, call.end(), f'      ctjs.store_global "escaped", {cell}'),
@@ -219,6 +234,7 @@ def mutations(text):
 
 
 def roots(text):
+    """captures.roots() plus conditional roots, as (label, valid, invalid) IR."""
     yield from captures.roots(text)
     owner, cell, closures, _, _ = shape(text, "conditional-call")
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", owner[0])[1]
@@ -227,8 +243,8 @@ def roots(text):
     for label, value in [("cell", cell)] + [
         ("callback-" + closure[3], closure[1]) for closure in closures
     ]:
-        # New conditional roots must retain the original frame obligation,
-        # including an arm that would be skipped for some runtime inputs.
+        # A root inside an `if` must still sit inside the frame, even though
+        # that arm is skipped for some runtime inputs.
         root = f"    scf.if {predicate} {{\n      ctjs.root {value} in {frame}\n    }}"
         yield (
             "conditional-" + label,

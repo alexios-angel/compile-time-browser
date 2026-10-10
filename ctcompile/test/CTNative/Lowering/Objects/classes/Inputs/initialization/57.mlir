@@ -1,6 +1,6 @@
-// Bootstrap's Config type check. The default reads a static getter that returns
-// a fresh empty object, so Object.entries is empty and the loop never runs: the
-// method is a closed effect-free path to `undefined`.
+// Bootstrap's (the CSS framework's JavaScript) Config type check. The default reads a static
+// getter that returns a fresh empty object, so Object.entries is empty and the loop never
+// runs: check() is a closed, effect-free path to `undefined`.
 //--- own-entries-default-type.js
 function own_entries_default_type() {
     class Config {
@@ -18,7 +18,7 @@ function own_entries_default_type() {
 }
 var a = own_entries_default_type();
 
-// A leaf inherits both the method and the getter it reads.
+// A subclass inherits both the method and the getter it reads.
 //--- inherited-own-entries-default-type.js
 function inherited_own_entries_default_type() {
     class Config {
@@ -39,7 +39,7 @@ function inherited_own_entries_default_type() {
 }
 var a = inherited_own_entries_default_type();
 
-// A getter that initializes a property is not proved at all.
+// A getter returning an object literal with a property is not proved at all.
 //--- own-entries-default-type-fields.js
 function own_entries_default_type_fields() {
     class Config {
@@ -57,7 +57,7 @@ function own_entries_default_type_fields() {
 }
 var a = own_entries_default_type_fields();
 
-// A proved getter may return a primitive: a string has an entry per code unit.
+// A proved getter may return a primitive: a string has one entry per code unit.
 //--- own-entries-default-type-primitive.js
 function own_entries_default_type_primitive() {
     class Config {
@@ -147,7 +147,7 @@ function own_entries_default_type_passed() {
 }
 var a = own_entries_default_type_passed();
 
-// Only a whole-method fold exists: an effect beside the empty loop refuses.
+// Only the whole method can be folded away: an effect beside the empty loop is refused.
 //--- own-entries-default-type-effect.js
 function own_entries_default_type_effect() {
     class Config {

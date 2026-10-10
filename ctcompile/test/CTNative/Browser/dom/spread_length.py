@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""Execute confined Bootstrap R.find and NodeList spread/concat counts."""
+"""Compile NodeList spread/concat counts to native code and run them.
+
+Two sources are compiled: one using Bootstrap's SelectorEngine.find (minified
+`R.find`, which is `[].concat(...querySelectorAll(...))`) copied unmodified,
+and a hand-written equivalent. Their element counts are checked against a live
+DOM through the public DOM/Core/Style libraries with no VM, and every variant
+in REFUSALS must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import without_intrinsic
 
+# Bootstrap's SelectorEngine.find, verbatim; main() checks the vendored bundle
+# still contains it.
 FIND = (
     "find: (t, e = document.documentElement) => "
     "[].concat(...Element.prototype.querySelectorAll.call(e, t))"
@@ -130,6 +139,8 @@ OWNED_CHECKS = r"""
     }
 """
 
+# Concat/spread shapes the native lowering cannot prove and must refuse; each
+# body runs after `const nodes=element.querySelectorAll('*');`.
 REFUSALS = {
     "nonempty-receiver": "return [element].concat(...nodes).length;",
     "extra-argument": "return [].concat(element, ...nodes).length;",
@@ -192,6 +203,9 @@ def main():
         ir, contract = dom.prepare(args, name, source, 1, entry_name="bad")
         contract["initial_intrinsics"] = ["Array", "Element", "Function"]
         dom.refuse(args, ir, contract, f"refused-{name}")
+    # 32 = 2 sources x 4 provider/optimize variants x 2 layouts (explicit and
+    # deduced) x 2 compilers. 24 = 8 manifests x 3 missing intrinsics; each
+    # REFUSALS entry is refused with and without optimization.
     print(
         f"DOM spread/concat counts: 32 native executions, {24 + 2 * len(REFUSALS)} refusals; DOM/Core/Style only"
     )

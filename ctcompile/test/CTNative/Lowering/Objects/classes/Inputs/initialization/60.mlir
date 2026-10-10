@@ -1,6 +1,6 @@
-// A decided arm's helper call does nothing for any construction's actual, so
-// it goes with the arm; the helper, called nowhere else, never runs, and its
-// ambient branch is not part of the census.
+// When every `new` takes the same branch, the helper call in the branch never taken is
+// removed with it. The helper, called nowhere else, never runs, so the class proof
+// does not examine its call to `ambient`.
 //--- helper-decided-uncalled.js
 function helper_decided_uncalled() {
     const pick = t => typeof t == "string" ? ambient(t) : null;
@@ -12,7 +12,7 @@ function helper_decided_uncalled() {
 }
 var a = helper_decided_uncalled();
 
-// Bootstrap's element/isElement shape: the nested helper's only call is in the
+// Bootstrap's element/isElement shape: the nested helper is called only from the
 // uncalled one, so neither runs.
 //--- helper-decided-nested-uncalled.js
 function helper_decided_nested_uncalled() {
@@ -26,8 +26,8 @@ function helper_decided_nested_uncalled() {
 }
 var a = helper_decided_nested_uncalled();
 
-// A base only its leaf builds: the leaf's copy decides the arm, and the base
-// original's call never runs.
+// A base built only through its subclass: the subclass's copy decides the branch,
+// and the call in the base's own constructor never runs.
 //--- inherited-helper-decided-leaf-built.js
 function inherited_helper_decided_leaf_built() {
     const pick = t => typeof t == "string" ? ambient(t) : null;
@@ -40,7 +40,7 @@ function inherited_helper_decided_leaf_built() {
 }
 var a = inherited_helper_decided_leaf_built();
 
-// The call's result outlives the arm, so the call and the helper's census stay.
+// The call's result outlives the branch, so the call stays and the helper is examined.
 //--- helper-decided-live-result.js
 function helper_decided_live_result() {
     const pick = t => typeof t == "string" ? ambient(t) : null;
@@ -52,7 +52,7 @@ function helper_decided_live_result() {
 }
 var a = helper_decided_live_result();
 
-// Another live call keeps the helper's census.
+// Another live call to the helper means it is still examined.
 //--- helper-decided-other-call.js
 function helper_decided_other_call() {
     const pick = t => typeof t == "string" ? ambient(t) : null;
@@ -64,8 +64,8 @@ function helper_decided_other_call() {
 }
 var a = helper_decided_other_call();
 
-// A holder slot whose only call sat in the dropped arm, like Bootstrap's Data
-// `set`, never runs; the slot another method calls keeps its census.
+// A Data method whose only call sat in the removed branch, like Bootstrap's Data
+// `set`, never runs; the method another method calls is still examined.
 //--- helper-decided-holder-slot.js
 function helper_decided_holder_slot() {
     const pick = t => typeof t == "string" ? t : null;

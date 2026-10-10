@@ -1,3 +1,3 @@
-# Execute the pinned Bootstrap UMD prefix and its published methods without the VM.
-# One of the five groups of the global_maps driver (core.test is the rest).
+# Runs the pinned Bootstrap UMD prefix and its published methods natively, without the VM.
+# One of the five --group runs of the global_maps driver; core.test runs the others.
 # RUN: python3 -m CTNative.Ownership.global_maps.driver --group umd --translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference

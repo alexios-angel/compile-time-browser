@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Keep proved synchronous callback calls inside their original branch and loop."""
+"""Test that a callback call inside an `if` arm or a `while` loop stays there when inlined.
+
+CASES must lower and run natively with the same DOM writes as Node and the
+reference VM (the loop writes `inside` twice; the branch writes only when the
+element has `ready`). BAD sources escape, misuse or protect the call and must
+be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.class_dom import callbacks
 from CTNative.Browser.class_dom.callback import captures
 from CTNative.harness import run
 
+# The method's DOM writes and callback call run only when `ready` is set.
 CONDITIONAL = captures.METHOD.replace(
     "target.setAttribute('before', 'done');",
     "if (target.hasAttribute('ready')) { target.setAttribute('before', 'done');",
 ).replace("return result;", "return result; } return true;")
+# The callback is called twice from a loop.
 LOOP = captures.METHOD.replace(
     "const result = local(target);",
     "let i = 0; while (i < 2) { local(target); ++i; } const result = true;",
@@ -90,10 +98,10 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks, args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.exhaust(args, ir, declared, name, 0, "{budget} did not exhaust callback proof")
-        refusals += 3
+        refusals += 3  # Two undeclared-intrinsic refusals and an exhausted budget of 0.
     for name, method in BAD.items():
         ir, contract = dom.prepare(
             args, name, callbacks.source(method + callbacks.CALLS), 2, entry_name="probe"

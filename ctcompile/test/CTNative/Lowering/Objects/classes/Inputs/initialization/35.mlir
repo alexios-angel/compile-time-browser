@@ -1,4 +1,4 @@
-// Exact entry-local helpers borrow their captured Map and its completed record owner.
+// Local helper functions read and write the captured Map holding a finished instance.
 //--- class-map-record-captured-helper-direct.js
 function captured_helper_direct() {
     const values = new Map();
@@ -13,7 +13,7 @@ function captured_helper_direct() {
 }
 var a = captured_helper_direct();
 
-// A captured reader may observe the receiver after terminal registration has completed.
+// A captured reader reads `this` after the constructor stored it as its last statement.
 //--- class-map-record-captured-helper-constructor.js
 function captured_helper_constructor() {
     const values = new Map();
@@ -27,7 +27,7 @@ function captured_helper_constructor() {
 }
 var a = captured_helper_constructor();
 
-// Repeated helper calls preserve both borrowed owners through replacement and deletion.
+// Repeated helper calls keep both instances valid through overwrite and delete.
 //--- class-map-record-captured-helper-overwrite-delete.js
 function captured_helper_overwrite_delete() {
     const values = new Map();
@@ -47,7 +47,7 @@ function captured_helper_overwrite_delete() {
 }
 var a = captured_helper_overwrite_delete();
 
-// Equal keys in distinct captured Maps must retain their separate allocation identities.
+// The same key in two captured Maps names two separate entries.
 //--- class-map-record-captured-helper-distinct.js
 function captured_helper_distinct() {
     const left = new Map(), right = new Map();
@@ -65,7 +65,7 @@ function captured_helper_distinct() {
 }
 var a = captured_helper_distinct();
 
-// Returning a reader extends the Map and record lifetime past their declaring frame.
+// Refused: returning the reader lets the Map and instance outlive this function.
 //--- class-map-record-captured-helper-escaped.js
 function captured_helper_escaped() {
     const values = new Map();
@@ -78,7 +78,7 @@ function captured_helper_escaped() {
 var reader = captured_helper_escaped();
 var a = reader().n;
 
-// A direct call does not authorize erasing a helper also observed through a stored alias.
+// `read` is called directly and through `holder`; it must not be removed as unused.
 //--- class-map-record-captured-helper-alias-observer.js
 function captured_helper_alias_observer() {
     const values = new Map();
@@ -92,7 +92,7 @@ function captured_helper_alias_observer() {
 }
 var a = captured_helper_alias_observer();
 
-// Region calls need control-flow and presence proof beyond exact entry-block expansion.
+// Refused: the helper is called inside an `if`, outside the function's first block.
 //--- class-map-record-captured-helper-region.js
 function captured_helper_region(flag) {
     const values = new Map();
@@ -105,7 +105,7 @@ function captured_helper_region(flag) {
 }
 var a = captured_helper_region(true);
 
-// Expanding a helper cannot establish membership after the entry has been removed.
+// Refused: a helper's get after delete returns undefined even though the key existed.
 //--- class-map-record-captured-helper-read-after-delete.js
 function captured_helper_read_after_delete() {
     const values = new Map();
@@ -119,7 +119,7 @@ function captured_helper_read_after_delete() {
 }
 var a = captured_helper_read_after_delete();
 
-// An entry parameter is still a dynamic key after exact helper argument substitution.
+// Refused: the key is a function parameter, even after it is passed into the helper.
 //--- class-map-record-captured-helper-dynamic-key.js
 function captured_helper_dynamic_key(key) {
     const values = new Map();
@@ -133,7 +133,7 @@ function captured_helper_dynamic_key(key) {
 }
 var a = captured_helper_dynamic_key("slot");
 
-// Every call contributes to payload proof, including a later scalar replacement.
+// Refused: a later `put(3)` stores a Number in the Map that also holds an instance.
 //--- class-map-record-captured-helper-mixed-payload.js
 function captured_helper_mixed_payload() {
     const values = new Map();
@@ -147,7 +147,7 @@ function captured_helper_mixed_payload() {
 }
 var a = captured_helper_mixed_payload();
 
-// Returning a class which retains a helper requires owning the outer Map environment.
+// Refused: returning the class keeps its helper and the captured Map alive.
 //--- class-map-record-captured-helper-returned-class.js
 function captured_helper_returned_class() {
     const values = new Map();

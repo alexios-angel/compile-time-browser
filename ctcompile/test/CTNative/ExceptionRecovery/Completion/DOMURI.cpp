@@ -1,3 +1,14 @@
+//===- DOMURI.cpp - DOM entry preparation transaction tests ---------------===//
+//
+// Exception-recovery tests for DOM entry preparation (prepareDOMEntry,
+// expandDOMHelpers and their source/cell/callable proofs). Each test mutates
+// an imported fixture one numbered `control` at a time and checks that the
+// transform either keeps the exact payload and ordered effects of the
+// unmutated program, or refuses and leaves the module and HostContract as they
+// were.
+//
+//===----------------------------------------------------------------------===//
+
 #include "DOMURI.hpp"
 #include "../../../../lib/CTNative/HostContract/Analysis.h"
 #include "../../../../lib/CTNative/HostContract/DOM/Source/Proof.hpp"
@@ -18,7 +29,8 @@ namespace ctcompile::test::exception_recovery {
 
 using ctcompile::ctnative::host_detail::projectInvocationContinuation;
 
-// A refused preparation leaves every contract field it could have written alone.
+/// Returns true if every HostContract field that preparation may write is
+/// unchanged from \p before.
 static bool sameContract(const ctcompile::ctnative::HostContract & request,
                          const ctcompile::ctnative::HostContract & before) {
     return request.moduleSha256 == before.moduleSha256 &&
@@ -27,11 +39,15 @@ static bool sameContract(const ctcompile::ctnative::HostContract & request,
            request.provider == before.provider && request.entry == before.entry;
 }
 
+/// Checks that \p error is set and the module and contract are \p unchanged.
 static void checkRefused(llvm::Error error, bool unchanged, llvm::StringRef label) {
     check(static_cast<bool>(error) && unchanged, label);
     if (error) { llvm::consumeError(std::move(error)); }
 }
 
+/// Checks DOMSource::precedesInStructuredBody on one try/invoke fixture: a
+/// definition reaches only uses it dominates through structured regions, and
+/// an exhausted step budget refuses without changing the IR.
 static void testStructuredSourceOrdering(mlir::ModuleOp original) {
     auto module = mlir::OwningOpRef<mlir::ModuleOp>(original.clone());
     auto entry = module->lookupSymbol<ctjs::FuncOp>("entry$0");
@@ -96,6 +112,10 @@ static void testStructuredSourceOrdering(mlir::ModuleOp original) {
     ordered(store, store, false, "an assignment cannot precede itself");
 }
 
+/// Checks analyzeLocalCallableObject on a method stored once and read in the
+/// normal, unwind and catch continuations. Controls 0 and 10 must prove; the
+/// others add a late or second store, an escape or a foreign read (1-9), or
+/// cut the step budget (11-12) and must refuse without changing the IR.
 static void testInvocationCallableReads(mlir::MLIRContext & context) {
     const std::string source = R"MLIR(module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -218,6 +238,10 @@ static void testInvocationCallableReads(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks DOMSource::resolveCell on a cell read in both invoke continuations.
+/// Controls 0, 1 and 8 must resolve to one snapshot; the others add a
+/// competing write, an escape, a nested read or a short budget and must
+/// refuse without changing any read.
 static void testInvocationCellReads(mlir::MLIRContext & context) {
     const std::string source = R"MLIR(module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %initial: !ctjs.value, %replacement: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -308,6 +332,9 @@ static void testInvocationCellReads(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks that expandDOMHelpers inlines an effect-free helper called under
+/// ctjs.invoke while keeping each continuation's payload, saved state and
+/// effects, and refuses helpers with coercions, throws or extra effects.
 static void testInertHelperCompletion(mlir::MLIRContext & context) {
     const std::string source = R"MLIR(module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %value: !ctjs.value, %saved: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -720,8 +747,9 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
         check(static_cast<bool>(refused), "incomplete leaf forwarding budget refuses");
         if (refused) { llvm::consumeError(std::move(refused)); }
         for (const bool suffix : {false, true}) {
-            // The argument case preserves the former refusal body unchanged.
-            // The suffix literal must move before Invoke to dominate success.
+            // suffix=false: the helper returns its argument %value, not the protected
+            // call's result. suffix=true: it returns a new literal, which must be moved
+            // before the Invoke so it dominates the success continuation.
             const auto ownResult =
                 replace(leafSource, "    ctjs.return %leaf",
                         suffix ? "    %suffix = ctjs.constant #ctjs.string<\"saved result\">\n"
@@ -784,6 +812,9 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
             auto hostile = mlir::parseSourceString<mlir::ModuleOp>(invalid, &context);
             if (!check(static_cast<bool>(hostile), "hostile leaf forwarding parses")) { continue; }
             auto error = ctcompile::ctnative::expandDOMHelpers(*hostile, "entry$0", 100000);
+            // Variant 1 adds a second DOM call; it is expanded into its own invoke
+            // instead of refused. Every other variant adds an effect or changes the
+            // returned value and must be refused.
             if (control++ == 1) {
                 unsigned invocations = 0;
                 hostile->walk([&](ctjs::InvokeOp) { ++invocations; });
@@ -828,6 +859,10 @@ static void testInertHelperCompletion(mlir::MLIRContext & context) {
           "disposable helper attempts preserve the source snapshot");
 }
 
+/// Prepares a JS `next()` helper whose DOM calls are caught by the caller's
+/// try. Control 0 must complete with exactly three ordered calls; controls 1-6
+/// (bad name, unknown call, unproved read, no element parameter, zero budget,
+/// stray poison op) must refuse without mutation.
 static void testHelperCatchSource(mlir::MLIRContext & context) {
     const std::string source = R"js(function customElements(anchor) {
   function next() {
@@ -885,6 +920,10 @@ static void testHelperCatchSource(mlir::MLIRContext & context) {
     }
 }
 
+/// Mutates the imported iterator helpers (identity, next, close) of \p original
+/// one control at a time and checks that DOM entry preparation either keeps the
+/// exact payload and ordered effects of the unmutated program, or refuses and
+/// rolls back the whole module and \p contract.
 static void testRawIteratorHelpers(mlir::ModuleOp original,
                                    const ctcompile::ctnative::HostContract & contract) {
     mlir::OwningOpRef<mlir::ModuleOp> reference(original.clone());
@@ -924,6 +963,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::BooleanAttr::get(context, false), false},
         {ctjs::BooleanAttr::get(context, true), true},
     }};
+    // lhs and rhs index `predicates` in `comparisons` and `equalityValues` in
+    // every later Comparison table; value is the expected result.
     struct Comparison {
         ctjs::CompareKind kind;
         unsigned lhs;
@@ -951,10 +992,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         uint64_t lhs;
         uint64_t rhs;
         uint64_t value;
-        bool truth;
+        bool truth; // ToBoolean(value): which arm the folded branch selects.
     };
     const std::array<Arithmetic, 12> arithmetic{{
-        // Nearest-ties-even rounds both an even and an odd significand correctly.
+        // 1 + 2^-53 ties to even (1), and (1 + ulp) + 2^-53 ties up to 1 + 2 ulp.
         {ctjs::BinaryKind::Add, 0x3ff0000000000000ULL, 0x3ca0000000000000ULL, 0x3ff0000000000000ULL,
          true},
         {ctjs::BinaryKind::Add, 0x3ff0000000000001ULL, 0x3ca0000000000000ULL, 0x3ff0000000000002ULL,
@@ -1301,7 +1342,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         // row deliberately selects the wrong result and must retain live effects.
         {ctjs::CompareKind::Eq, 35, 11, false}, // trailing junk
         {ctjs::CompareKind::Eq, 11, 36, false}, // 33 spaces convert to zero, contrary to this arm
-        {ctjs::CompareKind::Eq, 37, 18, false}, // Core radix overflow
+        {ctjs::CompareKind::Eq, 37, 18, false}, // radix overflows ctbrowser core's parser
         {ctjs::CompareKind::Eq, 38, 13, false}, // noncanonical NaN spelling
         {ctjs::CompareKind::Gt, 39, 11, false}, // no decimal digits
         {ctjs::CompareKind::Lt, 11, 40, false}, // signed radix literal
@@ -1387,10 +1428,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::CompareKind::Eq, 88, 1, true},   // long binary == true
         {ctjs::CompareKind::Ge, 89, 12, false}, // canonical NaN stays unordered
         {ctjs::CompareKind::Eq, 76, 2, false},  // absence needs no conversion
-        // Complete grammar and Core arithmetic safety remain required even
+        // Complete grammar and ctbrowser core arithmetic safety remain required even
         // when JavaScript's selected result happens to be predictable.
         {ctjs::CompareKind::Eq, 84, 11, false}, // exponent exceeds size-dependent bound
-        {ctjs::CompareKind::Eq, 85, 11, false}, // Core radix overflow is not JS Number
+        {ctjs::CompareKind::Eq, 85, 11, false}, // core radix overflow is not JS Number
         {ctjs::CompareKind::Eq, 86, 11, false}, // trailing junk
         {ctjs::CompareKind::Eq, 87, 11, false}, // embedded NUL
     }};
@@ -1421,7 +1462,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {ctjs::UnaryKind::Plus, 22, std::bit_cast<uint64_t>(8.0), true},    // octal
         {ctjs::UnaryKind::BitNot, 25, std::bit_cast<uint64_t>(-1.0), true}, // fraction
         {ctjs::UnaryKind::Plus, 20, 0, false},                              // JS whitespace
-        // Grammar and Core overflow refusals remain, even for predictable NaNs.
+        // Grammar and core-parser overflow refusals remain, even for predictable NaNs.
         {ctjs::UnaryKind::Plus, 29, 0, false},   // garbage
         {ctjs::UnaryKind::Neg, 35, 0, false},    // trailing junk
         {ctjs::UnaryKind::BitNot, 40, 0, false}, // signed radix
@@ -1435,7 +1476,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         unsigned rhs;
         uint64_t value;
         bool truth;
-        bool staticForm = false;
+        bool staticForm = false; // Emit ctjs.binary_static instead of ctjs.binary.
     };
     const std::array<CoercingBinary, 27> coercingBinaries{{
         {ctjs::BinaryKind::Sub, 77, 1, std::bit_cast<uint64_t>(15.0), true}, // long hex - true
@@ -1473,7 +1514,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         unsigned lhs;
         unsigned rhs;
         llvm::StringRef value;
-        bool accepts = true;
+        bool accepts = true; // False when an operand is invalid UTF-8 and must be refused.
     };
     const std::array<StringAdd, 38> stringAdds{{
         {4, 4, ""},
@@ -1551,6 +1592,21 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         {predicates[12].first, "object"}, // null
         {predicates[13].first, "undefined"},
     }};
+    // Each control applies one mutation to the raw iterator helpers (fn$2
+    // identity, fn$3 next, fn$4 close). Pairs of controls (2k, 2k+1) usually test
+    // the same table row as a CFG branch and as an scf.if. Ranges:
+    //   0-75      helper shape, effect and receiver edits
+    //   76-115    primitive payload selection
+    //   116-175   computed predicates; 176-231 `comparisons`
+    //   232-279   `arithmetic`; 280-325 numeric unaries; 326-371 bitwise unaries
+    //   372-433   `staticArithmetic`; 434-535 strict equality
+    //   536-559   `undefined`/`NaN` global predicates; 554/555 bad contract
+    //   560-643   `powers`; 644-747 `looseEqualities`
+    //   748-895   `convertedComparisons`; 896-1047 `stringComparisons`
+    //   1048-1095 `wideComparisons`; 1096-1165 `coercingUnaries`
+    //   1166-1247 `coercingBinaries`; 1248-1357 `stringAdds`; 1358-1425 `concats`
+    //   1426-1517 typeof/void over `taggedUnaries`
+    // The last few controls of most ranges build malformed ops (see `malformed`).
     for (unsigned control = 0; control != 1518; ++control) {
         auto expected = baseline;
         mlir::OwningOpRef<mlir::ModuleOp> candidate(original.clone());
@@ -2752,6 +2808,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
                 }
             }
         }
+        // Controls that deliberately build an op that fails MLIR verification.
         const bool malformed =
             (control >= 226 && control < 232) || (control >= 274 && control < 280) ||
             (control >= 322 && control < 326) || (control >= 368 && control < 372) ||
@@ -2773,6 +2830,8 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
         }
         const auto fingerprint = proof.moduleSha256;
         const auto before = printed(*candidate);
+        // Controls whose mutation preparation must accept; every other control must
+        // be refused with the module and contract unchanged.
         const bool succeeds =
             control == 0 || (control >= 2 && control <= 4) || (control >= 10 && control <= 12) ||
             control == 18 || control == 19 || (control >= 23 && control <= 29) ||
@@ -2797,7 +2856,7 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
             control == 268 || control == 269 || (control >= 1248 && control < 1312) ||
             (control >= 1324 && control < 1330) || (control >= 1356 && control < 1388) ||
             (control >= 1394 && control < 1400) || (control >= 1426 && control < 1478) ||
-            control == 424 || control == 425; // a bitwise ctjs.binary folds since e6babb265
+            control == 424 || control == 425; // Generic ctjs.binary BitAnd on Numbers folds.
         if (succeeds) {
             mlir::OwningOpRef<mlir::ModuleOp> limited(candidate->clone());
             auto limitedProof = proof;
@@ -2865,6 +2924,10 @@ static void testRawIteratorHelpers(mlir::ModuleOp original,
     }
 }
 
+/// Imports a for-of loop over an iterator whose next() and return() call DOM
+/// methods (as a getter or a plain method, raw or structured import) and
+/// checks that the loop prepares, that recovery keeps every checked call, and
+/// that mutated helpers, setup calls and budgets refuse with a full rollback.
 static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     const std::string getter = R"js(function customElements(anchor) {
   const values = {
@@ -3010,9 +3073,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 originalCalls.push_back(call);
             }
         });
-        // 27 since a2e5dbed3: `return 1` pops the try's handler before op::ret,
-        // and the importer gives the unreachable code after it the handlers its
-        // code-order walk has there - none - so that code has no status edges.
+        // Exactly 27 checks. `return 1` pops the try's handler before op::ret, and
+        // the importer gives the unreachable code after it the handlers its
+        // code-order walk has there (none), so that code has no status edges.
         check(originalCalls.size() == 4 && checks == 27,
               "original iterator keeps four checked calls and every non-call check");
         auto recovered = recoverPrimitiveExceptionRegion(function, 100000,
@@ -3130,8 +3193,8 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                     ctjs::StoreGlobalOp::create(at, call.getLoc(), "selection",
                                                 control == 14 ? mlir::Value(recordAlias) : holder);
             } else if (control == 16) {
-                // The exhausted close saves done at slot 9. Observe its exact
-                // unwind projection only after the original invocation.
+                // The exhausted close saves `done` in slot 9 (unwind argument 10, after
+                // the error). Observe its unwind result only after the original invocation.
                 auto & unwind = invocation.getUnwindBody().front();
                 auto yield = llvm::cast<ctjs::InvokeYieldOp>(unwind.back());
                 unsigned observed = 0;
@@ -3907,6 +3970,9 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks a Number(getAttribute()) value saved before the try and written by a
+/// protected setAttribute(): edits that change the attribute first, select
+/// another value or add unknown calls must refuse with the module unchanged.
 static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"js(function guarded(element) {
@@ -3945,7 +4011,8 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
             candidate->walk([&](ctjs::CallOp call) {
                 if (number && call.getCallee() == number.getResult()) { conversion = call; }
             });
-            // Inside try, status edges forward the callee through block arguments.
+            // Control 10 moves the Number call inside the try, where status edges
+            // forward the callee through block arguments, so `conversion` is not found.
             if (!check(number && (conversion || control == 10),
                        "saved Number source retains its original call")) {
                 continue;
@@ -4020,6 +4087,8 @@ static void testNumberAttributeOrigins(mlir::MLIRContext & context) {
     }
 }
 
+/// Like testNumberAttributeOrigins, but the Number(getAttribute()) read runs
+/// inside the try, so its own exceptional completion must be preserved too.
 static void testProtectedNumberReads(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"js(function guarded(element) {
@@ -4101,7 +4170,8 @@ static void testProtectedNumberReads(mlir::MLIRContext & context) {
                                          control == 14   ? 0
                                          : control == 15 ? 500
                                                          : 100000);
-            // Control 5 forwards the identical saved Number callee through both arms.
+            // Controls 0-5 must prepare; control 5 picks the callee with a conditional
+            // but both arms forward the same saved Number. Controls 6+ must refuse.
             if (control >= 6) {
                 checkRefused(
                     std::move(error),
@@ -4139,6 +4209,8 @@ static void testProtectedNumberReads(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks Number() applied to a conditionally selected attribute value, with
+/// the try ending in a throw or (variants 19+) a normal return.
 static void testConditionalNumberCallee(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     for (auto provider :
@@ -4262,6 +4334,9 @@ static void testConditionalNumberCallee(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks arithmetic on a protected Number(getAttribute()) before it is written:
+/// each control substitutes one entry of `expressions` (or a later edit) and
+/// preparation must accept only Number-preserving operations.
 static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::array expressions = {"converted + 1",
@@ -4380,6 +4455,9 @@ static void testProtectedNumberArithmetic(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks Number() over Boolean-producing inputs (`inputs`): proved Boolean
+/// sources (controls 0-8 and 18-20) prepare; objects, unknown calls and
+/// mixed arms must refuse.
 static void testBooleanNumberInputs(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::array inputs = {
@@ -4444,8 +4522,8 @@ static void testBooleanNumberInputs(mlir::MLIRContext & context) {
                        "Boolean conversion retains original Number binding and calls")) {
                 continue;
             }
-            // These controls retain the original direct read/conversion/write order;
-            // imported completion state may forward their callees through arguments.
+            // originalCalls is in source order (read, conversion, write). Pick calls by
+            // position: completion state may forward their callees through block arguments.
             auto conversion = originalCalls[1];
             auto anchor = function.getBody().front().getArgument(ctjs::implicit_arguments);
             if (control == 28) { conversion.getReceiverMutable().assign(anchor); }
@@ -4514,6 +4592,8 @@ static void testBooleanNumberInputs(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks Number() over Number-producing inputs (`inputs`): controls 0-5, 10 and
+/// 11 prepare; mixed-type arms, unknown calls and rebinding Number refuse.
 static void testNumberNumberInputs(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::array inputs = {
@@ -4635,6 +4715,9 @@ static void testNumberNumberInputs(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks Number(getAttribute()).toString() written by a protected
+/// setAttribute(), both inside the try and (indices 19+, `beforeTryControls`)
+/// saved before it.
 static void testProtectedNumberStrings(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::array beforeTryControls = {0u,  1u,  3u,  4u,  5u,  7u,  8u,  9u,
@@ -4754,6 +4837,9 @@ static void testProtectedNumberStrings(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks a getAttribute() String saved before the try and written by a
+/// protected setAttribute(); intervening writes to the attribute, unknown calls
+/// and replaced methods must refuse.
 static void testSavedAttributeStrings(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     for (auto provider :
@@ -4873,6 +4959,8 @@ static void testSavedAttributeStrings(mlir::MLIRContext & context) {
     }
 }
 
+/// Like testSavedAttributeStrings, but the saved value is selected by a
+/// hasAttribute() conditional between getAttribute() and null.
 static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     for (auto provider :
@@ -4991,12 +5079,20 @@ static void testSelectedAttributeStrings(mlir::MLIRContext & context) {
     }
 }
 
+/// Source variants for testSavedAttributePredicates: the plain Boolean
+/// selection, `false` replaced by `null`, and additionally the data-number
+/// predicate replaced by 42.
 enum class SavedSelection {
     boolean,
     nullableBoolean,
     nullableNumber
 };
 
+/// Mutation matrix for a saved hasAttribute() result written by a protected
+/// setAttribute(). Each `control` rewrites the JS source, the imported IR or
+/// the HostContract: controls 0-8 (and 30-31 in number mode) are accepted
+/// shapes whose proof and write order are checked; every other control must
+/// be refused with the module and contract left unchanged.
 static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelection mode) {
     using namespace ctcompile::ctnative;
     const bool nullable = mode != SavedSelection::boolean;
@@ -5005,8 +5101,9 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelec
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < (number ? 36u : 30u); ++control) {
             if (nullable && (control == 1 || control == 4)) { continue; }
-            // Number mode replaces the data-number producer with 42; 9, 18 and 19
-            // already replaced it, so they would repeat the null mode's sources.
+            // Number mode replaces the data-number predicate with 42. Controls 9,
+            // 18 and 19 rewrite that same predicate, so in number mode they would
+            // only repeat the nullable-boolean runs.
             if (number && (control == 9 || control == 18 || control == 19)) { continue; }
             std::string source = R"js(function guarded(anchor) {
                 const saved = anchor.hasAttribute('flag') ? anchor.hasAttribute('data-number') : false;
@@ -5118,6 +5215,8 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelec
             if (control == 25) { request.moduleSha256 = "stale"; }
             const auto originalContract = request;
             const auto original = printed(*candidate);
+            // Step budget: 0 and 500 (controls 26, 27) are too small to finish
+            // and must refuse; 100000 is ample.
             auto error = prepareDOMEntry(*candidate, request,
                                          control == 26   ? 0
                                          : control == 27 ? 500
@@ -5170,6 +5269,10 @@ static void testSavedAttributePredicates(mlir::MLIRContext & context, SavedSelec
     }
 }
 
+/// Runs every DOM entry preparation test in this file, then checks that
+/// caught DOM nodes, shared String helpers and decodeURIComponent inside a
+/// try are either prepared with a fresh, complete DOM proof or refused with
+/// the module and HostContract left exactly as they were.
 void testDOMURITransaction(mlir::MLIRContext & context) {
     testSavedAttributePredicates(context, SavedSelection::boolean);
     testSavedAttributePredicates(context, SavedSelection::nullableBoolean);
@@ -5188,6 +5291,10 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
     testObservedIteratorRecovery(context);
     testInertHelperCompletion(context);
     testHelperCatchSource(context);
+    // A DOM node thrown and caught inside the entry. Each block of controls
+    // (0, 7, 12, 20, 28, 33, 40, 50) starts a new source shape and the
+    // following controls mutate it. The listed accepted controls must prepare
+    // with the throw/try lowered away; all others must refuse unchanged.
     for (unsigned control = 0; control < 57; ++control) {
         std::string source = "function guarded(element) { try { throw element; } "
                              "catch (error) { return error === element; } }";
@@ -5339,6 +5446,8 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         if (control == 32 || control == 38 || control == 47) { request.elementParameters.clear(); }
         request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
         const auto fingerprint = request.moduleSha256;
+        // Controls 6, 19, 26, 39, 48 and 51 run with no step budget and 27 and
+        // 52 with too small a budget; both must refuse.
         auto error =
             ctnative::prepareDOMEntry(*candidate, request,
                                       control == 6 || control == 19 || control == 26 ||
@@ -5367,6 +5476,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
         }
     }
     if (!testClassTransactions(context)) { return; }
+    // Two helper methods share one String helper F. Controls 0, 1 and 6 must
+    // prepare; the others add an unproved input or effect, drop an intrinsic
+    // (4) or the budget (5, 11) and must refuse.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 12; ++control) {
@@ -5422,6 +5534,9 @@ void testDOMURITransaction(mlir::MLIRContext & context) {
             }
         }
     }
+    // String.replace with a callback over dataset keys. Only control 0 must
+    // prepare; the forged-provenance mutations then check that a fresh proof
+    // rejects a callback or receiver rewired after preparation.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 8; ++control) {
@@ -5536,6 +5651,8 @@ function guarded(element) {
     contract.elementParameters = {0};
     contract.initialIntrinsics = {"decodeURIComponent"};
     contract.moduleSha256 = ctnative::hostContractFingerprint(*module);
+    // Control 0 must prepare. Control 1 passes a stale fingerprint, 2 drops the
+    // decodeURIComponent intrinsic and 3 gives no step budget; all must refuse.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 4; ++control) {
@@ -5610,6 +5727,8 @@ function guarded(element) {
               "incomplete URI normalization preserves the complete source and all checks");
         return false;
     };
+    // Binary-search the smallest budget that completes normalization, then
+    // check that every smaller budget refuses without changing the module.
     unsigned lower = 0, upper = 100000;
     while (lower < upper) {
         const unsigned middle = lower + (upper - lower) / 2;
@@ -5623,6 +5742,9 @@ function guarded(element) {
     for (unsigned budget = 0; budget < lower; ++budget) {
         if (!check(!attempt(budget), "every smaller URI normalization budget refuses")) { break; }
     }
+    // Mutate the invocation snapshot so the catch observes the thrown payload
+    // (payload) or the check consumes the call result (!payload); both must
+    // refuse with the mutated source and every check intact.
     for (bool payload : {false, true}) {
         mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
         auto source = inspectSingleInvocationRegion(guarded(*candidate));
@@ -5658,7 +5780,4 @@ function guarded(element) {
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
 }
 
-// Original M's protected body: JSON.parse is looked up first, then
-// decodeURIComponent runs, then parse consumes its result. Both calls become
-// nested invokes on one success path; either failure reaches the same catch.
 } // namespace ctcompile::test::exception_recovery

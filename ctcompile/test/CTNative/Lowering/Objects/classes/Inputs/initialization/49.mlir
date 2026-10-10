@@ -1,4 +1,4 @@
-// Preserve the complete vendor Data conflict diagnostic; only proved dead arms retire.
+// Bootstrap's Data registry with its one-instance console.error kept; only dead branches go.
 //--- class-map-record-nested-conflict-direct.js
 function probe() {
     const outer = new Map();

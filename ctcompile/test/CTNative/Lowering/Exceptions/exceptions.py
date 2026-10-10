@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check native throw-site state, typed catches and conservative boundaries."""
+"""Lit test: lower the JS exception fixtures to native C++ and check them.
+
+Each fixture in PROGRAMS runs under Node, the interpreter and the compiled C++,
+and all must agree. POSITIVES must compile fully native with a typed C++
+try/catch; the rest must be refused with the boxed handler path intact.
+"""
 
 import argparse
 import json
@@ -18,6 +23,9 @@ from CTNative.harness import (
 from CTNative.Browser.dom.dom import link_options
 from CTNative.Exports.boundary import FUNCTION as CTJS_FUNCTION, NATIVE as NATIVE_FUNCTION
 
+# Fixture name -> (number of functions the importer must emit for it, the
+# global numeric values the program must leave behind, checked against Node,
+# the interpreter and the compiled C++).
 PROGRAMS = {
     "guarded": (2, {"caught42": 42, "normal20": 20}),
     "two_sites": (2, {"first42": 42, "normal20": 20, "second107": 107}),
@@ -62,7 +70,8 @@ PROGRAMS = {
     "helper_depth_limit": (35, {"caught42": 42}),
     "helper_work_limit": (3, {"caught42": 42}),
 }
-# The historical computed_throw source now has the importer's complete catch snapshot.
+# Programs whose every function must lower to native code. Every other entry
+# in PROGRAMS must be refused, with the original handler/throw ops intact.
 POSITIVES = (
     "guarded",
     "two_sites",
@@ -165,6 +174,11 @@ def node_oracle(node, source, expected, label):
 
 
 def imported_program(args, source, name, denominator, *, skipped=False):
+    """Import `source` to ctjs MLIR and check it has `denominator` functions.
+
+    When `skipped`, expect one fewer plus a `ctjs.skipped` marker for the
+    unsupported function. Returns the MLIR path and the function count.
+    """
     raw = args.work / f"{name}.raw.mlir"
     raw.unlink(missing_ok=True)
     imported = run(
@@ -257,8 +271,8 @@ def refused(prepared, output, imported, label):
     ):
         raise RuntimeError(f"{label}: missing named refusal or changed denominator\n{text}")
     # Failed recovery must keep the boxed backend's original handler/throw path.
-    # The explicitly skipped nested/finally functions have no imported body;
-    # their retained module-level omission marker remains part of the evidence.
+    # The explicitly skipped nested/finally functions have no imported body, so
+    # their module-level `ctjs.skipped` marker must survive lowering.
     for operation in ("push_handler", "catch_land", "pop_handler", "check", "throw"):
         if operation_count(text, operation) != operation_count(source, operation):
             raise RuntimeError(f"{label}: refused recovery changed ctjs.{operation}\n{text}")
@@ -294,9 +308,9 @@ def budget_controls(args, prepared):
 
 
 def callee_mutation_controls(args, prepared, name, helper_name, denominator):
-    # Start from a source-derived module that just admitted every function.
-    # A late helper body change revokes the proof even while the resolver's
-    # old report and a forged nonthrowing marker remain attached.
+    # Start from a module that just lowered fully native, then make the helper
+    # store to a global. The no-throw proof must be recomputed and fail, even
+    # though the resolver's old report and a forged nothrow marker remain.
     text = prepared.read_text()
     helper = re.search(
         r"ctjs\.func private @" + re.escape(helper_name) + r"\$1\b[\s\S]*?"
@@ -323,10 +337,12 @@ def callee_mutation_controls(args, prepared, name, helper_name, denominator):
 
 
 def register_flow_controls(args):
-    # These small IR controls supplement the source programs with two edges
-    # from the same terminator to the same successor, and an exhausted bounded
-    # query. Keep the indirect call and change only its incoming value; stale
-    # resolver reports and forged effect markers cannot name the changed call.
+    # Hand-written IR cases the JS fixtures cannot produce: two edges from one
+    # branch to the same successor (the call must resolve), the same with one
+    # edge carrying a different value (it must not, despite a stale resolver
+    # report and a forged nothrow marker), and a chain that exhausts the
+    # register-flow step budget. The helper's constant 4631107791820423168 is the
+    # IEEE-754 bit pattern of 42.0.
     prefix = """module {
   ctjs.func @_script_$0(%this: !ctjs.value, %target: !ctjs.value, %enclosing: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %undefined = ctjs.constant #ctjs.undefined
@@ -380,6 +396,9 @@ def register_flow_controls(args):
             or "another or unproved incoming value" not in changed
         ):
             raise RuntimeError(f"{name}: mixed incoming register retained a callee proof")
+    # 2100 forwarding blocks run past the register-flow step budget (`maxSteps`,
+    # 4096 by default, in ctcompile/lib/CTJS/Lowering/Globals/RegisterFlow.h), so
+    # the resolver must give up rather than prove the call target.
     chain = "    cf.br ^chain0(%loaded : !ctjs.value)\n"
     for index in range(2100):
         chain += (
@@ -427,8 +446,12 @@ def checked_callee_source_flow(raw, prepared, name):
 
 
 def generated_helper_limits(fixtures):
-    # Both programs really execute and retain exact importer denominators;
-    # neither recursion nor unsupported JavaScript supplies the refusal.
+    """Write two fixtures that run correctly but exceed native exception limits.
+
+    One is a chain of 33 helper calls (the call-depth limit is 32), the other a
+    helper of about 2050 statements (past the recovery work budget). Neither uses
+    recursion or unsupported JavaScript, so the only reason to refuse is the limit.
+    """
     depth = "\n".join(
         f"function helper{index}(value) {{ return "
         + (f"helper{index + 1}(value)" if index < 32 else "value")
@@ -446,7 +469,12 @@ def generated_helper_limits(fixtures):
 
 
 def standalone(args, module, name, expected, compilers, nm, *, wrong_state=False):
-    # Typed Number/String concatenation calls the same public Core as the VM.
+    """Print `module` as explicit and deduced C++, check its shape, and run it.
+
+    Each build must print `expected`. With `wrong_state`, the output must also
+    differ from guarded's expected values (it checks the result checker itself).
+    """
+    # Typed Number/String concatenation links the same public Core as the VM.
     _, libraries = link_options(
         argparse.Namespace(build=args.build, include=Path(CORE_INCLUDE[2:])), core_only=True
     )
@@ -608,9 +636,9 @@ def main():
             }
         )
 
-    # This altered source executes the specific wrong throw-site state that
-    # restoring the try-entry registers would produce. Run its generated C++,
-    # too; the same observation checker must reject it against guarded's oracle.
+    # This altered guarded.js produces the wrong throw-site state that restoring
+    # the try-entry registers would produce. Run its generated C++ too; the same
+    # observation checker must reject it against guarded's expected values.
     wrong_source = args.work / "wrong-state.js"
     compare(
         run([str(reference), str(wrong_source)]).stdout,

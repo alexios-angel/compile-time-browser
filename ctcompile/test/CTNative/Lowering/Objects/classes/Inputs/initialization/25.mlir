@@ -1,4 +1,4 @@
-// An inherited receiver selects the base getter without changing its target.
+// `this.constructor.Ready` on a Leaf instance resolves to Base's static getter.
 //--- inherited-getter-constant.js
 function inherited_getter_constant() {
     class Base {
@@ -11,7 +11,7 @@ function inherited_getter_constant() {
 }
 var a = inherited_getter_constant();
 
-// Every getter in the dependency chain keeps the same target on the leaf.
+// Getters that read other getters through `this` all resolve the same way from Leaf.
 //--- inherited-getter-dependencies.js
 function inherited_getter_dependencies() {
     class Base {
@@ -26,7 +26,7 @@ function inherited_getter_dependencies() {
 }
 var a = inherited_getter_dependencies();
 
-// Getter identity survives two heritage edges and constructor argument changes.
+// The getter resolves the same through two levels of `extends` with changed arguments.
 //--- inherited-getter-three-levels.js
 function inherited_getter_three_levels() {
     class Base {
@@ -40,7 +40,7 @@ function inherited_getter_three_levels() {
 }
 var a = inherited_getter_three_levels();
 
-// The inherited constructor sees the same getter before its field is written.
+// The inherited constructor reads the getter before it writes `this.n`.
 //--- inherited-getter-constructor.js
 function inherited_getter_constructor() {
     class Base {
@@ -53,7 +53,7 @@ function inherited_getter_constructor() {
 }
 var a = inherited_getter_constructor();
 
-// One shared method is checked against the base and both distinct leaf classes.
+// One shared method resolves the getter correctly for Base and two distinct subclasses.
 //--- inherited-getter-shared-receivers.js
 function inherited_getter_shared_receivers() {
     class Base {
@@ -68,7 +68,7 @@ function inherited_getter_shared_receivers() {
 }
 var a = inherited_getter_shared_receivers();
 
-// Expanding the same getter twice must preserve two fresh object identities.
+// Inlining a getter that returns `{}` twice must still give two distinct objects.
 //--- inherited-getter-fresh-empty.js
 function inherited_getter_fresh_empty() {
     class Base {
@@ -85,7 +85,7 @@ function inherited_getter_fresh_empty() {
 }
 var a = inherited_getter_fresh_empty();
 
-// A leaf override cannot reuse the getter target selected for the base method.
+// Leaf's own `Ready` getter overrides Base's; the method must not reuse Base's getter.
 //--- inherited-getter-override.js
 function inherited_getter_override() {
     class Base {
@@ -101,7 +101,7 @@ function inherited_getter_override() {
 }
 var a = inherited_getter_override();
 
-// The selected outer getter is unchanged, but its transitive dependency differs.
+// Leaf overrides only `Unit`, which `Ready` reads indirectly through `Factor`.
 //--- inherited-getter-override-dependency.js
 function inherited_getter_override_dependency() {
     class Base {
@@ -119,7 +119,7 @@ function inherited_getter_override_dependency() {
 }
 var a = inherited_getter_override_dependency();
 
-// Unused inherited getters still belong to the complete body census.
+// Refused: an unused getter calling an unknown global counts; every getter is checked.
 //--- inherited-getter-unused-ambient.js
 function inherited_getter_unused_ambient() {
     class Base {
@@ -133,7 +133,7 @@ function inherited_getter_unused_ambient() {
 }
 var a = inherited_getter_unused_ambient();
 
-// An own constructor field changes lookup before the inherited method executes.
+// Refused: the constructor sets an own `constructor` field that hides the class.
 //--- inherited-getter-constructor-shadow.js
 function inherited_getter_constructor_shadow() {
     class Base {
@@ -146,7 +146,7 @@ function inherited_getter_constructor_shadow() {
 }
 var a = inherited_getter_constructor_shadow();
 
-// A replaced prototype backedge cannot retain class-constructor authority.
+// Refused: Leaf.prototype.constructor is replaced, so it no longer names the class.
 //--- inherited-getter-prototype-replaced.js
 function inherited_getter_prototype_replaced() {
     class Base {
@@ -160,7 +160,7 @@ function inherited_getter_prototype_replaced() {
 }
 var a = inherited_getter_prototype_replaced();
 
-// A derived static method also shadows an inherited getter with the same name.
+// Refused: Leaf's static method `Ready` hides Base's static getter of the same name.
 //--- inherited-getter-static-method-collision.js
 function inherited_getter_static_method_collision() {
     class Base {
@@ -176,7 +176,7 @@ function inherited_getter_static_method_collision() {
 }
 var a = inherited_getter_static_method_collision();
 
-// Direct and static-method reads use the same inherited getter environment.
+// Direct `Leaf.Ready` and a static method's `this.Ready` resolve to the same getter.
 //--- inherited-getter-static-reads.js
 function inherited_getter_static_reads() {
     class Base {

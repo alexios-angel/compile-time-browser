@@ -1,9 +1,23 @@
+//===- DOM/JSON.h - JSON.parse and decodeURIComponent proofs ----*- C++ -*-===//
+//
+// Host-contract tests for DOMEntryAnalysis on entries that decode and parse
+// JSON, plus the DOM helper expansion (expandDOMHelpers) cases that share
+// these fixtures.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
 
 namespace ctcompile::test::host_contract {
 
+/// Tests DOMEntryAnalysis on entries that call JSON.parse and
+/// decodeURIComponent inside ctjs.invoke regions: each valid fixture must be
+/// proved under both DOM providers and reproduce its exact step budget, every
+/// smaller budget must publish no evidence, and each mutated fixture (wrong
+/// arguments, escaping values, out-of-order DOM reads and writes, unsupported
+/// throws) must be refused without changing the source.
 inline void checkDOMJSON(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(
@@ -46,6 +60,8 @@ module {
     contract.elementParameters = {0};
     contract.initialIntrinsics = {"JSON", "decodeURIComponent"};
     contract.moduleSha256 = hostContractFingerprint(*module);
+    // True when `proof` published nothing: no entry, parameters, string results
+    // or per-op facts. A refused or budget-exhausted analysis must look like this.
     const auto noEvidence = [](mlir::ModuleOp input, const DOMEntryAnalysis & proof) {
         bool empty = !proof.proved() && !proof.entry() && !proof.wrapper() &&
                      proof.parameters().empty() && proof.stringResults().empty() &&
@@ -123,6 +139,8 @@ module {
     refused(replaced(source, "ctjs.invoke_yield(%parsedTree)", "ctjs.invoke_yield(%element)"));
     refused(replaced(source, "ctjs.invoke_yield(%text)", "ctjs.invoke_yield(%parseError)"));
     refused(replaced(source, "%json =", "ctjs.store_global \"JSON\", %element\n    %json ="));
+    // Observing the parsed value with `typeof x == "object"` must prove a String
+    // result without narrowing the JSON operand itself.
     const std::string observation = R"MLIR(
     %kind = ctjs.unary typeof %answer
     %word = ctjs.constant #ctjs.string<"object">
@@ -175,6 +193,7 @@ module {
     }
     for (llvm::StringRef primitive :
          {"%primitive = ctjs.constant #ctjs.boolean<true>",
+          // 4631107791820423168 is the IEEE-754 bit pattern of 42.0.
           "%primitive = ctjs.constant #ctjs.number<4631107791820423168>",
           "%primitive = ctjs.constant #ctjs.null",
           "%getKey = ctjs.constant #ctjs.string<\"getAttribute\">\n"
@@ -227,6 +246,9 @@ module {
                   "JSON primitive proof keeps source and optional producer unchanged");
         }
     }
+    // Object spread: copy_props of the parsed value (or an empty object) into a
+    // fresh target. Only the selected value may be copied, and the target may only
+    // receive known-safe keys and values afterward.
     const std::string spread = R"MLIR(
     %kind = ctjs.unary typeof %answer
     %word = ctjs.constant #ctjs.string<"object">
@@ -313,7 +335,8 @@ module {
         refuseSpread(replaced(spread, "ctjs.copy_props %selected into %target",
                               "ctjs.copy_props " + unproved.str() + " into %target"));
     }
-    // The object tag includes null and arrays; it is no permission for arbitrary members.
+    // `typeof x == "object"` is also true for null and arrays, so it does not make
+    // reading an arbitrary member of %selected safe; that read must be refused.
     refuseSpread(replaced(spread, "ctjs.return %target",
                           "%member = ctjs.get_property %selected[%word]\n"
                           "    ctjs.return %target"));
@@ -363,7 +386,9 @@ module {
       scf.yield
     }
     ctjs.return %target)MLIR"));
-    // Deep-value branch joins cannot alias a target that is written afterward.
+    // Refused: returning an alias of %target taken before copy_props writes into
+    // it (via an scf.if join or an earlier copy), and a copy_props that runs on
+    // only one branch.
     const std::string earlyAlias = R"MLIR(
     %alias = scf.if %isObject -> (!ctjs.value) {
       scf.yield %target : !ctjs.value
@@ -385,6 +410,8 @@ module {
     })MLIR"));
     check(hostContractFingerprint(*module) == contract.moduleSha256,
           "JSON proof and exhausted attempts leave original source unchanged");
+    // 100000 is a generous expansion step limit for expandDOMHelpers; none of
+    // these fixtures come close to it.
     auto branchWrite = mlir::parseSourceString<mlir::ModuleOp>(R"MLIR(
 module {
   ctjs.func @parse$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -410,6 +437,9 @@ module {
               "capture write locality is checked before comparing its order with any read");
     }
 
+    // A callable stored in an object's own slot and called inside a branch:
+    // expansion may inline it only while the slot is immutable and the receiver
+    // is the holder.
     const std::string holderSource = R"MLIR(
 module {
   ctjs.func @entry$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -455,6 +485,10 @@ module {
         }
     }
 
+    // "Protected" fixtures wrap the helper call in a ctjs.invoke whose result is
+    // discarded on both the normal and the unwind path. Expansion may remove the
+    // call only when the inlined helper is inert, and the DOM proof must then be
+    // redone on the expanded entry.
     const auto protectedHolder = replaced(
         replaced(holderSource, "      %called = ctjs.call %method(%holder, %element)", R"MLIR(
       "ctjs.invoke"() ({
@@ -501,12 +535,15 @@ module {
              {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
             bound.provider = provider;
             // typeof is inert for every value, but this DOM proof has no
-            // Element typeof contract. Normalization must not grant one.
+            // contract for typeof on an Element, and expansion must not create one.
             const bool typed = valid.find("ctjs.unary typeof") == std::string::npos;
             check(DOMEntryAnalysis(*input, bound).proved() == typed,
                   "discharged inert call still requires complete DOM entry reproof");
         }
     }
+    // The fixtures below grow protectedAttribute one DOM call at a time
+    // (hasAttribute reads, setAttribute writes, matches() selectors) to check that
+    // helper expansion keeps every read and write in source order.
     const auto protectedAttribute =
         replaced(protectedHolder, "%answer = ctjs.compare strict_eq %element, %element", R"MLIR(
     %attributeKey = ctjs.constant #ctjs.string<"setAttribute">
@@ -750,6 +787,8 @@ module {
     const auto secondReadStart = reusedInitialRead.find("    %afterReadKey =");
     const auto secondRead = reusedInitialRead.substr(
         secondReadStart, reusedInitialRead.find("    %secondEffect =") - secondReadStart);
+    // The conditional* fixtures move later writes under an scf.if guarded by an
+    // earlier read's result, so some reads and writes run on only one branch.
     const auto conditionalRead =
         replaced(replaced(replaced(reusedInitialRead, secondRead, ""), "    %secondKey =",
                           "    %closeCondition = ctjs.truthy %present\n"
@@ -938,6 +977,7 @@ module {
     const auto discardedState =
         replaced(protectedAttribute, "%answer = ctjs.create_object",
                  "%answer = ctjs.create_object\n    ctjs.set_property %answer[%name], %text");
+    // 4607182418800017408 is the IEEE-754 bit pattern of 1.0.
     const auto scalarState = replaced(discardedState, "%effect = ctjs.call", R"MLIR(
     %one = ctjs.constant #ctjs.number<4607182418800017408>
     %advanced = ctjs.binary add %one, %one
@@ -2151,8 +2191,9 @@ module {
              std::pair{conditionalIgnoredRead, true},
              std::pair{conditionalBranchRead, true},
              std::pair{conditionalArgumentRead, true},
-             // An unread local record of the read is inert: preparation drops
-             // it, and the read keeps only its original write use.
+             // Storing the read's result into a local object that nothing reads is
+             // inert: expansion drops the object, so the read's only remaining use
+             // is the original setAttribute.
              std::pair{replaced(conditionalArgumentRead, "    %secondEffect =",
                                 "    %record = ctjs.create_object\n"
                                 "    ctjs.set_property %record[%name], %afterPresent\n"
@@ -2532,8 +2573,8 @@ module {
          }) {
         auto input = parsed(context, valid, "nested cleanup fixture parses");
         if (!input) { continue; }
-        // Compare every lookup, read, value use and guard before/after expansion.
-        // The caller's surrounding guard adds one common level of nesting.
+        // Compare every lookup, read, value use and guard before and after
+        // expansion. The caller's surrounding guard adds one common level of nesting.
         const auto trace = [&](ctjs::FuncOp function) {
             std::vector<std::string> events;
             llvm::DenseMap<mlir::Value, unsigned> producers;
@@ -3532,6 +3573,10 @@ module {
         if (error) { llvm::consumeError(std::move(error)); }
     }
 
+    // Saved throws: a primitive thrown inside a no_inline region on one branch.
+    // `#ctjs.number<N>` holds the IEEE-754 bit pattern of a double:
+    // 4607182418800017408 is 1.0, 4611686018427387904 is 2.0 and
+    // 4613937818241073152 is 3.0.
     const std::string throwingSource = R"MLIR(
 module {
   ctjs.func @saved$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {

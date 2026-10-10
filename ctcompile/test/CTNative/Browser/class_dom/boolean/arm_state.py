@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Retain an arm-local Boolean lifetime through class and closure normalization."""
+"""Native lowering of a class method whose Boolean `let` is initialized inside
+one if-arm and captured by two closures created in that arm.
+
+Checks each CASES source against Node and the reference VM, runs the native
+build, and checks that every BAD source and every hand-mutated IR variant is
+refused.
+"""
 
 import json
 import re
@@ -12,7 +18,9 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
-# Keep the exact old arm-only-state refusal as the first positive.
+# `seen` is declared without a value and initialized to false only inside an
+# if-arm. "arm-only-state" is the base case that must compile natively; the
+# other CASES vary it, and BAD lists variants that must be refused.
 METHOD = captures.METHOD.replace(
     "let seen = false;",
     "let seen; if (target.hasAttribute('ready')) { seen = false;",
@@ -77,6 +85,8 @@ BAD = {
 
 
 def events(name, ready, other):
+    """Return the (attribute, value) writes one probe() call makes on an element
+    whose `ready`/`other` attributes are present as given."""
     enabled = not ready if name == "else-state" else ready
     if name == "nested-scope":
         enabled = enabled and other
@@ -90,6 +100,8 @@ def events(name, ready, other):
 
 
 def scenarios(name):
+    """Yield (first_flags, second_flags, alias, (first_writes, second_writes)) for
+    each attribute combination, aliased or not; see captures.checks() for counts."""
     for flags in range(4):
         first = (bool(flags & 1), bool(flags & 2))
         second = (not first[0], not first[1])
@@ -106,6 +118,7 @@ def scenarios(name):
 
 
 def oracle(args, name, text):
+    """Run every scenario in the VM and Node; both must report result=true."""
     text += "var result = true;\n"
     for first, second, alias, writes in scenarios(name):
         text += f"var first = {callbacks.ELEMENT}, second = {callbacks.ELEMENT};\n"
@@ -127,6 +140,7 @@ def oracle(args, name, text):
 
 
 def checks(name):
+    """C++ assertions for the native harness, one block per scenario."""
     text = r"""
         (void)classes;
         (void)pressed;
@@ -163,6 +177,12 @@ def checks(name):
 
 
 def shape(text):
+    """Find the method whose two arm-local closures capture one cell.
+
+    Returns (owner, cell, made, store, closures, leaves): the owner function,
+    the cell, its create_cell and in-arm cell_set matches, the create_closure
+    matches and the two callback bodies.
+    """
     bodies = captures.functions(text)
     for owner in bodies:
         closures = list(
@@ -196,6 +216,7 @@ def shape(text):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     owner, cell, made, store, closures, leaves = shape(text)
     closure = closures[0]
     writer = next(body for body in leaves if "ctjs.store_upvalue" in body[0])
@@ -254,6 +275,8 @@ def mutations(text):
 
 
 def roots(text):
+    """Yield (label, valid, invalid) IR with a `ctjs.root` inside or after a frame;
+    invalid is None when no late placement is tested."""
     owner, cell, made, _, closures, leaves = shape(text)
     frame = re.search(r"(%\w+) = ctjs\.frame_enter \d+", owner[0])[1]
     exited = re.search(rf"^    ctjs\.frame_exit {re.escape(frame)}\b", owner[0], re.M)

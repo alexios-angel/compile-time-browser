@@ -1,13 +1,13 @@
-// Global observations preserve each proved scalar alternative's actual tag.
-// Every source store contributes to the census; a constant last write or an
-// observation request cannot erase earlier Number/Boolean or absent alternatives.
-// String/Number and String/Boolean joins retain their owning tagged carriers.
+// When a global is printed, its value keeps the exact JavaScript type of every
+// value it may hold. Every store to the global counts toward those types: a
+// constant final write, or printing the global, cannot drop an earlier Number,
+// Boolean or never-assigned (undefined) possibility. A global that may be
+// String or Number, or String or Boolean, keeps a tagged value that owns its
+// string.
 //
-// ONE PROGRAM PER FILE, VIA split-file, for the reason divergence-refusals.mlir
-// gives: admission reports the FIRST refusal per function and every global
-// store in these programs lives in `_script_$0`, so two refusals in one file
-// would pin whichever came first and be green on the other for the wrong
-// reason.
+// One program per split-file input, for the reason divergence-refusals.mlir
+// gives: admission reports the first refusal per function and every global
+// store here lives in `_script_$0`, so one refusal could hide another.
 //
 // RUN: split-file %s %t
 // RUN: python3 %S/nullable-global-output.py --translate ctjs-translate --opt ctjs-opt --work %t/execute --node %node --reference %native_reference
@@ -71,9 +71,9 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' \
 // RUN:   | FileCheck %s --check-prefix=STRING_EARLY
 
-// Hoisted globals, conditionally assigned cells and undominated field reads
-// retain Undefined. The output carrier must print their tags without narrowing
-// the underlying inference. Exact dominance proofs still keep numeric returns.
+// Hoisted globals, conditionally assigned cells and undominated field reads may
+// still be undefined, and printing must keep that tag without narrowing what
+// inference proved. A write that dominates every read still returns a Number.
 // HOISTED-NOT: ctnative.not_native
 // HOISTED: emitc.global static @g_u : !emitc.opaque<"ctnative::nullable_scalar">
 // HOISTED: call_opaque "ctnative::print_scalar"
@@ -161,8 +161,8 @@ function maybe(k) {
 }
 var mm = maybe(0 - 1);
 
-// Both Boolean values use exact Boolean observations; a neighboring Number
-// still calls global_number. Optional or mixed returns retain their real types.
+// Both Boolean globals print through global_boolean; a neighbouring Number
+// still calls global_number. Optional or mixed returns keep their real types.
 // BOOLEAN-NOT: ctnative.not_native
 // BOOLEAN: emitc.global static @g_off : !emitc.opaque<"ctnative::nullable_scalar">
 // BOOLEAN: call_opaque "ctnative::global_number"
@@ -204,8 +204,8 @@ function overwrite() { result = 1; }
 var result = false;
 overwrite();
 
-// String storage is owning, and the full store census decides its tag.
-// Early typeof observes initial Undefined without borrowing a later String.
+// A String global owns its storage, and every store to it decides its type. An
+// early typeof sees the initial undefined, not the String written later.
 // STRING-NOT: ctnative.not_native
 // STRING: emitc.global static @g_empty : !emitc.opaque<"ctnative::nullable_string">
 // STRING: call_opaque "ctnative::global_string"

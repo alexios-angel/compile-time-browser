@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Execute nullable global observations without changing their source type proof."""
+"""Globals that may be null or undefined print the same natively as in Node and the VM.
+
+Also checks that forged type-report attributes on the IR do not change the
+native output, which must come from the compiler's own type inference.
+"""
 
 import re
 
@@ -80,6 +84,7 @@ EXPECTED = {
 
 
 def normalized(output):
+    """glibc prints a NaN with its sign bit set as `-nan`; JavaScript has one NaN."""
     return output.replace("=-nan\n", "=nan\n")
 
 
@@ -88,7 +93,7 @@ def main():
     reference, node = args.reference, args.node
     compilers, nm = native_tools(reference)
     js, prepared, count = boundary.prepare(args, "nullable-global-output", SOURCE)
-    assert count == 9
+    assert count == 9  # The eight functions in SOURCE plus the top-level script.
     expected = "".join(f"{name}={EXPECTED[name]}\n" for name in sorted(EXPECTED))
     assert node_globals(node, js, sorted(EXPECTED)).stdout == expected
     oracle = host.run([str(reference), str(js)])
@@ -97,6 +102,8 @@ def main():
         "21 globals printed (6 number, 2 boolean, 2 string, 4 null, 7 undefined)" in oracle.stderr
     )
 
+    # Attach attributes claiming every global is a proved Number. The native
+    # output must be byte-identical with and without them.
     forged = args.work / "forged-scalar-reports.mlir"
     text, reports = re.subn(
         r"^(\s*ctjs\.store_global [^\n{}]+)$",

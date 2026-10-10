@@ -1,5 +1,5 @@
-// An implicit derived constructor forwards its actuals to the base: with no
-// arguments object on either side it is super(t) over the base's formals.
+// An implicit derived constructor forwards its arguments to the base: when neither side
+// reads `arguments`, it acts as super(t) over the base's parameters.
 //--- inherited-own-fields-iterate-deferred-implicit.js
 function inherited_own_fields_iterate_deferred_implicit() {
     class Base {
@@ -11,7 +11,7 @@ function inherited_own_fields_iterate_deferred_implicit() {
 }
 var a = inherited_own_fields_iterate_deferred_implicit();
 
-// A base that reads its arguments object sees every forwarded actual.
+// A base that reads `arguments` sees every forwarded argument.
 //--- inherited-own-fields-iterate-deferred-implicit-arguments.js
 function inherited_own_fields_iterate_deferred_implicit_arguments() {
     class Base {

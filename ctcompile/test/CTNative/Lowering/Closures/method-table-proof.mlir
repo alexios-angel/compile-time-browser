@@ -1,6 +1,6 @@
 // RUN: ctjs-opt %s --split-input-file --ctnative-lower-to-emitc | FileCheck %s
 // RUN: ctjs-opt %s --split-input-file --ctnative-lower-to-emitc --ctnative-lower-to-emitc | FileCheck %s
-// Forged table/callable annotations cannot open a public return boundary.
+// Hand-written (forged) method-table attributes are ignored and stripped; open$2 is still refused.
 module {
   ctjs.func @probe$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %nil = ctjs.constant #ctjs.undefined
@@ -24,14 +24,14 @@ module {
     ctjs.return %table
   }
   ctjs.func @reader$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<1>
+    %one = ctjs.constant #ctjs.number<1>  // Bit pattern 1: the smallest denormal.
     ctjs.return %one
   }
 }
 
 // -----
 
-// A direct caller outside the field flow prevents changing the target ABI.
+// A direct call of reader$3 outside the table flow means its signature cannot change.
 module {
   ctjs.func @probe$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %nil = ctjs.constant #ctjs.undefined
@@ -53,7 +53,7 @@ module {
     ctjs.return %table
   }
   ctjs.func @reader$3(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %one = ctjs.constant #ctjs.number<1>
+    %one = ctjs.constant #ctjs.number<1>  // Bit pattern 1: the smallest denormal.
     ctjs.return %one
   }
 }

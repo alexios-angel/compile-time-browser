@@ -1,4 +1,4 @@
-// Every exact construction supplies a literal String key to the sole holder slot.
+// Every `new Item` passes a string-literal key on to the holder's only method, `put`.
 //--- class-map-record-constructor-keyed-holder.js
 function keyed_holder() {
     const values = new Map();
@@ -14,7 +14,7 @@ function keyed_holder() {
 }
 var a = keyed_holder();
 
-// Overwrite and delete preserve the concrete owners behind both saved aliases.
+// Overwrite and delete do not change which instance each earlier get result refers to.
 //--- class-map-record-constructor-keyed-overwrite-delete.js
 function keyed_overwrite_delete() {
     const values = new Map();
@@ -33,7 +33,7 @@ function keyed_overwrite_delete() {
 }
 var a = keyed_overwrite_delete();
 
-// The key's constructor position need not match its helper parameter position.
+// The key may sit at a different argument position in the constructor than in the helper.
 //--- class-map-record-constructor-keyed-helper.js
 function keyed_helper() {
     const values = new Map();
@@ -47,7 +47,7 @@ function keyed_helper() {
 }
 var a = keyed_helper();
 
-// A sole leaf forwards each exact key through super before literal leaf writes.
+// A single subclass passes each key through `super` before writing constant fields.
 //--- class-map-inherited-keyed-holder.js
 function inherited_keyed_holder() {
     const values = new Map();
@@ -66,7 +66,7 @@ function inherited_keyed_holder() {
 }
 var a = inherited_keyed_holder();
 
-// A valid first construction cannot authorize a later Number key.
+// Refused: a later `new Item(4, 7)` passes a Number key after a valid String one.
 //--- class-map-record-constructor-keyed-later-number.js
 function keyed_later_number() {
     const values = new Map();
@@ -80,7 +80,7 @@ function keyed_later_number() {
 }
 var a = keyed_later_number();
 
-// A missing later key is undefined even when the payload remains a Number.
+// Refused: the second `new Item` omits the key, so it is undefined.
 //--- class-map-record-constructor-keyed-missing.js
 function keyed_missing() {
     const values = new Map();
@@ -94,7 +94,7 @@ function keyed_missing() {
 }
 var a = keyed_missing();
 
-// Computing a String at the call site is outside the literal-actual proof.
+// Refused: the key `"i" + "tem"` is computed, not a string literal.
 //--- class-map-record-constructor-keyed-computed.js
 function keyed_computed() {
     const values = new Map();
@@ -107,7 +107,7 @@ function keyed_computed() {
 }
 var a = keyed_computed();
 
-// An effectful key producer cannot disappear during helper expansion.
+// Refused: the key comes from `nextKey()`, whose side effect must not be dropped.
 //--- class-map-record-constructor-keyed-effect.js
 function keyed_effect() {
     const values = new Map();
@@ -122,7 +122,7 @@ function keyed_effect() {
 }
 var a = keyed_effect();
 
-// Assigning the helper key changes the publication target.
+// Refused: `put` reassigns its `key` parameter, so the entry lands under another key.
 //--- class-map-record-constructor-keyed-helper-modified-key.js
 function keyed_helper_modified_key() {
     const values = new Map();
@@ -135,7 +135,7 @@ function keyed_helper_modified_key() {
 }
 var a = keyed_helper_modified_key();
 
-// The pure publication helper must return undefined, including when ignored.
+// Refused: `put` returns the key; only methods returning undefined are handled.
 //--- class-map-record-constructor-keyed-helper-return-key.js
 function keyed_helper_return_key() {
     const values = new Map();
@@ -148,7 +148,7 @@ function keyed_helper_return_key() {
 }
 var a = keyed_helper_return_key();
 
-// A holder receiver read is not an inert forwarding helper.
+// Refused: `put` reads `this`, so it is not a plain pass-through to the Map.
 //--- class-map-record-constructor-keyed-helper-receiver.js
 function keyed_helper_receiver() {
     const values = new Map();
@@ -161,7 +161,7 @@ function keyed_helper_receiver() {
 }
 var a = keyed_helper_receiver();
 
-// Supplying a proved key does not permit publication before initialization.
+// Refused: `Data.put` runs before the fields are written, even with a literal key.
 //--- class-map-record-constructor-keyed-early.js
 function keyed_early() {
     const values = new Map();
@@ -174,7 +174,7 @@ function keyed_early() {
 }
 var a = keyed_early();
 
-// A saved alias may not outlive its stack-owned record.
+// Refused: the get result is returned and would outlive its stack-allocated instance.
 //--- class-map-record-constructor-keyed-owner-escaped.js
 function keyed_owner_escaped() {
     const values = new Map();
@@ -188,7 +188,7 @@ function keyed_owner_escaped() {
 var saved = keyed_owner_escaped();
 var a = saved.n;
 
-// Deferred base publication must check every leaf construction's actual key.
+// Refused: the key check must cover every subclass construction; here one passes a Number.
 //--- class-map-inherited-keyed-later-number.js
 function inherited_keyed_later_number() {
     const values = new Map();

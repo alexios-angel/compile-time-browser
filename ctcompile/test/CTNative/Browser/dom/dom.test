@@ -1,5 +1,5 @@
-# Compile typed actions and queries against the real DOM/Core/Style: an
-# action-only browser entry gate (dom.py says what it is not). The DOM
-# public API needs C++23 std::expected, so the compiler is %dom_clang - the
-# host compiler when it is Clang, else the pinned clang-std-embed.
+# Compiles typed DOM actions and queries against the real DOM/Core/Style
+# libraries (dom.py lists what is out of scope). The DOM API needs C++23
+# std::expected, so the compiler is %dom_clang: the host compiler if it is
+# Clang, otherwise the pinned clang-std-embed.
 # RUN: python3 %S/dom.py %dom_driver

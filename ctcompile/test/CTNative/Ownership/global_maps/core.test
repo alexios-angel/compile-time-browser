@@ -1,5 +1,5 @@
 # RUN: python3 -m CTNative.Ownership.global_maps.driver --translate ctjs-translate --opt ctjs-opt --work %t --node %node --reference %native_reference
-
+# Ownership of module-global Maps behind published host methods; fixtures live in sources/.
 # A published setter takes proved primitive or empty-object actuals while the
 # sibling getter retains its zero-argument signature. Saved typed C++ callables
 # receive new keys after startup and retain the same Map after owner release.
@@ -113,7 +113,7 @@
 # and own long String bytes through caller/result mutation, independent reentry
 # and final release of both Maps under ASan/UBSan.
 # Finite per-entry String/Null/Undefined facts preserve the exact fourteen-call
-# trace-2 and nineteen-call trace-3 mixed-storage readbacks. A sixteen-call
+# mixed-storage readbacks expecting trace 2 and the nineteen-call one expecting 3. A sixteen-call
 # witness checks all four nullable tags independently from the Map size and
 # incoming key. Broader Boolean storage and a later same-key Boolean overwrite
 # cannot widen a saved owning read; its bytes and tag survive entry deletion,
@@ -134,7 +134,7 @@
 # Unknown/missing/deleted/aliasing host-result facts independently refuse in
 # both modes; exact admitted repairs have different observations. Fresh/stale
 # scalar/nullable forgeries, reruns and transactional budgets cannot supply the
-# missing host evidence. The original fifteen-call trace-2 nested setter now
+# missing host evidence. The fifteen-call nested setter fixture (expected trace 2)
 # retains each live result edge through same-method calls, followed by the full
 # generalized actual and sibling-body census. Later String/nullish actuals,
 # exact nested result tags and saved owning bytes remain independently checked.
@@ -152,16 +152,16 @@
 # callable release; one observer-retained leaf survives until its own release.
 # Graphs, dynamic/prototype fields, mixed field carriers, external object arguments,
 # object keys/returns and unproved sibling reads remain independent refusals.
-# The exact historical eight-call saved identity source reads its actual leaf
+# The exact eight-call saved identity source reads its actual leaf
 # after replacement/deletion. The eight-call distinct source and the local
 # six-call fresh comparison retain actual separate allocations through a complete
-# strict-comparison use census. The nine-call fresh deleted read now proves
+# strict-comparison use census. The nine-call fresh deleted read proves
 # Undefined and compares unequal to the saved object. Source bytes are preserved.
 # Fresh/stale
 # forged object identity/field/presence annotations and transactional budget
 # cutoffs cannot manufacture ownership or erase source allocation/field uses.
-# The historical empty-object payload now admits without changing its source.
-# The historical nested leaf-writing sibling has complete ownership, while its
+# The empty-object payload is admitted without changing its source.
+# The nested leaf-writing sibling has complete ownership, while its
 # mixed Object/String Map still refuses native output and preserves prepared
 # nested result operands under fresh/stale facts and reruns.
 # Definite same-key leaf readback and initialized fixed scalar fields retain
@@ -200,7 +200,7 @@
 # Exact-key deletion of an object-valued captured Map proves a fresh Undefined
 # read, repeated deletion preserves it, and a saved Undefined stays independent
 # of later reseeding. Known disjoint writes preserve absence; same-key reseeding
-# restores the live object. Unseeded/Number payload controls and exact historical
+# restores the live object. Unseeded/Number payload controls and exact
 # saved-before-delete repairs preserve their original sources and observations.
 # All 31 continuation source hashes and their separate raw/prepared call counts
 # remain fixed. Four identical-arm sources simplify eight raw calls to seven
@@ -230,10 +230,10 @@
 # Weak observers require previous leaves and both Maps to die; one observed
 # leaf survives final Map release until its own last owner is released.
 # Entry Add/Sub/Mul/Div/Mod/Pow consume independently proved Number results.
-# The exact eight-call trace-3 source and its eight-call trace-1 repair retain
+# The exact eight-call source expecting trace 3 and its eight-call repair expecting 1 retain
 # every call. Size-returning operands distinguish evaluation order; arithmetic
 # result-fed keys retain the complete future-input family and NaN key identity.
-# The exact eight-call saved-result and size-snapshot sources now admit without
+# The exact eight-call saved-result and size-snapshot sources are admitted without
 # changing their global stores/loads, arithmetic dependencies or any call. The
 # live per-load Number proof preserves saved values across later Map mutations;
 # alias arithmetic and result-fed keys retain complete future-call categories.
@@ -256,7 +256,7 @@
 # The original eight-call alias and seven-call direct observation preserve their
 # source hashes and arithmetic repairs. Saved aliases of all three branch results
 # survive 128 future calls, owner/table release, reentry and final leaf mutation.
-# The original 3c1dfd95 constant-only Number source and 41a33e40 literal-copy
+# The constant_exact_historical fixture (a constant-only Number source) and its literal-copy
 # repair retain all eight calls and five numeric observations. Twelve original
 # probes and twelve candidate edits keep their exact hashes. Number alias chains,
 # arithmetic, negative zero and NaN preserve each scalar store/load and actual
@@ -264,7 +264,7 @@
 # check its Number tag and allow only the reference's irrelevant sign spelling;
 # signed-zero aliases retain their sign and a negative-infinity reciprocal.
 # Undefined originals that read a global alias retain their separate Map-identity
-# refusal; the literal substitution now executes exact Undefined output. Duplicate writes,
+# refusal; the literal substitution executes exact Undefined output. Duplicate writes,
 # reads before initialization, dynamic globals and future method writes retain
 # independent ownership refusals and exact admitted repairs. Fresh/stale forged
 # reports, reruns and measured budget cutoffs grant no authority.
@@ -272,7 +272,7 @@
 # 128 future calls, both flags, owner/table release, independent entry execution
 # and final Map/leaf reclamation. Full scalar observations before reentry prevent
 # later entry writes from hiding a corrupted constant alias.
-# The exact 681c8895 Boolean-copy source and d3a90c01 literal-copy candidate
+# The constant_boolean fixture's exact Boolean-copy source and literal-copy candidate
 # preserve all eight calls, three Number observations and two Boolean observations.
 # False/true aliases, a Boolean published result and Boolean trace globals retain
 # their actual stores and loads in source, preparation and both emitted C++ forms.
@@ -289,12 +289,12 @@
 # A mixed Number/Boolean snapshot lifetime runs 128 future saved Map calls with
 # both flags after owner/table release, checks globals before independent reentry,
 # and preserves Boolean tags and values after final Map/leaf destruction.
-# The historical Boolean Map.has result retains its exact four-function,
-# five-call source and now executes in both optimization modes with a bool()
+# The Boolean Map.has result fixture retains its exact four-function,
+# five-call source and executes in both optimization modes with a bool()
 # callable and true output. Node and the interpreter check its Boolean tag;
 # explicit/deduced GCC/Clang output retains the live set/has and observation check.
 # Its adjacent missing-key result keeps its independent nullable refusal.
-# The exact 3a99e34c String copy and f0a03c19 literal-copy candidate now
+# The constant_string fixture's exact String copy and literal-copy candidate
 # preserve eight calls and all five typed observations in both modes. Owning
 # per-binding String storage preserves empty, escaped UTF-8 and embedded NUL
 # bytes; absence never becomes an empty String. Whole-store type evidence,
@@ -304,7 +304,7 @@
 # refusals and exact repairs. A long String snapshot family survives 128 future
 # Map calls, owner/table release, mutation of original globals, independent
 # reentry and final Map/leaf destruction under both compilers and sanitizers.
-# Owning String fields preserve the original 88d51f7d seven-call/five-function
+# Owning String fields preserve the leaf_object_string_field seven-call/five-function
 # source and Number repair. Direct, empty, escaped UTF-8/NUL, Map-read and saved
 # field results keep every live field access and call in both optimization modes.
 # String/Null/Undefined storage uses owning nullable_string; independent scalar
@@ -317,7 +317,7 @@
 # caller mutation, owner/table release and independent reentry. Weak witnesses
 # require Map/leaf destruction, while saved owning strings survive field mutation,
 # deletion, final Map release and the last separately retained leaf under sanitizers.
-# Exact size zero after clear preserves the 49663558 eight-call source and its
+# Exact size zero after clear preserves the local_clear_zero_size_key eight-call source and its
 # evaluated-read/literal repair. Aliases, String fields, repeated clear, later
 # growth, equal zero keys and both-clearing arms keep each real size read and
 # runtime Map call. Empty intersections of known-key lists, one-clearing arms,
@@ -327,8 +327,8 @@
 # execute through saved native callables. Saved zero selects the original object
 # before clear/growth across 128 calls, owner/table release, independent reentry,
 # final Map reclamation and final separately retained leaf release under sanitizers.
-# Exact saved one after clear/set preserves the historical 544f425b source and
-# d4120093 evaluated-read/literal-one repair, all eight continuation source
+# Exact saved one after clear/set preserves the zero_size_read_after_write source and
+# size_one_literal_repair evaluated-read/literal-one repair, all eight continuation source
 # hashes and their raw/prepared call counts. Complete literal-key censuses,
 # repeated equal keys, captured/fluent aliases and both structural arms retain
 # their live Map operations. Saved one/two remains a read-time fact through later
@@ -337,20 +337,20 @@
 # Unknown incoming contents, potentially equal formal keys, one writing arm,
 # unequal selected values and a possibly distinct extra write remain independent
 # refusals under current/fresh/stale reports, reruns and exact executed repairs.
-# Startup-only emptiness keeps its historical sources and separate refusals;
+# Startup-only emptiness keeps its pinned sources and separate refusals;
 # an additional real clear supplies its exact repair. The unchanged formal-key
-# delete-last sources now execute through the independently proved deletion census.
+# delete-last sources execute through the independently proved deletion census.
 # Typed Node/interpreter observations distinguish saved from current sizes and
 # count duplicate/distinct writes independently of successful object lookup.
 # An own-field read independently requires the saved key to select the object.
-# Its unchanged raw optional global result now executes natively; entry + 0
+# Its unchanged raw optional global result executes natively; entry + 0
 # and a field comparison still check the same lookup with definite Number
 # observations, distinguishing a mistaken absence proof.
 # Saved native size/set callables select the original object with saved one
 # after growth, across 128 future calls/both flags, publication-owner release and
 # independent entry reexecution. Weak observers check Map/leaf reclamation and
 # final separately retained leaf release under ASan/UBSan/leak checks. GCC/Clang,
-# explicit/deduced output and measured work cutoffs preserve the no-Script gate.
+# explicit/deduced output and measured work cutoffs preserve the no-Script check.
 # Exact cardinality after deleting a proved key preserves all ten continuation
 # source hashes and raw/prepared call counts, including the original formal-key
 # candidates. Literal/equal saved keys, repeated and disjoint deletes, captured
@@ -366,7 +366,7 @@
 # owner/table release, independent reentry and final Map/leaf destruction under
 # GCC/Clang explicit/deduced output and ASan/UBSan/leak checks, without Script.
 # Equal cardinalities at a structural join retain the exact twelve continuation
-# sources, including 2d1763eb and its evaluated-read/literal-one b0d72c4e repair.
+# sources, including joined_delete_disjoint_false and its literal-one repair.
 # Deleting different keys and setting disjoint keys exercise both startup flags;
 # each post-join saved size selects a real object's field after the Map changes.
 # Unequal arms, no common present key and writes that insert on only one arm
@@ -378,8 +378,8 @@
 # across 128 future native calls, both flags, owner/table release, independent
 # reentry and final Map/leaf reclamation under GCC/Clang and ASan/UBSan/leak checks.
 # Known mutations after that join preserve the twelve exact continuation sources,
-# including insertion 56679e2d and its evaluated-read/literal-two a11c4179 repair,
-# and absent deletion 887e65fc with literal-one 8e3fa6f1. Both startup flags retain
+# including insertion joined_disjoint_set_false and its literal-two repair,
+# and joined_absent_delete_false with its literal-one repair. Both startup flags retain
 # all sixteen calls and a real saved-key object field read. A key present on both
 # arms supports overwrite/deletion; captured aliases and repeated known mutations
 # retain their own exact cardinality. Possible deletion or a future formal key
@@ -390,7 +390,7 @@
 # is selected while the current Map size is one, survives deletion/clear, and
 # remains independently retained after 128 future native calls, owner/table
 # release, reentry and final Map release. Explicit/deduced GCC/Clang output and
-# ASan/UBSan/leak observers retain the ordinary ownership and no-Script gates.
+# ASan/UBSan/leak observers retain the ordinary ownership and no-Script checks.
 
 # Fresh empty entry objects cross the published Map.has argument boundary with
 # their original allocations and exact t.has(e) calls. Local aliases, repeated
@@ -404,7 +404,7 @@
 # their Map after root/table release, borrow caller-owned keys over 128 rounds,
 # and release each key and final Map after reentry under ASan/UBSan/leak checks.
 
-# Exact7381e2fb stores the borrowed object's identity as an owning Map key.
+# The object_argument_key_write fixture stores a borrowed object's identity as an owning Map key.
 # Same-family get/set/delete/clear siblings preserve alias and distinct keys;
 # actual stored Numbers, overwrite and deletion remain runtime operations.
 # Saved siblings keep keys alive after every caller alias is released, then
@@ -412,7 +412,7 @@
 # 128 future rounds, independent reentry and owner/table release under sanitizers.
 # Object payloads and later key mutations remain independent ownership refusals.
 
-# Historical parameter_object retains its exact source, five functions and five
+# The parameter_object fixture keeps its pinned source, five functions and five
 # calls. Its saved typed setter/getter execute 128 fresh and aliased future keys;
 # the Map retains keys after caller release, stays independent across reentry,
 # and releases every key when its final saved callable is destroyed.

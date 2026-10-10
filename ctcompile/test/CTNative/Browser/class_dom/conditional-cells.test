@@ -1,2 +1,2 @@
-# One uncaptured store and all reads share an ordered conditional arm.
+# A boxed local stored once in an `if` arm and read only there becomes a native scalar.
 # RUN: python3 %S/conditional_cells.py %dom_driver --node %node --reference %native_reference

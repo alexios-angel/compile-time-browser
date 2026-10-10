@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Keep synchronous Boolean callbacks within the arm that creates them."""
+"""Check that a Boolean-writing callback created inside an `if` arm, and only
+called inside that arm, compiles natively and matches Node and the VM, and that
+callbacks used outside their arm, plus hand-mutated IR, are refused."""
 
 import re
 import subprocess
@@ -11,7 +13,7 @@ from CTNative.Browser.class_dom.boolean import captures
 from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 
-# The exact previous branch-local-creator refusal, including its original calls.
+# branches.BASE with the `mark` writer created inside the `if` arm that calls it.
 METHOD = branches.BASE.replace("    const mark = () => { seen = true; };\n", "").replace(
     "if (target.hasAttribute('ready')) mark();",
     "if (target.hasAttribute('ready')) { const mark = () => { seen = true; }; mark(); }",
@@ -42,7 +44,8 @@ CASES = {
     ),
 }
 BAD = {
-    # Exact arm-only-state source is now positive in the dedicated arm-state test.
+    # `pending` is created outside the arm but `seen` is initialized inside it,
+    # so this is refused. With both callbacks in the arm it compiles (arm_state.py).
     "initialization-in-arm": METHOD.replace("let seen = false;", "let seen;").replace(
         "{ const mark", "{ seen = false; const mark"
     ),
@@ -66,6 +69,8 @@ BAD = {
 
 
 def shape(text):
+    """Return (owner, cell, closure, leaf) for the arm-local writer callback,
+    checking the cell is initialized before the `if` that creates it."""
     bodies = captures.functions(text)
     for owner in bodies:
         closures = list(
@@ -99,6 +104,7 @@ def shape(text):
 
 
 def writer_call(owner, closure, leaf):
+    """Return (call match, writer symbol) for the call of the writer after its creation."""
     name = re.search(r"@([^ (]+)", leaf[0])[1]
     call = re.search(
         rf"^      +%\w+ = ctjs\.(?:call_direct @{re.escape(name)}|call {re.escape(closure[1])})\([^\n]+",
@@ -110,6 +116,8 @@ def writer_call(owner, closure, leaf):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs. Labels starting "rooted-" must still lower;
+    the lowering must refuse every other one."""
     owner, cell, closure, leaf = shape(text)
     call, name = writer_call(owner, closure, leaf)
     yield (
@@ -177,6 +185,7 @@ def mutations(text):
 
 
 def verifier_controls(text):
+    """Yield (label, IR) pairs that use the closure out of scope; the verifier rejects them."""
     owner, cell, closure, leaf = shape(text)
     call, name = writer_call(owner, closure, leaf)
     initial = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell (%\w+)", owner[0], re.M)[1]
@@ -184,8 +193,8 @@ def verifier_controls(text):
     body = owner[0][: closure.start()] + owner[0][closure.end() :]
     body = body.replace(call[0], call[0] + "\n" + closure[0])
     yield "before-creation", text[: owner.start()] + body + text[owner.end() :]
-    # A sibling/parent block cannot name the arm's closure SSA value. The
-    # verifier guards these shapes before the bounded class proof runs.
+    # A sibling or parent block cannot use the arm's closure SSA value, so the
+    # verifier rejects these before the class proof ever runs.
     extra = f"%outside = ctjs.call_direct @{name}({initial}, {initial}, {closure[1]})"
     for label, boundary, indent in (
         ("sibling-arm", "    } else {", "      "),

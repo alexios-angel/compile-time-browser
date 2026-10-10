@@ -1,3 +1,10 @@
+//===- CustomIteration.h - DOM custom-iterator tests ------------*- C++ -*-===//
+//
+// Host-contract tests for for-of loops over user-defined iterators in DOM
+// entry points. Included by the host-contract test driver.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
@@ -11,13 +18,25 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Tests normalizeDOMCustomIteration, expandDOMHelpers and DOMEntryAnalysis on
+/// for-of loops over user-defined iterators (objects with Symbol.iterator, next
+/// and an optional return). Each fixture is hand-written ctjs MLIR. Accepted
+/// fixtures must lower the __ctbrowser_for_of_open/iter_next/iter_close protocol
+/// calls into plain IR for both DOM providers while keeping state writes, close
+/// order and saved exceptions. Rejected ("hostile") variants must fail and leave
+/// the module, its fingerprint and the contract unchanged, with no DOM evidence.
 inline void checkDOMCustomIteration(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::arith::ArithDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<mlir::ub::UBDialect>();
-    // Independent protocol IR: the next method reads and updates the captured
-    // element before yielding it. Exhaustion must bypass the item observation.
+    // Hand-written for-of IR over a custom iterator. next() reads and marks the
+    // captured element before yielding it. Once next() reports done, the loop must
+    // not touch the item.
+    //
+    // #ctjs.number<N> holds the IEEE-754 bit pattern of a double:
+    // 4607182418800017408 = 1.0, 4611686018427387904 = 2.0, 4613937818241073152 = 3.0,
+    // 4619567317775286272 = 7.0, 4621819117588971520 = 10.0.
     const std::string source = R"MLIR(
 module {
   ctjs.func @custom$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -117,8 +136,10 @@ module {
     auto withoutReturn =
         parsed(context, withoutReturnSource, "custom iterator with no return hook parses");
     if (!withoutReturn) { return; }
-    // Independent break/exhaustion mux: each exit defines only its own count.
-    // The other slot is poison, so retaining a prior count cannot prove it.
+    // Break and exhaustion each write the count into their own result slot and
+    // leave the other slot as ub.poison. An i32 exit tag (7 = exhausted,
+    // 11 = break) selects the slot after the loop, so a rewrite that reused a
+    // stale count in the unused slot is caught.
     const std::string countedLoop = R"MLIR(
     %poison = ub.poison : !ctjs.value
     %tagPoison = ub.poison : i32
@@ -168,6 +189,8 @@ module {
     const auto countedSource =
         replaced(source.substr(0, loopBegin) + countedLoop + source.substr(loopEnd),
                  "ctjs.return %loop", "ctjs.return %answer");
+    // Renumber the exhaustion tag from 7 to 19 so a pass that hard-codes the tag
+    // value fails.
     const auto retaggedSource = replaced(
         replaced(countedSource, "%normalTag = arith.constant 7", "%normalTag = arith.constant 19"),
         "case 7 {", "case 19 {");
@@ -373,7 +396,7 @@ module {
                  "      ctjs.set_property %this[%emittedName], %advanced\n"
                  "      scf.yield\n"
                  "    }");
-    // Keep the original result prefix, read stores in source order, join an
+    // Keep the leading result values, read stores in source order, join an
     // unwritten arm with its incoming state, then update the joined value.
     std::string branchStores =
         R"MLIR(    %branchSetName = ctjs.constant #ctjs.string<"setAttribute">
@@ -445,8 +468,9 @@ module {
     if (!conditionalCaptured || !conditionalReceiver || !branchCaptured || !branchReceiver) {
         return;
     }
-    // Preserve the prior zero-trip refusals intact: the before region still
-    // writes state once even when the after region is never entered.
+    // Zero-trip variants: the store moves into an scf.while whose condition is
+    // false, so the before region writes state once and the after region never
+    // runs. These must normalize successfully.
     const auto zeroCapturedSource =
         replaced(conditionalCapturedSource, "      ctjs.store_upvalue %callee[1], %advanced",
                  "      scf.while : () -> () {\n"
@@ -612,7 +636,9 @@ module {
     check(methodBreakCaptured && methodBreakReceiver,
           "paired two-state method break witnesses with empty exit dispatch parse");
     if (!methodBreakCaptured || !methodBreakReceiver) { return; }
-    // Preserve the former external-access refusals as positive witnesses.
+    // The entry function writes or reads the captured state cell outside the
+    // iterator methods (a second initialization, a write or a read before open).
+    // These must normalize successfully.
     const auto reinitializedCaptureSource =
         replaced(initializedCaptureSource, "ctjs.cell_set %emittedCell, %emittedInitial",
                  "ctjs.cell_set %emittedCell, %emittedInitial\n"
@@ -749,7 +775,8 @@ module {
     check(directSiblingReader && zeroDirectSiblingReader,
           "direct sibling readers with unobserved lexical receivers parse");
     if (!directSiblingReader || !zeroDirectSiblingReader) { return; }
-    // Keep both former self-store refusals byte-identical as positive witnesses.
+    // A sibling reader stores the value it just loaded back into the same
+    // captured cell. Both variants must normalize successfully.
     const auto siblingCountStoreSource =
         replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
                  "%observed = ctjs.load_upvalue %callee[0]\n"
@@ -762,8 +789,9 @@ module {
         mlir::parseSourceString<mlir::ModuleOp>(siblingCountStoreSource, &context);
     auto siblingExtraStore =
         mlir::parseSourceString<mlir::ModuleOp>(siblingExtraStoreSource, &context);
-    // The ordinary result is the OLD count, while both captures receive new
-    // values. The second write reads the first; repeated calls must see both.
+    // The call returns the count from before the update, while both captured
+    // cells receive the new values. The second write reads the first, and repeated
+    // calls must see both.
     auto siblingWriterSource = replaced(
         siblingReaderSource,
         "%readCount = ctjs.create_closure %callee[4] this %undefined captures %emittedCell",
@@ -1136,8 +1164,9 @@ module {
     check(returnedWriter && directReturnedWriter,
           "ordinary/direct returned callable and scalar snapshot twins parse");
     if (!returnedWriter || !directReturnedWriter) { return; }
-    // One helper formal receives distinct writers at different source calls.
-    // A doubled step at body/final makes reusing the first identity observable.
+    // One helper parameter receives different writer closures at different call
+    // sites. The writer used at the `body` and `final` sites adds twice the step,
+    // so reusing the first writer gives a different result.
     const auto otherWriterBody =
         replaced(replaced(writerBody, "@readCount$4", "@otherWriter$7"),
                  "%updated = ctjs.binary_static add %observed, %step",
@@ -1395,8 +1424,8 @@ module {
         !zeroDirectLoopCallWriter) {
         return;
     }
-    // The returned dependency crosses another fixed helper before reaching
-    // the backedge; all existing loop and scalar snapshot assertions still apply.
+    // The returned writer passes through one more helper before the loop
+    // backedge. The loop and argument-snapshot checks for loopCallWriter apply.
     auto nestedLoopCallWriterSource = replaced(
         loopCallWriterSource, "    %keepWriter = ctjs.create_closure %callee[8] this %undefined",
         "    %forwardWriter = ctjs.create_closure %callee[9] this %undefined\n"
@@ -1453,9 +1482,9 @@ module {
         !zeroDirectNestedLoopCallWriter) {
         return;
     }
-    // Move the original selection into the nested return helper. Both formal
-    // dependencies cross keep's return and the loop backedge, preserving the
-    // existing state, scalar-argument and zero-trip assertions unchanged.
+    // Move the writer selection into the nested return helper. Both selected
+    // values flow through keepWriter's return and the loop backedge. The checks are
+    // the same as for loopCallWriter.
     const auto branchLoopSource = [&](const std::string & source) {
         auto text = replaced(source,
                              "      %selectPositive = ctjs.compare gt %selectedState, %selectZero\n"
@@ -1513,8 +1542,9 @@ module {
         !zeroDirectBranchLoopCallWriter) {
         return;
     }
-    // The return callee arrives through a formal instead of a closure capture.
-    // The original loop selection, scalar snapshots and zero-trip checks apply.
+    // The return callee arrives through a parameter instead of a closure capture.
+    // The loop selection, scalar-snapshot and zero-trip checks of loopCallWriter
+    // apply.
     const auto formalCalleeSource = [&](const std::string & source) {
         auto text = replaced(source, "%callee[8] this %undefined captures %forwardCell",
                              "%callee[8] this %undefined");
@@ -1586,8 +1616,10 @@ module {
     };
     constexpr unsigned completeBudget = 100000;
 
-    // Ordinary source spelling and compiler-minted Symbol keys are distinct.
-    // Rewrite every state access so refusal cannot come from a missing field.
+    // A state property literally named "@@iterator" is an ordinary String key
+    // and must be accepted. One named with the compiler's reserved Symbol key
+    // aliases the iterator method and must be refused. Every state access is
+    // renamed, so a refusal cannot come from a missing field.
     for (auto provider :
          {HostContract::Provider::ctbrowserDOM, HostContract::Provider::ctbrowserDOMSession}) {
         for (const auto key :
@@ -1626,8 +1658,10 @@ module {
             }
         }
     }
-    // The protected close keeps both outcomes and the original saved throw.
-    // Native publication still requires the downstream effect/payload proof.
+    // On the throw path, return() runs inside ctjs.invoke so its result and any
+    // exception are discarded, and the saved exception is rethrown. Normalization
+    // must succeed, but DOMEntryAnalysis must still publish no evidence because
+    // nothing proves the thrown value.
     const std::string abruptTail = R"MLIR(
     %chosen = ctjs.truthy %loop
     %answer = scf.if %chosen -> !ctjs.value {
@@ -1717,21 +1751,29 @@ module {
         }
     }
     for (const auto & invalid :
+         // The close call claims a normal completion.
          {replaced(abruptSource, "ctjs.call %close(%undefined, %record, %abrupt)",
                    "ctjs.call %close(%undefined, %record, %normal)"),
+          // The close call receives the iterable, not the iterator record.
           replaced(abruptSource, "ctjs.call %close(%undefined, %record, %abrupt)",
                    "ctjs.call %close(%undefined, %holder, %abrupt)"),
+          // The catch handler leaks the suppressed exception to a global.
           replaced(abruptSource, "^caughtClose(%caught: !ctjs.value):",
                    "^caughtClose(%caught: !ctjs.value):\n"
                    "        ctjs.store_global \"observed\", %caught"),
+          // The throw region may be inlined.
           replaced(abruptSource, "      } {no_inline}", "      }"),
+          // An effect follows the throw.
           replaced(abruptSource, "      %inactive = ub.poison",
                    "      ctjs.store_global \"afterThrow\", %one\n"
                    "      %inactive = ub.poison"),
+          // State is read between the close and the throw.
           replaced(abruptStateSource, "      scf.execute_region {",
                    "      %observed = ctjs.get_property %holder[%stateKey]\n"
                    "      scf.execute_region {"),
+          // The saved exception is never rethrown.
           replaced(abruptStateSource, "        ctjs.throw %one", "        scf.yield"),
+          // A global store runs between the close and the throw.
           replaced(abruptStateSource, "      scf.execute_region {",
                    "      ctjs.store_global \"between\", %one\n"
                    "      scf.execute_region {")}) {
@@ -2451,8 +2493,9 @@ module {
                               std::string::npos,
                           "incomplete mixed break fails complete-path closure proof");
                 }
-                // This normalizer owns a disposable candidate; refresh its
-                // fingerprint so evidence refusal cannot rely on a stale hash.
+                // normalizeDOMCustomIteration may have changed this throwaway copy.
+                // Recompute the fingerprint so the no-evidence check fails for the
+                // right reason, not because of a hash mismatch.
                 request.moduleSha256 = hostContractFingerprint(*input);
                 check(noEvidence(*input, DOMEntryAnalysis(*input, request)),
                       "incomplete mixed break publishes no native evidence");
@@ -3222,7 +3265,9 @@ module {
                   "mixed, observed, escaping or invalidated saved elements publish no proof");
         }
     }
-    // A unique-root selector still names just its original Style association.
+    // Selector calls (matches, closest, querySelector, querySelectorAll) on an
+    // element saved from a single root parameter: the evidence must name exactly
+    // that parameter as the call's style (document) input.
     const auto selectorElementSource = [&](llvm::StringRef method, bool prototype) {
         auto text =
             replaced(elementSource,
@@ -3493,6 +3538,9 @@ module {
                   "mixed kinds, invalidated lifetimes and reentry publish no Style evidence");
         }
     }
+    // Every accepted fixture must normalize for both providers and lose its
+    // protocol calls. The fixture-specific blocks below check the rewritten IR.
+    // Rewritten state lives in the __ctcompile_state_N properties.
     for (auto fixture : {*original,
                          *withoutReturn,
                          *counted,
@@ -4672,7 +4720,9 @@ module {
                           "    %undefined = ctjs.constant #ctjs.undefined\n"
                           "    %recursiveEffect = ctjs.call %callee(%undefined, %keptWriter)\n"
                           "    ctjs.return %keptWriter"),
-                 // A resolved direct call carries the resolver's undefined padding.
+                 // Drop the writer argument. An ordinary call just omits it. A
+                 // call_direct passes one argument per parameter (missing ones as
+                 // undefined), so there the mutation passes undefined instead.
                  source == loopCallWriterSource
                      ? replaced(source, ", %selectedWriter)\n      scf.yield %keptWriter",
                                 ")\n      scf.yield %keptWriter")
@@ -4729,7 +4779,8 @@ module {
                                    "    %forwardResult ="),
                           "%keptWriter)\n    ctjs.return %forwardResult",
                           "%unknownWriter)\n    ctjs.return %forwardResult"),
-                 // Direct calls retain the resolver's undefined argument padding.
+                 // Drop the kept writer argument: omit it from an ordinary call, and
+                 // pass undefined in its place in a call_direct.
                  source == nestedLoopCallWriterSource
                      ? replaced(source, ", %keptWriter)\n    ctjs.return %forwardResult",
                                 ")\n    ctjs.return %forwardResult")
@@ -4784,7 +4835,9 @@ module {
                  replaced(unknown, "scf.yield %forwardedAlternate :", "scf.yield %unknownWriter :"),
                  replaced(source, "scf.yield %forwardedWriter :", "scf.yield %selectZero :"),
                  replaced(source, "scf.yield %forwardedAlternate :", "scf.yield %selectZero :"),
-                 // A direct missing actual is padded with undefined by resolution.
+                 // Drop the alternate writer argument: omit it (and the state after
+                 // it) from an ordinary call, and pass undefined in its place in a
+                 // call_direct.
                  replaced(source,
                           "%keptWriter, %keptAlternate, %keptState)\n"
                           "    ctjs.return %forwardResult",
@@ -4871,7 +4924,9 @@ module {
                           "    %forwardResult ="),
                  replaced(source, "%selectedState, %forwardWriter)\n",
                           "%selectedState, %keepWriter)\n"),
-                 // Keep the wrong direct target structurally valid with its fourth actual.
+                 // Call keepWriter$8 instead of forwardWriter$9. keepWriter takes one
+                 // more argument, so add it; the IR stays valid and the wrong target
+                 // is the only reason left for the refusal.
                  replaced(source == formalCalleeWriterSource
                               ? replaced(source, "ctjs.call %keptChooser(%forwardUndefined, ",
                                          "ctjs.call_direct @keepWriter$8(%forwardUndefined, "
@@ -5011,6 +5066,8 @@ module {
             }
         }
     }
+    // An ordinary scf.if in the entry yields poison on one arm while its result stays live.
+    // Normalization must refuse, and no evidence may be published even after a partial rewrite.
     const auto poisonedJoinSource = replaced(
         entryCapturedSource, "    %entryStart = ctjs.binary_static add %entryBefore, %zero",
         R"MLIR(    %joinPoison = ub.poison : !ctjs.value
@@ -5038,6 +5095,7 @@ module {
         }
     }
 
+    // The cell starts undefined and receives its Number initial value only after the first read.
     auto uninitializedSiblingSource =
         replaced(siblingReaderSource, "%emittedCell = ctjs.create_cell %emittedInitial",
                  "%cellUndefined = ctjs.constant #ctjs.undefined\n"
@@ -5048,18 +5106,26 @@ module {
                  "    ctjs.cell_set %emittedCell, %emittedInitial");
     for (const auto & source : {argumentWriterSource, directArgumentWriterSource}) {
         unsigned index = 0;
+        // Hostile variants of the argument-taking helper. The first two change the argument count,
+        // which call_direct rejects at parse time.
         for (const auto & invalid : {
+                 // Too few arguments: drop the snapshot.
                  replaced(source, "%argumentStep_before, %argumentCount_before)",
                           "%argumentStep_before)"),
+                 // Too many arguments.
                  replaced(source, "%argumentStep_before, %argumentCount_before)",
                           "%argumentStep_before, %argumentCount_before, %one)"),
+                 // Pass the helper closure itself as the step.
                  replaced(source, "%argumentStep_before, %argumentCount_before)",
                           "%readCount, %argumentCount_before)"),
+                 // Pass the state cell itself as the step.
                  replaced(source, "%argumentStep_before, %argumentCount_before)",
                           "%emittedCell, %argumentCount_before)"),
+                 // The helper closure escapes to a global.
                  replaced(source, "    %argumentCount_before = ctjs.cell_get %emittedCell",
                           "    ctjs.store_global \"argument-helper-leaked\", %readCount\n"
                           "    %argumentCount_before = ctjs.cell_get %emittedCell"),
+                 // An extra direct call whose callee operand is undefined, not the closure.
                  replaced(source, "    %argumentCount_before = ctjs.cell_get %emittedCell",
                           "    %symbolOnly = ctjs.call_direct @readCount$4(%undefined, "
                           "%undefined, %undefined, %one, %one)\n"
@@ -5090,85 +5156,116 @@ module {
             }
         }
     }
+    // Hostile sibling reader and writer variants. Each must be refused with the module unchanged.
     for (const auto & invalid : {
+             // Call the reader with the element as its receiver.
              replaced(siblingReaderSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "%entryBefore = ctjs.call %readCount(%element)"),
+             // Pass the reader an extra argument.
              replaced(siblingReaderSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "%entryBefore = ctjs.call %readCount(%undefined, %one)"),
+             // Return the receiver instead of the captured value.
              replaced(siblingReaderSource, "ctjs.return %observed", "ctjs.return %this"),
+             // Return new.target instead of the captured value.
              replaced(siblingReaderSource, "ctjs.return %observed", "ctjs.return %new"),
+             // Build the reader closure from the element instead of the current callee.
              replaced(siblingReaderSource, "%readCount = ctjs.create_closure %callee[4]",
                       "%readCount = ctjs.create_closure %element[4]"),
+             // The reader closure escapes to a global.
              replaced(siblingReaderSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "ctjs.store_global \"reader-leaked\", %readCount\n"
                       "    %entryBefore = ctjs.call %readCount(%undefined)"),
+             // A second closure over the same reader function and cell.
              replaced(siblingReaderSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "%readTwin = ctjs.create_closure %callee[4] this %undefined captures "
                       "%emittedCell\n"
                       "    %entryBefore = ctjs.call %readCount(%undefined)"),
+             // Give readExtra the same function index (4) as readCount.
              replaced(siblingReaderSource, "ctjs.func @readExtra$5", "ctjs.func @readExtra$4"),
+             // Load past the last upvalue.
              replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
                       "%observed = ctjs.load_upvalue %callee[1]"),
+             // Load from a negative upvalue index.
              replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
                       "%observed = ctjs.load_upvalue %callee[-1]"),
+             // Load the upvalue through the receiver instead of the callee.
              replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
                       "%observed = ctjs.load_upvalue %this[0]"),
+             // readExtra captures a second value it does not declare.
              replaced(siblingReaderSource,
                       "%readExtra = ctjs.create_closure %callee[5] this %undefined captures "
                       "%extraCell",
                       "%readExtra = ctjs.create_closure %callee[5] this %undefined captures "
                       "%extraCell, %capture"),
+             // The reader calls itself recursively.
              replaced(siblingReaderSource, "%observed = ctjs.load_upvalue %callee[0]",
                       "%observed = ctjs.load_upvalue %callee[0]\n"
                       "    %recursiveUndefined = ctjs.constant #ctjs.undefined\n"
                       "    %recursive = ctjs.call %callee(%recursiveUndefined)"),
+             // The state cell escapes to a global.
              replaced(siblingReaderSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "%entryBefore = ctjs.call %readCount(%undefined)\n"
                       "    ctjs.store_global \"state-leaked\", %emittedCell"),
+             // The cell is read before it is initialized.
              uninitializedSiblingSource,
+             // Direct call to the wrong function (readExtra$5).
              replaced(directSiblingReaderSource,
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)",
                       "ctjs.call_direct @readExtra$5(%undefined, %undefined, %readCount)"),
+             // Direct call passes undefined instead of the closure as its callee.
              replaced(directSiblingReaderSource,
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)",
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %undefined)"),
+             // Direct call with the element as its receiver.
              replaced(directSiblingReaderSource,
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)",
                       "ctjs.call_direct @readCount$4(%element, %undefined, %readCount)"),
+             // Direct call with the element as new.target.
              replaced(directSiblingReaderSource,
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)",
                       "ctjs.call_direct @readCount$4(%undefined, %element, %readCount)"),
+             // An extra direct call whose callee operand is undefined.
              replaced(directSiblingReaderSource,
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)",
                       "ctjs.call_direct @readCount$4(%undefined, %undefined, %readCount)\n"
                       "    %symbolOnly = ctjs.call_direct @readCount$4(%undefined, %undefined, "
                       "%undefined)"),
+             // The reader closure binds the element as its lexical this.
              replaced(directSiblingReaderSource,
                       "%readCount = ctjs.create_closure %callee[4] this %this",
                       "%readCount = ctjs.create_closure %callee[4] this %element"),
+             // Writer stores to a negative upvalue index.
              replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
                       "ctjs.store_upvalue %callee[-1], %updated"),
+             // Writer stores past the last upvalue.
              replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
                       "ctjs.store_upvalue %callee[2], %updated"),
+             // Writer stores through the receiver instead of the callee.
              replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
                       "ctjs.store_upvalue %this[0], %updated"),
+             // Writer stores its own closure into the cell.
              replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
                       "ctjs.store_upvalue %callee[0], %callee"),
+             // readExtra also stores to a negative upvalue index.
              replaced(siblingWriterSource, "%observedExtra = ctjs.load_upvalue %callee[0]",
                       "%observedExtra = ctjs.load_upvalue %callee[0]\n"
                       "    ctjs.store_upvalue %callee[-1], %observedExtra"),
+             // The writer calls itself recursively.
              replaced(siblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
                       "ctjs.store_upvalue %callee[0], %updated\n"
                       "    %nestedUndefined = ctjs.constant #ctjs.undefined\n"
                       "    %nested = ctjs.call %callee(%nestedUndefined)"),
+             // The direct writer calls readExtra$5 with itself as the callee.
              replaced(directSiblingWriterSource, "ctjs.store_upvalue %callee[0], %updated",
                       "ctjs.store_upvalue %callee[0], %updated\n"
                       "    %nestedUndefined = ctjs.constant #ctjs.undefined\n"
                       "    %nested = ctjs.call_direct @readExtra$5(%nestedUndefined, "
                       "%nestedUndefined, %callee)"),
+             // The writer closure escapes to a global.
              replaced(siblingWriterSource, "%entryBefore = ctjs.call %readCount(%undefined)",
                       "ctjs.store_global \"writer-leaked\", %readCount\n"
                       "    %entryBefore = ctjs.call %readCount(%undefined)"),
+             // The state cell starts undefined instead of a Number.
              replaced(siblingWriterSource, "%emittedCell = ctjs.create_cell %emittedInitial",
                       "%uninitialized = ctjs.constant #ctjs.undefined\n"
                       "    %emittedCell = ctjs.create_cell %uninitialized"),
@@ -5192,6 +5289,7 @@ module {
         }
     }
 
+    // observer$4 is a closure outside the iterator protocol that also captures the state cell.
     auto otherCaptureSource = replaced(
         capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
         "    %observer = ctjs.create_closure %callee[4] this %undefined captures %emittedCell\n"
@@ -5203,34 +5301,48 @@ module {
   }
 }
 )MLIR");
+    // Hostile captured-state variants. Each must be refused with the module unchanged.
     for (const auto & invalid : {
+             // next takes only the callee parameter.
              replaced(capturedSource,
                       "ctjs.func @next$2(%this: !ctjs.value, %new: !ctjs.value, "
                       "%callee: !ctjs.value)",
                       "ctjs.func @next$2(%callee: !ctjs.value)"),
+             // next loads past the last upvalue.
              replaced(capturedSource, "%emitted = ctjs.load_upvalue %callee[1]",
                       "%emitted = ctjs.load_upvalue %callee[2]"),
+             // next stores to a negative upvalue index.
              replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
                       "ctjs.store_upvalue %callee[-1], %advanced"),
+             // next stores past the last upvalue.
              replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
                       "ctjs.store_upvalue %callee[2], %advanced"),
+             // upvalue_count is lower than the captures.
              replaced(capturedSource, "attributes {upvalue_count = 2 : i32}",
                       "attributes {upvalue_count = 1 : i32}"),
+             // upvalue_count is higher than the captures.
              replaced(capturedSource, "attributes {upvalue_count = 2 : i32}",
                       "attributes {upvalue_count = 3 : i32}"),
+             // next loads through the receiver.
              replaced(capturedSource, "%emitted = ctjs.load_upvalue %callee[1]",
                       "%emitted = ctjs.load_upvalue %this[1]"),
+             // next stores through the receiver.
              replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
                       "ctjs.store_upvalue %this[1], %advanced"),
+             // The cell starts as the element, not a Number.
              replaced(capturedSource, "%emittedCell = ctjs.create_cell %emittedInitial",
                       "%emittedCell = ctjs.create_cell %element"),
+             // The cell starts as a boolean, not a Number.
              replaced(capturedSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
                       "%emittedInitial = ctjs.constant #ctjs.boolean<false>"),
+             // The entry never initializes the cell.
              replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial\n",
                       ""),
+             // The entry reads the cell before initializing it.
              replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial",
                       "    %uninitialized = ctjs.cell_get %emittedCell\n"
                       "    ctjs.cell_set %emittedCell, %emittedInitial"),
+             // The entry reads the cell inside an scf.if before initializing it.
              replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial",
                       "    %readFlag = arith.constant true\n"
                       "    scf.if %readFlag {\n"
@@ -5238,35 +5350,44 @@ module {
                       "      scf.yield\n"
                       "    }\n"
                       "    ctjs.cell_set %emittedCell, %emittedInitial"),
+             // The only initialization moves to just before open.
              replaced(replaced(initializedCaptureSource,
                                "    ctjs.cell_set %emittedCell, %emittedInitial\n", ""),
                       "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.cell_set %emittedCell, %emittedInitial\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
+             // The only initialization is conditional.
              replaced(initializedCaptureSource, "    ctjs.cell_set %emittedCell, %emittedInitial",
                       "    %initializeFlag = arith.constant true\n"
                       "    scf.if %initializeFlag {\n"
                       "      ctjs.cell_set %emittedCell, %emittedInitial\n"
                       "      scf.yield\n"
                       "    }"),
+             // The loop body leaks the cell to a global.
              replaced(entryCapturedSource, "%bodyRead = ctjs.cell_get %extraCell",
                       "%bodyRead = ctjs.cell_get %extraCell\n"
                       "        ctjs.store_global \"leaked\", %emittedCell"),
+             // The loop body wraps the cell in another cell.
              replaced(entryCapturedSource, "%bodyRead = ctjs.cell_get %extraCell",
                       "%bodyRead = ctjs.cell_get %extraCell\n"
                       "        %alias = ctjs.create_cell %emittedCell"),
+             // The cell leaks to a global before open.
              replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.store_global \"leaked\", %emittedCell\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
+             // A second closure of next shares the cell.
              replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
                       "    %sharedStep = ctjs.create_closure %callee[2] this %undefined "
                       "captures %capture, %emittedCell\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
+             // The next closure leaks to a global before open.
              replaced(capturedSource, "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.store_global \"leaked\", %step\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
+             // next stores its own closure into the cell.
              replaced(capturedSource, "ctjs.store_upvalue %callee[1], %advanced",
                       "ctjs.store_upvalue %callee[1], %callee"),
+             // A closure outside the protocol also captures the cell.
              otherCaptureSource,
          }) {
         auto fixture = parsed(context, invalid, "invalid captured-state witness parses");
@@ -5287,34 +5408,46 @@ module {
         }
     }
 
+    // Hostile receiver-state variants (state kept in a property of the iterator object).
     for (const auto & invalid : {
+             // The state property is initialized twice.
              replaced(receiverSource, stateInitialization,
                       stateInitialization +
                           "    ctjs.set_property %holder[%emittedName], %emittedInitial\n"),
+             // The initial state is a boolean.
              replaced(receiverSource, "%emittedInitial = ctjs.constant #ctjs.number<0>",
                       "%emittedInitial = ctjs.constant #ctjs.boolean<false>"),
+             // The state property is named __proto__.
              replaced(receiverSource, "%emittedName = ctjs.constant #ctjs.string<\"emitted\">",
                       "%emittedName = ctjs.constant #ctjs.string<\"__proto__\">"),
+             // The state is initialized after open instead of before.
              replaced(replaced(receiverSource, stateInitialization, ""),
                       "    %record = ctjs.call %open(%undefined, %holder)\n",
                       "    %record = ctjs.call %open(%undefined, %holder)\n" + stateInitialization),
+             // next reads a property keyed by the element.
              replaced(receiverSource, "%emitted = ctjs.get_property %this[%emittedName]",
                       "%emitted = ctjs.get_property %this[%element]"),
+             // next reads a property that was never initialized.
              replaced(receiverSource, "%emitted = ctjs.get_property %this[%emittedName]",
                       "%missingName = ctjs.constant #ctjs.string<\"missing\">\n"
                       "    %emitted = ctjs.get_property %this[%missingName]"),
+             // next leaks its receiver to a global.
              replaced(receiverSource, "    %advanced = ctjs.binary_static add %emitted, %one",
                       "    ctjs.store_global \"leaked\", %this\n"
                       "    %advanced = ctjs.binary_static add %emitted, %one"),
+             // The holder leaks to a global before open.
              replaced(receiverSource, "    %record = ctjs.call %open(%undefined, %holder)",
                       "    ctjs.store_global \"leaked\", %holder\n"
                       "    %record = ctjs.call %open(%undefined, %holder)"),
+             // A second closure of the next function.
              replaced(receiverSource, "    %nextName = ctjs.constant #ctjs.string<\"next\">",
                       "    %sharedStep = ctjs.create_closure %callee[2] this %undefined "
                       "captures %capture\n"
                       "    %nextName = ctjs.constant #ctjs.string<\"next\">"),
+             // next is bound to the entry's this.
              replaced(receiverSource, "%step = ctjs.create_closure %callee[2] this %undefined",
                       "%step = ctjs.create_closure %callee[2] this %this"),
+             // return is bound to the entry's this.
              replaced(receiverSource, "%finish = ctjs.create_closure %callee[3] this %undefined",
                       "%finish = ctjs.create_closure %callee[3] this %this"),
          }) {
@@ -5335,28 +5468,39 @@ module {
                   "refused receiver-state proof preserves the source and publishes no evidence");
         }
     }
+    // Hostile variants of the branch- and loop-carried state fixtures.
     for (const auto & invalid : {
+             // Load past the last upvalue.
              replaced(branchCapturedSource, "%afterExtra = ctjs.load_upvalue %callee[2]",
                       "%afterExtra = ctjs.load_upvalue %callee[9]"),
+             // Read a property keyed by the element.
              replaced(branchReceiverSource, "%afterExtra = ctjs.get_property %this[%extraName]",
                       "%afterExtra = ctjs.get_property %this[%element]"),
+             // Leak the callee to a global inside the branch.
              replaced(branchCapturedSource, "      ctjs.store_upvalue %callee[1], %advanced",
                       "      ctjs.store_global \"leaked\", %callee\n"
                       "      ctjs.store_upvalue %callee[1], %advanced"),
+             // Leak the receiver to a global inside the branch.
              replaced(branchReceiverSource,
                       "      ctjs.set_property %this[%emittedName], %advanced",
                       "      ctjs.store_global \"leaked\", %this\n"
                       "      ctjs.set_property %this[%emittedName], %advanced"),
+             // Load past the last upvalue in the loop.
              replaced(loopCapturedSource, "%beforeExtra = ctjs.load_upvalue %callee[2]",
                       "%beforeExtra = ctjs.load_upvalue %callee[9]"),
+             // Store past the last upvalue in the loop.
              replaced(loopCapturedSource, "ctjs.store_upvalue %callee[2], %nextExtra",
                       "ctjs.store_upvalue %callee[9], %nextExtra"),
+             // Read a property keyed by the element in the loop.
              replaced(loopReceiverSource, "%afterExtra = ctjs.get_property %this[%extraName]",
                       "%afterExtra = ctjs.get_property %this[%element]"),
+             // Write a property keyed by the element in the loop.
              replaced(loopReceiverSource, "ctjs.set_property %this[%extraName], %nextExtra",
                       "ctjs.set_property %this[%element], %nextExtra"),
+             // Leak the callee to a global inside the loop.
              replaced(loopCapturedSource, "      %effectBefore =",
                       "      ctjs.store_global \"leaked\", %callee\n      %effectBefore ="),
+             // Leak the receiver to a global inside the loop.
              replaced(loopReceiverSource, "      %effectAfter =",
                       "      ctjs.store_global \"leaked\", %this\n      %effectAfter ="),
          }) {
@@ -5376,8 +5520,9 @@ module {
                   "unsupported branch-state proof preserves source and publishes no evidence");
         }
     }
-    // This malformed callable passes method arity/capture checks. Normalizing
-    // its entry dispatch would invalidate the cached protocol operations.
+    // next is built from function 0, the entry itself, with no captures. It passes the method arity
+    // and capture checks, but normalizing the entry's dispatch would invalidate the protocol
+    // operations cached for it, so it must be refused first.
     const auto aliasedEntrySource =
         replaced(replaced(replaced(countedSource, ", %element: !ctjs.value)", ")"),
                           "    %frame = ctjs.frame_enter 16",
@@ -5404,6 +5549,9 @@ module {
         }
     }
     for (const auto & source : {methodBreakCapturedSource, methodBreakReceiverSource}) {
+        // A setAttribute call in the `case 7` arm of next's exit dispatch is valid: it must
+        // normalize, stay after the loop and before the common exit write, and keep a complete DOM
+        // proof.
         const auto effectfulMethodSource =
             replaced(source, "    scf.index_switch %methodSelector\n    case 7 {",
                      "    scf.index_switch %methodSelector\n    case 7 {\n"
@@ -5462,17 +5610,23 @@ module {
         const auto poisoned =
             replaced(source, "    %methodPoison =",
                      "    %methodValuePoison = ub.poison : !ctjs.value\n    %methodPoison =");
+        // Hostile method-break variants.
         for (const auto & invalid : {
+                 // The exit tag is read again after the loop.
                  replaced(source, "    %exitEmitted =",
                           "    %observedTag = arith.index_castui %methodLoop#1 : i32 to index\n"
                           "    %exitEmitted ="),
+                 // The exhaustion tag is not a constant.
                  replaced(source, "%methodNormal = arith.constant 7 : i32",
                           "%unknownTag = ctjs.truthy %element\n"
                           "    %methodNormal = arith.extui %unknownTag : i1 to i32"),
+                 // The after region reads the inactive tag.
                  replaced(source, "      scf.yield %carried, %inactiveTag",
                           "      %observedTag = arith.index_castui %inactiveTag : i32 to index\n"
                           "      scf.yield %carried, %inactiveTag"),
+                 // The trip counter starts as poison.
                  replaced(poisoned, "%trip = %zero", "%trip = %methodValuePoison"),
+                 // The loop carries poison as the next trip count.
                  replaced(poisoned, "scf.yield %stop, %nextTrip, %methodBreak",
                           "scf.yield %stop, %methodValuePoison, %methodBreak"),
              }) {
@@ -5508,14 +5662,19 @@ module {
                 auto condition =
                     llvm::cast<mlir::scf::ConditionOp>(loop.getBefore().front().back());
                 if (malformed == 0) {
+                    // Drop one forwarded value from scf.condition.
                     condition->eraseOperands(1, 1);
                 } else if (malformed == 1) {
+                    // Drop one value from the after region's yield.
                     loop.getAfter().front().back().eraseOperands(0, 1);
                 } else if (malformed == 2) {
+                    // Use a loop-carried value as the condition.
                     condition->setOperand(0, loop.getBeforeArguments()[0]);
                 } else if (malformed == 3) {
+                    // Retype the first before-region argument to i1.
                     loop.getBeforeArguments()[0].setType(mlir::IntegerType::get(&context, 1));
                 } else {
+                    // Retype the first after-region argument to i1.
                     loop.getAfterArguments()[0].setType(mlir::IntegerType::get(&context, 1));
                 }
                 auto request = contract;
@@ -5530,6 +5689,9 @@ module {
             }
         }
     }
+    // Each variant replaces a Number state update with a non-Number value (the element, a boolean,
+    // undefined) or calls an unknown function. Normalization may succeed or fail, but no DOM
+    // evidence may be published.
     for (const auto & invalid : {
              replaced(receiverSource, "ctjs.set_property %this[%emittedName], %advanced",
                       "ctjs.set_property %this[%emittedName], %element"),
@@ -5558,6 +5720,7 @@ module {
                       "%element, %argumentCount_before)"),
              replaced(directArgumentWriterSource, "%argumentStep_before, %argumentCount_before)",
                       "%element, %argumentCount_before)"),
+             // Call an unknown global function inside the loop.
              replaced(loopCapturedSource, "      %effectAfter =",
                       "      %unknown = ctjs.load_global \"unknown\"\n"
                       "      %effect = ctjs.call %unknown(%element, %afterEmitted)\n"
@@ -5577,39 +5740,55 @@ module {
               "initial Number state never authorizes a non-Number recurrence or unknown effect");
     }
 
+    // Hostile counted and crossed exit variants (slot layouts are documented at countedLoop and
+    // crossedLoop above).
     for (const auto & invalid : {
+             // Exhaustion arm yields the break count, which is poison on that exit.
              replaced(countedSource, "scf.yield %loop#1 : !ctjs.value",
                       "scf.yield %loop#2 : !ctjs.value"),
+             // Read the break count after the loop (poison on exhaustion).
              replaced(countedSource,
                       "    %selector =", "    %observed = ctjs.unary not %loop#2\n    %selector ="),
+             // The after region reads the normal count, which is poison inside the loop.
              replaced(countedSource, "      scf.yield %count, %normalCount, %breakCount, %tag",
                       "      %observed = ctjs.unary not %normalCount\n"
                       "      scf.yield %count, %normalCount, %breakCount, %tag"),
+             // The count starts as poison.
              replaced(countedSource, "%count = %zero", "%count = %poison"),
+             // The exhaustion tag is not a constant.
              replaced(countedSource, "%normalTag = arith.constant 7 : i32",
                       "%unknown = ctjs.truthy %element\n"
                       "    %normalTag = arith.extui %unknown : i1 to i32"),
+             // setAttribute call in the exhaustion arm (valid; checked below).
              replaced(countedSource, "    case 7 {",
                       "    case 7 {\n"
                       "      %method = ctjs.get_property %element[%attributeName]\n"
                       "      %effect = ctjs.call %method(%element, %visited, %yes)"),
+             // The exit tag is read again after the loop.
              replaced(countedSource, "    %selector =",
                       "    %observedTag = arith.index_castui %loop#3 : i32 to index\n"
                       "    %selector ="),
+             // Exhaustion arm yields the break count, which is poison on that exit.
              replaced(crossedSource, "scf.yield %loop#3, %loop#2", "scf.yield %loop#3, %loop#4"),
+             // Read the normal count after the loop (poison on break).
              replaced(crossedSource,
                       "    %selector =", "    %observed = ctjs.unary not %loop#2\n    %selector ="),
+             // The after region reads the normal count, which is poison inside the loop.
              replaced(crossedSource, "      scf.yield %count, %extra, %normalCount",
                       "      %observed = ctjs.unary not %normalCount\n"
                       "      scf.yield %count, %extra, %normalCount"),
+             // The extra value starts as poison.
              replaced(crossedSource, "%extra = %extraInitial", "%extra = %poison"),
+             // The exhaustion tag is not a constant.
              replaced(crossedSource, "%normalTag = arith.constant 7 : i32",
                       "%unknown = ctjs.truthy %element\n"
                       "    %normalTag = arith.extui %unknown : i1 to i32"),
+             // setAttribute call in the exhaustion arm (valid; checked below).
              replaced(crossedSource, "    case 7 {",
                       "    case 7 {\n"
                       "      %method = ctjs.get_property %element[%attributeName]\n"
                       "      %effect = ctjs.call %method(%element, %visited, %yes)"),
+             // The exit tag is read again after the loop.
              replaced(crossedSource, "    %selector =",
                       "    %observedTag = arith.index_castui %loop#6 : i32 to index\n"
                       "    %selector ="),
@@ -5620,8 +5799,10 @@ module {
         request.moduleSha256 = hostContractFingerprint(*input);
         auto failure = normalizeDOMCustomIteration(*input, request, completeBudget);
         if (invalid.find("%effect = ctjs.call") != std::string::npos) {
-            // These two historical constructions add an effect only in the
-            // selected arm; neither arm observes the other exit's poison.
+            // The two variants that add a setAttribute call inside `case 7` are
+            // valid: the call is in the selected arm only and neither arm reads the
+            // other exit's poison value, so normalization must succeed and keep
+            // both writes.
             check(!failure, "historical counted effectful exits normalize unchanged");
             if (failure) {
                 llvm::consumeError(std::move(failure));
@@ -5663,6 +5844,8 @@ module {
     const std::string identityHeader =
         "ctjs.func @identity$1(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) "
         "-> !ctjs.value attributes {upvalue_count = 0 : i32}";
+    // Each variant breaks one rule of the iterator protocol. The refusal message must contain the
+    // paired diagnostic text.
     for (const auto & [invalid, diagnostic] : {
              std::pair{replaced(replaced(source, close, ""), "    %loop =", close + "    %loop ="),
                        "direct loop test"},
@@ -5722,6 +5905,8 @@ module {
               "refused private custom protocol exposes no DOM evidence");
     }
 
+    // Change a string after the contract was fingerprinted. Normalization must refuse on the
+    // fingerprint mismatch before changing anything.
     auto stale = mlir::parseSourceString<mlir::ModuleOp>(
         replaced(source, "#ctjs.string<\"data-yielded\">", "#ctjs.string<\"changed\">"), &context);
     check(static_cast<bool>(stale), "stale custom iterator witness parses");
@@ -5733,8 +5918,9 @@ module {
                   hostContractFingerprint(*stale) == fingerprint,
               "stale custom iterator fingerprint refuses before mutation");
     }
-    // Locate the completion threshold instead of baking in today's scan count.
-    // Sample early, middle and last incomplete budgets on fresh private clones.
+    // Binary-search the smallest budget that completes instead of hard-coding the
+    // current scan count. Then sample early, middle and last incomplete budgets on
+    // fresh clones.
     auto abruptState = parsed(context, abruptStateSource, "terminal state budget specimen parses");
     if (!abruptState) { return; }
     for (auto fixture : {*original,
@@ -5859,6 +6045,9 @@ module {
                 high = middle;
             }
         }
+        // Each fixture must need more than 64 budget steps, and a budget of
+        // 64 or less must stop during validation, before anything is rewritten
+        // (checked below by comparing fingerprints).
         check(low > 64 && low < completeBudget,
               "ordinary and counted iterators have finite charged completion budgets");
         if (low <= 64 || low == completeBudget) { continue; }

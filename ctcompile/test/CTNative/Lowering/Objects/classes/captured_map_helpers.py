@@ -1,4 +1,10 @@
-"""Check captured Map helpers against concrete record ownership and publication."""
+"""Run initialization.py on the fixtures about Map-based registries in captured helpers.
+
+The fixtures store records in a Map of per-element Maps (Bootstrap's `Data`
+registry shape) through a helper function or holder object the class captures.
+This narrows initialization.OBSERVATIONS to the SELECTED fixtures and the
+name-prefix families below, then runs the full initialization check on them.
+"""
 
 from CTNative.Lowering.Objects.classes import initialization as check
 
@@ -37,5 +43,7 @@ check.OBSERVATIONS = {
         )
     )
 }
+# 229 fixtures come from the name-prefix families above; update the count when
+# initialization.py gains or loses one, so a prefix that matches nothing fails.
 assert len(check.OBSERVATIONS) == len(SELECTED) + 229
 check.main()

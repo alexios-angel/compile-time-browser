@@ -1,12 +1,16 @@
-"""sources object maps: continued from sources_leaf_objects."""
+"""Map.clear() and definite-absence cases for the global_maps ownership tests.
+
+Builds on leaf_objects.py.
+"""
 
 from .leaf_objects import *
 
 
 def primitive_absence_sources():
-    # Keep the historical refusal's ten calls and empty/undefined key
-    # observations. Definite absence supplies its missing host result fact;
-    # the existing nullable String carrier independently admits native output.
+    # Admit the result_seeded_empty_deleted refusal source unchanged (ten
+    # calls, reads of the empty and undefined keys). Proving the key
+    # definitely absent supplies the host result, and the nullable String
+    # carrier holds the native output.
     source, value = payload_result_refusals()["result_seeded_empty_deleted"]
     return {"result_seeded_empty_deleted": (source, "host", value)}
 
@@ -18,7 +22,9 @@ RESULT_SIGNATURES["result_seeded_empty_deleted"] = (
 )
 
 
-# Exact Map.clear continuation measured in b1e8ba6b; includes final newlines.
+# Pinned Map.clear() sources: row name -> (raw call count, prepared call
+# count, sha256 of the source including its final newline). The digests
+# catch any accidental edit to these sources.
 LEAF_CLEAR_HISTORY = {
     "local_absence_clear_undefined": (
         7,
@@ -133,7 +139,10 @@ LEAF_CLEAR_HISTORY = {
 }
 
 
+# Cases from leaf_absence_cases() that are admitted here as Map.clear() sources.
 LEAF_CLEAR_PROMOTED = {"local_absence_clear_undefined", "local_absence_clear_saved_identity"}
+# Cases the analysis must refuse; leaf_clear_refusals() pairs each with the
+# edit that turns it into an admitted case.
 LEAF_CLEAR_UNOWNED = {
     "local_clear_maybe_reseed_same",
     "local_clear_maybe_reseed_distinct",
@@ -372,6 +381,3 @@ def leaf_clear_refusals():
             row["prepared_calls"],
         )
     return result
-
-
-# Preserve all twelve exact post-clear continuation sources and both call censuses.
