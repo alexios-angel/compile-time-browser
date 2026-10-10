@@ -36,8 +36,12 @@
 
 // PROBE: {name = "PROPS", reason = "absent: never stored and not provided by the native realm; 1 typeof read(s) folded to undefined", resolved = "none", stores = 0 : i32}
 // PROBE-NOT: ctjs.load_global "PROPS"
-// PROBE: %[[ABSENT:[^ ]+]] = ctjs.constant #ctjs.undefined
-// PROBE: ctjs.unary typeof %[[ABSENT]]
+// The frame's six registers start as `undefined` constants; the folded read is
+// the seventh, right before the `typeof` it feeds.
+// PROBE: ctjs.frame_enter 6
+// PROBE-COUNT-6: = ctjs.constant #ctjs.undefined
+// PROBE-NEXT: %[[ABSENT:[^ ]+]] = ctjs.constant #ctjs.undefined
+// PROBE-NEXT: ctjs.unary typeof %[[ABSENT]]
 
 // KEPT: ctjs.load_global "PROPS" {typeof_lookup = true}
 
