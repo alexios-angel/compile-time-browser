@@ -1,7 +1,7 @@
-# Optional String conversion preserves all three tags before arithmetic. Closed
-# Boolean/String temporaries use numeric and String operations;
-# their function parameters and returns stay single-type. Node's Object.is checks
-# distinguish null's zero, undefined's NaN and the sign of a numeric String zero.
+# Arithmetic and concatenation on an optional String (undefined, null or String)
+# and on Boolean-or-String temporaries, whose function parameters and returns
+# stay single-type. Node's Object.is checks tell apart null -> 0, undefined -> NaN
+# and the sign of a numeric String zero.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

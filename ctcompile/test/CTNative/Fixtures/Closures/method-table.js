@@ -1,4 +1,4 @@
-// Method fields own their callable and captured state after factory return.
+// Methods returned from a factory keep their captured state after it returns.
 function makeData(seed) {
     const state = new Map();
     state.set("value", seed);
@@ -126,7 +126,7 @@ function makeEmptyTable() {
         }
     };
 }
-
+// `table_0` and `env_fn_2` mimic names the C++ backend generates; they must not collide.
 function emptyEnvironment() {
     const marker = {
         table_0: 1

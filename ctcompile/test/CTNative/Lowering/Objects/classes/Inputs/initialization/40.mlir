@@ -1,4 +1,4 @@
-// Exact captured String keys keep the original record owner and call order.
+// Constructors that store `this` in the Map under a captured key variable or parameter.
 //--- class-map-record-constructor-captured-key-literal.js
 function probe() {
     const key = "slot";

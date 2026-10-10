@@ -1,4 +1,4 @@
-// Repeated registration must preserve the first child and skip the second allocation.
+// A repeated `if (!outer.has(...))` keeps the first inner Map and skips the second `new Map`.
 //--- class-map-record-nested-conditional-repeat.js
 function probe() {
     const outer = new Map();
@@ -20,7 +20,7 @@ function probe() {
 }
 var a = probe();
 
-// Each selected branch creates a distinct child for its literal outer key.
+// Each branch known to run creates a separate inner Map for its literal outer key.
 //--- class-map-record-nested-conditional-distinct.js
 function probe() {
     const outer = new Map();
@@ -48,7 +48,7 @@ function probe() {
 }
 var a = probe();
 
-// Dead branches still need a non-coercing complete effect census.
+// Refused: a branch known never to run still contains `+values`, which may call user code.
 //--- class-map-record-nested-conditional-dead-coercion.js
 function probe() {
     const outer = new Map();
@@ -68,7 +68,7 @@ function probe() {
 }
 var a = probe();
 
-// Parent cleanup and recreation do not invalidate saved child or record owners.
+// Clearing and recreating outer entries does not invalidate saved inner Maps or instances.
 //--- class-map-record-nested-conditional-recreate.js
 function probe() {
     const outer = new Map();
@@ -101,7 +101,7 @@ function probe() {
 }
 var a = probe();
 
-// A known first branch must not hide later topology controlled by a caller.
+// Refused: a later branch depends on a caller's flag, so its outer entry is not known.
 //--- class-map-record-nested-conditional-dynamic-branch.js
 function probe(flag) {
     const outer = new Map();
@@ -121,7 +121,7 @@ function probe(flag) {
 }
 var a = probe(true) * 10 + probe(false);
 
-// A conditional child cannot leave its owning entry through the outer Map.
+// Refused: the outer Map escapes with an inner Map created inside a branch.
 //--- class-map-record-nested-conditional-outer-escaped.js
 var retained;
 function probe() {
@@ -138,7 +138,7 @@ function probe() {
 }
 var a = probe();
 
-// Captured outer observers require their own complete call-order proof.
+// Refused: a closure reading the outer Map needs its calls and their order checked.
 //--- class-map-record-nested-conditional-captured-observer.js
 function probe() {
     const outer = new Map();
@@ -154,7 +154,7 @@ function probe() {
 }
 var a = probe();
 
-// Caller-controlled keys do not provide literal topology, even in a has guard.
+// Refused: the outer key is a parameter, even inside a `has` check.
 //--- class-map-record-nested-conditional-dynamic-key.js
 function probe(key) {
     const outer = new Map();
@@ -169,7 +169,7 @@ function probe(key) {
 }
 var a = probe("element");
 
-// Cleanup cannot turn an absent outer get into an invented child owner.
+// Refused: get after delete returns undefined; it must not produce an inner Map.
 //--- class-map-record-nested-conditional-missing-outer.js
 function probe() {
     const outer = new Map();
@@ -186,7 +186,7 @@ function probe() {
 }
 var a = probe();
 
-// Selecting a child allocation does not establish an absent inner record.
+// Refused: the inner Map exists, but the inner key does not.
 //--- class-map-record-nested-conditional-missing-inner.js
 function probe() {
     const outer = new Map();
@@ -202,7 +202,7 @@ function probe() {
 }
 var a = probe();
 
-// Erasing the outer topology must not conceal a child escape.
+// Refused: an inner Map escapes into a global; folding the outer Map must not hide it.
 //--- class-map-record-nested-conditional-child-escaped.js
 var retained;
 function probe() {
@@ -219,7 +219,7 @@ function probe() {
 }
 var a = probe();
 
-// A record reached through conditional children still belongs to its entry.
+// Refused: an instance read through branch-created inner Maps escapes its function.
 //--- class-map-record-nested-conditional-record-escaped.js
 var retained;
 function probe() {
@@ -236,7 +236,7 @@ function probe() {
 }
 var a = probe();
 
-// A known guard cannot bypass exception and cleanup control flow.
+// Refused: a throw inside the known branch leaves through the catch handler.
 //--- class-map-record-nested-conditional-exception.js
 function probe() {
     const outer = new Map();
@@ -256,7 +256,7 @@ function probe() {
 }
 var a = probe();
 
-// Even an unselected branch must pass the original complete effect census.
+// Refused: a branch known never to run still stores a Map into a global.
 //--- class-map-record-nested-conditional-dead-escape.js
 var retained;
 function probe() {
@@ -277,7 +277,7 @@ function probe() {
 }
 var a = probe();
 
-// Selecting Map-only arms cannot move a record allocation out of its own region.
+// Refused: the instance is created inside the branch, so it cannot outlive the branch.
 //--- class-map-record-nested-conditional-region-owner.js
 function probe() {
     const outer = new Map();
@@ -292,7 +292,7 @@ function probe() {
 }
 var a = probe();
 
-// Recursive registration remains outside the same-entry topology proof.
+// Refused: `register` calls itself, so the nested Maps are not built in one call.
 //--- class-map-record-nested-conditional-reentry.js
 function probe() {
     const outer = new Map();

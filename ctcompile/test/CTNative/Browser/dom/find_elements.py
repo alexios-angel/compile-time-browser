@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Execute original Bootstrap R.find with confined indexed element consumers."""
+"""Compile indexed loops over unmodified Bootstrap SelectorEngine.find (minified
+`R.find`) results to native code, run them against the public DOM and Style
+libraries, and check that out-of-bounds, escaping or mutating uses and
+replaced globals are refused."""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import without_intrinsic
@@ -25,6 +28,9 @@ BODY = """  if (anchor.hasAttribute('data-invalid')) {
 
 
 def source(kind):
+    """findElements with BODY. `kind` picks R.find's root: "explicit" passes
+    anchor, "undefined" passes undefined under a `!document.documentElement`
+    early return, and any other kind omits it under a root guard."""
     declaration = f"function findElements(anchor, expected) {{\n  const R={{{FIND}}};\n"
     if kind == "explicit":
         return declaration + BODY.replace("@RECEIVER@", ", anchor") + "}\n"
@@ -170,6 +176,8 @@ OWNED_CHECKS = r"""
         }
 """
 
+# Bodies the compiler must refuse: unproved or out-of-bounds indexes, writes to
+# or escapes of the snapshot, and replaced methods or spreadability R.find uses.
 REFUSALS = {
     "unproved-index": "const nodes=R.find('*',anchor); return nodes[0].matches('*');",
     "one-past": "const nodes=R.find('*',anchor); "
@@ -184,7 +192,7 @@ REFUSALS = {
     "escape": "return R.find('*',anchor);",
     "retained": "anchor.saved=R.find('*',anchor); return true;",
     "identity": "const nodes=R.find('*',anchor); return nodes===nodes;",
-    # The default root reaches the selector call checked; other uses stay nullable.
+    # The default root is checked at the selector call; other uses may be null.
     "unguarded-root-use": "const nodes=R.find('*'); return document.documentElement.matches('*');",
     "replace-query-all": "Element.prototype.querySelectorAll=anchor; return R.find('*',anchor).length;",
     "replace-call": "Function.prototype.call=anchor; return R.find('*',anchor).length;",
@@ -195,9 +203,11 @@ REFUSALS = {
     "replace-iterator": "NodeList.prototype[Symbol.iterator]=anchor; return R.find('*',anchor).length;",
 }
 
-# Former refusals the checked document root admits since b4aa79b57. Absent, the
-# selector call throws before any effect, as Element.prototype.querySelectorAll
-# .call(null, '*') does; present, the loop runs. jsdom answers the same.
+# Bodies that call R.find with no root, so the default document root is used.
+# These are admitted because the native code checks the root: with no document
+# element the selector call throws before any effect, as
+# Element.prototype.querySelectorAll.call(null, '*') does; with one, the loop
+# runs. jsdom gives the same answers.
 UNGUARDED_DEFAULT = {
     "unguarded-default": (
         "const nodes=R.find('*'); "
@@ -211,6 +221,8 @@ UNGUARDED_DEFAULT = {
 """,
     )
 }
+# Client for UNGUARDED_DEFAULT: the call throws with no document element and
+# runs once one is set; each case appends its own checks.
 UNGUARDED_CHECKS = r"""
         (void)pressed;
         (void)foreign;
@@ -230,7 +242,7 @@ UNGUARDED_CHECKS = r"""
 
 
 def unguarded_default(args, cases, intrinsics, compilers, includes, libraries):
-    """Execute each admitted default-root body under both policies."""
+    """Compile and run each default-root body, with and without optimization."""
     for name, (body, checks) in cases.items():
         text = f"function bad(anchor, expected) {{ const R={{{FIND}}}; {body} }}\n"
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
@@ -311,7 +323,7 @@ def main():
             initial_intrinsics=["Array", "Element", "Function", "Number"],
         )
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2
+        refusals += 2  # dom.refuse lowers with and without optimization.
     intrinsics = ["Array", "Element", "Function", "Number"]
     unguarded_default(args, UNGUARDED_DEFAULT, intrinsics, compilers, includes, libraries)
     print(

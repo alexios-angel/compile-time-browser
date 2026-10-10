@@ -1,7 +1,21 @@
+//===- ConditionalMapResults.cpp - Map results joined by scf.if ---------===//
+//
+// Host-contract proofs for a value read from a seeded Map inside an scf.if and
+// passed on to a later Map setter: plain two-arm joins, `has`-guarded reads and
+// short-circuit (`a || b`) selections.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Rewrites the seeded-Map fixture so the value saved from the Map comes out of
+/// an scf.if on a new %flag parameter, then checks HostContractAnalysis proves
+/// it only when every arm yields a primitive of the same tag with no escaping
+/// or unsupported effect, and that the contents intersection at the join drops
+/// one-arm deletes and writes. Number constants are IEEE-754 bit patterns:
+/// 4607182418800017408 is 1.0, 4611686018427387904 is 2.0 and
+/// 4613937818241073152 is 3.0. \p prepared selects the call_direct form.
 void checkConditionalMapResults(mlir::MLIRContext & context, std::string source, bool prepared) {
     const std::string header =
         "@get$2(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value" +
@@ -67,6 +81,7 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
                           ctcompile::ctnative::PrimitiveAlternatives::forTag(tag) &&
                       calls[1].arguments.front().actual == calls[0].call->getResult(0) &&
                       calls[1].arguments.front().parameter ==
+                          // put$3's %entryKey, after the prepared %state parameter.
                           setter.getBody().front().getArgument(prepared ? 4 : 3) &&
                       calls[0].call->isBeforeInBlock(calls[1].call) &&
                       calls[1].call->isBeforeInBlock(calls[2].call),
@@ -129,6 +144,8 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
         replaced(changed, continuation, "    %answer = ctjs.call %mapGetter(%state, %seedKey)\n"),
         false, "contents intersection clears a payload changed on one reaching arm");
     variant(changed, true, "a joined saved scalar can reseed after a one-arm payload overwrite");
+    // The analysis walks nested conditionals at most 32 deep; one level more
+    // must be refused.
     for (const unsigned depth : {4u, 32u, 33u}) {
         std::string nested = "      %left = ctjs.call %mapGetter(%state, %seedKey)\n";
         for (unsigned index = 1; index < depth; ++index) {
@@ -302,6 +319,8 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
     for (const auto & [program, tag] :
          {std::pair{&shortCircuit, mlir::TypeID::get<ctjs::NumberAttr>()},
           std::pair{&shortString, mlir::TypeID::get<ctjs::StringAttr>()}}) {
+        // Falsy constants: false, +0, -0, a NaN (non-canonical payload), "", null
+        // and undefined.
         for (const char * literal :
              {"#ctjs.boolean<false>", "#ctjs.number<0>", "#ctjs.number<9223372036854775808>",
               "#ctjs.number<9221120237041090561>", "#ctjs.string<\"\">", "#ctjs.null",
@@ -378,12 +397,16 @@ void checkConditionalMapResults(mlir::MLIRContext & context, std::string source,
             true, "a saved scalar alternative is independent of subsequent payload overwrites",
             mlir::TypeID::get<ctjs::StringAttr>());
 
+    // Runs \p program at every step budget below completion (each must withhold
+    // the proof), then forges proof attributes and makes live SSA edits to the
+    // arms and guards, which must invalidate the fingerprint and stay refused.
     const auto checkBudgets = [&](const std::string & program, const char * label) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(program, &context);
         if (!module) { return; }
         auto contract = mapContractFor(*module);
         HostContractAnalysis complete(*module, contract);
         const unsigned completion = complete.steps();
+        // 15000 is a ceiling well above this fixture's step count.
         check(complete.proved() && completion < 15000,
               "the complete conditional proof stays within its fixture work limit");
         if (!complete.proved() || completion >= 15000) { return; }

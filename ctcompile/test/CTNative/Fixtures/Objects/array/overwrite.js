@@ -1,5 +1,5 @@
-// The original array.mlir indexed.js body, separately CALLED here. Keep that
-// uncalled refusal control intact; this subject measures real native execution.
+// indexed.js in CTNative/Lowering/Objects/array.mlir, called here so it runs
+// natively. Keep the uncalled copy there unchanged: it tests a refusal.
 function stored() {
     var a = [1, 2];
     a[0] = 9;

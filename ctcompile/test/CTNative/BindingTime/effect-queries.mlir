@@ -16,9 +16,9 @@
 // RUN: ctjs-opt %t/alternate-static.mlir --ctnative-binding-time-analysis | FileCheck %s --check-prefix=ALTERNATE-STATIC
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-binding-time-analysis | FileCheck %s --check-prefix=SOURCE
 
-// A queried call/result stays dynamic. Only the subsequent disjoint heap read
-// is static; reading an affected alias is dynamic. No schema family identifies
-// a runtime allocation. Handwritten non-bytecode symbols use inert callee slots.
+// A call whose heap effects are proved stays dynamic, and so does its result. Only a
+// later read of a disjoint object is static; reading an alias the call may write is
+// dynamic. Handwritten (non-bytecode) functions get unused %callee slots.
 
 //--- objects.mlir
 module {
@@ -290,9 +290,9 @@ function untouched(value) {
 var result = untouched(9);
 
 //--- alternate-dynamic.mlir
-// BTA must respect both call target representations. Diagnostic specialization
-// provenance cannot prove an alternate boxed callee equivalent to the symbol.
-// This is a BTA regression, not a claim that whole-factory PE admits this IR.
+// Binding-time analysis must check both call targets: the symbol and the boxed
+// callee operand. ctnative.specialized_from is diagnostic only and does not prove
+// them equal. This tests the analysis alone, not partial evaluation of the module.
 module {
   // ALTERNATE-DYNAMIC-LABEL: ctjs.func @entry
   // ALTERNATE-DYNAMIC: ctjs.call_direct @noop{{.*}}ctnative.binding_time = "dynamic"{{.*}}ctnative.binding_time_reason = "runtime operands, heap contents or effects"
@@ -326,9 +326,9 @@ module {
 }
 
 //--- alternate-static.mlir
-// BTA must respect both call target representations. Diagnostic specialization
-// provenance cannot prove an alternate boxed callee equivalent to the symbol.
-// This is a BTA regression, not a claim that whole-factory PE admits this IR.
+// Binding-time analysis must check both call targets: the symbol and the boxed
+// callee operand. ctnative.specialized_from is diagnostic only and does not prove
+// them equal. This tests the analysis alone, not partial evaluation of the module.
 module {
   // ALTERNATE-STATIC-LABEL: ctjs.func @entry
   // ALTERNATE-STATIC: ctjs.call_direct @noop{{.*}}ctnative.binding_time = "dynamic"{{.*}}ctnative.binding_time_reason = "runtime operands, heap contents or effects"

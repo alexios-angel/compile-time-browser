@@ -1,5 +1,5 @@
-// Calls with identical static tuples share a variant. Each function retains
-// one generic call; source-visible effects and argument evaluation stay ordered.
+// Calls with the same constant arguments share one variant. Each function keeps
+// one generic call; visible effects and argument evaluation stay in source order.
 function formula(scale, offset, input) {
     return (scale * 10 + offset) * input;
 }
@@ -18,7 +18,7 @@ function seed(seed, input) {
 }
 
 function heaps(input) {
-    // Keep heap consumers at runtime while their initialization specializes.
+    // The effect keeps this caller at runtime while `seed`'s Map setup specializes.
     heapEffect = input;
     return seed(1, input) + seed(4, input) + seed(4, input);
 }
@@ -33,8 +33,8 @@ function effects(input) {
 }
 
 function remember(map, value) {
-    // Keep the argument producer at runtime even when its input is static.
-    // The Map trace below also observes evaluation order and duplicate calls.
+    // The effect keeps the argument producer at runtime even for a constant input.
+    // The Map trace below also records evaluation order and duplicate calls.
     argumentEffect = value;
     map.set("trace", map.get("trace") * 10 + value);
     return value;

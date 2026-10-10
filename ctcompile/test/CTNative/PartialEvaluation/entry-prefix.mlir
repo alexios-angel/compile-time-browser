@@ -5,9 +5,9 @@
 // RUN: ctjs-opt %t/cycle.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CYCLE
 // RUN: ctjs-opt %t/cycle.mlir '--ctnative-partial-evaluate=max-nodes=0' | FileCheck %s --check-prefix=NODES
 // RUN: ctjs-opt %t/control.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=CONTROL
-
-// The first dynamic write remains. Shared child identity crosses the boundary,
-// while the discarded object, Map, and obsolete stores disappear.
+// Prefix mode evaluates a function at compile time up to its first dynamic effect (the
+// recorded boundary) and keeps the rest. In mixedSeed that first write stays, the child shared
+// by both calls stays one object, and the discarded object, the Map and overwritten stores go.
 // PREFIX-LABEL: ctjs.func private @mixedSeed$1
 // PREFIX-SAME: ctnative.partial_evaluated = {boundary = "ctjs.call"
 // PREFIX-SAME: evaluated_nodes = 4 : i64
@@ -74,14 +74,14 @@ module {
     %u = ctjs.constant #ctjs.undefined
     %object = ctjs.create_object
     %key = ctjs.constant #ctjs.string<"value">
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
     ctjs.set_property %object[%key], %one
     %result = ctjs.call_direct @effect(%u, %u, %u, %object)
     ctjs.return %result
   }
   ctjs.func private @effect(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %object: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %key = ctjs.constant #ctjs.string<"value">
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0
     ctjs.set_property %object[%key], %two
     ctjs.store_global "effect", %two
     ctjs.return %object

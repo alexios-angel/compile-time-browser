@@ -1,16 +1,16 @@
-// THE SPECIFICATION OF THE PRINTING, for values that are not numbers.
+// The reference for how native code prints globals that are not numbers.
 //
-// HAND-WRITTEN, for the same reason native-fixture.emitc.mlir is: it is what
-// the Phase 62½-C lowering is expected to produce for native-values-fixture.js,
-// written BEFORE that lowering can produce it, so that the GATE is proved on
-// something before there is anything to gate. LowerToEmitC.cpp emits only
-// `<name>=%.17g` today and declares every global `double`; this module is the
-// one-hunk description of what it has to emit instead, and
-// check-native-unit.cmake compiles it standalone, runs it, and compares every
-// line with the interpreter's answer for the same JavaScript.
+// Hand-written: this is the C++ that LowerToEmitC.cpp is expected to emit for
+// values.js, kept as a fixed reference so the compile-and-compare harness
+// (Checks/compilation-unit.py) has a known-good module to run. The harness
+// compiles it standalone, runs it, and compares every printed line with the
+// interpreter's output for the same JavaScript. Because the module is fixed,
+// a failure here points at the harness or the interpreter's printing, not at
+// the lowering. If the print format changes, this module and the interpreter
+// side must change with it.
 //
-// THE CONVENTION - defined in check-native-unit.cmake, mirrored in
-// NativeReference.cpp, produced here:
+// The output convention, shared with the reference interpreter
+// (test/Runtime/Reference/Interpreter.cpp) and produced here:
 //
 //     Number      std::printf("%s=%.17g\n", "<name>", (double) <global>)
 //     Boolean     ctnative::print_boolean("<name>", <global>)
@@ -18,32 +18,32 @@
 //     null        ctnative::print_null("<name>")
 //     String      ctnative::print_string("<name>", <global>)
 //
-// one line per global, ascending bytewise by name, and `main` returns 0. THE
-// NUMBER CASE IS THE CALL IT ALWAYS WAS, unchanged to the byte, because every
-// fixture that predates the other four kinds expects exactly that text.
+// one line per global, sorted bytewise by name, and `main` returns 0. The
+// Number line is the plain printf above because older fixtures expect
+// exactly that text.
 //
-// THE REPRESENTATIONS, and why there are only three of them for five kinds:
+// Five kinds need only three representations:
 //
-//   * a Number is `double` (or `int32_t` widened at the print, as before)
+//   * a Number is `double` (or `int32_t`, widened to double at the print)
 //   * a Boolean is `bool`
 //   * a String is `std::string`
-//   * `undefined` and `null` GET NO STORAGE AT ALL. A global whose proven type
-//     is one of those has one possible value, which is a compile-time fact, so
-//     there is nothing to keep at runtime and nothing to load - the printing is
-//     a constant. Giving them a tagged slot would be boxing a value this tier
-//     has already proved, which is the one thing it does not do.
+//   * `undefined` and `null` get no storage at all. A global whose proved type
+//     is one of those has exactly one possible value, a compile-time fact, so
+//     there is nothing to keep at runtime and nothing to load; the print is a
+//     constant. Giving them a tagged slot would box a value whose type is
+//     already proved, which the native target never does.
 //
-// There is NO discriminator anywhere in the emitted C++: the kind of every
-// global is settled at compile time by the type the inference gave it, and it
-// is settled again, independently, by the interpreter at run time. The gate
-// passing is the two agreeing.
+// The emitted C++ has no runtime type tag anywhere: the kind of every global
+// is fixed at compile time by the type inference gave it, and decided again,
+// independently, by the interpreter at run time. The test passes only when
+// the two agree.
 //
-// WHAT IS NOT HERE, deliberately: nothing from the engine. No include, no
-// helper reaching into it, no `ct_aot_*`. The gate compiles this standalone and
-// runs `nm` on the result.
+// Nothing from the engine is used: no include, no helper reaching into it, no
+// `ct_aot_*`. The harness compiles this standalone and runs `nm` on the
+// result.
 
-// AS A LIT TEST this file asserts the SHAPE of the emitted C++ and never a
-// value: the values are the interpreter's to judge, in check-native-unit.cmake.
+// As a lit test this file checks only the shape of the emitted C++, never a
+// value: the values are judged against the interpreter by compilation-unit.py.
 //
 // RUN: ctjs-translate --mlir-to-cpp %s | FileCheck %s --implicit-check-not=ctbrowser
 //
@@ -57,21 +57,21 @@
 // CHECK: inline void print_null(const char * name) {
 // CHECK: } // namespace ctnative
 //
-// THE THREE REPRESENTATIONS, and no fourth.
+// Exactly three representations, no fourth.
 // CHECK: int32_t answer;
 // CHECK: double third;
 // CHECK: bool yes;
 // CHECK: bool no;
 // CHECK: std::string greeting;
 //
-// AND NO STORAGE FOR THE OTHER TWO KINDS. `nothing` and `missing` are globals
-// of the program; neither may appear as a declaration.
+// No storage for the other two kinds: `nothing` and `missing` are globals of
+// the program, but neither may appear as a declaration.
 // CHECK-NOT: nothing;
 // CHECK-NOT: missing;
 //
 // CHECK-LABEL: int32_t main() {
-// THE PRINTING, sorted bytewise by name - which is also the order the
-// interpreter's side sorts in, and a line out of place is a gate failure.
+// The prints, sorted bytewise by name. The interpreter side sorts the same
+// way, and a line out of place fails the comparison.
 // CHECK: std::printf("%s=%.17g\n", "answer", {{v[0-9]+}});
 // CHECK: ctnative::print_string("empty", {{v[0-9]+}});
 // CHECK: ctnative::print_string("greeting", {{v[0-9]+}});
@@ -85,19 +85,19 @@
 // CHECK: ctnative::print_boolean("yes", {{v[0-9]+}});
 // CHECK: return {{v[0-9]+}};
 //
-// THE DIFFERENTIAL GATE COMPARES VALUES THAT ARE NOT NUMBERS: the gate over
-// all five kinds at once, then ONE NEGATIVE PROOF PER KIND, because a mutation
-// that suits a Number suits nothing else - `<g> = <g> + 1` does not compile on
-// a bool, has no meaning on a std::string, and has nothing to act on for a
-// global whose proven type is `undefined` or `null`. Each must FAIL NAMING ITS
-// GLOBAL (compilation-unit.py's --mutate-as). `third` AND NOT `answer` FOR THE
-// NUMBER - the number mutation is an insertion in front of the first print, so
-// it is invisible to a global the printing has already read - which the FIRST
-// global in sorted order always has been; the driver refuses that case by
-// name and the VACUOUS proof is what shows it does, so the next author does
-// not spend the afternoon the last one did. Then the symbol check on a binary
-// built from THIS module plus one object that reaches the interpreter, and the
-// two-toolchain clean compile of the value-printing helpers.
+// The RUN lines: one comparison over all five kinds, then one mutation per
+// kind that must fail naming its global (compilation-unit.py --mutate-as),
+// because a Number mutation like `g = g + 1` does not compile on a bool, means
+// nothing on a std::string, and has nothing to act on for a storage-less
+// undefined or null global. The Number mutation targets `third`, not
+// `answer`: the edit is inserted before the first print, which has already
+// read the first global in sorted order, so mutating `answer` would change
+// nothing. The driver refuses that case by name, and the VACUOUS line checks
+// that it does. Then a symbol check: a binary built from this module plus one
+// object that reaches the interpreter must be rejected. Last, a warning-free
+// compile of the value-printing helpers on both toolchains
+// (compile-clean.py).
+//
 //
 // RUN: %compilation_unit --module %s --js %S/values.js --work %t --name values
 // RUN: not %compilation_unit --module %s --js %S/values.js --work %t --name values_number --mutate third --mutate-as number 2>&1 | FileCheck %s --check-prefix=NUMBER
@@ -121,18 +121,18 @@ module {
   emitc.include <"cstdio">
   emitc.include <"string">
 
-  // THE VALUE-PRINTING PRELUDE, one `emitc.verbatim` per line of C++ because
-  // an MLIR string attribute cannot hold a newline unescaped and a single
-  // 1,500-character line is not reviewable. The lowering will emit this as one
-  // `emitc.verbatim` built from a StringLiteral, the way kVectorHelpers already
-  // is; the TEXT is what has to match, not how it was assembled.
+  // The value-printing prelude, one `emitc.verbatim` per C++ line, because an
+  // MLIR string attribute cannot hold an unescaped newline and a single
+  // 1,500-character line is not reviewable. Only the text has to match what
+  // the lowering emits, not how it is assembled.
   //
-  // NOT std::printf, ANYWHERE IN HERE, and that is load-bearing twice over.
-  // A `%` in the data would be read as a conversion by a printf, and
-  // check-native-unit.cmake's MUTATE path inserts its off-by-one in front of
-  // the first `std::printf(` in the emitted C++ - which has to be the first
-  // line `main` prints, not a line of a helper defined above it. The driver
-  // asserts that placement; this is the half of the bargain the module keeps.
+  // No std::printf in here, for two reasons. A `%` in the data would be read
+  // as a conversion by printf. And compilation-unit.py's --mutate inserts its
+  // edit in front of the first `std::printf(` in the emitted C++, which must
+  // be the first line `main` prints, not a line of a helper defined above it.
+  // The driver asserts that placement; this module keeps its side of it.
+  // (The verbatim comment lines below name two files that have since been
+  // replaced by Checks/compilation-unit.py and Runtime/Reference/Interpreter.cpp.)
   emitc.verbatim "// ctcompile: the differential gate's value forms - the convention is stated"
   emitc.verbatim "// in ctcompile/test/check-native-unit.cmake and mirrored by the interpreter"
   emitc.verbatim "// side in ctcompile/test/NativeReference.cpp. The two must agree byte for"
@@ -183,8 +183,8 @@ module {
   emitc.verbatim "}"
   emitc.verbatim "} // namespace ctnative"
 
-  // --- the globals: one per top-level `var` THAT NEEDS STORAGE ---------------
-  // `nothing` and `missing` are absent on purpose - see the header.
+  // --- The globals: one per top-level `var` that needs storage ---------------
+  // `nothing` and `missing` are absent on purpose; see the header.
   emitc.global @answer : i32
   emitc.global @third : f64
   emitc.global @yes : i1
@@ -196,9 +196,9 @@ module {
   emitc.global @raw : !emitc.opaque<"std::string">
 
   emitc.func @main() -> i32 attributes {ctnative.provenance = "the top level of native-values-fixture.js (module written by hand)"} {
-    // --- the program, in source order -------------------------------------
-    // var answer = 6 * 7;  - MULTIPLIED, not memorised: a native side that
-    // printed 42 from a table would still be wrong about the arithmetic.
+    // --- The program, in source order -------------------------------------
+    // var answer = 6 * 7;  computed, not copied: a native side that printed
+    // 42 from a table would still be wrong about the arithmetic.
     %six = "emitc.constant"() <{value = 6 : i32}> : () -> i32
     %seven = "emitc.constant"() <{value = 7 : i32}> : () -> i32
     %product = emitc.mul %six, %seven : (i32, i32) -> i32
@@ -218,7 +218,7 @@ module {
     %g_yes = emitc.get_global @yes : !emitc.lvalue<i1>
     emitc.assign %true : i1 to %g_yes : !emitc.lvalue<i1>
 
-    // var no = 1 > 2;  - COMPARED, not memorised, for the same reason as above.
+    // var no = 1 > 2;  computed, not copied, for the same reason as above.
     %one_i = "emitc.constant"() <{value = 1 : i32}> : () -> i32
     %two_i = "emitc.constant"() <{value = 2 : i32}> : () -> i32
     %greater = emitc.cmp gt, %one_i, %two_i : (i32, i32) -> i1
@@ -226,10 +226,10 @@ module {
     emitc.assign %greater : i1 to %g_no : !emitc.lvalue<i1>
 
     // var looks_null = "null";  var looks_numeric = "42";
-    // THE TWO STRINGS THAT LOOK LIKE OTHER KINDS. Their lines are
+    // The two strings that look like other kinds. Their lines are
     // `looks_null="null"` and `looks_numeric="42"`; without the quotes the
     // first would be the line a `null` global prints and the second the line
-    // the number 42 prints, and the gate could not tell them apart.
+    // the number 42 prints, and the comparison could not tell them apart.
     %lit_looks_null = emitc.literal "\"null\"" : !emitc.opaque<"std::string">
     %g_looks_null = emitc.get_global @looks_null : !emitc.lvalue<!emitc.opaque<"std::string">>
     emitc.assign %lit_looks_null : !emitc.opaque<"std::string"> to %g_looks_null : !emitc.lvalue<!emitc.opaque<"std::string">>
@@ -250,17 +250,17 @@ module {
 
     // var raw = "a=1;b\\c\"d%e ÿ\ud800";
     //
-    // CONSTRUCTED WITH AN EXPLICIT LENGTH, 17, and that is not a style
-    // choice: the seventeen bytes include a NUL at index 11, and
-    // std::string(const char *) would stop there and lose the last five. The
-    // three bytes ED A0 80 are the lone surrogate's WTF-8.
+    // Constructed with an explicit length, 17, because the seventeen bytes
+    // include a NUL at index 11 and std::string(const char *) would stop
+    // there and lose the last five. The three bytes ED A0 80 are the lone
+    // surrogate's WTF-8.
     %lit_raw = emitc.literal "std::string(\"a=1;b\\\\c\\\"d%e\\x00\\xC3\\xBF\\xED\\xA0\\x80\", 17)" : !emitc.opaque<"std::string">
     %g_raw = emitc.get_global @raw : !emitc.lvalue<!emitc.opaque<"std::string">>
     emitc.assign %lit_raw : !emitc.opaque<"std::string"> to %g_raw : !emitc.lvalue<!emitc.opaque<"std::string">>
 
-    // var nothing = null;  var missing;   - no storage, nothing to assign.
+    // var nothing = null;  var missing;   No storage, nothing to assign.
 
-    // --- THE OUTPUT CONVENTION: every global, sorted bytewise by name -------
+    // --- The output convention: every global, sorted bytewise by name -------
     %fmt = emitc.literal "\"%s=%.17g\\n\"" : !emitc.ptr<!emitc.opaque<"const char">>
 
     %o_answer = emitc.load %g_answer : !emitc.lvalue<i32>
@@ -284,7 +284,7 @@ module {
     %n_looks_numeric = emitc.literal "\"looks_numeric\"" : !emitc.ptr<!emitc.opaque<"const char">>
     emitc.call_opaque "ctnative::print_string"(%n_looks_numeric, %o_looks_numeric) : (!emitc.ptr<!emitc.opaque<"const char">>, !emitc.opaque<"std::string">) -> ()
 
-    // undefined: A NAME AND NOTHING ELSE. No load, because there is no storage.
+    // undefined: a name and nothing else. No load, because there is no storage.
     %n_missing = emitc.literal "\"missing\"" : !emitc.ptr<!emitc.opaque<"const char">>
     emitc.call_opaque "ctnative::print_undefined"(%n_missing) : (!emitc.ptr<!emitc.opaque<"const char">>) -> ()
 

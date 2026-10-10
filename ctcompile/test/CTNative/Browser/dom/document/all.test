@@ -1,2 +1,2 @@
-# Bound document queries produce local snapshots of typed C++ element views.
+# document.querySelectorAll through an alias of document returns a native snapshot of elements.
 # RUN: python3 %S/all.py %dom_driver

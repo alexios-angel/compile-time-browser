@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Execute native classList methods against the shared DOM token-list core."""
+"""Check that native classList.add/remove/contains call the public DOM helpers.
+
+The lowered code must call ctnative::add_class and friends (the DOM token-list
+implementation), run correctly on owned and borrowed documents, and refuse
+unsupported argument shapes and escaping classList objects.
+"""
 
 from CTNative.Browser.dom import dom
 
@@ -182,8 +187,9 @@ def main():
         source = f"function bad(element) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, f"refused-{index}", source, 1)
         dom.refuse(args, refused, manifest, f"refused-{index}")
-    # Even no-argument writes invalidate saved dataset views. A membership
-    # query leaves the same source epoch intact.
+    # add() and remove() invalidate a saved `dataset` view even with no
+    # arguments; contains() does not modify the element, so the view stays
+    # valid.
     for method in ("add", "remove", "contains"):
         token = "'x'" if method == "contains" else ""
         source = (
@@ -209,6 +215,7 @@ def main():
         name = f"void-{owned}-{optimize}"
         native = dom.lower(args, void_ir, manifest, name, optimize=optimize)
         dom.standalone(args, native, name, VOID_CHECKS, compilers, includes, libraries)
+    # Analysis budgets too small to finish must refuse.
     for budget in (0, 1, 20):
         dom.lower(args, ir, contract, f"budget-{budget}", max_steps=budget, success=False)
     stale = dict(contract, module_sha256="0" * 64)

@@ -1,2 +1,2 @@
-# Class list actions and queries call the shared public DOM token-list implementation.
+# Native classList add/remove/contains call the public DOM token-list helpers.
 # RUN: python3 %S/class_list.py %dom_driver

@@ -1,4 +1,4 @@
-// The complete vendor Data holder, including its arrow getter and early return.
+// Bootstrap's minified Data registry (a Map of per-element Maps), used directly.
 //--- class-map-record-nested-vendor-holder.js
 function probe() {
     const t = new Map,
@@ -35,7 +35,7 @@ function probe() {
 }
 var a = probe();
 
-
+// The same registry, with Item's constructor registering `this`.
 //--- class-map-record-nested-vendor-constructor.js
 function probe() {
     const t = new Map,
@@ -73,7 +73,7 @@ function probe() {
 }
 var a = probe();
 
-
+// The getter arrow reads lexical `this` (undefined in strict mode) before the lookup.
 //--- class-map-record-nested-vendor-live-this.js
 function probe() {
     "use strict";
@@ -111,7 +111,7 @@ function probe() {
 }
 var a = probe();
 
-
+// An extra `inspect` method passes the registry Map to an unknown function.
 //--- class-map-record-nested-vendor-unused-observer.js
 function probe() {
     const t = new Map,

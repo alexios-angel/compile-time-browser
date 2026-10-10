@@ -1,9 +1,24 @@
-"""native dom string provenance: continued from native_dom_string_harness."""
+"""Mutation checks for the native DOM String tests.
+
+Each *_checks function edits one proof-carrying anchor in a lowered ctjs module
+(closure slot, capture cell, call target, regexp literal, ...) and requires both
+DOM providers to refuse the result with the expected diagnostic, or, for edits
+that must not matter, to lower it unchanged. Each returns the number of
+lowerings it checked: refuse_mutants checks 4 per variant (2 providers x
+optimize on/off), plus one per step budget passed to dom.exhaust.
+Module chain: cases.py -> harness.py -> this file -> strings.py.
+"""
 
 from CTNative.Browser.dom.string.harness import *
 
 
 def emitted(args, module, name, *, optional_read=True, uri_call=False, callbacks=0):
+    """Check lowered `module` is fully native and return (cpp_text, entry_symbol).
+
+    It must hold exactly 1 + `callbacks` typed DOM entries and no VM fallback,
+    and its C++ must reach attributes through the shared ctnative DOM helpers
+    (`optional_read`) or decodeURIComponent without a C++ catch (`uri_call`).
+    """
     text = module.read_text()
     entries = dom.NATIVE.findall(text)
     if len(entries) != 1 + callbacks or dom.FUNCTION.search(text) or "ctnative.not_native" in text:
@@ -61,15 +76,19 @@ def refuse_mutants(args, contract, prefix, variants):
 
 
 def completion_provenance_checks(args, ir, contract):
+    """Mutate the three-return helper's completion dispatch (cases.py's
+    HELPER_COMPLETION_SOURCE). Returns 4 per variant, plus 4 unsigned-selector
+    comparisons and 3 budget probes."""
     original = ir.read_text()
     helper = next(
         body
         for body in re.findall(r"^  ctjs\.func [^\n]+\n.*?^  }\n", original, re.M | re.S)
         if "@read$3(" in body.splitlines()[0]
     )
-    # An unsigned cast turns i32 -1 into index 4294967295. Like completion
-    # code 1, that selects the default arm and returns the same active value.
-    # Keep the former refusal mutation as an exact native-body equivalence check.
+    # An unsigned cast turns i32 -1 into index 4294967295, which, like
+    # completion code 1, selects the default arm and returns the same value.
+    # So replacing 1 with -1 must produce a byte-identical native body
+    # (ignoring the provenance attribute).
     before, after = "arith.constant 1 : i32", "arith.constant -1 : i32"
     if helper.count(before) != 1:
         raise RuntimeError("completion unsigned selector anchor changed")
@@ -123,6 +142,9 @@ def completion_provenance_checks(args, ir, contract):
 
 
 def helper_provenance_refusals(args, ir, contract):
+    """Mutate the local helper's closure and direct call (the helper_read
+    case) and check helper-depth limits. Returns 4 per variant plus 4 depth
+    probes."""
     original = ir.read_text()
 
     def once(text, old, new):
@@ -212,8 +234,9 @@ def helper_provenance_refusals(args, ir, contract):
                 f"helper-provenance-{name}-{owned}",
                 f"error: native DOM source: {reason}",
             )
-    # Each local helper calls only its own capture-free child. The 64th
-    # expansion must hit the depth bound, independently of the work budget.
+    # A chain of 64 nested helpers, each calling only its own capture-free
+    # child, must be refused as too deep. That depth limit is separate from
+    # the work budget.
     body = "return target.getAttribute('x') === null;"
     for depth in reversed(range(64)):
         body = f"function deep{depth}(target) {{ {body} }} return deep{depth}(target);"
@@ -274,6 +297,10 @@ def helper_provenance_refusals(args, ir, contract):
 
 
 def factory_provenance_checks(args, ir, contract, *, table=False):
+    """Mutate an entry created by a top-level factory call (host_factory_key),
+    or, with `table`, selected from the object it returns
+    (host_factory_table_key). Returns 4 per variant, plus 1 indirect-call
+    lowering that must succeed and 3 budget probes."""
     prefix = "factory-table" if table else "factory"
     original = ir.read_text()
     creator = "ctjs.create_closure %arg2[1] this %1"
@@ -337,6 +364,8 @@ def factory_provenance_checks(args, ir, contract, *, table=False):
 
 
 def host_provenance_checks(args, ir, contract):
+    """Mutate a top-level entry that captures a top-level key
+    (host_capture_key). Returns 4 per variant plus 3 budget probes."""
     original = ir.read_text()
     closure = "ctjs.create_closure %arg2[1] this %3 captures %2"
     export = 'ctjs.store_global "host_capture_key", %4'
@@ -367,6 +396,9 @@ def host_provenance_checks(args, ir, contract):
 
 
 def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
+    """Mutate a helper's captured key cell (`ir`, helper_capture_key) and a
+    captured callable's storage (`graph_ir`, helper_capture_callable).
+    Returns 4 per variant, 1 budget probe and 4 lowerings per storage edit."""
     original = ir.read_text()
     closure = "ctjs.create_closure %arg2[2] this %3 captures %2"
     load = "ctjs.load_upvalue %arg2[0]"
@@ -453,6 +485,8 @@ def capture_provenance_checks(args, ir, contract, graph_ir, graph_contract):
 
 
 def forwarded_provenance_checks(args, ir, contract):
+    """Mutate a capture forwarded through an enclosing helper
+    (capture_forwarded). Returns 4 per variant plus 1 budget probe."""
     original = ir.read_text()
     closure = "ctjs.create_closure %arg2[3] this %2 captures %1"
     indices = "enclosing_indices = array<i32: 0>"
@@ -491,6 +525,8 @@ def forwarded_provenance_checks(args, ir, contract):
 
 
 def method_provenance_checks(args, ir, contract):
+    """Mutate an object-literal helper method call (helper_object_method);
+    the "direct" variant must still lower. Returns 4 per variant."""
     original = ir.read_text()
     call = "ctjs.call %6(%1, %arg3, %7)"
     direct = "ctjs.call_direct @fn$2(%1, %2, %6, %arg3, %7)"
@@ -549,6 +585,9 @@ def method_provenance_checks(args, ir, contract):
 
 
 def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
+    """Mutate the regexp, flags and callback of Bootstrap's F in a lowered
+    module; the argument-only edits must still lower. Returns 4 per variant
+    plus 3 budget probes."""
     original = ir.read_text()
     variants = {
         "factory": ('ctjs.load_global "__ctbrowser_regexp"', 'ctjs.load_global "RegExp"'),
@@ -593,6 +632,9 @@ def regexp_provenance_checks(args, ir, contract, *, prefix="replacement"):
 
 
 def check_regexp_matching(args):
+    """Run REGEXP_MATCHING (plus REGEXP_CASES with --regexp-only) on Node, the
+    VM and natively, comparing the result and the data-bs-* attributes left
+    behind. With --regexp-only also check the regexp refusals."""
     cases = dict(REGEXP_MATCHING)
     if args.regexp_only:
         cases.update({name: (body, "true") for name, (body, _) in REGEXP_CASES.items()})

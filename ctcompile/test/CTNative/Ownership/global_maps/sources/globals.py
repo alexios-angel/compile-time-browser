@@ -1,6 +1,16 @@
-"""sources globals: continued from sources_numeric_globals."""
+"""Scalar and constant global test cases.
+
+JS sources whose top-level globals hold a Number, Boolean, String or undefined,
+with the expected native output and, for refused cases, the one-line edit that
+makes them admissible. Builds on numeric_globals.py.
+"""
 
 from .numeric_globals import *
+
+# Case-name sets. SCALAR_GLOBAL_UNOWNED cases must be refused because a read
+# can see a value the compiler cannot prove; SCALAR_GLOBAL_CARRIERS are refused
+# because one global carries several values; SCALAR_GLOBAL_INITIALIZED cases are
+# aliases or direct stores whose saved globals keep the stored value's type.
 
 SCALAR_GLOBAL_UNOWNED = {
     "scalar_read_before_write",
@@ -15,6 +25,8 @@ SCALAR_GLOBAL_INITIALIZED = {"scalar_alias", "scalar_single_write_repair"}
 
 
 def scalar_global_cases():
+    """Return {name: row} for the scalar-global cases; each row holds the source,
+    expected trace, saved globals, call counts and the refusal reason."""
     historical = numeric_entry_cases()
     rows = {}
 
@@ -180,9 +192,9 @@ def scalar_global_cases():
         "a constant-only Number global has no completed published-result dependency",
         repair=("const copy = fixed;", "const copy = 7;", "scalar_constant_literal_repair"),
     )
-    # Keep the measured alias-only sources and their arithmetic repairs intact.
-    # Exact initialization evidence now removes only the implicit Undefined seed;
-    # the actual stored SSA value still supplies the independently inferred type.
+    # Alias-only sources and their arithmetic repairs stay byte-identical. The
+    # compiler drops only the implicit `undefined` initial value; the type comes
+    # from the value actually stored.
     alias = rows["scalar_alias"]["source"]
     add(
         "scalar_alias_number_repair",
@@ -284,6 +296,8 @@ def scalar_global_sources():
 
 
 def scalar_global_refusals():
+    """Return {name: (source, trace, removed, replacement, repair, calls)} for
+    the UNOWNED cases; replacing `removed` with `replacement` gives `repair`."""
     return {
         name: (
             row["source"],
@@ -299,6 +313,7 @@ def scalar_global_refusals():
 
 
 def scalar_global_values(name):
+    """Return the {global: value} map case `name` saves, or {} if none."""
     saved = {
         "local_add_saved_results": {"first": 1, "second": 1, "third": 1},
         "local_numeric_saved_snapshot": {"first": 1, "second": 2},
@@ -322,6 +337,8 @@ STRING_GLOBAL_LONG = StringValue("owned-string-payload-" * 48 + "\x00tail")
 
 
 def scalar_global_output(name, value):
+    """Return the expected `global=value` lines, sorted by name, that the
+    native program prints for case `name` with `trace` set to `value`."""
     saved = scalar_global_values(name)
     globals_ = {**saved, "trace": value}
 
@@ -339,9 +356,9 @@ def scalar_global_output(name, value):
     return "".join(f"{binding}={printed(result)}\n" for binding, result in sorted(globals_.items()))
 
 
-# The twelve original probes and twelve candidate edits were measured before
-# constant-only Number admission. Keep their exact bytes; Boolean originals and
-# candidates now need both live scalar proof and independently typed observations.
+# sha256 pins of twelve original sources and their repaired ("_candidate")
+# versions, checked in constant_global_cases() so these cases cannot drift.
+# Boolean cases additionally need live scalar proof and typed observations.
 CONSTANT_GLOBAL_HISTORY = {
     "constant_exact_historical": (
         "3c1dfd95d22834d6ce64c352ab515f628fddd4e03168acf709642d62243c1491",
@@ -410,12 +427,15 @@ CONSTANT_GLOBAL_CARRIERS = {
     "constant_boolean_mixed_write",
     "constant_string_duplicate_write",
     "constant_string_mixed_write",
-    # Pure entry selections retain ownership; mixed globals still block Map identity.
+    # A global chosen between constants in the entry stays owned, but a global
+    # holding mixed types still blocks Map identity.
     "constant_boolean_optional",
     "constant_boolean_mixed",
     "constant_string_optional",
     "constant_string_mixed",
 }
+# Cases that duplicate an existing scalar-global case; constant_global_cases()
+# checks the sources match and they are not compiled twice.
 CONSTANT_GLOBAL_EXISTING = {
     "constant_exact_historical": "scalar_constant_only",
     "constant_exact_historical_candidate": "scalar_constant_literal_repair",
@@ -423,6 +443,8 @@ CONSTANT_GLOBAL_EXISTING = {
 
 
 def constant_global_cases():
+    """Return {name: row} for globals initialized from constants, in the same
+    row layout as scalar_global_cases()."""
     historical = scalar_global_cases()
     source = historical["scalar_constant_only"]["source"]
     snapshot = numeric_entry_cases()["local_numeric_saved_snapshot"]["source"]
@@ -793,8 +815,3 @@ def normalized_scalar_output(output):
     # Both reference and native printf may spell Number NaN as -nan. Do not
     # normalize any other value or turn a string, Undefined or infinity into NaN.
     return re.sub(r"(?m)^(\w+)=\-nan$", r"\1=nan", output)
-
-
-# The original String-field source and its Number repair keep their exact
-# bytes, function count and seven calls. Other names beginning field_string
-# preserve the post-417cd0ac continuation probe, including its long saved read.

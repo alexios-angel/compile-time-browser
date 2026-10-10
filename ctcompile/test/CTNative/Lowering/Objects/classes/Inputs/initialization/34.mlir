@@ -1,4 +1,4 @@
-// Every exact leaf construction supplies Numbers, including the later Map replacement.
+// Every `new Item` passes Numbers, including the second one that replaces the entry.
 //--- class-map-inherited-base-numeric-arguments.js
 function base_numeric_arguments() {
     const values = new Map();
@@ -16,7 +16,7 @@ function base_numeric_arguments() {
 }
 var a = base_numeric_arguments();
 
-// Numeric division and negation preserve infinity, NaN and signed zero after publication.
+// Division and negation keep Infinity, NaN and -0 in fields written after Base stores `this`.
 //--- class-map-inherited-base-numeric-special.js
 function base_numeric_special() {
     const values = new Map();
@@ -32,7 +32,7 @@ function base_numeric_special() {
 }
 var a = base_numeric_special();
 
-// Numeric bitwise coercions and unary plus never invoke a user-defined conversion.
+// Bitwise operators and unary plus on a Number never call a user-defined valueOf.
 //--- class-map-inherited-base-numeric-bitwise.js
 function base_numeric_bitwise() {
     const values = new Map();
@@ -48,7 +48,7 @@ function base_numeric_bitwise() {
 }
 var a = base_numeric_bitwise();
 
-// A first numeric construction cannot authorize arithmetic for a later String argument.
+// Refused: a later `new Item("7")` makes `n + 1` string concatenation.
 //--- class-map-inherited-base-numeric-later-string.js
 function base_numeric_later_string() {
     const values = new Map();
@@ -65,7 +65,7 @@ function base_numeric_later_string() {
 }
 var a = base_numeric_later_string();
 
-// Object coercion can inspect the partial receiver and replace its Map entry reentrantly.
+// Refused: valueOf on an object argument reads the half-built object and re-enters `new`.
 //--- class-map-inherited-base-numeric-coercion-reentry.js
 function base_numeric_coercion_reentry() {
     const values = new Map();
@@ -88,7 +88,7 @@ function base_numeric_coercion_reentry() {
 }
 var a = base_numeric_coercion_reentry();
 
-// A Boolean argument is primitive but outside the exact Number input proof.
+// Refused: a Boolean argument is primitive, but only Number arguments are handled.
 //--- class-map-inherited-base-numeric-boolean.js
 function base_numeric_boolean() {
     const values = new Map();
@@ -104,7 +104,7 @@ function base_numeric_boolean() {
 }
 var a = base_numeric_boolean();
 
-// A property read is not an exact numeric producer, even with a numeric new-site argument.
+// Refused: `this.n + 1` reads a property, so it is not known to be a Number.
 //--- class-map-inherited-base-numeric-read.js
 function base_numeric_read() {
     const values = new Map();
@@ -120,7 +120,7 @@ function base_numeric_read() {
 }
 var a = base_numeric_read();
 
-// Numeric helper results need a separate effect proof before base publication can move.
+// Refused: a helper call's result needs its side effects checked separately.
 //--- class-map-inherited-base-numeric-helper.js
 function base_numeric_helper() {
     const values = new Map();

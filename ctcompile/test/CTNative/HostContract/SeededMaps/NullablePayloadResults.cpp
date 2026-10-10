@@ -1,7 +1,19 @@
+//===- NullablePayloadResults.cpp - Nullable values stored in a Map -------===//
+//
+// Host-contract proofs for a Map whose stored value may be a String or null:
+// put$3 stores and reads it back, and a new size$4 method consumes the read.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Rewrites the nullable-getter fixture \p nullable so put$3 stores its
+/// nullable key as the value and returns a `get` of it, and adds a size$4
+/// method that takes that result. Checks the get -> put -> size chain is
+/// proved with String|Null payloads, that aliasing, deletes and branches
+/// update the payload set, and that unknown payloads, budgets and live edits
+/// withhold the proof. \p prepared selects the call_direct form.
 void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string & nullable,
                                  bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -57,6 +69,9 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
         source = replaced(source, "    %answer = ctjs.call %getter(%owned, %falseFlag)", consumer);
     }
     source = replaced(source, "    %getter = ctjs.get_property %owned[%key]\n", "");
+    // Checks a proved query has the three edges get$2, put$3, size$4 in order,
+    // each fed by the previous call's result; size$4's argument is typed by
+    // \p resultMask.
     const auto edges = [&](mlir::ModuleOp module, const HostContractAnalysis & query,
                            unsigned resultMask) {
         const auto calls = query.callables();
@@ -195,6 +210,7 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
             Alternatives::Undefined);
     variant(replaced(source, read, "    %loaded = ctjs.call %reader(%this, %entryKey)"), false,
             "a different receiver cannot inherit captured Map payload evidence");
+    // One row per variant() call above; update this when adding a case.
     check(rows == 16, "all nullable payload propagation and refusal rows ran");
     for (const auto & [program, label] :
          {std::pair{source, "nullable payload"}, std::pair{conditional, "nullable payload join"}}) {
@@ -203,6 +219,7 @@ void checkNullablePayloadResults(mlir::MLIRContext & context, const std::string 
         auto contract = mapContractFor(*module);
         HostContractAnalysis complete(*module, contract);
         const unsigned completion = complete.steps();
+        // 20000 is a ceiling well above this fixture's step count.
         check(complete.proved() && completion < 20000,
               "the nullable payload dependency proof stays within its fixture work limit");
         if (!complete.proved() || completion >= 20000) { continue; }

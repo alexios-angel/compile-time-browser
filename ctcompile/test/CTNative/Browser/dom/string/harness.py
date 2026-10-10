@@ -1,4 +1,8 @@
-"""native dom string harness: continued from native_dom_string_cases."""
+"""Shared data for the native DOM String tests.
+
+Extends cases.py with host-capture cases (HOST_CASES), the Node oracle, the C++
+client templates and the refusal tables; provenance.py builds on this module.
+"""
 
 from CTNative.Browser.dom.string.cases import *
 
@@ -6,6 +10,9 @@ BOOLEAN_SOURCES = tuple(
     (name, f"function {name}(element) {{ {body} }}\n", 1)
     for name, (body, _) in BOOLEAN_CASES.items()
 )
+# Entries defined at script top level that capture top-level bindings (keys,
+# helpers, factories). Same (source, expected digits) format as BOOLEAN_CASES:
+# one digit per initial `x` of null, '', 'a\0b' and '\u00e9'.
 HOST_CASES = {
     "host_factory_original_h": (
         "var host_factory_original_h = (function() {\n"
@@ -336,8 +343,9 @@ BOOLEAN_CHECKS = {
         assert(doc.read().attribute_value(node, atoms.intern("class")) == "test-token");""",
 }
 
-# This double supplies only the source's platform methods. Node runs the same
-# entry bodies imported below; real DOM casing/namespaces are checked separately.
+# This stand-in element supplies only the methods the sources call. Node runs
+# the same entry bodies; real DOM casing and namespaces are checked by the
+# native client against the real DOM.
 ORACLE = r"""
 const assert = require('node:assert/strict');
 const names = [];
@@ -592,6 +600,7 @@ BOOLEAN_RUN = r"""
     }
 """
 
+# Entry bodies the native compiler must refuse, keyed by test name.
 REFUSALS = {
     "branch_unsafe_then": "if (element.hasAttribute('x')) { element.unknown(); } return true;",
     "branch_unsafe_else": "if (element.hasAttribute('x')) { element.setAttribute('a', 'b'); } else { element.unknown(); } return true;",
@@ -618,6 +627,7 @@ REFUSALS = {
     "extra-name": "return element.getAttribute('x', 'y');",
     "non-string-name": "return element.getAttribute(null);",
 }
+# Refusals whose entry reaches the DOM through local helper functions.
 HELPER_REFUSALS = {
     "helper_completion_unsafe_middle": "function read(target) { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') { target.unknown(); return true; } return false; } return read(element);",
     "helper_completion_unsafe_tail": "function read(target) { if (target.getAttribute('x') === null) return false; if (target.getAttribute('x') === '') return true; target.unknown(); return false; } return read(element);",
@@ -696,6 +706,9 @@ HELPER_REFUSALS = {
     "helper_object_unknown_effect": "const helpers = {read(target) { return target.getAttribute('x'); }}; sideEffect(); return helpers.read(element);",
     "helper_object_nested_receiver": "const helpers = {read(target) { const observe = () => this; observe(); return target.getAttribute('x'); }}; return helpers.read(element);",
 }
+# Refusals around String.prototype.replace with a regexp, mostly Bootstrap's F
+# with a dynamic key or an overridden RegExp/String method. The "matching"
+# entries are moved to REGEXP_MATCHING below.
 REGEXP_REFUSALS = {
     "template_optional": "return element.getAttribute(`data-${element.getAttribute('x')}`);",
     "template_element": "return element.getAttribute(`data-${element}`);",
@@ -780,7 +793,9 @@ for case in ("names", "consumers", "chain"):
             REGEXP_REFUSALS[f"regex_captured_{case}_{kind}_{order}"] = REGEXP_CASES[
                 f"helper_regex_captured_{case}"
             ][0].replace(before, after, 1)
-# Preserve every original matching source, including its return type and effects.
+# Variants whose key has a capital letter ("matching": F rewrites it) now
+# compile instead of refusing. Move them out of REGEXP_REFUSALS, unchanged,
+# with their expected result; check_regexp_matching in provenance.py runs them.
 REGEXP_MATCHING = {
     name: (
         REGEXP_REFUSALS.pop(name),
@@ -795,6 +810,8 @@ REGEXP_MATCHING = {
 }
 HELPER_REFUSALS.update(REGEXP_REFUSALS)
 REFUSALS.update(HELPER_REFUSALS)
+# Top-level scripts whose `host_refusal` entry the native compiler must refuse:
+# its captured state can change, escape or be observed outside the entry.
 HOST_REFUSALS = {
     "host_wrapper_receiver": "const key = this; function host_refusal(element) { return element.getAttribute(key); }",
     "host_reassigned": "let key = 'x'; function host_refusal(element) { return element.getAttribute(key); } key = 'y'; key = 'z';",

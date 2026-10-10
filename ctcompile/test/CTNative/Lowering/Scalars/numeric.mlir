@@ -1,20 +1,20 @@
-// THE FIRST NATIVE ARTEFACT, as IR - part 24 Phase 62½-C.
+// A numeric JavaScript program lowered to native EmitC, checked at the IR level.
 //
-// A numeric JavaScript program goes in; EmitC over `double` comes out, with
+// The program goes in; EmitC over `double` comes out, with
 // no `ctjs` operation and no `!ctjs.value` left in any function that was
 // accepted, and a reason on every function that was not. The compilation-unit
-// gate (check-native-unit.cmake) is where this becomes a binary and gets
-// compared with the interpreter; this file is where the SHAPE is pinned.
+// check (Checks/compilation-unit.py) builds it into a binary and compares that
+// with the interpreter; this file pins the shape of the IR.
 //
-// Calls are not resolved here yet - that is --ctjs-resolve-globals, Phase
-// 62½-A - so the functions with parameters are refused by name, and the
-// refusal is the assertion - it names the parameter and what would prove it.
+// The pipeline below does not run --ctjs-resolve-globals, so calls stay
+// unresolved and every function with parameters is refused by name. The
+// refusal is the assertion: it names the parameter and what would prove it.
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s \
 // RUN:   | ctjs-opt --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s
-// The disabled baseline keeps the literal power operation whose runtime
-// lowering this test inspects; default precomputation replaces it with a constant.
+// optimize=false keeps the literal power operation whose runtime lowering
+// this test inspects; the default precomputation folds it to a constant.
 
 var total = 0;
 var count = 0;
@@ -27,21 +27,21 @@ var neg = -ratio;
 var big = 2 ** 31;
 function scale(x) { return x * 2; }
 
-// --- THE TOP LEVEL IS main, AND THE GLOBALS ARE STATIC DOUBLES ---------------
+// --- The top level is main, and the globals are static scalars ------------
 //
 // Undefined until the first store: NaN. Then the loop - lifted to scf.while
 // and left there for --convert-scf-to-emitc - and at the end every global is
-// printed under the gate's convention, sorted by name.
+// printed in the format compilation-unit.py compares, sorted by name.
 //
-// OPERATIONS INSIDE emitc.func PRINT WITHOUT THEIR DIALECT PREFIX at the top
-// level of the body and WITH it inside an scf region, so the patterns below
+// Operations inside emitc.func print without their dialect prefix at the top
+// level of the body and with it inside an scf region, so the patterns below
 // name the operation and not the prefix.
 //
 // CHECK: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
-// NO INITIALISER, deliberately: static zero-initialisation gives 0, so a
+// No initialiser, deliberately: static zero-initialisation gives 0, so a
 // global a program never wrote is distinguishable from one it computed a NaN
-// into. Initialising these to NaN made those two cases the same bytes and any
-// global whose right answer is NaN un-failable in the differential.
+// into. Initialising these to NaN would make those two cases the same bytes and
+// any global whose right answer is NaN impossible to fail in the comparison.
 // CHECK: emitc.global static @g_big : !emitc.opaque<"ctnative::nullable_scalar">
 // CHECK-NOT: = 0x7FF8000000000000
 // CHECK: emitc.global static @g_count : !emitc.opaque<"ctnative::nullable_scalar">
@@ -57,8 +57,8 @@ function scale(x) { return x * 2; }
 // CHECK: div
 // CHECK: unary_minus
 // `**` is emitted as its guard and then the call: NaN when the base has
-// magnitude one and the exponent is not finite, std::pow otherwise. Pinning
-// the bare call is what let the divergence sit here unnoticed.
+// magnitude one and the exponent is not finite, std::pow otherwise.
+// Pinning only the bare call would not catch a missing guard.
 // CHECK: call_opaque "std::fabs"
 // CHECK: call_opaque "std::isfinite"
 // CHECK: call_opaque "std::pow"
@@ -69,7 +69,7 @@ function scale(x) { return x * 2; }
 // CHECK: call_opaque "printf"({{.*}}) {ctnative.const_operands = array<i32: 0, 1>} : (!emitc.ptr<!emitc.opaque<"const char">>, f64) -> ()
 // CHECK: return %{{.*}} : i32
 
-// --- A FUNCTION NOBODY PROVES IS REFUSED, BY NAME --------------------------
+// --- A function no caller proves is refused, by name ----------------------
 //
 // `scale` has a parameter and no resolved caller, so its type is boxed and the
 // diagnostic says which parameter and what would change that. It stays a

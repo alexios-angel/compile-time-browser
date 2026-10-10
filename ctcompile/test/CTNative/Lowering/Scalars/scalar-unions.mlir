@@ -1,5 +1,5 @@
 // Scalar-only unions have an exact tagged carrier, including global output.
-// Wider unions remain refusals; the differential fixture checks the
+// Wider unions are still refused; Fixtures/Scalars/scalar-unions.js checks the
 // runtime distinction among booleans, numbers, null and undefined.
 // Keep both source alternatives: default precomputation can erase the union.
 //

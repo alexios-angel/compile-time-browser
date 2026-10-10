@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Check callback-parameter removal before and after exact call resolution."""
+"""Check that callback parameters lower natively, whether the callback call is
+still indirect (`ctjs.call`) or already resolved to a direct call, and that
+each unsafe variant of the hand-written guards.mlir is refused.
+"""
 
 import argparse
 from pathlib import Path
@@ -13,6 +16,10 @@ NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CL
 
 
 def resolve_callbacks(source, mixed=False):
+    """Rewrite each wrapper's indirect `ctjs.call %arg3(...)` into a
+    `ctjs.call_direct` to its known callback target, padding missing arguments
+    with undefined. With `mixed`, only the first of invokeMixed's two calls is
+    rewritten, so one direct and one indirect call remain."""
     functions = {match[1].split("$")[0]: match for match in FUNCTION.finditer(source)}
     callbacks = {
         "invoke": "doubleIt",
@@ -27,6 +34,8 @@ def resolve_callbacks(source, mixed=False):
         body = match[0]
         symbol = functions[target][1]
         header = functions[target][0].split(" -> ", 1)[0]
+        # Every ctjs.func takes this, new.target and the callee before its
+        # declared parameters.
         arity = header.count("!ctjs.value") - 3
         seen = 0
 
@@ -61,6 +70,9 @@ def resolve_callbacks(source, mixed=False):
 
 
 def guard_cases(base):
+    """Variants of guards.mlir, each made by filling one placeholder comment
+    (EXTRA_CALLER, WRAPPER_USE, FACTORY_USE, EXTRA_FUNCTION) or editing one
+    call, mapped to (IR text, expected ctnative.callback_refusal)."""
     escape = "the callback value or its identity escapes the call-only parameter"
     other = (
         "ctjs.func @other$3(%receiver: !ctjs.value, %new_target: !ctjs.value, "
@@ -197,8 +209,8 @@ def main():
             or re.search(r"\bemitc\.func @main\(", output)
         ):
             raise RuntimeError(f"{name}: missing intended refusal\n{output}")
-    # Malformed direct signatures must receive the verifier's arity diagnostic,
-    # never reach getOperand(parameter) with an out-of-range wrapper argument.
+    # A direct call with too few operands must get the verifier's arity
+    # diagnostic, and never reach getOperand(parameter) out of range.
     for name, source, diagnostic in [
         (
             "short-wrapper",

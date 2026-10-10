@@ -1,5 +1,5 @@
-// Materialize independent arrays from Map's insertion-ordered iterators.
-// Every observation is numeric for the independent native gate.
+// Standard Maps: NaN, -0, string and boolean keys, mutation, aliasing, and
+// arrays built from the insertion-ordered iterators. Every global is a Number.
 function numericKeys() {
     var map = new Map();
     map.set(0 / 0, 2);
@@ -51,7 +51,7 @@ function zeroKey() {
     var map = new Map();
     map.set(-0, 1).set(0, 2);
     var keys = Array.from(map.keys());
-    // The current interpreter retains the first key's sign, unlike ES Map.
+    // Map.prototype.set normalises -0 to +0, so this is +Infinity, despite the name.
     return 1 / keys[0];
 }
 var zeroNegativeInfinity = zeroKey();

@@ -1,4 +1,4 @@
-// One exact holder slot publishes the completed receiver through its captured Map.
+// The constructor's last call, `Data.put(this)`, stores the finished instance in the Map.
 //--- class-map-record-constructor-holder-direct.js
 function constructor_holder_direct() {
     const values = new Map();
@@ -12,7 +12,7 @@ function constructor_holder_direct() {
 }
 var a = constructor_holder_direct();
 
-// Replacing and deleting the entry does not move either saved alias's concrete owner.
+// Overwrite and delete do not change which instance each earlier get result refers to.
 //--- class-map-record-constructor-holder-overwrite-delete.js
 function constructor_holder_overwrite_delete() {
     const values = new Map();
@@ -31,7 +31,7 @@ function constructor_holder_overwrite_delete() {
 }
 var a = constructor_holder_overwrite_delete();
 
-// The proof follows the actual literal key and completed numeric field expression.
+// The key and the computed numeric field come from the actual source, not fixed values.
 //--- class-map-record-constructor-holder-numeric.js
 function constructor_holder_numeric() {
     const values = new Map();
@@ -45,7 +45,7 @@ function constructor_holder_numeric() {
 }
 var a = constructor_holder_numeric();
 
-// Returning the holder keeps its helper and captured Map reachable after the frame exits.
+// Refused: returning `Data` keeps its method and the captured Map alive past the function.
 //--- class-map-record-constructor-holder-escaped.js
 function constructor_holder_escaped() {
     const values = new Map();
@@ -59,7 +59,7 @@ function constructor_holder_escaped() {
 var holder = constructor_holder_escaped();
 var a = typeof holder.put === "function" ? 7 : 0;
 
-// A second holder alias remains an independent use even when it republishes the same owner.
+// Refused: `alias.put` is a second use of the holder, even though it stores the same object.
 //--- class-map-record-constructor-holder-alias.js
 function constructor_holder_alias() {
     const values = new Map();
@@ -74,7 +74,7 @@ function constructor_holder_alias() {
 }
 var a = constructor_holder_alias();
 
-// A second closure capturing the holder prevents its sole-constructor retirement.
+// Refused: a second closure captures `Data`, so it is not used only by the constructor.
 //--- class-map-record-constructor-holder-captured-observer.js
 function constructor_holder_captured_observer() {
     const values = new Map();
@@ -89,7 +89,7 @@ function constructor_holder_captured_observer() {
 }
 var a = constructor_holder_captured_observer();
 
-// Even an unused second slot is outside the single publication-helper proof.
+// Refused: the holder has a second method, even unused; only one-method holders handled.
 //--- class-map-record-constructor-holder-second-slot.js
 function constructor_holder_second_slot() {
     const values = new Map();
@@ -105,7 +105,7 @@ function constructor_holder_second_slot() {
 }
 var a = constructor_holder_second_slot();
 
-// Sharing the holder between constructor families needs a complete caller-family proof.
+// Refused: two classes share the holder; each caller would need checking.
 //--- class-map-record-constructor-holder-second-constructor.js
 function constructor_holder_second_constructor() {
     const values = new Map();
@@ -122,7 +122,7 @@ function constructor_holder_second_constructor() {
 }
 var a = constructor_holder_second_constructor();
 
-// A holder call before receiver initialization is not a terminal publication.
+// Refused: `Data.put(this)` runs before the fields are written, not as the last statement.
 //--- class-map-record-constructor-holder-early.js
 function constructor_holder_early() {
     const values = new Map();
@@ -135,7 +135,7 @@ function constructor_holder_early() {
 }
 var a = constructor_holder_early();
 
-// A later throw leaves the published receiver reachable without a completed owner.
+// Refused: a throw after storing `this` leaves a half-built object in the Map.
 //--- class-map-record-constructor-holder-throw-after.js
 function constructor_holder_throw_after() {
     const values = new Map();
@@ -152,7 +152,7 @@ function constructor_holder_throw_after() {
 }
 var a = constructor_holder_throw_after();
 
-// Expansion must not erase a publication helper's observable receiver.
+// Refused: `put` reads `this`, so inlining it must keep the holder object.
 //--- class-map-record-constructor-holder-receiver.js
 function constructor_holder_receiver() {
     const values = new Map();
@@ -165,7 +165,7 @@ function constructor_holder_receiver() {
 }
 var a = constructor_holder_receiver();
 
-// A later slot replacement changes the exact callable captured by the constructor.
+// Refused: `Data.put` is reassigned, so the constructor calls a different function.
 //--- class-map-record-constructor-holder-replaced.js
 function constructor_holder_replaced() {
     const values = new Map();
@@ -179,7 +179,7 @@ function constructor_holder_replaced() {
 }
 var a = constructor_holder_replaced();
 
-// A separate captured Map observer remains outside the exclusive publication proof.
+// Refused: another closure also reads the Map, so the holder is not its only user.
 //--- class-map-record-constructor-holder-map-observer.js
 function constructor_holder_map_observer() {
     const values = new Map();
@@ -193,7 +193,7 @@ function constructor_holder_map_observer() {
 }
 var a = constructor_holder_map_observer();
 
-// Publishing does not authorize a later helper write to the receiver.
+// Refused: `put` also writes a field of the stored object after storing it.
 //--- class-map-record-constructor-holder-helper-write.js
 function constructor_holder_helper_write() {
     const values = new Map();
@@ -206,7 +206,7 @@ function constructor_holder_helper_write() {
 }
 var a = constructor_holder_helper_write();
 
-// Returning the receiver exceeds the publication helper's undefined-return contract.
+// Refused: `put` returns its argument; only methods returning undefined are handled.
 //--- class-map-record-constructor-holder-helper-return.js
 function constructor_holder_helper_return() {
     const values = new Map();
@@ -219,7 +219,7 @@ function constructor_holder_helper_return() {
 }
 var a = constructor_holder_helper_return();
 
-// A captured alias cell is not visible in the direct holder source-use census.
+// Refused: an alias of `Data` used in a closure is missed by the scan of direct uses.
 //--- class-map-record-constructor-holder-alias-capture.js
 function constructor_holder_alias_capture() {
     const values = new Map();
@@ -235,7 +235,7 @@ function constructor_holder_alias_capture() {
 }
 var a = constructor_holder_alias_capture();
 
-// A second Map cell preserves an observer after the publication helper retires.
+// Refused: a second name for the Map lets a closure read it after `put` is inlined.
 //--- class-map-record-constructor-holder-map-alias-capture.js
 function constructor_holder_map_alias_capture() {
     const values = new Map();
@@ -250,7 +250,7 @@ function constructor_holder_map_alias_capture() {
 }
 var a = constructor_holder_map_alias_capture();
 
-// This slice requires the own slot to be complete before the constructor captures it.
+// Refused: `Data.put` is assigned after the class that calls it is defined.
 //--- class-map-record-constructor-holder-late-slot.js
 function constructor_holder_late_slot() {
     const values = new Map();

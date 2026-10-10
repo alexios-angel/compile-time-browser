@@ -1,2 +1,2 @@
-# All initialized Boolean state and captures are confined to one exact If arm.
+# Boolean state initialized and captured inside one if-arm compiles natively.
 # RUN: python3 %S/arm_state.py %dom_driver --node %node --reference %native_reference

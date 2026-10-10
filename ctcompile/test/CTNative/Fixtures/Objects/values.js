@@ -1,5 +1,5 @@
-// The exact Bootstrap getter with owning component identities and scalar payloads.
-// Fieldful components and the vendor's UMD/console paths remain separate gates.
+// makeData() is Bootstrap 5's Data store (element -> key -> value Maps), used
+// here with object identities and primitive values; other fixtures cover the rest.
 function makeInstance() {
     return {};
 }
@@ -149,7 +149,7 @@ function loopValue(limit) {
     }
     return value === instance ? 1 : (value === null ? 2 : 0);
 }
-// A definite identity also needs a typed inert slot on the loop's exit arm.
+// After the loop the lowering must still know which object `value` is (zero runs: the original).
 function identityLoop(limit) {
     const map = new Map();
     const original = {};

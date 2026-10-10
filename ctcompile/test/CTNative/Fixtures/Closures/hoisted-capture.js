@@ -1,63 +1,63 @@
-// A BINDING WITH ONE DOMINATING WRITE - part 24 Phase 59, slice 2 step 1,
-// through the compilation-unit gate.
+// Closures that capture a hoisted `var` written exactly once, compiled
+// natively and checked end to end by the compilation-unit test.
 //
-// EVERY CAPTURE HERE IS A HOISTED `var`, which is the shape slice 1 refused
-// whole and the shape a real program is made of.
-// `compiler_impl::predeclare_locals` hoists every `var`/`let`/`const` of a body
-// to the top and BOXES it there holding `undefined`, so `var n = 5` compiles to
-// a `ctjs.create_cell` of a constant undefined in the prologue and a
-// `ctjs.cell_set` into that already-built box where the declaration is written.
-// The box is therefore written after it is built, slice 1's immutability proof
-// said "reassigned", and every function on this page was refused. Measured on
-// phaser before this step: 715 closures refused for exactly that, 81 on p5, 16
-// on bootstrap.
+// Every capture here is a hoisted `var`, the shape real programs are made of.
+// `compiler_impl::predeclare_locals` hoists every `var`/`let`/`const` of a
+// body to the top and boxes it there holding `undefined`, so `var n = 5`
+// compiles to a `ctjs.create_cell` of undefined in the prologue plus a
+// `ctjs.cell_set` into that box where the declaration is written. A rule that
+// required the box never to be written after creation would call it
+// "reassigned" and refuse every function in this file, and most closures in
+// the Phaser, p5 and Bootstrap corpora.
 //
-// A BINDING WRITTEN ONCE IS CONSTANT AFTER THAT WRITE. The value a lifted call
-// prepends is then the STORE'S operand rather than the cell's initial, and what
-// makes that exact is dominance:
+// Each function below orders the closure's creation, the store and the call
+// differently; all must print the stored value.
 //
-//   1. exactly ONE ctjs.cell_set names the box;
-//   2. it DOMINATES every ctjs.cell_get of the cell - so no read in this frame
+// A binding written once is constant after that write. The value a lifted
+// call prepends is then the store's operand rather than the cell's initial
+// value, and dominance is what makes that exact:
+//
+//   1. exactly one ctjs.cell_set names the box;
+//   2. it dominates every ctjs.cell_get of the cell, so no read in this frame
 //      can see the hoisted `undefined`;
-//   3. it DOMINATES every CALL of every closure that captured the cell - so no
+//   3. it dominates every call of every closure that captured the cell, so no
 //      call can either.
 //
-// CONDITION 3 IS ABOUT THE CALL AND NOT ABOUT THE `function` KEYWORD, and that
-// is the whole of this step. A FUNCTION DECLARATION IS HOISTED: `get` in
-// `one_level` below is created by an `op::closure` in the PROLOGUE, before
-// `var base = 7` runs, because JavaScript makes it callable on the body's first
-// line. A rule that asked the store to dominate the create_closure refused
-// every program here - measured, all seven. What the lift actually does is
-// prepend the captured VALUE at each CALL, and a closure reads its box when it
-// RUNS (run_loop.cpp, VM_CASE(get_upvalue): `reg = cell->slot`), so the call is
-// the point that has to follow the write.
+// Condition 3 is about the call, not about where the closure is created. A
+// function declaration is hoisted: `get` in `one_level` below is created by
+// an `op::closure` in the prologue, before `var base = 7` runs, because
+// JavaScript makes it callable from the body's first line. Requiring the store
+// to dominate the create_closure would refuse every program here. The lift
+// prepends the captured value at each call, and a closure reads its box when
+// it runs (run_loop.cpp, VM_CASE(get_upvalue): `reg = cell->slot`), so the
+// call is the point that has to follow the write.
 //
 // AND THE INITIAL IS NOT CHECKED, deliberately. Conditions 2 and 3 make it
-// unobservable - nothing can read the box on a path that skips the store - so
-// requiring a constant `undefined` there would narrow the rule for a claim it
-// does not need. It is `undefined` in every function below anyway, because that
-// is what a hoist boxes.
+// unobservable (nothing can read the box on a path that skips the store), so
+// requiring a constant `undefined` there would narrow the rule for nothing.
+// It is `undefined` in every function below anyway, because that is what a
+// hoist boxes.
 //
-// EVERY CAPTURE IS READ IN THE INNERMOST BODY, not merely passed along: a lift
-// that prepended the cell's initial rather than the stored value compiles clean
-// and prints `undefined` - NaN in the native carrier - and only the interpreter
-// can say so. That is what the gate below is.
+// Every capture is read in the innermost body, not just passed along. A lift
+// that prepended the cell's initial value instead of the stored one would
+// still compile and would print `undefined` (NaN in the native carrier), and
+// only the comparison against the interpreter catches that.
 //
-// THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
-// to write a module while any function carries `ctnative.not_native`. A binding
-// written twice, a read the write does not dominate, and a write inside a loop
-// whose call is after it are one program apiece in
-// CTNative/Lowering/closure-refusals.mlir, under split-file.
+// Refused shapes cannot live here: test/CTNative/Checks/pipeline.cmake fails
+// if any function carries `ctnative.not_native`. A binding written twice, a
+// read the write does not dominate, and a write inside a loop whose call is
+// after the loop each have their own program in
+// test/CTNative/Lowering/Closures/refusals.mlir, under split-file.
 //
-// The answers, worked out by hand and NOT asserted anywhere - the interpreter is
-// the reference, by definition. Seven globals, seven distinct values, so a wrong
-// one cannot hide behind a right one:
+// Expected values, worked out by hand and not asserted here: the interpreter
+// is the reference. Seven globals, seven distinct values, so a wrong one
+// cannot hide behind a right one:
 //   one21 = 21      two22 = 22       three32 = 32     after20 = 20
 //   reads24 = 24    loop64 = 64      computed49 = 49
 
-// ONE LEVEL, AND THE CLOSURE IS CREATED BEFORE THE WRITE. `get` is a hoisted
+// One level, with the closure created before the write. `get` is a hoisted
 // declaration, so its `op::closure` runs in the prologue and the store to
-// `base` runs after it; the CALL runs after both, which is condition 3.
+// `base` runs after it; the call runs after both, which is condition 3.
 function one_level() {
     var base = 7;
 
@@ -67,9 +67,9 @@ function one_level() {
     return get();
 }
 
-// TWO LEVELS. `k` is a hoisted `var` of `two_levels`, boxed once in its
+// Two levels. `k` is a hoisted `var` of `two_levels`, boxed once in its
 // prologue; `deep` names it from two frames out and reaches it through `mid`'s
-// closure, which is slice 1b's mechanism over slice 2's binding.
+// closure: the capture is passed down through each enclosing closure in turn.
 function two_levels() {
     var k = 10;
 
@@ -82,7 +82,7 @@ function two_levels() {
     return mid();
 }
 
-// THREE LEVELS, so the lift's fixpoint needs three rounds and the value the
+// Three levels, so the lift's fixpoint needs three rounds and the value the
 // innermost call is handed has been passed through two capture parameters.
 function three_levels() {
     var k = 5;
@@ -99,9 +99,9 @@ function three_levels() {
     return mid();
 }
 
-// A CLOSURE CREATED AFTER THE STORE AND CALLED THROUGH A LOCAL, which is the
-// other order and the one a reader expects. `apply` is a function EXPRESSION,
-// so its create_closure sits where it is written - after the store - and it is
+// A closure created after the store and called through a local: the other
+// order, and the one a reader expects. `apply` is a function expression, so
+// its create_closure sits where it is written, after the store, and it is
 // called twice through the local that holds it.
 function after_store(x) {
     var scale = 4;
@@ -111,8 +111,8 @@ function after_store(x) {
     return apply(x) + apply(x + 1);
 }
 
-// WRITTEN ONCE, READ MANY TIMES, AND IN TWO PLACES. `step` is read directly in
-// this frame AND through the capture in `at`, three times; the one store
+// Written once, read many times, in two places. `step` is read directly in
+// this frame and through the capture in `at`, three times; the one store
 // dominates all four reads, which is conditions 2 and 3 together.
 function many_reads(n) {
     var step = 3;
@@ -123,14 +123,14 @@ function many_reads(n) {
     return step + at(1) + at(2) + at(n);
 }
 
-// THE LOOP SHAPE THAT IS ADMISSIBLE, and it is not the one a reader would
-// guess. `var` is FUNCTION-scoped and predeclare_locals boxes at the top, so
-// `v` is ONE box created in the prologue and not a fresh box per iteration -
-// there is no per-iteration binding in this compiler to admit. What makes this
-// exact is that the write and the call are both inside the loop body, in that
-// order: the call is dominated by the write, so it reads the value this
-// iteration stored, and that is what the lift prepends. Move the call after the
-// loop and dominance fails, which closure-refusals.mlir pins.
+// The loop shape that compiles, which is not the one a reader would guess.
+// `var` is function-scoped and predeclare_locals boxes at the top, so `v` is
+// one box created in the prologue, not a fresh box per iteration; this
+// compiler has no per-iteration binding. This is exact because the write and
+// the call are both inside the loop body, in that order: the write dominates
+// the call, so the call reads the value this iteration stored, and that is
+// what the lift prepends. Moving the call after the loop breaks dominance;
+// test/CTNative/Lowering/Closures/refusals.mlir pins that refusal.
 function per_iteration(n) {
     var total = 0;
     var i = 0;
@@ -145,10 +145,10 @@ function per_iteration(n) {
     return total;
 }
 
-// THE WRITE IS A COMPUTATION, NOT A LITERAL. What the lift prepends at each
-// call site is the operand of the store - here a `ctjs.binary` result - so this
-// is the case that fails if anything ever goes back to reading the cell's
-// initial, and it fails as a number rather than as a refusal.
+// The write is a computation, not a literal. What the lift prepends at each
+// call site is the store's operand, here a `ctjs.binary` result, so this case
+// fails if anything ever reads the cell's initial value again, and it fails
+// as a wrong number rather than as a refusal.
 function computed(a, b) {
     var span = b - a;
 

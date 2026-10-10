@@ -1,2 +1,2 @@
-# Actual synchronous shared Boolean state survives class and closure normalization.
+# Two callbacks sharing one local Boolean cell in a class method compile natively.
 # RUN: python3 %S/captures.py %dom_driver --node %node --reference %native_reference

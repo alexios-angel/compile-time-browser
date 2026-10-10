@@ -1,2 +1,2 @@
-# Focus on original Bootstrap replacement bodies, keys, effects and provenance.
+# Only the regexp cases of strings.py: unmodified Bootstrap replace() bodies, keys, effects.
 # RUN: python3 %S/strings.py --regexp-only %dom_driver --node %node --reference %native_reference

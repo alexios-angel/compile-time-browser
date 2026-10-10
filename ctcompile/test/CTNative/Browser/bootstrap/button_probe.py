@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Preserve original Bootstrap Button lifecycle and its current native boundary.
+"""Run Bootstrap's unmodified Button component through Node, the VM and native lowering.
 
-The element below is an explicit JavaScript test double for Node/the interpreter,
-not a browser API implementation or evidence of native DOM/component support.
-Vendor Config, BaseComponent, Button and their helper dependencies stay verbatim.
+The vendor Config, BaseComponent and Button code (with its helper dependencies)
+is cut from the pinned bootstrap.bundle.js verbatim, keeping its line positions,
+and driven by a fake element. That element is a JavaScript test double for Node
+and the reference VM; it is not a browser API and not evidence of native DOM
+support. Node and the reference VM must report the same lifecycle observations;
+native lowering must account for every function and give a reason for each one
+it refuses.
 """
 
 import hashlib
@@ -135,6 +139,7 @@ var trace = D.k === 7 ? 1 : 0;
 
 
 def source():
+    """Return (program, provenance): the pinned Button program and its metadata."""
     spec = importlib.util.spec_from_file_location(
         "bootstrap_data_probe", ROOT / "tools/check/bootstrap-data-probe.py"
     )
@@ -159,6 +164,7 @@ def source():
     provenance.update(
         program_sha256=hashlib.sha256(program.encode()).hexdigest(),
         program_bytes=len(program.encode()),
+        # Vendor line ranges kept verbatim: Config/BaseComponent and Button.
         preserved_vendor_ranges=[[1, 330], [420, 433]],
         vendor_line_offset=PRELUDE.count("\n"),
         preserved_prefix_sha256=hashlib.sha256(prefix.encode()).hexdigest(),
@@ -174,6 +180,7 @@ def source():
 
 
 def observe(args, name, program, expected):
+    """Run program in Node and the reference VM and require both to print expected."""
     js = args.work / f"{name}.js"
     js.write_text(program)
     node = node_globals(args.node, js, sorted(expected))
@@ -235,8 +242,8 @@ def main():
             "--ctjs-resolve-globals",
             "--ctjs-lift-to-scf",
             "--mlir-print-debuginfo",
-            # Upstream cf.switch custom syntax cannot reparse a multi-result
-            # operand (%v#1); generic MLIR preserves the prepared module.
+            # The upstream cf.switch custom syntax cannot reparse a multi-result
+            # operand (%v#1), so print generic MLIR, which round-trips.
             "--mlir-print-op-generic",
             "-o",
             str(prepared),
@@ -272,6 +279,8 @@ def main():
             or not all(reasons)
         ):
             raise RuntimeError("Button native census lost functions or precise refusals")
+        # Pinned census: 86 imported functions, 4 lowered natively, and the top
+        # level (_script_$0) refused. Update these together with the vendor pin.
         if (functions, native) != (86, 4) or "_script_$0" not in refusals:
             raise RuntimeError("Button admission changed: require a real native lifecycle gate")
         reports.append(

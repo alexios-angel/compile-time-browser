@@ -1,2 +1,2 @@
-# Forwarded primitive captures retain their original cell and complete use proof.
+# Primitives declared outside a class and forwarded into its callbacks lower natively.
 # RUN: python3 %S/forwarding.py %dom_driver --node %node --reference %native_reference

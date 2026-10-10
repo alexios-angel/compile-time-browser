@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
-"""Prove fixed primitive callback captures without dropping effects or identity checks."""
+"""Test class-method callbacks that capture a fixed primitive (a `const` String and friends).
+
+The native lowering may substitute the captured value, but must keep the
+callback's DOM writes and its `this`/`new.target` checks. Each CASES source runs
+under Node and the reference VM, then lowers natively and runs against a real
+ctbrowser document; each BAD source must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.class_dom import callbacks
 from CTNative.harness import run
 
+# callbacks.METHOD with the written attribute value read from a captured `label`.
 METHOD = callbacks.METHOD.replace("const local =", "const label = 'done'; const local =").replace(
     "node.setAttribute('inside', 'done')", "node.setAttribute('inside', label)"
 )
-# Keep the original refused source, including its false result and stored value.
+# The capture holds 'inside', so the callback's comparison with 'done' is false:
+# the probe returns false and stores 'inside'. The lowering once refused this
+# exact source.
 ORIGINAL = METHOD.replace("const label = 'done'", "const label = 'inside'")
 MIXED = METHOD.replace(
     "const local =",
@@ -77,6 +86,9 @@ BAD = {
     ).replace("const result = local(target);", "local(target); const result = true;"),
     "forwarded-capture": METHOD.replace("const label = 'done'; ", ""),
 }
+# Every bad case gets the shared call harness. "forwarded-capture" moves the
+# `label` declaration out of the method to the top of the probe, where it is a
+# valid capture, so it is moved to CASES and must compile.
 BAD = {
     name: ("const label = 'done'; " if name == "forwarded-capture" else "")
     + method
@@ -120,10 +132,10 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks, args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.exhaust(args, ir, declared, name, [0, 8], "{budget} did not exhaust capture proof")
-        refusals += 4
+        refusals += 4  # Two undeclared-intrinsic refusals and two exhausted budgets (0, 8).
     for name, body in BAD.items():
         ir, contract = dom.prepare(args, name, callbacks.source(body), 2, entry_name="probe")
         declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
@@ -138,8 +150,8 @@ def main():
                 max_steps=1000000,
             )
             if name == "discarded-effect":
-                # Literal substitution succeeds before the ambient-effect proof
-                # fails. Refusal must restore the original captured body.
+                # Substituting the literal succeeds before the ambient-effect
+                # check fails; the refusal must restore every captured read.
                 assert diagnostic.count("ctjs.load_upvalue") == ir.read_text().count(
                     "ctjs.load_upvalue"
                 ), diagnostic

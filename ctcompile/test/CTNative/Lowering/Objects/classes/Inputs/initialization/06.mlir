@@ -113,7 +113,7 @@ function captured_helper_nested() {
 }
 var a = captured_helper_nested();
 
-// Captured base constructors and lexical-super targets retain their own gates.
+// Captured base constructors and `super` method targets keep their own separate admission rules.
 //--- inherited-helper-constructor.js
 function inherited_helper_constructor() {
     const plus = n => n + 1;

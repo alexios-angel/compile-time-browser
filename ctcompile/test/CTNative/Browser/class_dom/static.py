@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Expand exact static factories (`new this` in a static body) before the native DOM class proof."""
+"""Test static factory methods (`static create(el) { return new this(el); }`).
+
+The native lowering expands a call such as `Button.create(element)` into the
+construction it performs before proving the class code native. Each CASES
+source must match Node and the reference VM and run natively; each BAD source
+must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import run
 
+# The class-support intrinsics a compiled class needs; the probe declares all.
 INTRINSICS = [
     "__ctbrowser_class_defined",
     "__ctbrowser_class_heritage",
@@ -46,7 +53,9 @@ CHECKS = r"""
         (void)doc.take_writes();
 """
 
-# Each keeps a static read or body the expansion must not take.
+# Each makes the static read or factory body unsafe to expand: a conditional
+# result, a reassigned or detached method, a computed name, new.target, the
+# wrong constructor argument, or an accessor that shadows the factory.
 BAD = {
     "conditional": CASES["own"].replace(
         "return new this(el);",
@@ -73,9 +82,11 @@ BAD = {
 
 
 def source(body):
+    """Wrap `body` as the probe(element) entry function."""
     return "function probe(element) {\n" + body + "\n}\n"
 
 
+# A JavaScript stand-in element for the Node and VM oracles.
 ELEMENT = (
     "{attributes: {}, setAttribute(k, v) { this.attributes[k] = String(v); },"
     " getAttribute(k) { return k in this.attributes ? this.attributes[k] : null; }}"
@@ -99,11 +110,11 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, CHECKS, args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(
             args, ir, dict(contract, initial_intrinsics=INTRINSICS[1:]), name + "-undeclared"
         )
-        refusals += 2
+        refusals += 2  # Without __ctbrowser_class_defined: refused under both policies.
         dom.lower(args, ir, declared, name + "-budget", success=False, max_steps=0)
         refusals += 1
     for name, body in BAD.items():

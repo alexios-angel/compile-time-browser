@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Gate private DOM Data storage against the unchanged source proof and real documents."""
+"""Compile a JS per-element data store (a private Map keyed by element) natively.
+
+The source comes from HostContract/dom-data-inputs.py. Each variant is checked
+against Node and the reference VM, lowered to C++, and run by C++ clients that
+pass foreign, dangling and detached elements.
+"""
 
 import importlib.util
 from pathlib import Path
@@ -153,6 +158,8 @@ def main():
         ),
     ):
         js, ir, contract, count = source.prepare(args, "data-" + variant, original)
+        # The source defines 7 functions; the native module keeps all but one
+        # inert declaration (checked as count - 1 below).
         if count != 7:
             raise RuntimeError("Data source census changed")
         report, _ = source.check_report(
@@ -176,8 +183,9 @@ def main():
                     f"{variant}: source observations disagree with native expectations"
                 )
         if variant == "snapshot":
-            # Preserve the first refused source: helper support alone cannot
-            # authorize a missing complete-family snapshot proof.
+            # The snapshot variant (Array.from(state.values())) must still be
+            # refused: supporting the helper call does not prove the whole Map
+            # iteration safe.
             if report["reason"] != "property call lacks a current source getter proof":
                 raise RuntimeError("snapshot source refusal changed")
             for optimize in (False, True):
@@ -238,6 +246,9 @@ def main():
                     )
                     if result.stdout != "DOM Data passed\n" or result.stderr:
                         raise RuntimeError("DOM Data lifetime check failed")
+                    # Negative controls: without the per-entry table reset the
+                    # client must fail, and the session's host global must not
+                    # be reachable from outside the class.
                     broken = path.with_suffix(".missing-reset.cpp")
                     changed = cpp.replace("data_table_0 = {};", "")
                     if changed == cpp:

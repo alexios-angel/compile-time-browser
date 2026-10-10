@@ -1,16 +1,16 @@
-# THE NATIVE GATE OVER nested-closure.js. The modules are the build's: Native.cmake's
-# ctcompile_add_native_pipeline lowers this program through the closed world,
-# the lift and the lowering (refusing to write a module while any function
-# carries `ctnative.not_native`), then applies the printing policy and its
-# mutation. Each is gated here: compiled standalone with no ctbrowser library,
-# shown by nm to reach no interpreter, run, and compared global by global with
-# the interpreter's own answer (compilation-unit.py); compiled clean on both
-# toolchains with a provenance comment over every definition (compile-clean.py);
-# and the printed pins paired, spelling-only, and shown to bite (print-deduced.py).
-# A trailing global on a RUN line under `not` is the off-by-one negative proof:
-# the mutation must fail naming that global, so the gate's teeth stay in the suite.
+# Native differential test of nested-closure.js. The modules come from
+# ctcompile_add_native_pipeline in Native.cmake, which lowers the program to
+# native C++ (writing no module while any function carries `ctnative.not_native`)
+# plus a variant printed with deduced `auto` types and one with a wrong type pin.
+# compilation-unit.py compiles a module standalone, checks with nm that it calls
+# no interpreter, runs it, and compares every global with the interpreter's.
+# compile-clean.py checks a warning-free build on both toolchains with a
+# provenance comment over every definition. print-deduced.py checks that the
+# deduced module differs only in type spellings and that the wrong pin fails.
+# A `not ... --mutate G` line adds one to global G in the C++ and expects the
+# comparison to fail naming G, proving the comparison can catch a difference.
 
-# Slice 1b: a capture filled from the enclosing closure (`enclosing_indices`).
+# A capture filled from the enclosing closure (`enclosing_indices`).
 # RUN: %compilation_unit --module %{obj}/nested_closures.pipeline.emitc.mlir --js %S/nested-closure.js --work %t --name nested_closures
 # RUN: not %compilation_unit --module %{obj}/nested_closures.pipeline.emitc.mlir --js %S/nested-closure.js --work %t --name nested_closures_off_by_one --mutate twice727 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
 # OFF-BY-ONE: global 'twice727' differs

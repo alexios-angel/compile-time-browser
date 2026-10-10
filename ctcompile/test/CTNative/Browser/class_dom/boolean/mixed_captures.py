@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Consume fixed Boolean captures while retaining the actual shared mutable cell."""
+"""Check that two callbacks sharing one mutable Boolean cell and also capturing
+fixed Boolean constants compile natively and match Node and the VM, and that
+variants where a fixed capture can change, plus hand-mutated IR, are refused."""
 
 import hashlib
 import re
@@ -12,7 +14,9 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
-# Exact mixed-slot source measured before this proof: mutable indices [1, 0].
+# Base program: two callbacks capture one mutable Boolean cell (`seen`) and
+# fixed Boolean constants (`off`, `on`). In the lowered IR the mutable cell is
+# at upvalue index 1 in the reader and 0 in the writer; main() asserts that.
 METHOD = (
     captures.METHOD.replace(
         "let seen = false;", "const off = false, on = true;\n    let seen = false;"
@@ -31,9 +35,10 @@ CASES = {
     ),
     "repeated-reset": METHOD.replace("    mark();", "    mark(); seen = false; mark(); mark();"),
     "conditional-leaf": METHOD.replace("seen = on;", "if (on) { seen = on; }"),
-    # The same fixed cell occurs at different original slots in both callbacks.
+    # The same fixed cell sits at different capture slots in the two callbacks.
     "three-slots": METHOD.replace("off === seen", "off === seen === on"),
-    # Preserve the two previous extra-capture refusals byte for byte.
+    # Programs from captures.py and conditionals.py with one extra fixed capture;
+    # SOURCE_HASHES pins their exact text so an edit upstream is noticed.
     "extra-reader": captures.METHOD.replace(
         "const pending", "const flag = true; const pending"
     ).replace("() => !seen", "() => seen === flag"),
@@ -41,11 +46,17 @@ CASES = {
         "const pending", "const flag = true; const pending"
     ).replace("if (!seen)", "if (seen === flag)"),
 }
+# SHA-256 of the full generated source for these cases. A change to an imported
+# METHOD or to callbacks.source() fails here instead of silently testing a
+# different program.
 SOURCE_HASHES = {
     "mixed-slots": "3d7d43ec563abf14d1a857681cacd3c6b72658ac423da145d07f47bb3fe4535d",
     "extra-reader": "b9a02865ea1a724385fca786e4e119323f905d458963ddfeac214dd0fd0be313",
     "extra-condition": "0012fb20616a7ab0de4a40cb05ca3af77c0bfc30a062547f27916c451822334a",
 }
+# Programs the native lowering must refuse, leaving the source operations
+# unchanged: a writer to a fixed capture, a capture read before initialization,
+# a non-Boolean or computed value, an escaping callback, or a side effect.
 BAD = {
     "second-mutable": METHOD.replace(
         "    const before = pending();",
@@ -84,12 +95,19 @@ BAD = {
 
 
 def observations(name):
+    """Return the (attribute, value) writes one item.run() makes for case name."""
     if name == "extra-reader":
         return [("before", "false"), ("after", "true")]
     return [("before", "true"), ("after", "true" if name == "extra-condition" else "false")]
 
 
 def shape(text):
+    """Find the method creating two callbacks with more than one capture.
+
+    Returns (owner, cell, closures, leaves, slots, indices): the owner function,
+    the one cell a callback writes, the create_closure matches, the callback
+    bodies, each callback's captured operands and the cell's slot in each.
+    """
     bodies = captures.functions(text)
     for owner in bodies:
         closures = list(
@@ -134,6 +152,8 @@ def shape(text):
 
 
 def roots(text):
+    """Yield (label, valid, invalid) IR with a `ctjs.root` placed inside or after
+    the frame of each captured cell, closure and callee."""
     owner, cell, closures, leaves, slots, _ = shape(text)
     selected = []
     for value in sorted(set(sum(slots, []))):
@@ -156,6 +176,7 @@ def roots(text):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     owner, cell, closures, leaves, slots, indices = shape(text)
     closure, reader, writer = closures[0], leaves[0], leaves[1]
     yield (
@@ -210,8 +231,8 @@ def mutations(text):
         + closure[0].replace(closure[2] + "[", initial + "[", 1)
         + text[owner.start() + closure.end() :],
     )
-    # This writer is dormant and addresses the nominally fixed slot in the
-    # same original body. A read replacement cannot conceal it.
+    # Add a store to the writer's fixed slot 1. Replacing reads of fixed slots
+    # with their constant must not hide this write; it must be refused.
     extra = f"    ctjs.store_upvalue {store[1]}[1], {store[3]}"
     writer_exit = re.search(r"^    ctjs\.frame_exit %\w+", writer[0], re.M)
     yield "additional-fixed-writer", captures.insert(text, writer, writer_exit.start(), extra)
@@ -221,8 +242,9 @@ def mutations(text):
         + reader[0].replace("upvalue_count = 2 : i32", "upvalue_count = 3 : i32")
         + text[reader.end() :],
     )
-    # Parameter normalization runs during fixed-cell discovery. A changing
-    # captured formal must refuse before that normalization can retire it.
+    # Initialize the mutable cell from a formal parameter instead of a literal.
+    # Fixed-cell discovery also normalizes parameters, and must refuse this
+    # before that normalization could replace the parameter.
     made = re.search(rf"^    {re.escape(cell)} = ctjs\.create_cell %\w+", owner[0], re.M)
     yield (
         "formal-initial",
@@ -233,6 +255,7 @@ def mutations(text):
 
 
 def verifier_mutations(text):
+    """Yield (label, IR) pairs with bad enclosing_indices that the verifier rejects."""
     owner, _, closures, _, _, _ = shape(text)
     closure = closures[0]
     for label, indices in (

@@ -1,24 +1,24 @@
-// THE CALL-GRAPH FIXPOINT'S TWO DIAGNOSTICS, WHICH NOTHING PINNED.
+// Pins the two diagnostics of the call-graph fixpoint in LowerToEmitC.cpp.
 //
-// The lowering admits each function on its own merits and then CLOSES THE SET
-// OVER THE CALL GRAPH, in both directions: a native caller needs a native
+// The lowering admits each function on its own merits and then closes the set
+// over the call graph, in both directions: a native caller needs a native
 // callee to emit an emitc.call to, and a native callee needs every caller
 // native too, because a refused caller keeps a ctjs.call_direct that has to
-// name a ctjs.func with a body - which a lowered function no longer is.
+// name a ctjs.func with a body, which a lowered function no longer is.
 //
-// THE FIXPOINT IS THE ONE PLACE THAT OVERWRITES A REASON `admission` ALREADY
-// WROTE. Everywhere else in the pass the first refusal wins and is kept
+// The fixpoint is the one place that overwrites a reason admission already
+// wrote. Everywhere else in the pass the first refusal wins and is kept
 // (`admission::refuse` returns early when `why` is non-empty); here a function
-// that was ACCEPTED gets a reason for the first time, and a function whose
+// that was accepted gets a reason for the first time, and a function whose
 // caller is refused has its own precise reason replaced by this vague one. So
-// a change in this loop can silently turn "field `class` is a C++ keyword..."
-// into "called by `f$3`, which is not native" on every function in a bundle,
-// and no gate in the tree would have said a word. These two strings are the
-// only thing standing under that.
+// a change in this loop could silently turn "field `class` is a C++ keyword..."
+// into "called by `f$3`, which is not native" on every function in a bundle;
+// these two strings are the only test that would notice.
 //
-// ONE PROGRAM PER FILE, and see the header of shape-field-names.mlir for why
-// that is not tidiness: a refusal is contagious in BOTH directions - which is
-// the entire subject here - so the two directions cannot share a module.
+// One program per split-file input (see the header of
+// Objects/shape-field-names.mlir): a refusal spreads in both directions, which
+// is the subject here, so the two directions cannot share a module, or one
+// direction's refusal would mask the other's.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unsupported-calledby.js 2>/dev/null \
@@ -42,15 +42,15 @@
 // MIXED: emitc.func @main
 // MIXED: emitc.func @helper_1
 
-// --- FORWARDS: a refused callee refuses its caller --------------------------
+// --- Forwards: a refused callee refuses its caller --------------------------
 //
-// `bad` reads `this`, which has no native carrier, and is refused STRUCTURALLY
-// - no types needed, so the diagnostic does not move when inference does.
+// `bad` reads `this`, which has no native carrier, and is refused structurally:
+// no types are needed, so the diagnostic does not move when inference does.
 // `good` passes admission on its own: every argument it passes is a number and
-// the value it gets back is one. It is the fixpoint that drops it, and the
-// reason NAMES THE CALLEE. Then the same step reaches the top level, which
-// calls `good`, so the reason there names `good` and not `bad` - one hop at a
-// time, which is what makes the roadmap readable.
+// the value it gets back is one. The fixpoint drops it, and the reason names
+// the callee. The same step then reaches the top level, which calls `good`, so
+// its reason names `good`, not `bad`: each reason points one hop closer to the
+// root cause.
 //
 // CALLS: ctjs.func {{.*}}@_script_$0
 // CALLS-SAME: ctnative.not_native = "calls `good$2`, which is not native"
@@ -59,16 +59,16 @@
 // CALLS: ctjs.func {{.*}}@good$2
 // CALLS-SAME: ctnative.not_native = "calls `bad$1`, which is not native"
 
-// A nullable caller no longer excludes its otherwise native callee. Preserve
-// this original source as a positive; the separate unsupported BigInt
-// global below still checks backwards refusal through the same helper call.
+// A caller that stores a nullable global is still native, so its callee is
+// too. The BigInt case (CALLEDBY) is the one that checks backwards refusal
+// through the same helper call.
 // ABSENT-NOT: ctnative.not_native
 // ABSENT: emitc.func @main
 // ABSENT: call_opaque "ctnative::print_scalar"
 // ABSENT: emitc.func @helper_1
 // ABSENT-NOT: ctnative.not_native
 
-// The original String global now emits both functions and a typed observation.
+// A String global is supported: both functions lower and the global prints.
 // STRING: emitc.func @main
 // STRING: call_opaque "ctnative::global_string"
 // STRING: emitc.func @helper_1

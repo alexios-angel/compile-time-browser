@@ -1,10 +1,10 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/exceptions.py --translate ctjs-translate --opt ctjs-opt --fixtures %t --work %t.executables --node %node --reference %native_reference --build %build
 
-// Source programs retain runtime branches and both normal and throwing calls.
-// The checker compares independent Node and interpreter results with explicit
-// and deduced standalone C++ under GCC and Clang. The main specimen has exactly
-// two source functions, including its script entry; neither may be omitted.
+// Each fixture below is a JS program whose try/catch must compile to native C++
+// or be refused, as listed in exceptions.py. exceptions.py builds the native ones
+// with GCC and Clang and checks they match Node and the interpreter. Each
+// fixture's expected function count is in exceptions.py (including the script entry).
 
 //--- guarded.js
 function guarded(flag) {
@@ -146,8 +146,8 @@ function stringValue(flag) {
     try {
         mark = "throw: ";
         if (flag) {
-            // A separate assignment preserves the importer's complete
-            // register vector before the throw-only block.
+            // Assigned before the throw so the payload is a plain variable
+            // at the throw.
             var payload = "owning payload that exceeds small string storage and survives the C++ handler " + "tail\u0000end";
             throw payload;
         }
@@ -269,8 +269,8 @@ var second42 = mixedBooleanStringPayload(false);
 
 //--- computed_throw.js
 function computedThrow() {
-    // The importer leaves the addition inside the throw block, without a
-    // following complete register vector. Keep this structural refusal.
+    // The importer leaves the addition inside the throw block; the computed
+    // payload must still reach the catch.
     try { throw "a" + "b"; } catch (value) { return value === "ab" ? 42 : -1; }
 }
 var computed42 = computedThrow();
@@ -278,9 +278,9 @@ var computed42 = computedThrow();
 //--- mixed_concatenation.js
 function mixedConcatenation(flag) {
     try {
-        // A completed computation can update the scratch register before
-        // its assignment check. Recovery still needs operation admission;
-        // primitive support does not authorize string/number coercion.
+        // The string/number concatenation completes before the throw, so
+        // its result must survive into the catch. Native code must perform
+        // the same string/number coercion as JavaScript.
         var payload = "value:" + 42;
         if (flag) { throw payload; }
         return 20;
@@ -408,9 +408,9 @@ function incrementProtected(value) { return value + 1; }
 function protectedNothrow(flag) {
     var mark = 1;
     try {
-        // The complete register CFG carries this global callee through a
-        // check. The resolver proves every incoming definition before naming
-        // this call; native admission proves the helper cannot throw.
+        // A call inside the try to a global helper the compiler can prove
+        // never throws; it must be compiled as a plain direct call inside
+        // the C++ try.
         mark = incrementProtected(9);
         if (flag) { throw 32; }
         return mark + 10;
@@ -516,8 +516,8 @@ function protectedEscaping(flag) {
         if (flag) { throw 1; }
         return chosen(42);
     } catch (value) {
-        // The helper is live in a handler register snapshot and escapes only
-        // through this edge. Naming its normal call cannot close the helper.
+        // The helper escapes to a global only on the catch path, so it must
+        // not be treated as a known, non-escaping callee.
         escaped = chosen;
         return 42;
     }

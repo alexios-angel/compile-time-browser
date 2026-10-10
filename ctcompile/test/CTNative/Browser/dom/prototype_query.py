@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Execute original Element.prototype selector calls against public DOM/Style."""
+"""Check that Element.prototype.{querySelector,querySelectorAll,matches,closest}
+called with .call(element, ...) compiles to the native DOM methods and runs
+against the public DOM and Style libraries, and that programs which replace,
+detach or leak those methods are refused."""
 
 from CTNative.Browser.dom import dom
 from CTNative.harness import without_intrinsic
@@ -8,6 +11,10 @@ from CTNative.Browser.dom import query_all
 
 
 def prototype_source(source, method, calls):
+    """Rewrite the `calls` `element.<method>(` calls in a shared fixture into
+    `select.call(element, ...)`, where `select` is read from
+    Element.prototype through local aliases. Raise if the fixture no longer
+    has exactly `calls` such calls."""
     original = f"element.{method}("
     if source.count(original) != calls:
         raise RuntimeError(f"{method}: the shared selector fixture changed")
@@ -19,7 +26,8 @@ def prototype_source(source, method, calls):
         1,
     )
     source = source.replace(original, "select.call(element, ")
-    # The invalid-selector branch also retains Bootstrap's original spelling.
+    # The invalid-selector branch uses Bootstrap's own spelling,
+    # Element.prototype.<method>.call, with no alias.
     return source.replace(
         "select.call(element, '[')", f"Element.prototype.{method}.call(element, '[')"
     )
@@ -58,6 +66,8 @@ CLOSEST_OWNED_CHECKS = r"""
         assert(!session.invoke(element_ref{&owned, nested}, element_ref{&owned, parent}));
 """
 
+# The native prototype methods have their own types and are the same objects as
+# the free ctnative::matches, closest, querySelector and querySelectorAll.
 PROTOTYPE_CHECKS = r"""
         static_assert(std::is_same_v<decltype((ctnative::Element.prototype.matches)),
                                      const ctnative::matches_method &>);
@@ -73,6 +83,9 @@ PROTOTYPE_CHECKS = r"""
         static_assert(&ctnative::querySelectorAll == &ctnative::Element.prototype.querySelectorAll);
 """
 
+# Programs the compiler must refuse: each replaces, detaches, leaks or misuses
+# an Element.prototype selector method, so the native method cannot be proved
+# to be the one called.
 REFUSALS = {
     "replace-element": "Element=element; return false;",
     "replace-function": "Function=element; return false;",

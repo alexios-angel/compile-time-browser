@@ -1,4 +1,4 @@
-// A copied base constructor keeps its Map capture across repeated leaf calls.
+// Inlining the base constructor into Leaf keeps its Map capture across repeated calls.
 //--- class-map-inherited-constructor.js
 function class_map_inherited_constructor() {
     const values = new Map();
@@ -11,7 +11,7 @@ function class_map_inherited_constructor() {
 }
 var a = class_map_inherited_constructor();
 
-// Slot zero in each original constructor names a different Map cell.
+// Base and Leaf each capture a different Map in their first capture slot; keep them apart.
 //--- class-map-inherited-distinct.js
 function class_map_inherited_distinct() {
     const left = new Map(), right = new Map();
@@ -26,7 +26,7 @@ function class_map_inherited_distinct() {
 }
 var a = class_map_inherited_distinct();
 
-// Base and leaf captures of the same cell retain one mutable identity.
+// Base and Leaf capturing the same Map see one shared, mutable Map.
 //--- class-map-inherited-shared.js
 function class_map_inherited_shared() {
     const values = new Map();
@@ -45,7 +45,7 @@ function class_map_inherited_shared() {
 }
 var a = class_map_inherited_shared();
 
-// Re-expanding a middle constructor keeps shared and distinct cells for siblings.
+// Inlining Middle into Leaf keeps the shared Map shared and Middle's own Map separate.
 //--- class-map-inherited-chain.js
 function class_map_inherited_chain() {
     const shared = new Map(), middle = new Map();
@@ -65,7 +65,7 @@ function class_map_inherited_chain() {
 }
 var a = class_map_inherited_chain();
 
-// Ordinary inherited method dispatch retains the same cell as construction.
+// An inherited method call sees the same Map the constructor wrote.
 //--- class-map-inherited-method.js
 function class_map_inherited_method() {
     const values = new Map();
@@ -82,7 +82,7 @@ function class_map_inherited_method() {
 }
 var a = class_map_inherited_method();
 
-// Removing an earlier helper capture must not rename the copied Map capture.
+// Dropping the inlined `adjust` capture must not renumber the Map capture copied into Leaf.
 //--- class-map-inherited-mixed-captures.js
 function class_map_inherited_mixed_captures() {
     const adjust = n => n + 1;
@@ -98,7 +98,7 @@ function class_map_inherited_mixed_captures() {
 }
 var a = class_map_inherited_mixed_captures();
 
-// An early own-key snapshot cannot use the final constructor field count.
+// Leaf.seed counts own fields mid-constructor, before the final field count is reached.
 //--- class-map-inherited-early-snapshot.js
 function class_map_inherited_early_snapshot() {
     const values = new Map();
@@ -119,7 +119,7 @@ function class_map_inherited_early_snapshot() {
 }
 var a = class_map_inherited_early_snapshot();
 
-// Copied captures observe a replaced cell, not the original allocation.
+// The inherited method sees the Map later assigned to `values`, not the first one.
 //--- class-map-inherited-reassigned-cell.js
 function class_map_inherited_reassigned_cell() {
     let values = new Map();
@@ -135,7 +135,7 @@ function class_map_inherited_reassigned_cell() {
 }
 var a = class_map_inherited_reassigned_cell();
 
-// Original Map identity cannot authorize a replacement constructor.
+// `Map` is reassigned before `new Map()`, so `values` is not an intrinsic Map.
 //--- class-map-inherited-global-replaced.js
 function class_map_inherited_global_replaced() {
     Map = function Replacement() { return {get() { return 9; }}; };
@@ -146,7 +146,7 @@ function class_map_inherited_global_replaced() {
 }
 var a = class_map_inherited_global_replaced();
 
-// A prototype write changes the inherited method's captured Map operation.
+// Replacing Map.prototype.get changes what the inherited method's get call runs.
 //--- class-map-inherited-prototype-replaced.js
 function class_map_inherited_prototype_replaced() {
     const values = new Map();
@@ -161,7 +161,7 @@ function class_map_inherited_prototype_replaced() {
 }
 var a = class_map_inherited_prototype_replaced();
 
-// An own Map member masks the operation even when capture identity is exact.
+// An own `get` on the Map instance hides Map.prototype.get, even for the right Map.
 //--- class-map-inherited-member-replaced.js
 function class_map_inherited_member_replaced() {
     const values = new Map();
@@ -176,7 +176,7 @@ function class_map_inherited_member_replaced() {
 }
 var a = class_map_inherited_member_replaced();
 
-// The full inherited class census includes methods this entry never calls.
+// An inherited method never called here still counts: every method body is checked.
 //--- class-map-inherited-unused-ambient.js
 function class_map_inherited_unused_ambient() {
     const values = new Map();
@@ -190,7 +190,7 @@ function class_map_inherited_unused_ambient() {
 }
 var a = class_map_inherited_unused_ambient();
 
-// Storing an inherited receiver requires a separate typed ownership proof.
+// Storing an inherited `this` in the Map needs object-valued Map entries.
 //--- class-map-inherited-stored-receiver.js
 function class_map_inherited_stored_receiver() {
     const values = new Map();
@@ -203,7 +203,7 @@ function class_map_inherited_stored_receiver() {
 }
 var a = class_map_inherited_stored_receiver();
 
-// Capturing a helper does not prove the Map its body captures.
+// The Map captured inside a helper is tracked separately from the helper capture.
 //--- class-map-inherited-helper.js
 function class_map_inherited_helper() {
     const values = new Map();
@@ -214,7 +214,7 @@ function class_map_inherited_helper() {
 }
 var a = class_map_inherited_helper();
 
-// A holder method's Map needs its own complete capture and invocation proof.
+// A Map captured by a holder object's method is tracked through the holder call.
 //--- class-map-inherited-holder.js
 function class_map_inherited_holder() {
     const values = new Map();
@@ -225,7 +225,7 @@ function class_map_inherited_holder() {
 }
 var a = class_map_inherited_holder();
 
-// A captured super.method target remains separate from constructor expansion.
+// Leaf's `super.read()` call is separate from constructor inlining.
 //--- class-map-inherited-super-method.js
 function class_map_inherited_super_method() {
     const values = new Map();

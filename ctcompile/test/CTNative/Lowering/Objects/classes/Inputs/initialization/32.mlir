@@ -1,4 +1,4 @@
-// Both construction sites publish through the same helper and retain distinct owners.
+// Two constructions store `this` through one helper; each keeps its own instance.
 //--- class-map-record-constructor-helper-overwrite.js
 function helper_overwrite() {
     const values = new Map();
@@ -16,7 +16,7 @@ function helper_overwrite() {
 }
 var a = helper_overwrite();
 
-// Removing the entry keeps the saved alias borrowed from the caller-owned record.
+// Deleting the entry leaves the get result referring to the caller's instance.
 //--- class-map-record-constructor-helper-delete.js
 function helper_delete() {
     const values = new Map();
@@ -32,7 +32,7 @@ function helper_delete() {
 }
 var a = helper_delete();
 
-// A helper writing the published receiver is not an effect-free terminal publication.
+// Refused: the helper also writes a field of `this`, so it is not a plain store.
 //--- class-map-record-constructor-helper-write-after.js
 function helper_write_after() {
     const values = new Map();
@@ -46,7 +46,7 @@ function helper_write_after() {
 }
 var a = helper_write_after();
 
-// Reading the published entry inside the helper requires an observer proof.
+// Refused: the helper reads the stored entry back, observing it mid-construction.
 //--- class-map-record-constructor-helper-observer.js
 function helper_observer() {
     const values = new Map();
@@ -63,7 +63,7 @@ function helper_observer() {
 }
 var a = helper_observer();
 
-// Returning the receiver exceeds the helper's exact undefined-return contract.
+// Refused: the helper returns its argument; only helpers returning undefined are handled.
 //--- class-map-record-constructor-helper-return-value.js
 function helper_return_value() {
     const values = new Map();
@@ -77,7 +77,7 @@ function helper_return_value() {
 }
 var a = helper_return_value();
 
-// A second closure capturing the Map is outside the exclusive observer proof.
+// Refused: a second closure also reads the Map, so the helper is not its only user.
 //--- class-map-record-constructor-helper-other-observer.js
 function helper_other_observer() {
     const values = new Map();
@@ -91,7 +91,7 @@ function helper_other_observer() {
 }
 var a = helper_other_observer();
 
-// Sharing the helper with another constructor requires a complete caller-family proof.
+// Refused: two different classes share the helper; each caller would need checking.
 //--- class-map-record-constructor-helper-shared-callers.js
 function helper_shared_callers() {
     const values = new Map();
@@ -109,7 +109,7 @@ function helper_shared_callers() {
 }
 var a = helper_shared_callers();
 
-// Escaping the Map retains its published receiver past the caller-owned record's lifetime.
+// Refused: the Map escapes into a global and outlives the instance the caller holds.
 //--- class-map-record-constructor-helper-map-escaped.js
 var retained;
 function helper_map_escaped() {
@@ -125,7 +125,7 @@ function helper_map_escaped() {
 var a = helper_map_escaped();
 a = retained.get("slot").n * 100 + a;
 
-// A pure helper does not make a subsequent constructor field write terminal.
+// Refused: a field write after the helper call means the store is not the last statement.
 //--- class-map-record-constructor-helper-constructor-write.js
 function helper_constructor_write() {
     const values = new Map();
@@ -139,7 +139,7 @@ function helper_constructor_write() {
 }
 var a = helper_constructor_write();
 
-// Throwing after the helper leaves a reachable receiver without a completed owner.
+// Refused: a throw after the helper call leaves a half-built object in the Map.
 //--- class-map-record-constructor-helper-constructor-throw.js
 function helper_constructor_throw() {
     const values = new Map();
@@ -156,7 +156,7 @@ function helper_constructor_throw() {
 }
 var a = helper_constructor_throw();
 
-// Recursive publication is not an exact single-call helper even when this input terminates.
+// Refused: the helper calls itself, so it is not a single call even though it terminates.
 //--- class-map-record-constructor-helper-recursive.js
 function helper_recursive() {
     const values = new Map();
@@ -173,7 +173,7 @@ function helper_recursive() {
 }
 var a = helper_recursive();
 
-// An alias captured by another closure keeps the helper reachable through its cell.
+// Refused: another closure captures an alias of the helper and calls it later.
 //--- class-map-record-constructor-helper-alias-cell.js
 function helper_alias_cell() {
     const values = new Map();

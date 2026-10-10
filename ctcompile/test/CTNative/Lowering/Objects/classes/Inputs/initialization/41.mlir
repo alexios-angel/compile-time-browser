@@ -1,4 +1,4 @@
-// Finite entry-block outer Maps route literal keys to existing child Map owners.
+// Nested Maps as in Bootstrap's Data: an outer Map maps literal keys to inner Maps.
 //--- class-map-record-nested-direct.js
 function probe() {
     const outer = new Map(), values = new Map();
@@ -14,7 +14,7 @@ function probe() {
 }
 var a = probe();
 
-// Distinct child Maps keep the same inner key bound to distinct record owners.
+// Two inner Maps keep the same inner key bound to two different instances.
 //--- class-map-record-nested-distinct.js
 function probe() {
     const outer = new Map(), left = new Map(), right = new Map();
@@ -32,7 +32,7 @@ function probe() {
 }
 var a = probe();
 
-// Parent and child replacement/deletion never end saved child or record lifetimes.
+// Replacing or deleting outer and inner entries never ends saved inner Maps or instances.
 //--- class-map-record-nested-overwrite-delete.js
 function probe() {
     const outer = new Map(), left = new Map(), right = new Map();
@@ -58,7 +58,7 @@ function probe() {
 }
 var a = probe();
 
-// The parent cannot escape with borrows of entry-local child Maps.
+// Refused: the outer Map escapes while holding inner Maps local to this function.
 //--- class-map-record-nested-outer-escaped.js
 var retained;
 function probe() {
@@ -72,7 +72,7 @@ function probe() {
 }
 var a = probe();
 
-// Folding a parent get cannot hide a child Map published beyond its owner frame.
+// Refused: an inner Map read through the outer Map escapes into a global.
 //--- class-map-record-nested-child-escaped.js
 var retained;
 function probe() {
@@ -86,7 +86,7 @@ function probe() {
 }
 var a = probe();
 
-// A record obtained through both keys still cannot outlive its entry-frame owner.
+// Refused: an instance read through both Maps escapes and would outlive its owner.
 //--- class-map-record-nested-record-escaped.js
 var retained;
 function probe() {
@@ -100,7 +100,7 @@ function probe() {
 }
 var a = probe();
 
-// Absent parent keys need nullable child-map ownership beyond exact routing.
+// Refused: get of a missing outer key would need an "inner Map or undefined" result.
 //--- class-map-record-nested-missing-outer.js
 function probe() {
     const outer = new Map(), values = new Map();
@@ -113,7 +113,7 @@ function probe() {
 }
 var a = probe();
 
-// A present child does not prove the requested inner record exists.
+// Refused: the inner Map exists, but the inner key does not.
 //--- class-map-record-nested-missing-inner.js
 function probe() {
     const outer = new Map(), values = new Map();
@@ -126,7 +126,7 @@ function probe() {
 }
 var a = probe();
 
-// Conditional child allocation remains the next Bootstrap Data boundary.
+// Refused: an inner Map allocated only on one branch is not supported yet.
 //--- class-map-record-nested-branch-child.js
 function probe(flag) {
     const outer = new Map();
@@ -141,7 +141,7 @@ function probe(flag) {
 }
 var a = probe(true);
 
-// Capturing the parent requires a complete observer and call-order proof.
+// Refused: a closure reading the outer Map needs its calls and their order checked.
 //--- class-map-record-nested-captured-observer.js
 function probe() {
     const outer = new Map(), values = new Map();
@@ -154,7 +154,7 @@ function probe() {
 }
 var a = probe();
 
-// An arbitrary caller key is not a literal outer topology edge.
+// Refused: the outer key is a parameter, not a string literal.
 //--- class-map-record-nested-dynamic-outer-key.js
 function probe(key) {
     const outer = new Map(), values = new Map();

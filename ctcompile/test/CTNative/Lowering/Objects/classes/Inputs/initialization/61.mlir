@@ -1,4 +1,4 @@
-// Fixed literals are copied before each inherited constructor body is normalized.
+// Captured literal constants are copied before each inherited constructor is inlined.
 //--- inherited-primitive-captures.js
 function inherited_primitive_captures() {
     const base = 3, leaf = 4;
@@ -9,7 +9,7 @@ function inherited_primitive_captures() {
 }
 var a = inherited_primitive_captures();
 
-// A loop method retains the literal through structured method normalization.
+// A method with a loop keeps the captured literal through method normalization.
 //--- primitive-capture-loop.js
 function primitive_capture_loop() {
     const increment = 2;
@@ -20,7 +20,7 @@ function primitive_capture_loop() {
 }
 var a = primitive_capture_loop();
 
-// A primitive's producer must still be a literal, with fixed ordered cell writes.
+// A captured primitive must come from a literal written once; `1 + 2` is computed.
 //--- primitive-capture-computed.js
 function primitive_capture_computed() {
     const increment = 1 + 2;

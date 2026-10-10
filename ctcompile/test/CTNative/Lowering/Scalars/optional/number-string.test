@@ -1,6 +1,6 @@
-# Source optional Number/String values retain undefined, null and value tags.
-# The historical optional-global.js refusal body is executed unchanged before
-# further global, call, loop and coercion checks.
+# Values that are a Number or a String, possibly undefined or null, keep all four
+# tags across globals, calls, loops and coercions in native code. optional-global.js
+# runs unchanged first, then more-values.js adds further cases.
 # RUN: split-file %s %t
 # RUN: cat %t/optional-global.js %t/more-values.js > %t/values.js
 # RUN: %node %t/expected.cjs %t/values.js

@@ -1,7 +1,18 @@
+"""Checks for global-Map fixtures whose values are objects with typed fields,
+and for the saved-size (zero, one, deleted) fixtures.
+
+Each check_* function scans the generated C++ for the expected typed
+signatures and storage and an unchanged count of Map operations; each
+*_lifetime_cpp appends a main() that verifies every allocated object is
+released, and each *_lifetime builds and runs it. Field members are named by
+the hex of the JS property name (field_76616c7565 is `value`).
+"""
+
 from .objects import *
 
 
 def string_field_cpp_value(value):
+    """Return a C++ std::string expression holding `value`'s exact UTF-8 bytes."""
     data = value.encode("utf-8")
     return (
         'std::string("' + "".join(f"\\x{byte:02x}" for byte in data) + '", ' + str(len(data)) + ")"
@@ -9,6 +20,7 @@ def string_field_cpp_value(value):
 
 
 def check_string_field_calls(cpp, name, mode):
+    """Check a String-field case's signature, field accesses and call order."""
     row = string_field_cases()[name]
     source, value = row["source"], row["expected_trace"]
     result = "ctnative::js_string" if isinstance(value, StringValue) else "ctnative::js_num"
@@ -70,6 +82,7 @@ def check_string_field_calls(cpp, name, mode):
 
 
 def string_field_observer_source(source, name):
+    """Return (source + observer JS, expected trace); each check sets one bit."""
     observed = (
         source
         + r"""
@@ -139,6 +152,7 @@ def string_field_observer_source(source, name):
 
 
 def string_field_identity_cpp(cpp):
+    """Append a main() checking each call allocates a fresh leaf (exit 120-125)."""
     changed = instrument_leaf_objects(cpp)
     return (
         changed
@@ -174,6 +188,7 @@ int main() {
 
 
 def string_field_lifetime_cpp(cpp):
+    """Append a main() checking owning String fields outlive their caller's copy."""
     changed = instrument_leaf_objects(cpp)
     changed = changed.replace(
         "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
@@ -187,6 +202,8 @@ def string_field_lifetime_cpp(cpp):
         "if (ctn_test_capture_next) { ctn_test_capture_next = false; ctn_test_retained = made; } "
         "return made;",
     )
+    # Each failure returns a distinct exit code (130, 131, ...) so the failing
+    # check can be identified from the exit status alone.
     changed += r"""
 int main() {
     const auto original = ORIGINAL;
@@ -277,6 +294,7 @@ def check_one_size_calls(cpp, name, mode):
 
 
 def check_exact_size_calls(cpp, name, mode, row):
+    """Check a saved-size case's typed callable, allocation, Map operations and calls."""
     source = row["source"]
     params = (
         "ctnative::js_num, ctnative::js_boolean_t"
@@ -311,8 +329,8 @@ def check_exact_size_calls(cpp, name, mode, row):
             raise RuntimeError(f"{name}/{mode}: exact saved one lost its present object field read")
     for method in ("set", "get", "has", "delete", "clear"):
         original = len(re.findall(rf"\b(?:state|alias)\.{method}\(", source))
-        # Existing preparation coalesces the historical identical set arms.
-        # Its immutable nine-call source has eight prepared/runtime call sites.
+        # Source preparation merges identical `set` calls in both branch arms,
+        # so expect raw_calls - prepared_calls fewer emitted map_set calls.
         if method == "set":
             original -= row["raw_calls"] - row["prepared_calls"]
         emitted = len(re.findall(rf"\bctnative::map_{method}(?:_\w+)?(?:<[^>]+>)?\(", cpp))
@@ -329,6 +347,8 @@ def check_exact_size_calls(cpp, name, mode, row):
 
 
 def zero_size_observer_source(source):
+    """Return (source + observer JS, 63) for the saved-size cases: six checks,
+    one bit of `trace` each."""
     observed = (
         source
         + r"""
@@ -433,8 +453,9 @@ def zero_size_lifetime(args, cpp, name, mode, compiler):
 
 
 def one_size_observer_source(source):
-    # Both witnesses select an owning saved leaf, branch on the future flag,
-    # and finish with one entry. The source's read-time key proof differs.
+    # Same observer as the zero-size case: both fixtures save an owned leaf
+    # object, branch on a flag that is only set after startup, and end with one
+    # entry. Only how the source proves the key at read time differs.
     return zero_size_observer_source(source)
 
 

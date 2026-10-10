@@ -1,3 +1,10 @@
+//===- URI.h - URI and numeric attribute tests ------------------*- C++ -*-===//
+//
+// DOM entry analysis tests for decodeURIComponent inside an invoke and for
+// setAttribute with numeric values. Included by HostContract.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -5,6 +12,9 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Host-contract tests for DOM entry analysis: decodeURIComponent inside an
+/// invoke (proof, budget, fingerprint and forged-attribute checks), then
+/// setAttribute with numeric values, with and without exception suppression.
 inline void checkDOMURI(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(
@@ -99,6 +109,8 @@ module {
     check(DOMEntryAnalysis(*module, contract).proved(),
           "advisory URI reports do not replace live discovery");
     auto argument = call.getArgs()[0];
+    // Operand 2 is the call's first argument (after callee and this). Point
+    // it at %element (entry argument 3) so decodeURIComponent gets an object.
     call->setOperand(
         2, module->lookupSymbol<ctjs::FuncOp>(contract.entry).getBody().front().getArgument(3));
     DOMEntryAnalysis stale(*module, contract);
@@ -234,6 +246,8 @@ module {
             }
             setter->setAttr("ctnative.host_proved", builder.getBoolAttr(true));
             const auto value = setter.getArgs()[1];
+            // Operand 3 is the written value (after callee, this and name);
+            // replace it with the element so the write needs object coercion.
             setter->setOperand(3, setter.getReceiver());
             DOMEntryAnalysis stale(*input, request);
             check(empty(stale) && stale.reason().contains("fingerprint"),
@@ -328,6 +342,8 @@ module {
                        "      ctjs.invoke_exit %written state()"),
               &context),
           "numeric attribute invocation rejects an extra call before proof");
+    // A conditional throw of the written number between the write and the
+    // second read: the proof must record exactly that saved throw.
     const auto saved = replaced(suppressed, "    %after =", R"MLIR(
     %condition = ctjs.truthy %before
     scf.if %condition {

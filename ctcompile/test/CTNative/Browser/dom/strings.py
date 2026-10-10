@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Gate copied optional String DOM reads against source and the public DOM/Core API."""
+"""Check native lowering of optional-String DOM reads (getAttribute and friends).
+
+Several cases are copied from Bootstrap's bundle (its F and H helpers; main()
+first checks the vendored copy still contains them). Node runs the sources as
+the oracle and the VM must agree; then the native C++ for both DOM providers,
+built by GCC and Clang, must print the same values. Finally every refusal case,
+the mutation checks in string/provenance.py, budget exhaustion and the branch
+nesting limit are checked. --regexp-only runs only the regexp cases.
+"""
 
 from CTNative.Browser.dom.string.provenance import *
 
@@ -107,6 +115,9 @@ function makeElement(value) {
     prepared.extend(number_conversion.prepare(args))
     prepared.extend(uri.prepare(args))
     prepared.extend(nullable_uri.prepare(args))
+    # Lower every case for each provider, with and without optimization, in
+    # both the explicit and deduced layouts; then link all of them into one
+    # combined C++ client per configuration and compare its output with Node.
     for optimize in (False, True):
         modules = {}
         for provider in dom.PROVIDERS:
@@ -130,9 +141,10 @@ function makeElement(value) {
                     optional_read=name != "helper_branch" and name not in uri.CASES,
                     uri_call=name in uri.CASES or name in nullable_uri.CASES,
                 )
-                # Hoist includes AND the runtime's defines in front of its include
-                # (CTNATIVE_DOM, CTNATIVE_ORDERED_MAPS) before isolating each
-                # unit; sorted(), `#define` precedes `#include`. The deduced
+                # Hoist the includes and the runtime's defines (CTNATIVE_DOM,
+                # CTNATIVE_ORDERED_MAPS), which must precede its include, out of
+                # each unit before wrapping it in a namespace; sorted() puts
+                # `#define` before `#include`. The deduced
                 # layout's CTCOMPILE_PIN block stays in its unit, inside its own
                 # #ifndef. Generated local helper names need not be globally unique.
                 headers.update(re.findall(r"^#(?:include|define CTNATIVE_)[^\n]*", cpp, re.M))
@@ -270,6 +282,8 @@ function makeElement(value) {
         (0, 1, 32),
         "helper branch budget {budget}: wrong refusal",
     )
+    # Branch nesting in a DOM entry or helper is limited to 63 levels: depth 63
+    # must lower and depth 64 must be refused with a branch-depth reason.
     for depth in (63, 64):
         source = (
             "function branchDepth(element) {"

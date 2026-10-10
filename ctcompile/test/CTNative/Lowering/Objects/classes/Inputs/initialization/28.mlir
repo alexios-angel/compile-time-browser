@@ -1,4 +1,4 @@
-// Saved Map results call the same immutable method as their original owner.
+// A non-mutating method called on a get result sees the original object's fields.
 //--- class-map-record-alias-method-read.js
 function class_map_record_alias_method_read() {
     const values = new Map();
@@ -13,7 +13,7 @@ function class_map_record_alias_method_read() {
 }
 var a = class_map_record_alias_method_read();
 
-// A method called through a saved alias mutates the original owner and later reads.
+// A method called on a get result mutates the original object, seen by a later get.
 //--- class-map-record-alias-method-write.js
 function class_map_record_alias_method_write() {
     const values = new Map();
@@ -30,7 +30,7 @@ function class_map_record_alias_method_write() {
 }
 var a = class_map_record_alias_method_write();
 
-// Overwrite and deletion preserve the method receiver of each saved generation.
+// After overwrite and delete, methods on each saved get result use that result's object.
 //--- class-map-record-alias-method-overwrite-delete.js
 function class_map_record_alias_method_overwrite_delete() {
     const values = new Map();
@@ -49,7 +49,7 @@ function class_map_record_alias_method_overwrite_delete() {
 }
 var a = class_map_record_alias_method_overwrite_delete();
 
-// An inherited method retains the leaf receiver through a saved Map alias.
+// An inherited method called on a get result runs with the Leaf instance as `this`.
 //--- class-map-record-alias-method-inherited.js
 function class_map_record_alias_method_inherited() {
     const values = new Map();
@@ -66,7 +66,7 @@ function class_map_record_alias_method_inherited() {
 }
 var a = class_map_record_alias_method_inherited();
 
-// Distinct records in one family share method code while keeping receiver identity.
+// Two instances of one class share method code but keep separate `this` objects.
 //--- class-map-record-alias-method-distinct.js
 function class_map_record_alias_method_distinct() {
     const values = new Map();
@@ -85,7 +85,7 @@ function class_map_record_alias_method_distinct() {
 }
 var a = class_map_record_alias_method_distinct();
 
-// A method replacement through a saved alias invalidates the original owner's selector too.
+// Refused: assigning `read` on a get result replaces the method for the original too.
 //--- class-map-record-alias-method-overwritten.js
 function class_map_record_alias_method_overwritten() {
     const values = new Map();
@@ -101,7 +101,7 @@ function class_map_record_alias_method_overwritten() {
 }
 var a = class_map_record_alias_method_overwritten();
 
-// An extracted method value is not an exact receiver call and may escape independently.
+// Refused: `saved.read` is taken as a value and escapes, not called on its object.
 //--- class-map-record-alias-method-extracted.js
 var escaped;
 function class_map_record_alias_method_extracted() {
@@ -118,7 +118,7 @@ function class_map_record_alias_method_extracted() {
 }
 var a = class_map_record_alias_method_extracted();
 
-// Returning and publishing this from a method needs a separate owner lifetime proof.
+// Refused: a method that stores `this` in a global lets the object outlive its owner.
 //--- class-map-record-alias-method-receiver-escape.js
 var retained;
 function class_map_record_alias_method_receiver_escape() {
@@ -135,7 +135,7 @@ function class_map_record_alias_method_receiver_escape() {
 }
 var a = class_map_record_alias_method_receiver_escape();
 
-// Saved-alias method proof cannot authorize publication before construction completes.
+// The constructor stores `this` in the Map before construction ends; a method reads it.
 //--- class-map-record-alias-method-constructor-publication.js
 function class_map_record_alias_method_constructor_publication() {
     const values = new Map();

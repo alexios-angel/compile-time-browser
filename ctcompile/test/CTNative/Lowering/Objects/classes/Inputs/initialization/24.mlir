@@ -1,4 +1,4 @@
-// Number, Null and Undefined keys keep distinct tags through own-field reads.
+// Number, null and undefined keys stay distinct when read back through the `key` field.
 //--- class-map-optional-key-tags.js
 function class_map_optional_key_tags() {
     const values = new Map();
@@ -11,7 +11,7 @@ function class_map_optional_key_tags() {
 }
 var a = class_map_optional_key_tags();
 
-// An Undefined key is an entry, while a missing get still returns Undefined.
+// undefined is a real key, while get of a missing key still returns undefined.
 //--- class-map-optional-key-missing.js
 function class_map_optional_key_missing() {
     const values = new Map();
@@ -43,7 +43,7 @@ function class_map_optional_key_booleans() {
 }
 var a = class_map_optional_key_booleans();
 
-// Distinct NaN producers address one entry; saved reads survive overwrite/delete.
+// Two separately computed NaNs name one entry; a read saved before overwrite/delete stays.
 //--- class-map-optional-key-nan.js
 function class_map_optional_key_nan() {
     const values = new Map();
@@ -62,7 +62,7 @@ function class_map_optional_key_nan() {
 }
 var a = class_map_optional_key_nan();
 
-// Positive and negative zero remain one key through writes in both directions.
+// -0 and +0 are one key, whichever of them writes the entry.
 //--- class-map-optional-key-signed-zero.js
 function class_map_optional_key_signed_zero() {
     const values = new Map();
@@ -81,7 +81,7 @@ function class_map_optional_key_signed_zero() {
 }
 var a = class_map_optional_key_signed_zero();
 
-// Inherited fields and Data helpers preserve the same optional numeric key.
+// Inherited fields and `Data` helpers pass the same Number key through unchanged.
 //--- class-map-inherited-optional-key-helper.js
 function class_map_inherited_optional_key_helper() {
     const values = new Map();
@@ -104,7 +104,7 @@ function class_map_inherited_optional_key_helper() {
 }
 var a = class_map_inherited_optional_key_helper();
 
-// Finite scalar tags do not authorize a mixed String/Number key carrier.
+// Refused: a Map whose keys mix Strings and Numbers is not supported.
 //--- class-map-optional-key-mixed-string.js
 function class_map_optional_key_mixed_string() {
     const values = new Map();
@@ -117,7 +117,7 @@ function class_map_optional_key_mixed_string() {
 }
 var a = class_map_optional_key_mixed_string();
 
-// An optional object key needs identity ownership beyond the scalar carrier.
+// Refused: an object key needs identity tracking that scalar Map keys do not have.
 //--- class-map-optional-key-object.js
 function class_map_optional_key_object() {
     const values = new Map();
@@ -130,7 +130,7 @@ function class_map_optional_key_object() {
 }
 var a = class_map_optional_key_object();
 
-// Optional keys cannot be exposed through the existing homogeneous snapshots.
+// Refused: listing a mix of undefined and Number keys with Array.from is not supported.
 //--- class-map-optional-key-snapshot.js
 function class_map_optional_key_snapshot() {
     const values = new Map();

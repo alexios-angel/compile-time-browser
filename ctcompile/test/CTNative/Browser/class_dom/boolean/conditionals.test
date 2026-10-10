@@ -1,2 +1,2 @@
-# Conditional captured leaves reuse the complete DOM Boolean borrower proof.
+# A callback that conditionally writes a captured Boolean compiles natively.
 # RUN: python3 %S/conditionals.py %dom_driver --node %node --reference %native_reference

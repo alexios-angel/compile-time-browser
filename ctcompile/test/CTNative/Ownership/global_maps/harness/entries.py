@@ -1,9 +1,26 @@
+"""Lifetime and call-shape checks for global Maps whose entries are leaf
+objects or numbers.
+
+Most *_observer_source functions append JS that adds 1 to `trace` per passing
+check and return (source, check count). Each *_lifetime_cpp appends a C++
+main() that drives the published host methods and uses weak_ptr expiry to
+check ownership; each failing check returns its own exit code within that
+harness. Each check_*_calls compares the emitted C++ against the JS source.
+Native fields are named by the hex of the JS property name, so
+field_76616c7565 is `value`.
+"""
+
 from .objects import *
 
 LEAF_ABSENCE_LIFETIMES = ("local_absence_saved_undefined", "local_absence_distinct_branches_false")
 
 
 def leaf_absence_observer_source(source, name):
+    """Return (source + observer JS, check count) for a saved-leaf absence case.
+
+    The observer wraps Map.prototype.set to capture every stored leaf, then
+    checks their count, values and pairwise identity.
+    """
     reseeded = name == "local_absence_saved_undefined"
     observed = (
         source
@@ -42,6 +59,7 @@ def leaf_absence_observer_source(source, name):
 
 
 def leaf_absence_lifetime_cpp(cpp, name):
+    """Append a main() that checks leaves die with their last owner (exit 140-151)."""
     reseeded = name == "local_absence_saved_undefined"
     changed = instrument_leaf_objects(cpp)
     changed += r"""
@@ -108,6 +126,7 @@ int main() {
 
 
 def leaf_absence_lifetime(args, cpp, name, mode, compiler):
+    """Build and run the absence or clear lifetime harness for `name`."""
     build = leaf_clear_lifetime_cpp if name in LEAF_CLEAR_LIFETIMES else leaf_absence_lifetime_cpp
     owned.check_lifetime(
         args, name, mode, compiler, build(cpp, name), "trace=1\n", "absence lifetime"
@@ -115,6 +134,8 @@ def leaf_absence_lifetime(args, cpp, name, mode, compiler):
 
 
 def check_leaf_absence_calls(cpp, name, mode):
+    """Check the emitted signature, allocations, field writes, Map operations and
+    call order of an absence or clear case against its JS source."""
     source = {**leaf_absence_sources(), **leaf_clear_sources()}[name][0]
     params = (
         "ctnative::js_string, ctnative::js_boolean_t"
@@ -159,6 +180,7 @@ def check_leaf_absence_calls(cpp, name, mode):
 
 
 def primitive_absence_observer_source(source):
+    """Return source + JS that sets one bit of `trace` per passing check (8 bits)."""
     return (
         source
         + """
@@ -179,6 +201,7 @@ def primitive_absence_observer_source(source):
 
 
 def primitive_absence_cpp(cpp):
+    """Append a main() that replays the observer's checks natively (exit 160-161)."""
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("primitive absence observer needs exactly one entry")
@@ -209,6 +232,7 @@ LEAF_CLEAR_LIFETIMES = (
 
 
 def leaf_clear_observer_source(source, name):
+    """Return (source + observer JS, check count) for a Map.clear leaf case."""
     reseeded = name == "local_clear_saved_undefined"
     observed = (
         source
@@ -255,12 +279,13 @@ def leaf_clear_observer_source(source, name):
 
 
 def leaf_clear_lifetime_cpp(cpp, name):
+    """Append a main() that checks cleared and overwritten leaves are freed."""
     reseeded = name == "local_clear_saved_undefined"
     branch = name == "local_clear_both_branches_false"
     changed = instrument_leaf_objects(cpp)
-    # The observer retains exactly the last leaf. All earlier leaves still
-    # have only the emitted program's owners, so clearing and overwrite must
-    # reclaim them. The final observed leaf outlives both Maps independently.
+    # The harness keeps a strong reference to the last leaf only. Every earlier
+    # leaf is owned solely by the emitted program, so clear and overwrite must
+    # free it, while the retained leaf outlives both Maps.
     changed = changed.replace(
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;",
         "static std::vector<std::weak_ptr<const void>> ctn_test_objects;\n"
@@ -354,6 +379,7 @@ NUMERIC_ENTRY_LIFETIMES = (
 
 
 def check_numeric_entry_calls(cpp, name, mode):
+    """Check call order and that every source arithmetic operator survives in C++."""
     source = {**numeric_entry_sources(), **scalar_global_sources(), **constant_global_sources()}[
         name
     ][0]
@@ -413,8 +439,9 @@ def check_numeric_entry_calls(cpp, name, mode):
         expected = ["size", "size", "size", "set", "size", "size", "set"]
     if [methods_by_value.get(callee) for callee, _ in calls] != expected:
         raise RuntimeError(f"{name}/{mode}: changed evaluated published call order: {calls}")
-    # Native arithmetic must still consume evaluated operands. Every original
-    # source binary has a corresponding entry expression, not a trace constant.
+    # Native arithmetic must still compute from evaluated operands: every binary
+    # operator in the source needs a matching C++ expression in the entry, not
+    # a folded trace constant.
     source_entry = source.rsplit("});\n", 1)[1]
     expressions = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', "", source_entry)
     expected_ops = re.findall(r"\*\*|[+*/%-]", expressions)
@@ -429,6 +456,7 @@ def check_numeric_entry_calls(cpp, name, mode):
 
 
 def numeric_entry_observer_source(source, name):
+    """Return (source + observer JS, check count) for a numeric-entry case."""
     branch = name in {
         "local_numeric_branch_lifetime",
         "scalar_saved_branch_lifetime",
@@ -476,6 +504,7 @@ def numeric_entry_observer_source(source, name):
 
 
 def numeric_entry_lifetime_cpp(cpp, name):
+    """Append a main() that checks numeric-entry leaves and Maps are freed."""
     branch = name in {
         "local_numeric_branch_lifetime",
         "scalar_saved_branch_lifetime",
@@ -671,8 +700,9 @@ int main() {
         return 201;
     }
 """
-        # Check once after 128 calls and owner destruction, before reentry can
-        # overwrite globals, then again after both Maps and the retained leaf die.
+        # Check once after the 128 calls and owner destruction, before re-running
+        # the entry can overwrite globals, and again after both Maps and the
+        # retained leaf die.
         changed = changed.replace(
             "    ctn_test_keep_leaf = false;", checks + "    ctn_test_keep_leaf = false;"
         )
@@ -759,6 +789,7 @@ int main() {
 
 
 def numeric_entry_lifetime(args, cpp, name, mode, compiler):
+    """Build and run the numeric-entry lifetime harness for `name`."""
     owned.check_lifetime(
         args,
         name,

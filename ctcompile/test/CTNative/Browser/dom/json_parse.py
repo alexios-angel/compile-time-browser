@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Original M's normalization and Config's JSON typeof/spread as native C++.
+"""Compile Bootstrap's data-attribute JSON parsing to native C++.
 
-The decode and parse calls become nested invokes on one success path; either
-failure returns the original String. Normalization owns ctbrowser::json_value;
-typeof and guarded spreads are compared against Node and the VM.
+The vendored, unmodified Bootstrap bundle normalises a `data-bs-*` attribute
+value with its minified helper `M`, which falls back from
+JSON.parse(decodeURIComponent(t)) to the original string, and its Config code
+spreads the result only when `typeof` says it is an object. The decode and
+parse calls become nested invokes on one success path, and either failure
+returns the original string. The native result owns a ctbrowser::json_value.
+Results are compared with Node and the ctbrowser VM, and REFUSALS lists
+variants the compiler must reject.
 """
 
 import json
@@ -35,11 +40,14 @@ SOURCES = {
 SOURCES["json_helper"] = SOURCES["json_helper"].replace(
     BODY, "function parse(text) { " + BODY + " } return parse(text);"
 )
-# Preserve the former refusal body, including its original earlier DOM observation.
+# Formerly a refusal case, kept with its original body (including the read of
+# the `good` attribute) as a regression case.
 SOURCES["json_not_element"] = (
     "function json_not_element(element) { const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
     "return !element; }\n"
 )
+# Verbatim excerpts of the vendored Bootstrap bundle. main() checks each is
+# still present in dom.BOOTSTRAP, so a Bootstrap upgrade fails loudly here.
 BOOTSTRAP_M = """    function M(t) {
         if ("true" === t) return !0;
         if ("false" === t) return !1;
@@ -87,8 +95,9 @@ ATTRIBUTE_CASES = {
     + BODY,
     "json_bootstrap_m": BOOTSTRAP_M + f"\nreturn M({GET});",
     "json_bootstrap_attribute": ATTRIBUTE_HELPERS + 'return H.getDataAttribute(element, "config");',
-    # Replacement callbacks have been admitted since 84b3357a; preserve the
-    # former refusal body and its earlier DOM observation.
+    # Formerly a refusal case (F's String.replace with a callback was not
+    # supported); kept with its original body, including the extra read of the
+    # `good` attribute, as a regression case.
     "json_matching_key": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
     + ATTRIBUTE_HELPERS
     + 'return H.getDataAttribute(element, "Config");',
@@ -96,11 +105,13 @@ ATTRIBUTE_CASES = {
     + 'return typeof H.getDataAttribute(element, "config");',
     "json_config_typeof_direct": ATTRIBUTE_HELPERS
     + 'return "object" == typeof H.getDataAttribute(element, "config");',
-    # Preserve the former refusal body, including its earlier DOM observation.
+    # Formerly a refusal case, kept with its original body (including the read
+    # of the `good` attribute) as a regression case.
     "json_config_typeof": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
     + ATTRIBUTE_HELPERS
     + 'const parsed = H.getDataAttribute(element, "config"); return "object" == typeof parsed;',
-    # Preserve the former refusal body, including its earlier DOM observation.
+    # Formerly a refusal case, kept with its original body (including the read
+    # of the `good` attribute) as a regression case.
     "json_nullable_join": "const text = element.hasAttribute('good') ? '%7B%7D' : '%'; "
     + NULLABLE_JOIN,
     **SPREAD_CASES,
@@ -108,6 +119,8 @@ ATTRIBUTE_CASES = {
 SOURCES.update(
     (name, f"function {name}(element) {{ {body} }}\n") for name, body in ATTRIBUTE_CASES.items()
 )
+# Attribute values fed to each ATTRIBUTE_CASES entry; SPREAD_CASES add JSON
+# objects and arrays with duplicate, index-like and __proto__ keys.
 INPUTS = tuple(value for value, _ in number_conversion.VALUES) + (
     "true",
     "false",
@@ -143,6 +156,7 @@ SPREAD_INPUTS = INPUTS + (
 LATER_INPUT = (
     '{"z":"last","0":"zero","2":"second","tail":{"kept":[true,null]},"__proto__":{"safe":"later"}}'
 )
+# Prints a result so -0, NaN and the infinities stay distinct from JSON output.
 OBSERVE = """
 function observe(result) {
     if (typeof result === 'number') {
@@ -157,12 +171,19 @@ function observe(result) {
 
 
 def inputs_for(name):
+    """Attribute values to test `name` with; None means the attribute is absent."""
     if name in SPREAD_CASES:
         return SPREAD_INPUTS
     return INPUTS if name in ATTRIBUTE_CASES else (None, "")
 
 
 def check_oracles(args):
+    """Run every source on every input in Node and in the reference VM, check
+    that they agree, and return Node's observations in order.
+
+    Each call also checks that the stub element saw the expected attribute
+    queries in order.
+    """
     source = "".join(SOURCES.values()) + OBSERVE
     names, observations = [], []
     for name in SOURCES:
@@ -208,6 +229,7 @@ def check_oracles(args):
 
 
 def quote(value):
+    """Percent-encode `value` the way the reference VM prints strings."""
     return quote_from_bytes(value.encode(), safe="")
 
 
@@ -296,6 +318,11 @@ int main() {
 
 
 def client(name, entry, owned):
+    """C++ block that calls `entry` once per input and observes the results.
+
+    Each result must be returned without DOM writes and must outlive later
+    attribute changes and, for an owned session, the session itself.
+    """
     setup = (
         f"{entry}_session session; auto & doc = session.document();"
         if owned
@@ -382,6 +409,9 @@ def client(name, entry, owned):
 """
 
 
+# Variants the native compiler must refuse: escaping or aliased spread
+# results, replaced or shadowed globals (JSON, Number), revivers, and reads
+# of the caught error.
 REFUSALS = {
     "json_spread_branch_cell_write": PARSED_CONFIG
     + "let t; if (element.hasAttribute('good')) t = H.getDataAttribute(element, 'later'); "
@@ -574,7 +604,9 @@ def main():
                 f"{name}-{provider}",
                 "DOM",
             )
-            refusals += 2
+            refusals += 2  # dom.refuse lowers with and without optimization.
+    # Missing or duplicated initial_intrinsics bindings must be refused; None
+    # removes the key entirely.
     premises = {
         "json_object": (
             None,

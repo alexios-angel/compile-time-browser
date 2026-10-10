@@ -1,3 +1,10 @@
+//===- DOM/Nullable.h - typeof guards on nullable getAttribute -*- C++ -*-===//
+//
+// Host-contract tests for DOMEntryAnalysis refining a nullable getAttribute
+// result to a String under a `typeof x === "string"` guard.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -5,6 +12,10 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Checks that DOMEntryAnalysis proves a `typeof x === "string"` guard on a
+/// nullable getAttribute result refines it to a String in the guarded arm only,
+/// and that changed guards, other operands, step-budget limits, stale
+/// fingerprints and advisory attributes yield no partial evidence.
 inline void checkDOMNullable(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
@@ -218,8 +229,9 @@ module {
           "advisory String reports never replace the live guard proof");
     auto condition = branch.getCondition();
     auto changedCondition = negated.getOperand();
-    // Truthy takes a JavaScript Boolean and returns i1; retain well-typed IR
-    // while reversing its real predicate underneath the printed reports.
+    // Point the truthy at the un-negated comparison: the IR stays well typed,
+    // but the real predicate is reversed while the advisory host_string attributes
+    // still claim the old polarity. The analysis must not trust those attributes.
     auto truth = condition.getDefiningOp<ctjs::TruthyOp>();
     truth->setOperand(0, changedCondition);
     DOMEntryAnalysis stale(*module, contract);

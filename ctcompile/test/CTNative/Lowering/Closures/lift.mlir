@@ -1,23 +1,23 @@
-// A CLOSURE CARRIES BY LIFTING - part 24 Phase 59 slice 1, as IR.
+// Closure lifting in the native lowering.
 //
-// Three closures used as VALUES - put in a local, called through it - which is
-// the shape the tier refused whole before this slice: the only closure it
-// carried was a function DECLARATION, whose create_closure/store_global pair
-// lowers to nothing. Here the captured values become extra LEADING parameters
-// of the lowered function and each call passes them, so what comes out is
-// ordinary C++ over `double` with no functor, no `std::function`, no
-// allocation and nothing to own. That last part is the point: this tier has no
-// collector, and a carrier that allocated would need one.
+// Three closures are used as values (stored in a local, then called through
+// it), not just declared. Their captured values become extra leading
+// parameters of the lowered function, and every call passes them, so the
+// output is plain C++ over `ctnative::js_num` with no functor, no
+// `std::function` and no allocation. That matters because the native target
+// has no garbage collector, and a closure that allocated would need one. (A
+// plain function declaration needs none of this: its create_closure /
+// store_global pair lowers to nothing.)
 //
-// THE SIGNATURES ARE THE ASSERTION. `apply` takes no JavaScript parameter and
-// lowers to `apply_2(double)`; `at` takes one and lowers to
-// `at_6(double, double, double)` with its two captures FIRST. Get the order
+// The signatures are the assertion. `apply` takes no JavaScript parameter and
+// lowers to `apply_2(js_num)`; `at` takes one and lowers to
+// `at_6(js_num, js_num, js_num)` with its two captures first. Get the order
 // wrong and the program still compiles and prints the wrong number, which is
 // why the parameter lists are pinned and not only the calls.
 //
-// ONE PROGRAM PER FILE, and the functions are appended in source order: the
-// importer's `$N` suffix is its position in `program::functions`, so inserting
-// a function in the middle renumbers every symbol below it.
+// Keep this one program and append new functions at the end: the importer's
+// `$N` suffix is its position in `program::functions`, so inserting a function
+// in the middle renumbers every symbol below it.
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
@@ -44,7 +44,7 @@ var a = scaled(21);
 var b = plain(4);
 var c = line(4, 2);
 
-// --- EVERY FUNCTION IS CLAIMED ----------------------------------------------
+// --- every function is lowered ----------------------------------------------
 //
 // The two --implicit-check-not options above are the whole-file half of this:
 // a `ctjs.func` anywhere in the output is a function the lowering left behind,
@@ -52,7 +52,7 @@ var c = line(4, 2);
 //
 // CHECK: emitc.func @main() -> i32
 
-// --- ONE CAPTURE, AND IT IS THE ONLY PARAMETER ------------------------------
+// --- one capture, and it is the only parameter ------------------------------
 //
 // `apply` is written with an empty parameter list and reads `k` out of its
 // closure. Lifted, it takes `k` and reads nothing.
@@ -62,18 +62,18 @@ var c = line(4, 2);
 // CHECK: emitc.func @apply_2(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: mul %arg0
 
-// --- NO CAPTURE AT ALL ------------------------------------------------------
+// --- no capture at all ------------------------------------------------------
 //
-// A nested helper that uses only its own argument. There is nothing to lift,
-// and the whole of the work is turning a ctjs.call through a local register
-// into a ctjs.call_direct the closed world can type - which is what makes this
-// the commonest shape the slice claims in real code.
+// A nested helper that uses only its own argument. There is nothing to lift;
+// the work is turning a ctjs.call through a local register into a
+// ctjs.call_direct the closed-world analysis can type, which makes this the
+// most common closure shape lowered in real code.
 //
 // CHECK: emitc.func @plain_3(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: call @twice_4(%arg0)
 // CHECK: emitc.func @twice_4(%arg0: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
-// --- TWO CAPTURES AND A PARAMETER, AND THE CAPTURES LEAD --------------------
+// --- two captures and a parameter, and the captures come first --------------
 //
 // `at(x)` becomes `at_6(m, b, x)`. Both call sites pass the same two captured
 // values with a different `x`, and the closure is built once and never
@@ -84,12 +84,12 @@ var c = line(4, 2);
 // CHECK: call @at_6(%arg0, %arg1, %{{.*}}) : (!emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">, !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK: emitc.func @at_6(%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.opaque<"ctnative::js_num">, %arg2: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 
-// --- AND THE COUNTS, BECAUSE PASS STATISTICS ARE INERT HERE -----------------
+// --- the counts, because pass statistics are compiled out -------------------
 //
 // The LLVM package this builds against compiles pass statistics out, so
 // --mlir-pass-statistics prints an empty report and a test asserting one
 // asserts nothing. `report` prints the numbers as a remark, which a test can
-// PIN: three closures, three captures between them (1 + 0 + 2), four calls
+// pin: three closures, three captures between them (1 + 0 + 2), four calls
 // rewritten (`at` is called twice), and three cells unboxed.
 //
 // REPORT: remark: ctnative: lifted 3 closure(s) over 3 capture(s) into 3 function(s), rewrote 4 call(s), unboxed 3 cell(s)

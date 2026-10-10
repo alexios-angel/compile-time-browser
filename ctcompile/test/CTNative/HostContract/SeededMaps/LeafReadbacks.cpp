@@ -1,7 +1,19 @@
+//===- LeafReadbacks.cpp - Objects read back from a Map ---------*- C++ -*-===//
+//
+// Host-contract proofs for an object stored in a captured Map and then read
+// back with `get`: identity comparisons and own-field reads.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Checks that HostContractAnalysis proves (or refuses) reads of an object
+/// stored in a Map and read back: identity comparisons, own-field reads after
+/// overwrite or delete, and unsafe uses such as accessors or uninitialized
+/// fields. \p source is the LeafObjectPayloads fixture; \p prepared selects
+/// its call_direct form. #ctjs.number<4607182418800017408> is the IEEE-754 bit
+/// pattern of 1.0 and 4611686018427387904 is 2.0.
 void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source, bool prepared) {
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
     const std::string field = "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
@@ -28,6 +40,9 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
     const auto savedAfter =
         replaced(saved, "    ctjs.return %size", overwrite + erase + fieldReturn);
     unsigned rows = 0;
+    // Checks a proved query has all four callable edges, each recording put$3's
+    // complete allocations, field writes and reads, and Map calls, with every
+    // setter argument typed String.
     const auto census = [&](mlir::ModuleOp module, const HostContractAnalysis & query) {
         auto setter = module.lookupSymbol<ctjs::FuncOp>("put$3");
         std::vector<ctjs::CreateObjectOp> objects;
@@ -161,10 +176,12 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
                  "      scf.yield\n    }\n");
     variant(uninitializedBranch, false,
             "both paths must definitely initialize a field before readback");
+    // One row per variant() call above; update this when adding a case.
     check(rows == 26, "all local identity, field, presence and unsafe-use controls ran");
 
-    // Live queries also see IR changed after parsing. A then-only allocation
-    // or read cannot be borrowed by a later statement or the sibling arm.
+    // The analysis also checks IR edited after parsing. An allocation or read
+    // defined only in the then-arm cannot be used by a later statement or by
+    // the else-arm.
     for (const bool alias : {false, true}) {
         const std::string thenBody =
             alias ? "      %branchSaved = ctjs.call %reader(%state, %entryKey)\n"
@@ -231,6 +248,7 @@ void checkLeafReadbacks(mlir::MLIRContext & context, const std::string & source,
         auto contract = mapContractFor(*module);
         HostContractAnalysis query(*module, contract);
         const unsigned completion = query.steps();
+        // 20000 is a ceiling well above this fixture's step count.
         check(query.proved() && completion < 20000,
               "leaf readback has bounded complete proof work");
         if (!query.proved() || completion >= 20000) { continue; }

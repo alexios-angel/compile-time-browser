@@ -1,8 +1,8 @@
-// Regression for ND-8. A Number key selects an element only when it is an
-// integral index; a fractional one names a property ("0.5", "-0.5") the array
-// does not have, so the read is undefined, as in Node and in the reference
-// since it stopped truncating. -0 names "0" and selects element zero.
-// The pipeline also injects an off-by-one to prove the differential gate fails.
+// Divergence ND-8 (ctcompile/docs/native-divergences.md). A Number key selects
+// an element only when it is an integral index; a fractional key names a
+// property ("0.5", "-0.5") the array does not have, so the read is undefined,
+// as in Node and the interpreter. -0 names "0" and selects element zero.
+// index-truncation.test also checks that an off-by-one global is caught.
 function element(i) {
     var a = [10, 20, 30];
     return a[i];

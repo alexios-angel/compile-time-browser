@@ -1,10 +1,10 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/owning-callables.py --fixtures %t --work %t.executables --translate ctjs-translate --opt ctjs-opt
 
-// The returned lambda outlives its factory. Aliases keep the same Map, separate
+// A returned lambda outlives its factory. Aliases keep the same Map, separate
 // factories keep separate Maps, and strings own storage beyond their frame.
-// This test executes ordinary and deduced output with both C++ compilers and
-// repeats the lifetime observations under address/undefined sanitizers.
+// owning-callables.py runs the explicit and deduced output with GCC and Clang,
+// and repeats the lifetime checks under AddressSanitizer and UBSan.
 
 //--- owning.js
 function makeCounter(seed) {
@@ -85,15 +85,15 @@ function scalars() {
     return first(12) + second(3) * 100;
 }
 function makeKeyword(template) { return concept => template + concept; }
-function keywords() { const fn = makeKeyword(40); return fn(2); }
+function keywords() { const fn = makeKeyword(40); return fn(2); }  // Names above are C++ keywords.
 var stringResult = strings();
 var scalarResult = scalars();
 var keywordResult = keywords();
 
 //--- fallback.js
-// A callable-valued parameter is outside the concrete std::function signature
-// set. Its already-supported tuple representation must remain available while
-// the scalar adder uses the new owning lambda representation in the same unit.
+// A callable-valued parameter has no concrete std::function signature, so it
+// keeps the tuple representation, while the scalar adder in the same program
+// uses an owning lambda. Both representations must work side by side.
 function makeApply(delta) { return callback => callback(delta); }
 function makeAdder(seed) { return value => seed + value; }
 function applyCallback() {

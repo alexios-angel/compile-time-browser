@@ -1,16 +1,16 @@
-// A CALL WHOSE RESULT NOTHING READS IS A STATEMENT, not a declaration.
+// A call whose result nothing reads is printed as a statement, not a declaration.
 //
 // The native lowering and --convert-scf-to-emitc both produce calls whose
-// result is dead - a function invoked for its effect on a global, a helper
+// result is dead: a function invoked for its effect on a global, a helper
 // whose value is dropped on one path. Declaring a variable for one emits
-// `double v = f();` with v never read, and part 24 Phase 63 Step 7 compiles
-// generated code with -Wall -Wextra -Werror: an unused variable is a BUILD
-// FAILURE on a program the pipeline declared native. Nothing downstream saves
-// it either - EmitC ops declare no memory effects, so the canonicalizer's
+// `double v = f();` with v never read, and the compile-clean check
+// (Checks/compile-clean.py) builds generated code with -Wall -Wextra -Werror: an
+// unused variable is a build failure on a program the pipeline declared native.
+// Nothing downstream saves it either: EmitC ops declare no memory effects, so the
 // `isOpTriviallyDead` is false for every one of them, and the prune pass will
 // not erase a call, because a call may do anything.
 //
-// THE DIVERGENCE IS OPT-IN. Upstream's emitter declares the variable, and its
+// The divergence is opt-in. Upstream's emitter declares the variable, and its
 // tests live in test/Target/Cpp/upstream/ verbatim to measure this fork's
 // distance from it, so the printer keys off `ctnative.statement` rather than
 // off use_empty() itself: --ctnative-prune-dead-stores sets it, the emitter
@@ -30,9 +30,9 @@ emitc.func private @effect_count_now() -> f64
 emitc.verbatim "struct Discarded { explicit Discarded(double x) { effect(x); } ~Discarded() { effect(0.0); } };"
 
 emitc.func @dropped(%a: f64) -> f64 attributes {ctnative.provenance = "function dropped, fixture.js:1:1"} {
-  // read: a declaration, as always
+  // Read: a declaration, as always.
   %kept = emitc.call @effect(%a) : (f64) -> f64
-  // NOT read: a statement
+  // Not read: a statement.
   %dead = emitc.call @effect(%kept) : (f64) -> f64
   emitc.return %kept : f64
 }
@@ -58,7 +58,7 @@ emitc.func @drop_constructor(%a: f64) -> f64 {
 
 emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effect_count; return x + 1.0; }\0Adouble effect_count_now() { return effect_count; }\0Aint main() { return dropped(40.0) == 41.0 && after_cleanup(7.0) == 7.0 && drop_constructor(9.0) == 6.0 && effect_count == 6 ? 0 : 1; }"
 
-// --- the pass marks exactly the dead one -----------------------------------
+// --- The pass marks exactly the dead one -----------------------------------
 //
 // CHECK-LABEL: emitc.func @dropped
 // CHECK: %[[K:.*]] = call @effect
@@ -72,7 +72,7 @@ emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effec
 // CHECK-SAME: ctnative.statement
 // CHECK-NEXT: {{(emitc\.)?}}return %arg0
 
-// --- and the emitter prints it as a statement ------------------------------
+// --- And the emitter prints it as a statement ------------------------------
 //
 // CPP: double dropped(double [[A:v[0-9]+]]) {
 // CPP-NEXT: double [[K:v[0-9]+]] = effect([[A]]);
@@ -87,17 +87,17 @@ emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effec
 // CPP-SAME: double [[A:v[0-9]+]]) {
 // CPP-NEXT: (void)Discarded([[A]]);
 
-// --- WITHOUT the mark, upstream's behaviour is unchanged --------------------
+// --- Without the mark, upstream's behavior is unchanged --------------------
 //
-// This is the guard on the guard: if the printer ever keys off use_empty()
-// again, this line goes red and the eight verbatim upstream tests go red with
-// it.
+// If the printer ever keys off use_empty() instead of the mark, this check
+// fails, and so do the verbatim upstream tests in test/Target/Cpp/upstream/.
+//
 //
 // UNMARKED: double dropped(double [[A:v[0-9]+]]) {
 // UNMARKED-NEXT: double [[K:v[0-9]+]] = effect([[A]]);
 // UNMARKED-NEXT: double {{v[0-9]+}} = effect([[K]]);
 
-// --- the printing policy does not deduce or pin what is not declared -------
+// --- The printing policy does not deduce or pin what is not declared -------
 //
 // DEDUCED: double dropped(double [[A:v[0-9]+]]) {
 // DEDUCED-NEXT: auto [[K:v[0-9]+]] = effect([[A]]);
@@ -110,10 +110,10 @@ emitc.verbatim "static int effect_count = 0;\0Adouble effect(double x) { ++effec
 // DEDUCED-NEXT: effect([[A]]);
 // DEDUCED-NEXT: return [[A]];
 
-// --- the count is asserted, not read ---------------------------------------
+// --- The count is asserted, not read ---------------------------------------
 //
-// Statistics are inert in the release LLVM this box installs, so the pass
-// carries an explicit report and the test pins its number: the initially
+// Statistics are inert in the release build of LLVM we install, so the pass
+// carries an explicit report and the test checks its number: the initially
 // unused call and the two whose last users were erased, never the live call.
 //
 // REPORT: pruned 1 variable(s) and 1 operation(s), marked 4 call(s) as statements

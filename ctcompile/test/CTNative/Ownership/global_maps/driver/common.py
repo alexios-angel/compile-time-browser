@@ -1,7 +1,9 @@
-"""Execute checked published Map methods and live primitive results without the VM."""
+"""Shared helpers for the global-Map ownership driver.
 
-# Split out of native-owned-global-maps.py on 2026-09-08: this is its main(),
-# verbatim. The docstring above is the one argparse prints, so it stays here.
+Census checks (exact function and call counts in the MLIR before and after
+preparation) and Node/VM observation of printed globals. main() lives in
+__main__.py; the argparse description is execution.py's docstring.
+"""
 
 import argparse
 import json
@@ -18,8 +20,13 @@ from ..harness import *
 
 
 def check_census(args, ir, name, cases, what, *, branched=False):
-    """A five-function case of `cases()` keeps its exact raw/prepared call census
-    and, when `branched`, both structural arms."""
+    """Require a five-function case of `cases()` to keep its exact census.
+
+    The census is the function count and the source-call counts of the raw and
+    prepared MLIR (`raw_calls`, `prepared_calls` in the row). When `branched`,
+    the prepared IR must also keep an scf.if with both arms. Names not in
+    `cases()` are skipped.
+    """
     row = cases().get(name)
     if row is None:
         return
@@ -66,7 +73,8 @@ def observe(args, name, source, values):
 
 
 def distinguish(args, name, source, old, replacement, expected, names=("trace",)):
-    """Node must fail, or print other than `expected`, once `old` becomes `replacement`."""
+    """Require Node to fail, or print other than `expected`, once `old` becomes
+    `replacement`; this proves the observer notices that detail of `source`."""
     assert source.count(old) == 1, (name, old)
     js = args.work / f"{name}-blind.js"
     js.write_text(source.replace(old, replacement))
@@ -81,10 +89,17 @@ def distinguish(args, name, source, old, replacement, expected, names=("trace",)
 
 
 def numeric_reference_output(name, value):
+    """Return what the reference interpreter prints for numeric global `value`."""
     return scalar_global_output(name, value)
 
 
 def numeric_node_observer(value):
+    """Return the Node observer script for `value`.
+
+    boundary.NODE accepts only finite Numbers, so booleans, NaN and -Infinity
+    get a copy with that type check replaced; String values use the typed
+    constant-global observer limited to `trace`.
+    """
     if isinstance(value, StringValue):
         return CONSTANT_GLOBAL_NODE.replace("JSON.parse(process.argv[2])", '["trace"]')
     if not isinstance(value, bool) and value not in {"NaN", "-Infinity"}:

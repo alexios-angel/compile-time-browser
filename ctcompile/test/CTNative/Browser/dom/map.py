@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Execute DOM entries that own local standard Maps keyed by element identity."""
+"""Compile DOM entries that build local Maps keyed by element identity to
+native C++ and run them against the real DOM.
+
+Map values may be numbers, strings, booleans or one level of child Map. The
+programs in REFUSALS, an undeclared or replaced Map constructor and small
+step budgets must be refused."""
 
 import re
 
@@ -106,8 +111,9 @@ FLAGS_CHECKS = r"""
         assert(doc.take_writes().empty());
 """
 
-# Bootstrap Data's shape: element keys own child Maps of instance keys. The
-# child reads after the browser call keep their presence proof.
+# The shape of Bootstrap's Data helper: a Map from element to a child Map of
+# instance keys. Reads of the child Map after the DOM call must still be known
+# to find their key.
 REGISTER = """function register(element, other) {
   const data = new Map();
   data.has(element) || data.set(element, new Map());
@@ -161,6 +167,7 @@ ENTRIES = (
     ("unregister", UNREGISTER, 1, UNREGISTER_CHECKS),
 )
 
+# (name, body, text the refusal must contain).
 REFUSALS = (
     ("returned", "return new Map();", "DOM entry return must be a scalar"),
     ("stored", "saved = new Map(); return true;", "DOM"),
@@ -234,8 +241,10 @@ REFUSALS = (
 
 
 def execute(args, native, name, checks, includes, libraries):
-    """Run the one typed entry against the real DOM. Unlike dom.standalone, a
-    proved Map read may use the existing tagged scalar carrier."""
+    """Run the one typed entry against the real DOM with each compiler.
+
+    Unlike dom.standalone, this allows a Map read proved to find its key to
+    return the tagged ctnative::nullable_scalar carrier."""
     text = native.read_text()
     entries = dom.NATIVE.findall(text)
     if len(entries) != 1 or FUNCTION.search(text) or "ctnative.not_native" in text:
@@ -283,7 +292,7 @@ def main():
             native = dom.lower(args, ir, manifest, name, optimize=optimize)
             execute(args, native, name, checks, includes, libraries)
             executions += 4
-        # The provider must declare the original constructor.
+        # Without Map in initial_intrinsics the entry must be refused.
         dom.refuse(args, ir, contract, f"{label}-undeclared", "DOM")
         refusals += 2
         if label == "keys":
@@ -308,7 +317,8 @@ def main():
             reason,
         )
         refusals += 2
-    # A declaration may not replace the declared constructor.
+    # A `var Map` declaration that replaces the declared constructor must be
+    # refused.
     source = "var Map = 0;\n" + FLAGS_SOURCE
     ir, contract = dom.prepare(args, "rebound", source, 1, entry_name="flags")
     dom.refuse(args, ir, dict(contract, initial_intrinsics=["Map"]), "rebound", "DOM")

@@ -1,5 +1,5 @@
-// A derived class's own static getters may read inherited ones when no own
-// getter shadows an inherited key: every receiver read resolves as it did.
+// A derived class's own static getters may read inherited ones when no own getter
+// shadows an inherited key: every `this.X` read resolves exactly as before.
 //--- inherited-static-getters.js
 function inherited_static_getters() {
     class Base {
@@ -15,8 +15,8 @@ function inherited_static_getters() {
 }
 var a = inherited_static_getters();
 
-// Bootstrap B's shape: an own getter whose inherited dependency always throws
-// ends the constructor arm that reads it.
+// Bootstrap's BaseComponent shape: an own getter (DATA_KEY) whose inherited dependency
+// (NAME) always throws ends the constructor branch that reads it.
 //--- inherited-own-fields-iterate-throwing-arm-own-getter.js
 function inherited_own_fields_iterate_throwing_arm_own_getter(u) {
     class Base {
@@ -36,8 +36,8 @@ function inherited_own_fields_iterate_throwing_arm_own_getter(u) {
 }
 var a = inherited_own_fields_iterate_throwing_arm_own_getter();
 
-// An own getter that shadows an inherited one changes what an inherited body's
-// receiver read selects; that still needs receiver-specific bodies.
+// An own getter that shadows an inherited one changes what the inherited getter's
+// `this.NAME` read finds, so each class needs its own copy of that getter.
 //--- inherited-static-getters-shadow.js
 function inherited_static_getters_shadow() {
     class Base {
@@ -54,7 +54,7 @@ function inherited_static_getters_shadow() {
 }
 var a = inherited_static_getters_shadow();
 
-// An inherited getter cannot read a key only its derived class defines.
+// An inherited getter cannot read a key that only its derived class defines.
 //--- inherited-static-getters-base-reads-leaf.js
 function inherited_static_getters_base_reads_leaf() {
     class Base {
@@ -70,8 +70,8 @@ function inherited_static_getters_base_reads_leaf() {
 }
 var a = inherited_static_getters_base_reads_leaf();
 
-// A static method may call an own static method on its exact receiver: the
-// call selects the same body an exact local `Shape.base(n)` does.
+// A static method may call another static method on `this`: the call runs the same
+// body that `Shape.base(n)` does.
 //--- static-call-this-method.js
 function static_call_this_method() {
     class Shape {
@@ -83,7 +83,7 @@ function static_call_this_method() {
 }
 var a = static_call_this_method();
 
-// The receiver call may pass fewer arguments and read an own getter too.
+// The call on `this` may pass fewer arguments and read an own getter too.
 //--- static-call-this-getter-chain.js
 function static_call_this_getter_chain() {
     class Shape {
@@ -96,7 +96,7 @@ function static_call_this_getter_chain() {
 }
 var a = static_call_this_getter_chain();
 
-// A detached receiver method loses its receiver; it is not the exact call.
+// A method read off `this` and called detached loses its receiver.
 //--- static-call-this-detached.js
 function static_call_this_detached() {
     class Shape {
@@ -108,7 +108,7 @@ function static_call_this_detached() {
 }
 var a = static_call_this_detached();
 
-// A different receiver for the same body is still not the exact receiver.
+// Calling the same method with another receiver is not a call on `this`.
 //--- static-call-this-foreign.js
 function static_call_this_foreign() {
     class Shape {
@@ -120,7 +120,7 @@ function static_call_this_foreign() {
 }
 var a = static_call_this_foreign();
 
-// Bootstrap B's getOrCreateInstance: a receiver method call beside new this.
+// Bootstrap's getOrCreateInstance shape: a static call on `this` beside `new this()`.
 //--- static-call-this-new-this.js
 function static_call_this_new_this() {
     class Shape {
@@ -132,9 +132,9 @@ function static_call_this_new_this() {
 }
 var a = static_call_this_new_this();
 
-// Bootstrap's component shape: W's NAME throws, B's own DATA_KEY and
-// EVENT_KEY read it through `this`, and a leaf overrides NAME. The leaf gets
-// its own copies of B's getters, so its EVENT_KEY is ".bs.alert".
+// Bootstrap's component shape: W's NAME throws, B's own DATA_KEY and EVENT_KEY read
+// it through `this`, and the leaf Alert overrides NAME. Alert gets its own copies
+// of B's getters, so its EVENT_KEY is ".bs.alert".
 //--- inherited-static-getters-component.js
 function inherited_static_getters_component() {
     class W {
@@ -154,8 +154,8 @@ function inherited_static_getters_component() {
 }
 var a = inherited_static_getters_component();
 
-// The base keeps its own resolution while the leaf reads its copy: the same
-// base constructor read selects "bs.base" for Base and "bs.leaf" for Leaf.
+// Base keeps its own getters while Leaf reads its copies: the same Base constructor
+// read finds "bs.base" for a Base and "bs.leaf" for a Leaf.
 //--- inherited-static-getters-shadow-both.js
 function inherited_static_getters_shadow_both() {
     class Base {
@@ -173,8 +173,8 @@ function inherited_static_getters_shadow_both() {
 }
 var a = inherited_static_getters_shadow_both();
 
-// A shared inherited method resolves `this.constructor.NAME` once for every
-// class; an override needs per-class method bodies.
+// An inherited method reads `this.constructor.NAME`; when a subclass overrides
+// NAME, the method needs a separate body per class.
 //--- inherited-static-getters-shadow-method.js
 function inherited_static_getters_shadow_method() {
     class Base {
@@ -191,8 +191,8 @@ function inherited_static_getters_shadow_method() {
 }
 var a = inherited_static_getters_shadow_method();
 
-// Copies belong to one class: a class derived from the leaf would inherit
-// the shared definition instead.
+// Copies belong to one class: a class derived from Leaf would inherit the shared
+// definition instead.
 //--- inherited-static-getters-shadow-extended.js
 function inherited_static_getters_shadow_extended() {
     class Base {
@@ -210,7 +210,7 @@ function inherited_static_getters_shadow_extended() {
 }
 var a = inherited_static_getters_shadow_extended();
 
-// A copy that reaches a throwing getter would need its own closure transport.
+// Copying KEY for Leaf would also reach the throwing BAD getter.
 //--- inherited-static-getters-shadow-throwing.js
 function inherited_static_getters_shadow_throwing() {
     class Base {
@@ -228,8 +228,8 @@ function inherited_static_getters_shadow_throwing() {
 }
 var a = inherited_static_getters_shadow_throwing();
 
-// A shared inherited method reads the overridden getter through
-// this.constructor: each class's instances run a body that selects its own.
+// An inherited method reads the overridden getter through this.constructor:
+// instances of each class run a body that finds that class's NAME.
 //--- inherited-static-getters-shadow-method-both.js
 function inherited_static_getters_shadow_method_both() {
     class Base {
@@ -245,7 +245,7 @@ function inherited_static_getters_shadow_method_both() {
 }
 var a = inherited_static_getters_shadow_method_both();
 
-// A class derived from the copy's class overrides again and gets its own.
+// A class derived from Leaf overrides NAME again and gets its own method body.
 //--- inherited-static-getters-shadow-method-chain.js
 function inherited_static_getters_shadow_method_chain() {
     class Base {
@@ -265,8 +265,8 @@ function inherited_static_getters_shadow_method_chain() {
 }
 var a = inherited_static_getters_shadow_method_chain();
 
-// Bootstrap's shape again: B's method reads DATA_KEY, which is copied for the
-// component, so the component's copy of the method sees "bs.alert".
+// Bootstrap's shape again: B's method reads DATA_KEY, which is copied for Alert,
+// so Alert's copy of the method sees "bs.alert".
 //--- inherited-static-getters-component-method.js
 function inherited_static_getters_component_method() {
     class W {

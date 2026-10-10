@@ -1,9 +1,17 @@
-"""class dom text cases: continued from class_dom_iteration_cases."""
+"""Class + DOM test cases that read and write attribute and dataset text.
+
+Continues iteration_cases.py, whose tables this module star-imports and
+extends; basics.py imports the result. Each case is (source, bits): bit k is
+the expected truthiness of the result when the element's `x` attribute is
+null, '', 'a\\0b' and '\\u00e9' respectively. A *_REFUSALS entry is a source the
+compiler must reject.
+"""
 
 from CTNative.Lowering.Objects.classes.dom.iteration_cases import *
 
-# Preserve the entire original method, including M, for-of and Unicode key
-# normalization; unused sibling slots retain their separate refusal.
+# Bootstrap's own getDataAttributes, cut unchanged from its helper object `H`
+# together with helper `M` (for-of and Unicode key normalisation included).
+# The other H methods are left out here; cases that keep them are FULL_H_*.
 ORIGINAL_ATTRIBUTES = (
     BOOTSTRAP_M
     + "const H = {\n"
@@ -18,8 +26,9 @@ ORIGINAL_ATTRIBUTES = (
 )
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, DYNAMIC_CASES):
     cases["class_dynamic_original"] = (ORIGINAL_ATTRIBUTES, "1000")
-# Every original H slot has actual arguments. The earlier FULL_H specimen keeps
-# its uncalled, parameterized slots and remains a separate proof boundary.
+# All of Bootstrap's H data-attribute helpers, each called with real
+# arguments. iteration_cases.py's FULL_H is the variant where some stay
+# uncalled, and it is still refused.
 FULL_H_CALLS = (
     BOOTSTRAP_M
     + strings.BOOTSTRAP_F
@@ -94,12 +103,14 @@ FULL_H_REFUSALS = {
     "class_h_full_later_target": FULL_H_CALLS.replace(
         "H.removeDataAttribute(element, 'config')", "H.removeDataAttribute({}, 'config')"
     ),
-    # A bounded tail does not prove the original normalized dataset key.
+    # slice(1, n) with an explicit end is not proved equal to slice(1), so the
+    # normalised dataset key is unknown and these are refused.
     "class_h_full_slice_end_tail": FULL_H_CALLS.replace("i.slice(1)", "i.slice(1, 2)"),
     "class_h_full_slice_max_tail": FULL_H_CALLS.replace("i.slice(1)", "i.slice(1, 4294967295)"),
 }
-# Fresh H results are distinct from the class prototype and each instance.
-# Keep the complete original bodies while checking aliases and real writes.
+# The object getDataAttributes returns is fresh: it is neither the class
+# prototype nor any instance. These cases keep Bootstrap's bodies unchanged
+# and check aliases of that object and real writes to it.
 FULL_H_METHOD = FULL_H_CASES["class_h_full_method"][0]
 FULL_H_CASES.update(
     {
@@ -170,8 +181,9 @@ FULL_H_REFUSALS.update(
         ),
     }
 )
-# An uncalled leaf needs no invented argument values: every operation must be
-# inert for all values. Keep unknown calls, conversions and captures refused.
+# An H method that is never called is accepted only if every operation in it
+# is free of side effects for any argument value; the compiler does not guess
+# argument values. Unknown calls, conversions and captures stay refused.
 for name, method in {
     "ignored": "unused(t) { return 'safe'; }",
     "identity": "unused(t) { return t; }",
@@ -196,8 +208,9 @@ for name, method in {
     FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
         "const H = {", "const H = { " + method + ","
     )
-# Conditional leaves still need proof of every original arm, without calls
-# supplying parameter types or dead-branch pruning hiding an unknown effect.
+# An uncalled method with a conditional needs every branch proved: no call
+# supplies parameter types, and pruning a dead branch must not hide an unknown
+# effect.
 for name, expression in {
     "conditional": "t ? e : t",
     "nested_conditional": "t ? (e ? typeof t : !e) : void t",
@@ -239,6 +252,9 @@ for name, body in {
     FULL_H_REFUSALS["class_h_unused_" + name] = FULL_H_CALLS.replace(
         "const H = {", "const H = { unused(t, e) { " + body + " },"
     )
+# These two started as refusals and now compile: an unused method with a
+# side-effect-free body is accepted, and a later removeDataAttribute with a
+# different-case key is accepted with the result it really produces ("0000").
 FULL_H_CASES["class_h_full_unused_slot"] = (FULL_H_REFUSALS.pop("class_h_full_unused_slot"), "1000")
 FULL_H_CASES["class_h_full_later_key"] = (FULL_H_REFUSALS.pop("class_h_full_later_key"), "0000")
 for cases in (CLASS_CASES, FILTER_CASES, M_CASES, NUMBER_CASES, F_CASES, DYNAMIC_CASES):
@@ -312,6 +328,8 @@ UTF16_REFUSALS = {
         ("effect", "charAt(0)", "charAt(unknown())"),
     )
 }
+# These started as refusals and are now accepted with the bits they really
+# produce.
 UTF16_CASES["class_utf16_lowercase"] = (UTF16_REFUSALS.pop("class_utf16_lowercase"), "1111")
 UTF16_CASES["class_utf16_slice_extra"] = (UTF16_REFUSALS.pop("class_utf16_slice_extra"), "1111")
 UTF16_CASES["class_utf16_char_missing"] = (UTF16_REFUSALS.pop("class_utf16_char_missing"), "1111")
@@ -319,7 +337,8 @@ for name in ("class_utf16_char_index", "class_utf16_slice_index"):
     UTF16_CASES[name] = (UTF16_REFUSALS.pop(name), "0000")
 CLASS_CASES.update(UTF16_CASES)
 CLASS_REFUSALS.update(UTF16_REFUSALS)
-# The arrow saves lexical this, but its original Bootstrap predicate never reads it.
+# The filter predicate is an arrow function, which captures `this`, but
+# Bootstrap's predicate never reads it.
 DIRECT_FILTER_EQUALITY_CLASS = (
     "class Shape { constructor(t) { this.element = t; } read() { return "
     "Object.keys(this.element.dataset).filter(" + FILTER_PREDICATE + ").length; } }\n"
@@ -406,8 +425,9 @@ FILTER_REFUSALS.update(
 for name in (
     "class_filter_direct_numeric_equality",
     "class_filter_repeated_numeric_equality",
-    # The instance's element field is written and never read: since
-    # 3f7edfa54 the field census drops it, keeping its value producer.
+    # The instance's `element` field is written and never read, so the
+    # compiler drops the field (keeping the expression that produced its
+    # value) and these compile.
     "class_filter_parameter_unused_field",
     "class_filter_parameter_branch_unused_field",
     "class_filter_parameter_numeric_equality",
@@ -417,8 +437,9 @@ FILTER_IDENTITIES = ["Object", "Array", "String"]
 DYNAMIC_ITERATION = ["__ctbrowser_for_of_open", "__ctbrowser_iter_next", "__ctbrowser_iter_close"]
 CLASS_CASES.update(FILTER_CASES)
 CLASS_REFUSALS.update(FILTER_REFUSALS)
-# Shadowed child names make the frontend box these otherwise local values.
-# Neither the outer helper nor its child is called to manufacture parameter facts.
+# The nested `hidden` function reuses a name from the outer function, which
+# makes the frontend store these otherwise local values in heap cells.
+# Neither function is called, so nothing is known about their parameters.
 UNUSED_CELL_CASES = {
     "parameter": "function hidden(t) { return t; } const saved = t; t = e; return saved === t;",
     "branch": "function hidden(t) { return t; } const saved = t; "
@@ -435,7 +456,8 @@ UNUSED_CELL_REFUSALS = {
     "child_escape": "function hidden(t) { return t; } t = e; return t ? hidden : t;",
 }
 for name, body in UNUSED_CELL_CASES.items():
-    # Standalone declarations still need class initialization's helper census.
+    # As a standalone function declaration the helper is refused even in the
+    # shapes accepted below as an object-literal method.
     CLASS_REFUSALS["class_unused_cell_" + name] = (
         "function unusedCell(t, e) { " + body + " }\n" + CLASS + READ
     )

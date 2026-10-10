@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Resolve fixed outer Booleans while retaining the actual local mutable cell."""
+"""Check that a callback capturing both a constant Boolean from an outer scope
+(forwarded through the class method's closure) and the method's own mutable
+Boolean cell compiles natively and matches Node and the VM, and that variants
+where the outer value can change, plus hand-mutated IR, are refused."""
 
 import hashlib
 import re
@@ -11,12 +14,14 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
-# Exact source measured before this proof; the reader has indices [0, -1].
+# The reader closure captures both the outer constant `off` (forwarded from the
+# enclosing frame) and the mutable `seen` cell. SOURCE_HASHES pins the generated
+# source so main()'s expected enclosing_indices ([0, -1] for the reader) stay valid.
 METHOD = "const off = false;\n" + captures.METHOD.replace("() => !seen", "() => off === seen")
 CASES = {
     "forwarded": METHOD,
     "reordered": METHOD.replace("off === seen", "seen === off"),
-    # Both callbacks share off, at different original capture positions.
+    # Both callbacks capture `off`, at different capture positions.
     "shared-forwarded": METHOD.replace("seen = true;", "if (seen === off) { seen = true; }"),
     "multiple-fixed": METHOD.replace("const off = false;", "const off = false, on = true;")
     .replace("off === seen", "off === seen === on")
@@ -54,6 +59,8 @@ BAD = {
     ),
 }
 
+# A `ctjs.create_closure` line. enclosing_indices gives, per capture slot, the
+# parent closure's slot it forwards (>= 0) or -1 for a value created locally.
 CLOSURE = (
     r"^    (%\w+) = ctjs\.create_closure (%\w+)\[(\d+)\] this (%\w+) captures ([^{\n]+?)"
     r"(?: \{enclosing_indices = array<i32: ([^>]+)>\})?$"
@@ -61,6 +68,13 @@ CLOSURE = (
 
 
 def shape(text):
+    """Find the method that creates the two callbacks and check their slots.
+
+    Returns (owner, cell, closures, leaves, slots, indices, enclosing): the
+    owner function, its mutable cell, the create_closure matches, the callback
+    bodies, each callback's captured operands, the cell's slot in each, and
+    each callback's enclosing_indices.
+    """
     bodies = captures.functions(text)
     for owner in bodies:
         closures = list(re.finditer(CLOSURE, owner[0], re.M))
@@ -107,6 +121,7 @@ def shape(text):
 
 
 def parent_capture(text, owner):
+    """Return (parent function, create_closure match) that creates owner."""
     index = re.search(r"@[^ (]+\$(\d+)\(", owner[0])[1]
     matches = [
         (parent, closure)
@@ -119,12 +134,15 @@ def parent_capture(text, owner):
 
 
 def replace(text, body, operation, changed):
+    """Replace match operation inside function match body with changed."""
     return (
         text[: body.start() + operation.start()] + changed + text[body.start() + operation.end() :]
     )
 
 
 def roots(text):
+    """Yield (label, valid, invalid) IR with a `ctjs.root` placed inside or after
+    the frame of the cell, each fixed outer value, each closure and callee."""
     owner, cell, closures, leaves, _, _, _ = shape(text)
     parent, creator = parent_capture(text, owner)
     fixed = re.findall(r"%\w+", creator[5])
@@ -154,6 +172,7 @@ def roots(text):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     owner, cell, closures, leaves, slots, indices, enclosing = shape(text)
     closure, reader, writer = closures[0], leaves[0], leaves[1]
     parent, creator = parent_capture(text, owner)
@@ -243,6 +262,7 @@ def mutations(text):
 
 
 def verifier_mutations(text):
+    """Yield (label, IR) pairs with bad enclosing_indices that the verifier rejects."""
     owner, cell, closures, _, _, _, _ = shape(text)
     closure = closures[0]
     for label, indices in (

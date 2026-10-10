@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Prove ordinary instanceof before class prototypes become structural C++ shapes."""
+"""Check that class preparation resolves `instanceof` on class instances.
+
+Each CASES program must print the same `a=` value under Node and the reference
+interpreter, and after --ctnative-specialize-class-initialization it must hold
+no ctjs.instanceof and keep every source `new`; the prepared IR is then lowered
+and run natively. Each REFUSALS program changes something `instanceof` depends
+on (the prototype, Symbol.hasInstance, Function, the constructor's return) and
+preparation must refuse it. Every accepted case is also re-prepared with no
+Function identity, a stale module fingerprint and a zero step budget, each of
+which must fail.
+"""
 
 from CTNative.harness import native_args, run
 from CTNative.HostContract import contract as host
@@ -114,8 +124,8 @@ def main():
             refusals += 1
             continue
         after = prepared.read_text()
-        # The importer also constructs Errors in unreachable super guards.
-        # Count the explicit source constructions whose effects must remain.
+        # The importer also constructs Errors in unreachable super guards, so
+        # compare against the number of `new` expressions in the source.
         if "ctjs.instanceof" in after or after.count("ctjs.construct") != body.count("new "):
             raise RuntimeError(f"{name}: preparation lost a constructor or retained instanceof")
         for control, changed, options, diagnostic in (

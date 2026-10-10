@@ -1,2 +1,2 @@
-# Structured invocations remain inside the source branch or loop.
+# An inlined callback call stays inside its source `if` arm or `while` loop.
 # RUN: python3 %S/regions.py %dom_driver --node %node --reference %native_reference

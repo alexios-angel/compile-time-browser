@@ -1,7 +1,7 @@
-# Proved primitive arithmetic uses the existing Number operations after String
-# conversion. String concatenation preserves Boolean and absence text. Keep
-# runtime and optimized paths, both printers and both C++ compilers observable.
-# Uninitialized locals supply undefined without requiring a global binding proof.
+# Arithmetic on primitive strings converts them to Number and reuses the Number
+# operations; `+` with a string concatenates, writing booleans, null and undefined
+# as text. Runtime and optimized output, with and without --ctnative-print-deduced,
+# compiles with both g++ and clang. An uninitialised local reads as undefined.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

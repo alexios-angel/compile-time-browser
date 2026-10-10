@@ -1,7 +1,18 @@
+//===- NullableMapResults.cpp - Nullable Map getter results -----*- C++ -*-===//
+//
+// Host-contract proofs for a Map getter that returns either a String or null,
+// and for the setter that consumes that result.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Checks the host-contract analysis on a Map getter that may return null.
+/// \p scalar is the short-circuit String fixture from ConditionalMapResults,
+/// and \p prepared selects its call_direct form. Each variant() row asserts
+/// proved or refused, and checkBudgets() asserts that every truncated step
+/// budget, forged attribute and live SSA edit withholds the proof.
 void checkNullableMapResults(mlir::MLIRContext & context, const std::string & scalar,
                              bool prepared) {
     constexpr llvm::StringLiteral nullableReturn = R"MLIR(
@@ -30,6 +41,9 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
     const auto normalized = replaced(nullable, write, normalize);
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     constexpr unsigned nullableMask = Alternatives::String | Alternatives::Null;
+    // Checks a proved query has \p expectedCalls edges in source order: two
+    // getter calls taking a Boolean and setter calls whose argument is typed by
+    // \p expectedMask, exactly one of them fed by a getter result.
     const auto edges = [&](mlir::ModuleOp module, const HostContractAnalysis & result,
                            unsigned expectedCalls, unsigned expectedMask) {
         auto getter = module.lookupSymbol<ctjs::FuncOp>("get$2");
@@ -136,6 +150,8 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
                              terminator),
                 false, "every nullable producer and consumer arm retains its late effect check");
     }
+    // The normalized program with one more `put` call taking \p literal, placed
+    // before the first getter call or before the final getter call.
     const auto extraActual = [&](const std::string & literal, bool before) {
         std::string addition = "    %extra = ctjs.constant " + literal +
                                "\n    %extraPutter = ctjs.get_property %owned[%putKey]\n";
@@ -188,8 +204,8 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
     variant(replaced(extraString, "%extra = ctjs.constant #ctjs.string<\"other\">",
                      "%extra = ctjs.load_global \"unknown\""),
             false, "a later unknown global actual withholds the entire nullable family");
-    // Prepared direct calls verify arity while parsing. Keep that form valid
-    // and test an unknown actual; source calls also exercise missing arity.
+    // The parser checks call_direct arity, so the prepared form passes an
+    // unknown actual (%this) instead; the source form drops the argument.
     const auto missingActual =
         prepared ? replaced(normalized, "%putEnvironment, %produced)", "%putEnvironment, %this)")
                  : replaced(normalized, "%putter(%owned, %produced)", "%putter(%owned)");
@@ -217,6 +233,7 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
         auto contract = mapContractFor(*module);
         HostContractAnalysis complete(*module, contract);
         const unsigned completion = complete.steps();
+        // 20000 is a ceiling well above this fixture's step count.
         check(complete.proved() && completion < 20000,
               "nullable complete actual census stays within the fixture work limit");
         if (!complete.proved() || completion >= 20000) { return; }
@@ -279,11 +296,14 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
         }
         check(consumer != nullptr, "the nullable consumer survives the live proof query");
         if (consumer) {
+            // The setter argument: operand 4 of call_direct (this, new, callee,
+            // state, arg), operand 2 of ctjs.call (callee, this, arg).
             const unsigned argument = prepared ? 4u : 2u;
             mutation(consumer, argument,
                      consumer->getParentOfType<ctjs::FuncOp>().getBody().front().getArgument(0));
-            // An invalid cyclic SSA edit must not bootstrap the dependency
-            // worklist from its own unproved result or a forged result marker.
+            // A call that consumes its own result is invalid SSA. The analysis
+            // must not seed its dependency worklist from that unproved result or
+            // from a forged result attribute.
             mutation(consumer, argument, consumer->getResult(0));
         }
         mlir::OpBuilder at(returned);
@@ -296,6 +316,7 @@ void checkNullableMapResults(mlir::MLIRContext & context, const std::string & sc
         std::printf("%s Map host %s: %u rows and all %u incomplete budgets checked\n", label,
                     prepared ? "prepared" : "source", rows, completion);
     };
+    // One row per variant() call above; update this when adding a case.
     check(rows == 32, "all nullable result, actual-census and refusal rows ran");
     checkBudgets(normalized, "nullable", 3);
     checkBudgets(extraActual("#ctjs.null", true), "nullable census", 4);

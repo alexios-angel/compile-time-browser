@@ -20,7 +20,7 @@
 //--- globals.mlir
 module {
   ctjs.func private @helper$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %answer = ctjs.constant #ctjs.number<4631107791820423168>
+    %answer = ctjs.constant #ctjs.number<4631107791820423168> // 42.0
     ctjs.return %answer
   }
   // A single declaration in the script's hoisting prologue establishes the
@@ -93,7 +93,7 @@ module {
 
 //--- specialized.js
 // This invokes a real variant emitted by specialization, with its original
-// boxed global callee intact. On a repeat PE run, the specialized body has
+// boxed global callee intact. On a second partial-evaluation run, the specialized body has
 // already changed again; equivalence must be proved from the current bodies.
 // SPECIALIZED-LABEL: ctjs.func private @factory$2
 // SPECIALIZED-SAME: ctnative.partial_evaluated =

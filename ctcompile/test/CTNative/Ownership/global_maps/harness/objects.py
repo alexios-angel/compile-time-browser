@@ -1,11 +1,18 @@
-"""harness objects: continued from harness_leaf_objects."""
+"""Observer sources and lifetime checks for Maps keyed or valued by objects.
+
+Builds on harness/leaf_objects.py, whose names it re-exports.
+"""
 
 from .leaf_objects import *
 
 
 def object_argument_observer_source(source, global_key=False, global_alias=False, global_chain=()):
-    # Capture the actual Map in a separate interpreter observer. The native
-    # source and its standard intrinsic contract remain untouched.
+    """Append a JS observer that exercises the Map with object keys and return
+    (source, expected trace). Each check sets one bit of `trace`.
+
+    The observer only runs in the interpreters; the native source and its
+    contract are left unchanged.
+    """
     observed = (
         source
         + """
@@ -101,6 +108,8 @@ def object_argument_observer_source(source, global_key=False, global_alias=False
 
 
 def check_object_argument_calls(cpp, name, mode):
+    """Check the native entry of object-argument case `name` keeps the expected
+    callable signatures, Map calls and global initializer order."""
     source = object_argument_cases()[name]["source"]
     receiver = "state" if name == "parameter_object" else "t"
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
@@ -213,6 +222,10 @@ def check_object_argument_calls(cpp, name, mode):
 
 
 def object_argument_lifetime_cpp(cpp, global_key=False, global_alias=False, global_chain=()):
+    """Append a C++ `main` that checks object keys are released with the Map.
+
+    A nonzero exit code names the first failed check.
+    """
     changed = (
         instrument_leaf_objects(cpp)
         + r"""
@@ -352,7 +365,7 @@ int main() {
 
 
 def object_argument_lifetime_source(cpp, name):
-    """`cpp` with the object-key lifetime observer of object-argument case `name`."""
+    """Return `cpp` with the object-key lifetime harness that fits case `name`."""
     observer = (
         retained_key_lifetime_cpp
         if name
@@ -414,8 +427,12 @@ def object_argument_lifetime(args, cpp, name, mode, compiler):
 
 
 def leak_checked_lifetime(args, name, mode, compiler, text, expected, label):
-    # Its own flags, environment and 30 s timeout, and an empty stderr: not
-    # owned.check_lifetime, which builds and runs the program differently.
+    """Build `text` with ASan/UBSan, run it, and require `trace=<expected>` twice
+    on stdout and an empty stderr.
+
+    This does not use owned.check_lifetime, which builds and runs the program
+    with different flags, environment and timeout.
+    """
     source = args.work / f"{name}.{mode}.lifetime.cpp"
     source.write_text(text)
     binary = source.with_suffix(".sanitized").resolve()
@@ -448,6 +465,8 @@ def leak_checked_lifetime(args, name, mode, compiler, text, expected, label):
 
 
 def retained_key_observer_source(source, global_alias=False, global_chain=()):
+    """Return (source, expected trace) for a JS observer that checks a Map keeps
+    an object key alive after the caller drops it."""
     observed = (
         source
         + """
@@ -509,6 +528,8 @@ def retained_key_observer_source(source, global_alias=False, global_chain=()):
 
 
 def retained_key_lifetime_cpp(cpp, allocations=6, retained=4, global_alias=False, global_chain=()):
+    """C++ counterpart of retained_key_observer_source: expect `allocations`
+    objects, of which `retained` stay alive while the Map holds them."""
     changed = (
         (
             instrument_leaf_objects(cpp, allocations=allocations)
@@ -617,6 +638,8 @@ int main() {
 
 
 def parameter_object_lifetime_cpp(cpp):
+    """Lifetime harness for parameter_object: keys passed to `set` stay alive
+    while the Map does and are freed with it (exit codes 230-239)."""
     return (
         instrument_leaf_objects(cpp)
         + r"""
@@ -668,6 +691,8 @@ int main() {
 
 
 def object_payload_observer_source(source, name):
+    """Return (source, expected trace) for a JS observer of a Map whose values
+    are objects."""
     row = object_argument_cases()[name]
     scalar = row.get("payload_only")
     observed = (
@@ -729,6 +754,8 @@ def object_payload_observer_source(source, name):
 
 
 def object_payload_lifetime_cpp(cpp, name):
+    """C++ counterpart of object_payload_observer_source: check object values
+    keep their identity and are freed with the Map."""
     row = object_argument_cases()[name]
     scalar = row.get("payload_only")
     changed = (

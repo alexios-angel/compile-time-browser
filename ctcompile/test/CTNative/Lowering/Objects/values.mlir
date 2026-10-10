@@ -74,7 +74,7 @@ module {
 }
 
 //--- poison.mlir
-// A false continuation does not excuse an observed loop exit value.
+// The loop exits at once carrying the else arm's `ub.poison`, and that exit value is compared.
 // POISON-LABEL: ctjs.func @exit_observed$1
 // POISON-SAME: ctnative.not_native
 // POISON: non-object producer `ub.poison`

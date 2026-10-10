@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Prove fixed primitive captures created and called in conditional arms."""
+"""Test callbacks that capture a fixed primitive and are created and called inside an `if` arm.
+
+Each CASES source runs under Node and the reference VM, then lowers to a native
+DOM entry that is compiled and run against a real ctbrowser document. Each BAD
+source writes, escapes or misuses the capture and must be refused.
+"""
 
 import re
 
@@ -20,6 +25,7 @@ METHOD = """class Item {
     return true;
   }
 }"""
+# The callback also captures a Number, Boolean, null and undefined.
 MIXED = METHOD.replace(
     "const label = 'done';",
     "const label = 'done'; const count = 3, flag = true, empty = null, missing = void 0;",
@@ -28,6 +34,7 @@ MIXED = METHOD.replace(
     "return count === 3 && flag && empty === null && missing === void 0"
     " && node.getAttribute('inside') === label;",
 )
+# The callback is created and called inside a second, nested `if` arm.
 NESTED = METHOD.replace(
     "const local =", "if (target.hasAttribute('ready')) { const local ="
 ).replace("return local(target);", "return local(target); }")
@@ -36,6 +43,9 @@ CASES = {
     "mixed": MIXED + callbacks.CALLS,
     "nested": NESTED + callbacks.CALLS,
 }
+# Each source breaks one requirement: the capture is never written after its
+# initialization, the callback never escapes or runs outside its arm, and its
+# body uses neither `this`, `new.target` nor an unknown global effect.
 BAD = {
     "later-write": METHOD.replace("const label", "let label").replace(
         "if (target", "label = 'changed'; if (target"
@@ -88,6 +98,8 @@ BAD = {
     ),
 }
 BAD = {name: method + callbacks.CALLS for name, method in BAD.items()}
+# The arm depends on a default parameter that the second call overrides, so the
+# captured parameter is written conditionally.
 BAD["default-parameter"] = METHOD.replace("run(target)", "run(target, enabled = true)").replace(
     "target.hasAttribute('ready')", "enabled"
 ).replace(
@@ -122,6 +134,8 @@ def main():
             "first.trace = ''; result = result && probe(first, first)"
             " && first.trace === 'inside,inside,';\n"
         )
+        # The oracle toggles the `ready` attribute on each element in turn and
+        # checks that only an element with `ready` set records the callback's write.
         assert run([args.reference, str(oracle)]).stdout == "result=true\n", name
         oracle.write_text(oracle.read_text() + "console.log('result=' + result);\n")
         assert run([args.node, str(oracle)]).stdout == "result=true\n", name
@@ -131,12 +145,12 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks, args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.exhaust(
             args, ir, declared, name, [0, 8], "{budget} did not exhaust branch capture proof"
         )
-        refusals += 4
+        refusals += 4  # Two undeclared-intrinsic refusals and two exhausted budgets (0, 8).
     for name, body in BAD.items():
         ir, contract = dom.prepare(args, name, callbacks.source(body), 2, entry_name="probe")
         if name == "loop-creation":
@@ -159,6 +173,7 @@ def main():
                 success=False,
                 max_steps=1000000,
             )
+            # The refused lowering must leave every captured read in place.
             if name == "effect":
                 assert diagnostic.count("ctjs.load_upvalue") == ir.read_text().count(
                     "ctjs.load_upvalue"

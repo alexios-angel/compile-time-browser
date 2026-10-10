@@ -1,3 +1,12 @@
+"""Observation checks for nullable Map results, and the nullable host-result
+refusals.
+
+Each observation check runs a small observer program under Node and the
+reference interpreter and requires the expected `trace=` output. It then
+applies source mutations and requires the output to change, which shows that
+the observer can tell the original apart from those mutations.
+"""
+
 import hashlib
 
 from ..harness.map_results import run_sanitized_lifetime
@@ -23,6 +32,8 @@ from ..harness.objects import instrument_leaf_objects
 
 
 def check_numeric_entry_observations(args, node, reference):
+    """Observe the numeric-entry lifetime cases across later calls, and require
+    reordered or re-read results to change the printed trace."""
     cases = {**numeric_entry_cases(), **scalar_global_cases(), **constant_global_cases()}
     for name in NUMERIC_ENTRY_LIFETIMES:
         source = cases[name]["source"]
@@ -71,8 +82,9 @@ def check_numeric_entry_observations(args, node, reference):
     ):
         source, value = cases[name]["source"], cases[name]["expected_trace"]
         if name == "local_numeric_sub":
-            # Reverse evaluation while keeping each original result in its
-            # operand position: swapping only key spellings would be invisible.
+            # Swap the evaluation order but keep each result in its original
+            # operand position; swapping only the key spellings would not
+            # change the output.
             replacement = "(host.slot.set('y'), host.slot.set('x')) - 1"
         js = args.work / f"{name}-numeric-blind.js"
         js.write_text(source.replace(old, replacement))
@@ -83,6 +95,8 @@ def check_numeric_entry_observations(args, node, reference):
 
 
 def check_leaf_absence_observations(args, node, reference):
+    """Observe each LEAF_ABSENCE_LIFETIMES case and require its delete and
+    saved-read mutations to change the output."""
     cases = leaf_absence_cases()
     for name in LEAF_ABSENCE_LIFETIMES:
         source = cases[name]["source"]
@@ -114,6 +128,8 @@ def check_leaf_absence_observations(args, node, reference):
 
 
 def check_leaf_clear_observations(args, node, reference):
+    """Observe each LEAF_CLEAR_LIFETIMES case and require its clear and
+    saved-read mutations to change the output."""
     cases = leaf_clear_cases()
     for name in LEAF_CLEAR_LIFETIMES:
         source = cases[name]["source"]
@@ -151,6 +167,8 @@ def check_leaf_clear_observations(args, node, reference):
 
 
 def nullable_foreign_observer(source):
+    """Return `source` plus a JS observer that calls the host methods again
+    with new keys and sets `trace` to 1 when every size and result matches."""
     return (
         source
         + """
@@ -175,6 +193,9 @@ def nullable_foreign_observer(source):
 
 
 def nullable_foreign_lifetime_cpp(cpp):
+    """Return `cpp` with a main() that replays nullable_foreign_observer's calls
+    natively and checks Map lifetimes. Each failing check returns its own exit
+    code (285-297)."""
     return (
         instrument_leaf_objects(cpp, allocations=0)
         + r"""
@@ -245,7 +266,12 @@ int main() {
 
 
 def check_nullable_foreign_empty(args, output, source, node, reference, compilers, nm):
+    """Check the admitted nullable_nested_foreign program: its observations and
+    mutations, and its emitted C++ in both layouts, built standalone and under
+    sanitizers."""
     name = "nullable_nested_foreign"
+    # The expected outputs below were written for this exact source; the hash
+    # makes an edit to the fixture fail here instead of silently changing them.
     if hashlib.sha256(source.encode()).hexdigest() != (
         "85aa6fa6356df6be5742dca004da0da8b5db5de4c816f8371d510f89974dc759"
     ):
@@ -303,10 +329,16 @@ def check_nullable_foreign_empty(args, output, source, node, reference, compiler
 def check_nullable_host_result_refusals(
     args, positives, node, reference, compilers, nm, *, names=None
 ):
+    """Check each nullable host-result refusal (optionally only `names`): its
+    observations, that its repair gives the admitted positive, refusal in both
+    modes, and refusal of forged Map-presence evidence. nullable_nested_foreign
+    is admitted instead and checked by check_nullable_foreign_empty."""
     controls = {
         name: (
             *row[:4],
             "nullable_host_result_both" if name.endswith("deleted") else "nullable_host_result",
+            # Source calls expected in the rejected IR: the deleted and
+            # aliasing variants make one extra call.
             16 if name.endswith(("deleted", "aliasing")) else 15,
         )
         for name, row in nullable_host_result_refusals().items()
@@ -354,8 +386,9 @@ def check_nullable_host_result_refusals(
 
             def check_live(input_ir, label, current_config):
                 if promoted:
-                    # Its distinct fresh Map is empty, independently of the
-                    # captured Map write. Keep the original Undefined result.
+                    # nullable_nested_foreign reads a fresh, empty Map rather
+                    # than the captured one, so it is admitted and its result
+                    # stays undefined.
                     checked = owned.lower(args, input_ir, label, current_config, options=options)
                     text = methods.census(checked, 6, label, admitted=6)
                     if "ctnative.host_owner_proved = true" not in text:
@@ -367,8 +400,9 @@ def check_nullable_host_result_refusals(
                     )
                     check_call_preservation(input_ir.read_text(), failed.read_text(), label)
                     return failed
-                # The historical leaf-writing sibling now has a complete
-                # owner. Its Object/String Map still has no native carrier.
+                # nullable_nested_sibling's owner is proved, but its Map holds
+                # Object values keyed by nullable String, which no native type
+                # supports yet, so lowering must keep the owner and still refuse.
                 failed = owned.lower(
                     args, input_ir, label, current_config, options=options, cleanup=False
                 )
@@ -457,9 +491,13 @@ def check_nullable_host_result_refusals(
 
 
 def check_shortcircuit_nullable_refusal(args, node, reference):
-    # Host truthiness proves this historical result is String/Null. The wider
-    # optional Bool/String temporary now has a scalar carrier, but its Map
-    # write still lacks an independently proved owning alternative.
+    """Check the shortcircuit_nullable refusal.
+
+    The host's truthiness check proves this result is a String or null. The
+    optional Bool/String temporary can be lowered to a native scalar, but the
+    Map write must still be refused: no branch of it is proved to store a
+    value with an owning native type. The repaired variant must be admitted.
+    """
     name = "shortcircuit_nullable"
     source, value, old, replacement, restored_value = shortcircuit_refusals()[name]
     js, rejected, count = boundary.prepare(args, name, source)

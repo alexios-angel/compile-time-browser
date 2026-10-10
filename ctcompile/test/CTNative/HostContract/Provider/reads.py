@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Check empty private Map paths without specializing reusable method bodies."""
+"""Check that the specializer summarizes reads of a private, empty Map.
+
+A factory's closure captures a `new Map`, and its `read` method calls `has`,
+`get` or `size` on it. The specializer must summarize those reads without
+editing the reusable method body. Effects that could change the Map, a
+replaced Map provider, a missing publication option, an exhausted work budget
+and forged metadata must leave no provider facts.
+"""
 
 import argparse
 from pathlib import Path
@@ -13,6 +20,13 @@ OPTIONS = "follow-publication=true follow-provider-reads=true"
 
 
 def source(body="return resource.has(key);", *, middle="", before="", twice=False, ending=None):
+    """A program whose factory returns {read, next} over one private Map.
+
+    `body` is the body of `read(key)`. By default the program ends by storing
+    `host.slot.read('x')` in `trace`, running `middle`, then calling
+    `host.slot.next()`; `ending` replaces that whole tail and `before` goes
+    in front of it. `twice` calls the factory a second time for `first`.
+    """
     calls = "first = factory(); host.slot = factory();" if twice else "host.slot = factory();"
     suffix = ending or ("var trace = host.slot.read('x'); " + middle + " host.slot.next();")
     return (
@@ -121,6 +135,10 @@ def main():
         if not report["valid"] or report["full_host_contract_claimed"]:
             raise RuntimeError(f"{name}: incorrect complete-host boundary: {report}")
         if name in positive:
+            # Expected counts: one summary per factory whose `read` is called,
+            # one runtime read per Map read executed (unselected_write runs
+            # `has` and `get`), and one resolved call per factory call and per
+            # summary on top of a fixed one.
             summaries = 2 if name == "two_factories" else 1
             factories = 2 if name in {"two_factories", "captured_alias"} else 1
             read_count = 2 if name in {"two_factories", "unselected_write"} else 1
@@ -155,8 +173,8 @@ def main():
             ):
                 if before.count(operation) != after.count(operation):
                     raise RuntimeError(f"{name}: runtime operation {operation} was removed")
-            # SSA numbering stays local to each function. A call-site summary
-            # must leave the repeatedly callable source read method identical.
+            # SSA numbering is local to each function, so the read method's text
+            # can be compared directly: a call-site summary must not change it.
             pattern = r"ctjs\.func @read\$\d+\(.*?(?=\n  ctjs\.func |\n})"
             if re.search(pattern, before, re.S)[0] != re.search(pattern, after, re.S)[0]:
                 raise RuntimeError(f"{name}: reusable method body was specialized")

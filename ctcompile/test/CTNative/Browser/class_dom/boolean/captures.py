@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Retain actual local Boolean state through class and closure normalization."""
+"""Check that a class method whose two arrow functions share one local Boolean
+(`seen`) compiles natively and matches Node and the VM, and that unsupported
+variants and hand-mutated IR are refused."""
 
 import json
 import re
@@ -10,6 +12,7 @@ from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
 from CTNative.harness import run
 
+# The base method: `pending` reads and `mark` writes the captured `seen` cell.
 METHOD = """class Item {
   run(target) {
     let seen = false;
@@ -23,6 +26,7 @@ METHOD = """class Item {
     return before !== after;
   }
 }"""
+# Entry body: runs item.run on element, other, element.
 CALLS = """
 const item = new Item();
 const first = item.run(element);
@@ -32,7 +36,8 @@ return first && second && third;
 """
 CASES = {
     "read-write-read": METHOD,
-    # Compose retained source captures with the exact numeric-origin proof.
+    # `!1`/`!0` instead of false/true: the cell's Booleans come from a unary not
+    # of a number, so the capture proof must compose with the numeric-origin proof.
     "numeric-origins": METHOD.replace("seen = false", "seen = !1").replace(
         "seen = true", "seen = !0"
     ),
@@ -48,8 +53,9 @@ CASES = {
         "return before !== after;",
         "target.setAttribute('owner', seen); return before === after;",
     ),
-    # These identical returns coalesce into one exit. This source exercises
-    # the original query and branch; it makes no method-cloning claim.
+    # Both switch arms return the same value, so lowering merges them into one
+    # exit. This case only checks that the hasAttribute query and branch survive;
+    # identity_dispatch() below is what forces method cloning.
     "coalesced-switch": METHOD.replace(
         "return before !== after;",
         "switch (target.hasAttribute('ready')) {\n"
@@ -62,7 +68,8 @@ BAD = {
         "const before",
         "let other = false; const change = () => { other = true; }; change(); const before",
     ),
-    # The original extra-capture source is positive in the mixed-capture test.
+    # A writer that is created but never called is refused here; the variant
+    # with an extra fixed capture is accepted, and tested, in mixed_captures.py.
     "uncalled-writer": METHOD.replace(
         "const before", "const unused = () => { seen = false; }; const before"
     ),
@@ -81,14 +88,16 @@ BAD = {
     "receiver": METHOD.replace("() => !seen", "() => this === seen"),
     "new-target": METHOD.replace("() => !seen", "function() { return new.target === seen; }"),
     "extra-argument": METHOD.replace("mark();", "mark(target);"),
-    # The original conditional-call/store bodies are positive witnesses in
-    # branches.py.
+    # A call or store inside an `if` is accepted (see branches.py); inside a
+    # loop it is refused.
     "loop-call": METHOD.replace(
         "mark();",
         "while (target.hasAttribute('ready')) { mark(); target.removeAttribute('ready'); }",
     ),
-    # Unlike loop-call, state stays outside this loop. Its real completion
-    # dispatch reaches an independent, currently unsupported arithmetic guard.
+    # Unlike loop-call, the captured state is not touched inside this loop. The
+    # loop's break/continue/return lower to a completion switch whose arithmetic
+    # the DOM proof does not support yet, so lowering refuses it with "DOM
+    # completion arithmetic must be a Boolean constant".
     "completion-loop": METHOD.replace(
         "return before !== after;",
         "const limit = target.hasAttribute('ready') ? 5 : 3;\n"
@@ -108,10 +117,17 @@ BAD = {
 
 
 def functions(text):
+    """Return a regex match for each top-level `ctjs.func` in the IR text."""
     return list(re.finditer(r"^  ctjs\.func [^\n]+ \{\n.*?^  \}", text, re.M | re.S))
 
 
 def shape(text):
+    """Find the function that creates two or more closures over one cell.
+
+    Returns (owner, cell, captures, writer, reader): regex matches for the
+    owning function, its cell, its create_closure lines, and the closure
+    bodies that store and load the upvalue.
+    """
     bodies = functions(text)
     for owner in bodies:
         captures = list(
@@ -142,7 +158,11 @@ def shape(text):
 
 
 def identity_dispatch(text):
-    """Force method cloning, then reach the unsupported dynamic-index guard."""
+    """Wrap the owner's result in an `scf.index_switch` whose arms both yield it.
+
+    The switch forces method cloning; lowering must then refuse the dynamic
+    index cast, which has no typed DOM contract.
+    """
     owner, _, _, _, _ = shape(text)
     returned = re.search(r"^    ctjs\.return (%\w+)", owner[0], re.M)
     exited = re.search(r"^    ctjs\.frame_exit %\w+", owner[0], re.M)
@@ -162,6 +182,7 @@ def identity_dispatch(text):
 
 
 def events(name):
+    """Return the (attribute, value) writes one item.run() makes for case name."""
     result = [("before", "true"), ("after", "true" if name == "owner-store" else "false")]
     if name == "sibling-writers":
         result.append(("again", "true"))
@@ -173,6 +194,8 @@ def events(name):
 
 
 def checks(name, *, observed=None, expected=True):
+    """C++ assertions for the native harness: run the entry for each
+    ready-flag and alias combination and check the attribute writes."""
     result = r"""
         (void)classes;
         (void)pressed;
@@ -204,6 +227,9 @@ def checks(name, *, observed=None, expected=True):
                 + str(expected).lower()
                 + ");\n"
             )
+            # CALLS runs item.run on element, other, element. With the alias,
+            # `other` is element, so element sees 3 runs and the foreign
+            # document none; without it, 2 and 1.
             owners = (
                 ("doc", "atoms", "button", 3 if alias else 2),
                 ("foreign_doc", "foreign_atoms", "other_button", 0 if alias else 1),
@@ -218,6 +244,7 @@ def checks(name, *, observed=None, expected=True):
 
 
 def oracle(args, name, text, *, observed=None, expected=True):
+    """Run the same combinations as checks() in the VM and Node; both must agree."""
     text += "var result = true;\n"
     for flag in (False, True):
         for alias in (False, True):
@@ -246,11 +273,14 @@ def oracle(args, name, text, *, observed=None, expected=True):
 
 
 def insert(text, body, local_end, extra):
+    """Insert line extra into text at offset local_end within function match body."""
     at = body.start() + local_end
     return text[:at] + "\n" + extra + "\n" + text[at:]
 
 
 def roots(text):
+    """Yield (label, valid, invalid) IR pairs: a `ctjs.root` for the cell, a
+    callback or a callee placed inside its frame (valid) or after its exit."""
     owner, cell, captures, writer, reader = shape(text)
     selections = [
         (
@@ -280,6 +310,7 @@ def roots(text):
 
 
 def mutations(text):
+    """Yield (label, mutated IR) pairs the lowering must refuse."""
     owner, cell, captures, writer, reader = shape(text)
     closure = captures[0]
     yield (
@@ -339,7 +370,7 @@ def mutations(text):
         + text[owner.start() + returned.end() :],
     )
     # Keep the defining literal in place, but move the only initialization
-    # after the original callbacks and reads. SSA remains verifier-valid.
+    # after the callbacks and reads. The IR still passes the verifier.
     missing = text[: owner.start() + store.start()] + text[owner.start() + store.end() :]
     moved_owner = next(body for body in functions(missing) if body.start() == owner.start())
     moved_exit = re.search(r"^    ctjs\.frame_exit %\w+", moved_owner[0], re.M)
@@ -396,9 +427,9 @@ def main():
                 dom.refuse(args, path, manifest, label)
                 refusals += 2
         if name == "coalesced-switch":
-            # This verifier-valid identity wrapper reaches method cloning,
-            # but the final DOM proof cannot type its dynamic index cast.
-            # Preserve the entire CTJS/SCF input on that downstream refusal.
+            # The identity dispatch is valid IR and gets through method cloning,
+            # but the DOM proof has no typed contract for its arith.index_castui.
+            # The refusal must leave every CTJS/SCF source operation unchanged.
             path = args.work / "unsupported-dispatch.mlir"
             path.write_text(identity_dispatch(ir.read_text()))
             assert "scf.index_switch" in path.read_text()

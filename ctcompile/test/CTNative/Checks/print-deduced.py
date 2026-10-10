@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""THE PRINTING GATE - ctcompile Phase 62½-E (part 24 Stages 53E and 53F).
+"""Check the --ctnative-print-deduced C++ output for one program.
 
-Three modules of ONE program: the plain lowering, the same with
---ctnative-print-deduced applied, and the same with the pass's mutation. The
-compilation-unit gate already runs the deduced module through the whole of
-62½-D, so what is left to prove here is the printing itself:
+Translates three modules of the same program: the plain lowering, the lowering
+with --ctnative-print-deduced applied (deduced declarations printed as `auto`,
+each followed by a CTCOMPILE_PIN type check), and the same with the pass's
+mutation (one pin deliberately wrong). The compilation-unit test already
+compiles and runs the deduced module, so this checks only the printing:
 
-  (a) every `auto` declaration has exactly one pin after it, and there is at
-      least one - a pass that marks nothing would make (b) to (d) vacuous
-  (b) the plain file has no `auto` and no pin at all
-  (c) the two files DIFFER ONLY IN SPELLING: with the pin lines, the macro
+  (a) every `auto` declaration is followed by exactly one pin, and there is at
+      least one (a pass that marks nothing would make (b) to (d) prove nothing)
+  (b) the plain file has no `auto` declaration and no pin at all
+  (c) the two files differ only in spelling: with the pin lines, the pin macro
       block and its include removed from the deduced file, and every
       declaration's type spelling normalised in both, the texts are
       identical, line for line
-  (d) the byte counts - plain, deduced, deduced without its pins - are
-      printed; the difference is the first number Phase 63 Step 4 reports
-  (e) the MUTATED file, where one deduced double is pinned as int32_t, FAILS
-      to compile and the compiler's message names the JavaScript site; the
-      same file compiles CLEAN under -DCTCOMPILE_NO_TYPE_PINS, which proves
-      both that the pin was the failure and that the switch strips it
+  (d) the byte sizes of plain, deduced, and deduced without its pins are
+      printed, to measure what the deduced spelling saves
+  (e) the mutated file, where one deduced double is pinned as int32_t, fails
+      to compile with a message naming the JavaScript site; the same file
+      compiles cleanly under -DCTCOMPILE_NO_TYPE_PINS, which shows both that
+      the pin caused the failure and that the switch removes it
 """
 
 import argparse
@@ -63,6 +64,7 @@ SITE = re.compile(r"ctcompile: [A-Za-z_0-9]+ @ [^\"\n]*\.js:[0-9]+:[0-9]+")
 
 
 def normalise(lines):
+    """Replace each declaration's type spelling in `lines` with `T`."""
     out = []
     for line in lines:
         for carrier in CARRIERS:
@@ -98,10 +100,10 @@ def main():
     deduced_lines = translate(args.deduced, "deduced.cpp")
     translate(args.mutated, "mutated.cpp")
 
-    # (a) and (b): count, and pair every auto with the pin on the next line.
+    # (a) and (b): Count, and pair every auto with the pin on the next line.
     n_auto = n_pin = 0
     expect_pin = in_macro = False
-    stripped = []  # the deduced file without pins, macro block, its include
+    stripped = []  # The deduced file without pins, the macro block or its include.
     for line in deduced_lines:
         if line.startswith("#ifndef CTCOMPILE_NO_TYPE_PINS"):
             # PrintDeduced adds one include immediately before its macro, even
@@ -139,7 +141,7 @@ def main():
     if n_auto != n_pin:
         fail(f"{n_auto} auto declarations but {n_pin} pins")
 
-    # (c) spelling only.
+    # (c) The files may differ only in spelling.
     plain_norm, deduced_norm = normalise(plain_lines), normalise(stripped)
     if len(plain_norm) != len(deduced_norm):
         fail(
@@ -150,20 +152,20 @@ def main():
         if a != b:
             fail(f"line {i + 1} differs in more than spelling:\n  plain:   {a}\n  deduced: {b}")
 
-    # (d) sizes.
+    # (d) Sizes.
     b_plain = (work / "plain.cpp").stat().st_size
     b_deduced = (work / "deduced.cpp").stat().st_size
     (work / "deduced-no-pins.cpp").write_text("\n".join(stripped) + "\n")
     b_nopins = (work / "deduced-no-pins.cpp").stat().st_size
 
-    # (e) the mutation: one double pinned as int32_t must NOT compile, or the
-    # pins do not bite.
+    # (e) The mutation: one double pinned as int32_t must not compile, or the
+    # pins check nothing.
     def compile_mutated(*extra, success):
         command = [args.cxx, *FLAGS, "-fsyntax-only", *extra, str(work / "mutated.cpp")]
         return run(command, success=success)
 
     result = compile_mutated(success=False)
-    # A JAVASCRIPT site: the file the program came from, its line and column. A
+    # A JavaScript site: the file the program came from, its line and column. A
     # site in the .mlir file (locations dropped between passes) or "unknown" (a
     # location the printer did not unwrap) both fail here by name.
     site = SITE.search(result.stdout + result.stderr)

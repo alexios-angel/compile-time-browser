@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Check confined owning table slots, lifetime, admission and refusal boundaries."""
+"""Check that method tables stored in owned object slots (`{exports: make()}`)
+lower to native C++ that matches the interpreter under GCC, Clang and
+sanitizers, and that every unsafe variant of the slot is refused."""
 
 import argparse
 from pathlib import Path
@@ -18,6 +20,7 @@ from CTNative.harness import (
 
 
 def prepare(args, source, name):
+    """Import and prepare `source`; return (prepared IR path, function count)."""
     raw = args.work / f"{name}.raw.mlir"
     prepared = args.work / f"{name}.prepared.mlir"
     text = prepare_js(args, source, raw, prepared, "--mlir-print-debuginfo", complete=True)
@@ -28,6 +31,9 @@ def prepare(args, source, name):
 
 
 def refused(args, prepared, name, *, imported=None):
+    """Lower `prepared` and require that it is refused with a named reason on
+    every remaining function and the expected table-related reason for `name`.
+    With `imported`, refused plus native functions must equal that count."""
     output = args.work / f"{name}.refused.mlir"
     run(
         [
@@ -66,6 +72,8 @@ def refused(args, prepared, name, *, imported=None):
 
 
 def refusal_sources(factory):
+    """Programs built from the specimen's table factory (`makeData`), each with
+    one unsafe use of the owning slot, keyed by case name."""
     ordinary_run = "function run() { const table = publish(40); table.set(42); return table.get(); }\nvar result = run();\n"
     bodies = {
         "alias_rewrite": "const ns = {exports: makeData(seed)}; const alias = ns; alias.exports = makeData(seed + 1); return ns.exports;",
@@ -145,6 +153,8 @@ def main():
     reference = args.reference
     compilers, nm = native_tools(reference)
 
+    # (name, source, expected function count, expected output, slot fields
+    # that must own their table through a shared_ptr).
     programs = [
         ("specimen", args.specimen, 6, "result=4211\n", ["exports"]),
         (
@@ -220,6 +230,8 @@ def main():
                 if observed != expected:
                     raise RuntimeError(f"{name}/{mode}/{compiler}: {observed!r} != {expected!r}")
             sanitized = (args.work / f"{name}.{mode}.sanitized").resolve()
+            # compilers[1] is Clang (find_compilers returns GCC first); only it
+            # runs the sanitizer build.
             if build_and_run(compilers[1], source, sanitized, sanitize=True).stdout != expected:
                 raise RuntimeError(f"{name}/{mode}: lifetime/sanitizer execution changed output")
 
@@ -234,8 +246,8 @@ def main():
         prepared[name] = ir
         refused(args, ir, name, imported=imported)
 
-    # Supplied markers are not a live slot proof. Check both initial admission
-    # and another lowering run over the already-refused result.
+    # Hand-written slot attributes are not a proof. Check both the first
+    # lowering and a second lowering run over the already-refused result.
     unsafe = prepared["alias_rewrite"]
     forged = args.work / "forged.mlir"
     text = unsafe.read_text()

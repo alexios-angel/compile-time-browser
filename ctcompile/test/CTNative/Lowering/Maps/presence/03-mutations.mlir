@@ -1,7 +1,7 @@
-// Keep every reaching path in refusal controls; default specialization can
-// prove the single closed call even when a different argument would fail.
+// Map set/delete/clear before a nested `outer.get(k).size` read. JOIN and MUTATION cases lower
+// natively; PRESENCE refusals use optimize=false, or specializing probe() could prove k present.
 // RUN: split-file %s %t
-// The sole closed flag selects a safe path under the default pipeline.
+// Default pipeline: the only call fixes `flag`, so the get is proved and result must be 1.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/join_no_common_member.js | ctjs-opt --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/selected.mlir
 // RUN: FileCheck %s --check-prefix=JOIN --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/selected.mlir
 // RUN: %compilation_unit --module %t/selected.mlir --js %t/join_no_common_member.js --work %t/selected --name join_no_common_member

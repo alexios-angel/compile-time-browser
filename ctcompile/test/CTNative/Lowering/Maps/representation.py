@@ -17,6 +17,13 @@ for (const name of Object.keys(context).sort()) {
 
 
 def check_zero_keys(cpp):
+    """Append a C++ SameValueZero check for -0/+0 Map keys to the program.
+
+    The program's main() is renamed ctnative_test_entry(). The new main() checks
+    that a key inserted as -0 is stored as +0, is found by +0, and keeps its -0
+    value across overwrite and delete. Exit code 90 means the program itself
+    failed; 91 and 92 mean the number-keyed or boolean/number-keyed Map failed.
+    """
     renamed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     assert count == 1
     return (
@@ -125,8 +132,8 @@ def main():
         )
         for label, ir in [("plain", module), ("deduced", deduced)]:
             cpp = run([args.translate, "--mlir-to-cpp", str(ir)]).stdout
-            # The helpers are the runtime header's now; the program decides only
-            # the storage, by the define in front of its include.
+            # Map helpers come from the runtime header. The program chooses only
+            # the storage, through the define placed before that include.
             assert '#include "ctcompile/CTNative/Runtime/ctnative.hpp"' in cpp
             if fixture in {"associative", "ordered"}:
                 assert "ctnative::make_string_to_number_map()" in cpp

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Execute static Element.querySelectorAll snapshots against public DOM/Style."""
+"""Compile Element.querySelectorAll loops to native code and run them.
+
+The result is a static snapshot: it keeps tree order and element identity and
+does not change as the loop edits the DOM. The native code calls only the
+public DOM/Core/Style libraries. Every entry in REFUSALS (out-of-bounds index,
+mutated or escaping snapshot, unknown receiver, ...) must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 
@@ -144,6 +150,7 @@ OWNED_CHECKS = r"""
         assert(foreign_rejected && owned.take_writes().empty());
 """
 
+# Entry bodies the native lowering must refuse, keyed by test name.
 REFUSALS = {
     "unguarded": "const nodes=element.querySelectorAll('*'); return nodes[0].matches('*');",
     "one-past": "const nodes=element.querySelectorAll('*'); "
@@ -202,8 +209,8 @@ def main():
             includes,
             libraries,
         )
-        # A declared dataset input keeps the loop's conservative alias gate,
-        # even when this particular body does not read a saved dataset view.
+        # A declared dataset input still makes the loop require its conservative
+        # dataset-alias proof, even though this body reads no saved dataset view.
         diagnostic = dom.lower(
             args,
             ir,
@@ -218,6 +225,7 @@ def main():
         source = f"function bad(element) {{ {body} }}\n"
         refused, manifest = dom.prepare(args, name, source, 1, entry_name="bad")
         dom.refuse(args, refused, manifest, f"refused-{name}")
+    # 16 = 4 provider/optimize variants x 2 layouts x 2 compilers.
     print(
         f"Element.querySelectorAll: 16 native executions, {2 * len(REFUSALS) + 4} refusals; "
         "DOM/Core/Style only"

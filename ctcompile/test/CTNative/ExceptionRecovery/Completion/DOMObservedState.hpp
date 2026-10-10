@@ -1,10 +1,19 @@
 #pragma once
 
+//===- DOMObservedState.hpp - Frozen pre-normalization IR fixture ---------===//
+//
+// Holds a frozen copy of imported IR used as input by DOMURI.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 namespace ctcompile::test::exception_recovery {
 
-// Original getter source (1a7fb166), frozen during d1605217 state-transport
-// validation before completion normalization. Keep the poison/budget controls on
-// this staged input now that full custom normalization publishes the result.
+/// A frozen copy of the customElements iterator getter as it looked before
+/// completion normalization ran: an invoke of `next` whose saved state still
+/// holds ub.poison slots. DOMURI.cpp parses it to mutate those inactive slots
+/// and check that normalization's poison and budget checks still reject the
+/// result. Do not regenerate it from current output, which is already
+/// normalized.
 inline constexpr char observedIteratorState[] = R"MLIR(
 ctjs.func private @customElements$1(%arg0: !ctjs.value, %arg1: !ctjs.value, %arg2: !ctjs.value, %arg3: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
   %0 = ctjs.constant #ctjs.boolean<false>

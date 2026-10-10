@@ -42,8 +42,10 @@ def main():
             {"left": 34, "right": 204},
         ),
     }
-    # A closed false call moves the selected literal into the entry block.
-    # The unspecialized source remains a region-allocation refusal below.
+    # region.js calls blocked(false) once with a constant argument, so the
+    # optimizer folds the branch and allocates the chosen literal in the entry
+    # block, where it owns its storage. Unoptimized, the same source would need
+    # a region-scoped allocation; the refusal loop at the end checks that.
     positives["region"] = (args.fixtures / "region.js", "blocked_1", {"observed": 2})
     counted = (args.fixtures / "counted.js").read_text()
     for trips, expected in enumerate((2935, 33195, 312935, 3133195)):
@@ -83,8 +85,9 @@ def main():
             ir = native.read_text()
             if "ctjs.func" in ir or "ctnative.not_native" in ir or "ctjs.skipped" in ir:
                 raise RuntimeError(f"{prefix}: source did not lower completely\n{ir}")
-            # The sole true call lets the optimizer select a directly. The
-            # two-call variant keeps the same source branch and both borrows.
+            # When the only call passes a constant, the optimizer picks the owning
+            # array directly and no borrowed pointer remains. original-both calls
+            # with both values, so the branch survives and the vectors are borrowed.
             direct_owner = optimize and name in ("original", "region")
             has_borrow = '!emitc.ptr<!emitc.opaque<"std::vector<double>">>' in ir
             if has_borrow == direct_owner:

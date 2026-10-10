@@ -1,2 +1,2 @@
-# Gate copied optional String DOM reads against source and the public DOM/Core API.
+# Optional-String DOM reads copied from Bootstrap lower natively and match Node and the VM.
 # RUN: python3 %S/strings.py %dom_driver --node %node --reference %native_reference

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Execute closed custom iterators with typed state and public DOM effects."""
+"""Test native compilation of `for...of` loops over hand-written iterator objects.
+
+Each iterator object (its own next(), return() and [Symbol.iterator]) stays local to
+its function. Every source is compiled to C++, run against the real DOM, and its
+attribute writes are checked against Node and the reference VM. Sources that let the
+iterator escape or change its protocol must be refused.
+"""
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.element_iteration import INTRINSICS as SNAPSHOT_INTRINSICS
@@ -12,6 +18,10 @@ INTRINSICS = [
     "__ctbrowser_to_property_key",
     "__ctbrowser_set_function_name",
 ]
+# Base iterator source. Every call reads and writes attributes on `anchor`:
+# data-yielded makes next() report done, `stop` triggers the @BREAK@ hook, and
+# `advance` gates state updates in the derived sources. return() records
+# data-closed. The *_SOURCE constants below are textual edits of this template.
 SOURCE = """function customElements(anchor) {
   const values = {
     [Symbol.iterator]() { return this; },
@@ -38,6 +48,10 @@ SOURCE = """function customElements(anchor) {
 
 
 def source(breaking):
+    """Return SOURCE with an optional `stop`-attribute break.
+
+    The breaking form returns whether the body ran (data-visited), not a count.
+    """
     text = SOURCE.replace("@BREAK@", "if (anchor.hasAttribute('stop')) break;" if breaking else "")
     if breaking:
         text = (
@@ -48,6 +62,8 @@ def source(breaking):
     return text
 
 
+# BODY_RETURN_*: the loop body leaves the function with `return`, so the
+# compiler must run return() (data-closed) before the function result is used.
 BODY_RETURN_SOURCE = source(True).replace(
     "    node.setAttribute('data-visited', 'yes');",
     "    return anchor.hasAttribute('data-visited');",
@@ -84,6 +100,8 @@ BODY_RETURN_ELEMENT_IDENTITY_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.repla
     "anchor.hasAttribute('data-closed'));",
     "node === anchor && !anchor.hasAttribute('data-closed'));",
 )
+# The body's return value comes from Element.matches(); the MIXED_* variants
+# pick the element from one of two parameters.
 SELECTOR_SOURCES = {
     "body-return-branch-element-selector": BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
         "anchor.hasAttribute('data-closed'));", "node.matches('button'));"
@@ -147,6 +165,11 @@ BODY_RETURN_MULTIPLE_SOURCE = BODY_RETURN_BRANCH_EXPRESSION_SOURCE.replace(
 )
 
 
+# RECEIVER_* keeps the iterator state in fields of the iterator object
+# (this.emitted, this.closed); CAPTURE_* keeps it in variables captured by the
+# methods. CONDITIONAL_* and BRANCH_* update that state under `if`, LOOP_* under
+# `while` (LOOP_BREAK_* with a `break` inside), so the compiler must carry the
+# state through those control-flow joins.
 RECEIVER_SOURCE = (
     SOURCE.replace("  const values = {", "  const values = {\n    emitted: 0,")
     .replace(
@@ -269,6 +292,10 @@ LOOP_BREAK_ORDERED_CAPTURE_SOURCE = (
     .replace("this.emitted", "emitted")
     .replace("this.closed", "closed")
 )
+# ENTRY_*: the function also updates the captured state before and after the
+# loop. SIBLING_*: further closures (read, advance, forward, relay, ...) beside
+# the iterator read and write the same captured variables, are passed as
+# arguments, and are called from loops and branches.
 ENTRY_CAPTURE_SOURCE = (
     LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace(
         "  let count = 0;",
@@ -461,6 +488,9 @@ SIBLING_CALLABLE_SHARED_SOURCE = (
     .replace("rounds += forward();", "rounds += forward(advance);")
     .replace("rounds += relay();", "rounds += relay(advance);")
 )
+# SIBLING_RETURNED_*: the writer closure is returned by a helper (identity,
+# keep, forward) before being called, possibly chosen by a branch or loop;
+# *_ZERO variants run that loop zero times.
 SIBLING_RETURNED_CALLABLE_SOURCE = SIBLING_CALLABLE_ARGUMENT_SOURCE.replace(
     "  const relay = (writer) => writer();",
     "  const identity = (writer) => writer;\n  const relay = (writer) => identity(writer)();",
@@ -649,12 +679,15 @@ SIBLING_RETURNED_FORMAL_CALLEE_ZERO_SOURCE = SIBLING_RETURNED_FORMAL_CALLEE_SOUR
     1,
 ).replace("while (rounds < 2)", "while (rounds < 0)", 1)
 
-# The original zero-state source cannot progress after its early break. Preserve
-# its native admission without executing it; the finite counterpart runs below.
+# SIBLING_BREAK_WRITER_SOURCE starts `closed` at 0, so it never terminates when
+# run. Only check that it compiles natively; SIBLING_BREAK_FINITE_SOURCE (with
+# `closed` starting at 1) is the version that is executed.
 COMPILE_ONLY = {"entry-captured-sibling-loop-break-writer": SIBLING_BREAK_WRITER_SOURCE}
 
-# Results for normal, stopping, and already-yielded DOM states, followed by
-# whether each invocation resets its iterator state and the close-hook value.
+# (label, source, breaking, (normal, stop, already-yielded) results, resetting,
+# data-closed value). `breaking` means the body can leave the loop early.
+# `resetting` means the iterator state lives in fields or captured variables,
+# not the DOM, so a second call starts over.
 POSITIVES = (
     ("normal", source(False), False, ("1", "1", "0"), False, "yes"),
     ("effect-only-break", source(True), True, ("true", "true", "false"), False, "yes"),
@@ -667,7 +700,7 @@ POSITIVES = (
         "yes",
     ),
     (
-        # The break must carry the incoming counter, not the continuation's update.
+        # The break must carry the counter as it was, not the update after the break.
         "counted-after-break",
         SOURCE.replace("let count = 0;", "let count = 7;")
         .replace("    count++;\n", "")
@@ -737,7 +770,7 @@ POSITIVES = (
     ),
     ("mutable-captured-counter", CAPTURE_SOURCE, True, ("1", "1", "1"), True, "yes"),
     (
-        # Both closures share both cells; close observes next's ordered updates.
+        # Both methods share both captured variables; return() sees next()'s updates in order.
         "mutable-captured-return-state",
         CAPTURE_SOURCE.replace("let emitted = 0;", "let emitted = 0;\n  let closed = 1;")
         .replace("emitted++;", "emitted++;\n      closed += emitted;")
@@ -768,7 +801,8 @@ POSITIVES = (
         "yes",
     ),
     (
-        # Exhaustion observes the nested else join; close checks each update order.
+        # The exhausting next() sees the state after the nested if/else; return() checks
+        # each update order.
         "conditional-captured-ordered-close",
         BRANCH_CAPTURE_SOURCE,
         True,
@@ -786,8 +820,8 @@ POSITIVES = (
     ),
     ("loop-captured-store", LOOP_CAPTURE_SOURCE, True, ("1", "1", "1"), True, "yes"),
     (
-        # First next loops twice, exhaustion loops zero times; close loops twice.
-        # The original rounds result survives alongside both carried state values.
+        # The first next() loops twice, the exhausting one zero times; return() loops
+        # twice. The `rounds` result survives alongside both carried state values.
         "loop-receiver-ordered-close",
         LOOP_RECEIVER_SOURCE,
         True,
@@ -805,8 +839,9 @@ POSITIVES = (
     ),
     ("loop-captured-break", LOOP_BREAK_CAPTURE_SOURCE, True, ("1", "1", "1"), True, "yes"),
     (
-        # Break carries both preceding updates and the ordinary rounds result.
-        # Exhaustion takes zero trips; close sees the latest state and skips its suffix.
+        # The break carries both preceding updates and the `rounds` result. The
+        # exhausting next() runs zero loop iterations; return() sees the latest
+        # state and skips the code after its break.
         "loop-receiver-break-ordered-close",
         LOOP_BREAK_RECEIVER_SOURCE,
         True,
@@ -868,7 +903,7 @@ POSITIVES = (
         "true",
     ),
     (
-        # The saved next boundary observes the state after the close-hook break.
+        # The read after the loop sees the state left by the break inside return().
         "loop-break-external-captured-read",
         LOOP_BREAK_ORDERED_CAPTURE_SOURCE.replace("return count;", "return count + emitted;"),
         True,
@@ -877,8 +912,9 @@ POSITIVES = (
         "true",
     ),
     (
-        # Entry loop/branch updates feed next and close, then both final cells
-        # feed ordered post-loop writes. Distinct sums expose stale or swapped state.
+        # Updates before the loop feed next() and return(); both final captured
+        # variables then feed the writes after the loop. Distinct sums expose
+        # stale or swapped state.
         "entry-captured-ordered-state",
         ENTRY_CAPTURE_SOURCE,
         True,
@@ -895,8 +931,8 @@ POSITIVES = (
         "true",
     ),
     (
-        # Every call observes the current cells: before iteration, after body
-        # writes, after close, and twice after the final ordered writes.
+        # Every call sees the current captured variables: before iteration, after
+        # body writes, after return(), and twice after the final ordered writes.
         "entry-captured-sibling-ordered-reader",
         SIBLING_ORDERED_CAPTURE_SOURCE,
         True,
@@ -925,8 +961,8 @@ POSITIVES = (
         "true",
     ),
     (
-        # Each result precedes the next call's writes; close sees both cells
-        # after the body calls, and both final calls observe the close update.
+        # Each result precedes the next call's writes; return() sees both captured
+        # variables after the body calls, and both final calls see its update.
         "entry-captured-sibling-ordered-writer",
         SIBLING_ORDERED_WRITER_SOURCE,
         True,
@@ -943,8 +979,8 @@ POSITIVES = (
         "true",
     ),
     (
-        # The first call takes else; later calls take if. Both carry their
-        # latest cells into the one shared custom-iterator continuation.
+        # The first call takes else; later calls take if. Both carry their latest
+        # captured variables into the shared code after the branch.
         "entry-captured-sibling-preloop-branch-writer",
         SIBLING_BRANCH_WRITER_SOURCE,
         True,
@@ -953,8 +989,8 @@ POSITIVES = (
         "true",
     ),
     (
-        # Different ordinary returns retain the earlier snapshot separately
-        # from the current cells, including calls after close and repeated calls.
+        # The two returns keep the earlier snapshot separate from the current
+        # captured variables, including calls after return() and repeated calls.
         "entry-captured-sibling-branch-result-writer",
         SIBLING_BRANCH_RESULT_SOURCE,
         True,
@@ -983,7 +1019,7 @@ POSITIVES = (
     ),
     (
         # The first argument snapshots emitted before the second argument writes
-        # it; both survive the helper's writes beside its current captured cells.
+        # it; both survive the helper's writes beside the current captured variables.
         "entry-captured-sibling-argument-snapshots",
         SIBLING_ARGUMENT_SNAPSHOTS_SOURCE,
         True,
@@ -1001,7 +1037,8 @@ POSITIVES = (
         "true",
     ),
     (
-        # The exact saved source breaks in both the helper and next method.
+        # Like the compile-only SIBLING_BREAK_WRITER_SOURCE, but `closed` starts at
+        # 1 so it terminates. Both the `read` helper's loop and next()'s loop break.
         "entry-captured-sibling-loop-break-finite-writer",
         SIBLING_BREAK_FINITE_SOURCE,
         True,
@@ -1010,8 +1047,9 @@ POSITIVES = (
         "false",
     ),
     (
-        # The second argument changes the first argument's cell before the
-        # helper writes both cells; break skips the suffix, retaining all results.
+        # The second argument changes the first argument's variable before the
+        # helper writes both; the break skips the rest of the loop body, keeping
+        # all results.
         "entry-captured-sibling-loop-break-argument-snapshots",
         SIBLING_BREAK_ARGUMENT_SOURCE,
         True,
@@ -1021,7 +1059,7 @@ POSITIVES = (
     ),
     (
         # The first call breaks on its explicit argument; later calls reach the
-        # suffix and ordinary return branch with their latest shared state.
+        # code after the break and the plain return with their latest shared state.
         "entry-captured-sibling-loop-break-argument-control",
         SIBLING_BREAK_CONTROL_SOURCE,
         True,
@@ -1048,7 +1086,7 @@ POSITIVES = (
         "false",
     ),
     (
-        # A later inner argument changes the first argument's captured cell.
+        # A later inner argument changes the first argument's captured variable.
         # Keep both snapshots, the ordinary result and ordered current state.
         "entry-captured-sibling-nested-call-snapshots",
         SIBLING_NESTED_SNAPSHOTS_SOURCE,
@@ -1067,7 +1105,7 @@ POSITIVES = (
     ),
     (
         # The callable separates two scalar arguments; the later argument writes
-        # the first one's cell before the forwarded call reads both snapshots.
+        # the first one's variable before the forwarded call reads both snapshots.
         "entry-captured-sibling-callable-argument-snapshots",
         SIBLING_CALLABLE_SNAPSHOTS_SOURCE,
         True,
@@ -1121,7 +1159,7 @@ POSITIVES = (
     ),
     (
         # Distinct returned writers retain the earlier scalar arguments beside
-        # current cells, with opposite write order and different ordinary results.
+        # current captured variables, with opposite write order and different results.
         "entry-captured-sibling-returned-different-snapshots",
         SIBLING_RETURNED_DIFFERENT_SNAPSHOTS_SOURCE,
         True,
@@ -1179,7 +1217,7 @@ POSITIVES = (
         "false",
     ),
     (
-        # Selection changes across backedges, after earlier scalar arguments
+        # Selection changes between loop iterations, after earlier scalar arguments
         # were evaluated and before the selected writer reads current state.
         "entry-captured-sibling-returned-loop-snapshots",
         SIBLING_RETURNED_LOOP_SNAPSHOTS_SOURCE,
@@ -1205,7 +1243,7 @@ POSITIVES = (
         "false",
     ),
     (
-        # No backedge call runs; the initial identity and prior state survive.
+        # The loop body never runs; the initial identity and prior state survive.
         "entry-captured-sibling-returned-loop-call-zero",
         SIBLING_RETURNED_LOOP_CALL_ZERO_SOURCE,
         True,
@@ -1247,7 +1285,7 @@ POSITIVES = (
         "false",
     ),
     (
-        # The inner branch restores advance after the outer branch chose other;
+        # The inner branch restores the advance() helper after the outer one chose other;
         # the earlier scalar arguments and the nested state write both survive.
         "entry-captured-sibling-returned-loop-branch-snapshots",
         SIBLING_RETURNED_LOOP_BRANCH_SNAPSHOTS_SOURCE,
@@ -1257,7 +1295,7 @@ POSITIVES = (
         "false",
     ),
     (
-        # Neither nested branch selection nor its state write runs on zero trips.
+        # With zero loop iterations neither the nested selection nor its write runs.
         "entry-captured-sibling-returned-loop-branch-zero",
         SIBLING_RETURNED_LOOP_BRANCH_ZERO_SOURCE,
         True,
@@ -1274,7 +1312,7 @@ POSITIVES = (
         "false",
     ),
     (
-        # The selected callee keeps the outer writer instead of restoring advance;
+        # The selected callee keeps the outer writer instead of restoring advance();
         # its state effect still follows the earlier scalar argument snapshots.
         "entry-captured-sibling-returned-selected-callee-snapshots",
         SIBLING_RETURNED_SELECTED_CALLEE_SNAPSHOTS_SOURCE,
@@ -1349,8 +1387,8 @@ POSITIVES = (
         "true",
     ),
     (
-        # The return saves 3 before close changes the captured count to 13.
-        # The already-yielded state never enters the body or closes its iterator.
+        # The return saves 3 before return() changes the captured count to 13.
+        # In the already-yielded state the body never runs and return() is not called.
         "body-return-branch-number",
         BODY_RETURN_BRANCH_NUMBER_SOURCE,
         True,
@@ -1375,7 +1413,7 @@ POSITIVES = (
         "true",
     ),
     (
-        # The selected return reads false before close creates data-closed.
+        # The return value reads false because return() has not yet set data-closed.
         "body-return-branch-selector-before-close",
         SELECTOR_SOURCES["body-return-branch-selector-before-close"],
         True,
@@ -1395,8 +1433,12 @@ POSITIVES = (
 
 
 def oracles(args):
-    # These receivers record the same source calls. The native clients below
-    # separately check those calls against public DOM and document ownership.
+    """Run every POSITIVES case under Node and the reference VM with a fake `anchor`.
+
+    The fake logs attribute writes; raise if either log differs from the expected
+    one. Return the number of observations (Node + VM). The native builds check
+    the same cases against the real DOM (CHECKS, OWNED_CHECKS).
+    """
     script, observations = "", []
     if any(label in SELECTOR_SOURCES for label, *_ in POSITIVES):
         script = (
@@ -1489,6 +1531,7 @@ var {name} = (function() {{
 
 
 def mixed_oracles(args):
+    """Like oracles(), for MIXED_SELECTOR_SOURCES (two element parameters)."""
     script = "var Element = {prototype: {matches(s) { return this.matches(s); }}};\n"
     observations = []
     for index, (label, text) in enumerate(MIXED_SELECTOR_SOURCES.items()):
@@ -1764,6 +1807,11 @@ MIXED_OWNED_CHECKS = r"""
 
 
 def mixed_selectors(args, compilers):
+    """Compile MIXED_SELECTOR_SOURCES natively, run them and check no VM helper survives.
+
+    Also check that lowering is refused with a zero step budget or when the second
+    element parameter is missing from the manifest.
+    """
     includes, libraries = dom.link_options(args, selectors=True)
 
     def check_case(case):
@@ -1807,6 +1855,13 @@ def mixed_selectors(args, compilers):
 
 
 def refusals():
+    """Return {label: source} variants of source(True) that break the iterator rules.
+
+    The iterator escapes, next/return/Symbol.iterator are replaced, results are
+    malformed, and so on. main() expects the native compiler to refuse each one,
+    except the body-throw* entries, which saved_throws() and later tests use as
+    source templates and run natively.
+    """
     text = source(True)
     loop = "  for (const node of values) {"
     visited = "    node.setAttribute('data-visited', 'yes');"
@@ -1838,7 +1893,8 @@ def refusals():
             "      const done", "      external(anchor); const done"
         ),
         "escaping-value": text.replace(visited, "    anchor.saved=node;"),
-        # Throw completion still needs its cleanup and handler proof.
+        # Throwing out of the loop body; main() runs the body-throw* entries
+        # natively (saved_throws()) instead of expecting a refusal.
         "body-throw": text.replace(visited, "    throw 1;"),
     }
     variants.update(
@@ -1865,7 +1921,7 @@ def refusals():
             "body-throw-or-return-snapshot": BODY_RETURN_MULTIPLE_SOURCE.replace(
                 "return (node.setAttribute", "throw (node.setAttribute", 1
             ),
-            # Abrupt completion wins even when return() produces a primitive.
+            # The body's throw wins even when return() produces a primitive.
             "body-throw-close-primitive": variants["body-throw"].replace("return {};", "return 2;"),
         }
     )
@@ -2295,7 +2351,13 @@ def refusals():
 
 
 def protected_attribute(args, compilers, includes, libraries):
-    # Exercise typed suppression separately from the saved source throw.
+    """Lower hand-written ctjs IR for a setAttribute call whose exception is swallowed.
+
+    The IR models `if (element === other) try { element.setAttribute('data-closed',
+    'yes') } catch {}`. Only constant, valid attribute names called on the element
+    itself may lower; computed or invalid names, a different receiver, or an
+    inspected exception payload must be refused.
+    """
     source = """module {
   ctjs.func @protectedAttribute$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value, %other: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %same = ctjs.compare strict_eq %element, %other
@@ -2411,7 +2473,14 @@ def protected_attribute(args, compilers, includes, libraries):
 
 
 def normal_throws(args, compilers, includes, libraries, cases):
-    """Observe cleanup exceptions and saved body throws across completion paths."""
+    """Run close cases whose return() throws, natively and under Node and the VM.
+
+    Each case is checked for its thrown payload, attribute trace and final
+    attributes in every initial DOM state. Behaviour is chosen by label
+    fragments: "selector" (boolean payload from matches()), "mixed-body-throw-"
+    (two-element sources), "mutable-" (counter payload), "string", "false-guard",
+    "-throw-read-", "-read-null-" and a "return-" prefix (data-closed is "true").
+    """
 
     def check_case(case):
         label, text = case
@@ -2419,6 +2488,8 @@ def normal_throws(args, compilers, includes, libraries, cases):
         selecting = "selector" in label
         mixed = label.startswith("mixed-body-throw-")
         mutable = "mutable-" in label
+        # The number return() throws: 2 for the literal `throw 2;`, otherwise the
+        # counter value at throw time in the mutable-counter variants.
         cleanup_number = (
             13
             if mutable and (mixed or "effectful" in label)
@@ -2468,6 +2539,9 @@ def normal_throws(args, compilers, includes, libraries, cases):
                 }"""
         closed = "true" if label.startswith("return-") else "yes"
         script, expected, states = text, {}, []
+        # Initial DOM states. 0: none. 1: stop. 2: stop + data-closed=false.
+        # 3: already yielded. 4: yielded + visited. Mixed sources also run
+        # 5: advance and 6: advance + data-closed=false.
         for mode in range(7 if mixed else 5 if unconditional_return else 4):
             setup = "saved.stop = '';" if mode in (1, 2) else ""
             if mode == 2:
@@ -2770,8 +2844,11 @@ CLOSING_THROW = (
 
 
 def closes(stem, source, *variants):
-    """The `(label, text)` close cases of `source`: its closing throw becomes a normal or a
-    returning completion, each optionally through a getter `return`, in `variants` order."""
+    """Yield (label, source) pairs where CLOSING_THROW in `source` becomes a completion.
+
+    "normal" turns it into `break;`, "return" into a return; a "-getter" variant
+    also turns return() into a getter. Pairs come in `variants` order.
+    """
     for variant in variants or ("normal", "return", "normal-getter", "return-getter"):
         completion, _, getter = variant.partition("-")
         text = source.replace("return() {", "get return() {") if getter else source
@@ -2781,7 +2858,11 @@ def closes(stem, source, *variants):
 
 
 def saved_throws(args, compilers, includes, libraries):
-    # Retain the historical source inventory; execute every promoted body here.
+    """Compile and run the throwing sources natively; check them against Node and the VM.
+
+    The sources still live in refusals(), but main() no longer expects them to be
+    refused.
+    """
     original = refusals()["body-throw"]
     conditional_source = refusals()["body-throw-branch-boolean-snapshot"]
     mutable_throwing_source = refusals()["body-throw-number-snapshot"].replace(
@@ -2959,6 +3040,8 @@ def saved_throws(args, compilers, includes, libraries):
     selector_branch_throw_read_false_source = selector_branch_throw_read_source.replace(
         "if (anchor.hasAttribute('data-closed'))", "if (anchor.matches('[data-closed=true]'))"
     )
+    # (label, source, C++ exception payload type, assertion on the caught payload,
+    # expected data-closed value). Labels also select behaviour (see check_case).
     cases = (
         ("number", original, "js_num", "error.value.value() == 1.0", "yes"),
         (
@@ -4261,6 +4344,8 @@ def saved_throws(args, compilers, includes, libraries):
 """
 
     def check_case(case):
+        # Behaviour is chosen by fragments of the case label; each flag below
+        # is named after the fragment it tests.
         label, text, kind, payload, closed = case
         executions = refused = observations = 0
         nested_branch_throw = "-branch-throw-" in label
@@ -5032,8 +5117,9 @@ var savedThrow, savedExhausted;
                             "ctnative::set_attribute("
                         ):
                             raise RuntimeError(f"{name}: final read moved before its close writes")
-                    # Joined throw paths duplicate the surviving suffix into each
-                    # normal arm; their path/order assertions execute above.
+                    # Skipped for nested branch throws: the compiler copies the code after
+                    # the join into each normal arm, so there is more than one close body
+                    # to slice. The per-path order checks above already cover those cases.
                     if terminal_match and not nested_branch_throw:
                         selector_call = "ctnative::Element.prototype.matches.call"
                         close_body = cpp[
@@ -5801,6 +5887,8 @@ var savedThrow, savedExhausted;
     normal_throws(args, compilers, includes, libraries, normal_cases)
     throwing_close = refusals()["body-throw-close-throws"]
     getter_close = refusals()["body-throw-close-getter"]
+    # Labels of the close cases the compiler must admit (lowering succeeds); admit()
+    # below expects every other case to be refused.
     accepted_normal_closes = {
         f"{completion}-{suffix}"
         for completion in ("normal", "return")
@@ -5871,10 +5959,11 @@ var savedThrow, savedExhausted;
         "return-mutable-nonliteral-close",
         "normal-mutable-nonliteral-close",
     }
-    # Refusals when written (2026-09-23); the later cleanup-read snapshot and
-    # read-order proofs admit them, which saved-throw-number hid from 09-24.
-    # Native matched Node+jsdom (value, write sequence, final attributes) in 48
-    # initial states each, both policies, GCC and Clang.
+    # These close cases were refused when first written. The compiler now admits
+    # them because it can prove the attribute reads in the close path see a stable
+    # snapshot and happen in source order. Their native output matched Node+jsdom
+    # (return value, write sequence, final attributes) for 48 initial states each,
+    # with both DOM providers and both GCC and Clang.
     accepted_normal_closes |= {
         "unsupported-postwrite-read",
         "unsupported-terminal-postselector-read-order",
@@ -7743,6 +7832,7 @@ var savedThrow, savedExhausted;
 
 
 def main():
+    """Run the oracle checks, every native execution group, and the refusal list."""
     args = dom.parse_args(__doc__, oracles=True)
     observations = oracles(args) + mixed_oracles(args)
     compilers = args.compilers
@@ -7900,7 +7990,7 @@ def main():
             "body-throw-close-throws",
             "body-throw-close-getter",
         ):
-            return 0  # Executed above, with the original source unchanged.
+            return 0  # saved_throws() runs these natively, source unchanged.
         ir, contract = dom.prepare(args, name, text, 1, entry_name="customElements")
         contract.update(initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, contract, f"refused-{name}")

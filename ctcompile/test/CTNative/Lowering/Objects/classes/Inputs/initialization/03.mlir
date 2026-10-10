@@ -1,6 +1,6 @@
-
+// Split-file JavaScript inputs for initialization.py; each split marker below starts one case.
 //--- receiver-default-shadow.js
-// Even an uncalled method cannot change the constructor backedge.
+// An uncalled method that reassigns `this.constructor` must still be checked.
 function receiver_default_shadow() {
     class Config {
         static get Default() { return 7; }
@@ -248,8 +248,8 @@ function helperDynamicKey() {
 }
 var a = helperDynamicKey();
 
-// Fresh callable holders share the DOM source proof. Class preparation leaves
-// their source operations intact for the existing native closure lifter.
+// A fresh object literal holding methods is proved like the DOM cases. Class preparation leaves
+// its source operations unchanged so the native closure lifter can still handle them.
 //--- local-holder-method.js
 function holderMethod() {
     class Shape {}

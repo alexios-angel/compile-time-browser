@@ -1,6 +1,6 @@
-// A complete current contents certificate permits only literal non-growing
-// length assignments. Ownership requires local entry-block arrays; selected
-// aliases borrow their owners. An unsupported operation invalidates the certificate.
+// Assigning `length` is native only when the array's contents are fully known and the new
+// length is a literal no larger than the current one. Only arrays created in the entry block
+// own their storage; selected aliases borrow it. Any unsupported operation forgets the contents.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/shrink.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SHRINK
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Objects/array/shrink.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf '--ctnative-lower-to-emitc=optimize=false' | FileCheck %s --check-prefix=SHRINK
 // RUN: split-file %s %t

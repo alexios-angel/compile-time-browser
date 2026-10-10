@@ -11,7 +11,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/closure_also_direct.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CLOSUREALSODIRECT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/property_names.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PROPERTYNAMES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed_producer.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXEDPRODUCER
-
+// Returned method tables: the fixture lowers natively; each split-file case below is refused.
 // NATIVE-DAG: using ctn_env_fn_2 = std::function<ctnative::js_num(ctnative::js_num)>
 // NATIVE-DAG: struct method_table_0
 // NATIVE-DAG: cap0 = std::move(cap0)

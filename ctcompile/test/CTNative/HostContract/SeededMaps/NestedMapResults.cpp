@@ -1,7 +1,19 @@
+//===- NestedMapResults.cpp - Chained Map setter results --------*- C++ -*-===//
+//
+// Host-contract proofs for a captured-Map setter whose argument is the result
+// of an earlier call to the same setter.
+//
+//===----------------------------------------------------------------------===//
 #include "Tests.h"
 
 namespace ctcompile::test::host_contract_seeded_maps {
 
+/// Checks that HostContractAnalysis proves a captured-Map setter whose argument
+/// is the result of an earlier call to the same setter (a nested result chain).
+/// \p shared is rewritten as text into that shape. Each case runs both as
+/// source IR (calls through closures) and in prepared form (call_direct with
+/// the Map state passed as an argument). Incompatible actuals, budget
+/// exhaustion, forged attributes and SSA-operand edits must withhold the proof.
 void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
     constexpr unsigned nullable = Alternatives::String | Alternatives::Null;
@@ -52,6 +64,7 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
                 program = replaced(program, call, direct);
             }
         }
+        // IR text for one more `put` call named \p name with argument \p actual.
         const auto call = [&](const std::string & name, const std::string & actual) {
             auto text = "    %" + name + "Putter = ctjs.get_property %owned[%putKey]\n";
             if (prepared) {
@@ -67,11 +80,16 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
             prepared ? "    %putterEnv = ctjs.load_upvalue" : "    %putResult = ctjs.call";
         const std::string last =
             prepared ? "    %getterEnv = ctjs.load_upvalue" : "    %answer = ctjs.call";
+        // The program with an extra `put` call whose argument is \p definition,
+        // inserted before the first call or before the getter call.
         const auto extra = [&](const std::string & definition, bool before) {
             const auto & marker = before ? first : last;
             return replaced(program, marker,
                             "    %extra = " + definition + "\n" + call("extra", "%extra") + marker);
         };
+        // Checks a proved query has \p count callable edges in source order, each
+        // setter argument typed by \p mask, and exactly \p dependencies arguments
+        // that are the result of an earlier setter call.
         const auto edges = [&](mlir::ModuleOp module, const HostContractAnalysis & query,
                                unsigned count, unsigned mask, unsigned dependencies) {
             auto getter = module.lookupSymbol<ctjs::FuncOp>("get$2");
@@ -189,6 +207,8 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
 )MLIR");
         variant(foreign, false,
                 "a foreign call result cannot borrow a captured-family result proof");
+        // 21 = 1 base + 2 orders x (2 accepted + 4 refused extras) + 8 single
+        // variants after the loop.
         check(rows == 21, "all nested invocation and complete-census source controls ran");
         for (const auto & [text, label, count, mask] :
              {std::tuple{program, "String", 3u, unsigned(Alternatives::String)},
@@ -198,6 +218,8 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
             auto contract = mapContractFor(*module);
             HostContractAnalysis complete(*module, contract);
             const unsigned completion = complete.steps();
+            // 15000 is a ceiling well above this fixture's step count; every
+            // smaller budget must exhaust without a partial proof.
             check(complete.proved() && completion < 15000,
                   "invocation and final family proofs stay within the fixture work limit");
             if (!complete.proved() || completion >= 15000) { continue; }
@@ -245,14 +267,18 @@ void checkNestedMapResults(mlir::MLIRContext & context, const std::string & shar
             const auto calls = exact.callables();
             auto * inner = calls[count - 3].call;
             auto * outer = calls[count - 2].call;
+            // The setter argument: operand 4 of call_direct (this, new, callee,
+            // state, arg), operand 2 of ctjs.call (callee, this, arg).
             const unsigned argument = prepared ? 4u : 2u;
             mutate(outer, argument, outer->getResult(0));
             mutate(inner, argument, outer->getResult(0));
             mutate(outer, argument, calls.back().call->getResult(0));
             auto finalRead = calls.back().read;
             mutate(outer, argument, finalRead.getObject());
-            // Give the later call an independent String seed first. Reversing
-            // this edge is acyclic and same-tag, but still violates SSA order.
+            // Point the outer call at the inner call's own String argument, so the
+            // two calls are independent and must still prove. Then make the inner
+            // call consume the outer result: the edge is acyclic and the tags
+            // match, but it uses a value before its definition and must be refused.
             const auto nestedContract = contract;
             const auto nestedActual = outer->getOperand(argument);
             outer->setOperand(argument, inner->getOperand(argument));

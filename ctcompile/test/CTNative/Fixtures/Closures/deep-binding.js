@@ -1,46 +1,46 @@
-// A LOCAL BINDING NAMED FROM TWO FRAMES IN - part 24 Phase 59, slice 2 step 5,
-// through the compilation-unit gate.
+// Local function bindings called from closures two or more frames inside the
+// function that owns them, compiled natively and checked end to end by the
+// compilation-unit test.
 //
-// Step 4 took `var f = function () { ... };` and made every call through the
-// name a `ctjs.call_direct`, in this frame and one frame in. One frame in was
-// as far as it went: a closure made INSIDE the function that captured the box
-// can fill a slot of its OWN from that slot - the descriptor is not
-// from_parent_local and the VM copies `enclosing->upvalues[up.index]`, which is
-// `enclosing_indices` in the IR (slice 1b) - and step 4 refused that shape with
-// "a function two frames in names the binding through its enclosing closure,
-// and this step has no call site out here for it".
+// `var f = function () { ... };` whose box has one store that dominates every
+// read, and whose every read is a call, has its box erased: each call through
+// the name becomes a `ctjs.call_direct` of the target. When the name is used in
+// a closure nested further in, that closure fills an upvalue slot of its own
+// from its enclosing closure's slot (the descriptor is not from_parent_local;
+// the VM copies `enclosing->upvalues[up.index]`, which is `enclosing_indices`
+// in the IR).
 //
-// BOTH HALVES OF THAT SENTENCE WERE WRONG, AND THE SECOND WAS WRONG BECAUSE OF
-// STEP 4 ITSELF. Renumbering was never the obstacle - `removeCaptureSlots` has
-// always renumbered a nested closure's `enclosing_indices` beside the target's
-// own reads, and what a removal actually cannot do is give the REMOVED index an
-// image, which is that function's `move()` fatal. And there IS a call site out
-// here: `makeBoundCallDirect` writes a `ctjs.call_direct` in a frame the closure
-// VALUE cannot reach, which is exactly what step 4's cross-frame calls are. So
-// the binding is followed inward instead, and at every level the same three
-// questions are asked that the owning frame already asks - one store, it
-// dominates, every read is a call - with the slots removed DEEPEST FIRST so
-// that no renumbering meets an index it is about to delete.
+// The pass follows the binding inward and asks the same three questions at
+// every level that the owning frame asks: one store, the store dominates, and
+// every read is a call. Two pieces of existing machinery make that work.
+// `removeCaptureSlots` renumbers a nested closure's `enclosing_indices` along
+// with the target's own reads; what it cannot do is give the removed index a
+// new position (that is its `move()` fatal error), so slots are removed
+// deepest first and no renumbering meets an index about to be deleted. And
+// `makeBoundCallDirect` writes a `ctjs.call_direct` in a frame the closure
+// value cannot reach. Both live in lib/CTNative/Lowering/ClosureLifting/
+// Bindings.cpp.
 //
-// THE ANSWERS, worked out by hand and NOT asserted anywhere - the interpreter is
-// the reference, by definition. Seven globals, seven distinct values, so a wrong
-// one cannot hide behind a right one:
+// Expected values, worked out by hand and not asserted here: the interpreter
+// is the reference. Every global has a distinct value, so a wrong one cannot
+// hide behind a right one:
 //   both6606 = 6606    chain35 = 35    data25 = 25    pair26 = 26
-//   recur21 = 21       three16 = 16    two10 = 10
+//   recur21 = 21       three16 = 16    two10 = 10     trap15 = 15
+//   maxt17 = 17
 //
-// THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake refuses
-// to write a module while any function carries `ctnative.not_native`. An inner
-// level that ASSIGNS the binding and an inner level that uses the name as a
-// VALUE are one program apiece in CTNative/Lowering/closure-refusals.mlir, under
-// split-file, and each pins the CHAINED sentence - the outer level refusing with
-// the inner level's reason after it.
+// Refused shapes cannot live here: test/CTNative/Checks/pipeline.cmake fails
+// if any function carries `ctnative.not_native`. An inner level that assigns
+// the binding, and one that uses the name as a value, each have their own
+// program in test/CTNative/Lowering/Closures/refusals.mlir (under
+// split-file), which checks that the outer level's refusal message ends with
+// the inner level's reason.
 
-// TWO FRAMES IN, THE SMALLEST ONE - and the program that was the BOUNDDEEP
-// refusal until this step. `base` is a box of this frame because `deep`
-// mentions the name; `mid` holds the box at a slot of its own, and `deep` fills
-// a slot from `mid`'s. Two slots go, `deep`'s first, and the `ctjs.load_upvalue`
-// inside `deep` becomes a `ctjs.call_direct` of `base`'s target - written in a
-// frame two removes from the one that holds the closure value.
+// Two frames in, the smallest case. `base` is boxed in this frame because
+// `deep` names it; `mid` holds the box in an upvalue slot of its own, and
+// `deep` fills a slot from `mid`'s. Both slots are removed, `deep`'s first,
+// and the `ctjs.load_upvalue` inside `deep` becomes a `ctjs.call_direct` of
+// `base`'s target, written two frames away from the frame that holds the
+// closure value.
 function two_frames_in(n) {
     var base = function (k) {
         return k + 1;
@@ -54,10 +54,10 @@ function two_frames_in(n) {
     return mid(n);
 }
 
-// AND THREE, BECAUSE TWO COULD BE A SPECIAL CASE OF ONE. Neither `one` nor `two`
-// reads `root` at all - they carry it - so the middle levels are slots with no
-// reads to rewrite, which is the case a walk that only looked for reads would
-// leave behind. Three slots go, in the order three, two, one.
+// Three frames in, because two could be a special case of one. Neither `one`
+// nor `two` reads `root`; they only carry it, so the middle levels are slots
+// with no reads to rewrite, which a walk that only looked for reads would
+// miss. Three slots are removed, in the order three, two, one.
 function three_frames_in(n) {
     var root = function (k) {
         return k * 3;
@@ -74,12 +74,12 @@ function three_frames_in(n) {
     return one(n);
 }
 
-// AN INNER FUNCTION THAT ALSO CAPTURES DATA. `inner` holds two captures: the
-// binding, filled from `wrap`'s closure, and `offset` - a number of `wrap`'s own
-// frame. Only the first is removed, so `inner` is left as a function of one
-// capture and slice 1 prepends `offset` at the call inside `wrap`. A removal
-// that took the whole capture list, or that renumbered `offset` wrongly, gives
-// 12 or a verifier error rather than 25.
+// An inner function that also captures data. `inner` holds two captures: the
+// binding, filled from `wrap`'s closure, and `offset`, a number in `wrap`'s own
+// frame. Only the binding's slot is removed, so `inner` keeps one capture, and
+// closure lifting passes `offset` as an extra leading argument at the call
+// inside `wrap`. Removing the whole capture list, or renumbering `offset`
+// wrongly, gives 12 or a verifier error instead of 25.
 function deep_with_data(n) {
     var scale = function (k) {
         return k * 4;
@@ -94,12 +94,12 @@ function deep_with_data(n) {
     return wrap(n);
 }
 
-// CALLED AT EVERY DEPTH IT REACHES, WHICH IS THREE DIFFERENT REWRITES OF ONE
-// NAME. `step` is read here through a `ctjs.cell_get` - replaced by the closure
-// VALUE, so slice 1's own rule takes that call - and through a
-// `ctjs.load_upvalue` in `mid` and another in `deep`, where there is no value to
-// name and this step writes the `ctjs.call_direct` itself. A rewrite that
-// stopped at the first depth prints 606.
+// The same name called at three depths, needing different rewrites. In this
+// frame `step` is read through `ctjs.cell_get`, which is replaced by the
+// closure value, so the ordinary same-frame rewrite turns the call into a
+// direct call. In `mid` and `deep` it is read through `ctjs.load_upvalue`;
+// there is no closure value to substitute, so the pass writes the
+// `ctjs.call_direct` itself. A rewrite that stopped at the first depth gives 606.
 function both_depths(n) {
     var step = function (k) {
         return k - 1;
@@ -113,12 +113,12 @@ function both_depths(n) {
     return step(n) + mid(n) * 100;
 }
 
-// RECURSION THROUGH TWO FRAMES. `down` names itself, so its closure captures the
-// box it is written into - and the name is then carried two frames further in,
-// through `hop` and into `again`, where the call of it is a `ctjs.call_direct`
-// of the function three frames out. Condition 3 is not asked again inward and
-// does not need to be: `hop` cannot run before `down` does, and `again` cannot
-// run before `hop` does.
+// Recursion through two frames. `down` names itself, so its closure captures
+// the box it is stored into, and the name is carried two frames further in,
+// through `hop` into `again`, where the call becomes a `ctjs.call_direct` of
+// the function three frames out. The "store dominates every read" check is not
+// repeated for the inner levels and does not need to be: `hop` cannot run
+// before `down` does, and `again` cannot run before `hop` does.
 function deep_recursion(n) {
     var down = function (k) {
         if (k <= 0) {
@@ -135,11 +135,11 @@ function deep_recursion(n) {
     return down(n);
 }
 
-// TWO NAMES TRAVELLING THROUGH THE SAME TWO CLOSURES, which is the case that
-// renumbers at BOTH levels. `mid` holds both boxes, at slots 0 and 1, and `deep`
-// fills both of its own slots from them; all four go. Removing `mid`'s slot 0
-// before `deep`'s entry for it is the fatal this step's ordering exists to
-// avoid, and removing `deep`'s slot 0 alone would leave `times` being read at an
+// Two names travelling through the same two closures, which renumbers at both
+// levels. `mid` holds both boxes, at slots 0 and 1, and `deep` fills both of
+// its own slots from them; all four slots are removed. Removing `mid`'s slot 0
+// before `deep`'s entry for it is the fatal error the deepest-first ordering
+// avoids, and removing `deep`'s slot 0 alone would leave `times` read at an
 // index that no longer means what it did.
 function two_names_deep(n) {
     var plus = function (k) {
@@ -157,12 +157,12 @@ function two_names_deep(n) {
     return mid(n);
 }
 
-// A DEEP NAME WHOSE FUNCTION CLOSES OVER ANOTHER BINDING - condition 5 and this
-// step in one program. `outer_fn`'s closure holds `inner_fn`'s box, and
-// `outer_fn` is the name `deep` reaches two frames in; condition 5 admits the
-// capture because it is itself a binding this step erases, and both boxes are
-// gone in one fixpoint. `inner_fn` never travels past one frame, so the two
-// names are erased by different depths of the same rule.
+// A deeply used name whose function closes over another binding. `outer_fn`'s
+// closure holds `inner_fn`'s box, and `deep` reaches `outer_fn` two frames in.
+// That capture is allowed because `inner_fn` is itself a binding being erased
+// (the fixpoint in bindLocalFunctions), so both boxes go in one fixpoint.
+// `inner_fn` is only used one frame in, so the two names are erased at
+// different depths by the same rule.
 function chained_deep(n) {
     var inner_fn = function (k) {
         return k + 3;
@@ -187,14 +187,14 @@ var recur21 = deep_recursion(6);
 var three16 = three_frames_in(5);
 var two10 = two_frames_in(4);
 
-// THE ORDERING TRAP, AND WHY PASS B KEYS ON NESTING DEPTH.
+// Ordering trap: why slot removal is ordered by each closure's nesting depth.
 //
-// `mid` holds a binding that STOPS at depth 0 (`w`) and one that TRAVELS on
-// (`q`); `inner` holds the travelled `q` at depth 1 and `p`, owned in mid's own
-// frame, at depth 0. Keyed on the MINIMUM slot depth both closures key on 0,
-// the stable_sort tie keeps `mid` first, and removeCaptureSlots' `move()` finds
-// no image for the slot `inner` still names: the compiler ABORTS on seven lines
-// of ordinary JavaScript, where step 4 merely refused them.
+// `mid` holds a binding that stops at depth 0 (`w`) and one that travels on
+// (`q`); `inner` holds the travelled `q` at depth 1 and `p`, owned by `mid`'s
+// frame, at depth 0. Ordered by the minimum slot depth, both closures key on
+// 0, stable_sort keeps `mid` first, and removeCaptureSlots' `move()` finds no
+// new index for the slot `inner` still names, so the compiler aborts on seven
+// lines of ordinary JavaScript.
 function order_trap(n) {
     var w = function (k) {
         return k + 3;
@@ -214,12 +214,12 @@ function order_trap(n) {
     return mid(n);
 }
 
-// AND THE MAXIMUM IS NOT THE FIX EITHER, which is the half a reader is most
-// likely to try. `a` holds `near` at depth 0 and `far` at depth 1; `b`, made
-// inside a's target, holds only `near`, at depth 1. Under MAX both key on 1 and
-// the tie aborts the other way round - so no function of the SLOT depths orders
-// these two programs at once. A slot's depth measures how far a BINDING
-// travelled; the rewrite needs how deep the CLOSURE sits.
+// The maximum slot depth does not work either, and is the obvious next try.
+// `a` holds `near` at depth 0 and `far` at depth 1; `b`, made inside `a`'s
+// target, holds only `near`, at depth 1. Ordered by the maximum, both key on 1
+// and the tie aborts the other way round, so no function of the slot depths
+// orders both programs. A slot's depth measures how far a binding travelled;
+// the rewrite needs how deep the closure itself sits.
 function maxtrap(n) {
     var far = function (k) {
         return k + 7;

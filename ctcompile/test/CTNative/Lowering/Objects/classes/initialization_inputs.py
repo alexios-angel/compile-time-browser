@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Keep class initialization, mutable helper effects and native admission distinct."""
+"""Fixture expectations and IR-mutation checks for the class-initialization test.
+
+Imported by initialization.py (which extends the tables) and by
+Browser/class_dom/data.py. OBSERVATIONS lists each fixture's expected output;
+the check_* helpers take a fixture's IR, mutate it, and assert that
+--ctnative-specialize-class-initialization or native lowering refuses the
+mutated program.
+"""
 
 import argparse
 import json
@@ -12,9 +19,10 @@ from CTNative.HostContract import contract as host
 from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
-# The implementation hook retains separate Node/VM observations. Static name
-# and length accessors and inherited static getter lookup now agree between
-# the engines.
+# Fixture name -> expected `a=<value>` output as (under Node, under the
+# ctbrowser reference interpreter). None means that run must fail. The two are
+# kept separate because they can differ, for example when a fixture depends on a
+# ctbrowser-only hook.
 OBSERVATIONS = {
     "class-map-record-nested-nullable-direct": (594414, 594414),
     "class-map-record-nested-nullable-holder": (15927, 15927),
@@ -813,6 +821,10 @@ OBSERVATIONS = {
     "receiver-default-identity": (7, 7),
     "receiver-default-inherited": (7, 7),
 }
+# Fixtures whose preparation must succeed and that must lower fully to native
+# code. GLOBAL_HOLDERS also need preparation to remove the global holder "H"
+# (its load_global and store_global). PREPARED_ONLY fixtures prepare
+# successfully but native lowering must still refuse them.
 GLOBAL_HOLDERS = {
     "local-holder-global",
     "global-holder-methods",
@@ -1015,7 +1027,7 @@ POSITIVES = GLOBAL_HOLDERS | {
     "inherited-own-fields-branch-leaf",
     "inherited-own-fields-branch-arguments",
     "inherited-branch-helper",
-    "constructor-branch",  # Preserve the original source; its linear-only refusal is retired.
+    "constructor-branch",  # A constructor with a branch is accepted.
     "inherited-own-fields-shared",
     "inherited-own-fields-leaf",
     "inherited-own-fields-external",
@@ -1130,6 +1142,13 @@ PREPARED_ONLY = {
 
 
 def check_constructed_methods(args):
+    """Check the plain-* fixtures, whose methods are assigned in the constructor.
+
+    Each must print its expected value under Node and the reference interpreter
+    (None: both must throw). plain-method and plain-prototype must run natively;
+    the rest must be refused by native lowering under both optimization
+    settings. Returns (native runs, refusals).
+    """
     checked = refused = 0
     for name, expected in {
         "plain-method": 7,
@@ -1172,6 +1191,10 @@ def check_constructed_methods(args):
 
 
 def check_refusal(name, text, functions):
+    """Assert that every one of `functions` in `text` is native or a named refusal.
+
+    The script entry must stay refused and no emitc main may be emitted.
+    """
     remaining = len(FUNCTION.findall(text))
     reasons = REFUSAL.findall(text)
     if (
@@ -1185,6 +1208,11 @@ def check_refusal(name, text, functions):
 
 
 def prepare(args, name, source, manifest, *, success, options="", diagnostic=""):
+    """Run class preparation on `source` with `manifest`, writing <name>.prepared.mlir.
+
+    With success=False the run must exit 1 with an error containing `diagnostic`
+    and must leave no partial output. Returns the output path.
+    """
     config = args.work / f"{name}.json"
     output = args.work / f"{name}.prepared.mlir"
     config.write_text(json.dumps(manifest, indent=2) + "\n")
@@ -1209,6 +1237,12 @@ def prepare(args, name, source, manifest, *, success, options="", diagnostic="")
 
 
 def check_ancestry_inputs(args, source, manifest):
+    """Corrupt the __ctbrowser_class_heritage call and expect preparation to refuse.
+
+    The mutations make a class its own base, complete the base after the call,
+    duplicate the call, pass an unrelated prototype, and drop the helper from
+    the manifest. Returns the number of refusals.
+    """
     text = source.read_text()
     load = re.search(
         r'(%\w+) = "ctjs.load_global"\(\) <\{name = "__ctbrowser_class_heritage"', text
@@ -1258,6 +1292,11 @@ def check_ancestry_inputs(args, source, manifest):
 
 
 def check_super_inputs(args, source, manifest):
+    """Corrupt an explicit super() call's guard and new.target and expect refusal.
+
+    Also drops each super helper from the manifest and runs with a zero step
+    budget. Returns the number of refusals.
+    """
     text = source.read_text()
     guard = re.search(r'(%\w+) = "ctjs.create_cell"\((%\w+)\)', text)
     write = re.search(
@@ -1315,6 +1354,10 @@ def check_super_inputs(args, source, manifest):
 
 
 def check_super_roots(args, source, manifest, diagnostic, target=None):
+    """Add a ctjs.root before frame exits and expect preparation to fail with `diagnostic`.
+
+    With `target`, only that function's single frame exit is rooted.
+    """
     original = source.read_text()
     selected = original
     if target is not None:
@@ -1355,6 +1398,13 @@ def check_super_roots(args, source, manifest, diagnostic, target=None):
 
 
 def check_proof_inputs(args, source, manifest, prepared, name):
+    """Feed preparation inputs it must not trust and expect refusal or reanalysis.
+
+    The mutations nest a module, duplicate a closure, and forge ctnative
+    annotations on every function; with a valid fingerprint the forged
+    annotations must be ignored and the output must match `prepared`. Returns
+    the smallest step budget from check_proof_budget.
+    """
     text = source.read_text()
     generic = '"ctjs.func"(' in text
     nested = args.work / "nested.mlir"
@@ -1423,8 +1473,13 @@ def check_proof_inputs(args, source, manifest, prepared, name):
 
 
 def check_proof_budget(args, source, manifest, prepared, name):
-    # Find and pin the exact first complete census. Each unsuccessful limit
-    # must withhold the entire rewrite; successful limits produce identical IR.
+    """Find and pin the smallest max-steps budget at which preparation succeeds.
+
+    Every smaller budget must fail with "work budget exhausted" and write no
+    output; every budget that succeeds must produce the same IR as an unlimited
+    run. Returns that smallest budget.
+    """
+
     def complete(limit):
         output = args.work / f"cutoff-{limit}.mlir"
         result = subprocess.run(
@@ -1462,8 +1517,10 @@ def check_proof_budget(args, source, manifest, prepared, name):
 
 
 def check_overflow_input(args, source):
-    # This malformed closure index is rejected by the parser, before the host
-    # fingerprint or preparation proof can inspect it.
+    """Check that a closure index above 2^32 is rejected by the MLIR parser.
+
+    The parser rejects it before the host fingerprint or preparation can see it.
+    """
     overflow = args.work / "overflow-closure.mlir"
     changed, count = re.subn(
         r"(ctjs.create_closure %\w+\[)\d+(\])",
@@ -1485,8 +1542,13 @@ def check_overflow_input(args, source):
 
 
 def check_getter_parent(args, source, manifest, prepared):
-    # A numeric function index is insufficient: make_closure requires the
-    # current function's closure, not an arbitrary value of the same IR type.
+    """Corrupt the static getter NAME and its references and expect refusal.
+
+    A create_closure must take the current function's closure, not any value of
+    the same IR type, so swapping it for `undefined` must be refused, as must a
+    wrong or repeated getter home and a leftover symbol reference to a getter
+    that preparation removes. Returns the number of refusals (1 + 2 + 4).
+    """
     forged = args.work / "getter-enclosing-closure.mlir"
     changed, count = re.subn(
         r"(?P<prefix>(?P<getter>%\w+) = ctjs.create_closure )%arg2"
@@ -1579,10 +1641,14 @@ def check_getter_parent(args, source, manifest, prepared):
                 else "static getter has a remaining symbol reference"
             ),
         )
-    return 7
+    return 7  # 1 enclosing closure + 2 getter homes + 4 symbol references.
 
 
 def check_class_capture_inputs(args, source, manifest):
+    """Mutate the cell a class method captures and expect preparation to refuse.
+
+    Returns the number of refusals.
+    """
     text = source.read_text()
     capture = re.search(
         r"^    %\w+ = ctjs.create_closure %arg2\[\d+\] this %\w+ captures (%\w+)[ \t]*$",
@@ -1592,7 +1658,8 @@ def check_class_capture_inputs(args, source, manifest):
     if not capture:
         raise RuntimeError("captured class control lost its original method capture")
     cell = capture[1]
-    # SSA names are local to functions: keep cell mutations in the owner only.
+    # SSA names are local to a function, so mutate the cell only inside the
+    # function that creates the capturing closure.
     owner = next(
         match[0]
         for match in re.finditer(r"^  ctjs.func\b[^\n]*\n.*?^  }\n", text, re.M | re.S)
@@ -1620,7 +1687,8 @@ def check_class_capture_inputs(args, source, manifest):
         "early-cell-read": owner[: stores[0].start()]
         + f"    %capture_early = ctjs.cell_get {cell}\n"
         + owner[stores[0].start() :],
-        # Keep the original constructor uses while a second cell hides a write.
+        # Keep the constructor's own uses but write `prototype` through a
+        # second cell that aliases the first.
         "chained-cell-alias": owner[: final.end()]
         + f"\n    %capture_alias_value = ctjs.cell_get {cell}\n"
         + "    %capture_alias_cell = ctjs.create_cell %capture_alias_value\n"
@@ -1648,6 +1716,12 @@ def check_class_capture_inputs(args, source, manifest):
 
 
 def check_executable(args, name, native, expected):
+    """Compile fully lowered `native` to C++ with every compiler and run it.
+
+    Both the explicit and the deduced-type layouts must print `a=<expected>`
+    and keep no ctbrowser runtime or prototype storage. Returns the number of
+    binaries run.
+    """
     text = native.read_text()
     if any(token in text for token in ("ctjs.func", "ctnative.not_native", "ctjs.skipped")):
         raise RuntimeError(f"{name}: trusted class did not lower completely\n{text}")
@@ -1689,6 +1763,12 @@ def check_executable(args, name, native, expected):
 
 
 def check_helper_guards(args, declaration):
+    """Run Bootstrap's `r` helper (`declaration`) called at top level and from functions.
+
+    All variants must print a=7. Only the optimized build of the two
+    function-local calls must lower natively; every other build must be
+    refused. Returns (native runs, refusals).
+    """
     checked = refused = 0
     for name, (body, native_expected) in {
         "bootstrap-r-direct": (declaration + "var a = r(null) ? 9 : 7;\n", False),
@@ -1734,8 +1814,16 @@ def check_helper_guards(args, declaration):
 
 
 def check_prototype_keys(args, prepared):
-    # The original helper reads numeric [0] on its parameter. Change only that
-    # IR key and the method name to distinguish disjoint keys from collisions.
+    """Swap the helper's [0] key and method name and check prototype key matching.
+
+    The helper reads numeric [0] on its parameter. Changing only that key and
+    the method name tells disjoint keys from collisions: an empty-string key
+    must still run natively, while the non-integer numbers (each paired with
+    the method name it would collide with, where there is one) and a dynamic
+    key must be refused. Returns (native runs, refusals).
+    """
+    # #ctjs.number<N> holds a double's IEEE-754 bit pattern as an unsigned
+    # integer: -0.0, NaN, +Infinity, -Infinity and 1e20 below.
     text = prepared.read_text()
     literal = "ctjs.constant #ctjs.number<0>"
     if text.count(literal) != 1 or text.count('#ctjs.string<"read">') != 2:

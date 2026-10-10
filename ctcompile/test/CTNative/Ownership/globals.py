@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Check live ordinary global ownership, standalone output and source refusals."""
+"""Check native ownership of ordinary global objects.
+
+Each admitted program (`var host = {slot: 42}` and variants) must lower 1/1 to
+native code with a proved owner, build standalone with no VM symbols under both
+compilers, and agree with Node and the interpreter. The refusal programs, stale
+or forged proofs and exhausted budgets must keep every source function boxed.
+"""
 
 import json
 import re
@@ -20,6 +26,8 @@ host = boundary.host
 
 
 def contract(args, ir, name, binding="host", *, absent=(), undefined=()):
+    """Write the host manifest for `ir`, naming `binding` as its root's global, and
+    return its path. `absent` and `undefined` declare host bindings of those kinds."""
     value = host.manifest(args.opt, ir, absent=absent, undefined=undefined)
     value["roots"][0]["binding"] = binding
     path = args.work / f"{name}.contract.json"
@@ -28,6 +36,8 @@ def contract(args, ir, name, binding="host", *, absent=(), undefined=()):
 
 
 def lower(args, ir, name, config, *, options="", cleanup=True):
+    """Run ctnative-lower-to-emitc on `ir` with the manifest `config` and extra pass
+    `options`, followed by CLEANUP when `cleanup`; return the output path."""
     output = args.work / f"{name}.native.mlir"
     flags = f"host-manifest={config} {options}"
     pipeline = f"builtin.module(ctnative-lower-to-emitc{{{flags}}}"
@@ -37,6 +47,9 @@ def lower(args, ir, name, config, *, options="", cleanup=True):
 
 
 def refused(args, ir, name, config, *, options="", reason=None):
+    """Lower `ir` with `config` and assert ownership was refused: every source
+    function is kept as a refusal, none becomes native, and the ctjs object and
+    global ops are unchanged. `reason`, when given, must appear in the output."""
     output = lower(args, ir, name, config, options=options, cleanup=False)
     text = output.read_text()
     count = len(boundary.FUNCTION.findall(ir.read_text()))
@@ -69,6 +82,9 @@ def check_lifetime(args, name, mode, compiler, text, expected, label="lifetime")
 
 
 def standalone(args, output, name, expected, compilers, nm):
+    """Translate `output` to C++ with explicit and with deduced types, build each
+    with every compiler, and check it links no VM symbol and prints `expected`.
+    The "ordinary" case also runs the sanitized lifetime harness below."""
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
@@ -90,6 +106,10 @@ def standalone(args, output, name, expected, compilers, nm):
             changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
             if count != 1:
                 raise RuntimeError("lifetime harness needs one generated entry")
+            # Exit codes 90-94 name the failing lifetime check: 90 first entry
+            # failed, 91 storage did not survive releasing g_host, 92 second
+            # entry failed, 93 second entry reused or corrupted the first slot,
+            # 94 slot leaked.
             changed += r"""
 int main() {
     if (ctnative_test_entry() != 0) { return 90; }
@@ -167,6 +187,8 @@ def main():
         reference_expected = "ignored=1\n" + expected if name == "unobserved_numeric" else expected
         if host.run([str(reference), str(js)]).stdout != reference_expected:
             raise RuntimeError(f"{name}: interpreter source oracle mismatch")
+        # The legacy_* cases tag one source op with a stray `ctnative.method`
+        # marker attribute; ownership must still be proved without trusting it.
         if name.startswith("legacy_"):
             pattern = (
                 r'ctjs\.store_global "trace", %[-\w.$]+'
@@ -194,9 +216,9 @@ def main():
         standalone(args, output, name, expected, compilers, nm)
         saved[name] = ir, config
 
-    # A present-undefined contract authorizes only its exact unchanged binding.
-    # Refusal must retain the load, including when the source owner proved but
-    # the private normalization clone exhausted its remaining budget.
+    # A contract declaring `undefined` as present authorizes only that exact,
+    # unchanged binding. A refusal must keep the load, including when the source
+    # owner was proved but the private normalization clone ran out of budget.
     ir, config = saved["fixed_undefined"]
     source = positives["fixed_undefined"][0]
     original, manifest_text = ir.read_text(), config.read_text()
@@ -253,7 +275,8 @@ def main():
                 raise RuntimeError(f"{label}-{name}: interpreter source oracle mismatch")
             fresh = contract(args, changed, f"{label}-{name}", undefined=("undefined",))
             if name == "inactive-store":
-                # Its empty branch still exceeds the complete global-owner proof.
+                # Even an empty `if (false)` branch is beyond what the global-owner
+                # proof handles, so the program is refused.
                 refused(
                     args,
                     changed,
@@ -324,8 +347,9 @@ def main():
         raise RuntimeError("fixed undefined normalization rewrote supplied IR or manifest")
 
     ir, config = saved["ordinary"]
-    # Default-disabled and default-enabled entry both preserve the driver's
-    # fingerprinted IR before ownership admission; source operations remain.
+    # With optimization on (the default) or off, lowering must produce the same
+    # output: the fingerprinted source IR is not rewritten before ownership is
+    # admitted.
     disabled = lower(args, ir, "ordinary-disabled", config, options="optimize=false")
     if disabled.read_text() != (args.work / "ordinary.native.mlir").read_text():
         raise RuntimeError("explicit host ownership changed with default optimization policy")
@@ -364,8 +388,9 @@ def main():
     for name, source in refusals.items():
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
-        # Some independent getter functions may retain baseline native support;
-        # the owner entry must still refuse. Single-entry cases are all atomic.
+        # The accessor case has a getter function that may still lower natively
+        # on its own, so only check that @main (the owner entry) was not
+        # admitted. Every other case has a single function, refused as a whole.
         if name == "accessor":
             output = lower(args, rejected, name, fresh, cleanup=False)
             if re.search(r"\bemitc\.func @main\(", output.read_text()):

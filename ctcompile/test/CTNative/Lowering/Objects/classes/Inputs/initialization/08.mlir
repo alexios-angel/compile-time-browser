@@ -1,4 +1,4 @@
-// Nested captures admit only immutable sibling calls, not arbitrary environments.
+// A constructor may call a helper arrow that calls another `const` arrow from the same scope.
 //--- nested-helper-constructor.js
 function nested_helper_constructor() {
     const plus = n => n + 1;
@@ -32,7 +32,7 @@ function nested_helper_method() {
 }
 var a = nested_helper_method();
 
-// All three calls and their value dependencies survive the complete census.
+// All three nested calls, and the values they depend on, are kept after lowering.
 //--- nested-helper-chain.js
 function nested_helper_chain() {
     const plus = n => n + 1;
@@ -120,7 +120,7 @@ function nested_helper_excess() {
 }
 var a = nested_helper_excess();
 
-// Nested calls do not grant authority for an arbitrary closure environment.
+// A nested helper that captures a non-function binding (`offset`) is refused.
 //--- nested-helper-primitive.js
 function nested_helper_primitive() {
     const offset = 1;
@@ -159,7 +159,7 @@ function nested_helper_newtarget() {
 }
 var a = nested_helper_newtarget();
 
-// A terminating observation does not establish a complete recursive proof.
+// Mutually recursive helpers are refused even though this call terminates.
 //--- nested-helper-recursive.js
 function nested_helper_recursive() {
     const first = n => n ? second(n - 1) : 7;

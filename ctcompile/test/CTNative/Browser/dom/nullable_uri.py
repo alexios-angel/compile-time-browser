@@ -1,4 +1,10 @@
-"""Saved nullable attribute guards before native URI success/failure continuations."""
+"""Cases for native DOM entries that guard a nullable getAttribute result with
+`typeof t != 'string'` before decodeURIComponent and its catch handler.
+
+The native code must keep the guard (null passes through, strings are
+decoded or returned unchanged on a URI error) and refuse variants that break
+it. string/cases.py runs these cases through its compile-and-run harness.
+"""
 
 import json
 import re
@@ -12,6 +18,7 @@ READ = "const t = element.getAttribute('data-bs-config');"
 GUARD = "if ('string' != typeof t) return t;"
 DECODE = "try { return decodeURIComponent(t); } catch (ignored) { return t; }"
 HELPER = "function decode(t) { " + GUARD + DECODE + " } "
+# Admitted guard shapes; each must return VALUES' expected results.
 CASES = {
     "nullable_uri_original": READ + GUARD + DECODE,
     "nullable_uri_reverse": READ + "if (typeof t != 'string') return t;" + DECODE,
@@ -25,7 +32,8 @@ CASES = {
     "nullable_uri_assignment": READ
     + GUARD
     + "let saved = 'before'; try { saved = t; saved = decodeURIComponent(t); } catch (ignored) { return saved; } return saved;",
-    # Original M shape: the guard and the handler live in a local helper.
+    # The shape of Bootstrap's minified data-attribute normaliser `M`: the
+    # guard and the decode handler live in a local helper function.
     "nullable_uri_helper_branch_call": READ
     + "if (t === null) return t; "
     + HELPER
@@ -37,6 +45,9 @@ CASES = {
     + DECODE
     + " }; return decode(element.getAttribute('data-bs-config'));",
 }
+# (attribute value or None for absent, expected result): malformed, overlong
+# and surrogate UTF-8 escapes make decodeURIComponent throw, so the value is
+# returned unchanged; valid escapes decode once.
 VALUES = (
     (None, None),
     ("", ""),
@@ -59,6 +70,8 @@ EXPECTED = "".join(
 
 
 def check_oracles(args):
+    """Check that Node and the reference VM both produce VALUES' expected results
+    and the expected attribute access trace for every case."""
     observations = []
     for name in CASES:
         trace = "get:data-bs-config"
@@ -99,6 +112,7 @@ def check_oracles(args):
 
 
 def prepare(args):
+    """(name, ir, contract) for each case, with decodeURIComponent declared."""
     return [
         (name, ir, dict(contract, initial_intrinsics=["decodeURIComponent"]))
         for name, source, count in SOURCES
@@ -107,6 +121,7 @@ def prepare(args):
 
 
 def optional_string(value):
+    """C++ std::optional<std::string> initializer for `value` (None is nullopt)."""
     return (
         "std::nullopt"
         if value is None
@@ -132,6 +147,9 @@ static const std::array<nullable_uri_sample, @COUNT@> nullable_uri_samples{{
 
 
 def client(name, entry, owned):
+    """C++ block that calls `entry` on every sample and checks the results and
+    writes, that results survive later attribute changes, and that an invalid
+    element is rejected."""
     setup = (
         f"{entry}_session session; auto & doc = session.document();"
         if owned
@@ -184,6 +202,8 @@ def client(name, entry, owned):
 """
 
 
+# Variants that drop, invert or detach the guard, replace decodeURIComponent,
+# or return the caught error; each must be refused.
 REFUSALS = {
     "nullable_uri_unguarded": READ + DECODE,
     "nullable_uri_opposite": READ + "if ('string' === typeof t) return t;" + DECODE,
@@ -220,6 +240,8 @@ REFUSALS = {
 
 
 def refusal_checks(args, prepared):
+    """Refuse every REFUSALS case plus a forged module whose guard predicate is
+    inverted, and return the number of refusals."""
     cases = [
         (name, ir, dict(contract, initial_intrinsics=["decodeURIComponent"]))
         for name, body in REFUSALS.items()
@@ -254,4 +276,5 @@ def refusal_checks(args, prepared):
     for name, ir, contract in cases:
         for provider in dom.PROVIDERS:
             dom.refuse(args, ir, dict(contract, provider=provider), f"{name}-{provider}", "DOM")
+    # Each case is refused for both providers, with and without optimization.
     return 4 * len(cases)

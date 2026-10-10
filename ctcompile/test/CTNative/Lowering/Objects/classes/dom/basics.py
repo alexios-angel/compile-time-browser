@@ -1,15 +1,25 @@
 #!/usr/bin/env python3
-"""Compose original class proofs with typed DOM entries and local fields."""
+"""Lower DOM-reading JS classes, receivers and fields to native code and check them.
+
+Each case is first checked against Node and the interpreter, then lowered with the
+ctbrowser-dom providers. Refusal controls (stale hash, missing entry, zero budget,
+missing intrinsics) must fail, and the lowered modules are compiled and run.
+"""
 
 from CTNative.Lowering.Objects.classes.dom.text_cases import *
 
 
 def source(name, body):
+    """Wrap a case body in `function <name>(element[, other])`."""
     parameters = "element, other" if name in CASES or name in TWO_ELEMENT_CLASSES else "element"
     return f"function {name}({parameters}) {{\n  {body}}}\n"
 
 
 def check_oracles(args):
+    """Run every case under the reference interpreter and Node on four attribute values.
+
+    Both must print the case's expected bits; returns the number of observations.
+    """
     cases = CLASS_CASES | CASES
     declarations = "".join(source(name, body) for name, (body, _) in cases.items())
     observations, expected = [], []
@@ -137,6 +147,12 @@ def direct_receiver(args, name, ir, contract):
 
 
 def check_direct_refusals(args, ir, contract, facts):
+    """Require lowering to refuse each receiver-ABI mutation of the direct_read IR.
+
+    The mutations make the helper public or capturing, observe its callee or
+    new.target, call an unknown DOM name, recurse, or pass the wrong operands.
+    Returns the number of refusals checked.
+    """
     original = ir.read_text()
     symbol, helper, call = (facts[key] for key in ("symbol", "helper", "call"))
     operands = call[call.index("(") + 1 : -1].split(", ")
@@ -197,6 +213,7 @@ def check_direct_refusals(args, ir, contract, facts):
 
 
 def check_native(args, modules, optimize, compilers, includes, libraries):
+    """Compile the lowered modules into one C++ program per layout and run it."""
     cases = CLASS_CASES | CASES
     for layout in ("explicit", "deduced"):
         headers, bodies, checks, expected = set(), [], [], []
@@ -302,6 +319,10 @@ def check_native(args, modules, optimize, compilers, includes, libraries):
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
+    # The cases copy Bootstrap's minified helpers verbatim, so check they still
+    # match the vendored bundle: M decodes a data-attribute value (boolean,
+    # Number, null, JSON, URI), F turns a camelCase key into kebab-case, and H is
+    # the object that reads and writes data-bs-* attributes.
     vendor = args.include.parent / "vendor/bootstrap/bootstrap.bundle.js"
     assert BOOTSTRAP_M in vendor.read_text(), "Bootstrap M source pin changed"
     assert strings.BOOTSTRAP_F in vendor.read_text(), "Bootstrap F source pin changed"
@@ -362,7 +383,8 @@ def main():
             entry_name=name,
             generic=name in INHERITED_CASES or name in INHERITED_REFUSALS,
         )
-        # Inspect custom assembly without reparsing its super-guard cf.switch.
+        # Inherited sources use custom assembly; print it through ctjs-opt so the
+        # text checks below do not have to parse its super-guard cf.switch.
         text = (
             run([args.opt, str(ir)]).stdout
             if name in INHERITED_CASES or name in INHERITED_REFUSALS
@@ -453,6 +475,8 @@ def main():
                     request["initial_intrinsics"] = list(
                         dict.fromkeys(request["initial_intrinsics"])
                     )
+            # Specializer step budget: the Bootstrap-derived M (value decoding) and
+            # dynamic-dataset sources need ten times the default to finish lowering.
             steps = (
                 1000000
                 if name in M_CASES
@@ -521,7 +545,7 @@ def main():
                     success=False,
                 )
                 refusals += 1
-            # Preserve the original optional-Error requests as successful lowerings.
+            # Granting Error as an extra, unused intrinsic must not make lowering fail.
             dom.lower(
                 args,
                 ir,
@@ -543,8 +567,10 @@ def main():
                     success=False,
                 )
                 refusals += 1
-            # Keep the old mixed request verbatim: only sources requiring Error
-            # or Number still lack an identity. Also prove the full mixed request.
+            # A request granting only __ctbrowser_class_defined and Object must
+            # refuse sources that also need Error, Number or the other listed
+            # identities, and succeed otherwise. Adding Object to the case's own
+            # intrinsics must always succeed.
             mixed = ["__ctbrowser_class_defined", "Object"]
             missing_identity = (
                 name.startswith("class_error_")

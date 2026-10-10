@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""THE COMPILE-CLEAN GATE - ctcompile Phase 63 Step 7.
+"""Check that generated C++ compiles with no output on every compiler.
 
-"The generated file compiles clean, and that is a test." One EmitC module goes
-through the forked emitter, and the C++ is compiled - not just parsed: -O2
-codegen is where -Wmaybe-uninitialized and friends fire - by EVERY compiler in
---compilers with -std=c++23 -O2 -pedantic -Wall -Wextra -Werror -Wconversion,
-and the compile must succeed with NO output at all: a warning that is not an
-error is still a ctcompile bug, because part 24 §2 makes ctcompile the
-diagnostician. And every definition in the file - each function, class and
-global - must sit under a provenance comment naming its JavaScript site, so the
-day a diagnostic appears the mapping back already exists.
+One EmitC module is printed by the forked emitter and compiled (not just
+parsed: -O2 code generation is where -Wmaybe-uninitialized and similar warnings
+fire) by every compiler in --compilers with the harness FLAGS (-std=c++23 -O2
+-pedantic -Wall -Wextra -Werror -Wconversion). The compile must succeed with no
+output at all: a warning on generated code is a ctcompile bug, because
+ctcompile, not the C++ compiler, is meant to report problems in the program.
+Every definition in the file (each function, class and global) must also sit
+under a provenance comment naming its JavaScript site, so a later diagnostic
+can be mapped back to the source.
 
-NEGATIVE PROOF, so the gate's teeth stay in the suite: --mutate inserts one
-unused variable at the top of main, and every compiler must then refuse the
-file naming it, or -Wall -Werror is not reaching the compile. The run exits 0
-only when every compiler refused; its report line is what the RUN line checks.
+--mutate inserts one unused variable at the top of main; every compiler must
+then refuse the file naming it, which proves -Wall -Werror reaches the compile.
+That run exits 0 only when every compiler refused; its report line is what the
+RUN line checks.
 """
 
 import argparse
@@ -56,11 +56,11 @@ def main():
     unit = work / "unit.cpp"
     unit.write_text(text)
 
-    # EVERY DEFINITION UNDER A PROVENANCE COMMENT: the line before each must be
-    # the comment. TWO LINES OF LOOKBACK, BECAUSE A TEMPLATE PUTS ONE IN
-    # BETWEEN (Phase 56C emits one class template per object-literal family),
-    # and no more: a definition that has drifted further from its comment is
-    # exactly what this gate is here to catch.
+    # Every definition must sit directly under a provenance comment. Look back
+    # two lines when the previous line is `template <...>` (the emitter makes
+    # one class template per object-literal shape), and no further: a
+    # definition that has drifted further from its comment is what this check
+    # exists to catch.
     definitions = 0
     previous = before_previous = ""
     for line in text.split("\n"):
@@ -73,7 +73,7 @@ def main():
     if definitions == 0:
         fail("no definition found in the emitted file; the gate would be vacuous")
 
-    # EVERY COMPILER, A REAL COMPILE, NO OUTPUT.
+    # Every compiler does a real compile, and none may print anything.
     compilers = args.compilers.split(",")
     if len(compilers) < 2:
         fail(

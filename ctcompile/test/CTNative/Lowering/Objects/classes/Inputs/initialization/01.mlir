@@ -492,8 +492,8 @@ function inherited_dispatch() {
 }
 var a = inherited_dispatch();
 
-// Preserve the formerly differing Button static-inheritance observation:
-// both Node and the VM now use Derived as the inherited getter's receiver.
+// An inherited static getter (Base's `k`, read through Derived) runs with
+// Derived as its receiver, in Node and in the VM.
 // Explicit linkage isolates accessor lookup from constructor linkage.
 //--- static-getter.js
 class Base { static get k() { return this.n; } }

@@ -1,4 +1,4 @@
-// Every called sibling expands before the existing constructor publication proof.
+// A holder with get/set/remove/count methods; the other methods are inlined around `set`.
 //--- class-map-record-constructor-multislot-keyed.js
 function multi() {
     const values = new Map();
@@ -20,7 +20,7 @@ function multi() {
 }
 var a = multi();
 
-// Saved aliases retain distinct owners across replacement and deletion.
+// Get results keep referring to their own instances after overwrite and delete.
 //--- class-map-record-constructor-multislot-overwrite.js
 function multi() {
     const values = new Map();
@@ -44,7 +44,7 @@ function multi() {
 }
 var a = multi();
 
-// One base publishes through the holder before literal leaf initialization.
+// Base stores `this` through the holder before Leaf writes its constant field.
 //--- class-map-inherited-multislot-holder.js
 function multi() {
     const values = new Map();
@@ -69,7 +69,7 @@ function multi() {
 }
 var a = multi();
 
-// Unkeyed pure registration composes with called getter/removal/count siblings.
+// `set` without a key parameter works alongside the called get/remove/count methods.
 //--- class-map-record-constructor-multislot-literal.js
 function multi() {
     const values = new Map();
@@ -89,7 +89,7 @@ function multi() {
 }
 var a = multi();
 
-// An extracted method remains an observable callable identity.
+// Refused: `Data.get` is taken as a value, making a second way to call it.
 //--- class-map-record-constructor-multislot-extracted.js
 function multi() {
     const values = new Map();
@@ -112,7 +112,7 @@ function multi() {
 }
 var a = multi();
 
-// A later replacement invalidates the unique own slot.
+// Refused: `Data.get` is reassigned, so it is no longer the holder's original method.
 //--- class-map-record-constructor-multislot-replaced.js
 function multi() {
     const values = new Map();
@@ -135,7 +135,7 @@ function multi() {
 }
 var a = multi();
 
-// A returned holder keeps its closures alive beyond the owner frame.
+// Refused: returning `Data` keeps its methods alive past the function.
 //--- class-map-record-constructor-multislot-escaped.js
 function multi() {
     const values = new Map();
@@ -158,7 +158,7 @@ function multi() {
 var saved = multi();
 var a = saved.count();
 
-// An additional nonconstructor holder capture is not projected away.
+// Refused: another closure captures `Data`, so the holder cannot be inlined away.
 //--- class-map-record-constructor-multislot-captured-observer.js
 function multi() {
     const values = new Map();
@@ -181,7 +181,7 @@ function multi() {
 }
 var a = multi();
 
-// A constructor-time reader observes registration before completion.
+// Refused: the constructor reads the stored entry back before it finishes.
 //--- class-map-record-constructor-multislot-constructor-observer.js
 function multi() {
     const values = new Map();
@@ -203,7 +203,7 @@ function multi() {
 }
 var a = multi();
 
-// A post-delete read needs a nullable record proof, even if guarded.
+// Refused: get after delete may return undefined, even though the code checks for it.
 //--- class-map-record-constructor-multislot-missing.js
 function multi() {
     const values = new Map();
@@ -226,7 +226,7 @@ function multi() {
 }
 var a = multi();
 
-// Every unused slot body remains in the complete source census.
+// Refused: an unused holder method calls an unknown global; every method is checked.
 //--- class-map-record-constructor-multislot-unused-effect.js
 function multi() {
     const values = new Map();
@@ -249,7 +249,7 @@ function multi() {
 }
 var a = multi();
 
-// A slot installed after constructor creation stays outside the ordered holder proof.
+// Refused: `Data.get` is added after the class is defined, not in the object literal.
 //--- class-map-record-constructor-multislot-late-slot.js
 function multi() {
     const values = new Map();

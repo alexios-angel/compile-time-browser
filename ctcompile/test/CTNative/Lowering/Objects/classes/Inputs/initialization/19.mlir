@@ -313,7 +313,7 @@ function inherited_own_fields_iterate_borrow_missing_argument() {
 }
 var a = inherited_own_fields_iterate_borrow_missing_argument();
 
-// Literal undefined isolates mixed call origins from the ambient binding control.
+// The helper is also called with the primitive 3; the constructor's borrow must not cover it.
 //--- inherited-own-fields-iterate-borrow-mixed-literal.js
 function borrowed_field(receiver) { return receiver.first; }
 function inherited_own_fields_iterate_borrow_mixed_literal() {

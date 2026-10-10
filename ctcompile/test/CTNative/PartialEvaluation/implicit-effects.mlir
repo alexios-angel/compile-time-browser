@@ -25,8 +25,8 @@ module {
   }
   ctjs.func @entry$0(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
-    %one = ctjs.constant #ctjs.number<4607182418800017408>
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0
     %f = ctjs.create_closure %callee[1] this %u
     %direct = ctjs.call_direct @doubled$1(%u, %u, %f, %one)
     %object = ctjs.create_object

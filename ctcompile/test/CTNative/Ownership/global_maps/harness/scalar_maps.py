@@ -1,9 +1,17 @@
-"""harness scalar maps: continued from harness_map_results."""
+"""Lifetime harnesses for Maps with String and nullable-String payloads or keys,
+plus the leaf/branch preservation checks, evidence forgers and budget bisection
+shared by the global_maps driver. Builds on harness/map_results.py.
+"""
 
 from .map_results import *
 
+# Each lifetime harness below appends a C++ main() to the emitted program. A
+# nonzero exit code (90-99) names the first check that failed, in source order.
+
 
 def string_payload_lifetime(args, cpp, name, mode, compiler):
+    """Check a Map with String payloads owns its string bytes and is freed with
+    its last owner."""
     joined = name in {
         "saved_join_string_saved",
         "guarded_saved_string_saved",
@@ -87,6 +95,7 @@ int main() {
 
 
 def nullable_payload_lifetime(args, cpp, name, mode, compiler):
+    """Lifetime check for a Map whose getter returns a nullable String."""
     changed = instrument_maps(cpp)
     changed += r"""
 int main() {
@@ -152,6 +161,7 @@ int main() {
 
 
 def nullable_key_lifetime(args, cpp, name, mode, compiler):
+    """Lifetime check for a Map keyed by a nullable String."""
     changed = instrument_maps(cpp)
     changed += r"""
 int main() {
@@ -217,6 +227,7 @@ int main() {
 
 
 def nullable_stored_payload_lifetime(args, cpp, name, mode, compiler):
+    """Lifetime check for a Map that stores nullable-String payloads."""
     changed = instrument_maps(cpp)
     changed += r"""
 int main() {
@@ -288,9 +299,9 @@ int main() {
         generated, separator, observer = changed.rpartition("\nint main() {\n")
         if not separator:
             raise RuntimeError("nested nullable observer lost its main function")
-        # Exercise later same-method results with long caller strings and each
-        # nullish tag after releasing the published owner. Only the appended
-        # observer changes; emitted method bodies and helpers remain intact.
+        # Feed each setter result back into the setter again, with long caller
+        # strings and each nullish tag, after the host object is released.
+        # Only the appended main() changes; emitted code stays byte-identical.
         for before, after in (
             ("const auto saved = setter(caller);", "const auto saved = setter(setter(caller));"),
             ("auto returned = setter(input);", "auto returned = setter(setter(input));"),
@@ -320,11 +331,11 @@ int main() {
             observer = observer.replace(before, after)
         changed = generated + separator + observer
     if name == "nullable_host_result_saved":
-        # This saved size callable itself consumes a nullable result. A fixed
-        # distinct String entry observes both independent Maps without keeping
-        # the overwritten payload alive or changing the setter's result.
-        # Rewrite only the appended observer; generated helpers may contain
-        # their own member size() calls and must remain byte-identical.
+        # Here the saved size callable takes a nullable String argument. Pass a
+        # fixed "anchor" string, which reads both Maps without keeping the
+        # overwritten payload alive or changing the setter's result. Rewrite
+        # only the appended main(): generated helpers may have their own size()
+        # calls and must stay byte-identical.
         generated, separator, observer = changed.rpartition("\nint main() {\n")
         if not separator:
             raise RuntimeError("nullable host-result observer lost its main function")
@@ -359,8 +370,9 @@ int main() {
     )
 
 
-# The families whose failed ownership must keep every leaf object/property
-# operation; the branch families add their live branch and yield operands.
+# Fixture-name prefixes. When ownership is refused for a LEAF_PREFIXES fixture,
+# every object allocation and property operation must be left unchanged;
+# BRANCH_PREFIXES fixtures must also keep their branch and yield operands.
 LEAF_PREFIXES = (
     "leaf_object",
     "leaf_readback",
@@ -379,6 +391,8 @@ BRANCH_PREFIXES = ("saved_join", "guarded_saved", "shortcircuit", "nullable", *L
 
 
 def check_call_preservation(original, output, name):
+    """Raise if a refused lowering changed the calls, branches or leaf object
+    operations of `original` (see LEAF_PREFIXES and BRANCH_PREFIXES)."""
     if source_calls(original) != source_calls(output):
         raise RuntimeError(f"{name}: failed ownership changed live source call operands")
     if name.startswith(BRANCH_PREFIXES):
@@ -399,6 +413,8 @@ def check_call_preservation(original, output, name):
 
 
 def check_prepared_result_calls(text, original, name):
+    """Check a refused case still passes each getter result straight into the
+    following setter's ctjs.call_direct and stores the last result in `trace`."""
     calls = re.findall(
         r"^\s*(%[-\w.$]+) = ctjs\.call_direct @([-\w.$]+)\(([^\n]+)\) "
         r"\{ctnative\.stored_call = 1 : i32\}",
@@ -441,9 +457,12 @@ def check_prepared_result_calls(text, original, name):
 def forge_map_presence(text, payload="bool"):
     if payload not in {"bool", "string", "nullable_string"}:
         raise ValueError("forged presence needs a valid read tag")
-    # Nullable alternatives are a read proof, not a scalar write/key proof.
-    # Forge each accepted vocabulary independently, so parsing cannot reject
-    # the control before its live read/presence evidence is rederived.
+    """Mark every ctjs.call in `text` with forged Map presence and type
+    attributes, for negative tests that must not trust them."""
+    # A nullable String is only valid as a read type; writes and keys use plain
+    # String. Forge each attribute with a value the parser accepts, so the
+    # negative test reaches the stage that re-derives the real evidence instead
+    # of failing at parse time.
     scalar = "string" if payload == "nullable_string" else payload
     marked, count = re.subn(
         r"(^\s*%[-\w.$]+ = ctjs\.call [^\n{]+)(\{)?",
@@ -468,6 +487,8 @@ def forge_map_presence(text, payload="bool"):
 
 
 def forge_leaf_evidence(text, payload="bool"):
+    """forge_map_presence plus forged object-identity and field-group attributes
+    on every allocation and property access."""
     marked = forge_map_presence(text, payload)
     marked, count = re.subn(
         r"(\bctjs\.create_object)(\s*\{)?",
@@ -492,6 +513,14 @@ def forge_leaf_evidence(text, payload="bool"):
 
 
 def check_budgets(args, ir, config, name, functions=4):
+    """Bisect the smallest host-max-steps budget at which all `functions` lower
+    natively, and check every smaller budget refuses without leaking a partial
+    rewrite (signatures, op counts and call operands unchanged).
+
+    Bisection starts from [0, 100000]; the 16 budgets below the boundary are then
+    re-checked one by one. Returns the budgets that discarded a rewrite after the
+    owner proof succeeded.
+    """
     original = ir.read_text()
     signatures = re.findall(
         r"^\s*ctjs\.func (.*?) -> !ctjs.value attributes \{.*?" r"upvalue_count = (\d+) : i32",

@@ -1,3 +1,10 @@
+"""Map `size` cases for the global_maps ownership tests.
+
+Covers String-valued object fields, then Maps whose `size` is proved to be
+zero, one, or the result of a delete. Rows named in the *_SIZE_HISTORY tables
+are pinned by call count and SHA-256 through case_adder (scalar/results.py).
+"""
+
 from ..globals import *
 
 STRING_FIELD_BYTES = StringValue('quoted "field"\n\t%\\=;雪\x00tail')
@@ -164,7 +171,9 @@ def string_field_sources():
     return admitted_sources(string_field_cases())
 
 
-# Exact sources of the thirteen-row post-String-field continuation probe.
+# Pins (raw call count, SHA-256 of the source) for the zero-size cases.
+# case_adder asserts each named case still matches, so changing one must be a
+# deliberate edit here.
 ZERO_SIZE_HISTORY = {
     "local_clear_zero_size_key": (
         8,
@@ -250,8 +259,9 @@ def zero_size_cases():
         9,
     )
     add("zero_size_equal_key", base.replace("state.set(1, item);", "state.set(0, item);"), 0, 8)
-    # Unary Neg still lacks the host key-value proof. Keep this source intact;
-    # raw Number negative-zero bits exercise SameValueZero independently.
+    # `-0` is written with unary minus, which the host key proof does not
+    # handle, so this case is expected to be refused (admitted=False). Raw
+    # negative-zero Number constants elsewhere test SameValueZero key equality.
     add(
         "zero_size_negative_zero",
         base.replace("state.set(1, item);", "state.set(-0, item);"),
@@ -305,9 +315,10 @@ def zero_size_cases():
             False,
             ("else { state.has(key); }", "else { state.clear(); state.has(key); }", both_name),
         )
-        # Intersecting the known-key lists produces no common entries although
-        # every runtime path is nonempty. Equal cardinality now proves saved
-        # one independently; a later real clear instead establishes zero.
+        # The two branches insert different keys, so their known-key lists
+        # have no common entry, yet both paths leave the Map nonempty. Equal
+        # entry counts on both paths prove size one; only the repaired variant's
+        # later clear() makes the size zero.
         intersect = source.replace(
             "state.clear();",
             "state.clear(); if (flag) { state.set(1, item); } else { state.set(2, item); }",
@@ -354,7 +365,8 @@ def zero_size_sources():
     return admitted_sources(zero_size_cases())
 
 
-# Preserve the eight exact sources of the saved-one continuation probe.
+# Pins (raw calls, prepared calls, SHA-256) for the size-one cases; checked by
+# case_adder.
 ONE_SIZE_HISTORY = {
     "zero_size_read_after_write": (
         8,
@@ -407,8 +419,9 @@ def one_size_cases():
     add = case_adder(rows, ONE_SIZE_HISTORY)
 
     add("zero_size_read_after_write", base, 0, 8)
-    # A raw own-field read requires the exact-one key to select the object.
-    # A mistaken absence proof cannot pass through a nullable comparison.
+    # Reading a field directly off the entry needs the key proved to be
+    # exactly one to select the object; a wrong absence proof cannot hide
+    # behind a nullable `=== void 0` comparison here.
     field = base.replace(
         "return state.get(zero) === void 0 ? 1 : 0;", "return state.get(zero).value;"
     )
@@ -567,8 +580,10 @@ def one_size_cases():
             ),
         )
 
-    # Startup-only emptiness still needs a separately evaluated clear.
-    # Exact deletion now also proves the two unchanged historical formal-key sources.
+    # A Map that is empty only because it was just created is not proved
+    # empty: the startup_empty_* rows are refused, and their size_one_cleared_*
+    # repairs add an explicit clear(). Setting and then deleting the parameter
+    # key does prove the size, so the size_deleted_* rows are admitted.
     fresh = old["local_clear_zero_size_key"]["source"].replace(
         "state.set(key, item); state.clear(); ", ""
     )
@@ -619,7 +634,8 @@ def one_size_sources():
     return admitted_sources(one_size_cases())
 
 
-# Every byte of the ten measured delete-size continuation sources is retained.
+# Pins (raw call count, SHA-256) for the cases that read `size` after a
+# delete; checked by case_adder.
 DELETE_SIZE_HISTORY = {
     "size_deleted_last": (10, "6aa0868a86f765f22c30b09cc9e8494d9847c8e5d4e8f1bbaf6f3df1bd96276e"),
     "size_deleted_last_literal_repair": (
@@ -766,8 +782,8 @@ def delete_size_cases():
         ),
     )
 
-    # Both witnesses force the independently proved current key to select a
-    # real object and read its field. A wrong cardinality cannot fake absence.
+    # Both cases make the proved key select a real object and read its field,
+    # so a wrong size proof cannot pass by claiming the entry is absent.
     zero_field = base.replace(
         "const zero = state.size; state.set(1, item);",
         "const zero = state.size; state.set(0, item);",
@@ -824,6 +840,3 @@ def delete_size_cases():
 
 def delete_size_sources():
     return admitted_sources(delete_size_cases())
-
-
-# The twelve measured branch-cardinality continuation sources are immutable.

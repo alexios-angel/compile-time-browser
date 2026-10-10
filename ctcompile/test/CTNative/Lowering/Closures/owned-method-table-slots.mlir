@@ -1,10 +1,10 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/owned-method-table-slots.py --translate ctjs-translate --opt ctjs-opt --specimen %S/../../Fixtures/Closures/owned-method-table-slot.js --fixtures %t --work %t.executables --reference %native_reference
 
-// The independent checker runs the exact six-function specimen and this
-// lifetime program through admission, explicit/deduced C++, both compilers,
-// the interpreter and ASan/UBSan. Its refusal controls keep default
-// optimizations off and require a named refusal, not a compiler crash.
+// owned-method-table-slots.py runs the six-function specimen and these programs
+// through admission, explicit and deduced C++, GCC and Clang, the interpreter,
+// and ASan/UBSan. Its refusal cases keep default optimizations off and require
+// a named refusal, not a compiler crash.
 
 //--- lifetime.js
 function makeTable(seed, label) {
@@ -19,7 +19,7 @@ function makeTable(seed, label) {
 }
 function transport(table) { return table; }
 function publish(seed, label) {
-    // No special meaning is attached to the specimen's property `exports`.
+    // Named `payload`, not `exports` as in the specimen: the name is not special.
     const ns = {payload: makeTable(seed, label)};
     return transport(ns.payload);
 }
@@ -73,8 +73,8 @@ var shared15 = sharedAlias();
 var strings11 = stringLifetime();
 
 //--- families.js
-// The owner field has one schema at each site. Sharing the field name makes
-// one C++ class template; it must not merge these two distinct table schemas.
+// Both owner fields are named `exports` but hold different table schemas. The
+// shared name gives one C++ class template, which must not merge the two.
 function makeMutable(seed) {
     const state = new Map();
     state.set("value", seed);

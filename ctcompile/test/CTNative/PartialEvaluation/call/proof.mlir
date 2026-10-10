@@ -11,17 +11,17 @@
 // RUN: ctjs-opt %t/reverse-sharing.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=SHARING
 // RUN: ctjs-opt %t/zero.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=ZERO
 // RUN: ctjs-opt %t/order.mlir --ctnative-partial-evaluate | FileCheck %s --check-prefix=ORDER
-
-// The boxed callee and native symbol must agree under this call's actual
-// arguments. Equal scalar returns do not prove equal heap effects. These
-// annotations are deliberately plausible and deliberately untrusted.
+// A call to a specialized @variant folds only when it provably matches its boxed callee
+// @original$1 for this call's actual arguments; equal scalar returns do not prove equal
+// heap effects. The ctnative.* annotations are plausible but forged and must not be trusted.
+// The python3 RUN line swaps @original$1 and @variant in sharing.mlir to check both ways.
 
 //--- effects.mlir
 module {
   ctjs.func private @original$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value, %object: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %u = ctjs.constant #ctjs.undefined
     %key = ctjs.constant #ctjs.string<"value">
-    %two = ctjs.constant #ctjs.number<4611686018427387904>
+    %two = ctjs.constant #ctjs.number<4611686018427387904> // 2.0
     ctjs.set_property %object[%key], %two
     ctjs.return %u
   }
@@ -224,11 +224,11 @@ module {
   // JavaScript equality and Map SameValueZero merge these numbers, but their
   // reciprocals differ. Compare primitive attributes exactly in this proof.
   ctjs.func private @original$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %negative = ctjs.constant #ctjs.number<9223372036854775808>
+    %negative = ctjs.constant #ctjs.number<9223372036854775808> // -0.0
     ctjs.return %negative
   }
   ctjs.func private @variant(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
-    %positive = ctjs.constant #ctjs.number<0>
+    %positive = ctjs.constant #ctjs.number<0> // +0.0
     ctjs.return %positive
   }
   // ZERO-LABEL: ctjs.func private @factory$2

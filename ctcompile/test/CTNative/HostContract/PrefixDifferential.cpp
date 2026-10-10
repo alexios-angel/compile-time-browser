@@ -1,3 +1,17 @@
+//===- PrefixDifferential.cpp - Host prefix differential --------*- C++ -*-===//
+//
+// Differential test for a natively compiled host prefix. It runs the program
+// written by tools/check/bootstrap-host-prefix.py once in the interpreter and
+// then with the compiled wrapper installed (with and without GC stress), and
+// requires identical values for the globals listed in expected.inc and the
+// expected number of compiled-body entries. test/cmake/BootstrapData.cmake
+// sets the CTCOMPILE_HOST_PREFIX_* macros per workload: FUNCTIONS is the
+// source function count, ENTRY the index of the compiled function,
+// INVOCATIONS the expected compiled entries, and SCRIPT / REALM_SLOT enable
+// a compiled top-level script and the `bootstrap` realm slot.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/aot/aot_entry.h>
 #include <ctbrowser/script/builtins.hpp>
@@ -29,10 +43,14 @@ extern "C" std::int32_t ctcompile_host_prefix_script(ctbrowser::aot::ct_aot_ctx 
 
 namespace {
 
+/// The observed globals and their exact expected numeric values.
 constexpr std::pair<std::string_view, double> expected[] = {
 #include "expected.inc"
 };
 
+/// Runs `source`, optionally with the compiled wrappers installed and GC
+/// stress on, and returns the values of the `expected` globals in order, or
+/// an empty vector (with a message on stderr) on any mismatch.
 std::vector<double> run(const std::string & source, bool compiled, bool stress) {
     using namespace ctbrowser::script;
     auto program = compiler::compile(source, script_kind::classic);

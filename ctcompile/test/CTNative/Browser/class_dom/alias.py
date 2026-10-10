@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Keep sequential DOM Map keys sound for equal and distinct native inputs."""
+"""Check that a nested Map keyed by DOM elements stays correct when the two
+element inputs are equal, aliased or distinct, natively and against the Node and
+VM oracles, and that unsound variants are refused."""
 
 import re
 
@@ -35,6 +37,7 @@ NODE = data.session.source.NODE.replace(
 
 
 def sources():
+    """Return {label: (source, expected traceAfter)} for the accepted two-input programs."""
     holder = (
         data.published_source()
         .replace("probe(element)", "probe(element, other)")
@@ -83,6 +86,7 @@ def sources():
 
 
 def observe(args, name, text, suffix, expected):
+    """Run text plus the driver suffix in Node and the VM; both must print expected."""
     path = args.work / f"{name}.oracle.js"
     path.write_text(text + "\n" + suffix)
     for command in ([args.node, "-e", NODE, str(path)], [args.reference, str(path)]):
@@ -115,6 +119,8 @@ probe(first, first); var traceRepeat = traceAfter;
         ir, contract = data.published_prepare(args, name, text, parameters=2)
         prepared = data.classes.prepare(args, name, ir, contract, success=True)
         body = prepared.read_text()
+        # Preparation must keep every class construction and Map owner (five
+        # ctjs.construct) and all eight source functions.
         if body.count("ctjs.construct") != 5 or len(dom.FUNCTION.findall(body)) != 8:
             raise RuntimeError(f"{name}: preparation lost original class, Map or function owners")
         checked = dict(contract, module_sha256=host.fingerprint(args.opt, prepared))
@@ -126,8 +132,8 @@ probe(first, first); var traceRepeat = traceAfter;
             )
         if label != "holder":
             continue
-        # Carry the successful report into changed live IR. An otherwise
-        # unused declared input gains no authority to be observed or returned.
+        # Apply the successful proof to edited copies of the proved IR: an input
+        # the proof saw as unused must not become readable or returnable.
         proved = annotated.read_text()
         entry = re.search(
             rf"(?ms)^  ctjs.func (?:private )?@{re.escape(checked['entry'])}"
@@ -182,8 +188,9 @@ probe(first, first); var traceRepeat = traceAfter;
         dom.refuse(args, ir, contract, f"{name}-raw")
         refusals += 2
 
-    # These are the unchanged handoff witnesses. Distinct inputs reach a null
-    # field read, so accepting their equal-input answer would erase a TypeError.
+    # The unmodified class-DOM sources, given two inputs. With distinct inputs
+    # they read a null field, so a proof that accepted their equal-input result
+    # would hide a TypeError; each must be refused.
     rejected = {}
     for constructor in (False, True):
         text = data.source(constructor).replace("probe(element)", "probe(element, other)")

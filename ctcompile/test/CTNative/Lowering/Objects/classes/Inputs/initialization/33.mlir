@@ -1,4 +1,4 @@
-// Both leaf construction sites retain their own receiver across Map replacement.
+// Base stores `this` in the Map; each Leaf construction keeps its own instance.
 //--- class-map-inherited-base-overwrite.js
 function base_overwrite() {
     const values = new Map();
@@ -18,7 +18,7 @@ function base_overwrite() {
 }
 var a = base_overwrite();
 
-// Removing the entry leaves the saved alias borrowed from the completed leaf owner.
+// Deleting the entry leaves the get result referring to the finished Leaf instance.
 //--- class-map-inherited-base-delete.js
 function base_delete() {
     const values = new Map();
@@ -37,7 +37,7 @@ function base_delete() {
 }
 var a = base_delete();
 
-// Constant own-field writes may replace a base field and add primitive leaf fields.
+// After Base stores `this`, Leaf may overwrite a base field and add constant fields.
 //--- class-map-inherited-base-constant-overwrite.js
 function base_constant_overwrite() {
     const values = new Map();
@@ -53,7 +53,7 @@ function base_constant_overwrite() {
 }
 var a = base_constant_overwrite();
 
-// Constant own-field writes may replace a base field and add primitive leaf fields.
+// Same with a String-valued field; preparation keeps it but native lowering refuses it.
 //--- class-map-inherited-base-string.js
 function base_string() {
     const values = new Map();
@@ -69,7 +69,7 @@ function base_string() {
 }
 var a = base_string();
 
-// A child Map read can observe the published receiver before its extra field exists.
+// Refused: Leaf reads `this` back from the Map before writing its `extra` field.
 //--- class-map-inherited-base-observer.js
 function base_observer() {
     const values = new Map();
@@ -89,7 +89,7 @@ function base_observer() {
 }
 var a = base_observer();
 
-// A throwing child leaves the base receiver reachable without a completed owner.
+// Refused: Leaf throws after Base stored `this`, leaving a half-built object in the Map.
 //--- class-map-inherited-base-throw.js
 function base_throw() {
     const values = new Map();
@@ -108,7 +108,7 @@ function base_throw() {
 }
 var a = base_throw();
 
-// An accessor in the child suffix exceeds the literal-write completion proof.
+// Refused: Leaf's field write calls a getter; only constant field writes are handled.
 //--- class-map-inherited-base-getter.js
 function base_getter() {
     const values = new Map();
@@ -125,7 +125,7 @@ function base_getter() {
 }
 var a = base_getter();
 
-// A helper called by the child can observe the partial receiver through its Map.
+// Refused: a helper called by Leaf can read the half-built object from the Map.
 //--- class-map-inherited-base-call.js
 function base_call() {
     const values = new Map();
@@ -141,7 +141,7 @@ function base_call() {
 }
 var a = base_call();
 
-// Reentrant construction replaces the entry before the outer child completes.
+// Refused: a nested `new Item` replaces the entry before the outer Leaf finishes.
 //--- class-map-inherited-base-reentry.js
 function base_reentry() {
     const values = new Map();
@@ -157,7 +157,7 @@ function base_reentry() {
 }
 var a = base_reentry();
 
-// A directly constructed base does not have the proved leaf's complete field set.
+// Refused: a direct `new Base` stores an object lacking Leaf's `extra` field.
 //--- class-map-inherited-base-direct-base.js
 function base_direct_base() {
     const values = new Map();
@@ -174,7 +174,7 @@ function base_direct_base() {
 }
 var a = base_direct_base();
 
-// Sibling leaves require a separate proof of the complete constructor family.
+// Refused: two sibling subclasses of Base would each need checking.
 //--- class-map-inherited-base-siblings.js
 function base_siblings() {
     const values = new Map();
@@ -194,7 +194,7 @@ function base_siblings() {
 }
 var a = base_siblings();
 
-// A deeper chain is outside the single base and directly constructed leaf proof.
+// Refused: only one Base and one directly constructed subclass are handled, not a chain.
 //--- class-map-inherited-base-deep.js
 function base_deep() {
     const values = new Map();
@@ -213,7 +213,7 @@ function base_deep() {
 }
 var a = base_deep();
 
-// Reading through a second Map alias is still a partial-initialization observer.
+// Refused: reading through a second name for the Map still sees the half-built object.
 //--- class-map-inherited-base-map-alias.js
 function base_map_alias() {
     const values = new Map();
@@ -233,7 +233,7 @@ function base_map_alias() {
 }
 var a = base_map_alias();
 
-// An escaped Map would retain the receiver past its enclosing native owner.
+// Refused: the Map escapes into a global and would keep the instance past its owner.
 //--- class-map-inherited-base-map-escaped.js
 var retained;
 function base_map_escaped() {
@@ -251,7 +251,7 @@ function base_map_escaped() {
 var a = base_map_escaped();
 a = retained.get("slot").n * 100 + a;
 
-// An explicit receiver return exceeds the child's fixed-write completion proof.
+// Refused: an explicit `return this` is not one of the constant field writes handled.
 //--- class-map-inherited-base-return-receiver.js
 function base_return_receiver() {
     const values = new Map();
@@ -267,7 +267,7 @@ function base_return_receiver() {
 }
 var a = base_return_receiver();
 
-// A child replacement makes the returned owner differ from the published receiver.
+// Refused: Leaf returns another object, so `new` differs from the stored `this`.
 //--- class-map-inherited-base-return-object.js
 function base_return_object() {
     const values = new Map();
@@ -283,7 +283,7 @@ function base_return_object() {
 }
 var a = base_return_object();
 
-// Arithmetic after publication needs a broader effect and exception proof.
+// Leaf computes a field with arithmetic after Base stored `this` in the Map.
 //--- class-map-inherited-base-arithmetic.js
 function base_arithmetic() {
     const values = new Map();

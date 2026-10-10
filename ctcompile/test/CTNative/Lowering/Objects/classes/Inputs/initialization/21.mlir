@@ -20,7 +20,7 @@ function class_map_direct() {
 }
 var a = class_map_direct();
 
-// Two classes and repeated instances observe the same mutable captured identity.
+// Two classes and repeated instances all share one mutable captured Map.
 //--- class-map-shared.js
 function class_map_shared() {
     const values = new Map();
@@ -39,7 +39,7 @@ function class_map_shared() {
 }
 var a = class_map_shared();
 
-// Two captured cells remain distinct even when their keys and lifetimes coincide.
+// Two captured Maps stay distinct even when they use the same keys and lifetimes.
 //--- class-map-distinct.js
 function class_map_distinct() {
     const left = new Map(), right = new Map();
@@ -55,7 +55,7 @@ function class_map_distinct() {
 }
 var a = class_map_distinct();
 
-// Retiring the preceding class/getter slot must renumber the surviving Map slot.
+// Folding away the static getter's capture must renumber the remaining Map capture.
 //--- class-map-mixed-captures.js
 function class_map_mixed_captures() {
     const values = new Map();
@@ -69,7 +69,7 @@ function class_map_mixed_captures() {
 }
 var a = class_map_mixed_captures();
 
-// Normalizing a method loop must keep its surviving captured Map argument.
+// Rewriting the method's loop must keep the captured Map argument it still uses.
 //--- class-map-method-loop.js
 function class_map_method_loop() {
     const values = new Map();
@@ -88,7 +88,7 @@ function class_map_method_loop() {
 }
 var a = class_map_method_loop();
 
-// Captures observe a later cell assignment, not the first Map allocation.
+// The method sees the Map later assigned to `values`, not the first allocation.
 //--- class-map-reassigned-cell.js
 function class_map_reassigned_cell() {
     let values = new Map();
@@ -103,7 +103,7 @@ function class_map_reassigned_cell() {
 }
 var a = class_map_reassigned_cell();
 
-// Declaring initial Map identity cannot authorize a replacement constructor.
+// `Map` is reassigned before `new Map()`, so `values` is not an intrinsic Map.
 //--- class-map-global-replaced.js
 function class_map_global_replaced() {
     Map = function Replacement() { return {get() { return 9; }}; };
@@ -113,7 +113,7 @@ function class_map_global_replaced() {
 }
 var a = class_map_global_replaced();
 
-// Prototype writes change the operation invoked by the original method body.
+// Replacing Map.prototype.get changes what the method's `values.get` call runs.
 //--- class-map-prototype-replaced.js
 function class_map_prototype_replaced() {
     const values = new Map();
@@ -127,7 +127,7 @@ function class_map_prototype_replaced() {
 }
 var a = class_map_prototype_replaced();
 
-// An own member masks the declared intrinsic's original prototype method.
+// An own `get` property on the Map instance hides Map.prototype.get.
 //--- class-map-member-replaced.js
 function class_map_member_replaced() {
     const values = new Map();
@@ -141,7 +141,7 @@ function class_map_member_replaced() {
 }
 var a = class_map_member_replaced();
 
-// Publishing a captured Map needs an ownership proof beyond local invocations.
+// The Map escapes into a global, so local calls alone do not show who owns it.
 //--- class-map-escaped.js
 var retained;
 function class_map_escaped() {
@@ -155,7 +155,7 @@ function class_map_escaped() {
 }
 var a = class_map_escaped();
 
-// An unused method still belongs to the original class effect census.
+// An unused method calling an unknown global still counts: every method body is checked.
 //--- class-map-unused-ambient.js
 function class_map_unused_ambient() {
     const values = new Map();
@@ -168,7 +168,7 @@ function class_map_unused_ambient() {
 }
 var a = class_map_unused_ambient();
 
-// Storing the receiver requires typed payload ownership, not scalar Map admission.
+// Storing `this` in the Map needs object-valued entries, not scalar ones.
 //--- class-map-stored-receiver.js
 function class_map_stored_receiver() {
     const values = new Map();
@@ -180,7 +180,7 @@ function class_map_stored_receiver() {
 }
 var a = class_map_stored_receiver();
 
-// A helper/holder chain needs its own complete Map capture and invocation proof.
+// A Map reached through a helper and a holder object is tracked through both calls.
 //--- class-map-nested-holder.js
 function class_map_nested_holder() {
     const values = new Map();
@@ -194,7 +194,7 @@ function class_map_nested_holder() {
 }
 var a = class_map_nested_holder();
 
-// Static calls do not inherit the direct instance-method capture proof.
+// A static method's Map capture is not covered by the instance-method handling.
 //--- class-map-static.js
 function class_map_static() {
     const values = new Map();
@@ -204,7 +204,7 @@ function class_map_static() {
 }
 var a = class_map_static();
 
-// Base expansion cannot erase a Map capture before proving its leaf invocations.
+// Inlining the base constructor into Leaf must keep the base's Map capture.
 //--- class-map-inherited.js
 function class_map_inherited() {
     const values = new Map();
@@ -217,7 +217,7 @@ function class_map_inherited() {
 }
 var a = class_map_inherited();
 
-// Literal keys isolate capture transport from optional numeric-key representation.
+// String-literal keys: tests how the captured Map is passed, not numeric-key handling.
 //--- class-map-direct-string-keys.js
 function class_map_direct_string_keys() {
     const values = new Map();
@@ -240,7 +240,7 @@ function class_map_direct_string_keys() {
 var a = class_map_direct_string_keys();
 
 
-// Literal keys isolate capture transport from optional numeric-key representation.
+// Same as class-map-distinct with string-literal keys instead of numeric ones.
 //--- class-map-distinct-string-keys.js
 function class_map_distinct_string_keys() {
     const left = new Map(), right = new Map();
@@ -257,7 +257,7 @@ function class_map_distinct_string_keys() {
 var a = class_map_distinct_string_keys();
 
 
-// Literal keys isolate capture transport from optional numeric-key representation.
+// A static getter read beside a captured Map does not disturb the Map capture.
 //--- class-map-mixed-method.js
 function class_map_mixed_method() {
     const values = new Map();

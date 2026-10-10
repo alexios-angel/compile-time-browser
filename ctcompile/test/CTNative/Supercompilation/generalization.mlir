@@ -10,9 +10,9 @@
 // RUN: ctjs-opt %t/source.mlir --ctnative-supercompile='max-residual-ops=1' | FileCheck %s --check-prefix=SIZE
 // RUN: ctjs-opt %t/source.mlir --ctnative-supercompile='max-growth=1' | FileCheck %s --check-prefix=SIZE
 // RUN: ctjs-opt %t/exact.mlir --ctnative-supercompile | FileCheck %s --check-prefix=EXACT
-
-// Known growing arguments must actually reach the whistle and generalize;
-// merely failing to evaluate them and deriving a dynamic child is insufficient.
+// Arguments that grow across recursive calls must trip the whistle (the supercompiler's
+// termination check) and be generalized. Failing to evaluate them and deriving a dynamic
+// child instead does not count.
 // SUMMARY: contexts = 14 : i64
 // SUMMARY-SAME: generalizations = 9 : i64
 // SUMMARY-SAME: kernels = 3 : i64
@@ -104,9 +104,9 @@ module {
     %r = scf.if %test -> !ctjs.value {
       %more = ctjs.truthy %count
       %result = scf.if %more -> !ctjs.value {
-        %one = ctjs.constant #ctjs.number<4607182418800017408>
+        %one = ctjs.constant #ctjs.number<4607182418800017408> // 1.0
         %next = ctjs.binary sub %count, %one
-        %negative = ctjs.constant #ctjs.number<9223372036854775808>
+        %negative = ctjs.constant #ctjs.number<9223372036854775808> // -0.0
         %again = ctjs.call_direct @zero$1(%u, %u, %u, %mode, %negative, %next)
         scf.yield %again : !ctjs.value
       } else {
@@ -126,7 +126,7 @@ module {
       %result = scf.if %more -> !ctjs.value {
         %one = ctjs.constant #ctjs.number<4607182418800017408>
         %next = ctjs.binary sub %count, %one
-        %payload = ctjs.constant #ctjs.number<9221120237041090561>
+        %payload = ctjs.constant #ctjs.number<9221120237041090561> // NaN, bits 0x7FF8000000000001
         %again = ctjs.call_direct @nan$2(%u, %u, %u, %mode, %payload, %next)
         scf.yield %again : !ctjs.value
       } else {
@@ -142,7 +142,7 @@ module {
     %u = ctjs.constant #ctjs.undefined
     %true = ctjs.constant #ctjs.boolean<true>
     %zero = ctjs.constant #ctjs.number<0>
-    %nan = ctjs.constant #ctjs.number<9221120237041090560>
+    %nan = ctjs.constant #ctjs.number<9221120237041090560> // quiet NaN, bits 0x7FF8000000000000
     %genericZero = ctjs.call_direct @zero$1(%u, %u, %u, %true, %zero, %count)
     %a = ctjs.call_direct @zero$1(%u, %u, %u, %true, %zero, %count)
     %genericNaN = ctjs.call_direct @nan$2(%u, %u, %u, %true, %nan, %count)

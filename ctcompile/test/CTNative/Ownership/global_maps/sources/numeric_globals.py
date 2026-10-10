@@ -1,5 +1,12 @@
+"""Numeric Map entry cases: arithmetic, identity and saved-global checks on
+values a host setter returns from a captured Map. Builds on object_maps.py."""
+
 from .object_maps import *
 
+# Pinned cases: name -> (raw call count, prepared call count, sha256 of the
+# JavaScript source). numeric_entry_cases() asserts each generated source still
+# hashes to this value, so an edit to a shared base source cannot silently
+# change a case another test depends on.
 NUMERIC_ENTRY_HISTORY = {
     "local_identity_saved": (
         6,
@@ -194,8 +201,9 @@ def numeric_entry_cases():
     )
     assert rows["leaf_object_string_field"]["expected_raw_calls"] == calls
 
-    # Each source still evaluates both calls. The size-returning setter makes
-    # subtraction/division/power sensitive to reversing their execution order.
+    # Each source evaluates both calls. Because the setter returns the Map's
+    # size, subtraction, division and power give a different result if the
+    # two calls run in the wrong order.
     growing = base.replace("return saved === item ? 1 : 0;", "return state.size;")
     for kind, symbol, value in (
         ("add", "+", 3),
@@ -361,6 +369,8 @@ def numeric_entry_cases():
     return rows
 
 
+# Cases the analysis must refuse; numeric_entry_refusals() returns each with
+# the repair that turns it into an admitted case.
 NUMERIC_ENTRY_UNOWNED = {
     "local_add_string_control",
     "local_add_object_control",
@@ -369,13 +379,21 @@ NUMERIC_ENTRY_UNOWNED = {
     "local_numeric_null",
     "local_numeric_undefined",
 }
+# Cases whose call results are saved into globals; driver/globals.py checks
+# those global stores.
 NUMERIC_ENTRY_SAVED_GLOBALS = {"local_add_saved_results", "local_numeric_saved_snapshot"}
+# Cases left out of numeric_entry_sources() because they need a separate
+# carrier; currently none.
 NUMERIC_ENTRY_CARRIERS = set()
+# Admitted cases already run as sources by another family, so
+# numeric_entry_sources() skips them.
 NUMERIC_ENTRY_EXISTING_POSITIVES = {
     "local_identity_saved",
     "leaf_object_number_field",
     "leaf_object_string_field",
 }
+# Rows of leaf_readback_refusals() that are admitted here; the driver drops them
+# from its refusal list.
 NUMERIC_ENTRY_PROMOTED = {"local_identity_repeated_keys"}
 
 

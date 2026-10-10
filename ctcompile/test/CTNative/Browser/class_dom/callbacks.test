@@ -1,2 +1,2 @@
-# Keep synchronous nested helper bodies in the complete native DOM proof.
+# Local callbacks a class method calls synchronously lower natively with their DOM writes.
 # RUN: python3 %S/callbacks.py %dom_driver --node %node --reference %native_reference

@@ -1,4 +1,4 @@
-// Growing arguments become parameters while exact modes and weights survive.
+// Arguments that change per call (seed, count) become parameters; constant mode and weight stay.
 function weighted(mode, weight, seed, count) {
     if (count <= 0) {
         return seed;
@@ -28,7 +28,7 @@ function strings(count) {
     return append(true, "x", "", count) + append(true, "ab", "s", count) +
         append(false, "!", "e", count) + append(true, "ab", "t", count);
 }
-// A literal reset must not recover the generalized seed's static binding.
+// Resetting a generalized `seed` to a literal must not make it a constant again.
 function reset(mode, seed, count) {
     if (count <= 0) {
         return seed;

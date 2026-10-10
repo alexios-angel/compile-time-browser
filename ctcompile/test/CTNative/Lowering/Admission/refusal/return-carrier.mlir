@@ -1,6 +1,6 @@
-// Scalar return alternatives join into one tagged signature. Unstructured
-// control flow and unreachable values retain their existing refusal rules.
-// The runtime scalar-union fixture covers both reachable alternatives.
+// Returns of different scalar types join into one tagged return type.
+// Unstructured control flow and unreachable values are still refused.
+// Fixtures/Scalars/scalar-unions.js checks the runtime answers.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null \
@@ -14,33 +14,33 @@
 // RUN: ctjs-opt --ctnative-lower-to-emitc %t/unreachable-return.mlir \
 // RUN:   | FileCheck %s --check-prefix=UNVISITED
 
-// Mixed scalar returns are native after structuring. Their numeric observer
-// below keeps the standalone global contract definite.
+// Mixed scalar returns are native once structured. The unary `+` on the call
+// gives the global `r` a definite Number type.
 // MIXED: emitc.func @main
 // MIXED: emitc.func @mixed_1({{.*}}) -> !emitc.opaque<"ctnative::nullable_scalar">
 
-// --- and the same shape with the carriers agreeing is lowered ---------------
+// --- the same shape with both returns of one type ---------------------------
 //
-// The precision the rule costs is meant to be nil: two returns of the same
-// carrier are one C++ return type and nothing is refused. Without this half, a
-// change that refused every function with more than one `return` would leave
-// the checks above green while narrowing the tier.
+// Two returns of the same type lower to one plain C++ return type, with no
+// tagged value, and nothing is refused. This guards against a change that
+// refuses every function with more than one `return` while the other checks
+// still pass.
 //
 // AGREED: emitc.func @main
 // AGREED: emitc.func @agreed_1
 
-// --- the hand-written route: two reachable returns, two carriers, and the
-// --- `cf` arm gets there first ---------------------------------------------
+// --- hand-written IR: two reachable returns of different types, still in
+// --- unstructured `cf` form -------------------------------------------------
 //
-// No parameters, so the parameter rule cannot fire; a constant condition, so
-// nothing is boxed. This is as close to the two-carrier rule as an input can
-// get, and the answer is still the branch.
+// It has no parameters and a constant condition, so nothing is boxed and the
+// only refusal that can apply is the one for unstructured control flow.
+// The importer never emits this form once --ctjs-lift-to-scf has run.
 //
 // TWORETURNS: ctjs.func {{.*}}@two_returns
 // TWORETURNS-SAME: ctnative.not_native = "unstructured control flow - run --ctjs-lift-to-scf first"
 // TWORETURNS-NOT: on one path
 
-// --- and the dodge: an unreachable second return is unvisited, not admitted -
+// --- an unreachable second return is unvisited, not admitted ----------------
 //
 // UNVISITED: ctjs.func {{.*}}@unreachable_return
 // UNVISITED-SAME: ctnative.not_native = "a value of type <unvisited> from `ctjs.constant`"
@@ -68,7 +68,7 @@ ctjs.func @two_returns(%receiver: !ctjs.value, %new_target: !ctjs.value,
   %bit = ctjs.truthy %k
   cf.cond_br %bit, ^number, ^boolean
 ^number:
-  %n = ctjs.constant #ctjs.number<4617315517961601024>
+  %n = ctjs.constant #ctjs.number<4617315517961601024>  // 5.0
   ctjs.return %n
 ^boolean:
   %b = ctjs.constant #ctjs.boolean<true>
@@ -79,7 +79,7 @@ ctjs.func @two_returns(%receiver: !ctjs.value, %new_target: !ctjs.value,
 ctjs.func @unreachable_return(%receiver: !ctjs.value, %new_target: !ctjs.value,
                               %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
-  %n = ctjs.constant #ctjs.number<4617315517961601024>
+  %n = ctjs.constant #ctjs.number<4617315517961601024>  // 5.0
   ctjs.return %n
 ^boolean:
   %b = ctjs.constant #ctjs.boolean<true>

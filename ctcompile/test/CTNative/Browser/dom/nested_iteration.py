@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Execute nested DOM and original Bootstrap for-of through typed snapshots."""
+"""Compile nested for-of loops over querySelectorAll and Bootstrap's R.find to
+native loops over element snapshots, run them against a real document, and
+check that unsafe variants are refused."""
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.document.basics import CURRENT_DOCUMENT_CHECKS, INPUT_CHECKS
@@ -29,6 +31,9 @@ BODY = """  let count = 0;
 
 
 def source(kind):
+    """nestedElements with BODY. "direct" uses querySelectorAll (and spreads the
+    outer snapshot); "explicit" uses R.find with a root; "default" uses R.find's
+    default document root for the outer loop."""
     text = "function nestedElements(anchor, expected) {\n"
     body = BODY
     if kind == "direct":
@@ -190,6 +195,8 @@ OWNED_CHECKS = r"""
         }
 """
 
+# Inner-loop bodies that leak, store or pass on a member or replace an
+# iterator helper; main() adds whole-source refusals to these.
 REFUSALS = {
     "escaping-inner-member": "return node;",
     "retained-inner-member": "anchor.saved=node;",
@@ -197,7 +204,8 @@ REFUSALS = {
     "replaced-inner-next": "__ctbrowser_iter_next=anchor;",
 }
 
-# Preserve the exact source that the preceding single-loop fixture refused.
+# A nested for-of over Bootstrap's R.find that the single-loop lowering used to
+# refuse; it must now emit exactly one native entry. Keep the text exact.
 PREVIOUS_REFUSAL = (
     "for (const node of R.find('*',anchor)) "
     "for (const child of node.querySelectorAll('*')) child.matches('*'); return 0;"
@@ -212,6 +220,8 @@ def main():
     compilers = args.compilers
     includes, libraries = dom.link_options(args, selectors=True)
     refusals = executions = 0
+    # INTRINSICS[4:] are the VM's iterator-protocol helpers; a native lowering
+    # must not call any of them.
     for kind in ("direct", "explicit", "default"):
         ir, contract = dom.prepare(args, kind, source(kind), 2, entry_name="nestedElements")
         contract.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
@@ -316,9 +326,10 @@ def main():
     )
     for name, text in bad_sources.items():
         if name == "escaping-inner-member":
-            # A return out of both loops closes both iterators under one guard
-            # plus a suppression handler each (380ee61d5), and the importer
-            # refuses more than one protected region before any DOM proof.
+            # A return out of both loops must close both iterators, which the
+            # importer emits as one guard plus a suppression handler per
+            # iterator. The importer refuses more than one protected region, so
+            # this case fails at import, before any DOM proof runs.
             js = args.work / f"{name}.js"
             js.write_text(text)
             raw = args.work / f"{name}.raw.mlir"
@@ -330,7 +341,7 @@ def main():
         ir, manifest = dom.prepare(args, name, text, 2, entry_name="bad")
         manifest.update(current_document_parameter=0, initial_intrinsics=INTRINSICS)
         dom.refuse(args, ir, manifest, f"refused-{name}")
-        refusals += 2
+        refusals += 2  # dom.refuse lowers with and without optimization.
     print(
         f"Nested element for-of: {executions} native executions, 2 previous-source lowering checks, "
         f"{refusals} refusals; DOM/Core/Style only"

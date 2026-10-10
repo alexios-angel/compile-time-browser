@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Check live exported getter ownership through standalone native execution."""
+"""Check native ownership of a getter stored on a host global.
+
+`host.slot.get()` must compile to standalone native C++ with owning
+shared_ptr/std::function carriers, agree with Node and the interpreter, and
+keep its owners alive exactly as long as a handle exists. Stale, forged and
+unsafe variants of the program must be refused.
+"""
 
 from pathlib import Path
 import re
@@ -43,8 +49,12 @@ POSITIVES = {
 
 
 def resolve_getter(args, ir):
-    # The source query already supports a current direct call. Preserve its
-    # actual receiver and callee while making only that resolution explicit.
+    """Rewrite the one `ctjs.call` of the getter into `ctjs.call_direct`.
+
+    The target is the third function (the getter); the receiver and callee
+    are kept, so the `already_resolved` case starts from IR whose call target
+    is already known.
+    """
     text = ir.read_text()
     targets = re.findall(r"^\s*ctjs\.func (?:private )?@([^\s(]+)", text, re.M)
     undefined = re.search(r"(%[-\w.$]+) = ctjs\.constant #ctjs\.undefined", text)
@@ -64,9 +74,12 @@ def resolve_getter(args, ir):
 
 
 def legacy_marker(args, ir, name):
-    # A current fingerprint authenticates this source, not old native facts.
-    # The legacy marker would erase the observation or omit the owning field
-    # from the shape census if preparation failed to reconstruct its facts.
+    """Add a stale `{ctnative.method}` attribute to one source operation.
+
+    The manifest fingerprint covers the source, not native annotations, so it
+    still matches. Preparation must ignore the marker and rebuild its own
+    facts; trusting it would drop the `trace` store or the owning field.
+    """
     pattern = (
         r'ctjs\.store_global "trace", %[-\w.$]+'
         if name == "legacy_store_marker"
@@ -83,6 +96,12 @@ def legacy_marker(args, ir, name):
 
 
 def census(ir, denominator, name, *, admitted=None):
+    """Assert that lowering kept every function and return the IR text.
+
+    Native plus still-refused functions must equal `denominator` (the source
+    function count), every remaining function must carry a refusal, and when
+    `admitted` is given exactly that many must be native.
+    """
     text = ir.read_text()
     remaining = len(boundary.FUNCTION.findall(text))
     native = len(boundary.NATIVE.findall(text))
@@ -96,6 +115,11 @@ def census(ir, denominator, name, *, admitted=None):
 
 
 def refused(args, ir, name, config, *, options="", reason=None, admitted=None):
+    """Lower `ir` with `config` and require that host ownership was not proved.
+
+    There must be no native main and `host_owner_proved = false`; when
+    `reason` is given it must appear in the output.
+    """
     denominator = len(boundary.FUNCTION.findall(ir.read_text()))
     denominator += len(boundary.NATIVE.findall(ir.read_text()))
     output = owned.lower(args, ir, name, config, options=options, cleanup=False)
@@ -114,6 +138,7 @@ def lifetime(args, cpp, name, mode, expected, compiler):
     # Retain owner, table and callable independently after the script entry
     # returns. Weak witnesses ensure that each heap owner actually dies when
     # its final strong handle is released; a leak cannot satisfy this test.
+    # Exit codes 90-97 identify which lifetime check failed.
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
     if count != 1:
         raise RuntimeError("lifetime harness needs exactly one generated entry")
@@ -159,6 +184,10 @@ int main() {
 
 
 def standalone(args, output, name, expected, compilers, nm, *, result_type="ctnative::js_num"):
+    """Emit C++ (explicit and deduced), check its carriers, build and run it.
+
+    Every compiler's binary must link no VM symbol and print `expected`.
+    """
     deduced = args.work / f"{name}.deduced.mlir"
     host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
     for mode, ir in (("explicit", output), ("deduced", deduced)):
@@ -238,6 +267,11 @@ int main() {
 
 
 def refusal_sources():
+    """Programs like the positive case that each break one ownership condition.
+
+    Aliasing, extra fields, replacement, effects and the like; every one must
+    be refused.
+    """
     prefix = "var host = {}; function make() { return {get() { return 42; }}; } "
     suffix = " var trace = host.slot.get();"
     return {
@@ -279,6 +313,10 @@ def refusal_sources():
 
 
 def forge_reports(text):
+    """Add module attributes claiming host ownership was already proved.
+
+    Lowering must not trust them.
+    """
     text, count = re.subn(
         r"\bmodule attributes \{",
         "module attributes {"
@@ -405,8 +443,8 @@ def main():
     if completed - 1 not in rollback or completed == 100000:
         raise RuntimeError("preparation budget control did not exercise rollback and completion")
 
-    # The original nullish getters now keep their exact tag through the owning
-    # callable and global observation, under both optimization policies.
+    # Getters returning null or undefined keep that exact tag through the owning
+    # callable and the global observation, with optimization on and off.
     for name, literal in (("null", "null"), ("undefined", "void 0")):
         js, typed, count = boundary.prepare(
             args, f"typed-{name}", SOURCE.replace("return 42;", f"return {literal};")
@@ -449,9 +487,10 @@ def main():
         if typed.read_text() != prepared_text or fresh.read_text() != manifest_text:
             raise RuntimeError(f"typed-{name}: preparation rewrote the supplied IR or manifest")
 
-    # Proof-preserving internal preparation must validate the input fingerprint
-    # before it rewrites anything. A changed literal still has a valid owner
-    # graph, so accepting this old manifest would expose an automatic refresh.
+    # Preparation must check the manifest fingerprint before rewriting anything.
+    # Changing the getter's literal from 42 to 43 leaves a valid ownership graph,
+    # so only the fingerprint check can reject the old manifest; without it the
+    # manifest would silently be re-validated against the new source.
     changed = args.work / "changed-literal.mlir"
     original_bits = struct.unpack("=Q", struct.pack("=d", 42))[0]
     changed_bits = struct.unpack("=Q", struct.pack("=d", 43))[0]
@@ -492,8 +531,8 @@ def main():
         refused(args, rejected, name, fresh, admitted=0 if name == "captured_map" else None)
         if name == "effect":
             # A current fingerprint authenticates source identity, never a
-            # supplied native proof. Rebuild the unsafe getter body despite
-            # successful reports and fabricated table/type preparation.
+            # supplied native proof. Lowering must reanalyse the unsafe getter
+            # body despite forged reports and fabricated method-table markers.
             forged = args.work / "forged-fresh.mlir"
             text = forge_reports(rejected.read_text())
             marker = (

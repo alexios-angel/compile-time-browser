@@ -1,2 +1,2 @@
-# Compose constructor registration with DOM record ownership and preserve saved aliases.
+# Constructors that store `this` in a captured Map, with DOM records and saved aliases.
 # RUN: python3 %S/publication.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --clang %dom_clang --build %build --include %{monorepo}/ctbrowser/include --nm %nm --work %t

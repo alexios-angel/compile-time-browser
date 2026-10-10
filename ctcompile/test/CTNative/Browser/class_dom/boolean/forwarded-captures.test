@@ -1,2 +1,2 @@
-# Prove original forwarded fixed slots before compacting local mutable captures.
+# Callbacks capturing an outer constant Boolean and a local mutable cell compile natively.
 # RUN: python3 %S/forwarded_captures.py %dom_driver --node %node --reference %native_reference

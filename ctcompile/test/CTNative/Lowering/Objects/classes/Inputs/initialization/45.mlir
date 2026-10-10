@@ -1,4 +1,4 @@
-// Both constructor key parameters retain each exact new's literal arguments.
+// The constructor's element and key parameters take each `new Item(...)`'s literal arguments.
 //--- class-map-record-nested-constructor-direct.js
 function probe() {
     const outer = new Map();
@@ -25,7 +25,7 @@ function probe() {
 }
 var a = probe();
 
-// Failed helper expansion must roll back a constructor publication rewrite.
+// If inlining the helper fails, rewriting the constructor's registration must be undone too.
 //--- class-map-record-nested-constructor-helper-effect.js
 function probe() {
     const outer = new Map();
@@ -45,7 +45,7 @@ function probe() {
 }
 var a = probe();
 
-// Called holder slots preserve old child and record aliases after recreation.
+// Every Data method is called; old inner-Map and record aliases survive remove and re-set.
 //--- class-map-record-nested-constructor-holder.js
 function probe() {
     const outer = new Map();
@@ -73,7 +73,7 @@ function probe() {
 }
 var a = probe();
 
-// Only the first constructor allocates a child through the short-circuit helper.
+// Only the first construction creates an inner Map through the `||` helper.
 //--- class-map-record-nested-constructor-shortcircuit.js
 function probe() {
     const outer = new Map();
@@ -98,7 +98,7 @@ function probe() {
 }
 var a = probe();
 
-// A read after publication must not move ahead of its registration.
+// A read of the registry must not move ahead of the constructor that registers `this`.
 //--- class-map-record-nested-constructor-observer.js
 function probe() {
     const outer = new Map();
@@ -121,7 +121,7 @@ function probe() {
 }
 var a = probe();
 
-// An exception leaves the published receiver observable to the catch handler.
+// After a throw, the catch handler can still see the registered `this`.
 //--- class-map-record-nested-constructor-throw.js
 function probe() {
     const outer = new Map();
@@ -141,7 +141,7 @@ function probe() {
 }
 var a = probe();
 
-// A replacement return is distinct from the receiver stored in the child Map.
+// An object returned from the constructor differs from the `this` stored in the inner Map.
 //--- class-map-record-nested-constructor-return-object.js
 function probe() {
     const outer = new Map();
@@ -161,7 +161,7 @@ function probe() {
 }
 var a = probe();
 
-// A caller parameter is not a literal key at the exact construction site.
+// A key passed in by the caller is not a literal at the `new` site.
 //--- class-map-record-nested-constructor-dynamic-key.js
 function probe(element) {
     const outer = new Map();
@@ -180,7 +180,7 @@ function probe(element) {
 }
 var a = probe("element");
 
-// Element object identity is outside the literal String routing proof.
+// An object element key needs an identity proof, not the literal String-key proof.
 //--- class-map-record-nested-constructor-object-key.js
 function probe() {
     const outer = new Map();
@@ -200,7 +200,7 @@ function probe() {
 }
 var a = probe();
 
-// Constructor sinking cannot extend a child Map's borrowed record lifetime.
+// Registering in the constructor cannot let an escaped inner Map outlive its records.
 //--- class-map-record-nested-constructor-child-escaped.js
 var retained;
 function probe() {
@@ -221,7 +221,7 @@ function probe() {
 }
 var a = probe();
 
-// A record reached through the published child still needs its local owner.
+// A record reached through the registry still belongs to probe()'s frame.
 //--- class-map-record-nested-constructor-record-escaped.js
 var retained;
 function probe() {
@@ -242,7 +242,7 @@ function probe() {
 }
 var a = probe();
 
-// Recursive helper entry cannot be replaced with a finite entry call sequence.
+// A recursive helper cannot be replaced by a fixed sequence of calls.
 //--- class-map-record-nested-constructor-reentry.js
 function probe() {
     const outer = new Map();
@@ -264,7 +264,7 @@ function probe() {
 }
 var a = probe();
 
-// An uncalled holder slot remains part of the complete effect census.
+// Data's uncalled `unsafe` method still counts as an effect the proof must examine.
 //--- class-map-record-nested-constructor-unused-slot.js
 function probe() {
     const outer = new Map();
@@ -286,7 +286,7 @@ function probe() {
 }
 var a = probe();
 
-// Inherited construction still needs the complete family publication proof.
+// Construction through a subclass needs the proof for the whole class family.
 //--- class-map-record-nested-constructor-inherited.js
 function probe() {
     const outer = new Map();

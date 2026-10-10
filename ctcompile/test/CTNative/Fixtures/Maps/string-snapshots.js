@@ -1,5 +1,5 @@
-// Bootstrap 5.3.8 Data's diagnostic expression, with a numeric observation
-// instead of console publication. The first-key read remains optional.
+// The error message Bootstrap 5.3.8's Data module builds, compared with the
+// expected text instead of logged. The first key may be undefined (empty Map).
 function diagnostic(key, populated) {
     const map = new Map();
     if (populated) {

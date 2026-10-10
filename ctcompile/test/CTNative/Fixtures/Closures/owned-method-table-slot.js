@@ -1,5 +1,5 @@
-// Six imported functions, including the script entry. The local container
-// dies before its owning method-table value is used by the caller.
+// Six functions, the script entry included. The local container `ns` dies
+// before the caller uses the method table it held in its `exports` field.
 function makeData(seed) {
     const state = new Map();
     state.set("value", seed);

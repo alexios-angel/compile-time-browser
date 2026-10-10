@@ -35,7 +35,7 @@
 // FIELD-NOT: ctjs.func
 // MIXED: emitc.func @choose_1({{.*}}) -> !emitc.opaque<"ctnative::number_string">
 // Reads keep owning snapshots when captured functions overwrite the union cell.
-// The original source below also executes in Closures/primitive-cells.test.
+// The shared-mixed.js source also executes in Closures/primitive-cells.test.
 // SHARED-MIXED: emitc.func @mixedShared_1
 // SHARED-MIXED: call_opaque "ctnative::primitive_strict_equal"
 // SHARED-MIXED: emitc.func @change_2({{.*}}!emitc.ptr<!emitc.opaque<"ctnative::number_string">>{{.*}})
@@ -78,8 +78,8 @@ function choose(mode) {
 choose(0);
 
 //--- shared-mixed.js
-// String cells now have a carrier; a binding mixing strings and numbers
-// must still exercise the shared-cell carrier refusal.
+// A captured binding holding both strings and numbers lowers to a shared
+// ctnative::number_string cell that change() writes through a pointer.
 function mixedShared() {
     var value = "a";
     function change() { value = 1; return value; }

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Prove fixed primitive forwarding through exact enclosing callback slots."""
+"""Test fixed primitive captures declared outside a class and forwarded into its callbacks.
+
+The constants are declared at the top of the probe, so the class method's
+closure captures them and passes them on through its own capture slots
+(`enclosing_indices`) to the inner callback. CASES must lower and run natively
+with the same DOM writes as Node and the reference VM; BAD sources and the
+mutated `ctjs.create_closure` operations must be refused.
+"""
 
 import re
 
@@ -11,8 +18,11 @@ from CTNative.harness import run
 DECLARATIONS = (
     "const label = 'done'; const count = 3, flag = true, empty = null, missing = void 0; "
 )
+# Every primitive is forwarded from the probe into the method's callback.
 MIXED = DECLARATIONS + captures.MIXED.replace(DECLARATIONS, "")
+# `label` is forwarded; the other primitives stay local to the method.
 LOCAL_AND_OUTER = "const label = 'done'; " + captures.MIXED.replace("const label = 'done'; ", "")
+# A top-level arrow function, not a method, forwards `label` to its callback.
 HELPER = (
     "const label = 'done'; const invoke = target => {"
     + captures.METHOD.split("run(target) {", 1)[1]
@@ -25,6 +35,7 @@ CASES = {
     "local-and-forwarded": LOCAL_AND_OUTER + callbacks.CALLS,
     "helper-forwarded": HELPER + callbacks.CALLS,
 }
+# captures.METHOD with `label` forwarded from the probe; the base for BAD.
 SIMPLE = "const label = 'done'; " + captures.METHOD.replace("const label = 'done'; ", "")
 BAD = {
     "sibling-writer": SIMPLE.replace("const label", "let label").replace(
@@ -53,6 +64,7 @@ BAD = {
     "timer": SIMPLE.replace("const result =", "setTimeout(local, 0); const result ="),
     "effect": SIMPLE.replace("node.setAttribute('inside', label)", "ambient(label)"),
 }
+# 65 nested callbacks, each forwarding `label`: past the forwarding depth limit.
 deep = callbacks.LEAF.replace("'inside', 'done'", "'inside', label")
 for _ in range(64):
     deep = "node => { const nested = " + deep + "; return nested(node); }"
@@ -60,6 +72,11 @@ BAD["deep-forwarding"] = "const label = 'done'; " + callbacks.METHOD.replace(cal
 
 
 def mutations(args, ir):
+    """Yield (name, mutated IR path, verifier reason) for edits of the one
+    `ctjs.create_closure`: bad capture slots, operand swaps and a duplicate
+    creation. A reason means the ctjs verifier itself must reject the edit
+    with that message; None means it verifies and the lowering must refuse it.
+    """
     text = run([args.opt, str(ir), "--mlir-print-op-generic"]).stdout
     made = re.search(
         r'(%\w+) = "ctjs.create_closure"\(([^)]*)\) <\{enclosing_indices = array<i32: 0>, function = (\d+) : i32\}>[^\n]*',
@@ -127,10 +144,10 @@ def main():
             label = f"{name}-{owned}-{optimize}"
             native = dom.lower(args, ir, manifest, label, optimize=optimize, max_steps=1000000)
             dom.standalone(args, native, label, checks, args.compilers, includes, libraries)
-            executions += 4
+            executions += 4  # Explicit and deduced C++, each built by both compilers.
         dom.refuse(args, ir, contract, name + "-undeclared")
         dom.exhaust(args, ir, declared, name, [0, 8], "{budget} did not exhaust forwarding proof")
-        refusals += 4
+        refusals += 4  # Two undeclared-intrinsic refusals and two exhausted budgets (0, 8).
     for name, method in BAD.items():
         ir, contract = dom.prepare(
             args, name, callbacks.source(method + callbacks.CALLS), 2, entry_name="probe"
@@ -159,8 +176,8 @@ def main():
     declared = dict(contract, initial_intrinsics=["__ctbrowser_class_defined"])
     for name, changed, verifier_reason in mutations(args, ir):
         if verifier_reason:
-            # Malformed metadata has no canonical fingerprint. The CTJS verifier
-            # rejects it before any native proof or rewrite can consume it.
+            # Malformed metadata has no canonical fingerprint: the ctjs verifier
+            # rejects it before any native proof or rewrite can see it.
             checked = run([args.opt, str(changed), "-o", "/dev/null"], success=False)
             assert checked.returncode == 1 and verifier_reason in checked.stderr, checked.stderr
             refusals += 1

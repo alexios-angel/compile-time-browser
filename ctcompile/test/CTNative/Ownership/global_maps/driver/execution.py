@@ -1,4 +1,6 @@
-"""Execute checked published Map methods and live primitive results without the VM."""
+"""Compile programs that publish a global Map through host methods to native C++
+(no script VM), run them, and check them against Node and the reference
+interpreter."""
 
 from CTNative.harness import native_args, native_tools
 
@@ -20,6 +22,9 @@ def check_positive(args, node, reference, compilers, nm, name, spec):
     emitted C++, returning what the forgery controls read back."""
     source, binding, value = spec
     js, ir, count = boundary.prepare(args, name, source)
+    # Expected function count of the source chain: per-family tables first,
+    # then 5 for the families listed below, 6 for shared_three, 5 for other
+    # shared_* cases, else 4 (script, owner, getter, setter).
     functions = (
         object_argument_cases()[name]["functions"]
         if name in object_argument_sources()
@@ -201,12 +206,13 @@ GROUPS = {
 
 
 def setup():
-    """The command line every group shares, and the two oracles plus the two
-    compilers and the nm control they all need. Each group is its own lit
-    test (../*.test), so a failure in one no longer hides the rest and lit -j
-    parallelises across them; within a group the programs run one after
-    another. core.test is the exception: its four hundred programs and their
-    controls are one lit case, so __main__.parallel spreads them itself."""
+    """Parse the shared command line and locate the two oracles (Node and the
+    reference interpreter), the two C++ compilers and nm.
+
+    Each group in GROUPS is its own lit test (../<group>.test) and runs its
+    programs one after another. core.test runs everything else as one lit case
+    and parallelises internally through __main__.parallel.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group", choices=GROUPS)
     args = native_args(__doc__, parser=parser)
@@ -215,6 +221,7 @@ def setup():
 
 
 def positive_cases():
+    """Map each admitted program name to (source, binding, expected trace)."""
     mutated = SOURCE.replace("return state.size;", "state.set('x', 1); return state.size;")
     growing = SOURCE.replace("return state.size;", "state.set(state.size, 1); return state.size;")
     positives = {
@@ -343,14 +350,15 @@ def positive_cases():
         **delete_size_sources(),
         **join_size_sources(),
         **mutation_size_sources(),
-        # Keep the original refusal source byte-for-byte. Its method-local
-        # empty payload now has the same independently proved leaf owner.
+        # Reuses refusal_sources()["object_payload"] unchanged: its method-local
+        # empty payload has a proved leaf owner, so it is a positive case.
         "object_payload": (refusal_sources()["object_payload"], "host", 1),
     }
     return positives
 
 
 def report(positives, shared_refusals, rollback):
+    """Print the one-line summary of everything core.test checked."""
     print(
         f"native captured Map ownership: {len(positives)} complete programs (4/4, 5/5, 6/6); "
         "Node/interpreter/GCC/Clang explicit+deduced and Map/table/callable lifetime pass; "

@@ -1,9 +1,23 @@
+"""Leaf-object checks for the global-Map ownership harness: JS observers that
+record what Map.set stores, and C++ drivers that check identity and lifetime
+of the objects the native code allocates.
+
+Native fields are named by the hex of the JS key: 76616c7565 = "value",
+666c6167 = "flag", 656d707479 = "empty", 616273656e74 = "absent".
+"""
+
 from .scalar_maps import *
 
 
 def leaf_object_observer_source(source, name):
-    # Only this independent reference observer replaces Map.set. The compiled
-    # source and its standard intrinsic contract retain their original bytes.
+    """Return (source + observer JS, expected trace value).
+
+    Each passing check sets one bit of the global `trace`, so the expected
+    value is all bits set.
+    """
+    # The observer is appended only to the JavaScript run as the reference;
+    # the source given to the compiler is unchanged. It wraps Map.set to capture
+    # the two stored leaf objects, then restores it.
     observed = (
         source
         + """
@@ -44,6 +58,11 @@ def leaf_object_observer_source(source, name):
 
 
 def instrument_leaf_objects(cpp, allocations=1):
+    """Route the emitted identity_object allocations through ctn_test_make_leaf,
+    which records a weak_ptr to each in ctn_test_objects.
+
+    `allocations` is the number of allocation sites the emitted C++ must have.
+    """
     changed = instrument_maps(
         cpp,
         declarations=(
@@ -62,6 +81,7 @@ def instrument_leaf_objects(cpp, allocations=1):
 
 
 def leaf_field_failures(variable, style, expected):
+    """Return C++ conditions that are true when `variable`'s fields are wrong."""
     if not style:
         return []
     scalar = "ctnative::nullable_scalar::kind::"
@@ -82,7 +102,11 @@ def leaf_field_failures(variable, style, expected):
 
 
 def leaf_object_identity_cpp(cpp, name):
+    """Append a main() checking that each set allocates a fresh, owned leaf."""
     changed = instrument_leaf_objects(cpp)
+    # Exit codes: 90 entry failed, 91 wrong allocation/size after the two
+    # sets, 92 a leaf died with the host or the Map outlived it, 93 wrong
+    # field values, 94 a leaf leaked.
     changed += r"""
 int main() {
     if (ctnative_test_entry() != 0 || ctn_test_maps.size() != 1) { return 90; }
@@ -118,6 +142,7 @@ int main() {
 
 
 def check_leaf_object_calls(cpp, name, mode):
+    """Check a leaf-object case's setter signature, call order and field writes."""
     source = leaf_object_sources()[name][0]
     entry = re.search(r"\bmain\(\)\s*\{(.*?)^\}", cpp, re.M | re.S)
     if not entry or "std::function<ctnative::js_num(ctnative::js_string)>" not in cpp:
@@ -154,6 +179,7 @@ def check_leaf_object_calls(cpp, name, mode):
 
 
 def check_leaf_readback_calls(cpp, name, mode, *, source=None):
+    """Check a readback case's signature, allocations and live comparison operands."""
     if source is None:
         source = leaf_readback_sources()[name][0]
     body = source.split("set(key", 1)[1].split("\n", 1)[0]
@@ -216,8 +242,9 @@ def check_leaf_readback_calls(cpp, name, mode, *, source=None):
 
 
 def comparison_identity_observer_source(source, name):
-    # These future calls remain separate from the byte-preserved compiled
-    # source. Retaining Map payloads is observation, never production storage.
+    """Return (source + observer JS, check count) for a strict-identity case."""
+    # The observer is appended only to the reference JS, not to the compiled
+    # source. It keeps the stored payloads only to compare their identities.
     historical = name.startswith("historical_")
     writes = 2 if historical else 1
     result = leaf_readback_sources()[name][2]
@@ -250,14 +277,16 @@ def comparison_identity_observer_source(source, name):
             checks.append(f"seen[{left}] !== seen[{right}]")
     if historical:
         checks.append("seen.every(value => value.value === 1)")
-    # Avoid bitwise accumulation: the full pairwise historical census has
-    # more than 31 independent checks, and JavaScript bitwise values are Int32.
+    # Count passing checks instead of giving each one a bit: the historical
+    # cases have 32 checks (28 of them pairwise), more than fit in a JavaScript
+    # Int32.
     for check in checks:
         observed += f"    if ({check}) {{ trace += 1; }}\n"
     return observed + "})();\n", len(checks)
 
 
 def comparison_identity_cpp(cpp, name):
+    """Append a main() checking identity results and leaf lifetimes natively."""
     historical = name.startswith("historical_")
     distinct = "distinct" in name
     allocations = 1 + historical + distinct
@@ -356,6 +385,7 @@ int main() {
 
 
 def comparison_identity_lifetime(args, cpp, name, mode, compiler):
+    """Build and run the comparison-identity lifetime harness for `name`."""
     owned.check_lifetime(
         args,
         name,
@@ -368,6 +398,7 @@ def comparison_identity_lifetime(args, cpp, name, mode, compiler):
 
 
 def leaf_readback_lifetime(args, cpp, name, mode, compiler):
+    """Build and run the saved-leaf readback lifetime harness for `name`."""
     changed = instrument_leaf_objects(cpp, allocations=2)
     changed = changed.replace(
         "template <class T> std::shared_ptr<T> ctn_test_make_leaf() {",
@@ -438,6 +469,7 @@ int main() {
 
 
 def leaf_object_lifetime(args, cpp, name, mode, compiler):
+    """Build and run a harness checking leaves, Maps and callables are freed."""
     changed = instrument_leaf_objects(cpp)
     changed += r"""
 int main() {

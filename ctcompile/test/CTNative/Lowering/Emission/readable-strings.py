@@ -1,4 +1,9 @@
-"""Native literals must be readable C++ and preserve their exact input bytes."""
+"""Native string literals must print as readable C++ and keep their exact bytes.
+
+Each case is a JS string constant lowered to C++. Where a case lists a spelling,
+the generated C++ must contain it verbatim. The C++ is then built with GCC and
+Clang (-Werror) and each literal's bytes are compared with a numeric byte array.
+"""
 
 import argparse
 from pathlib import Path
@@ -28,7 +33,7 @@ def main():
         (b"", 'ctnative::js_string("", 0)'),
         ("caf\u00e9 \U0001f642".encode(), None),
         (b"\xed\xa0\x80", None),  # A lone surrogate's WTF-8 bytes.
-        (b"??= ??/ ??' ??( ??) ??! ??< ??> ??-", None),
+        (b"??= ??/ ??' ??( ??) ??! ??< ??> ??-", None),  # Every trigraph.
         (b"??/\\", None),  # Raw strings also need to compile without warnings.
         (bytes(range(256)), None),
     ]

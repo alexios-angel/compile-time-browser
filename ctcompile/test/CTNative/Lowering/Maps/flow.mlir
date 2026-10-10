@@ -60,7 +60,7 @@ function probe() { var store = maybe(1); return store.size; }
 probe();
 
 //--- phi.js
-// This slice does not prove Map identity through structured merge values.
+// Map identity is not tracked through scf.if results, so reassigning on one branch is refused.
 function probe(flag) {
     var store = new Map();
     if (flag > 0) { store = new Map(); }

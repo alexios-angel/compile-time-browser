@@ -1,4 +1,4 @@
-// The original nullable getter preserves saved records across replacement and cleanup.
+// Bootstrap's `get(...) || null` getter keeps saved records valid across replace and cleanup.
 //--- class-map-record-nested-nullable-direct.js
 function probe() {
     const outer = new Map();
@@ -37,7 +37,7 @@ function probe() {
 }
 var a = probe();
 
-// Every Data slot is called, including missing lookups before and after cleanup.
+// Every Data method is called, including missing lookups before and after cleanup.
 //--- class-map-record-nested-nullable-holder.js
 function probe() {
     const outer = new Map();
@@ -77,7 +77,7 @@ function probe() {
 }
 var a = probe();
 
-// Constructor publication and nullable reads share the same ordinary record owners.
+// Constructor registration and `|| null` reads share the same ordinary record owners.
 //--- class-map-record-nested-nullable-constructor.js
 function probe() {
     const outer = new Map();
@@ -118,7 +118,7 @@ function probe() {
 }
 var a = probe();
 
-// A truth test cannot discard a missing get whose raw undefined is also observed.
+// `|| null` cannot hide a missing get() whose raw undefined is also read.
 //--- class-map-record-nested-nullable-raw-undefined.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -132,7 +132,7 @@ function probe() {
 }
 var a = probe();
 
-// A falsey null payload is not a concrete record owner.
+// A stored null value is not a record that owns anything.
 //--- class-map-record-nested-nullable-null-payload.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -148,7 +148,7 @@ function probe() {
 }
 var a = probe();
 
-// An explicit undefined payload is not interchangeable with an absent record.
+// An explicitly stored undefined is not the same as a missing record.
 //--- class-map-record-nested-nullable-undefined-payload.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -164,7 +164,7 @@ function probe() {
 }
 var a = probe();
 
-// Caller-controlled child keys cannot inherit a literal lookup proof.
+// A caller-controlled inner key cannot reuse the literal-key lookup proof.
 //--- class-map-record-nested-nullable-dynamic-key.js
 function probe(key) {
     const outer = new Map(), child = new Map();
@@ -179,7 +179,7 @@ function probe(key) {
 }
 var a = probe("missing") * 1000 + probe("bs.item");
 
-// Caller-controlled outer keys can select either null or a distinct child.
+// A caller-controlled element key can find either nothing (null) or the inner Map.
 //--- class-map-record-nested-nullable-dynamic-element.js
 function probe(element) {
     const outer = new Map(), child = new Map();
@@ -194,7 +194,7 @@ function probe(element) {
 }
 var a = probe("missing") * 1000 + probe("element");
 
-// Object element keys remain an identity proof beyond literal String routing.
+// An object element key needs an identity proof, not the literal String-key proof.
 //--- class-map-record-nested-nullable-object-key.js
 function probe() {
     const outer = new Map(), child = new Map(), element = {};
@@ -209,7 +209,7 @@ function probe() {
 }
 var a = probe();
 
-// Another outer Map can mutate the shared child before a nullable read.
+// Another outer Map can change the shared inner Map before the `|| null` read.
 //--- class-map-record-nested-nullable-shared-child.js
 function probe() {
     const outer = new Map(), other = new Map(), child = new Map();
@@ -226,7 +226,7 @@ function probe() {
 }
 var a = probe();
 
-// A nullable observation cannot discard a child published outside its owner.
+// A `|| null` read cannot drop an inner Map that has escaped probe().
 //--- class-map-record-nested-nullable-child-escaped.js
 var retained;
 function probe() {
@@ -243,7 +243,7 @@ function probe() {
 }
 var a = probe();
 
-// A selected record still cannot escape the function that owns it.
+// A record found by get() still cannot escape the function that owns it.
 //--- class-map-record-nested-nullable-record-escaped.js
 var retained;
 function probe() {
@@ -260,7 +260,7 @@ function probe() {
 }
 var a = probe();
 
-// A selected record cannot outlive its defining branch even when the key exists.
+// A found record cannot outlive the block that created it, even when its key exists.
 //--- class-map-record-nested-nullable-region-owner.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -277,7 +277,7 @@ function probe() {
 }
 var a = probe();
 
-// An unused Data method still observes the original captured owner.
+// Data's unused `inspect` method still reads the captured Map.
 //--- class-map-record-nested-nullable-unused-slot.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -295,7 +295,7 @@ function probe() {
 }
 var a = probe();
 
-// An escaped Data holder must retain its captured getter and owner.
+// A Data holder that escapes probe() must keep its getter and the Map it captures.
 //--- class-map-record-nested-nullable-holder-escaped.js
 var retained;
 function probe() {
@@ -314,7 +314,7 @@ function probe() {
 }
 var a = probe();
 
-// An unknown call in the skipped present arm must not disappear with the getter.
+// An unknown call in the skipped found-branch must not disappear with the getter.
 //--- class-map-record-nested-nullable-dead-present-call.js
 function probe() {
     const outer = new Map(), child = new Map();
@@ -330,7 +330,7 @@ function probe() {
 }
 var a = probe();
 
-// An unknown call in the skipped fallback arm must not disappear with the getter.
+// An unknown call in the skipped fallback branch must not disappear with the getter.
 //--- class-map-record-nested-nullable-dead-fallback-call.js
 function probe() {
     const outer = new Map(), child = new Map();

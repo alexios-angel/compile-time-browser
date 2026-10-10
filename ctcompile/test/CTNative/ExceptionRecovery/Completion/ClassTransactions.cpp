@@ -1,3 +1,11 @@
+//===- ClassTransactions.cpp - Class/DOM preparation rollback tests -------===//
+//
+// Runs prepareDOMEntry on many small class-based DOM programs and checks that
+// each one either proves or refuses atomically: a refusal must leave the
+// module and the HostContract request exactly as they were.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ClassTransactions.hpp"
 #include "../../../../lib/CTNative/HostContract/Preparation.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
@@ -6,7 +14,15 @@
 namespace ctcompile::test::exception_recovery {
 
 bool testClassTransactions(mlir::MLIRContext & context) {
-    // A late typed-DOM refusal must roll back consumed class metadata too.
+    // Each `control` value selects one JavaScript variant of `guarded`. The
+    // variants come in ranges that start at 0, 5, 8, 13, 19, 25, 35, 46, 70, 82,
+    // 92, 104, 116, 128, 140, 151, 157, 165, 172, 181 and 189. Each range
+    // rebuilds or edits `source`, and later values in a range add one construct
+    // the class/DOM proof must refuse. Controls 197-200 corrupt the imported IR
+    // directly. A variant listed in admittedControls must prove. Every other
+    // variant must refuse and leave the module and the HostContract request
+    // exactly as they were, including class metadata a late refusal had
+    // already consumed.
     for (const auto provider : {ctnative::HostContract::Provider::ctbrowserDOM,
                                 ctnative::HostContract::Provider::ctbrowserDOMSession}) {
         for (unsigned control = 0; control < 201; ++control) {
@@ -579,6 +595,10 @@ bool testClassTransactions(mlir::MLIRContext & context) {
             }
             auto candidate = import(context, source, true);
             if (!candidate) { return false; }
+            // Controls 189 and up keep a local cell in a two-parameter function.
+            // Controls 197-200 then corrupt that cell in the IR: they redirect
+            // a read, redirect a write's cell or value, or return the cell
+            // itself. The proof must refuse each of these.
             if (control >= 189) {
                 ctjs::CreateCellOp cell;
                 candidate->walk([&](ctjs::CreateCellOp found) {
@@ -619,7 +639,9 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                     });
                 }
             }
-            // Input reports cannot bypass any source proof.
+            // Mark the module as if the caller had supplied its own proof.
+            // Preparation must ignore that claim and re-prove from source. A
+            // successful run removes the attribute, which is checked below.
             (*candidate)->setAttr("ctnative.supplied", mlir::UnitAttr::get(&context));
             const auto original = printed(*candidate);
             ctnative::HostContract request;
@@ -678,6 +700,11 @@ bool testClassTransactions(mlir::MLIRContext & context) {
             }
             request.moduleSha256 = ctnative::hostContractFingerprint(*candidate);
             const auto before = request;
+            // The work budget passed to prepareDOMEntry. The controls listed
+            // here get zero and must refuse for lack of budget. Controls 4 and
+            // 17 get 1000, which is too little for their programs. The others
+            // get 100000, or 1000000 from control 47 on, where the programs
+            // are larger; both are effectively unlimited.
             static const llvm::DenseSet<unsigned> zeroBudgetControls{
                 3, 32, 55, 69, 81, 91, 103, 115, 125, 139, 147, 153, 164, 171, 180, 188, 196};
             auto error = ctnative::prepareDOMEntry(*candidate, request,
@@ -685,8 +712,9 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                                    : control == 4 || control == 17      ? 1000
                                                    : control >= 47                      ? 1000000
                                                                                         : 100000);
-            // 57 and 67 call a capture-free helper nested in M synchronously,
-            // which the class proof admits since 7fa3a87b4.
+            // The variants expected to prove. Controls 57 and 67 synchronously
+            // call `identity`, a capture-free helper nested in M. The class
+            // proof admits that call (added in commit 7fa3a87b4).
             static const llvm::DenseSet<unsigned> admittedControls{
                 0,   2,   5,   8,   13,  19,  23,  25,  35,  38,  46,  47,  56,  57,
                 58,  59,  60,  67,  70,  71,  72,  73,  77,  82,  92,  93,  121, 100,
@@ -764,6 +792,13 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                 }
             }
         }
+        // Dataset-key normalization (strip a "bs" prefix, lowercase the first
+        // character), as Bootstrap does it. Controls 0, 7 and 8 must prove.
+        // The others change the key derivation (1, 2, 4), add a second writer
+        // (3), remove the String intrinsic (5), give a zero budget (6, 12),
+        // overwrite the class method through a computed key or an alias
+        // (9, 10), or add an unknown call (11), and must refuse without
+        // changing anything.
         for (unsigned control = 0; control < 13; ++control) {
             std::string source = R"js(function guarded(element) {
                 const H = { read(t) {

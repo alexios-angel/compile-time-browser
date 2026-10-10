@@ -1,4 +1,4 @@
-// Registration occurs after the complete inherited receiver is initialized.
+// The derived constructor stores `this` in the Map after all inherited fields are set.
 //--- class-map-inherited-leaf-direct.js
 function leaf_direct() {
     const values = new Map();
@@ -12,7 +12,7 @@ function leaf_direct() {
 }
 var a = leaf_direct();
 
-// Saved aliases continue to borrow different owners across replacement.
+// After the entry is replaced, each get result still refers to its own instance.
 //--- class-map-inherited-leaf-overwrite.js
 function leaf_overwrite() {
     const values = new Map();
@@ -30,7 +30,7 @@ function leaf_overwrite() {
 }
 var a = leaf_overwrite();
 
-// Removing the Map entry does not destroy the caller-owned record.
+// Deleting the Map entry does not destroy the instance the caller holds.
 //--- class-map-inherited-leaf-delete.js
 function leaf_delete() {
     const values = new Map();
@@ -47,7 +47,7 @@ function leaf_delete() {
 }
 var a = leaf_delete();
 
-// Inherited methods retain the same saved receiver identity.
+// An inherited method called on a get result runs on the same instance.
 //--- class-map-inherited-leaf-method.js
 function leaf_method() {
     const values = new Map();
@@ -65,7 +65,7 @@ function leaf_method() {
 }
 var a = leaf_method();
 
-// A later field write still makes registration nonterminal.
+// Refused: a field write after storing `this` means the store is not the last statement.
 //--- class-map-inherited-leaf-write-after.js
 function leaf_write_after() {
     const values = new Map();
@@ -79,7 +79,7 @@ function leaf_write_after() {
 }
 var a = leaf_write_after();
 
-// A throwing leaf leaves an observable partial receiver in the Map.
+// Refused: a throw after storing `this` leaves a half-built object visible in the Map.
 //--- class-map-inherited-leaf-throw-after.js
 function leaf_throw_after() {
     const values = new Map();

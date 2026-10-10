@@ -1,2 +1,2 @@
-# Original Bootstrap R.find counts use public DOM/Style without a VM.
+# Unmodified Bootstrap SelectorEngine.find (R.find) counts use public DOM/Style without a VM.
 # RUN: python3 %S/spread_length.py %dom_driver

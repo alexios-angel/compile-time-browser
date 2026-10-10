@@ -1,10 +1,10 @@
 // RUN: split-file %s %t
 // RUN: python3 -c "from pathlib import Path; Path(r'%t/long-keys.js').write_text(Path(r'%t/long-keys.js.in').read_text().replace('LONG_KEY', 'x' * 65537))"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/long-keys.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-partial-evaluate | FileCheck %s --check-prefix=LONG
-
-// Heap keys do not share the primitive execution string budget. Two writes
-// through the same long key must replace one entry, and an object read must
-// still find the final value. Rejecting a conversion must never mean unequal.
+// LONG_KEY becomes 65537 'x' characters, longer than the 65536-byte primitive string budget.
+// Heap keys do not share that budget: two writes through the same long key must replace one
+// entry (size 1.0) and an object read must still find the final value (2.0). Failing to
+// convert a key must never be taken as proof that two keys differ.
 // LONG-LABEL: ctjs.func private @longMapKey$1
 // LONG-SAME: ctnative.partial_evaluated =
 // LONG: %[[SIZE:.*]] = ctjs.constant #ctjs.number<4607182418800017408>

@@ -1,2 +1,2 @@
-# Ordered fresh-object assignments preserve original M's payload ownership.
+# Fresh objects holding results of Bootstrap's `M` (data-attribute normalizer) own them natively.
 # RUN: python3 %S/assignment.py %dom_driver --node %node --reference %native_reference

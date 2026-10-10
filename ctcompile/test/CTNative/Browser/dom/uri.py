@@ -1,4 +1,10 @@
-"""Proved URI completions share the DOM String gate's source/native harness."""
+"""decodeURIComponent cases for the DOM String tests (strings.py).
+
+Each case decodes a string chosen by the element's attributes inside try/catch.
+strings.py runs every case as source (Node and the VM, via check_oracles) and
+as native code (via prepare and client); the results must agree. Programs in
+REFUSALS must be refused by the native lowering.
+"""
 
 import json
 from urllib.parse import quote_from_bytes
@@ -8,6 +14,7 @@ from CTNative.Browser.dom.number_conversion import cpp_string, encoded
 from CTNative.harness import run
 
 SELECT = "const text = element.hasAttribute('good') ? 'A%20B%00%C3%A9' : '%E0%80%80';"
+# name -> (entry body, (result when `good` is absent, result when present)).
 CASES = {
     "uri_text": (
         SELECT + "try { return decodeURIComponent(text); } catch (ignored) { return text; }",
@@ -34,6 +41,7 @@ CASES = {
         ("%E0%80%80", "A B\0é"),
     ),
 }
+# Byte-level cases: (valid input, its decoding, malformed input that throws).
 for index, (good, expected, bad) in enumerate(
     (
         ("%2500", "%00", "%2"),
@@ -51,6 +59,8 @@ for index, (good, expected, bad) in enumerate(
 SOURCES = tuple(
     (name, f"function {name}(element) {{ {body} }}\n", 1) for name, (body, _) in CASES.items()
 )
+# Expected result for each case and each `choice` in 0..3: bit 0 sets the
+# `good` attribute and bit 1 the `skip` attribute (only uri_prefix reads it).
 RESULTS = [
     "early" if name == "uri_prefix" and choice & 2 else values[choice & 1]
     for name, (_, values) in CASES.items()
@@ -60,6 +70,7 @@ EXPECTED = "".join(encoded(value) + "\n" for value in RESULTS)
 
 
 def check_oracles(args):
+    """Run every case under Node and the VM reference and compare with RESULTS."""
     source = "".join(source for _, source, _ in SOURCES)
     for index, (name, choice) in enumerate((name, choice) for name in CASES for choice in range(4)):
         queries = (
@@ -98,6 +109,7 @@ var uriObservation{index:03} = (function() {{
 
 
 def prepare(args):
+    """Import every case; return (name, ir, contract) rows for the native build."""
     return [
         (name, ir, dict(contract, initial_intrinsics=["decodeURIComponent"]))
         for name, source, count in SOURCES
@@ -106,6 +118,12 @@ def prepare(args):
 
 
 def client(name, entry, owned):
+    """Return C++ that calls `entry` for all four attribute choices.
+
+    Each result must match the expected string, must not change the document,
+    and must stay valid after a later DOM write and after the document is gone.
+    `owned` selects the session provider, whose class owns its document.
+    """
     values = [
         "early" if name == "uri_prefix" and choice & 2 else CASES[name][1][choice & 1]
         for choice in range(4)
@@ -148,6 +166,7 @@ def client(name, entry, owned):
 """
 
 
+# Entry bodies, appended after SELECT, that the native lowering must refuse.
 REFUSALS = {
     "uri_payload": "try { return decodeURIComponent(text); } catch (error) { return error; }",
     "uri_payload_read": "try { return decodeURIComponent(text); } catch (error) { return error.message; }",
@@ -170,6 +189,10 @@ REFUSALS = {
 
 
 def refusal_checks(args, prepared):
+    """Check that every refusal is refused by both providers, with and without
+    optimization. Besides REFUSALS this covers wrong intrinsic declarations
+    and an entry that is itself named decodeURIComponent. Returns the number
+    of lowerings checked (4 per case)."""
     cases = []
     for name, body in REFUSALS.items():
         ir, contract = dom.prepare(

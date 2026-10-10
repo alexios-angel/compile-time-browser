@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Keep one synchronous Boolean cell's lifetime inside its initializing arm."""
+"""Native lowering of a Boolean cell that is initialized inside one branch arm.
+
+Each case is checked three ways: Node and the reference VM run the JavaScript,
+the native build runs the lowered IR, and invalid variants (reads before
+initialization, uses from a sibling arm or after the join, unknown effects)
+must be refused.
+"""
 
 import subprocess
 
@@ -279,6 +285,13 @@ def bad_programs():
 
 
 def outcome(ready, other, *, nested_scope=False, nested_state=False, missing_else=False):
+    """Return the expected (attribute values, return value) for one input pair.
+
+    `ready` and `other` say whether those attributes are present. The helper
+    that sets the cell runs only when `ready` holds; the nested variants also
+    require `other` (nested_scope) or its absence (nested_state). With no else
+    arm, nothing is written unless `ready` holds and the result is always true.
+    """
     changed = ready and (other if nested_scope else not other if nested_state else True)
     attributes = {"before": True, "after": not changed}
     if missing_else:
@@ -375,6 +388,8 @@ def main():
                 success=False,
                 max_steps=1000000,
             )
+            # These refusals can be reached after the pass has started
+            # rewriting, so check that the source IR comes back unchanged.
             if name.startswith("unknown-effect") or name in (
                 "effect-in-borrower",
                 "owner-root-after-exit",

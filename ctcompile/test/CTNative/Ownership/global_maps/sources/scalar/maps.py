@@ -1,4 +1,9 @@
-"""sources scalar maps: continued from sources_scalar_results."""
+"""Map read/write cases for scalar values read from a Map, saved, and written
+back: saved reads, joins of two reads, has()-guarded reads and `&&`/`||`
+short-circuit reads.
+
+Builds on results.py beside this file.
+"""
 
 from .results import *
 
@@ -19,8 +24,8 @@ def saved_read_sources():
         "state.delete(false); return result;",
     )
     return {
-        # Exact next boundary from HANDOFF: an empty String read passes through
-        # a nonliteral write into mixed storage and remains a present String.
+        # An empty String read passes through a nonliteral write into
+        # mixed-type storage and must remain a present String.
         "saved_read_write": hosted(saved, 1),
         # The payload's old scalar value survives mutation of its source entry;
         # its SSA tag must not be recovered from the entry's later contents.
@@ -149,12 +154,13 @@ def saved_join_sources():
         "state.set('other', false); state.delete('other'); state.set(false, true);",
     )
     owning = owning.replace("state.delete(false);", "state.set(false, false); state.delete(false);")
-    # Startup sees false only. The typed C++ lifetime caller later selects both
-    # branches, after the publishing owner and table have already been released.
+    # Startup passes only false. The typed C++ lifetime test later calls both
+    # branches, after the owner that published the methods and its method
+    # table have been released.
     owning = owning.replace(" host.slot.set(host.slot.get(true));", "")
     return {
-        # Exact 16-call boundary from the preceding handoff. Both runtime calls
-        # must remain: choosing the empty arm unconditionally yields size 2.
+        # A 16-call source. Both runtime calls must remain: always choosing
+        # the empty arm yields size 2.
         "saved_join": hosted(saved, 3),
         "saved_join_always_empty": hosted(
             saved.replace("flag ? state.get('other') : state.get('')", "state.get('')"), 2
@@ -236,8 +242,9 @@ def guarded_saved_sources():
         "const saved = state.has('other') ? state.get('other') : state.get('');",
     )
     return {
-        # Exact 18-call next boundary from HANDOFF. A deletion join loses
-        # unconditional membership, but preserves the tag whenever present.
+        # An 18-call source. After the conditional delete the key is no longer
+        # always present, but whenever it is present its value keeps the same
+        # type tag.
         "guarded_saved_read": hosted(saved, 2),
         "guarded_saved_no_delete": hosted(
             saved.replace("if (flag) { state.delete('other'); }", "state.has('other');"), 3
@@ -250,8 +257,9 @@ def guarded_saved_sources():
         ),
         "guarded_saved_bool": hosted(boolean, 4),
         "guarded_saved_number": hosted(number, 4),
-        # The false-only startup returns STRING_RESULT. Future calls with true
-        # delete the guarded entry and return the other independently owned String.
+        # Startup passes only false and returns STRING_RESULT. Later calls
+        # with true delete the guarded entry and return the other String,
+        # which has its own owned copy.
         "guarded_saved_string_saved": hosted(owning, 2),
     }
 
@@ -276,8 +284,9 @@ def guarded_saved_refusals():
         "state.set(key, true)", "state.set('future', true); state.set(key, true)"
     )
     return {
-        # Membership cannot supply a tag absent from the method's live local
-        # facts, even when startup always takes the independently typed fallback.
+        # A has() check cannot supply a value type the method never stored,
+        # even though startup always takes the fallback, whose type is proved
+        # separately.
         "guarded_saved_missing_tag": (
             missing,
             1,
@@ -323,7 +332,7 @@ def guarded_saved_refusals():
             deletion,
             2,
         ),
-        # Both syntactic arms still require proof for a literal predicate.
+        # Both arms still need a proof even when the condition is a literal.
         "guarded_saved_literal_false": (
             saved.replace(guard, "false ? state.get('other') : state.get('')"),
             1,
@@ -367,8 +376,8 @@ def shortcircuit_sources():
     zero = zero.replace(" host.slot.set(host.slot.get(true));", "")
     owning = guarded["guarded_saved_string_saved"][0].replace(guard, short)
     return {
-        # Exact eighteen-call source from the preceding handoff. The temporary
-        # && result includes false, but only String reaches the truthy || arm.
+        # An 18-call source. The temporary && result includes false, but only
+        # a String reaches the truthy || arm.
         "shortcircuit_same_tag": hosted(saved, 2),
         "shortcircuit_distinct": hosted(distinct, 3),
         "shortcircuit_empty_string": hosted(empty, 3),
@@ -376,8 +385,9 @@ def shortcircuit_sources():
         "shortcircuit_false": hosted(false_value, 3),
         "shortcircuit_number": hosted(number, 4),
         "shortcircuit_zero": hosted(zero, 3),
-        # Only false runs at startup; the lifetime harness invokes both flags
-        # after owner release and retains both results past final Map release.
+        # Only false runs at startup; the lifetime harness calls with both
+        # flags after the owner is released and keeps both results alive past
+        # the final Map release.
         "shortcircuit_string_saved": hosted(owning, 2),
     }
 
@@ -402,8 +412,9 @@ def shortcircuit_refusals():
         short,
         "(state.has('other') && (state.delete('other'), state.get('other'))) || state.get('')",
     )
-    # The unknown call is unexecuted during startup, but its future flag arm
-    # remains part of the published method and cannot receive a complete proof.
+    # The unknown call never runs during startup, but its `if (flag)` branch
+    # is still part of the exported method, so the method cannot be fully
+    # proved.
     effect = saved.replace(deletion, "if (flag) { inspect(state); }")
     effect = effect.replace(" host.slot.set(host.slot.get(true));", "")
     return {

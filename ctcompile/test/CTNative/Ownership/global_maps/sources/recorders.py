@@ -1,4 +1,10 @@
-"""Preserved Data sources, recorder effects and captured Map snapshot execution."""
+"""Cases built on Bootstrap's `Data` module (a Map of element -> Map of
+key -> instance whose conflict path calls console.error).
+
+Covers the copied source, the console.error "recorder" callback that counts
+conflicts into trace globals, Array.from(map.keys()) snapshots and template
+literal messages, plus mutated sources that must be refused.
+"""
 
 import hashlib
 import json
@@ -10,7 +16,9 @@ from CTNative.Ownership.globals import CONSTANT_GLOBAL_NODE
 
 from ..harness import *
 
-# Keep the measured full Data subject, recorder and factory byte-for-byte.
+# Bootstrap 5's Data module, its factory wrapper and a console.error stub,
+# copied byte-for-byte. The sha256 pins in recorder_cases() catch any
+# accidental edit.
 EXACT_DATA = """var traceErrorCount = 0; var traceErrorMessage = 0;
 var console = { error: function(message) {
     traceErrorCount = traceErrorCount + 1;
@@ -61,6 +69,8 @@ var traceReinsertedIdentity = host.slot.get(element, "bs.collapse") === instance
 var traceOldKeyAfterReinsert = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 var traceOtherAfterReinsert = host.slot.get(other, "bs.alert");
 """
+# Everything up to and including the factory call (`});\n`): the console stub
+# and Data module that every derived case starts with.
 DATA_PREFIX = EXACT_DATA[:975]
 SINGLE_CONFLICT = (
     DATA_PREFIX
@@ -84,7 +94,8 @@ var traceSecondKept = host.slot.get(element, "bs.collapse") === 21 ? 1 : 0;
 var traceSecondRejected = host.slot.get(element, "bs.alert") === null ? 1 : 0;
 """
 )
-# Separate invocation-proof probe; EXACT_DATA keeps its original source and host contract.
+# Exercises the same Data module with several distinct and aliased element
+# objects. Kept separate so EXACT_DATA stays an unmodified copy.
 ENTRY_OBJECTS = (
     DATA_PREFIX
     + """var element = {}; var other = {}; var absent = {}; var alias = element;
@@ -169,8 +180,9 @@ def recorder_cases():
             ),
         ),
     }
-    # Keep the original empty-manifest refusal and measure the same bytes with
-    # the existing fixed-undefined host contract and exact Number-store proof.
+    # recorder_exact_data is refused with the default host manifest. This
+    # variant runs the same source with the host globals declared
+    # fixed-undefined and entry objects, under which it must be admitted.
     cases["recorder_exact_data_undefined"] = dict(
         cases["recorder_exact_data"], fixed_undefined=True, entry_objects=True, field_reads=1
     )
@@ -291,17 +303,21 @@ def recorder_refusals():
             'traceGet = host.slot.get(element, "bs.collapse");\n',
         ),
     ):
-        # The final observation is unchanged. Every source store must still be
-        # proved independently; an earlier Number result cannot authorize it.
+        # Each variant stores one more get() result into traceGet and then
+        # resets it to 42, so the final trace is unchanged. That store must be
+        # proved on its own; the earlier Number result does not cover it.
         cases["recorder_exact_later_" + name] = dict(
             exact, source=EXACT_DATA + appended + "traceGet = 42;\n"
         )
     for row in cases.values():
-        # A completed source rejection must not be disguised as a budget cutoff.
+        # Give each case enough steps that a refusal comes from the analysis
+        # finishing, not from hitting the step limit.
         row.update(admitted=False, max_steps=1_000_000)
     cases["recorder_exact_later_zero"]["max_steps"] = 2_000_000
-    # Every later store is proved independently. Missing/falsy lookups retain
-    # null through the broad getter ABI; the object-valued store still refuses.
+    # A later get() that finds nothing (a missing key, or a stored 0 that
+    # `|| null` turns into null) returns null, which the getter's return type
+    # can carry, so those two are admitted; the object-valued store is still
+    # refused.
     for name in ("missing", "zero"):
         cases["recorder_exact_later_" + name]["admitted"] = True
     return cases
@@ -487,7 +503,8 @@ def recorder_mutations():
         yield name, source.replace(old, replacement), values
 
 
-# Separate measured template probes; the original recorder bodies above stay unchanged.
+# Template-literal versions of Data's error message, built as new cases so
+# the copied sources above stay unchanged.
 TEMPLATE_OUTER = """var host = {};
 (function(factory) { host.slot = factory(); })(function() {
     const state = new Map;
@@ -583,8 +600,10 @@ def template_cases():
         source = cases[name]["source"].encode()
         assert (len(source), hashlib.sha256(source).hexdigest()) == (size, digest), name
         cases[name].update(functions=6, admitted=True)
-    # Late calls poison the complete formal category; sibling stores separately
-    # poison the Map family even when every observed setter actual is a String.
+    # Refusal variants: one late set() call with a non-String key changes the
+    # parameter's type for every call, and a sibling method storing a
+    # non-String key changes the Map's key type, even if set() itself only
+    # receives Strings.
     for role, category, key in (
         ("outer", "number", "7"),
         ("outer", "object", "{}"),

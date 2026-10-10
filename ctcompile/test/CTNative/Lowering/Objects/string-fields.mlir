@@ -1,4 +1,4 @@
-// Field storage follows every actual write, independently of current read types.
+// A field's storage type follows every write to it (field_76616c7565 is `value` in hex).
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/saved.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SAVED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nullable-literal.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NULLABLE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
@@ -40,9 +40,9 @@
 // FUNCTIONS-SAME: ctnative.not_native = "owning field `value` has incompatible types across its complete store census"
 // UNPROVED-GLOBAL: ctnative.not_native = "a value of type !ctnative.boxed from `ctjs.call_direct`"
 // UNPROVED-GLOBAL: ctjs.load_global "undefined"
-// Both objects enter the same Map field group, so this source's final read
-// already contains both types. The separate function cases isolate the later
-// emitted-member census with independently narrow Number and String results.
+// Both objects enter the same Map field group, so the final read here already
+// sees both types. The separate-function cases test the emitted member alone,
+// with one function reading only a Number and the other only a String.
 // READ-UNION: ctjs.func private @distinct$1
 // READ-UNION-SAME: ctnative.not_native = "an owning field read has an unsupported scalar schema"
 
@@ -157,7 +157,7 @@ text();
 numeric();
 
 //--- nullable-literal.js
-// Literal repair of nullable.js; bare undefined remains an unproved host name.
+// nullable.js with `void 0` for undefined; a bare `undefined` is an unproved global.
 function nullable(flag) {
     const map = new Map();
     const item = {value: "initial", count: 1};

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Execute finite Map key/value storage and independently proved read types."""
+"""Lit test: Maps with mixed and nullable key and value types.
+
+mixed.js must lower to native storage and print the same globals under Node, the
+interpreter and the compiled C++ (GCC and Clang, associative and ordered layouts).
+Each *-refused.js fixture must be refused by the native Map lowering, even when
+its IR carries forged Map type facts, except six that are now admitted (see the
+check near the end of main()).
+"""
 
 import importlib.util
 from pathlib import Path
@@ -23,6 +30,8 @@ boundary, run = representation.boundary, representation.run
 
 
 def number_object_lifetime(cpp, ordered):
+    """Rename the generated main() and append one that checks a Map with an object
+    key frees that key once the Map is cleared or released."""
     factory = re.search(r"\b(ownedNumberObjectKeys_\d+)\(\)", cpp)
     assert factory
     changed, count = re.subn(r"\bmain\(\)", "ctnative_test_entry()", cpp)
@@ -60,6 +69,9 @@ int main() {
 
 
 def forge_map_facts(text, read_type):
+    """Overwrite every ctjs.call's Map attributes with a forged claim that the
+    entry is present, with string keys and writes, and reads of `read_type`."""
+
     def replace(match):
         attributes = (match[2] or "{}")[1:-1]
         attributes = re.sub(
@@ -84,8 +96,9 @@ def check_nullable_read_facts(args, source):
     proved = run([args.opt, "--ctnative-binding-time-analysis", str(prepared)]).stdout
     assert proved.count('ctnative.map_read_type = "nullable_string"') == 1
     assert proved.count('ctnative.map_read_type = "bool"') == 1
-    # Derivation also runs before native types exist. Both a fresh bogus claim
-    # and one inserted over prior derived facts must reproduce the live proof.
+    # The analysis runs before native types exist. A forged claim on fresh IR and
+    # one written over facts it already derived must both be replaced by the
+    # real result.
     for phase, text in [("fresh", prepared.read_text()), ("stale", proved)]:
         for tag in ("bool", "nullable_string"):
             forged = forge_map_facts(text, tag)
@@ -105,7 +118,8 @@ def compile_and_run(args, name, cpp, expected, compilers, nm):
 
 
 def check_scalar_payloads(args, node, reference, compilers, nm):
-    # Historical source names stay unchanged when their storage becomes native.
+    # Fixture names ending in "-refused" are kept although these now lower to
+    # native code; the value is each fixture's expected `trace`.
     cases = {
         "nullable-number-payload-refused": 2,
         "nullable-boolean-payload-refused": 2,
@@ -132,8 +146,9 @@ def check_scalar_payloads(args, node, reference, compilers, nm):
 
 
 def check_isolated_nullable_helpers(args, source, node, reference, compilers, nm):
-    # Either nullable keys or nullable payloads must request their helpers alone.
-    # Reuse existing functions without expanding the full layout/sanitizer matrix.
+    # A program with only nullable keys, or only nullable payloads, must pull in
+    # just the runtime helpers it needs. Each case reuses one function from
+    # mixed.js, without the full layout and sanitizer matrix.
     cases = [
         (
             "nullable-numbers-only",
@@ -284,8 +299,10 @@ def main():
                     "saved-missing-refused",
                     "saved-join-missing-refused",
                 }:
-                    # These historical names predate optional scalar key support
-                    # (7b456d79). Keep both source bodies and forged-fact controls.
+                    # These fixtures end in "-refused" but are now admitted because
+                    # native Maps support nullable scalar keys and payloads. The
+                    # names are kept so the fixture files stay stable; check that
+                    # they lower to native code with nullable_scalar storage.
                     assert not boundary.FUNCTION.search(result), name
                     assert len(boundary.NATIVE.findall(result)) == count, name
                     assert "ctnative.not_native" not in result, name
@@ -331,8 +348,9 @@ def main():
                     "mixed-nullable-temporary-refused",
                     "mixed-nullable-payload-temporary-refused",
                 }:
-                    # The scalar union now has a carrier; Map storage still
-                    # requires an independently proved alternative.
+                    # A nullable scalar can be represented, but storing it in a
+                    # native Map still needs one alternative proved independently,
+                    # so these are refused.
                     boundary_kind = (
                         "write" if name == "mixed-nullable-payload-temporary-refused" else "key"
                     )

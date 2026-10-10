@@ -9,7 +9,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=THIS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/array.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ARRAY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/methods.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=METHODS
-
+// Returned closures: the fixture and METHODS lower natively; every other case below is refused.
 // NATIVE: emitc.verbatim {{.*}}using ctn_env_{{.*}} = std::function<ctnative::js_num(ctnative::js_num)>;
 // NATIVE: emitc.verbatim {{.*}}std::function<ctnative::js_string(ctnative::js_string)>
 // NATIVE: emitc.verbatim {{.*}}std::function<ctnative::js_num()>

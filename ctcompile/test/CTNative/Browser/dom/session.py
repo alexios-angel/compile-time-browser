@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Gate owned synchronous DOM entries; retained Data keys remain outside this contract."""
+"""Test natively compiled DOM entry functions that take element handles and run synchronously.
+
+The generated session class owns its document. Entries are checked against
+foreign, dangling and invalid handles, and under ASan/UBSan. Programs that keep
+a handle beyond the call (as Bootstrap's Data store keeps them) are outside
+this host contract and must be refused.
+"""
 
 import re
 
@@ -191,6 +197,8 @@ def main():
                     if result.stdout != "owned DOM passed\n" or result.stderr:
                         raise RuntimeError("owned DOM lifetime check failed")
 
+    # Each program keeps the element handle beyond the call (returned, stored in a
+    # global, a Map, an expando or a listener closure), so each must be refused.
     refusals = (
         "function invalid(element) { return element; }",
         "function invalid(element) { saved = element; return true; }",

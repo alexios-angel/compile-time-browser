@@ -1,2 +1,2 @@
-# Preserve original Bootstrap Button lifecycle and its current native boundary.
+# Runs the unmodified Bootstrap Button lifecycle in Node, the VM and native lowering.
 # RUN: python3 %S/button_probe.py --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --work %t

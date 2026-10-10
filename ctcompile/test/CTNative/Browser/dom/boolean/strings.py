@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Prove literal String equality inside exact synchronous Boolean borrowers."""
+"""Check that strict equality between two string constants compiles natively.
+
+The comparison sits inside a synchronous DOM helper that reads or returns a
+Boolean cell value. Any other use of the strings (store, return, yield, loose
+or ordering compare, an unrelated constant) must be refused.
+"""
 
 import hashlib
 
@@ -122,6 +127,8 @@ def bad_programs():
             "ctjs.frame_exit %frame", "ctjs.frame_exit %frame\nctjs.root %name in %frame"
         )
     )
+    # 4611686018427387904 is the IEEE-754 bit pattern of 2.0: an unrelated Number
+    # constant in the helper must also be refused.
     bad["unused-number-literal"] = program(
         PENDING.replace(
             "%condition =", "%two = ctjs.constant #ctjs.number<4611686018427387904>\n%condition ="
@@ -132,6 +139,8 @@ def bad_programs():
 
 def main():
     args = dom.parse_args(__doc__, oracles=True)
+    # Pin the base case's IR and JavaScript text so an edit to cells.py cannot
+    # silently change what every derived case replaces into.
     original, js, _, _ = CASES["retained-equality"]
     assert (
         hashlib.sha256(original.encode()).hexdigest()

@@ -1,5 +1,5 @@
-// Owning immutable captures, invoked after the factory frame has returned.
-// Map contents remain shared; the binding to the Map is never reassigned.
+// Closures called after the factory that made them has returned. Each owns a
+// copy of its never-reassigned captures; a captured Map is still shared.
 function makeStore(seed) {
     const state = new Map();
     state.set("value", seed);

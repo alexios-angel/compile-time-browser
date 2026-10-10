@@ -1,3 +1,17 @@
+//===- Completion.cpp - Exception-recovery completion tests -----*- C++ -*-===//
+//
+// Checks that exception recovery rewrites a try/catch around checked calls
+// into ctjs.invoke ops whose normal and unwind continuations carry the right
+// values and types, that every smaller step budget refuses without editing
+// the IR, and that rollback restores the source byte for byte. Also covers
+// the DOM decodeURIComponent/JSON.parse chain normalization. The shared
+// helpers declared in Tests.h are defined here.
+//
+// The budget 100000 used throughout is effectively unlimited for these
+// fixtures; tests that need the exact cost search below it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../../../lib/CTNative/HostContract/Preparation.h"
 #include "Completion/DOMURI.hpp"
 #include "Tests.h"
@@ -55,13 +69,14 @@ mlir::OwningOpRef<mlir::ModuleOp> import(mlir::MLIRContext & context, llvm::Stri
     return std::move(imported.module);
 }
 
-// This checks the selected completion's SSA wiring. It supplies fixed helper
-// outcomes, independently of helper implementation/type inference: every normal
-// call returns 20; one selected call throws the fixture's known payload. Poison
-// is never a number and cannot satisfy a selected completion observation.
+/// Evaluates recovered IR with fixed call outcomes to check its SSA wiring,
+/// without running type inference or the helper bodies: every call returns 20
+/// on success, and only `failing` throws, with `payload`. A ub.poison value is
+/// never a number, so it cannot satisfy an expected completion value.
 struct completionTrace {
     ctjs::InvokeOp failing;
     double payload;
+    /// Evaluation step limit, so a malformed cycle cannot loop forever.
     unsigned remaining = 4096;
 
     std::optional<double> value(mlir::Value value) {
@@ -120,6 +135,9 @@ struct completionTrace {
     }
 };
 
+/// Checks that the try's exit reports `failing` (or no call, when it is null)
+/// as the completion, and that the catch receives `payload` and the saved
+/// state `expectedState` from immediately before the failed call.
 void checkCompletion(ctjs::TryOp attempt, ctjs::InvokeOp failing, double payload,
                      double expectedState) {
     auto exit = llvm::cast<ctjs::TryExitOp>(attempt.getBody().front().getTerminator());
@@ -148,6 +166,11 @@ void checkCompletion(ctjs::TryOp attempt, ctjs::InvokeOp failing, double payload
           "catch receives the invocation's thrown payload");
 }
 
+/// Imports `source`, checks that single-invocation inspection and exception
+/// recovery in `mode` rewrite the `guarded` function's try/catch into
+/// ctjs.invoke ops with correct normal and unwind wiring, and checks that every
+/// smaller step budget refuses without editing the source and that rollback
+/// is byte-identical.
 void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringRef source,
                 unsigned expectedCalls, double saved, double payload, ExceptionRecoveryMode mode,
                 bool resolve) {
@@ -221,7 +244,7 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
                      << " steps, every incomplete budget preserves " << checks << " checks\n";
     }
     // Successful recovery keeps these original values alive in its rollback
-    // snapshot. Calls also carry the importer's literal undefined receiver.
+    // snapshot. Calls also carry the importer's literal `undefined` receiver.
     llvm::SmallVector<llvm::SmallVector<mlir::Value>> callInputs;
     function.walk([&](ctjs::CallOp call) { callInputs.emplace_back(call->getOperands()); });
     auto ordinary = recoverPrimitiveExceptionRegion(function);
@@ -289,8 +312,8 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
     checkCompletion(attempt, invocations.back(), payload, saved);
     checkCompletion(attempt, {}, payload, 0);
     if (expectedCalls == 2) { checkCompletion(attempt, invocations.front(), payload, 0); }
-    // The first argument-free handler cannot be recovered a second time. A
-    // failed rerun must not consume its existing continuations.
+    // Running recovery again on already-recovered IR must refuse and leave the
+    // existing invoke ops and their continuations unchanged.
     const auto structured = printed(function);
     auto rerun = recoverPrimitiveExceptionRegion(function, 100000, mode);
     check(!rerun.recovered && printed(function) == structured,
@@ -333,6 +356,9 @@ void testSource(mlir::MLIRContext & context, llvm::StringRef name, llvm::StringR
                  << '\n';
 }
 
+/// Runs type inference on `module` and checks the types it gives each invoke's
+/// call result, normal and unwind continuation arguments, and the enclosing
+/// catch's payload and saved-state arguments. Inference must not edit the IR.
 void checkCompletionTypes(mlir::ModuleOp module, ctjs::FuncOp function, llvm::StringRef normalType,
                           llvm::StringRef stateType,
                           llvm::StringRef payloadType = "!ctnative.boxed") {
@@ -379,6 +405,10 @@ void checkCompletionTypes(mlir::ModuleOp module, ctjs::FuncOp function, llvm::St
     check(printed(module) == before, "completion inference does not change source operations");
 }
 
+/// Checks normalizeDOMURI on `JSON.parse(decodeURIComponent(text))` inside a
+/// try: the two calls become nested invokes, each catch returns the original
+/// input, smaller budgets and mutated inputs refuse without edits, and a
+/// saved assignment between the calls is captured in each failure state.
 void testDOMJSONChain(mlir::MLIRContext & context) {
     using ctnative::lowering_detail::inspectSingleInvocationRegion;
     using ctnative::lowering_detail::normalizeDOMURI;
@@ -496,6 +526,7 @@ function guarded(text) {
               "incomplete JSON normalization preserves both calls and every original check");
         return false;
     };
+    // Binary search for the smallest budget that succeeds.
     unsigned lower = 0, upper = 100000;
     while (lower < upper) {
         const unsigned middle = lower + (upper - lower) / 2;
@@ -509,6 +540,9 @@ function guarded(text) {
     for (unsigned budget = 0; budget < lower; ++budget) {
         if (!check(!attempt(budget), "every smaller JSON normalization budget refuses")) { break; }
     }
+    // Mutations 0 and 1 feed a chained call's result into its own failure
+    // snapshot; mutation 2 makes the JSON.parse lookup read the input
+    // argument instead of the JSON global.
     for (unsigned index = 0; index != 3; ++index) {
         mlir::OwningOpRef<mlir::ModuleOp> candidate(module->clone());
         auto source = inspectSingleInvocationRegion(guarded(*candidate), 100000, 2);
@@ -572,6 +606,10 @@ function guarded(text) {
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
 }
 
+/// Runs the DOM tests, then checks that a try around an unresolved
+/// decodeURIComponent call recovers structurally with a boxed payload, but
+/// refuses in effect-checked mode because nothing proves the host call's
+/// identity or effects.
 void testOrdinaryCompletionTypes(mlir::MLIRContext & context) {
     testDOMURITransaction(context);
     testDOMJSONChain(context);
@@ -615,6 +653,8 @@ function guarded(text) {
           "an unused URI payload supplies no host identity or effect proof");
 }
 
+/// Recovers `source` in effect-checked mode and checks the inferred normal and
+/// saved-state types (twice, to show a rerun is stable), then rolls back.
 void testSourceCompletionTypes(mlir::MLIRContext & context, llvm::StringRef name,
                                llvm::StringRef source, llvm::StringRef normalType,
                                llvm::StringRef stateType) {
@@ -640,6 +680,12 @@ void testSourceCompletionTypes(mlir::MLIRContext & context, llvm::StringRef name
                  << ", unwind remains boxed across frame_enter\n";
 }
 
+/// Ten mutations of the helper called inside try, each followed by a fresh type
+/// solve: 0-2 change the return literal's type (String, Boolean, -0),
+/// 3 changes the thrown value, 4-6 add an escaping store, a property read or a
+/// recursive call, 7 makes the helper public, 8 pushes the helper past the
+/// 4096-operation inference limit, and 9 removes the frame bookkeeping to show
+/// that the boxed unwind payload comes from the frame.
 void testSourceCompletionMutations(mlir::MLIRContext & context, llvm::StringRef source) {
     for (unsigned mutation = 0; mutation != 10; ++mutation) {
         auto module = import(context, source);
@@ -715,9 +761,9 @@ void testSourceCompletionMutations(mlir::MLIRContext & context, llvm::StringRef 
             added.push_back(
                 ctjs::ConstantOp::create(at, where, type, ctjs::BooleanAttr::get(&context, true)));
         } else {
-            // A test-only frame-free counterpart establishes that the boxed
-            // payload above is a real frame-failure obligation. This erasure
-            // is not a source transform or evidence that native may do it.
+            // Erasing the frame ops shows that the boxed payload above comes
+            // from the frame's possible failure. This is a test-only edit, not
+            // a transform the native backend may perform.
             llvm::SmallVector<mlir::Operation *> bookkeeping;
             helper.walk([&](mlir::Operation * operation) {
                 if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp>(operation)) {

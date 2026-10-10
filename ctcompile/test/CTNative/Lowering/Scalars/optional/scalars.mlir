@@ -1,6 +1,6 @@
 // Null and undefined have distinct tags even when their lattice type agrees.
-// The standalone differential fixture tests the semantics; this gate checks
-// that optional signatures survive lowering and unsupported payloads refuse.
+// Fixtures/Scalars/optional-scalars.js checks the runtime behaviour; this test
+// checks that optional signatures survive lowering and bad payloads are refused.
 // Keep both source alternatives: default precomputation can erase the union.
 //
 // RUN: split-file %s %t
@@ -55,7 +55,7 @@ function probe(flag) {
 probe(false);
 
 //--- mixed-present.js
-// Preserve the former refusal with its owning String/Number representation.
+// A String-or-Number return lowers to the owning ctnative::number_string carrier.
 function choose(flag) { return flag ? "value" : 42; }
 choose(false);
 

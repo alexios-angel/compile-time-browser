@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Check named returned lambdas, owning captures, and concrete callable behavior."""
+"""Check that returned closures lower to named C++ lambdas that own their
+captures by value, give the interpreter's results with GCC and Clang, and stay
+memory-safe under AddressSanitizer and UBSan."""
 
 import argparse
 from pathlib import Path
@@ -17,6 +19,7 @@ def main():
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     compilers = find_compilers()
+    # Split-file program -> expected sorted `global=value` output.
     fixtures = {
         "owning": "independentResult=101\nlifetimeResult=42\nloopResult=16\nmutationResult=42\nsharedResult=15\n",
         "scalar-string": "keywordResult=42\nscalarResult=1342\nstringResult=11\n",
@@ -64,8 +67,8 @@ def main():
                 assert re.search(r"capture_0 = v\d+", cpp), cpp
                 assert "ctnative::js_num const argument_0" in cpp, cpp
                 assert re.search(r"const v\d+ = ctnative::", cpp), cpp
-                # The original source body now lives inside the owning lambda;
-                # neither a forwarding call nor an unused lifted definition remains.
+                # The closure body lives inside the owning lambda; neither a
+                # forwarding call nor an unused lifted definition remains.
                 assert not re.search(r"\bfn_2\s*\(", cpp), cpp
                 assert "ctnative::map_get(capture_0," in cpp, cpp
                 assert "static_cast<void>(capture_0)" not in cpp, cpp
@@ -88,6 +91,7 @@ def main():
     # exercise heap ownership; leak checks cover std::function/shared_ptr cleanup.
     for source, expected in emitted:
         binary = source.with_suffix(".sanitized").resolve()
+        # compilers[1] is Clang (find_compilers returns GCC first).
         assert build_and_run(compilers[1], source, binary, sanitize=True).stdout == expected
     print("owning callables: 9 observations agree, plain/deduced, GCC/Clang and ASan/UBSan")
 

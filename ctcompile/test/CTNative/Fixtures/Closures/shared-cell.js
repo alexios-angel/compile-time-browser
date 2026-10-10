@@ -1,95 +1,95 @@
-// A SHARED MUTABLE BINDING, CARRIED BY POINTER - part 24 Phase 59, slice 2
-// step 2, through the compilation-unit gate.
+// Closure-lifting fixture: a shared mutable binding captured by pointer,
+// checked end to end by the compilation-unit test (Checks/compilation-unit.py).
 //
-// STEP 1 ADMITTED A BINDING WITH ONE DOMINATING WRITE by copying the stored
-// value into a parameter. These are the bindings it cannot: written twice,
-// written on only one path, written inside a loop whose call is outside it,
-// and - the shape that dominates the reachable set of a real bundle - written
-// by the CLOSURE. `var n = 0; function tick() { n = n + 1; }` has one
-// assignment in the frame and one in the closure, and there is no single value
-// to copy: copying gives every call its own counter and prints 1 twice where
-// the interpreter prints 1 then 2. That refusal ("capture 0 is a binding that
-// is reassigned - a shared cell is Phase 59 slice 2") was 11 of the 16 chains
-// over bootstrap's 19 reachable callees.
+// Copy-by-value capture (Closures/hoisted-capture.js) handles a binding with
+// exactly one write that dominates every call, by copying the stored value into
+// a parameter. These are the bindings it cannot handle: written twice, written
+// on only one path, written inside a loop whose call is outside it, and, the
+// most common shape in a real bundle, written by the closure itself.
+// `var n = 0; function tick() { n = n + 1; }` has one assignment in the frame
+// and one in the closure, so there is no single value to copy: copying gives
+// every call its own counter and prints 1 twice where the interpreter prints 1
+// then 2. In the Bootstrap workload this was the most common closure refusal.
 //
-// SO THE BOX BECOMES AN ORDINARY LOCAL AND THE CAPTURE BECOMES A POINTER TO
-// IT. `ctjs.create_cell` lowers to `double n;` in the frame that owns the
-// binding, assigned the box's INITIAL - the `undefined`
+// So the box becomes an ordinary local and the capture becomes a pointer to
+// it. `ctjs.create_cell` lowers to `double n;` in the frame that owns the
+// binding, assigned the box's initial value: the `undefined`
 // `compiler_impl::predeclare_locals` hoists, carried as NaN. A read is a load
 // of that variable, a write an assignment to it, and a lifted target takes
 // `double *` for the slot instead of `double`, reading and writing through it.
-// Each call site passes `&n`. That is the receiver lift's convention exactly
-// (`ctnative.receiver` emits `ctn_x * self`), one operand along.
+// Each call site passes `&n`. That is the receiver lift's convention
+// (`ctnative.receiver` emits `ctn_x * self`), applied to a capture operand.
 //
-// WHY THE POINTER CANNOT DANGLE, which is the only question worth asking here,
-// and each half is a condition that was already being enforced:
+// Why the pointer cannot dangle. Each part is a check the lifter already makes
+// (see the pointer-capture comment in ClosureLifter.h):
 //
-//   1. THE CLOSURE CANNOT LEAVE THE FRAME. Condition 4 of `whyNotLiftable`
-//      admits a closure only when EVERY use of its value is a call this tier
-//      lowers; stored, returned or passed, it is refused by name and those
-//      three refusals are still pinned in closure-refusals.mlir. A closure
-//      reachable from nothing but a call in this frame cannot be called after
-//      the frame is gone.
-//   2. AND EVERY CALL IS IN THE FRAME THAT OWNS THE VARIABLE.
-//      `whyCapturesDoNotReach` compares the `ctjs.func` the captured value
-//      lives in against the one the call sits in - METHODCAP in
-//      closure-refusals.mlir is that refusal - and then asks that the cell
-//      properly dominate the call, which is what puts the variable in scope in
-//      the emitted C++ where its address is taken.
-//   3. AND THE POINTER GOES NOWHERE ELSE. After the lift the parameter's only
-//      uses are the load and the store that replaced the upvalue read and
-//      write, plus its re-appearance at a nested lifted call - which is the
-//      same three conditions one level in.
+//   1. The closure cannot leave the frame. Condition 4 of `whyNotLiftable`
+//      admits a closure only when every use of its value is a call the native
+//      lowering handles; a stored, returned or passed closure is refused, and
+//      CTNative/Lowering/Closures/refusals.mlir tests those three refusals. A
+//      closure reachable from nothing but a call in this frame cannot be called
+//      after the frame is gone.
+//   2. Every call is in the frame that owns the variable.
+//      `whyCapturesDoNotReach` checks that the call and the captured value are
+//      in the same `ctjs.func` (the METHODCAP case in
+//      CTNative/Lowering/Closures/refusals.mlir) and that the cell properly
+//      dominates the call, so the variable is in scope where its address is
+//      taken in the emitted C++.
+//   3. The pointer goes nowhere else. After the lift the parameter's only uses
+//      are the load and the store that replaced the upvalue read and write,
+//      plus its reappearance at a nested lifted call, where the same three
+//      conditions apply one level in.
 //
-// NO DOMINANCE PROOF IS NEEDED FOR THE VALUE, and that is what makes this
-// step wider than step 1 rather than merely different. Step 1 replaced every
-// read with the stored value, so it had to prove no read could see the
-// hoisted `undefined`; this one does not replace the box, it EMITS it. A read
-// on a path that reached no assignment loads the NaN the variable was
-// initialised with - so `early_read`, `conditional` and `loop_after` below,
-// all three of them refusals pinned in closure-refusals.mlir until this step,
-// are now programs that compile and agree.
+// No dominance proof is needed for the value. Copy-by-value capture replaces
+// every read with the stored value, so it must prove no read can see the
+// hoisted `undefined`. Pointer capture does not replace the box, it emits it: a
+// read on a path that reached no assignment loads the NaN the variable was
+// initialised with. That is why `early_read`, `conditional` and `loop_after`
+// below compile, although copy-by-value capture refuses all three.
 //
-// AND NaN IS NOT undefined EVERYWHERE, WHICH THIS PARAGRAPH USED TO CLAIM.
-// The sentence "which is exactly what the interpreter answers" stood here, in
-// the commit message and in closure-refusals.mlir. It is true in arithmetic,
-// in ordering and in truthiness - `defined()` already refuses the other place
-// they part company, equality. It is FALSE at the one place a value becomes an
-// observable again: a global prints a Number with `%.17g`, so undefined-as-NaN
-// prints `nan` where the interpreter prints `undefined`.
+// NaN stands in for undefined correctly in arithmetic, ordering and
+// truthiness; `defined()` refuses equality, where the two differ. It is wrong
+// when a value is printed: a global prints a Number with `%.17g`, so
+// undefined-as-NaN would print `nan` where the interpreter prints `undefined`.
 //
-// SO THIS STEP WIDENED A KNOWN WRONG ANSWER, AND STEP 3 CLOSED IT.
+// So `ctjs.store_global` refuses a value whose type may be undefined (an `opt`
+// type, checked by `admission::printable`). Without that,
 // `function pick(k) { var v; if (k > 0) { v = 5; } function get() { return v;
-// } return get(); } var out = pick(-1);` was refused before step 2 and
-// compiled to `out=nan` after it. The CLASS is older than any closure rule -
-// `var u; var z = u;` leaks the same NaN with no closure in the file - and a
-// `ctjs.store_global` now refuses an `opt` by name
-// (`admission::printable`), which is what both of those programs are.
-// CTNative/Lowering/global-undefined.mlir pins the two of them plus the
-// OUTERSTORE shape, and the DOMINATES program in the same file is the
-// narrowing that makes the refusal cost nothing here.
+// } return get(); } var out = pick(-1);` would print `out=nan`. The same leak
+// exists with no closure at all (`var u; var z = u;`).
+// CTNative/Lowering/Admission/global-undefined.mlir tests both programs and
+// the OUTERSTORE shape; its DOMINATES program shows the type narrowing that
+// keeps this refusal from firing on the programs in this file (see the note
+// above the globals at the foot of this file).
 //
-// THE COERCIONS THAT CAME WITH STEP 2 ARE GONE, and their absence is the
-// assertion - see the note over the globals at the foot of this file.
+// The refused shapes cannot be tested here, because Checks/pipeline.cmake will
+// not write a module while any function carries `ctnative.not_native`. A box
+// that escapes into an object, a closure that escapes, and a target that writes
+// a slot the native lowering does not carry each have a program in
+// CTNative/Lowering/Closures/refusals.mlir, under split-file.
 //
-// THE REFUSED SHAPES ARE NOT HERE, and cannot be: native-pipeline.cmake
-// refuses to write a module while any function carries `ctnative.not_native`.
-// A box that escapes into an object, a closure that escapes, and a target that
-// writes a slot this tier does not carry are one program apiece in
-// CTNative/Lowering/closure-refusals.mlir, under split-file.
-//
-// The answers, worked out by hand and NOT asserted anywhere - the interpreter
-// is the reference, by definition. Ten globals, ten distinct values, so a
-// wrong one cannot hide behind a right one:
+// The answers, worked out by hand and not asserted anywhere (the interpreter is
+// the reference). Ten globals with ten distinct values, so a wrong one cannot
+// hide behind a right one:
 //   counter122 = 122      shared17 = 17        loop20 = 20
 //   readwrite30 = 30      mixed25065 = 25065   nested204103 = 204103
 //   twice2 = 2            earlyread5 = 5       cond12 = 12
 //   loopafter38 = 38
 
-// THE COUNTER: A CLOSURE INCREMENTS, THE FRAME READS. `tick` compiles to a
-// `ctjs.store_upvalue`, which is the refusal this step lifts; `n` is read
-// again in `counter`'s own frame after both calls, so a lowering that gave
-// `tick` a copy would answer 121 here and only the interpreter could say so.
+
+
+
+
+
+
+
+
+
+
+// The counter: a closure increments, the frame reads. `tick` compiles to a
+// `ctjs.store_upvalue`, the write that copy-by-value capture cannot handle; `n`
+// is read again in `counter`'s own frame after both calls, so a lowering that
+// gave `tick` a copy would answer 121 here, and only the interpreter could say so.
 function counter() {
     var n = 0;
 
@@ -102,10 +102,10 @@ function counter() {
     return a * 100 + b * 10 + n;
 }
 
-// TWO CLOSURES, ONE BOX, BOTH WRITING IT. `add` and `scale` are two lifted
-// functions taking the SAME `double *`, and the order of the three calls is
-// the whole answer: 5 -> 8 -> 16 -> 17. Each call's result is discarded, which
-// is the statement form --ctnative-prune-dead-stores turns into one.
+// Two closures, one box, both writing it. `add` and `scale` are two lifted
+// functions taking the same `double *`, and the order of the three calls
+// decides the answer: 5 -> 8 -> 16 -> 17. Each call's result is discarded, the
+// statement form that --ctnative-prune-dead-stores produces.
 function shared_two(start) {
     var acc = start;
 
@@ -124,10 +124,10 @@ function shared_two(start) {
     return acc;
 }
 
-// A MUTATION INSIDE A LOOP. The box is built once in the prologue and written
+// A mutation inside a loop. The box is built once in the prologue and written
 // on every iteration through the pointer, so the variable lives at function
 // scope in the emitted C++ and its address is taken inside the loop body.
-// `take` returns nothing, which is `undefined` - a NaN this tier never prints.
+// `take` returns nothing, which is `undefined`: a NaN the lowering never prints.
 function loop_sum(n) {
     var total = 0;
 
@@ -142,10 +142,10 @@ function loop_sum(n) {
     return total;
 }
 
-// READ-ONLY IN ONE CLOSURE, WRITTEN IN ANOTHER. `peek` holds no
-// `ctjs.store_upvalue` at all and still takes a pointer, because carrying is a
-// property of the SLOT and not of the target: one `ctjs.func` is one C++
-// signature, and `v` is shared whoever is looking at it.
+// Read-only in one closure, written in another. `peek` holds no
+// `ctjs.store_upvalue` at all and still takes a pointer, because carrying by
+// pointer is a property of the slot, not of the target: one `ctjs.func` is one
+// C++ signature, and `v` is shared whoever is looking at it.
 function read_and_write(base) {
     var v = base;
 
@@ -162,17 +162,17 @@ function read_and_write(base) {
     return first + second;
 }
 
-// A SHARED CELL, A SINGLE-WRITE CELL AND A PLAIN PARAMETER IN ONE SIGNATURE.
-// `step` reads three captures and none of them is the same kind: `running` is
-// written by `bump`, so it arrives as `double *`; `fixed` is written once
-// before every call and nothing writes it again, so slice 2 step 1 copies it
-// and it arrives as a `double`; `p` is a captured parameter, boxed holding its
-// value and never written, so slice 1 copies it. `k` is `step`'s own.
+// A shared cell, a single-write cell and a plain parameter in one signature.
+// `step` reads three captures, each of a different kind: `running` is written
+// by `bump`, so it arrives as `double *`; `fixed` is written once before every
+// call and never again, so copy-by-value capture copies it and it arrives as a
+// `double`; `p` is a captured parameter, boxed holding its value and never
+// written, so the ordinary closure lift copies it. `k` is `step`'s own.
 //
-// THE WRITE IS IN A DIFFERENT CLOSURE ON PURPOSE. `mutatesUpvalue` is a
-// property of a FUNCTION and not of a slot, so a target that writes any
-// upvalue makes every cell it captures shared; keeping the write in `bump`
-// leaves `step` unmarked and is what lets one signature hold all three.
+// The write is in a different closure on purpose. `mutatesUpvalue` is a
+// property of a function, not of a slot, so a target that writes any upvalue
+// makes every cell it captures shared; keeping the write in `bump` leaves
+// `step` unmarked, which lets one signature hold all three kinds.
 function mixed(p) {
     var fixed = 10;
     var running = 0;
@@ -191,13 +191,13 @@ function mixed(p) {
     return a * 1000 + b;
 }
 
-// TWO LEVELS, SO SLICE 1b CARRIES THE POINTER OUTWARD. `n` belongs to
-// `nested_two`; `deep` names it from two frames out, so its slot is filled
-// from `mid`'s closure and the importer leaves a placeholder in the operand.
-// `mid` neither reads nor writes `n` - its only use of the capture is to hand
-// it to `deep` - so `mid` lifts to `mid(double * n)` and passes the pointer
-// straight on, which is the enclosing-index path carrying an address instead
-// of a value.
+// Two levels, so enclosing-capture forwarding carries the pointer outward. `n`
+// belongs to `nested_two`; `deep` names it from two frames out, so its slot is
+// filled from `mid`'s closure and the importer leaves a placeholder in the
+// operand. `mid` neither reads nor writes `n` (its only use of the capture is
+// to hand it to `deep`), so `mid` lifts to `mid(double * n)` and passes the
+// pointer straight on: the enclosing-index path (Closures/nested-closure.js)
+// carrying an address instead of a value.
 function nested_two() {
     var n = 100;
 
@@ -212,10 +212,10 @@ function nested_two() {
     return t * 1000 + n;
 }
 
-// WRITTEN TWICE, WHICH STEP 1 REFUSED BY NAME ("it is assigned more than
+// Written twice, which copy-by-value capture refuses ("it is assigned more than
 // once"): which value a copy would see depends on the path taken to the call.
-// There is nothing to choose here - the variable holds what the last
-// assignment put in it, which is what the interpreter reads.
+// Here there is nothing to choose: the variable holds what the last assignment
+// put in it, which is what the interpreter reads.
 function twice_written() {
     var n;
     n = 1;
@@ -227,11 +227,11 @@ function twice_written() {
     return get();
 }
 
-// A READ THE WRITE DOES NOT DOMINATE, which step 1 refused because unboxing on
-// the stored value would have turned the honest `undefined` into 5. Here the
-// variable is initialised with that `undefined` - NaN - so `before` is NaN,
-// falsy, and `hit` stays 0. Equality on it would be refused (`defined()` says
-// NaN does not compare the way undefined does); truthiness is exact.
+// A read the write does not dominate, which copy-by-value capture refuses,
+// because replacing the read with the stored value would turn the real
+// `undefined` into 5. Here the variable is initialised with that `undefined`
+// (NaN), so `before` is NaN, falsy, and `hit` stays 0. Equality on it would be
+// refused (`defined()`); truthiness is exact.
 function early_read() {
     var before = n;
     var n = 5;
@@ -246,11 +246,11 @@ function early_read() {
     return hit * 100 + get();
 }
 
-// A STORE ON ONE PATH ONLY - the OUTERSTORE program, which is the one that
-// caught a real wrong answer in step 1: `t` is computed before the branch and
+// A store on one path only: the OUTERSTORE program, which caught a real wrong
+// answer in copy-by-value capture. `t` is computed before the branch and
 // dominates every call, while the `ctjs.cell_set` inside the `scf.if`
-// dominates none. Compiled by value it answered -2 for `conditional(-1)`;
-// carried, the variable is NaN on that path and falsy, which is what the
+// dominates none. Copied by value it answered -2 for `conditional(-1)`; by
+// pointer, the variable is NaN on that path and falsy, which is what the
 // interpreter says.
 function conditional(k) {
     var v;
@@ -270,10 +270,10 @@ function conditional(k) {
     return hit * 10 + k;
 }
 
-// A WRITE INSIDE A LOOP AND THE CALL AFTER IT - the LOOPWRITE program. There
-// is a path to `get()` on which the body never ran, so no value dominates the
-// call and step 1 refused it. The variable is NaN on that path, `seen` is
-// falsy, and the answer is 7; entered, it holds the last iteration's 30.
+// A write inside a loop and the call after it: the LOOPWRITE program. There is
+// a path to `get()` on which the body never ran, so no value dominates the call
+// and copy-by-value capture refuses it. The variable is NaN on that path, `seen`
+// is falsy, and the answer is 7; when the loop runs it holds the last value, 30.
 function loop_after(n) {
     var v;
     var i = 0;
@@ -292,32 +292,32 @@ function loop_after(n) {
     return 7;
 }
 
-// NOT ONE `+ 0` HERE, AND THAT IS THE ASSERTION - part 24 Phase 59 slice 2
-// step 3. THREE of these globals carried one until the narrowing landed:
-// `shared17`, `loop20` and `twice2` are a carried binding returned straight
-// out of its frame, and the binding's type was `opt<num>` FLOW-INSENSITIVELY -
-// the variable is emitted holding the box's hoisted `undefined`, so the type
-// said "may be undefined" at a read a write dominates just as loudly as at one
-// it does not. A global is where a value becomes an observable again and the
-// print convention is `%.17g` of the double, which cannot spell `undefined`,
-// so `admission::printable` refuses an `opt` there and these three were
-// refused. `+ 0` bought a `num` and said so in a comment.
+
+
+// No global below uses a `+ 0` coercion, and that is what this file asserts.
+// `shared17`, `loop20` and `twice2` are a pointer-captured binding returned
+// straight out of its frame. The variable is emitted holding the box's hoisted
+// `undefined`, so a flow-insensitive type for the binding would be `opt<num>`
+// ("may be undefined") even at a read that a write dominates. A global prints
+// `%.17g` of the double, which cannot spell `undefined`, so
+// `admission::printable` refuses an `opt` there and these three would be
+// refused; a `+ 0` would force a `num`.
 //
-// THE NARROWING PAID FOR THEM INSTEAD. `var acc = start`, `var total = 0` and
-// the pair of assignments in `twice_written` each dominate every read of their
-// binding - the frame's own reads and every call of every closure over it - so
-// the box's initial is unobservable and the type is the join of the WRITES.
-// Removing the coercions is what makes this file a gate on that: with the
-// narrowing stubbed out these three globals are refused by name and the
-// pipeline step below fails before any binary is built.
+// The type narrowing (`TypeInference::cellTypeOf`) makes the coercion
+// unnecessary. `var acc = start`, `var total = 0` and the pair of assignments
+// in `twice_written` each dominate every read of their binding (the frame's own
+// reads and every call of every closure over it), so the box's initial value is
+// unobservable and the type is the join of the writes. Without the coercions
+// this file tests the narrowing: with the narrowing stubbed out, these three
+// globals are refused by name and the pipeline fails before any binary is built.
 //
-// AND THE FOUR THAT NEVER NEEDED ONE STILL DO NOT. `earlyread5`, `cond12` and
-// `loopafter38` are the shapes where NO write dominates the read - a read
-// before the store, a store on one path of an `if`, a store inside a loop -
-// so their bindings stay `opt<num>`, which is correct: the variable really is
-// NaN on those paths. Each of the three reaches its global through arithmetic
-// or a comparison, where the representation is exact, so the refusal never
-// fires and the honest `undefined` is never printed.
+// Three more need no coercion for another reason. `earlyread5`, `cond12` and
+// `loopafter38` are the shapes where no write dominates the read (a read
+// before the store, a store on one path of an `if`, a store inside a loop), so
+// their bindings stay `opt<num>`, which is correct: the variable really is NaN
+// on those paths. Each reaches its global through arithmetic or a comparison,
+// where NaN represents undefined exactly, so the refusal never fires and
+// `undefined` is never printed.
 var counter122 = counter();
 var shared17 = shared_two(5);
 var loop20 = loop_sum(5);

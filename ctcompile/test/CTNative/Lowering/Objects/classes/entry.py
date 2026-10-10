@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Prove explicit class entries without borrowing DOM or host parameter authority."""
+"""Check class-initialization preparation when the entry is a named function.
+
+The entry function declares a class and returns a value. Its no-argument and
+unused-argument forms must prepare without changing the script's wrapper
+function, and every negative variant (stale manifest, wrong entry, DOM
+parameters, a parameter the callee reads, replaced or detached methods, ambient
+calls) must be refused.
+"""
 
 import re
 
@@ -17,6 +24,8 @@ CLASS = """class Shape {
 """
 BODY = CLASS + "  return shape.read() === 'x';\n"
 DOM_BODY = CLASS + "  return element.getAttribute(shape.read()) === null;\n"
+# The top-level script function (`_script_$0`), which preparation must leave
+# byte-for-byte unchanged.
 WRAPPER = re.compile(r"^  ctjs.func @_script_\$0\(.*?^  }\n", re.M | re.S)
 
 

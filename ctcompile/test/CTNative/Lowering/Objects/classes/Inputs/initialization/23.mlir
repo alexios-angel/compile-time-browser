@@ -1,4 +1,4 @@
-// A missing user argument is padded before the constructor helper's Map parameter.
+// `save` takes two parameters but gets one argument; it is padded before the Map capture.
 //--- class-map-helper-constructor.js
 function class_map_helper_constructor() {
     const values = new Map();
@@ -9,7 +9,7 @@ function class_map_helper_constructor() {
 }
 var a = class_map_helper_constructor();
 
-// Data-style methods and class methods mutate the same captured scalar Map.
+// Methods of a `Data` object literal and class methods mutate the same captured Map.
 //--- class-map-helper-holder.js
 function class_map_helper_holder() {
     const values = new Map();
@@ -33,7 +33,7 @@ function class_map_helper_holder() {
 }
 var a = class_map_helper_holder();
 
-// Every entry, constructor and method caller receives the same helper environment.
+// The top-level code, constructors and methods all call the helpers with the same captures.
 //--- class-map-helper-shared-callers.js
 function class_map_helper_shared_callers() {
     const values = new Map();
@@ -55,7 +55,7 @@ function class_map_helper_shared_callers() {
 }
 var a = class_map_helper_shared_callers();
 
-// Removing a helper capture must not merge or renumber two distinct Map cells.
+// Dropping the `adjust` capture must not merge or renumber the two distinct Maps.
 //--- class-map-helper-distinct-mixed.js
 function class_map_helper_distinct_mixed() {
     const adjust = n => n + 1;
@@ -77,7 +77,7 @@ function class_map_helper_distinct_mixed() {
 }
 var a = class_map_helper_distinct_mixed();
 
-// A transitive chain forwards its Map environment through each direct callee.
+// A chain of helpers passes the captured Map through each direct call.
 //--- class-map-helper-chain.js
 function class_map_helper_chain() {
     const values = new Map();
@@ -94,7 +94,7 @@ function class_map_helper_chain() {
 }
 var a = class_map_helper_chain();
 
-// Copied base constructors and leaf methods preserve the original helper's Map.
+// Inlined base constructors and leaf methods keep the Map captured by `save`.
 //--- class-map-inherited-helper-callers.js
 function class_map_inherited_helper_callers() {
     const values = new Map();
@@ -111,7 +111,7 @@ function class_map_inherited_helper_callers() {
 }
 var a = class_map_inherited_helper_callers();
 
-// Loop normalization keeps the helper's environment alongside its scalar argument.
+// Rewriting the helper's loop keeps its captured Map next to its number argument.
 //--- class-map-helper-loop.js
 function class_map_helper_loop() {
     const values = new Map();
@@ -131,7 +131,7 @@ function class_map_helper_loop() {
 }
 var a = class_map_helper_loop();
 
-// A helper capture observes later cell assignment rather than the first Map.
+// The helper sees the Map later assigned to `values`, not the first one.
 //--- class-map-helper-reassigned-cell.js
 function class_map_helper_reassigned_cell() {
     let values = new Map();
@@ -147,7 +147,7 @@ function class_map_helper_reassigned_cell() {
 }
 var a = class_map_helper_reassigned_cell();
 
-// Direct-call rewriting cannot freeze a helper cell that changes between calls.
+// `save` is reassigned between calls, so calls to it cannot be bound early.
 //--- class-map-helper-replaced.js
 function class_map_helper_replaced() {
     const values = new Map();
@@ -160,7 +160,7 @@ function class_map_helper_replaced() {
 }
 var a = class_map_helper_replaced();
 
-// A replaced Data method no longer names its original captured-Map helper.
+// `Data.get` is replaced, so the method no longer calls the Map-reading helper.
 //--- class-map-helper-holder-replaced.js
 function class_map_helper_holder_replaced() {
     const values = new Map();
@@ -175,7 +175,7 @@ function class_map_helper_holder_replaced() {
 }
 var a = class_map_helper_holder_replaced();
 
-// An own Map member changes the operation reached through the helper.
+// An own `get` on the Map instance changes what the helper's get call runs.
 //--- class-map-helper-member-replaced.js
 function class_map_helper_member_replaced() {
     const values = new Map();
@@ -190,7 +190,7 @@ function class_map_helper_member_replaced() {
 }
 var a = class_map_helper_member_replaced();
 
-// The explicit Map identity does not authorize a replaced prototype operation.
+// Replacing Map.prototype.get changes the helper's get even though the Map is known.
 //--- class-map-helper-prototype-replaced.js
 function class_map_helper_prototype_replaced() {
     const values = new Map();
@@ -205,7 +205,7 @@ function class_map_helper_prototype_replaced() {
 }
 var a = class_map_helper_prototype_replaced();
 
-// An unused holder method still belongs to the original effect census.
+// An unused `Data` method calling an unknown global still counts: every body is checked.
 //--- class-map-helper-unused-ambient.js
 function class_map_helper_unused_ambient() {
     const values = new Map();
@@ -222,7 +222,7 @@ function class_map_helper_unused_ambient() {
 }
 var a = class_map_helper_unused_ambient();
 
-// Data retaining a class receiver needs typed payload ownership beyond borrowing.
+// `Data` storing `this` in the Map needs object-valued Map entries.
 //--- class-map-helper-stored-receiver.js
 function class_map_helper_stored_receiver() {
     const values = new Map();
@@ -240,7 +240,7 @@ function class_map_helper_stored_receiver() {
 }
 var a = class_map_helper_stored_receiver();
 
-// Publishing the helper leaves the closed local caller census.
+// `save` escapes into a global, so not all of its callers are known.
 //--- class-map-helper-published.js
 var retained;
 function class_map_helper_published() {
@@ -253,7 +253,7 @@ function class_map_helper_published() {
 }
 var a = class_map_helper_published();
 
-// Capture transport alone does not select an optional numeric-key carrier.
+// A helper-captured Map keyed by a Number argument instead of a string literal.
 //--- class-map-helper-numeric-key.js
 function class_map_helper_numeric_key() {
     const values = new Map();
@@ -269,7 +269,7 @@ function class_map_helper_numeric_key() {
 }
 var a = class_map_helper_numeric_key();
 
-// A static method cannot acquire an instance capture environment through a helper.
+// A static method gets no instance capture environment by calling a helper.
 //--- class-map-helper-static.js
 function class_map_helper_static() {
     const values = new Map();
@@ -279,7 +279,7 @@ function class_map_helper_static() {
 }
 var a = class_map_helper_static();
 
-// The current VM binds a same-named method call to itself; retain that oracle boundary.
+// The VM wrongly resolves `read()` inside method `read` to the method itself; keep it out.
 //--- class-map-helper-method-name.js
 function class_map_helper_method_name() {
     const values = new Map();
@@ -290,7 +290,7 @@ function class_map_helper_method_name() {
 }
 var a = class_map_helper_method_name();
 
-// An entry call with extra arguments retains the original arity refusal.
+// Calling `save` with an extra argument from top-level code keeps the arity refusal.
 //--- class-map-helper-excess-arguments.js
 function class_map_helper_excess_arguments() {
     const values = new Map();

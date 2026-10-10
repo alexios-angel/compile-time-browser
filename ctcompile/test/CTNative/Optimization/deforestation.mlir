@@ -1,6 +1,6 @@
-// Lumberhack-style producer/consumer strategies, restricted to native Map
-// snapshots. Conflicting consumers select identity; effects and control keep
-// the original snapshot's observation time.
+// Tests --ctnative-deforest, which fuses a native Map snapshot (map_keys or
+// map_values) into its consumers, Lumberhack-style. Conflicting consumers keep
+// the snapshot; effects and control flow keep its original observation time.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/deforestation.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/native.mlir
@@ -114,8 +114,8 @@ emitc.func @conflict(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<d
 }
 
 //--- unknown-runtime.mlir
-// Familiar helper names and a forged previous-result annotation do not replace
-// the runtime contract from successful native admission.
+// Familiar helper names and a forged ctnative.deforested annotation are not enough
+// without the ctnative.hpp include and ordered-maps define native lowering emits.
 emitc.func @unknown_runtime(%map: !emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"ctnative::js_num"> {
   %snapshot = emitc.call_opaque "ctnative::map_values"(%map) {ctnative.deforested = "length"} : (!emitc.opaque<"std::shared_ptr<ctnative::number_map<double>>">) -> !emitc.opaque<"std::vector<double>">
   %size = emitc.call_opaque "ctnative::vec_length"(%snapshot) : (!emitc.opaque<"std::vector<double>">) -> !emitc.opaque<"ctnative::js_num">

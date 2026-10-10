@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Positive and adversarial checks of the opt-in, driver-bound host proof."""
+"""Test --ctnative-host-contract on small host programs.
+
+Each source either publishes 42 through `host.slot` (and must be proved) or
+breaks that flow (and must be refused). The script then checks that a proof is
+stable when re-run, and that forged proof attributes, stale fingerprints,
+unknown providers, unsupported manifest fields and an exhausted step budget all
+withhold the proof.
+"""
 
 import argparse
 import json
@@ -10,6 +17,7 @@ from CTNative.harness import forge_module, prepare_js, run
 
 
 def fingerprint(opt, ir):
+    """Return the canonical SHA-256 fingerprint ctjs-opt computes for `ir`."""
     result = run([opt, str(ir), "--ctnative-host-contract=fingerprint=true", "-o", "/dev/null"])
     match = re.search(r"host-contract fingerprint: ([0-9a-f]{64})", result.stderr)
     if not match:
@@ -18,6 +26,12 @@ def fingerprint(opt, ir):
 
 
 def manifest(opt, ir, *, absent=(), undefined=()):
+    """Build a host manifest bound to `ir`'s fingerprint.
+
+    The manifest names `host.slot` as the published root and `trace` as the
+    observed global; `absent` and `undefined` list globals the host promises
+    are missing or undefined.
+    """
     return {
         "version": 1,
         "provider": "closed-source-v1",
@@ -31,6 +45,13 @@ def manifest(opt, ir, *, absent=(), undefined=()):
 
 
 def analyze(opt, ir, contract, prefix, *, strict=False, success=True, options=""):
+    """Run the host-contract pass on `ir` with `contract` as its manifest.
+
+    Files are written next to `prefix`. `strict` sets require-proof, so a
+    refusal fails the run; `success` is the expected exit status. Returns the
+    parsed JSON report (None if none was written), the output IR path and the
+    process result.
+    """
     config = prefix.with_suffix(".json")
     report = prefix.with_suffix(".report.json")
     output = prefix.with_suffix(".out.mlir")

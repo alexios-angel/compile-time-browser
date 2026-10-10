@@ -1,6 +1,6 @@
-# Captured primitive unions share typed cells; reads own their String snapshots.
-# Each family writes through a closure and returns a snapshot after later stores.
-# The original shared-mixed witness executes unchanged in a separate program.
+# A primitive union captured by closures lives in one shared typed cell; a String read owns a copy.
+# Each case writes through closures and returns values read before later stores. shared-mixed.js
+# (string, then number) runs separately; broad-union, object-union and container are refused.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

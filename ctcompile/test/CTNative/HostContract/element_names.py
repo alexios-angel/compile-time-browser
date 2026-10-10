@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Re-enumerate the VM's element property names; fail on any difference.
 
-Element facts (ClassInitialization/Inheritance.cpp) read a constant key the VM's
-element binding never defines as undefined. The binding's surface is spread
-over lib/Shell/bindings/element/, so the name set is enumerated from the VM
-itself: one element per tag of every interface in interface_table (parsed
+Element facts (ClassInitialization/Inheritance.cpp) treat a constant property
+key that is not in ElementNames.inc as undefined on any element, so that file
+must list every name the VM's element binding defines. The binding is spread
+over ctbrowser/lib/Shell/bindings/element/, so the set is enumerated from the
+VM itself: one element per tag of every interface in interface_table (parsed
 from interfaces.cpp), plus an unknown tag, a custom-element name and SVG,
-MathML and other-namespace elements, each walked from the element through
-its whole prototype chain with Object.getOwnPropertyNames. A form's and a
-select's getters answer keys the document decides: the page checks they
-answer what HTML says and keeps those keys out of the set. --write
+MathML and other-namespace elements, each walked through its whole prototype
+chain with Object.getOwnPropertyNames. Form and select elements also answer
+keys the document decides (named and indexed controls or options): the page
+checks they behave as HTML says and keeps those keys out of the set. --write
 regenerates ElementNames.inc.
 """
 
@@ -66,6 +67,11 @@ for (const name of names) console.log(name);
 
 
 def interface_tags(source):
+    """Return every tag name listed in interfaces.cpp's interface_table.
+
+    Each row's string literals are the interface name, its parent, then the
+    tags (space-separated, possibly split across adjacent literals).
+    """
     table = re.search(r"interface_table\[\] = \{(.*?)\n\};", source, re.S)
     if not table:
         raise RuntimeError("interfaces.cpp lost its interface_table")

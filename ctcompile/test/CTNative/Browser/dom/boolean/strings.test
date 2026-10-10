@@ -1,2 +1,2 @@
-# Literal String equality yields Boolean facts without widening shared state.
+# Strict equality of two string constants lowers natively inside a Boolean-cell helper.
 # RUN: python3 %S/strings.py %dom_driver --node %node --reference %native_reference

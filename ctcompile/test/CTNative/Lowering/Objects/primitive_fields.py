@@ -1,4 +1,10 @@
-"""Check owning String fields through local borrows and the mixed/absent boundary."""
+"""Check objects with String fields read directly, through parameters and forwarded calls.
+
+Each fixture in primitive-fields.mlir must print its expected `a=` value under
+Node and the reference interpreter. The fixtures in the NATIVE tuple must also
+lower to native code and print the same value; every other fixture must be
+refused by native lowering under both optimization settings.
+"""
 
 from CTNative.harness import native_args, run
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_native
@@ -7,6 +13,8 @@ from CTNative.Lowering.Objects.constructor_refusals import NODE, check_native
 def main():
     args = native_args(__doc__, "fixtures")
     checked = refused = 0
+    # Fixture name -> the value of `a` that Node and the reference interpreter
+    # must both print.
     for name, expected in {
         "strings": 375,
         "borrowed": 5,
@@ -61,6 +69,8 @@ def main():
     }.items():
         source = args.fixtures / f"{name}.js"
         if name == "forwarded-depth-limit":
+            # A chain of 64 forwarding functions above the reader, deeper than
+            # native lowering follows, so it must be refused.
             source = args.work / f"{name}.js"
             source.write_text(
                 "function forwarded() {\n"
@@ -73,6 +83,7 @@ def main():
             )
         assert run([args.node, "-e", NODE, str(source)]).stdout == f"a={expected}\n", name
         assert run([args.reference, str(source)]).stdout == f"a={expected}\n", name
+        # NATIVE: the fixtures that must lower and run natively.
         if name in (
             "strings",
             "equality",

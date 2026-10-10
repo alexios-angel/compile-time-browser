@@ -1,24 +1,24 @@
-// ONE SHAPE IS ONE DEFINITION - part 24 Phase 56, stage C.
+// One object shape produces one class definition.
 //
-// 56B emitted one `emitc.class` per creation SITE, so the shipped struct
-// fixture had seven classes for six shapes and two of them were byte for byte
-// the same. A definition is keyed on the SHAPE instead - the ordered list of
-// (field name, field type) - so two sites with the same key get the same type
-// and the SAME NAME, which is what makes a generated struct passable between
-// functions at all. Where the names match and a type differs, the definition is
-// one class TEMPLATE and each site is an instantiation.
+// A class is keyed on the object's shape, the sorted list of (field name,
+// field type), not on its creation site. Two sites with the same key get the
+// same type and the same name, which is what lets a generated struct be passed
+// between functions. Where the names match and a type differs, the definition
+// is one class template and each site an instantiation.
 //
+// Creation sites can sit inside branches and loops (object identity, obligation
+// O-3 in ctcompile/docs/native-divergences.md), so the test is
 // ASSERTED AT THE IR LEVEL, WITH CHECK-COUNT AND CHECK-NOT, and deliberately
-// NOT by counting `class` lines in the emitted C++ with a regex: an indent-
-// anchored regex over generated C++ under-counts the moment a definition moves,
-// and obligation O-3 already puts creation sites inside branches and loops.
+// not by counting `class` lines in the emitted C++ with a regex: an
+// indent-anchored regex over generated C++ under-counts as soon as a
+// definition moves, and those creation sites move.
 // CHECK-COUNT-1 followed by CHECK-NOT is exact and needs no indent at all. One
-// RUN does go to C++, and only to pin the two things the IR cannot show: the
+// RUN does go to C++, only to pin the two things the IR cannot show: the
 // `template <class T0>` line itself and the provenance comment above it.
 //
-// ONE PROGRAM PER FILE, for the reason native-array.mlir gives: a refusal is
-// contagious in both directions, so one bad function in a shared module would
-// take every other case in it down with it.
+// One program per split file: a refusal is contagious in both directions, so
+// one bad function in a shared module would take every other case down with it.
+
 
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/same.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=SAME
@@ -30,14 +30,14 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/conflict.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CONFLICT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/varying.js 2>/dev/null | ctjs-opt "--pass-pipeline=builtin.module(ctjs-resolve-globals, ctjs-lift-to-scf, ctnative-lower-to-emitc, emitc.func(canonicalize, convert-scf-to-emitc, convert-arith-to-emitc, canonicalize, ctnative-prune-dead-stores, canonicalize))" | ctjs-translate --mlir-to-cpp | FileCheck %s --check-prefix=CPP
 
-// --- THREE SITES, ONE CLASS ------------------------------------------------
+// --- Three sites, one class ------------------------------------------------
 //
-// `{x, y}` in two functions and three literals. Before 56C this module held
-// ctn_shape_0, ctn_shape_1 and ctn_shape_2, three distinct types with
-// identical members, and `dot` could not have passed `a` to a helper that took
-// `b`. The COUNT-3 is the other half of the claim: all three creations declare
-// a variable of the ONE type, so the canonicalisation reaches the sites and not
-// only the definitions.
+// `{x, y}` in two functions and three literals must yield one class, ctn_x_y.
+// With a class per site there would be three distinct types with identical
+// members, and `dot` could not pass `a` to a helper that took `b`. The COUNT-3
+// checks that all three creations declare a variable of that one type, so the
+// canonicalization reaches the sites and not only the definitions.
+//
 //
 // SAME-NOT:  emitc.class
 // SAME:      emitc.class @ctn_x_y
@@ -47,18 +47,18 @@
 // SAME-COUNT-3: "emitc.variable"() <{value = #emitc.opaque<"">}> : () -> !emitc.lvalue<!emitc.opaque<"ctn_x_y">>
 // SAME-NOT:  emitc.class
 
-// --- THE NAMES MATCH AND A TYPE DIFFERS: ONE TEMPLATE, TWO INSTANTIATIONS ---
+// --- Same names, one type differs: one template, two instantiations --------
 //
 // `at` is a number at both sites and stays a `ctnative::js_num`; `hit` is a
-// boolean at one and a number at the other, and only IT becomes a parameter. A position
-// the whole program agrees on keeps its concrete type, which is more
-// information and not less.
+// boolean at one and a number at the other, and only it becomes a parameter. A
+// position the whole program agrees on keeps its concrete type.
 //
-// NOT A VARIANT FIELD. Each site here is monomorphic - `flag` never puts a
-// number in `hit` and `count` never puts a boolean there - and only the union
-// of the two sites is not, so a `std::variant` member would put a `std::visit`
-// in front of every read at both sites to pay for a polymorphism neither has.
-// Part 24 Phase 56C step 3 draws that line; this is the case on its near side.
+// This is not a variant field. Each site is monomorphic (`flag` never puts a
+// number in `hit` and `count` never puts a boolean there); only the union of
+// the two is not. A `std::variant` member would put a `std::visit` before
+// every read at both sites to pay for polymorphism neither has. A variant field
+// is used only when a single site stores more than one type.
+//
 //
 // VARYING:      emitc.class @ctn_at_hit
 // VARYING-SAME: 2 sites, 2 instantiations
@@ -69,23 +69,23 @@
 // VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<ctnative::js_boolean_t>">>
 // VARYING-DAG: () -> !emitc.lvalue<!emitc.opaque<"ctn_at_hit<ctnative::js_num>">>
 
-// --- AND THE ORDER THE PROGRAM WROTE THE KEYS IN IS NOT PART OF THE KEY -----
+// --- The order the program wrote the keys in is not part of the key ---------
 //
 // `{x: 1, y: 2}` and `{y: 4, x: 3}` are the same shape. The fields are sorted
-// before the key is formed, so they canonicalise together.
+// before the key is formed, so they canonicalize together.
 //
-// A NOTE ON WHAT THIS DOES *NOT* PROVE. Deleting the sort does not make this
-// test fail, and it was tried: the field vector comes out of a StringMap whose
-// bucket layout depends on the key SET and not on the insertion order, so both
-// sites produce the same order with or without it. A "delete the sort and watch
-// it go red" test would have been vacuous, so there is not one. The sort stays
-// because the emitted field order should not depend on a hash.
+// This test cannot catch a removed sort: the fields come from a StringMap whose
+// order depends only on the key set, so both sites agree anyway. The sort stays
+// so the emitted field order never depends on a hash.
+
+
+
 //
 // ORDERED-NOT: emitc.class
 // ORDERED:     emitc.class @ctn_x_y
 // ORDERED-NOT: emitc.class
 
-// --- TWO SHAPES THAT WANT ONE NAME -----------------------------------------
+// --- Two shapes that want one name -----------------------------------------
 //
 // `{a_b}` and `{a, b}` both join to `ctn_a_b`, because every character a field
 // name may contain is also the character the separator is. Without the
@@ -98,7 +98,7 @@
 // COLLIDE-NEXT: emitc.field @a : !emitc.opaque<"ctnative::js_num">
 // COLLIDE-NEXT: emitc.field @b : !emitc.opaque<"ctnative::js_num">
 
-// --- A FIELD MAY BE CALLED T0, AND A TEMPLATE PARAMETER MAY NOT -------------
+// --- A field may be called T0, and a template parameter may not -------------
 //
 // `template <class T0> class C { double T0; };` is "declaration of 'T0'
 // shadows template parameter" on both toolchains, and `{T0: 1}` is a perfectly
@@ -110,35 +110,35 @@
 // SHADOW-NEXT: emitc.field @T0 : !emitc.opaque<"ctnative::js_num">
 // SHADOW-NEXT: emitc.field @y : !emitc.opaque<"T1">
 
-// --- THE SHAPE WITH NO FIELDS IS A PLAIN CLASS -----------------------------
+// --- The shape with no fields is a plain class -----------------------------
 //
 // `var e = {};` is admitted: hasClosedShape's loop over the uses of a literal
-// with none is vacuously true. It has no field, so it has nothing to
-// parametrise, and `template <>` is the explicit-specialisation syntax rather
-// than a declaration - ill-formed on a primary template. It must therefore
-// arrive at the emitter with NO parameter attribute at all, not an empty one;
-// template-empty.mlir pins what happens if it ever does.
+// with none is vacuously true. It has no field, so nothing to parametrize, and
+// `template <>` is explicit-specialization syntax, ill-formed on a primary
+// template. So it must reach the emitter with no parameter attribute at all,
+// not an empty one; ../Emission/template-empty.mlir pins what happens if it
+// ever does.
 //
 // EMPTY:     emitc.class @ctn_empty
 // EMPTY-NOT: ctnative.template_params
 // EMPTY-NOT: emitc.field
 
-// --- A FIELD STORED BOTH SCALAR KINDS USES TAGGED STORAGE ------------------
+// --- A field stored as both scalar kinds uses tagged storage ----------------
 //
 // `o.v = 1; o.v = true;` with `v` never read still joins every write before
-// choosing its storage. A use-list's order cannot select bool or double and
-// make otherwise identical sites disagree about the shape key.
+// choosing its storage, so the order of a use list cannot pick bool or double
+// and make otherwise identical sites disagree about the shape key.
 //
 // CONFLICT: emitc.include "ctcompile/CTNative/Runtime/ctnative.hpp"
 // CONFLICT: emitc.class @ctn_v
 // CONFLICT-NEXT: emitc.field @v : !emitc.opaque<"ctnative::nullable_scalar">
 // CONFLICT: emitc.func @twofaced_1
 
-// --- AND WHAT THE TEMPLATE LOOKS LIKE AS C++ -------------------------------
+// --- What the template looks like as C++ ----------------------------------
 //
 // The provenance comment names the sites and says how many there are, and the
-// `template <class T0>` line sits between it and the class - which is why
-// check-compile-clean.cmake looks back two lines and not one.
+// `template <class T0>` line sits between it and the class, which is why
+// CTNative/Checks/compile-clean.py looks back two lines and not one.
 //
 // CPP:      // ctcompile: object literal at
 // CPP-SAME: (2 sites, 2 instantiations)

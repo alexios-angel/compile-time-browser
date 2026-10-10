@@ -8,8 +8,8 @@
 // PROVED: emitc.func @tag_1({{.*}}!emitc.opaque<"ctnative::js_string">) -> !emitc.opaque<"ctnative::js_string">
 // PROVED-NOT: ctnative.not_native
 
-// --- AND THE ONE NOTHING PROVED, WHICH IS STILL 62½-A -----------------------
-//
+// An unproved parameter is still refused: only a closed-world proof of every
+// caller (the ctjs-resolve-globals pass, omitted from this RUN line) can type it.
 // UNPROVED: ctjs.func @scale$1
 // UNPROVED-SAME: ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it (a closed-world call is Phase 62\C2\BD-A)"
 

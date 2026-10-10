@@ -1,23 +1,23 @@
-# THE NATIVE GATE OVER overwrite-loop.js. The modules are the build's: Native.cmake's
-# ctcompile_add_native_pipeline lowers this program through the closed world,
-# the lift and the lowering (refusing to write a module while any function
-# carries `ctnative.not_native`), then applies the printing policy and its
-# mutation. Each is gated here: compiled standalone with no ctbrowser library,
-# shown by nm to reach no interpreter, run, and compared global by global with
-# the interpreter's own answer (compilation-unit.py); compiled clean on both
-# toolchains with a provenance comment over every definition (compile-clean.py);
-# and the printed pins paired, spelling-only, and shown to bite (print-deduced.py).
-# A trailing global on a RUN line under `not` is the off-by-one negative proof:
-# the mutation must fail naming that global, so the gate's teeth stay in the suite.
+# Native differential test of overwrite-loop.js. The modules come from
+# ctcompile_add_native_pipeline in Native.cmake, which lowers the program to
+# native C++ (writing no module while any function carries `ctnative.not_native`)
+# plus a variant printed with deduced `auto` types and one with a wrong type pin.
+# compilation-unit.py compiles a module standalone, checks with nm that it calls
+# no interpreter, runs it, and compares every global with the interpreter's.
+# compile-clean.py checks a warning-free build on both toolchains with a
+# provenance comment over every definition. print-deduced.py checks that the
+# deduced module differs only in type spellings and that the wrong pin fails.
+# A `not ... --mutate G` line adds one to global G in the C++ and expects the
+# comparison to fail naming G, proving the comparison can catch a difference.
 
-# array_overwrite_loop
+# Built with the default optimizations.
 # RUN: %compilation_unit --module %{obj}/array_overwrite_loop.pipeline.emitc.mlir --js %S/overwrite-loop.js --work %t --name array_overwrite_loop
 # RUN: %compilation_unit --module %{obj}/array_overwrite_loop.pipeline.deduced.emitc.mlir --js %S/overwrite-loop.js --work %t --name array_overwrite_loop_deduced
 # RUN: %compile_clean --module %{obj}/array_overwrite_loop.pipeline.emitc.mlir --work %t --name array_overwrite_loop
 # RUN: %compile_clean --module %{obj}/array_overwrite_loop.pipeline.deduced.emitc.mlir --work %t --name array_overwrite_loop_deduced
 # RUN: %print_deduced --plain %{obj}/array_overwrite_loop.pipeline.emitc.mlir --deduced %{obj}/array_overwrite_loop.pipeline.deduced.emitc.mlir --mutated %{obj}/array_overwrite_loop.pipeline.mutated.emitc.mlir --work %t --name array_overwrite_loop
 
-# array_overwrite_loop_unoptimized
+# The same program built with NO_DEFAULT_OPTIMIZATIONS.
 # RUN: %compilation_unit --module %{obj}/array_overwrite_loop_unoptimized.pipeline.emitc.mlir --js %S/overwrite-loop.js --work %t --name array_overwrite_loop_unoptimized
 # RUN: %compilation_unit --module %{obj}/array_overwrite_loop_unoptimized.pipeline.deduced.emitc.mlir --js %S/overwrite-loop.js --work %t --name array_overwrite_loop_unoptimized_deduced
 # RUN: %compile_clean --module %{obj}/array_overwrite_loop_unoptimized.pipeline.emitc.mlir --work %t --name array_overwrite_loop_unoptimized

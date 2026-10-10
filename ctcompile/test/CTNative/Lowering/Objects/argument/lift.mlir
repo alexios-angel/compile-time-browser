@@ -1,29 +1,29 @@
-// AN ARGUMENT IS A PARAMETER TOO - part 24, as IR.
+// Object literals passed as call arguments lower to pointer parameters.
 //
-// The receiver lift's content is that a closed-shape literal reaches a function
-// as a `ctn_x *` and its fields as `self->x`. NOTHING IN THAT CARRIER IS ABOUT
-// OPERAND 0, so an argument gets it on the same proof: `read(o)` lowers to
+// The receiver lift lowers a closed-shape literal to a `ctn_x *` parameter
+// and its fields to `self->x`. Nothing in that lowering depends on operand 0,
+// so an argument gets it on the same proof: `read(o)` lowers to
 // `fn_N(&o)` with `!emitc.ptr<!emitc.opaque<"ctn_x">>` for a parameter and
 // `emitc.member_of_ptr` for every field, which is the receiver's own lowering
 // with a different operand number.
 //
-// WHY THIS IS A `this` CHANGE AND NOT ONLY AN ARGUMENT ONE. `closedAfterLift`
-// refused a literal the moment it appeared in an argument, so a method table
-// that was ALSO passed to anything had an open shape - and an open shape
-// refused every method on it with "a method field of an object whose shape is
-// not closed". `both()` is that program: before this slice neither the method
-// nor the call lifted, and the census in refusals.mlir is what
-// says how often that shape occurs.
+// This also matters for `this`. If an argument use made a literal's shape
+// open (`closedAfterLift` in ClosureLifting/Methods.cpp decides), a method
+// table that was also passed anywhere would have every method refused with
+// "a method field of an object whose shape is not closed". `both()` is that
+// program, and both its method and its call must lift. The census in
+// refusals.mlir counts how often that shape occurs in real programs.
 //
-// THE SIGNATURES ARE THE ASSERTION. Get the index wrong and the program still
-// verifies, still compiles clean under -Werror, and prints a wrong number - so
-// the parameter lists are pinned here and the answers are pinned by the
-// differential gate over native-object-argument-fixture.js.
 //
-// ONE PROGRAM PER FILE, and the functions are appended in source order: the
+// The signatures are the assertion. With a wrong index the program still
+// verifies, compiles cleanly under -Werror and prints a wrong number, so the
+// parameter lists are pinned here and the answers are pinned by the native
+// fixture test over test/CTNative/Fixtures/Objects/argument.js.
+//
+// One program per file, and the functions are appended in source order: the
 // importer's `$N` suffix is its position in `program::functions`, so inserting
 // a function in the middle renumbers every symbol below it. The checks below
-// match the SIGNATURE rather than the number for that reason.
+// match the signature rather than the number for that reason.
 //
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
@@ -60,7 +60,7 @@ var b1 = both();
 var t1 = two_arguments();
 var m1 = mixed();
 
-// --- THE CLASSES ------------------------------------------------------------
+// --- The classes -------------------------------------------------------------
 //
 // `{x: 4, bump: <fn>}` in `both` shares the exact `ctn_x` class with
 // `{x: 4}` in `passed`. Complete callable-use and initialization checks prove
@@ -79,27 +79,27 @@ var m1 = mixed();
 // CHECK-NEXT:   emitc.field @k : !emitc.opaque<"ctnative::js_num">
 // CHECK-NEXT: }
 
-// --- THE ADDRESS AT THE CALL SITE, AND THE SIGNATURE IT FEEDS ---------------
+// --- The address at the call site, and the signature it feeds ----------------
 //
 // The literal is an `emitc.variable` - an lvalue in the caller's frame - and
 // the callee takes a pointer, so the site takes its address. It is the same
 // `emitc.address_of` the receiver uses, through the same lambda, which is what
 // stops the two drifting into two spellings of one thing.
 //
-// ONE OBJECT PARAMETER, ALONE: `double fn_2(ctn_x *)`.
+// One object parameter, alone: `double fn_2(ctn_x *)`.
 // CHECK:      emitc.func @passed_1
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_x">>
 // CHECK:      emitc.func @fn_2(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> !emitc.opaque<"ctnative::js_num">
 // CHECK:        emitc.member_of_ptr
 
-// --- THE RECEIVER AND AN ARGUMENT, ON ONE LITERAL ---------------------------
+// --- The receiver and an argument, on one literal ----------------------------
 //
-// `both` is the program the widening exists for. Two addresses of the SAME
+// `both` is the program this rule is for. Two addresses of the same
 // variable: `bump` takes the pointer at operand 0 because a receiver is
 // `%arg0`, `read` takes it at operand 3 because that is where the parameter is.
-// Two indices, one carrier, one class - and before this slice neither call
-// lifted, because the argument use opened the shape and an open shape refused
-// the method field by name.
+// Two indices, one carrier, one class. The argument use must not open the
+// shape, or the method field would be refused by name.
+//
 //
 // CHECK:      emitc.func @both_3
 // CHECK:        address_of %[[OBJ:[0-9]+]] : !emitc.lvalue<!emitc.opaque<"ctn_x">>
@@ -107,9 +107,9 @@ var m1 = mixed();
 // CHECK:      emitc.func @fn_4(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>, %arg1: !emitc.opaque<"ctnative::js_num">) -> !emitc.opaque<"ctnative::js_num">
 // CHECK:      emitc.func @fn_5(%arg0: !emitc.ptr<!emitc.opaque<"ctn_x">>) -> !emitc.opaque<"ctnative::js_num">
 
-// --- TWO OBJECT PARAMETERS OF TWO SHAPES ------------------------------------
+// --- Two object parameters of two shapes -------------------------------------
 //
-// The lift writes a LIST of indices rather than a bit for this, and the alias
+// The lift writes a list of indices rather than a bit for this, and the alias
 // groups keep the two apart: joining them would give both the union of the
 // shapes and a class with a field neither literal has.
 //
@@ -118,19 +118,19 @@ var m1 = mixed();
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_b">>
 // CHECK:      emitc.func @fn_7(%arg0: !emitc.ptr<!emitc.opaque<"ctn_a">>, %arg1: !emitc.ptr<!emitc.opaque<"ctn_b">>) -> !emitc.opaque<"ctnative::js_num">
 
-// --- AND AN OBJECT THAT IS NOT THE FIRST ARGUMENT ---------------------------
+// --- An object that is not the first argument --------------------------------
 //
-// Next to a number, and second. The index the lift writes is the ENTRY-BLOCK
+// Next to a number, and second. The index the lift writes is the entry-block
 // index, so a mixed parameter list still lines up: `fn_9(double, ctn_k *)`.
 //
 // CHECK:      emitc.func @mixed_8
 // CHECK:        address_of %{{[0-9]+}} : !emitc.lvalue<!emitc.opaque<"ctn_k">>
 // CHECK:      emitc.func @fn_9(%arg0: !emitc.opaque<"ctnative::js_num">, %arg1: !emitc.ptr<!emitc.opaque<"ctn_k">>) -> !emitc.opaque<"ctnative::js_num">
 
-// --- THE COUNTS -------------------------------------------------------------
+// --- The counts --------------------------------------------------------------
 //
 // Pass statistics are compiled out of the release LLVM this builds against, so
-// the counter is printed and asserted rather than admired. Five object
+// the counter is printed and asserted. Five object
 // parameters: one in `passed`, one in `both`, two in `two_arguments`, one in
 // `mixed`.
 //

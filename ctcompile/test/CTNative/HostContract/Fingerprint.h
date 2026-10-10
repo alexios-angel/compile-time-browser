@@ -1,3 +1,10 @@
+//===- Fingerprint.h - Fingerprint tests ------------------------*- C++ -*-===//
+//
+// Tests for hostContractFingerprint, the SHA-256 of a module that a host
+// contract binds to. Included by HostContract.cpp.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "Fixtures.h"
@@ -8,6 +15,9 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Checks hostContractFingerprint: it equals the reference digest, ignores
+/// ctnative.host_* report attributes and locations, and changes when any other
+/// attribute or source constant changes.
 inline void checkFingerprint(mlir::MLIRContext & context) {
     auto module = parsed(context, fixture, "fingerprint fixture parses");
     if (!module) { return; }
@@ -20,7 +30,9 @@ inline void checkFingerprint(mlir::MLIRContext & context) {
     const auto checked = [&] {
         const auto before = printed(*module, true);
         const auto result = hostContractFingerprint(*module);
-        // Preserve the old always-clone algorithm as the compatibility oracle.
+        // Reference digest: clone the module, strip host-contract reports and
+        // hash the generic printed form without locations. The fast path in
+        // hostContractFingerprint must produce the same hex string.
         mlir::OwningOpRef<mlir::ModuleOp> copy = module->clone();
         ctnative::clearHostContractReports(*copy);
         const auto text = printed(*copy, false);

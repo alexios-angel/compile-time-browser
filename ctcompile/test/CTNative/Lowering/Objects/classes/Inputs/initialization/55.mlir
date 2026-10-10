@@ -1,6 +1,6 @@
-// A base constructed only through its leaves' super calls has no own-key shape
-// of its own: the leaf proves the snapshot after super normalization, where its
-// actuals decide the base's arm.
+// A base constructed only through its subclasses' super() calls has no field list of
+// its own: each subclass proves its fields after inlining super(), where the
+// subclass's arguments decide the base constructor's branch.
 //--- inherited-own-fields-iterate-deferred-arm.js
 function inherited_own_fields_iterate_deferred_arm() {
     class Base {
@@ -12,7 +12,7 @@ function inherited_own_fields_iterate_deferred_arm() {
 }
 var a = inherited_own_fields_iterate_deferred_arm();
 
-// Bootstrap's dispose shape: the leaf folds the base's clearing loop.
+// Bootstrap's dispose() shape: the subclass's copy of the base's clearing loop is folded.
 //--- inherited-own-fields-iterate-deferred-loop.js
 function inherited_own_fields_iterate_deferred_loop() {
     class Base {
@@ -27,7 +27,7 @@ function inherited_own_fields_iterate_deferred_loop() {
 }
 var a = inherited_own_fields_iterate_deferred_loop();
 
-// Truthy actuals select the other arm's fields.
+// Truthy arguments select the other branch's fields.
 //--- inherited-own-fields-iterate-deferred-truthy.js
 function inherited_own_fields_iterate_deferred_truthy() {
     class Base {
@@ -39,7 +39,7 @@ function inherited_own_fields_iterate_deferred_truthy() {
 }
 var a = inherited_own_fields_iterate_deferred_truthy();
 
-// Siblings that decide the same fields share the folded body.
+// Sibling subclasses whose arguments decide the same fields share the folded body.
 //--- inherited-own-fields-iterate-deferred-siblings.js
 function inherited_own_fields_iterate_deferred_siblings() {
     class Base {
@@ -52,7 +52,7 @@ function inherited_own_fields_iterate_deferred_siblings() {
 }
 var a = inherited_own_fields_iterate_deferred_siblings();
 
-// An intermediate base with no instances defers as well.
+// An intermediate base with no instances of its own is deferred to the leaf as well.
 //--- inherited-own-fields-iterate-deferred-chain.js
 function inherited_own_fields_iterate_deferred_chain() {
     class Base {
@@ -65,7 +65,7 @@ function inherited_own_fields_iterate_deferred_chain() {
 }
 var a = inherited_own_fields_iterate_deferred_chain();
 
-// The first leaf to fold the shared body fixes its fields for every sibling.
+// The first subclass to fold the shared body fixes its fields for every sibling.
 //--- inherited-own-fields-iterate-deferred-siblings-differ.js
 function inherited_own_fields_iterate_deferred_siblings_differ() {
     class Base {
@@ -78,7 +78,7 @@ function inherited_own_fields_iterate_deferred_siblings_differ() {
 }
 var a = inherited_own_fields_iterate_deferred_siblings_differ();
 
-// Leaf actuals that disagree leave the base arm to run time.
+// Subclass arguments that disagree leave the base's branch to be decided at run time.
 //--- inherited-own-fields-iterate-deferred-mixed.js
 function inherited_own_fields_iterate_deferred_mixed() {
     class Base {
@@ -90,7 +90,7 @@ function inherited_own_fields_iterate_deferred_mixed() {
 }
 var a = inherited_own_fields_iterate_deferred_mixed();
 
-// The decided arm calls the snapshot before the leaf's fields are complete.
+// The decided branch calls count() before the subclass's fields are complete.
 //--- inherited-own-fields-iterate-deferred-early-snapshot.js
 function inherited_own_fields_iterate_deferred_early_snapshot() {
     class Base {
@@ -102,7 +102,7 @@ function inherited_own_fields_iterate_deferred_early_snapshot() {
 }
 var a = inherited_own_fields_iterate_deferred_early_snapshot();
 
-// With no base instance, a field only the leaf adds is simply part of its shape.
+// With no base instance, a field only the subclass adds is simply part of its shape.
 //--- inherited-own-fields-iterate-deferred-added.js
 function inherited_own_fields_iterate_deferred_added() {
     class Base {

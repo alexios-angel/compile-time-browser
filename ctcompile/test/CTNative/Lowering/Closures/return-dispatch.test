@@ -1,5 +1,5 @@
-# Ordinary return dispatch reuses bounded normalization on a disposable clone.
-# Budget failure and later type refusal must preserve the original switch.
+# Returns that become scf.index_switch lower natively; the dispatch is normalized on a throwaway
+# clone, so an exhausted work budget or a later type refusal (BigInt) leaves the switch intact.
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/values.js
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir

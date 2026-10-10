@@ -1,3 +1,15 @@
+"""Map `size` cases for the global-Map ownership driver.
+
+Families: zero-size, one-size, deletion, branch-join and after-join mutation.
+For each family:
+- census: the five-function IR keeps its expected call counts;
+- observations: Node and the VM agree, and each (old, replacement) edit must
+  change the output (`distinguish`), which proves the fixture observes that
+  detail;
+- refusals: cases that are not admitted must be refused, and applying the
+  row's repair edit must give back the admitted positive.
+"""
+
 from CTNative.harness import find_compilers
 
 from .common import *
@@ -69,6 +81,14 @@ def check_one_size_refusals(args, positives):
 
 
 def check_exact_size_refusals(args, positives, cases, census):
+    """Check every case of `cases` that is not admitted.
+
+    In both the default and optimize=false modes, require refusal (or, for
+    `owner` rows, ownership-preserving lowering that runs correctly), require
+    the row's repair edit to give the admitted positive, and require a changed
+    source, forged leaf evidence (stale and fresh manifests) and reruns of the
+    refused output to be refused too.
+    """
     for name, row in cases.items():
         if row["admitted"]:
             continue
@@ -226,9 +246,11 @@ def check_one_size_observations(args, node, reference):
         if host.run([node, "-e", CONSTANT_GLOBAL_NODE, str(js), '["trace"]']).stdout == expected:
             raise RuntimeError(f"{name}: future observer cannot distinguish {replacement}")
 
-    # The concrete startup happens to be safe in both refusal families. Their
-    # future observations expose why startup facts cannot establish an exact
-    # cardinality for every invocation or decide equality of distinct formals.
+    # These programs give the right answer during startup but are refused,
+    # because later calls can differ. Calling the setter again with keys 1 and
+    # 99 gives a different size or key equality, so facts seen at startup
+    # cannot prove an exact size for every call. Each bit of `trace` records
+    # one expected result; 7 means all three held.
     for name, values in (
         ("startup_empty_before_write", (1, 0, 0)),
         ("size_one_possible_formal_key", (1, 0, 1)),
@@ -287,9 +309,9 @@ def check_delete_size_observations(args, node, reference):
         row = cases[name]
         distinguish(args, name, row["source"], old, replacement, f"trace={row['expected_trace']}\n")
 
-    # Future invocations expose possible aliasing that the startup key seven
-    # alone cannot establish. Each branch's startup literal remains irrelevant
-    # to the independent complete-body proof.
+    # Startup calls the setter with key 7 only; later calls with 1 and 99 can
+    # hit a key that aliases an existing entry. The proof has to hold for the
+    # whole method body, not only for the startup argument.
     for name, values in (
         ("size_deleted_possible_alias", (0, 1, 0)),
         ("size_deleted_possible_remaining_key", (0, 1, 0)),
@@ -322,8 +344,8 @@ def check_delete_size_observations(args, node, reference):
         ("state.clear(); state.set(2, item);", "state.has(key); state.set(2, item);"),
     ):
         if old == "state.delete(0);":
-            # The original trailing clear deliberately makes this deletion
-            # unobservable; observe its result before that clear independently.
+            # The trailing clear() hides this deletion from the trace, so record
+            # delete()'s own result before the clear and observe that instead.
             witnessed = source.replace(
                 "state.delete(0); state.clear();", "const deleted = state.delete(0); state.clear();"
             ).replace("return saved === item ?", "return deleted && saved === item ?")
@@ -374,9 +396,10 @@ def check_join_size_observations(args, node, reference):
             args, name, row["source"], f"state.set({key}, item);", f"state.has({key});", "trace=1\n"
         )
 
-    # Both future flags distinguish unequal cardinality, missing common keys,
-    # and writes which overwrite in one arm but insert in the other. The
-    # startup argument is no authority for a method callable again later.
+    # Call the setter again later with flag false and true. This shows when the
+    # two branches leave different sizes, lack a common key, or overwrite in
+    # one branch but insert in the other. Startup arguments prove nothing
+    # about later calls; `trace` 3 means both results held.
     for name, values in (
         ("joined_delete_disjoint_false", (1, 1)),
         ("joined_set_disjoint_false", (1, 1)),
@@ -469,8 +492,9 @@ def check_mutation_size_observations(args, node, reference):
             "trace=1\n",
         )
 
-    # Future arguments cover both independently proved mutations and cases in
-    # which a startup-only distinct key later becomes an existing branch key.
+    # Later calls (99, false), (1, false) and (1, true) cover mutations proved
+    # for every call, and cases where a key that differed at startup later
+    # matches a key one branch already wrote.
     for name, values in (
         ("joined_disjoint_set_false", (1, 1, 1)),
         ("joined_absent_delete_false", (1, 1, 1)),

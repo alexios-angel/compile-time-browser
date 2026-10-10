@@ -11,14 +11,14 @@
 // RUN: ctjs-opt %t/source.mlir --ctnative-supercompile='max-growth=1' | FileCheck %s --check-prefix=SIZE
 // RUN: ctjs-opt %t/effects.mlir --ctnative-supercompile | FileCheck %s --check-prefix=EFFECTS
 // RUN: ctjs-opt %t/exact.mlir --ctnative-supercompile | FileCheck %s --check-prefix=EXACT
-
+// Without --ctnative-supercompile (OFF) there are no supercompiled clones and no summary.
 // OFF-NOT: __supercompiled_
 // OFF-NOT: ctnative.supercompile_summary
 // OFF: ctjs.func private @modeSum$1
 // OFF-NOT: __supercompiled_
-
-// Exact promises precede the whistle: stable true/false modes each fold to a
-// real recursive residual definition. Unknown count tests still execute.
+// The whistle is the supercompiler's termination check. Exact promises (memoized
+// configurations) are checked before it: stable true/false modes each fold to a real
+// recursive residual definition. Unknown count tests still execute.
 // DRIVEN-LABEL: ctjs.func private @ordered$8
 // DRIVEN: ctjs.call_direct @record$7
 // DRIVEN: ctjs.call_direct @modeSum$1__supercompiled_1
@@ -36,7 +36,7 @@
 // DRIVEN: ctjs.call_direct @alternate$3__supercompiled_1
 // DRIVEN-LABEL: ctjs.func private @alternate$3__supercompiled_1
 // DRIVEN: ctjs.call_direct @alternate$3__supercompiled_0
-// The shape of 10 and 11 embeds, but they are not equivalent configurations.
+// 10 and 11 have the same shape, so the whistle fires, but they are not equivalent configurations.
 // DRIVEN-LABEL: ctjs.func private @growing$5__supercompiled_0
 // DRIVEN: ctjs.call_direct @growing$5(
 // DRIVEN-NOT: __supercompiled_
@@ -106,9 +106,9 @@ module {
     %u = ctjs.constant #ctjs.undefined
     %true = ctjs.constant #ctjs.boolean<true>
     %zero = ctjs.constant #ctjs.number<0>
-    %negative = ctjs.constant #ctjs.number<9223372036854775808>
-    %nan1 = ctjs.constant #ctjs.number<9221120237041090560>
-    %nan2 = ctjs.constant #ctjs.number<9221120237041090561>
+    %negative = ctjs.constant #ctjs.number<9223372036854775808> // -0.0
+    %nan1 = ctjs.constant #ctjs.number<9221120237041090560> // quiet NaN, bits 0x7FF8000000000000
+    %nan2 = ctjs.constant #ctjs.number<9221120237041090561> // NaN, bits 0x7FF8000000000001
     %generic = ctjs.call_direct @bits$1(%u, %u, %u, %true, %zero, %x)
     %a = ctjs.call_direct @bits$1(%u, %u, %u, %true, %zero, %x)
     %b = ctjs.call_direct @bits$1(%u, %u, %u, %true, %negative, %x)

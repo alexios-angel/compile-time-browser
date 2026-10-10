@@ -1,4 +1,4 @@
-// Preparation preserves completed record registrations; native storage is a separate proof.
+// Maps whose entries are class instances: get returns the very object that was set.
 //--- class-map-record-direct.js
 function class_map_record_direct() {
     const values = new Map();
@@ -10,7 +10,7 @@ function class_map_record_direct() {
 }
 var a = class_map_record_direct();
 
-// Replacing an entry must not change the record already returned by get.
+// Overwriting an entry does not change the object an earlier get returned.
 //--- class-map-record-overwrite.js
 function class_map_record_overwrite() {
     const values = new Map();
@@ -25,7 +25,7 @@ function class_map_record_overwrite() {
 }
 var a = class_map_record_overwrite();
 
-// Deletion removes the entry without ending the saved record's owner lifetime.
+// Deleting the entry leaves the object returned by an earlier get alive and writable.
 //--- class-map-record-delete.js
 function class_map_record_delete() {
     const values = new Map();
@@ -39,7 +39,7 @@ function class_map_record_delete() {
 }
 var a = class_map_record_delete();
 
-// Clearing every Map entry leaves both entry-frame owners and the saved alias alive.
+// clear() empties the Map but both instances and the saved get result stay alive.
 //--- class-map-record-clear.js
 function class_map_record_clear() {
     const values = new Map();
@@ -53,7 +53,7 @@ function class_map_record_clear() {
 }
 var a = class_map_record_clear();
 
-// One constructor schema can carry distinct payload values in independent entries.
+// Two entries hold distinct instances of the same class with different field values.
 //--- class-map-record-payloads.js
 function class_map_record_payloads() {
     const values = new Map();
@@ -66,7 +66,7 @@ function class_map_record_payloads() {
 }
 var a = class_map_record_payloads();
 
-// Writes through a copied get result reach the original record and a later get.
+// Writes through a copy of a get result reach the original object and a later get.
 //--- class-map-record-alias-write.js
 function class_map_record_alias_write() {
     const values = new Map();
@@ -80,7 +80,7 @@ function class_map_record_alias_write() {
 }
 var a = class_map_record_alias_write();
 
-// A branch-local construction cannot supply the enclosing Map's borrowed owner.
+// Refused: the instance is created inside an `if` block, so it may not outlive the Map read.
 //--- class-map-record-region-owner.js
 function class_map_record_region_owner(flag) {
     const values = new Map();
@@ -94,7 +94,7 @@ function class_map_record_region_owner(flag) {
 }
 var a = class_map_record_region_owner(true);
 
-// A missing get requires an optional record carrier beyond a present-record borrow.
+// Refused: get of a missing key would need an "instance or undefined" result type.
 //--- class-map-record-missing.js
 function class_map_record_missing() {
     const values = new Map();
@@ -106,7 +106,7 @@ function class_map_record_missing() {
 }
 var a = class_map_record_missing();
 
-// Different constructors and field layouts cannot share one proved record schema.
+// Refused: one Map holding instances of two classes with different fields.
 //--- class-map-record-mixed-constructors.js
 function class_map_record_mixed_constructors() {
     const values = new Map();
@@ -120,7 +120,7 @@ function class_map_record_mixed_constructors() {
 }
 var a = class_map_record_mixed_constructors();
 
-// A scalar write prevents the complete producer census from proving record payloads.
+// Refused: one Map holding both an instance and a Number.
 //--- class-map-record-mixed-scalar.js
 function class_map_record_mixed_scalar() {
     const values = new Map();
@@ -133,7 +133,7 @@ function class_map_record_mixed_scalar() {
 }
 var a = class_map_record_mixed_scalar();
 
-// Publishing the Map would let its borrowed payload outlive the entry-frame owner.
+// Refused: the Map escapes into a global and would outlive the instance it holds.
 //--- class-map-record-map-escaped.js
 var retained;
 function class_map_record_map_escaped() {
@@ -146,7 +146,7 @@ function class_map_record_map_escaped() {
 }
 var a = class_map_record_map_escaped();
 
-// A saved record published outside the entry needs its own lifetime proof.
+// Refused: the get result escapes into a global and would outlive the instance.
 //--- class-map-record-alias-escaped.js
 var retained;
 function class_map_record_alias_escaped() {
@@ -160,7 +160,7 @@ function class_map_record_alias_escaped() {
 }
 var a = class_map_record_alias_escaped();
 
-// Declared standard Map identity does not authorize a replaced prototype operation.
+// Refused: Map.prototype.get is replaced, even though `values` is a real Map.
 //--- class-map-record-prototype-replaced.js
 function class_map_record_prototype_replaced() {
     const values = new Map();
@@ -173,7 +173,7 @@ function class_map_record_prototype_replaced() {
 }
 var a = class_map_record_prototype_replaced();
 
-// Constructor-time publication still needs an exception and reentry lifetime proof.
+// The constructor stores `this` in the Map; exceptions and reentry need separate checks.
 //--- class-map-record-constructor-publication.js
 function class_map_record_constructor_publication() {
     const values = new Map();
@@ -186,7 +186,7 @@ function class_map_record_constructor_publication() {
 }
 var a = class_map_record_constructor_publication();
 
-// Membership must be re-established after deletion, even for an existing key.
+// Refused: get after delete returns undefined even though the key existed before.
 //--- class-map-record-read-after-delete.js
 function class_map_record_read_after_delete() {
     const values = new Map();
@@ -198,7 +198,7 @@ function class_map_record_read_after_delete() {
 }
 var a = class_map_record_read_after_delete();
 
-// A computed key needs identity/presence evidence beyond literal string equality.
+// Refused: a key passed in as a parameter is not a known string literal.
 //--- class-map-record-computed-key.js
 function class_map_record_computed_key(key) {
     const values = new Map();
@@ -210,7 +210,7 @@ function class_map_record_computed_key(key) {
 }
 var a = class_map_record_computed_key("slot");
 
-// Saved receiver constructor/getter identity is deliberately a separate proof.
+// Refused: reading a static getter through the get result's `constructor` is not supported.
 //--- class-map-record-alias-constructor.js
 function class_map_record_alias_constructor() {
     const values = new Map();
@@ -222,7 +222,7 @@ function class_map_record_alias_constructor() {
 }
 var a = class_map_record_alias_constructor();
 
-// Saved receiver methods need a complete call-site proof in addition to fields.
+// Calling a method on a get result needs every call site checked, not just the fields.
 //--- class-map-record-alias-method.js
 function class_map_record_alias_method() {
     const values = new Map();
@@ -234,7 +234,7 @@ function class_map_record_alias_method() {
 }
 var a = class_map_record_alias_method();
 
-// A saved alias cannot write an own field over a class method.
+// Refused: writing an own `read` field through a get result hides the class method.
 //--- class-map-record-alias-shadow.js
 function class_map_record_alias_shadow() {
     const values = new Map();
@@ -247,7 +247,7 @@ function class_map_record_alias_shadow() {
 }
 var a = class_map_record_alias_shadow();
 
-// Alias writes cannot hide a shadow of a constructor whose getter would be folded.
+// Refused: overwriting `constructor` through a get result hides the folded static getter.
 //--- class-map-record-alias-constructor-write.js
 function class_map_record_alias_constructor_write() {
     const values = new Map();
@@ -260,7 +260,7 @@ function class_map_record_alias_constructor_write() {
 }
 var a = class_map_record_alias_constructor_write();
 
-// The own-key snapshot must include a field added through a saved Map alias.
+// Refused: a field added through a get result must count in getOwnPropertyNames.
 //--- class-map-record-alias-snapshot-write.js
 function class_map_record_alias_snapshot_write() {
     const values = new Map();

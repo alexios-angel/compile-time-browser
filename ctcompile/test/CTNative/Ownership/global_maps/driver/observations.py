@@ -1,9 +1,15 @@
-"""driver observations: continued from driver_nullable_observations."""
+"""Witness checks for the global-Map driver.
+
+Each positive program's traced value must change when one source fragment is
+"blinded" (replaced), proving the observation depends on that fragment.
+Builds on driver/nullable_observations.py.
+"""
 
 from .nullable_observations import *
 
 
 def check_source_observations(args, node, reference, positives):
+    """Run every observer and blinded-source check over the positive programs."""
     check_leaf_object_observations(args, node, reference)
     check_leaf_readback_observations(args, node, reference)
     check_comparison_identity_observations(args, node, reference)
@@ -34,6 +40,8 @@ def check_source_observations(args, node, reference, positives):
         blind.write_text(live_source.replace("state.delete(", "state.has("))
         if host.run([node, "-e", boundary.NODE, str(blind)]).stdout == f"trace={live_value}\n":
             raise RuntimeError(f"{name}: size witness cannot distinguish a real deletion")
+    # (positive name, exact source fragment, replacements): each replacement must
+    # change the traced value, or the witness cannot tell that fragment apart.
     for name, old, replacements in (
         ("result_seeded_false", "return state.get(false);", ("return undefined;",)),
         ("result_seeded_empty_string", "return state.get('');", ("return undefined;",)),
@@ -262,6 +270,8 @@ def check_source_observations(args, node, reference, positives):
         observations = len(NULLABLE_OBSERVATIONS[name]) + len(
             NULLABLE_PAYLOAD_READBACKS.get(name, ())
         )
+        # The observer sets one bit per observation that matched, so all passing
+        # is a trace of 2**observations - 1.
         expected = f"trace={(1 << observations) - 1}\n"
         if (
             host.run([node, "-e", boundary.NODE, str(identity)]).stdout != expected

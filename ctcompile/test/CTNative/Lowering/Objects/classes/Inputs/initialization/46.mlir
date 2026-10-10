@@ -1,4 +1,4 @@
-// Both literal keys follow reordered super arguments; saved aliases retain their leaf owners.
+// Both literal keys follow super()'s reordered arguments; saved aliases keep Item's records.
 //--- class-map-record-nested-inherited-direct.js
 function probe() {
     const outer = new Map();
@@ -32,7 +32,7 @@ function probe() {
 
 var a = probe();
 
-// Called Data slots preserve old child and leaf aliases after deletion and recreation.
+// Every Data method is called; old inner-Map and record aliases survive remove and re-set.
 //--- class-map-record-nested-inherited-holder.js
 function probe() {
     const outer = new Map();
@@ -69,7 +69,7 @@ function probe() {
 
 var a = probe();
 
-// Base registration reuses one selected child while the unique leaf initializes its suffix.
+// Base registration reuses the existing inner Map; Item's code after super() still runs.
 //--- class-map-record-nested-inherited-shortcircuit.js
 function probe() {
     const outer = new Map();
@@ -101,7 +101,7 @@ function probe() {
 
 var a = probe();
 
-// The leaf can observe the receiver published by super before its suffix finishes.
+// Item can read the `this` that Base registered before Item's constructor finishes.
 //--- class-map-record-nested-inherited-observer.js
 function probe() {
     const outer = new Map();
@@ -131,7 +131,7 @@ function probe() {
 
 var a = probe();
 
-// A throwing leaf leaves the base receiver visible to its catch handler.
+// When Item's constructor throws, its catch handler still sees the `this` Base registered.
 //--- class-map-record-nested-inherited-throw.js
 function probe() {
     const outer = new Map();
@@ -157,7 +157,7 @@ function probe() {
 
 var a = probe();
 
-// Leaf reentry can replace the published record before the outer construction completes.
+// A nested `new Item` can replace the registered record before the outer one finishes.
 //--- class-map-record-nested-inherited-reentry.js
 function probe() {
     const outer = new Map();
@@ -183,7 +183,7 @@ function probe() {
 
 var a = probe();
 
-// A replacement return differs from the base receiver already stored in Data.
+// An object returned by Item's constructor differs from the `this` Base stored in Data.
 //--- class-map-record-nested-inherited-return-object.js
 function probe() {
     const outer = new Map();
@@ -209,7 +209,7 @@ function probe() {
 
 var a = probe();
 
-// A second concrete leaf prevents a unique family publication proof.
+// A second subclass of Base means no single subclass registers every instance.
 //--- class-map-record-nested-inherited-sibling.js
 function probe() {
     const outer = new Map();
@@ -240,7 +240,7 @@ function probe() {
 
 var a = probe();
 
-// A grandchild needs a separate complete ancestry proof.
+// A grandchild class needs its own proof covering its whole ancestry.
 //--- class-map-record-nested-inherited-deeper.js
 function probe() {
     const outer = new Map();
@@ -269,7 +269,7 @@ function probe() {
 
 var a = probe();
 
-// A valid first element String cannot authorize a later numeric element key.
+// A String element key on the first `new` does not cover a later Number element key.
 //--- class-map-record-nested-inherited-outer-number.js
 function probe() {
     const outer = new Map();
@@ -296,7 +296,7 @@ function probe() {
 
 var a = probe();
 
-// A valid first component String cannot authorize a later numeric component key.
+// A String inner key on the first `new` does not cover a later Number inner key.
 //--- class-map-record-nested-inherited-inner-number.js
 function probe() {
     const outer = new Map();
@@ -323,7 +323,7 @@ function probe() {
 
 var a = probe();
 
-// A computed super key is outside the exact literal actual proof.
+// A key computed in the super() call is not a literal argument.
 //--- class-map-record-nested-inherited-computed-super-key.js
 function probe() {
     const outer = new Map();
@@ -349,7 +349,7 @@ function probe() {
 
 var a = probe();
 
-// An uncalled observer is still part of the original Data holder census.
+// Data's uncalled `unsafe` method still counts: it must make the proof fail.
 //--- class-map-record-nested-inherited-unused-slot.js
 function probe() {
     const outer = new Map();
@@ -380,7 +380,7 @@ function probe() {
 
 var a = probe();
 
-// Moving publication past super cannot extend the selected child owner lifetime.
+// Registering after super() cannot let an escaped inner Map outlive its records.
 //--- class-map-record-nested-inherited-child-escaped.js
 var retained;
 function probe() {
@@ -408,7 +408,7 @@ function probe() {
 
 var a = probe();
 
-// A failed captured helper census must roll back base and leaf publication together.
+// register() may call an unknown function, so neither Base's nor Item's registration is proved.
 //--- class-map-record-nested-inherited-helper-effect.js
 function probe() {
     const outer = new Map();
@@ -435,7 +435,7 @@ function probe() {
 
 var a = probe();
 
-// Coercion can inspect the partial receiver and replace its child entry reentrantly.
+// A valueOf() coercion can see the partly built `this` and re-register reentrantly.
 //--- class-map-record-nested-inherited-coercion.js
 function probe() {
     const outer = new Map();
@@ -469,7 +469,7 @@ function probe() {
 
 var a = probe();
 
-// A captured base caller must retain its original registration after leaf normalization.
+// A `new Base` inside a captured helper keeps its own registration after Item is rewritten.
 //--- class-map-record-nested-inherited-hidden-base.js
 function probe() {
     const outer = new Map();
@@ -497,7 +497,7 @@ function probe() {
 
 var a = probe();
 
-// A captured leaf caller is outside the complete same-entry construction census.
+// A `new Item` inside another function is outside the calls the proof can enumerate.
 //--- class-map-record-nested-inherited-hidden-leaf.js
 function probe() {
     const outer = new Map();

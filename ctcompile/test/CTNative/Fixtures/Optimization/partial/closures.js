@@ -1,5 +1,5 @@
-// Factory construction is static. Closure bodies run only after their factory
-// has returned, with dynamic arguments and ordinary owning C++ environments.
+// Each factory runs at compile time. The closures it returns run natively, after it
+// has returned, with runtime arguments and ordinary owning C++ environments.
 function makeRetained() {
     const scratch = {
         amount: 1

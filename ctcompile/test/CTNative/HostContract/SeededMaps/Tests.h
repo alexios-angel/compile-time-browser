@@ -1,3 +1,12 @@
+//===- Tests.h - Seeded Map checks ------------------------------*- C++ -*-===//
+//
+// Declares the HostContractAnalysis checks for captured Maps that are seeded,
+// read and passed between methods. Each check builds its fixture by text
+// replacement on the shared MLIR from ../Fixtures.h and reports through
+// check.hpp. A `prepared` parameter selects the call_direct form, where the Map
+// state is passed as an argument instead of captured.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "../Fixtures.h"

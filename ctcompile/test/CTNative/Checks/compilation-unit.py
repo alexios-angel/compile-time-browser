@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
-"""THE COMPILATION-UNIT GATE - ctcompile Phase 62½-D. The test that DEFINES "native".
+"""Compilation-unit check: the test that defines what "native" means.
 
-Part 24 §1.2: a program compiles to native only when the output links neither
-the interpreter nor the collector. This is that sentence as a test, run over
-ONE EmitC module and the JavaScript program it is the lowering of:
+A program compiles to native only when the output links neither the
+interpreter nor the garbage collector. This script checks that for one EmitC
+module and the JavaScript program it was lowered from:
 
-  (a) the module goes through the FORKED emitter to C++ (ctjs-translate
+  (a) the module goes through the forked emitter to C++ (ctjs-translate
       --mlir-to-cpp, in its default mode: --declare-variables-at-top would
       declare a variable for a `do` loop's condition and never assign it,
       which -Wall -Werror rejects; native functions are single-block and do
       not need it)
-  (b) that C++ is compiled by the configured compiler STANDALONE: public headers only,
+  (b) that C++ is compiled by the configured compiler standalone: public headers only,
       only the optional public Core library on the link line, -Wall -Wextra -Werror
       -pedantic, and -ffp-contract=off because JavaScript has no fused
       multiply-add and the interpreter's separate opcodes never fuse one
   (c) `nm -C` on the binary shows no `ctbrowser::script::` symbol (nor a
-      `ctbrowser::aot::` one - the boxed tier's helper ABI links the
-      interpreter). THE CHECK IS PROVED LOAD-BEARING FIRST: the same nm is run
+      `ctbrowser::aot::` one: the boxed backend's helper ABI links the
+      interpreter). The check is first shown to work: the same nm is run
       against a binary that does link the interpreter and must find such a
-      symbol there, or a wrong nm spelling, a stripped binary or a wrong
-      pattern would pass this gate vacuously
+      symbol there, otherwise a wrong nm spelling, a stripped binary or a
+      wrong pattern would let every binary pass
   (d) the binary runs and prints its globals
   (e) the interpreter runs the same JavaScript and prints its globals
       (ctcompile-test-native-reference) - after a probe program with known
-      answers has shown the reference formats, sorts and CLASSIFIES as the
+      answers has shown the reference formats, sorts and classifies as the
       convention says, one of every kind, so that a reference which has lost
       the ability to print a boolean cannot agree with a binary that never
       printed one either
   (f) both texts are checked against the convention's own grammar, then
-      compared line by line; a difference NAMES the global
+      compared line by line; a difference names the global
   (g) the counters are asserted and one line is printed
 
-THE OUTPUT CONVENTION, which both sides print and this script checks: one line
+The output convention, which both sides print and this script checks: one line
 per global the program created or changed, ascending bytewise by name,
 `<name>=<value>`, the value one of five pairwise-disjoint forms:
 
@@ -41,25 +41,25 @@ per global the program created or changed, ascending bytewise by name,
     null        null
     String      "<percent-encoded bytes>"   "text"   ""   "a%3D1"
 
-Strings are BYTES (a lone surrogate is WTF-8, NUL is legal), so every byte
-outside RFC 3986's unreserved set is `%` and two UPPERCASE hex digits: total,
+Strings are bytes (a lone surrogate is WTF-8, NUL is legal), so every byte
+outside RFC 3986's unreserved set is `%` and two uppercase hex digits: total,
 injective, printable ASCII with no whitespace and no `=`, so the first `=` on
 a line is always the separator. `-nan` and `nan` compare equal: a NaN's sign
 is not observable in JavaScript. The grammar is checked on both texts before
 they are compared, so a shared mistake in the escaping cannot pass by
 corrupting both sides the same way.
 
-NEGATIVE PROOFS, so the gate's teeth stay in the suite (each is a lit RUN line
-under `not`, with FileCheck on the reason):
-  --mutate <global>   after (a), the emitted C++ is perturbed so that ONE
-                      global prints a different value - the gate must then
-                      FAIL naming <global>
+Negative tests, which show the check can fail (each is a lit RUN line under
+`not`, with FileCheck on the reason):
+  --mutate <global>   after (a), the emitted C++ is perturbed so that one
+                      global prints a different value; the check must then
+                      fail naming <global>
   --mutate-as <kind>  which perturbation: `<g> = <g> + 1` is a no-op on
                       everything that is not a number. Defaults to `number`.
-  --prebuilt <exe>    skip (a) and (b) and gate this binary instead; used
+  --prebuilt <exe>    skip (a) and (b) and check this binary instead; used
                       with ctcompile-test-native-vm-linked, the fixture's own
-                      C++ plus one object that reaches the interpreter - the
-                      gate must FAIL on its nm check
+                      C++ plus one object that reaches the interpreter, which
+                      must fail the nm check
 """
 
 import argparse
@@ -69,7 +69,7 @@ from pathlib import Path
 
 from CTNative.harness import CORE_INCLUDE, FLAGS, run
 
-# THE CONVENTION AS A REGEX - the five forms of the value, in one place.
+# The output convention as a regex: the five forms of the value, in one place.
 GRAMMAR = re.compile(
     r"^[A-Za-z_$][A-Za-z0-9_$]*=(true|false|undefined|null|-?(inf|nan)"
     r'|-?[0-9]+(\.[0-9]+)?(e[-+][0-9]+)?|"([-A-Za-z0-9._~]|%[0-9A-F][0-9A-F])*")$'
@@ -81,14 +81,14 @@ COUNTS = re.compile(
     r"([0-9]+) other globals skipped"
 )
 
-# THE PROBE HAS ONE OF EVERYTHING THE CONVENTION HAS TO GET RIGHT: two numbers
-# out of source order (the sort), a negative zero, a NaN, BOTH booleans, null
+# The probe has one of everything the convention has to get right: two numbers
+# out of source order (the sort), a negative zero, a NaN, both booleans, null
 # beside `nan`, an unassigned `var`, the empty string, the string "nan", a
 # string holding every character that would break a layer between the two
 # programs, a NUL/two-byte/newline string, a lone surrogate, a function
-# (skipped and counted) and an OBJECT - the kind the convention has no form
-# for, counted under `other`, which keeps that path alive: a real program must
-# have ZERO of them, so without the probe the check would never be seen to fire.
+# (skipped and counted) and an object. An object is the kind the convention has
+# no form for and is counted under `other`; a real program must have none, so
+# without the probe that check would never be seen to fire.
 PROBE = r"""function f(x) { return x; }
 var z = f(2);
 var a = 1;
@@ -180,7 +180,7 @@ def main():
             )
         run([args.cxx, *FLAGS, "-o", exe, str(src), *libraries])
 
-    # --- (c) the symbol check, proved load-bearing before it is trusted ------
+    # --- (c) the symbol check, first shown to find interpreter symbols ------
     control = run([args.nm, "-C", args.vm_linked])
     control_count = sum("ctbrowser::script::" in line for line in control.stdout.splitlines())
     if control_count == 0:
@@ -217,8 +217,9 @@ def main():
             "the reference does not print the convention - on the probe it printed:\n"
             f"{probed.stdout}expected:\n{PROBE_EXPECTED}"
         )
-    # THE CLASSIFICATION, ASSERTED SEPARATELY FROM THE TEXT: the reference must
-    # know WHY, per kind, which the real program's run relies on.
+    # The classification is asserted separately from the text: the reference
+    # must count each kind correctly, because the real program's run relies on
+    # those counts.
     if PROBE_COUNTS not in probed.stderr:
         fail(
             "the reference miscounted the probe - it must find 4 numbers, 2 booleans, "
@@ -288,7 +289,9 @@ def main():
 
 
 def mutate(cpp, target, kind, fail):
-    """THE PERTURBATION IS PER KIND. `<g> = <g> + 1` is a no-op on a NaN and a
+    """Return `cpp` edited so global `target`, of `kind`, prints a wrong value.
+
+    The perturbation is per kind. `<g> = <g> + 1` is a no-op on a NaN and a
     compile error or a no-op on every other kind, so each gets the smallest
     edit that changes the one line it prints: number - an off-by-one before
     the first print; boolean - the printed value becomes `!<g>`; string - the
@@ -296,14 +299,14 @@ def mutate(cpp, target, kind, fail):
     because those globals have no storage and the only thing a wrong compiler
     can get wrong about one is which constant it prints. Every branch asserts
     that its edit landed, and the substituting branches that the text they
-    replace occurs EXACTLY ONCE."""
+    replace occurs exactly once."""
     if kind == "number":
-        # INSIDE main, AND THAT IS ASSERTED: the value-printing prelude is
+        # The edit goes inside main, and that is asserted: the value-printing prelude is
         # written with fputs/putchar so a helper never carries the printf the
         # insertion anchors on. Qualified or bare `printf(`, because the
         # hand-written module and a generated one spell it differently, and
-        # the insertion goes BEFORE the qualifier or `std::<assignment>printf`
-        # would not compile - a negative proof that passes for the wrong reason.
+        # the insertion goes before the qualifier, or `std::<assignment>printf`
+        # would not compile: a negative test that passes for the wrong reason.
         main_at = cpp.find("int32_t main() {")
         if main_at < 0:
             fail(
@@ -319,15 +322,15 @@ def mutate(cpp, target, kind, fail):
             relative -= 5
         at = main_at + relative
         head, tail = cpp[:at], cpp[at:]
-        # THE INSERTION MUST PRECEDE THE LOAD, or it changes nothing: the
+        # The insertion must precede the load, or it changes nothing: the
         # printing reads each global into a temporary (`<type> vN = <g>;`), so
         # a global already read above the insertion point prints its old value
         # and the negative test reports only "PASSED where it had to fail".
-        # Under whichever name the emitter gave it - `g_total` generated,
-        # `total` hand-written.
+        # Use whichever name the emitter gave it: `g_total` when generated,
+        # `total` when hand-written.
         symbol = f"g_{target}" if f"= g_{target};" in cpp else target
         if f"= {symbol};" not in tail:
-            # ONE WORD IS THE ANCHOR, so a FileCheck line cannot miss it.
+            # The message starts with one fixed word that a FileCheck line anchors on.
             fail(
                 f"VACUOUS - mutating {symbol} here would change nothing the binary prints, "
                 "because the printing has already read it above the insertion point. Mutate a "

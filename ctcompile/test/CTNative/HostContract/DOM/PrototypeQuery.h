@@ -1,3 +1,10 @@
+//===- DOM/PrototypeQuery.h - Element.prototype selector proofs -*- C++ -*-===//
+//
+// Host-contract tests for DOMEntryAnalysis on selector calls reached through
+// Element.prototype, the current document, or document.documentElement.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -5,6 +12,12 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Checks DOMEntryAnalysis on `Element.prototype.querySelector{,All}.call(el, ...)`,
+/// on `document.querySelectorAll` and on selectors applied to
+/// document.documentElement: the exact source chain is proved and gets
+/// evidence, any substitute intrinsic, binding or receiver is refused with no
+/// evidence published, every smaller work budget withholds all evidence, and a
+/// stale fingerprint or forged report attribute grants nothing.
 inline void checkDOMPrototypeQuery(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     const std::string source = R"MLIR(
@@ -174,6 +187,8 @@ module {
         query(invalid, false);
     }
 
+    // `document.querySelectorAll(sel).length`, proved only when the contract
+    // names a current-document parameter.
     const auto document =
         replaced(replaced(collection, R"MLIR(    %Element = ctjs.load_global "Element"
     %prototypeName = ctjs.constant #ctjs.string<"prototype">
@@ -233,6 +248,8 @@ module {
           "restoring the original document receiver restores the live proof");
 
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
+    // A selector call on document.documentElement guarded by a truthiness check
+    // of that same root.
     const std::string guardedRoot = R"MLIR(
 module {
   ctjs.func @query$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value, %expected: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -311,6 +328,8 @@ module {
     check(DOMEntryAnalysis(*input, contract).proved(),
           "restoring the original root guard restores its live presence proof");
 
+    // The prototype call applied to document.documentElement instead of an
+    // element parameter.
     const auto checkedRoot =
         replaced(replaced(collection, "    %found =",
                           "    %document = ctjs.load_global \"document\"\n"

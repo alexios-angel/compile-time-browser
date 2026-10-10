@@ -3,9 +3,9 @@
 // RUN: cp %t.original/prototype-written.js %t/prototype-written.js
 // RUN: python3 %S/constructor_refusals.py --scalars --translate ctjs-translate --opt ctjs-opt --node %node --reference %native_reference --fixtures %t --work %t.executables
 
-// Scalar defaults are copied only under the complete immutable prototype/use
-// proof. Constructor reads, conditional own writes and independent instances
-// distinguish missing defaults, wrong initialization order and shared storage.
+// A prototype's scalar defaults are copied into each instance only when the
+// prototype is proved immutable. Constructor reads, conditional own writes and
+// separate instances catch a missing default, a wrong init order and shared storage.
 
 //--- inherited.js
 function inherited() {
@@ -46,9 +46,9 @@ function primitives() {
 }
 var a = primitives();
 
-// The preserved primitives.js still refuses the global `undefined` lookup.
-// An actual undefined literal has no host-binding provenance obligation.
-// Definite string fields and the existing nullable scalar fields now carry it.
+// primitives.js reads `undefined` as a global, which is still refused.
+// literal-primitives.js uses `void 0`, which needs no host-binding provenance
+// proof, so its string and nullable scalar fields lower natively.
 //--- literal-primitives.js
 function primitives() {
     var Shape = function () {};

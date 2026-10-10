@@ -1,5 +1,5 @@
 // RUN: ctjs-opt %s --split-input-file --ctnative-lower-to-emitc | FileCheck %s
-// Call/return proof boundaries, independent of the source resolver's choices.
+// Hand-written IR for Map values passed across calls and returns, independent of the resolver.
 
 module {
   // CHECK: ctjs.func @probe$1
@@ -43,8 +43,8 @@ module {
 // -----
 
 module {
-  // A standard constructor reaching one return does not prove the other.
-  // Check the proof itself; control-flow admission also refuses this raw CFG.
+  // A Map constructor reaching one return does not prove the other return is a Map.
+  // This checks the Map proof itself; the CFG lowering would also refuse this raw CFG.
   ctjs.func @probe$1(%this: !ctjs.value, %target: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
     %nil = ctjs.constant #ctjs.undefined
     %condition = ctjs.constant #ctjs.number<1>

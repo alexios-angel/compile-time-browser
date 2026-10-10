@@ -1,6 +1,6 @@
-// Optional numeric and boolean equality retain their runtime tags. These
-// programs formerly refused because undefined was represented by NaN/false;
-// both now lower through the same tagged strict comparison.
+// Equality on an optional Number or Boolean keeps the runtime tag, so an
+// undefined value is never confused with NaN or false. Both programs lower
+// through the same tagged strict comparison, ctnative::scalar_strict_equal.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined.js 2>/dev/null \

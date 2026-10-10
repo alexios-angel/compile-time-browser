@@ -1,3 +1,13 @@
+//===- Guards.cpp - Exception-recovery refusal tests ------------*- C++ -*-===//
+//
+// Checks that recoverPrimitiveExceptionRegion refuses, leaving the IR
+// byte-identical, whenever a mutation breaks a fact its proof relies on, and
+// that every step budget below the exact cost refuses atomically. Forged
+// ctnative.* proof attributes are added before most refusals to show that the
+// proof is rebuilt from the live IR rather than read back from attributes.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -5,6 +15,14 @@
 
 namespace ctcompile::test::exception_recovery {
 
+/// Applies eight edits after the protected call, one at a time, and checks that
+/// CheckedInvocations recovery refuses with the IR unchanged:
+/// 0/1 rewire the catch edge's first operand (to the call result, to a function
+/// argument), 2 replaces a continuation operand with the call result, 3 adds a
+/// constant, 4 publishes the result to a global, 5 adds a global load before the
+/// call, 6 duplicates the call, 7 replaces the result in the continuation with a
+/// block argument. When `resolve` is false, it also checks that an ordinary call
+/// gets no exception or native-call permission from other modes.
 void testMutations(mlir::MLIRContext & context, llvm::StringRef source, bool resolve) {
     for (unsigned mutation = 0; mutation != 8; ++mutation) {
         auto module = import(context, source, resolve);
@@ -87,6 +105,10 @@ void testMutations(mlir::MLIRContext & context, llvm::StringRef source, bool res
           "generic native refusal preserves every ordinary invocation continuation");
 }
 
+/// A try whose body does checked arithmetic on a possibly unknown value, then
+/// calls `leaf`, which always throws 32. `#ctjs.number<N>` holds the IEEE-754
+/// bit pattern of a double: 4629700416936869888 is 32.0 and
+/// 4607182418800017408 is 1.0.
 constexpr llvm::StringLiteral effectFixture = R"mlir(
 module {
   ctjs.func private @leaf(%r: !ctjs.value, %nt: !ctjs.value,
@@ -128,14 +150,16 @@ module {
 }
 )mlir";
 
+/// Undoes a successful recovery by putting back the original body and
+/// attributes saved in `result.original`.
 void restore(ctjs::FuncOp function,
              ctcompile::ctnative::lowering_detail::ExceptionRecoveryResult & result) {
     function.getBody().takeBody(result.original->getBody());
     function->setAttrs((*result.original)->getAttrs());
 }
 
-// Every budget below `complete` refuses with the IR unchanged; exactly `complete` proves again
-// and is rolled back.
+/// Checks that every budget below `complete` refuses with the IR unchanged and
+/// that exactly `complete` proves again; the successful run is rolled back.
 static bool checkBudgets(ctjs::FuncOp function, unsigned complete, ExceptionRecoveryMode mode,
                          llvm::function_ref<bool()> unchanged, llvm::StringRef prefix,
                          llvm::StringRef incomplete, llvm::StringRef exactLabel) {
@@ -154,6 +178,9 @@ static bool checkBudgets(ctjs::FuncOp function, unsigned complete, ExceptionReco
     return true;
 }
 
+/// Checks effect-checked recovery against the global binding of the helper
+/// `choose`: the exact budget, nineteen mutations that must refuse, and
+/// uncalled helpers whose throw payload is or is not a known primitive.
 void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
     auto module = import(context, source);
     if (!module) { return; }
@@ -180,6 +207,18 @@ void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
     llvm::outs() << "source binding recovery: " << complete
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
 
+    // Each of the 19 mutations changes the global binding, callee identity,
+    // helper body or published state that the proof relies on. Forged
+    // `ctnative.*` proof attributes are then added, and the proof must still
+    // refuse: it must be rebuilt from the live IR, not trusted from attributes.
+    // 0-2 duplicate, replace or move the `choose` declaration; 3-4 change the
+    // call's target or operand 2; 5 renames the loaded global; 6-7 write or
+    // read globalThis.choose; 8 marks the module as having skipped functions;
+    // 9 adds an unknown op; 10-14 make the helper publish, coerce or throw its
+    // argument, duplicate it, or return another argument; 15 publishes the
+    // callee; 16 drops the loaded value from the continuation; 17 changes the
+    // closure's operand; 18 makes the helper read a property (a possible
+    // getter call).
     for (unsigned mutation = 0; mutation != 19; ++mutation) {
         auto current = import(context, source);
         if (!current) { return; }
@@ -279,17 +318,17 @@ void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
                                         key);
         }
         if (mutation == 11 || mutation == 12) {
-            // Live caller operands now prove the original boolean formal.
-            // Keep an unknown alternative for the coercion/payload control;
-            // one known caller cannot supply the whole family's fact.
+            // These mutations make the helper read its boolean parameter.
+            // Pass an unknown value for it at the call site, because a single
+            // caller with a known value must not prove a fact about every caller.
             entry.walk([&](ctjs::CallDirectOp actual) {
                 if (actual.getCallee() == candidate.getSymName()) {
                     actual->setOperand(3, entry.getBody().front().getArgument(0));
                 }
             });
         }
-        // The entire proof must be rebuilt after real IR changes, even when
-        // forged summaries agree with its previous successful conclusion.
+        // The proof must be rebuilt after the IR changes, even when forged
+        // summary attributes agree with its earlier successful result.
         load->setAttr("ctnative.nothrow", at.getUnitAttr());
         helper->setAttr("ctnative.nonthrowing", at.getUnitAttr());
         (*current)->setAttr("ctnative.global_bindings_complete", at.getUnitAttr());
@@ -320,6 +359,10 @@ void testBindings(mlir::MLIRContext & context, llvm::StringRef source) {
     }
 }
 
+/// Rewrites `source` so that `guarded` reaches `leaf` through a chain of
+/// `depth` functions (choose -> forward1 -> ... -> leaf). With `payload`, each
+/// link forwards `(flag, payload)` instead of `(flag)`. A depth below 2
+/// returns `source` unchanged.
 std::string nestedSource(llvm::StringRef source, unsigned depth, bool payload) {
     std::string text = source.str();
     if (depth < 2) { return text; }
@@ -337,6 +380,8 @@ std::string nestedSource(llvm::StringRef source, unsigned depth, bool payload) {
     return text;
 }
 
+/// Returns the function whose symbol is `prefix` followed by `$` and an
+/// importer-assigned suffix, or null.
 ctjs::FuncOp named(mlir::ModuleOp module, llvm::StringRef prefix) {
     for (auto function : module.getOps<ctjs::FuncOp>()) {
         if (function.getSymName().starts_with((prefix + "$").str())) { return function; }
@@ -344,6 +389,8 @@ ctjs::FuncOp named(mlir::ModuleOp module, llvm::StringRef prefix) {
     return {};
 }
 
+/// Checks recovery through a three-link call chain: the exact budget, eight
+/// mutations that must refuse, and the call-depth limit of 32.
 void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
     const auto nested = nestedSource(source, 3, true);
     auto module = import(context, nested);
@@ -373,6 +420,11 @@ void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
     llvm::outs() << "transitive recovery: " << complete
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
 
+    // 0 and 1 make forward1 call itself or `choose` (recursion), 2 adds an
+    // unused self-recursive function, 3 adds an uncalled sibling caller of
+    // leaf, 4 makes leaf read a property, 5 duplicates leaf's declaration,
+    // 6 changes the nested call's operand 2, and 7 marks the module as having
+    // skipped functions.
     for (unsigned mutation = 0; mutation != 8; ++mutation) {
         const auto suffix =
             mutation == 2   ? "\nfunction unused(flag, payload) { return unused(flag, payload); }"
@@ -399,8 +451,8 @@ void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
         }
         mlir::OpBuilder at(nestedCall);
         if (mutation == 0 || mutation == 1) {
-            // Update both live identity operands. These are genuine recursive
-            // source families, rather than a stale named-target mismatch.
+            // Change both the loaded global name and the direct callee, so the
+            // result is real recursion rather than a name/target mismatch.
             auto target = mutation == 0 ? forward : named(*current, "choose");
             load.setNameAttr(at.getStringAttr(mutation == 0 ? "forward1" : "choose"));
             nestedCall.setCalleeAttr(mlir::FlatSymbolRefAttr::get(&context, target.getSymName()));
@@ -455,6 +507,9 @@ void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
     }
 }
 
+/// Checks that the catch's saved state is proved primitive only from the
+/// arguments of the protected calls themselves, not from other callers of
+/// the same helpers.
 void testSelectedActuals(mlir::MLIRContext & context) {
     constexpr llvm::StringLiteral source = R"js(
 function leaf(flag, payload) {
@@ -475,13 +530,13 @@ var caught52 = guarded(true, 20);
 var normal20 = guarded(false, 20);
 function sibling(payload) { return leaf(false, payload); }
 )js";
-    // The sibling leaf caller passes an uncalled formal, so its normal return
-    // is unknown. (Not the top level's `this`: since 5a35bf9a9 that is the
-    // global object to --ctjs-resolve-globals, and handing it to leaf leaves
-    // every name unresolved.) Its effects and constant payload remain proved,
-    // but its result is not the first protected call's saved state. Only that
-    // call's own actual chain may establish the catch arithmetic's primitive
-    // operand.
+    // `sibling` is never called, so `leaf`'s normal return through it is
+    // unknown. (It does not use the top level's `this`: --ctjs-resolve-globals
+    // treats that as the global object, and passing it to leaf would leave
+    // every name unresolved.) Its effects and constant throw payload are still
+    // proved, but its result is not the saved state of the first protected
+    // call. Only that call's own chain of arguments may prove the catch
+    // arithmetic's operand is primitive.
     testSource(context, "transitive selected actuals", source, 2, 20, 32,
                ExceptionRecoveryMode::EffectCheckedInvocations);
     auto module = import(context, source);
@@ -510,6 +565,9 @@ function sibling(payload) { return leaf(false, payload); }
           "one unknown selected actual cannot borrow a sibling caller's primitive result");
 }
 
+/// Checks effect-checked recovery on effectFixture: an ordinary ctjs.call is
+/// refused, the fixture proves with an exact budget, and thirteen mutations
+/// that add a possibly throwing or observable operation must refuse.
 void testEffects(mlir::MLIRContext & context) {
     {
         auto source = effectFixture.str();
@@ -547,8 +605,9 @@ void testEffects(mlir::MLIRContext & context) {
     check(printed(function) == before,
           "effect-checked rollback restores exact source and attributes");
 
-    // Every incomplete budget must fail before adoption, including cutoffs
-    // inside primitive predecessor walks, the effect scan and structuring.
+    // Every incomplete budget must fail before the result is adopted,
+    // including cutoffs inside the predecessor walks, the effect scan and
+    // structuring.
     if (!checkBudgets(
             function, firstSteps, ExceptionRecoveryMode::EffectCheckedInvocations,
             [&] { return printed(function) == before && countChecks(function) == checks; },
@@ -560,13 +619,20 @@ void testEffects(mlir::MLIRContext & context) {
     llvm::outs() << "effect recovery: " << firstSteps
                  << " steps, every incomplete budget preserves " << checks << " checks\n";
 
+    // 0, 3, 4 add an unknown global load before the arithmetic, on the normal
+    // path or in the catch; 9 adds one with forged nothrow/type attributes.
+    // 1 allocates an object, 2 publishes a value to a global, 5 and 6 feed an
+    // unknown value into the arithmetic, 7 converts undefined to an object
+    // (which throws), 8 turns the add into a concat, 10 reads a property of an
+    // unknown value, 11 duplicates the call, and 12 coerces an unknown value
+    // to a number.
     for (unsigned mutation = 0; mutation != 13; ++mutation) {
         auto current = mlir::parseSourceString<mlir::ModuleOp>(effectFixture, &context);
         if (!current) { return; }
         auto candidate = guarded(*current);
-        // Establish and roll back a success before every mutation: neither
-        // the earlier success nor forged nothrow/type markers may survive as
-        // authority for the next source graph.
+        // Prove and roll back before every mutation: neither that earlier
+        // success nor forged nothrow/type attributes may count as proof for
+        // the mutated IR.
         auto prior = recoverPrimitiveExceptionRegion(
             candidate, 100000, ExceptionRecoveryMode::EffectCheckedInvocations);
         if (!check(prior.recovered, "mutation fixture first proves unchanged effects")) { return; }
@@ -608,8 +674,8 @@ void testEffects(mlir::MLIRContext & context) {
             store.addOperands(arithmetic->getOperand(0));
             at.create(store);
         } else if (mutation == 5) {
-            // Both edges have the same successor. Checking only the first
-            // incoming operand would incorrectly retain a primitive fact.
+            // Both edges go to the same block. Checking only the first edge's
+            // operand would wrongly keep the value's primitive fact.
             branch->setOperand(1u + static_cast<unsigned>(branch.getTrueDestOperands().size()),
                                unknown);
         } else if (mutation == 6) {
@@ -631,8 +697,8 @@ void testEffects(mlir::MLIRContext & context) {
             at.setInsertionPoint(normal);
             at.clone(*firstCall(candidate).getOperation());
         } else {
-            // Its normal result is always numeric, but coercing the input
-            // can run valueOf or throw. Result facts do not discharge it.
+            // Unary plus always produces a number, but coercing the input can
+            // run valueOf or throw. A known result type does not make it safe.
             auto numeric = ctjs::UnaryOp::create(
                 at, where, type, ctjs::UnaryKindAttr::get(&context, ctjs::UnaryKind::Plus),
                 unknown);
@@ -649,6 +715,9 @@ void testEffects(mlir::MLIRContext & context) {
     }
 }
 
+/// A function whose try is installed after an early return and a fallible
+/// global load, so only the tail of the function can be recovered. Its catch
+/// compares the saved state with the payload. 4607182418800017408 is 1.0.
 constexpr llvm::StringLiteral guardedTailFixture = R"mlir(
 module {
   ctjs.func @guarded$tail(%r: !ctjs.value, %nt: !ctjs.value,
@@ -692,8 +761,9 @@ module {
 }
 )mlir";
 
-// The prefix is printed independently of the function's diagnostic attributes.
-// Its block order, SSA uses and both status successors must survive adoption.
+/// Prints every operation before the try is installed, without the function's
+/// attributes. Recovery must keep this prefix's block order, SSA uses and both
+/// check successors unchanged.
 std::string guardedPrefix(ctjs::FuncOp function) {
     std::string text;
     llvm::raw_string_ostream into(text);
@@ -707,6 +777,10 @@ std::string guardedPrefix(ctjs::FuncOp function) {
     return text;
 }
 
+/// Checks recovery of a try that starts after an unstructured prefix, in all
+/// three modes, then eleven malformations of the prefix, handler or register
+/// vectors that must refuse (except an unreachable block, which must not
+/// prevent recovery).
 void testGuardedTail(mlir::MLIRContext & context) {
     for (auto mode :
          {ExceptionRecoveryMode::ExplicitThrows, ExceptionRecoveryMode::CheckedInvocations,
@@ -807,6 +881,12 @@ void testGuardedTail(mlir::MLIRContext & context) {
         check(printed(function) == source,
               "native admission rollback restores a source without a diagnostic marker");
     }
+    // 0 makes the check continue to itself, 1 jumps from the entry into the try
+    // body, 2 jumps from the body back to the prefix, 3 and 4 add an extra
+    // pop_handler, 5 changes a push_handler operand, 6 changes the frame's
+    // register count, 7 drops a continuation operand, 8 adds an unreachable
+    // block, 9 makes the body loop to itself, and 10 passes the frame token
+    // as a register.
     for (unsigned mutation = 0; mutation != 11; ++mutation) {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(guardedTailFixture, &context);
         if (!module) { return; }

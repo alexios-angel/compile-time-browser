@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Consume only actual closed entry-prefix proofs; keep unknown effects live."""
+"""Test --ctnative-specialize-host-prefix.
+
+The pass may fold branches and calls in the script's entry code only when it
+proves what the host objects look like at that point. Any unknown effect (an
+unknown call, global, accessor or throw, or a stale, forged or over-budget
+manifest) must leave the code unchanged.
+"""
 
 import argparse
 import json
@@ -11,6 +17,10 @@ from CTNative.harness import forge_module, prepare_js
 
 
 def specialize(opt, ir, contract, prefix, *, success=True, options=""):
+    """Run the host-prefix pass on `ir` with `contract` as its manifest.
+
+    Returns (parsed report or None, output path, process result).
+    """
     manifest = prefix.with_suffix(".json")
     report = prefix.with_suffix(".report.json")
     output = prefix.with_suffix(".out.mlir")
@@ -29,6 +39,9 @@ def specialize(opt, ir, contract, prefix, *, success=True, options=""):
 
 
 def hoisted_declarations(args):
+    """Hoisted `var` declarations: a declaration alone must never become a
+    value or callable proof, and missing, stale or malformed
+    `ctjs.hoisted_vars` metadata must withdraw any proof."""
     wrapper = (
         "var host = {slot: 42}; "
         "(function(f) { if (typeof host === 'object') { f(); } })(function() {}); "
@@ -55,8 +68,10 @@ def hoisted_declarations(args):
         text = raw.read_text()
         if "ctjs.hoisted_vars = [" not in text:
             raise RuntimeError("import discarded script declaration metadata")
-        # Simulate the VM's pending bare-var fix without changing the oracle.
-        # Remove only declaration stores: later source assignments stay live.
+        # The importer emits `store_global <name>, undefined` for each hoisted
+        # `var`, which the VM is expected to stop doing. Remove that one store to
+        # model the fixed behaviour without changing the VM; later source
+        # assignments to the same name stay.
         binding = "Map" if name == "unknown_intrinsic" else "saved"
         store = re.search(rf'^\s*ctjs\.store_global "{binding}", (%\w+)[^\n]*\n', text, re.M)
         if store and re.search(
@@ -164,6 +179,8 @@ def main():
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=True)
     hoisted_declarations(args)
+    # name -> (JavaScript source, expected selected_branches,
+    #          expected resolved_calls) in the pass's report.
     sources = {
         "callback": (
             "var trace = 0; var host = {slot: 42}; (function(f) { if (typeof host === 'object') { f(); } else { host.slot = 0; } })(function() { trace = 42; });",

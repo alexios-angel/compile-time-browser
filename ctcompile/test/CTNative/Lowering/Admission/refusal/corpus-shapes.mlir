@@ -1,34 +1,34 @@
-// THE FIVE REFUSAL SHAPES REAL CODE ACTUALLY PRODUCES.
+// The most common refusal shapes in real code.
 //
-// tools/check/native-claims.py groups every refusal by its SHAPE - the reason
-// with identifiers, numbers and MLIR types replaced - and over the three
-// corpora the compiler already measures there are exactly eight of them, in
-// 12,916 refusals:
+// tools/check/native-claims.py groups refusals by shape (the reason with
+// identifiers, numbers and MLIR types replaced). Over the three corpora it
+// measures, the 12,916 refusals had eight shapes when this file was written:
 //
 //     8600  uses `X`                                    <- always `this`
 //     2426  uses its own closure
-//     1779  parameter N is T - no caller proves it ...  <- native-numeric.mlir
-//       46  unstructured control flow                   <- refusal-unstructured
+//     1779  parameter N is T - no caller proves it ...  <- Scalars/numeric.mlir
+//       46  unstructured control flow                   <- refusal/unstructured.mlir
 //       27  global `X` is T, not a number
 //       21  a constant that is not a number, a boolean or undefined
-//       13  an object literal that escapes - it is returned   <- native-struct
-//        4  an array literal that escapes - it is returned    <- native-array
+//       13  an object literal that escapes - returned   <- Objects/struct.mlir
+//        4  an array literal that escapes - returned    <- Objects/array.mlir
 //
-// THREE OF THE EIGHT WERE PINNED, and they are the three at the bottom of the
-// table. The top two - 11,026 refusals between them, 85% of everything this
-// compiler says about real code - were pinned by nothing at all, and neither
-// was `global \`X\` is T, not a number` or the constant rule. This file is
-// those, plus `uses new.target`, which shares the arm with the two at the top
-// and fires nowhere in the corpora only because Babel's _classCallCheck is
-// behind a guard the importer does not reach.
+// Rerun native-claims.py for current counts. An arrow names the test that
+// pins that message.
 //
-// THESE ARE STRUCTURAL REFUSALS, decided before any type is looked at, which
-// is why they dominate: the three implicit arguments a ctjs.func always has -
-// receiver, new.target, callee - have no native carrier, so a function that
-// READS one cannot be a plain C++ function whatever its types say.
+// This file pins `this`, the function's own closure and a non-numeric global
+// as refusals, plus `uses new.target`, which shares the arm with `this` and
+// fires nowhere in the corpora only because Babel's _classCallCheck sits
+// behind a guard the importer does not reach. It also checks that a String
+// length constant, once refused by the constant rule, now lowers and runs.
 //
-// ONE PROGRAM PER FILE; see the header of shape-field-names.mlir for why.
+// The first three are structural refusals, decided before any type is looked
+// at, which is why they dominate: the three implicit arguments every ctjs.func
+// has (receiver, new.target, callee) have no native carrier, so a function
+// that reads one cannot be a plain C++ function whatever its types say.
 //
+// One program per split-file input; see the header of
+// Objects/shape-field-names.mlir for why.
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
@@ -53,7 +53,7 @@
 // RUN: %native_reference %t/constant.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/constant.js | FileCheck %s --check-prefix=OBSERVATION
 
-// --- argument 0: the receiver. 8600 refusals, two thirds of the whole census
+// --- argument 0: the receiver, two thirds of all refusals measured ---------
 //
 // The message is spelled with the JavaScript name in backticks, not "argument
 // 0" or "receiver": what the reader wrote is `this`.
@@ -66,28 +66,28 @@
 // NEWTARGET: ctjs.func {{.*}}@constructed$1
 // NEWTARGET-SAME: ctnative.not_native = "uses new.target"
 
-// --- argument 2: the function's own closure. 2426 refusals ------------------
+// --- argument 2: the function's own closure ---------------------------------
 //
-// A named function expression that calls ITSELF by name reads its own closure
+// A named function expression that calls itself by name reads its own closure
 // value, because the name is bound in the function's own scope and nowhere a
-// direct call could resolve. (A `function f(){}` DECLARATION is exempt: its
+// direct call could resolve. (A `function f(){}` declaration is exempt: its
 // create_closure's only use is a store_global, the pair lowers to nothing, and
 // isDeclarationClosure says so.)
 //
 // OWNCLOSURE: ctjs.func {{.*}}@me$1
 // OWNCLOSURE-SAME: ctnative.not_native = "uses its own closure"
 
-// --- a global that is not a number. 27 refusals -----------------------------
+// --- a global that is not a number ------------------------------------------
 //
-// Every global this tier carries is a `static double`, so a global whose type
-// inference could not prove numeric has no representation. The message names
-// the global AND what it was proved to be, which is what makes the census
-// row above a work list rather than a count.
+// A global that is read but never stored has no type inference can prove, so
+// it stays !ctnative.boxed and has no native representation. The message names
+// the global and what it was proved to be, which makes each refusal a to-do
+// item rather than a count.
 //
 // GLOBAL: ctjs.func {{.*}}@reader$1
 // GLOBAL-SAME: ctnative.not_native = "global `unstored` is !ctnative.boxed, not a number"
 
-// The original String length source now has a definite native type and carrier.
+// A String's length has a definite native type, so this lowers and runs.
 // CONSTANT: emitc.func @main()
 // CONSTANT: emitc.func @s_1
 // CONSTANT: call_opaque "ctnative::string_length"

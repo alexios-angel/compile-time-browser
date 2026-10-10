@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Compose constructor publication with local DOM record ownership."""
+"""Lower class constructors that store `this` in a captured Map.
+
+Built on records.py's WITNESS program. CASES must lower natively (the Map's
+values become owned record pointers, not shared_ptr) and match Node and the
+reference VM; BAD variants, missing intrinsics, a missing element parameter
+and a zero step budget must be refused.
+"""
 
 import re
 
@@ -7,6 +13,7 @@ from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.records import CHECKS, ELEMENT, WITNESS, source
 from CTNative.harness import run
 
+# The constructor publishes the new instance by storing `this` in `state`.
 CLASS = """class Item {
   constructor(n) { this.n = n; state.set('x', this); }
   read() { return this.n; }
@@ -39,6 +46,7 @@ CASES = {
         "const register = (owner, key, value) => { state.set(key, value); };\n  class Item",
     ).replace("state.set('x', this)", "register('owner', 'x', this)"),
 }
+# Map and Object plus the VM class helpers the importer emits for classes.
 INTRINSICS = [
     "Map",
     "Object",
@@ -62,6 +70,7 @@ CASES["saved-conditional"] = DIRECT.replace(
     "return a === 8 && b === 9;",
     "return (b !== 9 && saved.n === 0) || (b === 9 && saved.n === 8);",
 )
+# Instances that also hold an element in `_element`.
 ELEMENT_FIELD = (
     DIRECT.replace("constructor(n)", "constructor(n, target)")
     .replace("this.n = n;", "this.n = n; this._element = target;")
@@ -97,6 +106,7 @@ ELEMENT_PAIR_CHECKS = r"""
         (void)doc.take_writes();
 """
 
+# Variants the compiler must refuse.
 BAD = {
     "indirect-set": DIRECT.replace("state.set('x', this)", "state.set.call(state, 'x', this)"),
     "host-alias": DIRECT.replace(

@@ -1,2 +1,2 @@
-# Original prototype methods preserve their explicit element receiver and intrinsic identities.
+# Element.prototype selector methods called with .call keep their element receiver.
 # RUN: python3 %S/prototype_query.py %dom_driver

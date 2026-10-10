@@ -1,3 +1,11 @@
+//===- DOM/SnapshotLengths.h - querySelectorAll spread lengths --*- C++ -*-===//
+//
+// Host-contract tests for normalizeDOMSnapshotLengths, which replaces
+// `[].concat(...el.querySelectorAll(sel)).length` with a bounded read of the
+// original NodeList, and for the DOMEntryAnalysis proof of the result.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Fixtures.h"
@@ -8,9 +16,16 @@
 
 namespace ctcompile::test::host_contract {
 
+/// Checks normalizeDOMSnapshotLengths and DOMEntryAnalysis on a
+/// querySelectorAll snapshot spread into an array and then counted or indexed:
+/// the exact source normalizes and is proved, changed or missing intrinsics and
+/// any mutated fixture are refused with the source untouched, every smaller
+/// budget reports nothing, and each of four edits to the normalized bound must
+/// remove the evidence even when forged report attributes are present.
 inline void checkDOMSnapshotLengths(mlir::MLIRContext & context) {
     using namespace ctcompile::ctnative;
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
+    // 4607182418800017408 is the IEEE-754 bit pattern of 1.0.
     const std::string source = R"MLIR(
 module {
   ctjs.func @count$0(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value, %element: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 0 : i32} {
@@ -236,6 +251,10 @@ module {
         check(limited.exhausted() && noEvidence(*input, limited),
               "every incomplete index proof withholds bounds and borrow evidence");
     }
+    // Normalization bounds the count as `length < 2^24 ? length : 2^24`, the VM's
+    // array length cap. Each change breaks that bound one way: raise the cap to
+    // 2^24 + 1, swap the compare operands, swap the arms, or yield the cap as
+    // the length.
     for (unsigned change = 0; change < 4; ++change) {
         mlir::OwningOpRef<mlir::ModuleOp> changed(input->clone());
         mlir::scf::IfOp bounded;
