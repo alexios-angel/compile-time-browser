@@ -28,6 +28,7 @@
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
+#include "engine.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -37,7 +38,6 @@
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 using namespace ctbrowser;
 using ctbrowser::shell::browser;
@@ -55,35 +55,9 @@ constexpr int viewport_height = 768;
 constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
                                          "components", "position", "kitchen"};
 
-// The dump script, with its inputs bound. PROPS comes off disk rather than being
-// spelled again here: css-parity.py --emit-props writes it, so the Python list is
-// the only copy and this cannot drift from what the Chrome comparison asks.
-//
-// The geometry columns are filtered out. They are in the props file because the
-// REPORT has a column for each, but they come from getBoundingClientRect rather
-// than from getComputedStyle - asking the cascade for `@x` would just add four
-// empty answers.
-[[nodiscard]] std::string dump_script(const std::string & props_file, const std::string & dump) {
-    std::string props = "[";
-    std::istringstream lines{props_file};
-    std::string line;
-    bool first = true;
-    while (std::getline(lines, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) { line.pop_back(); }
-        if (line.empty() || line[0] == '#' || line[0] == '@') { continue; }
-        if (!first) { props += ","; }
-        props += "\"" + line + "\"";
-        first = false;
-    }
-    props += "]";
-    // COUNT is every element: there is no socket here, so there is nothing to
-    // chunk for. css-parity.py chunks because a reply crosses a wire.
-    return "var PROPS = " + props + ";\nvar PROPS_VERSION = 1;\nvar FROM = 0;\n" +
-           "var COUNT = 1000000;\nvar COMPACT = 1;\n" + dump;
-}
-
-// One fixture's table, as ctbrowser sees it.
-[[nodiscard]] std::string table_for(std::string_view name, const std::string & script_tail,
+// One fixture's table, as ctbrowser sees it. `props` is the text of
+// css-parity-props.txt, handed to the dump as data.
+[[nodiscard]] std::string table_for(std::string_view name, const std::string & props,
                                     std::string & why) {
     const std::filesystem::path page =
         std::filesystem::path{"examples/pages"} / ("bootstrap-" + std::string{name} + ".html");
@@ -113,10 +87,22 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     // geometry comes off the fragment tree and getComputedStyle reads the box
     // tree, and neither exists until one has.
     page_browser.frame();
-    if (!page_browser.run_script(script_tail)) {
-        why = "the dump script did not run: " + page_browser.script_error();
+    // The dump, LOADED into the fixture rather than listed by it: the fixture is
+    // shared with css-parity.py, which runs the same file its own way.
+    // `../tools/`: see main().
+    const auto engine = ctbrowser_test::make_engine(page_browser);
+    if (const std::string error = engine->load("../tools/check/css-dump.js"); !error.empty()) {
+        why = "the dump script did not run: " + error;
         return {};
     }
+    // Its inputs, as strings: PROPS, PROPS_VERSION, FROM, COUNT and COMPACT.
+    // PROPS comes off disk rather than being spelled again here: css-parity.py
+    // --emit-props writes it, so the Python list is the only copy and this cannot
+    // drift from what the Chrome comparison asks. COUNT is every element: there is
+    // no socket here, so there is nothing to chunk for. css-parity.py chunks
+    // because a reply crosses a wire. COMPACT asks for the one-line-per-element
+    // form the baselines are in.
+    std::string table = engine->call("css_dump_table", {props, "1", "0", "1000000", "1"});
     // THE `#head` LINE IS KEPT, on purpose. css-parity.py consumes and strips it,
     // because for a cross-engine diff it is a precondition rather than data. Here
     // it IS data: it records the viewport, the clientWidth and the element count
@@ -124,21 +110,22 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     // context and a change in any of the three shows up as line 1 rather than as
     // every line. It is also the line that will catch the clientWidth-versus-
     // layout-width inconsistency in docs/plans/bootstrap.md the moment S7 fixes it.
-    std::string out;
-    for (const std::string & logged : page_browser.bindings().console_output()) {
-        out += logged;
-        out += '\n';
+    //
+    // And so every table OPENS with it. Any other answer is the engine's
+    // "threw: ..." or "<no answer>", and must never reach a baseline under
+    // REGOLDEN=1.
+    if (!table.starts_with("#head ")) {
+        why = "the dump script did not run: " + table;
+        return {};
     }
-    if (out.empty()) { why = "the dump script logged nothing"; }
-    return out;
+    return table;
 }
 
-void run_fixture(std::string_view name, const std::string & props, const std::string & dump,
-                 bool regolden) {
+void run_fixture(std::string_view name, const std::string & props, bool regolden) {
     const std::filesystem::path baseline =
         std::filesystem::path{"test/baseline"} / ("bootstrap-" + std::string{name} + ".txt");
     std::string why;
-    const std::string table = table_for(name, dump_script(props, dump), why);
+    const std::string table = table_for(name, props, why);
     if (table.empty()) {
         std::printf("FAIL bootstrap-%s: %s\n", std::string{name}.c_str(), why.c_str());
         ++ctbrowser_test_failures;
@@ -194,7 +181,8 @@ int main() {
     // `../tools/`, NOT `tools/`. ctest runs this with WORKING_DIRECTORY =
     // PROJECT_SOURCE_DIR, which is the ctbrowser PROJECT directory since the
     // monorepo split - and tools/ stayed at the REPOSITORY root, one level up,
-    // because it drives both projects.
+    // because it drives both projects. css-dump.js is reached the same way, by
+    // the engine's load() in table_for().
     //
     // AND THE MISSING-FILE PATH HAS TO FAIL. It used to printf "FAIL ..." and
     // then REPORT, which returns `failures == 0 ? 0 : 1` - and a raw printf
@@ -202,6 +190,7 @@ int main() {
     // while comparing nothing at all, which is precisely what it exists to
     // prevent, and it is how the monorepo move briefly disabled the whole
     // Bootstrap ratchet without turning a single test red. ++failures first.
+    // A missing css-dump.js fails every fixture, through run_fixture's ++failures.
     const std::string props = read_file("../tools/check/css-parity-props.txt");
     if (props.empty()) {
         std::printf("FAIL no tools/check/css-parity-props.txt - "
@@ -209,15 +198,9 @@ int main() {
         ++ctbrowser_test_failures;
         REPORT("bootstrap_layout");
     }
-    const std::string dump = read_file("../tools/check/css-dump.js");
-    if (dump.empty()) {
-        std::printf("FAIL no tools/check/css-dump.js\n");
-        ++ctbrowser_test_failures;
-        REPORT("bootstrap_layout");
-    }
     const char * regolden = std::getenv("REGOLDEN");
     const bool write = regolden != nullptr && std::string_view{regolden} != "0";
 
-    for (const std::string_view name : fixtures) { run_fixture(name, props, dump, write); }
+    for (const std::string_view name : fixtures) { run_fixture(name, props, write); }
     REPORT("bootstrap_layout");
 }

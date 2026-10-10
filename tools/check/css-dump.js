@@ -1,6 +1,11 @@
 // The parity dump: one element per line, box geometry plus a fixed property set.
 // Run through `compare.py eval` on ctbrowser AND Chrome; css-parity.py prepends
-// PROPS/PROPS_VERSION/FROM/COUNT and diffs the two answers.
+// PROPS/PROPS_VERSION/FROM/COUNT and diffs the two answers. The bottom of this
+// file runs the dump when those globals are there.
+//
+// ctbrowser/unittests/unit/bootstrap_layout.cpp is the second caller: it loads
+// this file into a fixture and calls css_dump_table() with its inputs as
+// strings, so it binds no globals and nothing runs at load.
 //
 // WRITTEN AGAINST FOUR CONSTRAINTS, each of which has already been got wrong
 // somewhere in this repo's history:
@@ -10,6 +15,8 @@
 //     whether a script ran, not what it produced (ctbrowser/tools/ctdrive/ctdrive.cpp). The
 //     Playwright side patches console.log into an array to match
 //     (tools/check/compare.py), so this is the one channel both engines share.
+//     css_dump_table() RETURNS the table instead: its caller's engine seam
+//     (ctbrowser/test/support/engine.hpp) carries a call's answer back itself.
 //
 //  2. NO COMPLEX SELECTORS. ctbrowser's selector engine is the thing under test:
 //     using `querySelectorAll('.card > .btn')` to find elements would make the
@@ -25,7 +32,11 @@
 //
 //  4. RAW VALUES, NORMALISED IN PYTHON. Two normalisers running in two engines
 //     is two chances to normalise differently. This emits what the engine said.
-(function (FROM, COUNT) {
+
+// The table, one string per line, for both ways in. The parameters are named
+// after the globals css-parity.py prepends.
+function css_dump_lines(PROPS, PROPS_VERSION, FROM, COUNT, COMPACT) {
+    var lines = [];
     // Document order, with a structural path as the identity. The path survives
     // a class or text change, which is what makes the ratchet comparable across
     // rungs; the tag/id/classes after it are for the human reading the report.
@@ -65,7 +76,7 @@
         // from the initial containing block. A 15px disagreement moves every
         // element's @x and @w, and the report becomes eight thousand lines about
         // one number. css-parity.py exits on a mismatch here instead.
-        console.log('#head ' + JSON.stringify({
+        lines.push('#head ' + JSON.stringify({
             v: PROPS_VERSION,
             n: els.length,
             cw: document.documentElement.clientWidth,
@@ -101,10 +112,9 @@
         }
 
         var line;
-        if (typeof COMPACT !== 'undefined' && COMPACT) {
+        if (COMPACT) {
             // ONE LINE PER ELEMENT, EMPTIES OMITTED - the form
             // ctbrowser/unittests/unit/bootstrap_layout.cpp byte-compares against
-            // ctbrowser/test/baseline/. Most values are empty today (the engine answers
             // ctbrowser/test/baseline/. Most values are empty today (the engine answers
             // for well under half of them), so JSON would make the baselines
             // several times larger and a `git diff` correspondingly harder to
@@ -128,6 +138,41 @@
             }
             line = els[i][0] + '|' + key(el) + '|' + JSON.stringify(out);
         }
-        console.log(line);
+        lines.push(line);
     }
-})(FROM, COUNT);
+    return lines;
+}
+
+// bootstrap_layout.cpp's way in. Every argument is a STRING, because that is
+// all the engine seam passes: the text of tools/check/css-parity-props.txt, then
+// PROPS_VERSION, FROM, COUNT and COMPACT in decimal. Number() them before use -
+// `FROM === 0` is false for "0", and "0" + "1000000" is not a count. The answer
+// is the table with every line ended by a newline, which is the baseline file
+// byte for byte.
+function css_dump_table(propsText, version, from, count, compact) {
+    // The geometry columns are filtered out. They are in the props file because
+    // the REPORT has a column for each, but they come from getBoundingClientRect
+    // rather than from getComputedStyle - asking the cascade for `@x` would just
+    // add four empty answers. A trailing CR or space goes too, so a CRLF checkout
+    // reads the same names.
+    var props = [];
+    var rows = propsText.split('\n');
+    for (var i = 0; i < rows.length; i++) {
+        var name = rows[i].replace(/[\r ]+$/, '');
+        if (name !== '' && name[0] !== '#' && name[0] !== '@') {
+            props.push(name);
+        }
+    }
+    var lines = css_dump_lines(props, Number(version), Number(from), Number(count),
+        Number(compact));
+    return lines.join('\n') + '\n';
+}
+
+// css-parity.py's way in: the globals it prepends, and one console.log per line
+// (constraint 1). COMPACT is optional, for a chunk pasted into a console by hand.
+if (typeof PROPS !== 'undefined') {
+    css_dump_lines(PROPS, PROPS_VERSION, FROM, COUNT,
+        typeof COMPACT !== 'undefined' && COMPACT).forEach(function (line) {
+        console.log(line);
+    });
+}
