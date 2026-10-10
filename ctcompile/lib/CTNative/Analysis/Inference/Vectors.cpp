@@ -398,4 +398,15 @@ bool TypeInference::elementVectorParameter(llvm::ArrayRef<mlir::Value> members) 
     });
 }
 
+bool TypeInference::isUndefinedGlobal(mlir::Operation * op) {
+    auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(op);
+    if (!load || load.getName() != "undefined") { return false; }
+    // ponytail: one module walk per query; index the stores per solve if a
+    // large program makes this slow.
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    bool stored = false;
+    module.walk([&](ctjs::StoreGlobalOp store) { stored |= store.getName() == "undefined"; });
+    return !stored;
+}
+
 } // namespace ctcompile::ctnative

@@ -763,6 +763,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // The RegExp literal factory behind split(/\s+/) lowers
                         // to nothing; it is not a program global.
                         if (isVectorCallPlumbing(load)) { return; }
+                        // Nor is the global `undefined`, which is a constant.
+                        if (TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();
                     }
                     if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {

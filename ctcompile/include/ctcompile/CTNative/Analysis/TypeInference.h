@@ -256,6 +256,12 @@ public:
     /// splitsAString says whether there is one.
     static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
         llvm::ArrayRef<mlir::Value> members);
+    /// Whether `op` reads the global `undefined` in a program that never
+    /// stores to it. `undefined` is a non-writable, non-configurable property
+    /// of the global object (ECMA-262 19.1.4), so such a read is the undefined
+    /// value, whatever else writes the globals table.
+    static bool isUndefinedGlobal(mlir::Operation * op);
+
     /// Whether the array `members` names is a function's parameter: a
     /// read-only borrow of the caller's array, lowered as std::span.
     static bool elementVectorParameter(llvm::ArrayRef<mlir::Value> members);

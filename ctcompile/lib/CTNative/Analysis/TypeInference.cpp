@@ -783,7 +783,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // subscribes this load to every store's operand, so a store whose type
     // widens later re-visits the load.
     std::optional<mlir::Type> global;
-    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+    if (isUndefinedGlobal(op)) {
+        global = absentType(c);
+    } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
         const auto stores = globalStores_.find(load.getName());
         if (!globalsAreDynamic_ && stores != globalStores_.end() && !stores->second.empty()) {
             // A global can be read before its first store. Only the complete
