@@ -1,22 +1,25 @@
-// MutationObserver: the records a diff can reconstruct, and when they arrive.
+//===- ctbrowser/unittests/unit/mutation_observer.cpp - Observer tests ----===//
 //
-// This is the regression net for lib/Shell/bindings/mutation.cpp, and it asks
-// the two questions no other test in the suite asks:
+// MutationObserver: the records a diff of DOM writes can reconstruct, and when
+// they arrive. This is the regression net for lib/Shell/bindings/mutation.cpp,
+// and it checks two things no other test in the suite checks:
 //
-//   * WHAT SHAPE IS A RECORD. `addedNodes` has to be a real empty array and
+//   * The shape of a record. `addedNodes` has to be a real empty array and
 //     `previousSibling` a real null, because that is what almost every
 //     assertion in web-platform-tests' MutationObserver files reads first. A
 //     record whose absent fields are `undefined` fails on the shape before the
 //     test gets to what it was about.
-//   * WHEN DOES THE CALLBACK RUN. Delivery is a MICROTASK, so a mutation and
-//     its record are never in the same statement - and several mutations in one
-//     script turn are ONE callback holding several records. Half these WPT
-//     files are counting records per callback, so a delivery that fired per
-//     mutation would look like it worked and be wrong everywhere.
+//   * When the callback runs. Delivery is a microtask, so a mutation and its
+//     record are never in the same statement, and several mutations in one
+//     script turn are one callback holding several records. Many of these WPT
+//     files count records per callback, so a delivery that fired per mutation
+//     would look like it worked and be wrong everywhere.
 //
-// The page's own `alert()` is the observation channel: the browser keeps them
-// in order, they survive the turn the callback ran in, and a test that reads
-// them is reading exactly what a page could read.
+// The page's own `alert()` is the observation channel: the browser keeps the
+// alerts in order, they survive the turn the callback ran in, and a test that
+// reads them is reading exactly what a page could read.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -39,10 +42,9 @@ using ctbrowser_test::said;
 
 namespace {
 
-// THE VALIDATION HALF, and it is the half that is all-or-nothing: five
-// MutationObserver files in dom/nodes are a fast FAIL without it and a
-// ten-second TIMEOUT with only the validation, because their last subtest is an
-// async_test waiting for a record that never comes. Both halves or neither.
+/// observe() option validation. It is only useful together with record
+/// delivery: WPT's MutationObserver tests that pass validation otherwise end in
+/// an async_test that waits for a record and times out.
 void test_observe_validates_its_options() {
     CHECK_EQ(said("<html><body><p id=t></p><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
@@ -50,14 +52,14 @@ void test_observe_validates_its_options() {
                   "var m = new MutationObserver(function () {});"
                   // Nothing asked for at all.
                   "alert(threw(function(){ m.observe(t, {}); }));"
-                  // An old value or a filter with attributes explicitly OFF.
+                  // An old value or a filter with attributes explicitly off.
                   "alert(threw(function(){ m.observe(t, {childList:true, attributeOldValue:true,"
                   " attributes:false}); }));"
                   "alert(threw(function(){ m.observe(t, {childList:true, attributeFilter:['a'],"
                   " attributes:false}); }));"
                   "alert(threw(function(){ m.observe(t, {childList:true,"
                   " characterDataOldValue:true, characterData:false}); }));"
-                  // ...and the same three with attributes OMITTED, which turns
+                  // The same three with attributes omitted, which turns
                   // attribute observation on rather than throwing. Present, not
                   // true: `attributeOldValue: false` still enables it.
                   "alert(threw(function(){ m.observe(t, {attributeOldValue:true}); m.disconnect();"
@@ -75,8 +77,8 @@ void test_observe_validates_its_options() {
              "TypeError;TypeError;TypeError;TypeError;ok;ok;ok;ok;TypeError");
 }
 
-// One childList record, every field of it, and the fact that it arrives after
-// the script rather than inside the appendChild.
+/// One childList record, every field of it, and the fact that it arrives after
+/// the script rather than inside the appendChild.
 void test_one_child_list_record() {
     CHECK_EQ(said("<html><body><div id=host></div><script>"
                   "var host = document.getElementById('host');"
@@ -95,7 +97,7 @@ void test_one_child_list_record() {
                   "});"
                   "m.observe(host, {childList: true});"
                   "host.appendChild(document.createElement('span'));"
-                  // Printed BEFORE anything above: a delivery that ran from
+                  // Printed before anything above: a delivery that ran from
                   // inside appendChild would put this last.
                   "alert('during-the-turn');"
                   "</script></body></html>"),
@@ -103,9 +105,9 @@ void test_one_child_list_record() {
              "siblings=null,null;absent=null,null,null;callback=true,true;record=true");
 }
 
-// The siblings an insertion names, which is the part of the diff that has to
-// know WHERE in the child list the new node landed rather than only that it is
-// there.
+/// The siblings an insertion names: the part of the diff that has to know
+/// where in the child list the new node landed rather than only that it is
+/// there.
 void test_a_record_names_the_siblings_of_what_changed() {
     CHECK_EQ(said("<html><body><div id=host><i id=a></i><i id=b></i></div><script>"
                   "var host = document.getElementById('host');"
@@ -121,11 +123,10 @@ void test_a_record_names_the_siblings_of_what_changed() {
              "added=U;prev=a,next=b");
 }
 
-// TWO MUTATIONS, ONE CALLBACK, TWO RECORDS - which is what makes the delivery a
-// microtask rather than a call from the mutation, and what half of these WPT
-// files are actually counting. And the old values, which only a per-CALL diff
-// can get right: one diff at delivery time would see the first value and the
-// last and report a single record.
+/// Two mutations make one callback with two records, because delivery is a
+/// microtask rather than a call from the mutation. The old values need a diff
+/// per call: one diff at delivery time would see only the first and last values
+/// and report a single record.
 void test_two_attribute_writes_batch_into_one_callback() {
     CHECK_EQ(said("<html><body><div id=host class=one></div><script>"
                   "var host = document.getElementById('host');"
@@ -147,8 +148,8 @@ void test_two_attribute_writes_batch_into_one_callback() {
              "calls=1 n=2;attributes:class:one attributes:class:two ");
 }
 
-// attributeFilter, and the record for an attribute that did not exist before -
-// whose oldValue is null even under attributeOldValue, there being no old value.
+/// attributeFilter, and the record for an attribute that did not exist before,
+/// whose oldValue is null even under attributeOldValue, there being no old value.
 void test_attribute_filter_and_a_new_attribute() {
     CHECK_EQ(said("<html><body><div id=host></div><script>"
                   "var host = document.getElementById('host');"
@@ -164,8 +165,8 @@ void test_attribute_filter_and_a_new_attribute() {
              "n=1;data-x:null");
 }
 
-// characterData on a text node, with the old value, and `subtree` reaching a
-// descendant's attributes.
+/// characterData on a text node, with the old value, and `subtree` reaching a
+/// descendant's attributes.
 void test_character_data_and_subtree() {
     CHECK_EQ(said("<html><body><p id=p>hello</p><script>"
                   "var text = document.getElementById('p').firstChild;"
@@ -191,9 +192,9 @@ void test_character_data_and_subtree() {
              "n=1 attributes:true");
 }
 
-// "REPLACE ALL" IS ONE RECORD NAMING BOTH LISTS, not a removal record and an
-// addition record. `textContent = "x"` over existing children is the case, and
-// MutationObserver-textContent.html asserts it three ways.
+/// "Replace all" is one record naming both lists, not a removal record and an
+/// addition record. `textContent = "x"` over existing children is the case, and
+/// MutationObserver-textContent.html asserts it three ways.
 void test_replacing_the_children_is_one_record() {
     CHECK_EQ(said("<html><body><div id=host><span>old</span></div><script>"
                   "var host = document.getElementById('host');"
@@ -207,10 +208,10 @@ void test_replacing_the_children_is_one_record() {
              "n=1 removed=1 added=1");
 }
 
-// A SWAP NAMES THE NODE THAT MOVED FORWARD: `insertBefore(b, a)` is b's
-// removal (between a and c) then b's insertion ahead of a - and normalize is
-// one record per text node it removes, MutationObserver-childList.html's n32
-// and n21.
+/// A swap names the node that moved forward: `insertBefore(b, a)` is b's
+/// removal (between a and c) then b's insertion ahead of a. normalize() is one
+/// record per text node it removes (MutationObserver-childList.html's n32 and
+/// n21).
 void test_a_swap_and_a_normalize_are_the_records_the_dom_queues() {
     CHECK_EQ(
         said("<html><body><div id=host><i id=a></i><i id=b></i><i id=c></i></div>"
@@ -234,8 +235,8 @@ void test_a_swap_and_a_normalize_are_the_records_the_dom_queues() {
         "rm:b/a/c add:b/-/a rm:y/xyz/z rm:z/xyz/- rm:a/b/c add:a/c/-");
 }
 
-// takeRecords empties the queue, so the callback the delivery microtask would
-// have made never happens - and a second takeRecords answers with nothing.
+/// takeRecords empties the queue, so the callback the delivery microtask would
+/// have made never happens, and a second takeRecords answers with nothing.
 void test_take_records_empties_the_queue() {
     CHECK_EQ(said("<html><body><div id=host></div><script>"
                   "var host = document.getElementById('host');"
@@ -251,10 +252,10 @@ void test_take_records_empties_the_queue() {
              "taken=1 attributes:a;again=0;fired=0");
 }
 
-// disconnect drops the registrations AND the queue: a mutation made before it
-// is discarded rather than delivered late, and mutations after it are not seen
-// at all. Re-observing afterwards works, which is what the second half of
-// MutationObserver-disconnect.html walks through three times.
+/// disconnect drops the registrations and the queue: a mutation made before it
+/// is discarded rather than delivered late, and mutations after it are not seen
+/// at all. Re-observing afterwards works, which is what the second half of
+/// MutationObserver-disconnect.html walks through three times.
 void test_disconnect_drops_the_registrations_and_the_queue() {
     CHECK_EQ(said("<html><body><div id=host></div><script>"
                   "var host = document.getElementById('host');"
@@ -273,9 +274,9 @@ void test_disconnect_drops_the_registrations_and_the_queue() {
              "1:id:second");
 }
 
-// Observing a target a second time REPLACES the registration rather than adding
-// one beside it - otherwise every mutation after a re-observe would deliver two
-// copies of the same record.
+/// Observing a target a second time replaces the registration rather than
+/// adding one beside it; otherwise every mutation after a re-observe would
+/// deliver two copies of the same record.
 void test_observing_the_same_target_twice_replaces_it() {
     CHECK_EQ(said("<html><body><div id=host></div><script>"
                   "var host = document.getElementById('host');"
@@ -289,9 +290,9 @@ void test_observing_the_same_target_twice_replaces_it() {
              "n=1 old=host");
 }
 
-// A page with no observer pays nothing and behaves as it always did - the point
-// being that `record_mutations()` is on the path of EVERY DOM write a script
-// makes, so a fault in it would surface everywhere rather than here.
+/// A page with no observer behaves normally. `record_mutations()` is on the
+/// path of every DOM write a script makes, so a fault in it would surface
+/// everywhere rather than here.
 void test_a_page_without_an_observer_is_untouched() {
     CHECK_EQ(said("<html><body><div id=host></div><script>"
                   "var host = document.getElementById('host');"
@@ -303,10 +304,10 @@ void test_a_page_without_an_observer_is_untouched() {
              "x,1;function,function");
 }
 
-// A node of ANOTHER document in the realm - a DOMParser's here - is observed
-// by that document's bindings and delivered through the page's: the records
-// name that document's nodes, takeRecords works, and disconnect stops it
-// (MutationObserver-textContent.html's CDATASection case).
+/// A node of another document in the realm (a DOMParser's here) is observed by
+/// that document's bindings and delivered through the page's: the records name
+/// that document's nodes, takeRecords works, and disconnect stops it
+/// (MutationObserver-textContent.html's CDATASection case).
 void test_a_second_documents_node_is_observable() {
     CHECK_EQ(said("<html><body><script>"
                   "var xml = new DOMParser().parseFromString('<root></root>', 'text/xml');"
@@ -334,10 +335,10 @@ void test_a_second_documents_node_is_observable() {
 
 namespace {
 
-// A ROUND IS THE OBSERVERS PENDING WHEN IT STARTS (DOM 4.3 "notify mutation
-// observers" steps 2-3): a record one callback queues for an observer that had
-// none is delivered in a LATER microtask - after one the callback queued
-// before making it - not in the same round.
+/// A delivery round covers the observers pending when it starts (DOM 4.3
+/// "notify mutation observers" steps 2-3): a record one callback queues for an
+/// observer that had none is delivered in a later microtask, after one the
+/// callback queued before making it, not in the same round.
 void test_a_record_queued_by_a_callback_waits_for_the_next_round() {
     CHECK_EQ(said("<html><body><script>"
                   "var log = [];"

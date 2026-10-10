@@ -1,12 +1,17 @@
-// THE BYTES A TYPED ARRAY UPLOADS. getBufferSubData is WebGL 2 and refused
-// here, and readPixels reads the canvas rather than a bound framebuffer, so
-// each case is a 1x1 RGBA texture whose four bytes come from the array under
-// test, sampled by a point drawn onto the canvas: once for R,G,B and once for
-// A (as red), both opaque so no premultiplication touches them.
+//===- ctbrowser/unittests/unit/webgl_uploads.cpp - WebGL upload tests ----===//
 //
-// OPTIONAL, like gl_basics: a build with no ANGLE, or an ANGLE whose device
-// does not come up, passes and says it skipped - the page clears to red first
-// and checks it reads back.
+// The bytes a typed array uploads to WebGL. getBufferSubData is WebGL 2 and
+// refused here, and readPixels reads the canvas rather than a bound
+// framebuffer, so each case is a 1x1 RGBA texture whose four bytes come from
+// the array under test, sampled by a point drawn onto the canvas: once for
+// R,G,B and once for A (as red), both opaque so no premultiplication touches
+// them.
+//
+// Optional, like gl_basics: a build with no ANGLE, or an ANGLE whose device
+// does not come up, passes and says it skipped. The page clears to red first
+// and checks that it reads back.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/raster/raster.hpp>
 #include <ctbrowser/shell/shell.hpp>
@@ -21,6 +26,8 @@ using ctbrowser_test::log_of;
 
 namespace {
 
+/// The first console line starting with `prefix`, or a "(not logged: ...)"
+/// placeholder that no expected value matches.
 [[nodiscard]] std::string said(browser & page, std::string_view prefix) {
     for (const std::string & line : log_of(page)) {
         if (line.starts_with(prefix)) { return line; }
@@ -28,11 +35,9 @@ namespace {
     return "(not logged: " + std::string{prefix} + ")";
 }
 
-// Every element kind is its own little-endian bytes: ToInt8 is modular, so
-// Int8Array([-1]) is 0xFF (it uploaded 0 through a clamp); a Float64Array is
-// eight bytes an element (it uploaded one, which the 1x1 level then refused as
-// short); and a NaN or an out-of-float-range double reaches no undefined
-// conversion on the way.
+/// Every element kind uploads its own little-endian bytes: ToInt8 is modular,
+/// so Int8Array([-1]) is 0xFF; a Float64Array is eight bytes per element; and a
+/// NaN or out-of-range double never hits an undefined conversion.
 void test_typed_array_bytes() {
     browser page{browser_options{100, 100}};
     page.load_html(R"(<html><body><script>
@@ -92,11 +97,11 @@ void test_typed_array_bytes() {
     check(said(page, "f32big=") == "f32big=0:0,0,128,127", said(page, "f32big="));
 }
 
-// bufferData(target, size, usage) is ZERO-FILLED: the storage is uploaded as
-// zeros rather than left to whatever the GPU memory held. A point drawn with
-// its colour read out of the fresh buffer (all four bytes summed into red)
-// must be black. (ANGLE with robust resource init zeroes it anyway; without
-// it this is the leak.)
+/// bufferData(target, size, usage) is zero-filled: the storage is uploaded as
+/// zeros rather than left to whatever the GPU memory held. A point drawn with
+/// its colour read out of the fresh buffer (all four bytes summed into red)
+/// must be black. ANGLE with robust resource init zeroes it anyway; without
+/// that, stale GPU memory would leak to the page.
 void test_size_only_buffer_is_zeros() {
     browser page{browser_options{100, 100}};
     page.load_html(R"(<html><body><script>

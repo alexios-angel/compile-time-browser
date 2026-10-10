@@ -1,11 +1,16 @@
-// Web Animations - `element.animate`, seeked, read back through getComputedStyle.
+//===- web_animations.cpp - Web Animations tests ----------------*- C++ -*-===//
+//
+// Web Animations: `element.animate`, seeked, read back through
+// getComputedStyle.
 //
 // The shape every case takes is the one css/support/interpolation-testcommon.js
 // takes: make an animation, pause it, set `currentTime`, read the property.
 // See lib/Shell/bindings/animations.cpp for what the model is and what it
 // deliberately leaves out; these cases pin down the parts a page can observe,
-// and two of them - `fill: none` past the end, and `cancel()` - assert that an
-// animation STOPS having an effect, which is the half a stub gets wrong.
+// and two of them (`fill: none` past the end, and `cancel()`) assert that an
+// animation stops having an effect, which is the half a stub gets wrong.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -20,15 +25,16 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-// A positioned 100px-wide container with an absolutely positioned target in it,
-// so `left` has a used value and a percentage has a containing block.
+/// A positioned 100px-wide container with an absolutely positioned target in
+/// it, so `left` has a used value and a percentage has a containing block.
 constexpr const char * stage =
     "<div id=c style='position:relative;width:100px;height:100px'>"
     "<div id=t style='position:absolute;left:0px;width:10px;height:10px;opacity:1'></div></div>";
 
-// Run `setup` at load and log `expression` on the first timer after it, once
-// the page has ticked a few times - a running animation's clock has moved by
-// then, and a promise settled by `finish()` has delivered.
+/// Runs `setup` at load and logs `expression` on the first timer after it,
+/// once the page has ticked a few times: a running animation's clock has moved
+/// by then, and a promise settled by `finish()` has delivered. Returns the last
+/// logged line, or `threw:<name>` if the expression threw.
 [[nodiscard]] std::string answer(const std::string & setup, const std::string & expression) {
     browser page{browser_options{400, 300}};
     const std::string html =
@@ -45,12 +51,15 @@ constexpr const char * stage =
     return logged.back();
 }
 
+/// Checks answer(setup, expression) against `expected`, printing the
+/// expression on a mismatch.
 void is(const std::string & setup, const std::string & expression, const std::string & expected) {
     const std::string got = answer(setup, expression);
     CHECK_EQ(got, expected);
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
+/// Setup for `a`: `left` from 0px to 100px over 1000ms, paused at 250ms.
 constexpr const char * seeked =
     "var a = t.animate([{left: '0px'}, {left: '100px'}], {duration: 1000, fill: 'forwards'});"
     "a.pause(); a.currentTime = 250;";
@@ -77,7 +86,7 @@ void test_a_seeked_animation_is_what_getComputedStyle_reports() {
        " a.pause(); a.currentTime = 250;",
        "getComputedStyle(t).opacity", "0.25");
     // The property-indexed form, and a one-value list whose missing endpoint
-    // is the underlying value - `left: 0px` from the style attribute.
+    // is the underlying value (`left: 0px` from the style attribute).
     is("var a = t.animate({left: ['0px', '100px']}, {duration: 1000, fill: 'forwards'});"
        " a.pause(); a.currentTime = 500;",
        "getComputedStyle(t).left", "50px");
@@ -96,7 +105,7 @@ void test_a_seeked_animation_is_what_getComputedStyle_reports() {
 void test_easing_is_applied_and_may_overshoot() {
     // The three shapes interpolation-testcommon.js builds for progress 0, 1 and
     // an arbitrary point: steps(1, end), steps(1, start), and a cubic-bezier
-    // whose control points sit at the progress wanted - here -0.25.
+    // whose control points sit at the progress wanted (here -0.25).
     const std::string at_half = "{duration: 1000, fill: 'forwards', easing: '";
     const std::string seek = "'}); a.pause(); a.currentTime = 500;";
     is("var a = t.animate([{left: '0px'}, {left: '100px'}], " + at_half + "steps(1, end)" + seek,
@@ -134,7 +143,7 @@ void test_the_play_state_follows_the_specification() {
     is("var a = t.animate([{left: '0px'}, {left: '100px'}], 1000); a.finish();"
        " a.finished.then(function (x) { window.__done = x === a; });",
        "window.__done", "true");
-    // ...and a seek back out of the finished state hands out a fresh one.
+    // A seek back out of the finished state hands out a fresh promise.
     is("var a = t.animate([{left: '0px'}, {left: '100px'}], 1000); a.finish();"
        " var p = a.finished; a.currentTime = 100;",
        "a.finished === p", "false");

@@ -1,16 +1,20 @@
-// A SECOND DOCUMENT - `createHTMLDocument` and `createDocument`.
+//===- ctbrowser/unittests/unit/second_document.cpp - Second documents ----===//
 //
-// Its own file because what it pins down is a MODEL rather than a method: a
-// second Document here is a second `dom_bindings` over its own tree, sharing
-// the realm, the atom table and the interface objects with the page's own. The
-// block above `adopt_interfaces_of` in lib/Shell/bindings/document/second_document.cpp is the
-// decision; these cases are the parts of it that would otherwise drift.
+// A second document: `createHTMLDocument` and `createDocument`.
 //
-// TWO OF THEM ASSERT THAT SOMETHING DOES NOT WORK, and those are the important
-// ones. A node of one document handed to the other is REFUSED rather than
-// misread, because `pack(node_id)` is a slot into one slab and the same number
-// names a different node in a different document. A test that only checked the
-// happy path would let that turn back into a silent wrong answer.
+// This pins down a model rather than a method: a second Document is a second
+// `dom_bindings` over its own tree, sharing the realm, the atom table and the
+// interface objects with the page's own. The comment above
+// `adopt_interfaces_of` in lib/Shell/bindings/document/second_document.cpp
+// records that design; these cases are the parts of it that would otherwise
+// drift.
+//
+// The important case is the boundary between the two documents. A node of one
+// document appended into the other is adopted (cloned into the other node
+// slab), never misread: `pack(node_id)` is a slot in one slab, so the same
+// number names a different node in another document.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -26,7 +30,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <html><head><title>the page</title></head><body><div id=here>x</div>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks \p expression against a fresh page per case, since many of these
+/// mutate the document.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -38,10 +43,10 @@ void test_create_html_document_builds_a_whole_document() {
        "        d.head.tagName + ',' + d.body.tagName; })()",
        "made,HTML,HEAD,BODY");
     is("document.implementation.createHTMLDocument('made').nodeType", "9");
-    // THE ARGUMENT'S ABSENCE IS OBSERVABLE: with none there is no <title>
-    // element at all - and `undefined` IS absence, the argument being an
-    // optional DOMString (WebIDL; DOMImplementation-createHTMLDocument.js
-    // tests it beside `null`, which is the four letters).
+    // The argument's absence is observable: with none there is no <title>
+    // element at all, and `undefined` counts as absence because the argument
+    // is an optional DOMString (WebIDL). DOMImplementation-createHTMLDocument.js
+    // tests it beside `null`, which becomes the string "null".
     is("document.implementation.createHTMLDocument()"
        ".getElementsByTagName('title').length",
        "0");
@@ -49,7 +54,7 @@ void test_create_html_document_builds_a_whole_document() {
        ".getElementsByTagName('title').length",
        "0");
     is("document.implementation.createHTMLDocument(null).title", "null");
-    // AND IT IS NOT THE PAGE'S DOCUMENT, which is the whole point.
+    // And it is not the page's document, which is the whole point.
     is("document.implementation.createHTMLDocument('made') === document", "false");
     is("(function () {"
        " var d = document.implementation.createHTMLDocument('made');"
@@ -62,7 +67,7 @@ void test_create_html_document_builds_a_whole_document() {
 }
 
 void test_a_made_document_shares_the_realms_interfaces() {
-    // ONE HTMLDivElement in a realm. The made document adopts the primary's
+    // One HTMLDivElement per realm. The made document adopts the primary's
     // interface prototypes rather than building a second set, so an element it
     // creates is `instanceof` the constructor the page can name.
     is("document.implementation.createHTMLDocument('m').createElement('div')"
@@ -100,7 +105,7 @@ void test_create_document_makes_an_xml_document() {
        " var d = document.implementation.createDocument(null, 'foo', null);"
        " return d.documentElement.tagName; })()",
        "foo");
-    // An XML document is CASE-SENSITIVE, so the name is not folded.
+    // An XML document is case-sensitive, so the name is not folded.
     is("document.implementation.createDocument(null, 'FooBar', null).documentElement.tagName",
        "FooBar");
     // `createDocument(null, "")` is a Document with no document element at all,
@@ -114,16 +119,13 @@ void test_create_document_makes_an_xml_document() {
 }
 
 void test_a_node_of_one_document_is_adopted_by_the_other() {
-    // ADOPTION, AS THE DOM REQUIRES. `pack(node_id)` is a slot and a
-    // generation into ONE slab, so the same number names a different node in
-    // a different document - which is why this used to be refused with a
-    // TypeError, pinned here "so the day adoption arrives this line has to
-    // change". It arrived (2026-09-12): `appendChild` runs "adopt node" first,
-    // node_from clone-adopts the subtree across the two slabs and rebinds the
-    // page's wrapper to the copy, so the node is MOVED into this document.
-    // NOT YET: `document.getElementById('moved') === p` - the page hands out a
-    // second wrapper for the adopted copy, so identity across the adoption is
-    // the next thing this test should pin.
+    // Adoption, as the DOM requires. `pack(node_id)` is a slot and a
+    // generation into one slab, so the same number names a different node in
+    // a different document. `appendChild` runs "adopt node" first: node_from
+    // clone-adopts the subtree across the two slabs and rebinds the page's
+    // wrapper to the copy, so the node is moved into this document.
+    // Not yet pinned: `document.getElementById('moved') === p` fails, because
+    // the page hands out a second wrapper for the adopted copy.
     is("(function () {"
        " var d = document.implementation.createHTMLDocument('m');"
        " var p = d.createElement('p'); p.id = 'moved';"

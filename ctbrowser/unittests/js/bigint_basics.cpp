@@ -1,26 +1,17 @@
-// `bigint`, against V8.
+//===- ctbrowser/unittests/js/bigint_basics.cpp - BigInt against V8 -------===//
 //
-// THIS FILE USED TO RECORD AN ABSENCE. Every line asserted that BigInt did not
-// exist, with V8's answer in the comment, and it said outright that the day the
-// type was implemented it should fail everywhere at once and be rewritten as a
-// conformance suite. That is what happened - 17 of its assertions failed
-// together - and this is the rewrite.
+// The `bigint` type, with expected values taken from node (V8): arithmetic,
+// comparison, conversion and every error the specification names.
 //
-// Differentially tested against node (V8) over 61 expressions covering
-// arithmetic, comparison, conversion and every error the specification names;
-// no differences.
+// The point of the type is exactness past 2^53, where a double starts rounding
+// (an id, a nanosecond timestamp, a 64-bit hash). So the assertions that
+// matter most are the refusals: a BigInt never silently becomes a Number,
+// because that would lose exactly what it was reached for.
 //
-// THE POINT OF THE TYPE is exactness past 2^53, where a double starts rounding
-// - an id, a nanosecond timestamp, a 64-bit hash. So the assertions that matter
-// most are not the arithmetic, which is boring and correct, but the REFUSALS:
-// a BigInt will not silently become a Number, because doing so would lose
-// exactly the thing it was reached for.
+// Represented by `boost::multiprecision::cpp_int` in `bigint_object`. Bare
+// section numbers are ECMA-262.
 //
-// Represented by `boost::multiprecision::cpp_int` in `bigint_object`. Boost was
-// turned down for `Math` earlier in this repository and is right here, which is
-// not a contradiction: the objections there were speed against hardware and
-// disagreement with V8's fdlibm, and arbitrary precision has no hardware
-// alternative and no rounding to disagree about.
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -35,7 +26,7 @@ int main() {
     js_expect("0b101n", "5");
     js_expect("0o17n", "15");
     js_expect("1_000n", "1000");
-    // THE WHOLE REASON THE TYPE EXISTS: this integer is not representable as a
+    // The reason the type exists: this integer is not representable as a
     // double, and the Number beside it rounds to something else.
     js_expect("9007199254740993n", "9007199254740993");
     js_expect("9007199254740993", "9007199254740992"); // the Number, rounded
@@ -45,7 +36,7 @@ int main() {
     js_expect("1n + 2n", "3");
     js_expect("10n - 3n", "7");
     js_expect("6n * 7n", "42");
-    js_expect("7n / 2n", "3"); // TRUNCATES toward zero - there are no fractions
+    js_expect("7n / 2n", "3"); // truncates toward zero; there are no fractions
     js_expect("-7n / 2n", "-3");
     js_expect("7n % 3n", "1");
     js_expect("-7n % 3n", "-1"); // the sign follows the dividend, as for Number
@@ -63,8 +54,8 @@ int main() {
     js_expect("1n << 10n", "1024");
     js_expect("1024n >> 3n", "128");
 
-    // --- comparison DOES cross to Number, and exactly -------------------------
-    // Arithmetic between the two types is refused, but comparison is not - and
+    // --- comparison does cross to Number, and exactly -------------------------
+    // Arithmetic between the two types is refused, but comparison is not, and
     // the comparison is exact rather than going through a double, or the two
     // values below would compare equal.
     js_expect("1n == 1", "true");
@@ -180,7 +171,7 @@ int main() {
     // --- the refusals, which are the safety property --------------------------
     // Mixing a BigInt with a Number in arithmetic is a TypeError. An engine
     // that coerced instead would round at exactly the point the type was
-    // reached for, so the throw IS the feature.
+    // reached for, so the throw is the feature.
     const auto throws = [](const char * expression, const char * error) {
         js_expect(std::string{"(function(){try{return "} + expression +
                       "}catch(e){return \"THROWS \"+e.name}})()",
@@ -198,15 +189,16 @@ int main() {
     // There is no lossless JSON spelling for a BigInt, so it throws rather than
     // picking between a string and a rounded number.
     throws("JSON.stringify(1n)", "TypeError");
-    // `>>>` needs a WIDTH to fill from and a BigInt has none.
+    // `>>>` needs a width to fill from and a BigInt has none.
     throws("1n>>>1n", "TypeError");
     // No BigInt infinity, so division by zero has no value to give.
     throws("1n/0n", "RangeError");
     throws("1n%0n", "RangeError");
     // No fractions, so a negative exponent has none either.
     throws("2n**-1n", "RangeError");
-    // DOS-026: a result past 2^30 bits is refused from the operands' widths
-    // before a byte of it is computed; bases 0, 1 and -1 stay small at any power.
+    // Denial-of-service guard: a result past 2^30 bits is refused from the
+    // operands' widths before any of it is computed; bases 0, 1 and -1 stay
+    // small at any power.
     throws("(2n**100000n)**4000000000n", "RangeError");
     throws("3n**4294967295n", "RangeError");
     throws("3n**700000000n", "RangeError"); // 1.1 billion bits: past the cap, not just near it

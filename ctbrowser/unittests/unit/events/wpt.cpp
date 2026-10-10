@@ -1,13 +1,17 @@
-// THE DISPATCH RULES dom/events FOUND MISSING, one case per behaviour: where an
-// event's path crosses a shadow boundary and where it stops, what `target` and
-// `window.event` read on each side of that boundary, that a detached tree's
-// events reach neither the document nor the window, and where `offsetX` is
-// measured from.
+//===- ctbrowser/unittests/unit/events/wpt.cpp - Event path tests from WPT ===//
+//
+// Event dispatch path rules exercised by WPT's dom/events tests, one case per
+// behaviour: where an event's path crosses a shadow boundary and where it
+// stops, what `target` and `window.event` read on each side of that boundary,
+// that a detached tree's events reach neither the document nor the window, and
+// where `offsetX` is measured from.
 //
 // Each case names the WPT file it stands in for. They are here rather than in
-// event_listeners because every one is about the PATH - which objects an event
-// visits and what it looks like at each - where that file is about what a
+// event/listeners.cpp because every one is about the path (which objects an
+// event visits and what it looks like at each), where that file is about what a
 // listener does once reached.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -28,9 +32,9 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=target>hello</div>
 </body></html>)";
 
-// ONE EXPRESSION, EVALUATED AFTER THE PAGE HAS LAID OUT. `frame()` is what
-// makes `box_of` answer, and the offsetX case needs a box to measure from; the
-// rest do not care and share the helper so there is one.
+/// Evaluates one expression after the page has laid out and returns what it
+/// logged, or "threw:<name>". `frame()` does the layout, which the offsetX case
+/// needs a box from; the other cases do not care but share the helper.
 [[nodiscard]] std::string answer(const std::string & expression) {
     browser page{browser_options{400, 300}};
     page.load_html(page_html);
@@ -43,13 +47,15 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
     return logged.back();
 }
 
+/// Checks `answer(expression)` against `expected`, printing the expression on
+/// a mismatch.
 void is(const std::string & expression, const std::string & expected) {
     const std::string got = answer(expression);
     CHECK_EQ(got, expected);
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
-// The tree Event-dispatch-listener-order.window.js builds: a detached
+// The tree dom/events/Event-dispatch-listener-order.window.js builds: a detached
 // <section> holding a <div> host, whose closed shadow tree holds <p><span>.
 // Every node on both sides gets a capturing and a bubbling listener that logs
 // its nodeName, and the target is the innermost <span>.
@@ -69,8 +75,8 @@ constexpr const char * listener_order_setup =
 // --- the path through a shadow tree ---------------------------------------
 
 void test_a_composed_event_crosses_the_shadow_boundary() {
-    // Event-dispatch-listener-order.window.js. The path used to stop at the
-    // shadow root, so the host and its parent heard nothing.
+    // Event-dispatch-listener-order.window.js: a composed event's path continues
+    // past the shadow root to the host and its ancestors.
     is(std::string{"(function () {"} + listener_order_setup +
            " target.dispatchEvent(new CustomEvent('test', {bubbles: true, composed: true}));"
            " return result.join(','); })()",
@@ -90,7 +96,7 @@ void test_an_uncomposed_event_stops_at_the_shadow_root() {
 
 void test_the_target_is_retargeted_at_the_host() {
     // relatedTarget.window.js and shadow-relatedTarget.html both read `target`
-    // from outside the tree. The span sees itself; the host sees ITSELF, at
+    // from outside the tree. The span sees itself; the host sees itself, at
     // phase AT_TARGET; and after the dispatch the target is the host, because
     // that is the last shadow-adjusted target and it is in the light tree.
     is("(function () {"
@@ -107,7 +113,7 @@ void test_the_target_is_retargeted_at_the_host() {
        " seen.push(e.target === host);"
        " return seen.join(','); })()",
        "true:2,true:2,true");
-    // A host hears a NON-BUBBLING composed event too - its shadow-adjusted
+    // A host hears a non-bubbling composed event too - its shadow-adjusted
     // target is itself, so it is a target and not a bystander.
     is("(function () {"
        " var host = document.createElement('div');"
@@ -118,7 +124,7 @@ void test_the_target_is_retargeted_at_the_host() {
        " span.dispatchEvent(new Event('t', {composed: true}));"
        " return heard; })()",
        "1");
-    // And an event that never left the shadow tree has NO target afterwards:
+    // And an event that never left the shadow tree has no target afterwards:
     // concept-event-dispatch's clearTargets, which is what keeps a closed
     // tree's nodes off an object the light tree can read.
     is("(function () {"
@@ -145,7 +151,7 @@ void test_window_event_is_hidden_inside_a_shadow_tree() {
        " seen.push(window.event === undefined);"
        " return seen.join(','); })()",
        "true,true,true");
-    // ...AND THAT IS DECIDED AS THE PATH IS BUILT, not as each listener runs:
+    // ...and that is decided as the path is built, not as each listener runs:
     // a listener that moves the target's ancestor out of the shadow tree
     // (event-global-extra.window.js, "nodes moving post-dispatch") leaves the
     // later steps as hidden as they were.
@@ -265,7 +271,7 @@ void test_a_detached_tree_reaches_neither_document_nor_window() {
 
 void test_offset_x_is_measured_from_the_target_box() {
     // mouse-event-retarget.html: `clientX: 50` on a div at the body's 8px
-    // margin is offsetX 42. It used to be a copy of clientX.
+    // margin is offsetX 42.
     is("(function () {"
        " var seen = '';"
        " var target = document.getElementById('target');"
@@ -274,8 +280,8 @@ void test_offset_x_is_measured_from_the_target_box() {
        " target.dispatchEvent(new MouseEvent('click', {clientX: 50, clientY: 20}));"
        " return seen; })()",
        "42,12");
-    // AND FROM A PARSER-INSERTED SCRIPT, before any frame has laid the page
-    // out - which is when the file dispatches. The box is flushed on demand.
+    // The same from a parser-inserted script, before any frame has laid the
+    // page out, which is when the WPT file dispatches. The box is flushed on demand.
     browser page{browser_options{400, 300}};
     std::string html{page_html};
     html.insert(html.find("</body>"),

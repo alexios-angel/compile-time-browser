@@ -1,21 +1,17 @@
-// ctbrowser.aot: a compiled `try`, which the ABI said could not be written.
+//===- unittests/unit/aot/throw.cpp - Compiled try/catch/finally vs VM ----===//
 //
-// aot_helpers.def records, dated and by name, that ct_aot_catch_land "CANNOT BE
-// IMPLEMENTED AS WRITTEN, found on 2026-08-22 by trying": it says to read back
-// registers_[call_frame::base + handler::slot], and unwind_to_handler pops the
-// handler BEFORE it writes, so by the time a compiled body could ask, which
-// register the thrown value went into is unknowable. The row wrote down two
-// possible fixes and deliberately took neither, because "taking one without a
-// compiled `try` to test it would be inventing on no evidence".
+// Tests try/catch/finally in hand-written compiled (AOT) function bodies
+// against the interpreter, plus the stack trace of a mixed VM/AOT/C++ stack.
 //
-// This file is that evidence. The fix taken is a third: call_frame records the
-// slot at the moment unwind_to_handler writes it, which keeps the helper's
-// signature the one the table declares.
+// A compiled body never has a C++ exception thrown through it (generated
+// functions are nounwind): a helper returns CT_AOT_CAUGHT and the body branches
+// to its own landing pad. ct_aot_catch_land reads the thrown value from the
+// slot call_frame::landed_slot recorded when unwind_to_handler wrote it,
+// because the handler itself is already popped by then. Each helper's contract
+// (its "row") is in include/ctbrowser/aot/helpers/*.def; ct_aot_catch_land's is
+// in frames-and-bindings.def.
 //
-// COMPLETIONS, NOT UNWINDING, which is Phase 6's whole instruction. A compiled
-// body never has a C++ exception thrown through it: a helper RETURNS
-// CT_AOT_CAUGHT and the body branches to its own pad, exactly as the plan says
-// - "generated functions are nounwind".
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -35,14 +31,17 @@ using ctbrowser::script::value;
 
 namespace {
 
+/// How many times a compiled body ran in the current arm.
 std::size_t body_calls = 0;
+/// How many times a compiled body branched to its catch landing pad.
 std::size_t pads_taken = 0;
 
+/// The frame slots the compiled bodies use.
 enum slot : std::size_t {
-    // NOT SLOT ZERO, deliberately. It was, and that made the runtime's
-    // recording of WHICH slot the thrown value went into untestable: a
-    // `landed_slot` left at its default of 0 is indistinguishable from one
-    // correctly recorded as 0. Blinding the recording left this file green.
+    // slot_caught is deliberately not slot zero: a `landed_slot` left at its
+    // default of 0 is indistinguishable from one correctly recorded as 0, so
+    // a zero slot would not test the runtime's recording of which slot the
+    // thrown value went into.
     slot_arg = 0,
     slot_caught = 2, // where the thrown value lands
     slot_count = 4,
@@ -50,15 +49,15 @@ enum slot : std::size_t {
 
 constexpr std::uint32_t pad_catch = 7; // any id the body likes; it is its own label
 
-// A COMPILED
-//
-//     function guarded(f) {
-//       try { return f(); }
-//       catch (e) { return "caught:" + e; }
-//     }
-//
-// written as a backend would emit it: push a handler naming a pad and a slot,
-// make the call, and branch on the STATUS rather than on an exception.
+/// A compiled
+///
+///     function guarded(f) {
+///       try { return f(); }
+///       catch (e) { return "caught:" + e; }
+///     }
+///
+/// written as a backend would emit it: push a handler naming a pad and a slot,
+/// make the call, and branch on the status rather than on an exception.
 extern "C" std::int32_t compiled_guarded(ctbrowser::aot::ct_aot_ctx * ctx,
                                          const ctbrowser::aot::ct_aot_site * site,
                                          const std::uint64_t * argv, std::uint32_t argc,
@@ -94,8 +93,8 @@ extern "C" std::int32_t compiled_guarded(ctbrowser::aot::ct_aot_ctx * ctx,
     }
 
     if (status != ctbrowser::aot::ct_aot_status::caught) {
-        // UNWOUND means this frame is already gone - no epilogue, no leave.
-        // FAILED is the uncatchable tier and no `catch` may see it.
+        // UNWOUND means this frame is already gone: no epilogue, no leave.
+        // FAILED is an uncatchable engine fault that no `catch` may see.
         if (status != ctbrowser::aot::ct_aot_status::unwound) {
             ctbrowser::aot::ct_aot_handler_pop(frame);
             ctbrowser::aot::ct_aot_leave(frame);
@@ -105,8 +104,8 @@ extern "C" std::int32_t compiled_guarded(ctbrowser::aot::ct_aot_ctx * ctx,
 
     // } catch (e) {
     //
-    // THE HANDLER IS ALREADY OFF: unwind_to_handler pops as it searches. A
-    // ct_aot_handler_pop here would take the CALLER's.
+    // The handler is already off: unwind_to_handler pops as it searches. A
+    // ct_aot_handler_pop here would take the caller's.
     std::uint64_t thrown = value::undefined().bits();
     const std::uint32_t pad = ctbrowser::aot::ct_aot_catch_land(frame, &thrown);
     slots = ctbrowser::aot::ct_aot_slots(frame);
@@ -137,10 +136,11 @@ extern "C" std::int32_t compiled_guarded(ctbrowser::aot::ct_aot_ctx * ctx,
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
 
-// A COMPILED BODY THAT POPS A HANDLER IT NEVER PUSHED, which is what a
-// mis-balanced emission looks like. ct_aot_handler_pop takes the GLOBALLY
-// innermost handler without consulting handler_base, so without a guard this
-// silently takes its CALLER'S catch and nothing reports it - the row says so.
+/// A compiled body that pops a handler it never pushed, which is what a
+/// mis-balanced emission looks like. ct_aot_handler_pop takes the globally
+/// innermost handler without consulting handler_base, so without a guard this
+/// would silently take its caller's catch (ct_aot_handler_pop's .def entry
+/// documents this).
 extern "C" std::int32_t compiled_sloppy(ctbrowser::aot::ct_aot_ctx * ctx,
                                         const ctbrowser::aot::ct_aot_site * site,
                                         const std::uint64_t * argv, std::uint32_t argc,
@@ -160,9 +160,9 @@ extern "C" std::int32_t compiled_sloppy(ctbrowser::aot::ct_aot_ctx * ctx,
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
 
-// A COMPILED BODY THAT SIMPLY FORWARDS, for the stack-trace arrangement: the
-// point is that it sits BETWEEN a native and an interpreted frame while the
-// throw happens, so the trace has to name it in the right place.
+/// A compiled body that simply forwards, for the stack-trace test: it sits
+/// between a native and an interpreted frame while the throw happens, so the
+/// trace must name it in the right place.
 extern "C" std::int32_t compiled_middle(ctbrowser::aot::ct_aot_ctx * ctx,
                                         const ctbrowser::aot::ct_aot_site * site,
                                         const std::uint64_t * argv, std::uint32_t argc,
@@ -191,22 +191,21 @@ extern "C" std::int32_t compiled_middle(ctbrowser::aot::ct_aot_ctx * ctx,
 
 constexpr std::uint32_t pad_finally = 11;
 
-// A COMPILED
-//
-//     function guardedFinally(f) {
-//       try { return f(); }
-//       finally { note(); }
-//     }
-//
-// `finally` is the subtle one and the plan says so: it must run on all three
-// completion kinds - normal, thrown, and returned-through - and must be able to
-// override the pending completion. It is NOT a catch: the thrown value is
-// re-thrown after the block runs, which is what ct_aot_throw's re-throw path is
-// for.
-//
-// Modelled the way the bytecode models it, which the plan also insists on: a
-// saved completion and a dispatch at the end of the block. Here the completion
-// is which of two ways the body reached the finally.
+/// A compiled
+///
+///     function guardedFinally(f) {
+///       try { return f(); }
+///       finally { note(); }
+///     }
+///
+/// `finally` must run on all three completion kinds (normal, thrown and
+/// returned-through) and may override the pending completion. It is not a catch:
+/// a thrown value is re-thrown after the block runs (ct_aot_throw's re-throw
+/// path).
+///
+/// Modelled as the bytecode does it: a saved completion and a dispatch at the
+/// end of the block. Here the completion is which of two ways the body reached
+/// the finally.
 extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
                                          const ctbrowser::aot::ct_aot_site * site,
                                          const std::uint64_t * argv, std::uint32_t argc,
@@ -225,8 +224,8 @@ extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
     std::uint64_t * slots = ctbrowser::aot::ct_aot_slots(frame);
     slots[slot_arg] = note;
 
-    // THE COMPLETION RECORD, which is the whole of the technique: what the body
-    // must do AFTER the finally block, decided before it runs.
+    // The completion record, the core of the technique: what the body must do
+    // after the finally block, decided before it runs.
     enum class completion {
         returning,
         throwing
@@ -246,7 +245,7 @@ extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
             carried = produced;
         } else if (status == ctbrowser::aot::ct_aot_status::caught) {
             // The handler has already been popped by the search. This is not a
-            // catch - the value is carried and re-thrown below.
+            // catch: the value is carried and re-thrown below.
             std::uint64_t thrown = value::undefined().bits();
             if (ctbrowser::aot::ct_aot_catch_land(frame, &thrown) != pad_finally) {
                 ctbrowser::aot::ct_aot_leave(frame);
@@ -257,8 +256,8 @@ extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
             carried = thrown;
         } else {
             // UNWOUND or FAILED: the finally block cannot run, because either
-            // this frame is gone or the failure tier is uncatchable. The
-            // interpreter does the same - a raise() is not a completion.
+            // this frame is gone or the failure is uncatchable. The
+            // interpreter does the same: a raise() is not a completion.
             if (status != ctbrowser::aot::ct_aot_status::unwound) {
                 ctbrowser::aot::ct_aot_leave(frame);
             }
@@ -266,7 +265,7 @@ extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
         }
     }
 
-    // THE FINALLY BLOCK ITSELF, run on both completions, with the pending one
+    // The finally block itself, run on both completions, with the pending one
     // parked in a slot across it because calling note() is a safepoint.
     slots[slot_caught] = carried;
     {
@@ -274,10 +273,9 @@ extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
         const auto status = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
             frame, slots[slot_arg], value::undefined().bits(), nullptr, 0u, 0u, site, &ignored));
         if (status != ctbrowser::aot::ct_aot_status::ok) {
-            // A THROW INSIDE THE FINALLY OVERRIDES THE PENDING COMPLETION,
-            // which is the behaviour the plan singles out. Nothing to do but
-            // hand the new one on: the old value is dropped, exactly as
-            // `try { throw 1 } finally { throw 2 }` drops the 1.
+            // A throw inside the finally overrides the pending completion.
+            // Nothing to do but hand the new one on: the old value is dropped,
+            // exactly as `try { throw 1 } finally { throw 2 }` drops the 1.
             if (status != ctbrowser::aot::ct_aot_status::unwound) {
                 ctbrowser::aot::ct_aot_leave(frame);
             }
@@ -286,7 +284,7 @@ extern "C" std::int32_t compiled_finally(ctbrowser::aot::ct_aot_ctx * ctx,
         slots = ctbrowser::aot::ct_aot_slots(frame);
     }
 
-    // THE DISPATCH AT THE END OF THE BLOCK.
+    // The dispatch at the end of the block.
     if (pending == completion::throwing) {
         const auto status = static_cast<ctbrowser::aot::ct_aot_status>(
             ctbrowser::aot::ct_aot_throw(frame, slots[slot_caught]));
@@ -318,18 +316,18 @@ constexpr std::string_view source =
     "  try { f(); throw 'after'; }\n"
     "  catch (e) { return 'kept:' + e; }\n"
     "}\n"
-    // THE HOSTILE ARRANGEMENT the plan asks for: a native built-in calls a
-    // COMPILED function, which calls an INTERPRETED one, which throws - and
-    // `stack` is captured at the throw site.
+    // The mixed-stack arrangement: a native built-in calls a compiled
+    // function, which calls an interpreted one, which throws, and `stack` is
+    // captured at the throw site.
     "function thrower() { throw new Error('from the bottom'); }\n"
     "function middle(f) { return f(); }\n"
     "var notes = 0;\n"
     "function note() { notes = notes + 1; }\n"
-    // `note` IS AN ARGUMENT rather than a global, because a compiled body
-    // cannot read a global yet - ct_aot_global_get has no body. Passing it
-    // keeps both arms running the same source.
+    // `note` is passed as an argument rather than read as a global so the
+    // hand-written compiled body stays a plain call with no global lookup.
+    // Both arms still run the same source.
     "function guardedFinally(f, n) { try { return f(); } finally { n(); } }\n"
-    // THE COUNT IS PART OF THE ANSWER. A finally that never ran, or ran twice,
+    // The count is part of the answer: a finally that never ran, or ran twice,
     // produces the same string as one that ran once unless the count is in it.
     "function aroundFinally(f) {\n"
     "  notes = 0;\n"
@@ -341,6 +339,10 @@ constexpr std::string_view source =
     "  catch (e) { return e.stack; }\n"
     "}\n";
 
+/// Runs `entry(argument)` from `source` on a fresh context, with the compiled
+/// bodies stamped in when `stamp` is set. Returns the answer as a string;
+/// `calls` receives how often a compiled body ran and `failed` whether the
+/// context hit an uncatchable failure.
 [[nodiscard]] std::string run(bool stamp, const char * entry, const char * argument,
                               std::size_t & calls, bool & failed) {
     program compiled = ctbrowser::script::compiler::compile(source);
@@ -378,7 +380,8 @@ constexpr std::string_view source =
     return ctx.to_string(answer);
 }
 
-// Both arms, compared. The interpreted one is the specification here.
+/// Runs `entry(argument)` interpreted and compiled and checks the two agree.
+/// The interpreted arm is the specification.
 void agrees(const char * entry, const char * argument, bool expect_body) {
     std::size_t calls = 0;
     bool failed = false;
@@ -398,48 +401,46 @@ void agrees(const char * entry, const char * argument, bool expect_body) {
 } // namespace
 
 int main() {
-    // NOTHING THROWN: the handler must come off again, and the answer is the
+    // Nothing thrown: the handler must come off again, and the answer is the
     // callee's. A body that forgot the pop leaves a live handler pointing at a
     // frame that has returned - which the next throw anywhere would find.
     agrees("guarded", "fine", true);
 
-    // A STRING THROWN THROUGH A COMPILED try, caught by its own catch.
+    // A string thrown through a compiled try, caught by its own catch.
     agrees("guarded", "boom", true);
     check(pads_taken >= 1, "AND THE COMPILED BODY REACHED ITS LANDING PAD");
 
-    // AN OBJECT THROWN, whose toString runs during the concatenation in the
+    // An object thrown, whose toString runs during the concatenation in the
     // catch block - page JavaScript running inside a compiled handler.
     agrees("guarded", "boomObject", true);
 
-    // A THROW THAT PASSES THROUGH the compiled frame to a handler BELOW it.
+    // A throw that passes through the compiled frame to a handler below it.
     // The compiled body must return UNWOUND without running its epilogue: its
     // frame is already gone, and calling ct_aot_leave would pop somebody else's.
     agrees("outer", "rethrower", true);
 
-    // ---- A COMPILED `finally`, ON ALL THREE COMPLETIONS ------------------
+    // ---- A compiled `finally`, on all three completions ------------------
     //
-    // The plan singles this out: it must run on normal, thrown and
-    // returned-through completions, and must be able to override the pending
-    // one. `notes` is in the answer because a finally that never ran and one
+    // It must run on normal, thrown and returned-through completions, and may
+    // override the pending one. `notes` is in the answer because a finally that never ran and one
     // that ran twice both produce the same string otherwise.
     agrees("aroundFinally", "fine", true);
     agrees("aroundFinally", "boom", true);
     agrees("aroundFinally", "boomObject", true);
 
-    // A MIS-BALANCED BODY MUST NOT TAKE ITS CALLER'S CATCH. `keepsCatch` has a
+    // A mis-balanced body must not take its caller's catch. `keepsCatch` has a
     // live handler when it calls the compiled `sloppy`, which pops one it never
     // pushed; if that pop is allowed, the `throw 'after'` on the next line is
     // uncaught instead of caught.
     agrees("keepsCatch", "sloppy", false);
 
-    // AND UNCAUGHT, which is the failure tier no `catch` may see: the compiled
-    // body must not treat it as caught.
+    // An uncaught throw: the compiled body must not treat it as caught.
     {
         std::size_t calls = 0;
         bool failed = false;
         const std::string interpreted = run(false, "guarded", "boom", calls, failed);
         (void)interpreted;
-        // `boom` inside `guarded` IS caught, so uncaught needs the throw to
+        // `boom` inside `guarded` is caught, so uncaught needs the throw to
         // escape both. Called directly, nothing is guarding it.
         const std::string bare_interpreted = run(false, "boom", "fine", calls, failed);
         const bool interpreted_failed = failed;
@@ -449,11 +450,11 @@ int main() {
               "and both arms record the uncatchable failure");
     }
 
-    // ---- A MIXED STACK, WHICH IS PHASE 6'S OTHER HALF --------------------
+    // ---- A mixed stack ---------------------------------------------------
     //
-    // "A mixed VM/AOT/C++ stack must produce a single coherent JavaScript stack
-    // trace", tested with the arrangement the plan specifies: a native calling
-    // a compiled function calling an interpreted one that throws.
+    // A stack that mixes interpreted, compiled and native C++ frames must
+    // still produce one coherent JavaScript stack trace. Arrangement: a native
+    // calls a compiled function, which calls an interpreted one that throws.
     {
         std::size_t calls = 0;
         bool failed = false;
@@ -466,17 +467,17 @@ int main() {
         check(thrower_at != std::string::npos, "the interpreted frame that threw is named");
         check(middle_at != std::string::npos, "THE COMPILED FRAME IS NAMED TOO");
         check(mixed_at != std::string::npos, "and the interpreted frame below the native");
-        // INNERMOST FIRST, which is the order every engine prints and the only
+        // Innermost first, which is the order every engine prints and the only
         // one a reader can follow. The native itself has no JavaScript frame to
         // name - it is C++ - so what has to be right is that the two JS frames
         // either side of it are in the right order rather than collapsed.
         check(thrower_at < middle_at && middle_at < mixed_at,
               "AND THEY ARE IN CALL ORDER ACROSS THE NATIVE IN THE MIDDLE");
 
-        // A COMPILED FRAME CARRIES NO BYTECODE OFFSET. "+0" would be a number
-        // that looks like a position and is not one, and after a catch fires
-        // `ip` holds the landing pad with CT_AOT_PAD_BIT set - which would
-        // print as 9223372036854775815.
+        // A compiled frame carries no bytecode offset. "+0" would look like a
+        // position and is not one, and after a catch fires `ip` holds the
+        // landing pad with CT_AOT_PAD_BIT (bit 63) set, which would print as
+        // 9223372036854775815 (2^63 + 7).
         const std::size_t marker = trace.find("compiled)", middle_at);
         check(marker != std::string::npos && marker - middle_at < 40,
               "and the compiled frame says so instead of carrying a fake offset");

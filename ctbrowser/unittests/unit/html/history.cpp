@@ -1,8 +1,12 @@
+//===- ctbrowser/unittests/unit/html/history.cpp - window.history ---------===//
+//
 // `window.history`, HTML 7.4.2: pushState and replaceState move the document's
 // address and keep a structured clone of the state; a URL the document cannot
 // be rewritten to is a SecurityError; back() is a later task that restores the
 // entry's address and state and fires `popstate`, then `hashchange` when the
 // fragment moved.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -13,7 +17,8 @@
 
 namespace {
 
-// The page at an http: address, run for a few ticks; what it logged.
+/// Runs \p script in a page at address \p url for a few ticks and returns
+/// everything it logged.
 std::vector<std::string> run(const std::string & script, const char * url) {
     ctbrowser::browser page{ctbrowser::browser_options{400, 300}};
     page.set_location(url);
@@ -23,7 +28,7 @@ std::vector<std::string> run(const std::string & script, const char * url) {
     return page.bindings().console_output();
 }
 
-// The lines, `|`-joined: a mismatch prints every one of them.
+/// Joins \p lines with `|`, so a mismatch prints every one of them.
 std::string joined(const std::vector<std::string> & lines) {
     std::string out;
     for (const std::string & line : lines) { out += (out.empty() ? "" : "|") + line; }
@@ -53,7 +58,7 @@ void test_push_and_replace() {
                          "SecurityError /dir/next.html|DataCloneError|TypeError"});
 }
 
-// back() is a TASK: nothing moves in the statement, then `popstate` carries
+// back() queues a task: nothing moves in the statement, then `popstate` carries
 // the entry's state and `hashchange` follows when only the fragment differed.
 void test_back_is_a_task() {
     const std::vector<std::string> logged =

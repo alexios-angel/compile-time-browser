@@ -1,11 +1,16 @@
-// IsConstructor (7.2.4), as `new` and Reflect.construct see it: a built-in
-// METHOD, a getter, an arrow, a generator and an async function have no
-// [[Construct]], so `new Math.abs()` is a TypeError. test262's isConstructor.js
-// asks `Reflect.construct(function(){}, [], f)` and expects the newTarget check
-// to refuse - ~170 `not-a-constructor.js` files across the built-ins.
+//===- ctbrowser/unittests/js/is_constructor.cpp - IsConstructor ----------===//
+//
+// IsConstructor (ECMA-262 7.2.4), as `new` and Reflect.construct see it: a
+// built-in method, a getter, an arrow, a generator and an async function have
+// no [[Construct]], so `new Math.abs()` is a TypeError. test262's
+// isConstructor.js asks `Reflect.construct(function(){}, [], f)` and expects
+// the newTarget check to refuse; the `not-a-constructor.js` tests across the
+// built-ins depend on it.
 //
 // The default is the other way for an embedder's native (`new Image()`, `new
 // DOMParser()`): those set nothing and must keep constructing.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -75,14 +80,14 @@ int main() {
               " {get() { throw sentinel; }}); try { Reflect.construct(function () {}, [], N); }"
               " catch (e) { return e === sentinel; } return false; })()",
               "true");
-    // THE `new` OPERATOR ITSELF, not only Reflect.construct: the interpreter's
-    // op::construct ran an arrow, a generator and an async function as
-    // constructors while the other two tiers refused them.
+    // The `new` operator itself, not only Reflect.construct: arrows,
+    // generators and async functions have no [[Construct]] and must throw a
+    // TypeError from op::construct too.
     js_expect("(function () { var out = []; [() => 1, function* () {}, async function () {},"
               " async function* () {}].forEach(function (f) { try { new f(); out.push('no'); }"
               " catch (e) { out.push(e.constructor === TypeError); } }); return out.join(); })()",
               "true,true,true,true");
-    // A PROXY OVER A FUNCTION IS CALLED through its `apply` trap, or its
+    // A proxy over a function is called through its `apply` trap, or its
     // target when there is none - directly, through .call, and through a
     // proxy over a proxy over a bound function (10.5.12).
     js_expect("(function () { var seen; var p = new Proxy(function (a) { return a; }, {"
@@ -91,9 +96,9 @@ int main() {
               " + b; }.bind({k: 10}, 1); var q = new Proxy(new Proxy(sum, {}), {apply: null});"
               " return [p(1), p.call(null, 2), typeof seen, q(2)].join(); })()",
               "2,3,object,13");
-    // A CLASS CONSTRUCTOR HAS NO [[Call]] (10.2.1 step 2): called directly,
-    // through call/apply, Reflect.apply or a spread it is the TypeError, while
-    // `super()` - a call with a new.target - still reaches it.
+    // A class constructor has no [[Call]] (10.2.1 step 2): called directly or
+    // through call/apply, Reflect.apply or a spread it throws the TypeError,
+    // while `super()` (a call with a new.target) still reaches it.
     js_expect("(function () { class A {} class B extends A {} var out = [];"
               " [function () { A(); }, function () { B.call({}); },"
               " function () { A.apply(null, []); }, function () { Reflect.apply(B, null, []); },"

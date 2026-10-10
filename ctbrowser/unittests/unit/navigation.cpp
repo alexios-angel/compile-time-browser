@@ -1,15 +1,15 @@
-// LEAVING THE PAGE, AND WHAT THE EMBEDDER IS TOLD: `location`'s parts and
-// `document.cookie`, `alert`, `location.reload`, a link handed to the embedder
-// or scrolled to as a fragment - and the three cases that drive `run_app`
-// rather than a bare browser, because the wiring between the application's
-// hooks and the browser's was what had gone wrong. Those three initialise SDL,
-// which is why this test carries the sanitizer suppressions in
-// unittests/CMakeLists.txt.
+//===- ctbrowser/unittests/unit/navigation.cpp - Navigation tests ---------===//
 //
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// Leaving the page, and what the embedder is told: `location`'s parts and
+// `document.cookie`, `URL`, `alert`, `location.reload`, a link handed to the
+// embedder or scrolled to as a fragment, and the cases that drive `run_app`
+// rather than a bare browser, because the wiring between the application's
+// hooks and the browser's is what they test. Those initialise SDL, which is
+// why this test carries the sanitizer suppressions in
+// unittests/unit/CMakeLists.txt. Shared helpers are in chrome_probe.hpp beside
+// this file.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -42,12 +42,11 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-// `location`'s parts, and `document.cookie`.
-//
-// Neither is exotic and both are read WITHOUT a guard: the idiom is
-// `location.search.substring(1)` and `document.cookie.split(';')`, so an absent
-// one is not a missing feature but a TypeError on the first line of whatever
-// library reached for it.
+/// `location`'s parts, and `document.cookie`.
+///
+/// Pages read both without a guard: the idiom is `location.search.substring(1)`
+/// and `document.cookie.split(';')`, so an absent one is not a missing feature
+/// but a TypeError on the first line of whatever library reached for it.
 void test_location_parts_and_cookies() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><script>
@@ -74,8 +73,8 @@ void test_location_parts_and_cookies() {
     check(log[3] == "replaced=a=9; b=2", "...and writing the same name replaces it: " + log[3]);
 }
 
-// `new URL(url, base)` over the same parser: the parts, the resolution against
-// a base, the TypeError for no URL at all, and the blob methods still there.
+/// `new URL(url, base)` over the same parser: the parts, the resolution against
+/// a base, the TypeError for no URL at all, and the blob methods still there.
 void test_url_objects() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><script>
@@ -103,9 +102,8 @@ void test_url_objects() {
 
 // --- alert, location, and <a href> -------------------------------------
 //
-// The last three things the previous engine's script surface had and this engine's did not. MDN's
-// breakout calls alert() and document.location.reload() the moment the game
-// ends, so a page could win and then die on an undefined identifier.
+// MDN's breakout game calls alert() and document.location.reload() when the
+// game ends, so a missing one turns a win into an undefined-identifier error.
 
 void test_alert_is_recorded() {
     browser page{browser_options{200, 100}};
@@ -128,7 +126,7 @@ void test_alert_reaches_the_hook() {
 void test_location_reload_reruns_the_page() {
     browser page{browser_options{200, 100}};
     // The script appends a paragraph, so a reload is visible as a page that
-    // has ONE again rather than two - a reload re-parses the source, it does
+    // has one again rather than two: a reload re-parses the source, it does
     // not re-run the script over the mutated document.
     page.load_html(R"(<body><div id=host></div><script>
     var p = document.createElement('p');
@@ -138,7 +136,7 @@ void test_location_reload_reruns_the_page() {
     check(page.script_error().empty(), "the script ran");
 
     // A page that reloads itself from a timer: the request is recorded and
-    // drained BETWEEN callbacks, because a reload inside one would destroy the
+    // drained between callbacks, because a reload inside one would destroy the
     // context the callback is running in.
     page.load_html(R"(<body><p>page</p><script>
     setTimeout(function () { document.location.reload(); }, 5);
@@ -177,7 +175,7 @@ void test_a_link_is_handed_to_the_embedder() {
     page.load_html("<body><a href='https://example.com/x'>a link</a></body>");
     page.frame();
 
-    // Clicked on the link's TEXT, which is a different node from the <a>.
+    // Clicked on the link's text, which is a different node from the <a>.
     (void)page.handle(input_event::mouse_down_at(8, 8));
     (void)page.handle(input_event::mouse_up_at(8, 8));
     check(visited.size() == 1, "the link was followed");
@@ -185,14 +183,14 @@ void test_a_link_is_handed_to_the_embedder() {
     if (!activated.empty()) { check(activated[0], "a real click carries user activation"); }
     check(page.location_href() == "https://example.com/x", "and location.href records it");
 
-    // Following it CONSUMED the gesture: a script re-clicking inside the same
+    // Following it consumed the gesture: a script re-clicking inside the same
     // activation window must not open a second thing.
     (void)page.run_script("document.querySelector('a').click();");
     check(activated.size() == 2 && !activated[1], "one gesture opens one link");
 }
 
-// A SCRIPT'S click() with no gesture behind it may not reach the system
-// browser under the default policy.
+/// A script's click() with no gesture behind it may not reach the system
+/// browser under the default policy.
 void test_a_script_click_is_not_activated() {
     browser page{browser_options{400, 200}};
     std::vector<bool> activated;
@@ -204,8 +202,9 @@ void test_a_script_click_is_not_activated() {
     check(activated.size() == 1 && !activated[0], "a script click is not user-activated");
 }
 
-// THE DEFAULT POLICY: only a user-activated http(s) URL, and only when the
-// application enabled external links. No SDL needed - it is a free function.
+/// The default navigate policy opens only a user-activated http(s) URL, and
+/// only when the application enabled external links. No SDL is needed: it is a
+/// free function.
 void test_the_default_navigate_policy() {
     const auto verdict = [](std::string url, bool gesture) {
         return default_navigate_verdict(navigate_request{std::move(url), "", gesture});
@@ -269,10 +268,10 @@ void test_a_page_can_read_where_a_link_went() {
     </script></body>)");
     page.frame();
 
-    // A listener runs BEFORE the default action, so the first click logs the
-    // href from before it - empty - and the second logs the first link's.
-    // That second value is the point: `href` was written once when the object
-    // was built, so a page could never see a link it had already followed.
+    // A listener runs before the default action, so the first click logs the
+    // href from before it (empty) and the second logs the first link's. The
+    // second value shows `location.href` is live rather than a snapshot taken
+    // when the location object was built.
     (void)page.handle(input_event::mouse_down_at(12, 12));
     (void)page.handle(input_event::mouse_up_at(12, 12));
     check(page.location_href() == "/first", "the browser recorded the href");
@@ -285,13 +284,13 @@ void test_a_page_can_read_where_a_link_went() {
     }
 }
 
-// A LINK LEAVES THE PAGE THROUGH run_app, and lands in the SYSTEM BROWSER.
-//
-// Driven through run_app rather than the browser directly, because the wiring
-// is what was wrong: `ctbrowse` set browser::set_navigate_hook itself, which
-// REPLACES run_app's hook rather than chaining with it, so every http:// link
-// it was handed was silently swallowed. The application gets first refusal
-// now and anything it does not claim goes to the navigate policy.
+/// A link leaves the page through run_app, and lands in the system browser.
+///
+/// Driven through run_app rather than the browser directly, because the wiring
+/// is what is under test: browser::set_navigate_hook replaces any existing hook
+/// rather than chaining, so an embedder that sets it must not drop run_app's.
+/// The application gets first refusal; anything it does not claim goes to the
+/// navigate policy.
 void test_a_link_reaches_the_application_through_run_app() {
     std::vector<std::string> asked;
     ctbrowser::app_options options;
@@ -301,7 +300,7 @@ void test_a_link_reaches_the_application_through_run_app() {
     options.real_fonts = false;
     options.network = false;
     // Claimed, so the run does not actually open a browser mid-test. Returning
-    // FALSE falls to the policy, which opens nothing unless open_external_links.
+    // false falls to the policy, which opens nothing unless open_external_links.
     options.on_navigate = [&asked](const std::string & url) {
         asked.push_back(url);
         return true;
@@ -319,16 +318,10 @@ void test_a_link_reaches_the_application_through_run_app() {
     if (!asked.empty()) { check(asked[0] == "https://example.com/here", "with its href"); }
 }
 
-// A PAGE THAT DIES MUST SAY SO. `run_app` ticked the clock and never looked at
-// what came back, so a page whose callbacks throw kept rendering whatever it
-// last drew - it looked FROZEN and reported nothing at all. That is how the
-// Phaser invaders page hid an undefined method for an afternoon: update() threw
-// on every frame and the window showed create()'s output forever.
-//
-// The message arrives ONCE PER DISTINCT FAULT, not once per frame. A callback
-// that faults every frame at 60 Hz would otherwise bury the first and only
-// useful line under thousands of copies of itself, which is the same as saying
-// nothing.
+/// A page whose callbacks throw must report it through on_script_error;
+/// otherwise it keeps showing its last frame and looks frozen. The message is
+/// reported once per distinct fault, not once per frame, so a 60 Hz fault does
+/// not bury the first line under thousands of copies.
 void test_run_app_reports_a_script_error() {
     std::vector<std::string> reported;
     ctbrowser::app_options options;
@@ -341,9 +334,9 @@ void test_run_app_reports_a_script_error() {
     options.on_script_error = [&reported](const std::string & message) {
         reported.push_back(message);
     };
-    // The fault is in an ANIMATION FRAME rather than in the page's top level:
-    // a top-level throw is reported by load_html and was never the gap. What
-    // was missing is the one that happens later, on a turn nobody is watching.
+    // The fault is in an animation frame rather than in the page's top level:
+    // a top-level throw is reported by load_html, while this one happens later,
+    // on a turn no caller is watching.
     const int code = ctbrowser::run_app(R"(<body><script>
         function spin() { window.requestAnimationFrame(spin); missingFunction(); }
         window.requestAnimationFrame(spin);
@@ -360,8 +353,8 @@ void test_run_app_reports_a_script_error() {
     }
 }
 
-// AND STAYS SILENT WHEN NOTHING IS WRONG, or the hook is noise a caller learns
-// to ignore - which is the same as not having it.
+/// on_script_error stays silent when nothing is wrong, or the hook is noise a
+/// caller learns to ignore.
 void test_run_app_is_silent_for_a_healthy_page() {
     std::vector<std::string> reported;
     ctbrowser::app_options options;
@@ -383,11 +376,14 @@ void test_run_app_is_silent_for_a_healthy_page() {
     check(reported.empty(), "a healthy page reports nothing");
 }
 
-// THE CTBROWSER_* OVERRIDES ARE THE EMBEDDER'S TO GRANT. unittests/unit/
-// CMakeLists.txt runs this test with CTBROWSER_CLOCK pinned: a page built from
-// source reads it, a packaged bundle does not unless it was built with
-// `ctcompile --allow-env-overrides` or handed to `ctrun` as a loose file -
-// otherwise CTBROWSER_TEST_FRAMES would be a speedhack in every shipped game.
+/// Runs \p run with a one-frame page and returns what `Date.now()` printed.
+///
+/// The CTBROWSER_* environment overrides are the embedder's to grant.
+/// unittests/unit/CMakeLists.txt runs this test with CTBROWSER_CLOCK pinned: a
+/// page built from source reads it, a packaged bundle does not unless it was
+/// built with `ctcompile --allow-env-overrides` or handed to `ctrun` as a loose
+/// file; otherwise CTBROWSER_TEST_FRAMES would be a speedhack in every shipped
+/// game.
 [[nodiscard]] std::string clock_seen(const std::function<int(ctbrowser::app_options)> & run) {
     std::string seen;
     ctbrowser::app_options options;
@@ -408,6 +404,7 @@ void test_run_app_is_silent_for_a_healthy_page() {
 
 void test_environment_overrides_are_opt_in() {
     constexpr std::string_view page = "<body>clock</body>";
+    // CTBROWSER_CLOCK's pinned value: one day after the epoch, in milliseconds.
     const std::string pinned = "86400000";
     check(clock_seen([&](ctbrowser::app_options o) { return ctbrowser::run_app(page, o); }) ==
               pinned,

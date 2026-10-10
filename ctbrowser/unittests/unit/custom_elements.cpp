@@ -1,14 +1,17 @@
-// customElements: define, construct, upgrade, and WHEN the reactions run.
+//===- custom_elements.cpp - Custom element tests ---------------*- C++ -*-===//
 //
-// The regression net for lib/Shell/bindings/custom_elements.cpp. What it pins
-// down is the model rather than the method list: an element a definition
-// covers is the author's class - `instanceof` says so and the identity a page
-// already held is kept - and a reaction runs BEFORE the call that caused it
-// returns, which is what every test in web-platform-tests reads first
-// (`define()` then `element.click()` on the same line).
+// customElements: define, construct, upgrade, and when the reactions run.
+// Regression tests for lib/Shell/bindings/custom_elements.cpp. They pin down
+// the model rather than the method list: an element a definition covers is
+// the author's class (`instanceof` says so, and the identity a page already
+// held is kept), and a reaction runs before the call that caused it returns,
+// which is what WPT tests rely on first (`define()` then `element.click()` on
+// the same line).
 //
 // The page's own `alert()` is the observation channel, as in
 // unit/mutation_observer.cpp: it keeps order and survives the turn.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -52,15 +55,14 @@ void test_define_validates() {
              "NotSupportedError;NotSupportedError;true;undefined;true");
 }
 
-// THE NAME RULE IS "valid element local name" WITH AN ASCII LOWER ALPHA IN
-// FRONT, not the old PotentialCustomElementName: after the first character,
-// anything the HTML tokenizer would read back as a tag name is a name, so
-// punctuation a page could not use before is legal now and only the characters
-// that would END a tag name - and an ASCII capital - are refused. The FIRST
-// character is still [a-z] alone, which is why `_-element` and an accented
-// first letter are not names however valid a local name they are.
-// whatwg/html#7991, measured by
-// custom-elements/registries/valid-custom-element-names.html.
+/// A custom element name is a "valid element local name" that starts with an
+/// ASCII lowercase letter (whatwg/html#7991, which replaced
+/// PotentialCustomElementName). After the first character, anything the HTML
+/// tokenizer would read back as a tag name is allowed, so only characters that
+/// would end a tag name, and ASCII capitals, are refused. The first character
+/// must be [a-z], so `_-element` and an accented first letter are not names
+/// even though they are valid local names. Checked by WPT
+/// custom-elements/registries/valid-custom-element-names.html.
 void test_define_takes_the_modern_name_rule() {
     CHECK_EQ(said("<html><body><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
@@ -81,9 +83,9 @@ void test_define_takes_the_modern_name_rule() {
              "SyntaxError");
 }
 
-// A parsed element is upgraded by define(), connectedCallback has run before
-// define() returns, and the wrapper a page held before is the very object
-// that is now an instance of the class.
+/// A parsed element is upgraded by define(), connectedCallback has run before
+/// define() returns, and the wrapper a page held before is the very object
+/// that is now an instance of the class.
 void test_define_upgrades_what_the_parser_made() {
     CHECK_EQ(
         said("<html><body><x-proxy id=a></x-proxy><script>"
@@ -109,8 +111,8 @@ void test_define_upgrades_what_the_parser_made() {
              "ctor:a,connected;true;true");
 }
 
-// createElement and `new` both build through the class, synchronously, and a
-// detached element hears nothing until it is appended.
+/// createElement and `new` both build through the class, synchronously, and a
+/// detached element hears nothing until it is appended.
 void test_create_element_and_new_construct_through_the_class() {
     CHECK_EQ(said("<html><body><script>"
                   "var log = [];"
@@ -134,12 +136,12 @@ void test_create_element_and_new_construct_through_the_class() {
              "ctor,ctor;true;X-BAR:false;ctor,ctor,in;ctor,ctor,in,out;true");
 }
 
-// A CUSTOMIZED BUILT-IN constructs through its own interface's constructor -
-// `super()` in `class extends HTMLScriptElement` - which is HTML's one "HTML
-// element constructor" with the interface check; an interface the definition
-// does not extend is a TypeError. And a script made that way runs when it
-// connects, before its connectedCallback
-// (Node-appendChild-cereactions-vs-script.window.js).
+/// A customized built-in constructs through its own interface's constructor
+/// (`super()` in `class extends HTMLScriptElement`), which is HTML's single
+/// "HTML element constructor" with the interface check; an interface the
+/// definition does not extend is a TypeError. A script made that way runs when
+/// it connects, before its connectedCallback
+/// (Node-appendChild-cereactions-vs-script.window.js).
 void test_a_customized_built_in_constructs_through_its_interface() {
     CHECK_EQ(said("<html><body><script>"
                   "var log = [];"
@@ -192,8 +194,9 @@ void test_when_defined_resolves_on_define() {
              "defined:true;already:true;SyntaxError");
 }
 
-// A page that never defines anything pays nothing: the funnel returns on its
-// first line, and `new HTMLElement()` is still illegal.
+/// A page that never defines a custom element pays nothing: the custom-element
+/// hook in the bindings returns at once when no definition exists, and
+/// `new HTMLElement()` is still a TypeError.
 void test_a_page_without_a_definition_is_untouched() {
     CHECK_EQ(said("<html><body><script>"
                   "try { new HTMLElement(); alert('made'); } catch (e) { alert(e.name); }"
@@ -203,10 +206,10 @@ void test_a_page_without_a_definition_is_untouched() {
              "TypeError;true");
 }
 
-// A CUSTOMIZED BUILT-IN from `createElement(tag, {is})`, and a clone of one:
-// DOM's "create an element" constructs through the class synchronously for
-// createElement and enqueues an upgrade for a clone, detached as it is
-// (builtin-coverage.html, 333 subtests at 9cd0a9e4).
+/// A customized built-in from `createElement(tag, {is})`, and a clone of one:
+/// DOM's "create an element" constructs through the class synchronously for
+/// createElement and enqueues an upgrade for a clone, even though the clone is
+/// detached (WPT custom-elements/builtin-coverage.html).
 void test_create_element_with_is_and_clone_node() {
     CHECK_EQ(said("<html><body><div id=c></div><script>"
                   "var log = [];"
@@ -229,9 +232,9 @@ void test_create_element_with_is_and_clone_node() {
              "true:a:my-a;true;true:true;true;ctor,ctor,ctor,in,ctor,ctor");
 }
 
-// HTML 4.13.4's element definition reads the constructor in the order the
-// specification lists, a prototype that is a function or a Proxy is an
-// object, and an arrow function is not a constructor.
+/// HTML 4.13.4's element definition reads the constructor in the order the
+/// specification lists, a prototype that is a function or a Proxy is an
+/// object, and an arrow function is not a constructor.
 void test_define_reads_the_constructor_in_spec_order() {
     CHECK_EQ(said("<html><body><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
@@ -250,10 +253,10 @@ void test_define_reads_the_constructor_in_spec_order() {
              "ok;prototype,disabledFeatures,formAssociated;TypeError;NotSupportedError;true");
 }
 
-// AN UPGRADE THAT FAILS: the constructor's exception is reported at the
-// window, the element's state is `failed`, nothing later re-upgrades it, and a
-// second `super()` in one upgrade is an InvalidStateError. A `new` that has no
-// definition is a TypeError even when a parent class has one.
+/// A failed upgrade: the constructor's exception is reported at the window,
+/// the element's state is `failed`, nothing later re-upgrades it, and a second
+/// `super()` in one upgrade is an InvalidStateError. A `new` that has no
+/// definition is a TypeError even when a parent class has one.
 void test_upgrade_failure_is_reported_and_final() {
     CHECK_EQ(said("<html><body><x-bad id=b></x-bad><x-two id=t></x-two><script>"
                   "window.addEventListener('error', function (e) {"
@@ -275,12 +278,12 @@ void test_upgrade_failure_is_reported_and_final() {
              "reported:boom;true;true;TypeError");
 }
 
-// A reaction is enqueued for a CUSTOM element, and only for a callback its
-// class has (HTML 4.13.6). What an upgrading constructor does to its own
-// element enqueues nothing - the upgrade's attributeChanged and connected are
-// read when the upgrade RUNS; an element one upgrade connects is upgraded
-// inside that call; and a removal with no disconnectedCallback leaves the
-// child's pending connectedCallback where it was.
+/// A reaction is enqueued only for a custom element, and only for a callback
+/// its class has (HTML 4.13.6). What an upgrading constructor does to its own
+/// element enqueues nothing, because the upgrade's attributeChanged and
+/// connected reactions are decided when the upgrade runs. An element one
+/// upgrade connects is upgraded inside that call, and a removal with no
+/// disconnectedCallback leaves the child's pending connectedCallback in place.
 void test_reactions_wait_for_custom_and_a_callback() {
     CHECK_EQ(
         said("<html><body><x-up id=a title=t></x-up><x-in id=p></x-in><x-in id=q></x-in><script>"
@@ -315,11 +318,12 @@ void test_reactions_wait_for_custom_and_a_callback() {
         "ctor,attr:id=a,attr:title=t,connected;p:begin,q:begin,q:end,p:end;begin,end,connected");
 }
 
-// SCOPED REGISTRIES (DOM 4.9, HTML 4.13.3): a node HAS a registry, fixed at
-// creation - createElement's and attachShadow's option, the parser's intended
-// parent, initialize() for what had none - and a definition upgrades only
-// what has ITS registry. `new C()` for a class only a scoped registry holds is
-// a TypeError; createElement through that registry constructs it.
+/// Scoped registries (DOM 4.9, HTML 4.13.3): a node has a registry, fixed at
+/// creation (from createElement's or attachShadow's option, the parser's
+/// intended parent, or initialize() for a node that had none), and a
+/// definition upgrades only nodes with its own registry. `new C()` for a class
+/// only a scoped registry holds is a TypeError; createElement through that
+/// registry constructs it.
 void test_scoped_registries() {
     CHECK_EQ(said("<html><body><script>"
                   "var scoped = new CustomElementRegistry();"
@@ -348,10 +352,10 @@ void test_scoped_registries() {
              "true;true;null;TypeError;true;true;true;true;true");
 }
 
-// THE PARSER CONSTRUCTS a defined custom element SYNCHRONOUSLY (HTML 13.2.6.1),
-// with the throw-on-dynamic-markup-insertion counter up: document.write from
-// its constructor throws, and its connectedCallback runs before the parser
-// reads its children.
+/// The parser constructs a defined custom element synchronously (HTML
+/// 13.2.6.1), with the throw-on-dynamic-markup-insertion counter raised:
+/// document.write from its constructor throws, and its connectedCallback runs
+/// before the parser reads its children.
 void test_the_parser_constructs_synchronously() {
     CHECK_EQ(said("<html><body><script>"
                   "var log = [];"
@@ -364,15 +368,14 @@ void test_the_parser_constructs_synchronously() {
              "ctor:0,InvalidStateError,connected:0");
 }
 
-// PAGE-CONTROLLED RECEIVERS AND COLLECTIONS DURING define(). HTMLElement
-// called on an array or proxy made to look like an instance, or on an element
-// with no upgrade running, is a TypeError - not a write through the wrong
-// object type. And define() reads the callbacks and observedAttributes through
-// page getters that may collect and mutate: what it read earlier must survive,
-// and a list that grows while it is converted is converted as it was.
+/// A page-side JS function that allocates 200,000 objects, enough to make a
+/// garbage collection likely when called from a page getter.
 constexpr const char * churn = "function churn(){ var a = []; for (var i = 0; i < 200000; ++i)"
                                " a.push({i: i}); return a.length; }";
 
+/// HTMLElement called on an array or proxy made to look like an instance, or on
+/// an element with no upgrade running, is a TypeError rather than a write
+/// through the wrong object type.
 void test_page_controlled_receivers_are_refused() {
     CHECK_EQ(said(std::string{"<html><body><script>"} +
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
@@ -389,6 +392,9 @@ void test_page_controlled_receivers_are_refused() {
              "TypeError;TypeError;TypeError;true");
 }
 
+/// define() reads the callbacks and observedAttributes through page getters
+/// that may trigger a collection and mutate state: what it read earlier must
+/// survive, and a list that grows while it is converted is converted as it was.
 void test_define_survives_collection_in_its_getters() {
     CHECK_EQ(said(std::string{"<html><body><script>"} + churn +
                   "var list = null;"

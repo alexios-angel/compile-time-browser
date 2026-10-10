@@ -1,40 +1,37 @@
-// The Math object, against V8.
+//===- ctbrowser/unittests/js/math_basics.cpp - Math built-in tests -------===//
 //
-// Written by differentially testing every Math function against node (V8, the
-// engine Chrome ships) over ~27,000 expressions; the ~90 differences it found
-// collapsed to seven defects, and every one of them is pinned below. As with
-// unittests/js/number/format.cpp the expectations were taken from V8 BEFORE the fixes
-// were written, so this file failed on the day it was committed rather than
-// agreeing with the bug.
+// The Math object, with expected values taken from node (V8, the engine Chrome
+// ships), as with unittests/js/number/format.cpp.
 //
-// WHAT THIS FILE ASSERTS, AND WHAT IT DELIBERATELY DOES NOT.
-//
-// ECMA-262 21.3.2 marks the VALUE of sin, cos, tan, asin, acos, atan, atan2,
-// exp, expm1, log, log1p, log2, log10, pow, cbrt, sinh, cosh, tanh, asinh,
-// acosh, atanh and hypot "implementation-approximated": a conforming engine may
-// differ in the last place, and ours does — it is libm's answer, and Linux links
-// glibc while the Windows cross-build links Microsoft's UCRT. **So no decimal
-// string for any of those values appears here.** A test that asserted
+// What this file asserts, and what it deliberately does not: ECMA-262 21.3.2
+// marks the value of sin, cos, tan, asin, acos, atan, atan2, exp, expm1, log,
+// log1p, log2, log10, pow, cbrt, sinh, cosh, tanh, asinh, acosh, atanh and
+// hypot "implementation-approximated": a conforming engine may differ in the
+// last place, and ours does. It is libm's answer, and Linux links glibc while
+// the Windows cross-build links Microsoft's UCRT. So no decimal string for
+// any of those values appears here. A test that asserted
 // `Math.sin(1) === 0.8414709848078965` would be asserting which libc the
 // machine had, and would fail the cross-build for a reason that is not a bug.
 //
-// What IS exact, and is asserted:
+// What is exact, and is asserted:
 //   * every NaN / +-0 / +-Infinity special case, of every function - those are
-//     mandated steps, not approximations, and every defect found was one;
+//     mandated steps, not approximations;
 //   * abs, ceil, floor, round, trunc, sign, min, max, fround, imul, clz32 in
 //     full - the specification gives these exact results;
 //   * results that are exactly representable, so approximation has no room:
 //     sqrt(16) is 4, cbrt(27) is 3, log2(8) is 3, hypot(3,4) is 5;
 //   * the eight constants, at all seventeen digits;
-//   * Math.random's CONTRACT - range and finiteness - never a value.
+//   * Math.random's contract (range and finiteness), never a value.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 int main() {
-    // --- the constants ------------------------------------------------------
-    // All eight at full precision. SQRT1_2 was one ulp low: it was computed as
-    // 1/sqrt2, which rounds twice, where sqrt2/2 rounds once because halving is
-    // exact. The engine disagreed with its own Math.sqrt(0.5).
+    // --- The constants. ------------------------------------------------------
+    // All eight at full precision. SQRT1_2 must be computed as sqrt2/2, which
+    // rounds once because halving is exact; 1/sqrt2 rounds twice and lands one
+    // ulp low, disagreeing with Math.sqrt(0.5).
     js_expect("Math.PI", "3.141592653589793");
     js_expect("Math.E", "2.718281828459045");
     js_expect("Math.LN2", "0.6931471805599453");
@@ -45,48 +42,48 @@ int main() {
     js_expect("Math.SQRT1_2", "0.7071067811865476");
     js_expect("Math.SQRT1_2 === Math.sqrt(0.5)", "true");
 
-    // --- Math.round ---------------------------------------------------------
-    // It rounds halves toward POSITIVE infinity, which is not std::round (away
-    // from zero) and not floor(x + 0.5) either. The latter was what this engine
-    // had, and it broke three separate clauses.
+    // --- Math.round ----------------------------------------------------------
+    // It rounds halves toward positive infinity, which is not std::round (away
+    // from zero) and not floor(x + 0.5) either; floor(x + 0.5) breaks the three
+    // clauses below.
     js_expect("Math.round(2.5)", "3");
-    js_expect("Math.round(-2.5)", "-2"); // toward +Infinity, so -2 and not -3
+    js_expect("Math.round(-2.5)", "-2"); // Toward +Infinity, so -2 and not -3.
     js_expect("Math.round(3.5)", "4");
     js_expect("Math.round(-3.5)", "-3");
     js_expect("Math.round(0.5)", "1");
     js_expect("Math.round(-1.5)", "-1");
-    // THE DOUBLE-ROUNDING CASE. 0.49999999999999994 + 0.5 is exactly halfway
+    // The double-rounding case: 0.49999999999999994 + 0.5 is exactly halfway
     // between 1-2^-53 and 1, so ties-to-even lifts it to 1.0 before floor ever
-    // runs, and the answer came back 1 where the spec requires +0.
+    // runs, and floor(x + 0.5) answers 1 where the spec requires +0.
     js_expect("Math.round(0.49999999999999994)", "0");
-    js_expect("Math.round(0.4999999999999999)", "0"); // control: just below
-    js_expect("Math.round(0.5000000000000001)", "1"); // control: just above
-    // AN INTEGRAL NUMBER COMES BACK UNCHANGED. Above 2^52 the spacing between
-    // doubles is 1, so `x + 0.5` was not representable and every odd integer
-    // moved - 2^53-1 came back as 2^53, outside the safe-integer range.
+    js_expect("Math.round(0.4999999999999999)", "0"); // Control: just below.
+    js_expect("Math.round(0.5000000000000001)", "1"); // Control: just above.
+    // An integral number comes back unchanged. Above 2^52 the spacing between
+    // doubles is 1, so `x + 0.5` is not representable and would move every odd
+    // integer: 2^53-1 would come back as 2^53, outside the safe-integer range.
     js_expect("Math.round(4503599627370496)", "4503599627370496");
     js_expect("Math.round(4503599627370497)", "4503599627370497");
     js_expect("Math.round(-4503599627370497)", "-4503599627370497");
     js_expect("Math.round(9007199254740991)", "9007199254740991");
     js_expect("Math.round(-9007199254740991)", "-9007199254740991");
-    // THE SIGN OF ZERO SURVIVES. Every x in [-0.5, -0] returns -0, and adding
-    // 0.5 destroyed that.
+    // The sign of zero survives: every x in [-0.5, -0] returns -0, which adding
+    // 0.5 would destroy.
     js_expect_negative_zero("Math.round(-0)", true);
     js_expect_negative_zero("Math.round(-0.5)", true);
     js_expect_negative_zero("Math.round(-0.1)", true);
     js_expect_negative_zero("Math.round(-0.4)", true);
     js_expect_negative_zero("Math.round(-5e-324)", true);
-    js_expect_negative_zero("Math.round(-0.6)", false); // control: rounds to -1
+    js_expect_negative_zero("Math.round(-0.6)", false); // Control: rounds to -1.
     js_expect_negative_zero("Math.round(0)", false);
     js_expect("Math.round(NaN)", "NaN");
     js_expect("Math.round(Infinity)", "Infinity");
     js_expect("Math.round(-Infinity)", "-Infinity");
 
-    // --- Math.min and Math.max ----------------------------------------------
-    // NOT std::min/std::max. Both are written on `<`, and IEEE comparison
-    // answers false to everything involving NaN, so the NaN was silently
-    // dropped; and `-0 < +0` is false, so which zero came back depended on the
-    // ARGUMENT ORDER.
+    // --- Math.min and Math.max -----------------------------------------------
+    // Not std::min/std::max: both are written on `<`, and IEEE comparison
+    // answers false to everything involving NaN, so they silently drop a NaN;
+    // and `-0 < +0` is false, so which zero they return depends on the argument
+    // order.
     js_expect("Math.min(1,NaN)", "NaN");
     js_expect("Math.max(1,NaN)", "NaN");
     js_expect("Math.min(NaN,1)", "NaN");
@@ -107,16 +104,16 @@ int main() {
     js_expect("Math.max(...[3,9,4])", "9");
     js_expect("Math.min(-Infinity,Infinity)", "-Infinity");
 
-    // --- Math.hypot ---------------------------------------------------------
-    // An infinite argument wins BEFORE NaN is considered - step 3 precedes step
-    // 5 - so hypot(Infinity, NaN) is Infinity and not NaN.
+    // --- Math.hypot ----------------------------------------------------------
+    // An infinite argument wins before NaN is considered (step 3 precedes step
+    // 5), so hypot(Infinity, NaN) is Infinity and not NaN.
     js_expect("Math.hypot(Infinity,NaN)", "Infinity");
     js_expect("Math.hypot(NaN,-Infinity)", "Infinity");
     js_expect("Math.hypot(1,Infinity)", "Infinity");
     js_expect("Math.hypot(NaN,1)", "NaN");
-    // OVERFLOW AND UNDERFLOW. Squaring passes 1.8e308 above about 1.34e154 and
+    // Overflow and underflow: squaring passes 1.8e308 above about 1.34e154 and
     // flushes to zero below about 1e-162, so the naive sqrt(sum of squares)
-    // answered Infinity and 0 for values whose result is an ordinary double.
+    // answers Infinity and 0 for values whose result is an ordinary double.
     js_expect("Math.hypot(1e300,1e300)", "1.4142135623730952e+300");
     js_expect("Math.hypot(3e300,4e300)", "5e+300");
     js_expect("Math.hypot(1.7976931348623157e308,0)", "1.7976931348623157e+308");
@@ -130,9 +127,9 @@ int main() {
     js_expect("Math.hypot(0,0)", "0");
     js_expect("Math.hypot(7)", "7");
 
-    // --- Math.pow, and the ** operator --------------------------------------
-    // C99 defines pow(+-1, y) as 1 for EVERY y; Number::exponentiate requires
-    // NaN when the exponent is NaN or infinite. Both spellings had the bug.
+    // --- Math.pow, and the ** operator ---------------------------------------
+    // C99 defines pow(+-1, y) as 1 for every y; Number::exponentiate requires
+    // NaN when the exponent is NaN or infinite. Both spellings are checked.
     js_expect("Math.pow(1,NaN)", "NaN");
     js_expect("Math.pow(1,Infinity)", "NaN");
     js_expect("Math.pow(1,-Infinity)", "NaN");
@@ -141,7 +138,7 @@ int main() {
     js_expect("1 ** NaN", "NaN");
     js_expect("1 ** Infinity", "NaN");
     js_expect("(-1) ** Infinity", "NaN");
-    // Even NaN to the zeroth power is 1 - the exponent is checked first.
+    // Even NaN to the zeroth power is 1: the exponent is checked first.
     js_expect("Math.pow(NaN,0)", "1");
     js_expect("Math.pow(NaN,-0)", "1");
     js_expect("Math.pow(2,10)", "1024");
@@ -152,11 +149,11 @@ int main() {
     js_expect("Math.pow(2,NaN)", "NaN");
     js_expect("Math.pow(NaN,1)", "NaN");
 
-    // --- a missing argument is NaN, not zero --------------------------------
+    // --- A missing argument is NaN, not zero. --------------------------------
     // Every Math function's step 1 is `Let n be ? ToNumber(x)`, an absent
-    // argument is undefined, and ToNumber(undefined) is NaN. The shared
-    // argument helper substituted 0.0, so Math.sin() was sin(0) = 0 and
-    // Math.cos() was 1 - answers a page cannot distinguish from real ones.
+    // argument is undefined, and ToNumber(undefined) is NaN. Substituting 0.0
+    // would make Math.sin() 0 and Math.cos() 1, answers a page cannot tell
+    // from real ones.
     for (const char * fn :
          {"abs",  "floor", "ceil", "trunc", "sign", "round", "sqrt",  "cbrt",  "fround",
           "exp",  "expm1", "log",  "log1p", "log2", "log10", "sin",   "cos",   "tan",
@@ -167,15 +164,14 @@ int main() {
     js_expect("Math.pow(2)", "NaN");
     js_expect("Math.atan2()", "NaN");
     js_expect("Math.atan2(1)", "NaN");
-    // Written out, undefined already coerced correctly - it was only the arity
-    // fallback that was wrong.
+    // An explicit undefined argument coerces the same way.
     js_expect("Math.sin(undefined)", "NaN");
     js_expect("Math.pow(2,undefined)", "NaN");
-    // These two take their arguments a different way and were always right.
+    // These two take their arguments a different way.
     js_expect("Math.clz32()", "32");
     js_expect("Math.imul()", "0");
 
-    // --- the exact-by-specification functions -------------------------------
+    // --- The exact-by-specification functions. -------------------------------
     js_expect("Math.abs(-5)", "5");
     js_expect("Math.abs(-Infinity)", "Infinity");
     js_expect("Math.abs(NaN)", "NaN");
@@ -200,16 +196,16 @@ int main() {
     js_expect("Math.fround(Infinity)", "Infinity");
     js_expect("Math.fround(1e300)", "Infinity");
     js_expect("Math.fround(-1e300)", "-Infinity");
-    js_expect("Math.fround(3.4028235677973366e38)", "Infinity"); // FLT_MAX + half an ulp
+    js_expect("Math.fround(3.4028235677973366e38)", "Infinity"); // FLT_MAX + half an ulp.
     // f16round is the same round trip through binary16 (ties to even, straight
-    // from the double), V8's answers.
+    // from the double); the expected values are V8's.
     js_expect("Math.f16round(1.5)", "1.5");
     js_expect("Math.f16round(1.1)", "1.099609375");
     js_expect("Math.f16round(65504)", "65504");
     js_expect("Math.f16round(65519.99)", "65504");
     js_expect("Math.f16round(65520)", "Infinity");
-    js_expect("Math.f16round(5.960464477539063e-8)", "5.960464477539063e-8"); // least subnormal
-    js_expect("Math.f16round(2.9802322387695312e-8)", "0"); // exactly half of it: ties to even
+    js_expect("Math.f16round(5.960464477539063e-8)", "5.960464477539063e-8"); // Least subnormal.
+    js_expect("Math.f16round(2.9802322387695312e-8)", "0"); // Exactly half of it: ties to even.
     js_expect("Math.f16round(3e-8)", "5.960464477539063e-8");
     js_expect("Math.f16round(0.1)", "0.0999755859375");
     js_expect_negative_zero("Math.f16round(-0)", true);
@@ -223,7 +219,7 @@ int main() {
     js_expect("Math.imul(-5,12)", "-60");
     js_expect("Math.imul(0xffffffff,5)", "-5");
 
-    // --- exactly representable results --------------------------------------
+    // --- Exactly representable results. --------------------------------------
     // Approximation has no room here, so these are safe to assert exactly on
     // any libm.
     js_expect("Math.sqrt(16)", "4");
@@ -238,10 +234,10 @@ int main() {
     js_expect("Math.log10(1000)", "3");
     js_expect("Math.log(1)", "0");
     js_expect("Math.exp(0)", "1");
-    js_expect("Math.atan2(0,-0)", "3.141592653589793"); // exactly Math.PI, by rule
+    js_expect("Math.atan2(0,-0)", "3.141592653589793"); // Exactly Math.PI, by rule.
 
-    // --- the mandated special cases of the approximated functions -----------
-    // The VALUES are implementation-approximated; these are not.
+    // --- The mandated special cases of the approximated functions. -----------
+    // The values are implementation-approximated; these are not.
     js_expect("Math.log(0)", "-Infinity");
     js_expect("Math.log(-1)", "NaN");
     js_expect("Math.log2(0)", "-Infinity");
@@ -254,7 +250,7 @@ int main() {
     js_expect("Math.asin(2)", "NaN");
     js_expect("Math.acos(2)", "NaN");
     js_expect("Math.acos(1)", "0");
-    js_expect("Math.atan(Infinity)", "1.5707963267948966"); // exactly PI/2, by rule
+    js_expect("Math.atan(Infinity)", "1.5707963267948966"); // Exactly PI/2, by rule.
     js_expect("Math.atanh(1)", "Infinity");
     js_expect("Math.atanh(-1)", "-Infinity");
     js_expect("Math.atanh(2)", "NaN");
@@ -271,30 +267,29 @@ int main() {
     js_expect_negative_zero("Math.cbrt(-0)", true);
     js_expect_negative_zero("Math.expm1(-0)", true);
 
-    // --- a literal too big for a double is Infinity, not zero ---------------
-    // from_chars reports the overflow and does not write the value, and the
-    // error was going unchecked - so `1e400` compiled to 0, at the far end of
-    // the number line from the truth. Runtime overflow was always right.
+    // --- A literal too big for a double is Infinity, not zero. ---------------
+    // std::from_chars reports the overflow and does not write the value, so the
+    // compiler must check the error or `1e400` compiles to 0.
     js_expect("1e400", "Infinity");
     js_expect("-1e400", "-Infinity");
     js_expect("1e-400", "0");
-    js_expect("1e308*10", "Infinity"); // control: this always worked
+    js_expect("1e308*10", "Infinity"); // Control: runtime overflow.
     js_expect("Math.sinh(1e400)", "Infinity");
     js_expect("Number('1e400')", "Infinity");
     js_expect("Number('-1e400')", "-Infinity");
-    // A numeric literal has ONE dot: `0..toString(2)` is `0.` and a member
-    // access (the lexer used to swallow both dots and refuse the script).
+    // A numeric literal has one dot: `0..toString(2)` is `0.` followed by a
+    // member access, not a malformed number.
     js_expect("0..toString(2)", "0");
     js_expect("1.5.toFixed(1)", "1.5");
     js_expect(".5 + 1", "1.5");
     js_expect("Number('1e-400')", "0");
     js_expect_negative_zero("Number('-1e-400')", true);
 
-    // --- Math.random: the contract, never a value ---------------------------
-    // Seeded and deterministic here on purpose, so the byte-compared render
-    // goldens can exist (see CLAUDE.md). That makes any particular value an
-    // implementation detail, so this asserts only what the specification
-    // promises: a Number in [0, 1).
+    // --- Math.random: the contract, never a value. ---------------------------
+    // Math.random is seeded and deterministic in this engine so byte-compared
+    // render goldens (ctbrowser/test/golden/*.ppm) are reproducible. That makes
+    // any particular value an implementation detail, so this asserts only what
+    // the specification promises: a Number in [0, 1).
     js_expect("(function () {"
               "  for (var i = 0; i < 10000; i++) {"
               "    var r = Math.random();"
@@ -307,37 +302,36 @@ int main() {
     js_expect("(function () { var a = Math.random(), b = Math.random(); return a !== b; })()",
               "true");
 
-    // --- EVERY ARGUMENT IS COERCED, ONCE, IN ORDER, BEFORE ANY IS READ -------
+    // --- Every argument is coerced, once, in order, before any is read. ------
     // Step 1 of hypot, min and max builds a List called `coerced` and step 3
     // inspects it, and the ordering is observable three ways. All three of
     // these count `valueOf` calls, because that is the only thing that can see
-    // it - the returned number is the same either way.
+    // it; the returned number is the same either way.
     //
-    // A NaN found early used to end the loop, so a later argument's valueOf was
-    // never called. Math.min_each-element-coerced.js is exactly this.
+    // A NaN found early must not end the loop: every later argument's valueOf
+    // still runs (test262 built-ins/Math/min/Math.min_each-element-coerced.js).
     js_expect("(function () { var n = 0;"
               " Math.min(NaN, {valueOf: function () { n++; return 1; }}); return n; })()",
               "1");
     js_expect("(function () { var n = 0;"
               " Math.max(NaN, {valueOf: function () { n++; return 1; }}); return n; })()",
               "1");
-    // An infinity found early ended hypot's loop the same way.
+    // An infinity found early must not end hypot's loop either.
     js_expect("(function () { var n = 0;"
               " Math.hypot(Infinity, {valueOf: function () { n++; return 1; }}); return n; })()",
               "1");
-    // And hypot made TWO passes over its arguments, so every valueOf ran twice.
-    // A counter as an argument made the scan and the sum disagree about what
-    // they were adding up.
+    // hypot makes one pass over its arguments, so every valueOf runs once.
     js_expect("(function () { var n = 0;"
               " Math.hypot({valueOf: function () { n++; return 3; }}, 4); return n; })()",
               "1");
-    // ...and a valueOf that answers differently each time now cannot make the
-    // scale factor and the sum disagree, because there is only one pass.
+    // With one pass, a valueOf that answers differently each time cannot make
+    // the scale factor and the sum disagree.
     js_expect("(function () { var n = 0;"
               " return Math.hypot({valueOf: function () { n++; return n * 3; }}, 4); })()",
               "5");
-    // The two-argument functions coerce LEFT TO RIGHT. As arguments to one C++
-    // call their order is unspecified, and clang evaluated them right to left.
+    // The two-argument functions coerce left to right. Coercing them as
+    // arguments to one C++ call would leave the order unspecified (clang
+    // evaluates them right to left).
     js_expect("(function () { var seen = '';"
               " var a = {valueOf: function () { seen += 'a'; return 2; }};"
               " var b = {valueOf: function () { seen += 'b'; return 3; }};"
@@ -353,15 +347,15 @@ int main() {
               " var b = {valueOf: function () { seen += 'b'; return 3; }};"
               " Math.imul(a, b); return seen; })()",
               "ab");
-    // imul and clz32 took the STATIC ToUint32, which answers 0 for every
-    // object, so neither ever ran a receiver's own coercion.
+    // imul and clz32 run an object argument's own coercion (a static ToUint32
+    // that answers 0 for every object would skip it).
     js_expect("Math.imul({valueOf: function () { return 3; }}, 2)", "6");
     js_expect("Math.clz32({valueOf: function () { return 1; }})", "31");
     js_expect("Math.clz32('1')", "31");
     js_expect("Math.clz32(NaN)", "32");
     js_expect("Math.clz32()", "32");
 
-    // --- Math.sumPrecise: the EXACT sum, rounded once (test262's own cases) --
+    // --- Math.sumPrecise: the exact sum, rounded once (test262's own cases). -
     js_expect("Math.sumPrecise([1, 2, 3])", "6");
     js_expect("Math.sumPrecise([0.1, 0.1])", "0.2");
     js_expect("Math.sumPrecise([1e308, 1e308, 0.1, 0.1, 1e30, 0.1, -1e30, -1e308, -1e308])",

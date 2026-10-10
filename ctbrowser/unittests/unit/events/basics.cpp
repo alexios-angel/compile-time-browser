@@ -1,18 +1,19 @@
-// THE EVENT INTERFACES AND THE HANDLER PROPERTY, from a page.
+//===- ctbrowser/unittests/unit/events/basics.cpp - Event interface tests -===//
 //
-// Its own file rather than more of bindings_basics because everything in it is
-// one question asked twice: what a page can CONSTRUCT, and what the engine does
-// with it when it is dispatched. Those are the two halves dom/events measures,
-// and the two that a wrapper-shaped test in bindings_basics cannot see - a
-// missing interface object is a name that is not there, and a handler property
-// that is never called says nothing at all.
+// The event interfaces and the handler property, from a page.
 //
-// THE CASES THAT ASSERT SOMETHING DOES NOT HAPPEN ARE THE IMPORTANT ONES. A
-// passive listener may not cancel, a handler property named in the event's own
-// mixed case is not a handler, and `return 0` is not `return false`. Each of
-// those is a rule whose only evidence is an event that came back UNcancelled,
-// which is indistinguishable from a rule nobody implemented unless the
-// cancelling case is asserted beside it.
+// Every case asks one of two questions: what a page can construct, and what
+// the engine does with it when it is dispatched. Those are the two halves
+// WPT's dom/events measures.
+//
+// The cases that assert something does not happen matter most. A passive
+// listener may not cancel, a handler property named in the event's own mixed
+// case is not a handler, and `return 0` is not `return false`. The only
+// evidence for each rule is an event that came back uncancelled, which looks
+// the same as a rule nobody implemented unless the cancelling case is asserted
+// beside it.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -31,7 +32,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <html><head><title>events</title></head><body><div id=here>x</div>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks that `expression` evaluates to `expected`, on a fresh page per case
+/// since many cases mutate the document.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -53,7 +55,7 @@ void test_the_touch_interfaces_exist() {
        "TypeError");
 }
 
-// TouchInit's two REQUIRED members, which are the only rule in the family.
+// TouchInit's two required members, which are the only rule in the family.
 void test_a_touch_needs_an_identifier_and_a_target() {
     is("(function () { var t = new Touch({identifier: 7, target: document.body, clientX: 3});"
        " return t.identifier + ',' + (t.target === document.body) + ',' + t.clientX + ',' +"
@@ -90,16 +92,16 @@ void test_a_touch_event_carries_touch_lists() {
        "true,true,false,false");
 }
 
-// WHAT THE INTERFACE WAS THE GATE IN FRONT OF. `touchstart` on the window is
-// passive by default, so a listener that calls preventDefault is refused - and
-// the refusal is only visible on an event that COULD have been cancelled.
+// Why TouchEvent has to exist: `touchstart` on the window is passive by
+// default, so a listener that calls preventDefault is ignored, and that is
+// only visible on an event that could have been cancelled.
 void test_a_touchstart_listener_on_the_window_cannot_cancel() {
     is("(function () {"
        " addEventListener('touchstart', function (e) { e.preventDefault(); });"
        " var e = new TouchEvent('touchstart', {cancelable: true});"
        " return dispatchEvent(e) + ',' + e.defaultPrevented; })()",
        "true,false");
-    // The same listener on an ordinary target is NOT passive by default, so
+    // The same listener on an ordinary target is not passive by default, so
     // there the cancel stands. Without this the case above would pass on an
     // engine that had simply lost preventDefault.
     is("(function () {"
@@ -109,7 +111,7 @@ void test_a_touchstart_listener_on_the_window_cannot_cancel() {
        " return target.dispatchEvent(e) + ',' + e.defaultPrevented; })()",
        "false,true");
     // And a constructed event is not cancelable unless the page asked, which is
-    // the other half of what synthetic-events-cancelable.html checks.
+    // the other half of what dom/events/synthetic-events-cancelable.html checks.
     is("new TouchEvent('touchstart').cancelable", "false");
 }
 
@@ -125,21 +127,19 @@ void test_the_css_event_interfaces() {
        "width,0,TransitionEvent");
 }
 
-// A HANDLER PROPERTY IS NAMED IN LOWERCASE AND AN EVENT TYPE IS NOT.
+// A handler property is named in lowercase and an event type is not.
 void test_a_handler_property_is_found_by_the_lowercased_type() {
-    // The four prefixed CSS families are the reason: `onwebkitanimationend`
-    // listens for `webkitAnimationEnd`, so concatenating found nothing.
+    // `onwebkitanimationend` must fire for `webkitAnimationEnd`, so the handler
+    // is found by the lowercased event type.
     is("(function () { var seen = 'no';"
        " var d = document.createElement('div');"
        " d.onwebkitanimationend = function () { seen = 'yes'; };"
        " d.dispatchEvent(new AnimationEvent('webkitAnimationEnd'));"
        " return seen; })()",
        "yes");
-    // And the invention that goes away with it: only the attributes the IDL
-    // declares are handlers, so a property spelled in the event's own case is
-    // not one. `onmyevent` is not one either in a browser, but this engine
-    // looks up `on` + the type and that is the deviation it is admitting to -
-    // what matters here is that the two spellings no longer BOTH fire.
+    // Only the lowercase spelling is a handler. A mixed-case `onMyEvent` must
+    // not fire. (Real browsers would not fire `onmyevent` either; this engine
+    // looks up `on` + the lowercased type for any event.)
     is("(function () { var seen = [];"
        " var d = document.createElement('div');"
        " d.onMyEvent = function () { seen.push('mixed'); };"
@@ -156,7 +156,7 @@ void test_what_a_handler_property_returns_can_cancel() {
        " var e = new MouseEvent('click', {cancelable: true});"
        " return d.dispatchEvent(e) + ',' + e.defaultPrevented; })()",
        "false,true");
-    // EXACTLY `false`, not merely falsy - the return type is `any` and the rule
+    // Exactly `false`, not merely falsy - the return type is `any` and the rule
     // names the boolean, so neither of these cancels in any browser.
     is("(function () { var d = document.createElement('div');"
        " d.onclick = function () { return 0; };"
@@ -174,7 +174,7 @@ void test_what_a_handler_property_returns_can_cancel() {
        " var e = new MouseEvent('click', {cancelable: true});"
        " return d.dispatchEvent(e); })()",
        "true");
-    // Cancelling here is the DOM's set-the-canceled-flag, so an event that is
+    // Cancelling here is the DOM's "set the canceled flag", so an event that is
     // not cancelable is not cancelled by a `false` either.
     is("(function () { var d = document.createElement('div');"
        " d.onclick = function () { return false; };"

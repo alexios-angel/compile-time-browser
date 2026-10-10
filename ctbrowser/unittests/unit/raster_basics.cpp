@@ -1,13 +1,16 @@
-// ctbrowser.raster: tiles, the software backend, and the scroll path.
+//===- ctbrowser/unittests/unit/raster_basics.cpp - Raster tests --------===//
 //
-// Three claims, and the last two are the ones the architecture stands on:
+// Tests for ctbrowser.raster: tiles, the software backend, and the scroll
+// path. Three claims, the last two of which the architecture stands on:
 //
-//   1. blending and clipping are right.
-//   2. TILING IS INVISIBLE. The same page rastered as one tile and as sixteen
+//   1. Blending and clipping are right.
+//   2. Tiling is invisible. The same page rastered as one tile and as sixteen
 //      must be byte-identical, and so must sequential against parallel. A tile
 //      seam is a visible bug that no unit test of a single fill would catch.
-//   3. A SCROLL DOES NOT RASTER. This is the reason tiles are kept in content
+//   3. A scroll does not raster. This is the reason tiles are kept in content
 //      space at all; the evidence is that the raster counter does not move.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -35,7 +38,7 @@ using ctbrowser::paint::recorder;
 
 namespace {
 
-// A page, taken all the way from HTML to a layer tree.
+/// A page, taken all the way from HTML to a layer tree.
 struct page {
     atom_table atoms;
     document doc{atoms};
@@ -45,6 +48,8 @@ struct page {
     layout::fragment placed;
     layer_tree layers;
 
+    /// Parses \p html, applies \p css, lays out at \p viewport pixels wide and
+    /// records the result into `layers`.
     void load(std::string_view html, std::string_view css, float viewport) {
         (void)parse_html(doc, html);
         styles.add_sheet(css, 1);
@@ -62,6 +67,7 @@ struct page {
     }
 };
 
+/// Returns the pixel at (\p x, \p y), or 0 outside the surface.
 [[nodiscard]] std::uint32_t pixel_at(const surface & s, int x, int y) {
     if (x < 0 || y < 0 || x >= s.width() || y >= s.height()) { return 0; }
     return s.row(y)[static_cast<std::size_t>(x)];
@@ -97,9 +103,9 @@ void test_fill_and_clip() {
     check(pixel_at(backend.target(), 20, 20) != 0xFFFF0000u, "outside the clip is not");
 }
 
-// `border-radius`, at the pixel. Bootstrap puts one on every button, badge, card
-// and alert, so "the corner is empty and the middle is full" is the single most
-// visible property of a real page after the geometry is right.
+/// `border-radius`, at the pixel. Bootstrap puts one on every button, badge, card
+/// and alert, so "the corner is empty and the middle is full" is the single most
+/// visible property of a real page after the geometry is right.
 void test_rounded_corners_are_cut_away() {
     auto list = std::make_shared<display_list>();
     list->fill_rounded(rect{0, 0, 40, 40}, color::rgba(255, 0, 0),
@@ -143,7 +149,7 @@ void test_a_radius_is_scaled_to_fit_its_box() {
 }
 
 void test_a_ring_is_hollow() {
-    // A rounded BORDER. Four rectangles cannot make one - the corners are where
+    // A rounded border. Four rectangles cannot make one - the corners are where
     // they would have to meet, and they meet on a curve - and "fill the box in
     // the border colour then fill the inside in the background colour" floods a
     // transparent element, which is exactly what `.btn-outline-primary` is.
@@ -161,9 +167,9 @@ void test_a_ring_is_hollow() {
 
 // --- tiling is invisible --------------------------------------------------
 
-// The grid is anchored at the content origin, so a negative coordinate has to
-// floor toward -infinity: the hand-rolled division this replaced answered -2
-// for -64 / 64 and dropped the tile that content in [-64, 0) lives in.
+/// The grid is anchored at the content origin, so a negative coordinate has to
+/// floor toward -infinity; truncating division would drop the tile that
+/// content in [-64, 0) lives in.
 void test_tiles_floor_at_negative_coordinates() {
     const auto first_tile_x = [](float x) {
         return tiles_for(rect{x, 0, 1, 1}, 0, 64).at(0).area.x;
@@ -173,9 +179,9 @@ void test_tiles_floor_at_negative_coordinates() {
           "tile columns floor toward -infinity at exact negative multiples");
 }
 
-// DOS-005: a 1e7px square is 1.5 billion tiles; only the visible ones are made,
-// still numbered from the content's first tile, and an absurd coordinate clamps
-// rather than overflowing the float-to-int cast.
+/// Denial-of-service guard: a 1e7px square is 1.5 billion 256px tiles. Only the
+/// visible ones are made, still numbered from the content's first tile, and an
+/// absurd coordinate clamps rather than overflowing the float-to-int cast.
 void test_tiles_are_culled_before_they_are_made() {
     const rect huge{-1000, 0, 1e7f, 1e7f};
     const auto seen = tiles_for(huge, 0, 256, rect{0, 0, 800, 600});
@@ -260,8 +266,8 @@ void test_scrolling_recomposites_without_rastering() {
     p.layers.scroll_to(0, 20);
     draw(backend, p.layers, nullptr, 64);
 
-    // THE CLAIM. A scroll is a composite. Tiles were rastered in content space
-    // and are still valid; the previous engine re-ran layout and re-emitted every command.
+    // A scroll only composites: tiles were rastered in content space and are
+    // still valid, so no new raster calls should happen.
     check(backend.raster_calls() == after_first, "scrolling rastered NOTHING new");
 
     // And it actually moved: the pixel at y is now what used to be at y+20.
@@ -293,8 +299,8 @@ void test_a_fixed_layer_does_not_move() {
     tree.scroll_to(0, 20);
     draw(backend, tree, nullptr, 128);
 
-    // position:fixed needs no per-command flag here - it is simply a layer the
-    // scroll does not move. the previous engine carried a `fixed` bool on every paint command.
+    // position:fixed needs no per-command flag: it is simply a layer the scroll
+    // does not move.
     check(pixel_at(backend.target(), 70, 5) == 0xFF0000FFu, "the pinned layer stayed put");
     check(pixel_at(backend.target(), 10, 5) == 0xFFFF0000u, "the scrolling layer moved under it");
     check(pixel_at(backend.target(), 10, 35) != 0xFFFF0000u, "and its bottom edge came up");
@@ -362,13 +368,13 @@ void test_scrolling_rasters_only_what_came_into_view() {
     draw(backend, p.layers, nullptr, 64, viewport);
     const std::size_t after_scroll = backend.raster_calls() - first;
 
-    // A one-tile scroll exposes one row of tiles. Paying for the whole page
-    // again - which is what the uncelled path did - is the thing being fixed.
+    // A one-tile scroll exposes one row of tiles, so only that row should be
+    // rastered, not the whole page again.
     check(after_scroll > 0, "scrolling into new content does raster it");
     check(after_scroll < first, "but only the newly exposed tiles, not the page");
     std::printf("     first frame %zu tiles, one-tile scroll %zu more\n", first, after_scroll);
 
-    // And scrolling BACK is free, because those tiles were kept.
+    // And scrolling back is free, because those tiles were kept.
     const std::size_t before_back = backend.raster_calls();
     p.layers.scroll_to(0, 0);
     draw(backend, p.layers, nullptr, 64, viewport);
@@ -420,11 +426,9 @@ void test_golden_page() {
            "body { margin: 0; padding: 8px; background-color: #f0f0f0; color: #202020 } "
            "h1 { font-size: 24px; margin: 4px; color: #103070; background-color: #ffffff } "
            ".note { font-size: 16px; margin: 4px; padding: 4px; background-color: #ffffe0 } "
-           // `solid`, WHICH THIS PAGE USED TO OMIT. A `border-color` and a
-           // `border-width` with no STYLE is a used width of zero in CSS 2.1
-           // §8.5.3 - no browser draws it - and this page relied on a painter
-           // that never asked. Layout and paint now agree that it is nothing, so
-           // saying what was meant is what keeps the page exercising a border.
+           // `solid` is required: a `border-color` and `border-width` with no
+           // style has a used width of zero (CSS 2.1 §8.5.3), so the border
+           // would not be drawn.
            ".box { margin: 4px; padding: 6px; background-color: #d0e0ff; "
            "border: 2px solid #3050a0 } "
            ".inner { font-size: 16px; background-color: rgba(255, 0, 0, 0.5) } ",

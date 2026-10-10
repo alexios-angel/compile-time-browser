@@ -1,10 +1,13 @@
-// THE DOCUMENT BINDING AGAINST dom/nodes - one case per rule the corpus found
-// the other answer to, each named after the WPT file that asserts it.
+//===- api_wpt.cpp - Document API tests -------------------------*- C++ -*-===//
 //
-// `new Document()`, importNode and adoptNode, the two DOM 6 walkers, and
-// three one-line rules a clone, a textContent setter and getElementById had
-// wrong. The pattern is unit/dom/nodes_wpt.cpp's: one expression against a
-// fresh page, and whatever it logged.
+// The document binding checked against WPT dom/nodes, one case per rule, each
+// named after the WPT file that asserts it: `new Document()`, importNode and
+// adoptNode, TreeWalker and NodeIterator (DOM Standard section 6), and three
+// one-line rules for cloneNode, the textContent setter and getElementById.
+// The pattern follows unit/dom/nodes_wpt.cpp: one expression against a fresh
+// page, and whatever it logged.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -24,7 +27,9 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <p id=blank-id><i id=""></i></p>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks that \p expression evaluates to \p expected on a fresh copy of
+/// `page_html` (a fresh page per case, since many of these mutate the
+/// document).
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -146,8 +151,9 @@ void test_adopt_node_within_one_document_removes_and_returns() {
     is("(function () { var root = document.createElement('div').attachShadow({mode: 'closed'});"
        " try { document.adoptNode(root); } catch (e) { return e.name; } })()",
        "HierarchyRequestError");
-    // ACROSS DOCUMENTS IT ADOPTS: the same object, now the other document's
-    // node, out of the tree it was in - see node_from in tree_ops.cpp.
+    // Across documents adoptNode returns the same object, now the other
+    // document's node and removed from its old tree (see
+    // dom_bindings::node_from in bindings/document/tree_ops.cpp).
     is("(function () { var doc = document.implementation.createHTMLDocument('T');"
        " var a = document.getElementById('a'); var r = doc.adoptNode(a);"
        " return (r === a) + ',' + (a.ownerDocument === doc) + ',' + a.parentNode + ',' +"
@@ -189,10 +195,9 @@ void test_tree_walker_defaults_and_moves() {
        " out.push(w.previousNode().id); out.push(w.parentNode().id); out.push(w.parentNode());"
        " return out.join(','); })()",
        "a,b,a,box,");
-    // Text is one bit in whatToShow; the walker's answer over a parsed
-    // comment sibling is measured by the WPT suite rather than pinned here -
-    // the devbox run at d049b7d4 read `undefined` for the comment's data, and
-    // the comment/lastChild half of this case was never proved on a build.
+    // Text is one bit in whatToShow. The walker's result over a parsed comment
+    // sibling is not asserted here: it has read `undefined` for the comment's
+    // data and has not been confirmed fixed, so the WPT suite measures it.
     is("(function () { var w = document.createTreeWalker(document.getElementById('box'),"
        " NodeFilter.SHOW_TEXT); return w.firstChild().data + ',' + w.nextSibling(); })()",
        "text,null");
@@ -206,21 +211,21 @@ void test_tree_walker_defaults_and_moves() {
        " { acceptNode: function (n) { return n.id === 'box' ? 2 : 1; } });"
        " return w.firstChild().id; })()",
        "tpl");
-    // Rooted at the document itself: the first node is the doctype - this
-    // page begins `<!DOCTYPE html>` - then <html>, and each one's parent is the
+    // Rooted at the document itself: the first node is the doctype (this page
+    // begins `<!DOCTYPE html>`), then <html>, and each one's parent is the
     // document.
     is("(function () { var w = document.createTreeWalker(document);"
        " var first = w.nextNode(); var second = w.nextNode(); return first.nodeType + ',' +"
        " second.tagName + ',' + (w.parentNode() === document) + ',' + w.parentNode(); })()",
        "10,HTML,true,null");
-    // A filter that re-enters its own walker is an InvalidStateError - and it
-    // is NOT pinned here: the throw is raised inside the nested call, unwinds
-    // to the page's `try`, and the OUTER nextNode then calls the filter again
-    // for the next node, which throws a second time with no handler left. A
-    // native cannot see that a throw crossed its `cx.call` (the handler was
-    // consumed, `failed()` is clear) - the same gap the events fence in
-    // bindings/events/dispatch.cpp closes with a JS `try`. dom/traversal's
-    // TreeWalker-acceptNode-filter.html measures it; fix it there, not here.
+    // A filter that re-enters its own walker is an InvalidStateError, but that
+    // is not asserted here: the throw is raised inside the nested call and
+    // unwinds to the page's `try`, then the outer nextNode calls the filter
+    // again for the next node, which throws a second time with no handler
+    // left. A native cannot see that a throw crossed its `cx.call` (the
+    // handler was consumed and `failed()` is clear); event listeners close
+    // the same gap with the JS `try` wrapper in bindings/events/listeners.cpp.
+    // WPT dom/traversal/TreeWalker-acceptNode-filter.html measures it.
 }
 
 void test_node_iterator_walks_both_ways() {

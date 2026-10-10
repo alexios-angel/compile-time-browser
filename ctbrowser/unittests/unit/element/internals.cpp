@@ -1,8 +1,11 @@
-// ElementInternals: attachInternals() and what it hands back - HTML 4.13.7.
+//===- ctbrowser/unittests/unit/element/internals.cpp - ElementInternals --===//
 //
-// The regression net for lib/Shell/bindings/element_internals.cpp, in the
-// shape of unit/custom_elements.cpp: a page observes through alert().
-
+// ElementInternals: attachInternals() and what it hands back (HTML 4.13.7).
+//
+// Regression tests for lib/Shell/bindings/element_internals.cpp, written like
+// unittests/unit/custom_elements.cpp: the page reports through alert().
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/layout/layout.hpp>
@@ -24,10 +27,10 @@ using ctbrowser_test::said;
 
 namespace {
 
-// attachInternals: once per element, only for a defined autonomous custom
-// element whose definition did not disable internals, and only from the
-// constructor on (HTMLElement-attachInternals.html, element-internals-
-// shadowroot.html).
+/// attachInternals succeeds once per element, only for a defined autonomous
+/// custom element whose definition did not disable internals, and only from
+/// the constructor on (HTMLElement-attachInternals.html,
+/// element-internals-shadowroot.html).
 void test_attach_internals_refusals() {
     CHECK_EQ(said("<html><body><x-later id=l></x-later><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"
@@ -59,10 +62,11 @@ void test_attach_internals_refusals() {
              "NotSupportedError;NotSupportedError;ctor:ok;has;null;true");
 }
 
-// The form-associated members: refused for a definition without
-// `formAssociated`, and for one with it the validity flags, the message,
-// willValidate's barring, checkValidity's `invalid` event, the form owner
-// and the two callbacks the scan diffs.
+/// The form-associated members: they throw for a definition without
+/// `formAssociated`. With it: the validity flags, the validation message,
+/// willValidate being false while disabled, checkValidity's `invalid` event,
+/// the form owner, and the formAssociatedCallback and formDisabledCallback
+/// reactions.
 void test_form_associated_internals() {
     CHECK_EQ(said("<html><body><form id=f></form><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"

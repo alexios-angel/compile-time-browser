@@ -1,6 +1,8 @@
+//===- ctbrowser/unittests/unit/html/parse.cpp - HTML parser tests --------===//
+//
 // The HTML parser: tokenizer and tree construction.
 //
-// Almost every test here is a MALFORMED document, and that is the point. A
+// Almost every test here is a malformed document, and that is the point. A
 // parser that only handles well-formed HTML is untested against the web: pages
 // leave <p> and <li> unclosed, quote attributes three different ways, overlap
 // their inline formatting and emit stray close tags. The spec is the written
@@ -11,6 +13,8 @@
 // The expected trees below are what Chrome and Firefox produce. Where this
 // parser knowingly differs, the test says so rather than asserting the wrong
 // thing.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -25,8 +29,9 @@ using namespace ctbrowser;
 
 namespace {
 
-// The tree as a flat string, so an expectation is readable and a failure shows
-// what was actually built. Elements are `tag(children)`, text is quoted.
+/// Prints a tree as a flat string, so an expectation is readable and a failure
+/// shows what was actually built. Elements are `tag(children)`, text is quoted,
+/// and every other node kind prints nothing.
 struct dumper {
     atom_table & atoms;
     const read_txn & txn;
@@ -48,6 +53,7 @@ struct dumper {
     }
 };
 
+/// A fresh document with its own atom table, parsed from one input.
 struct parsed {
     atom_table atoms;
     document doc{atoms};
@@ -59,7 +65,8 @@ struct parsed {
     }
 };
 
-// Each case gets a fresh document: parse_html builds, it does not reset.
+/// Parses \p html into a fresh document (parse_html builds, it does not reset)
+/// and reports a failure named \p what if the dumped tree is not \p want.
 void expect_tree(std::string_view html, std::string_view want, std::string_view what) {
     parsed p;
     const std::string got = p.tree(html);
@@ -70,7 +77,7 @@ void expect_tree(std::string_view html, std::string_view want, std::string_view 
     }
 }
 
-// --- the shape a document always has --------------------------------------
+// --- The shape a document always has --------------------------------------
 
 void test_implied_structure() {
     // <html>, <head> and <body> exist whether or not the document says so. Every
@@ -86,10 +93,10 @@ void test_implied_structure() {
                 "leading whitespace does not become a text node");
 }
 
-// --- the rules that make real pages work ----------------------------------
+// --- The rules that make real pages work ----------------------------------
 
 void test_unclosed_paragraphs() {
-    // THE classic. Written by hand on nearly every page before XHTML, and a
+    // The classic case. Written by hand on nearly every page before XHTML, and a
     // nesting parser gets it wrong in a way that changes every margin.
     expect_tree("<p>one<p>two", R"(html(head body(p("one") p("two"))))",
                 "a <p> start tag closes an open <p>");
@@ -121,7 +128,7 @@ void test_void_elements() {
 
 void test_stray_end_tags_are_ignored() {
     // The rule that stops one typo from unwinding the whole document.
-    // ONE Text node, not two: "insert a character" appends to the Text node
+    // One Text node, not two: "insert a character" appends to the Text node
     // before the insertion point (HTML 13.2.6.1), and an ignored tag is not a
     // boundary. That is also what makes `document.write("a"); write("b")` one.
     expect_tree("<div>a</span>b</div>", R"(html(head body(div("ab"))))",
@@ -136,7 +143,7 @@ void test_unclosed_at_eof() {
                 "everything still open at EOF is closed implicitly");
 }
 
-// --- tables, where the implied elements are load bearing -------------------
+// --- Tables, where the implied elements are load bearing -------------------
 
 void test_table_implies_its_sections() {
     // A page writing <table><tr><td> gets a <tbody> it never asked for, and
@@ -152,7 +159,7 @@ void test_table_implies_its_sections() {
 }
 
 void test_foster_parenting() {
-    // Text directly inside a <table> goes BEFORE the table, not inside it.
+    // Text directly inside a <table> goes before the table, not inside it.
     // Every browser does this; a parser that nests it instead puts stray text
     // into the table layout and the page shifts.
     expect_tree("<table>stray<tr><td>a</table>",
@@ -160,18 +167,18 @@ void test_foster_parenting() {
                 "text inside a table is foster-parented out of it");
 }
 
-// --- inline formatting, the hard part -------------------------------------
+// --- Inline formatting, the hard part -------------------------------------
 
 void test_formatting_reconstruction() {
     // A <p> opened inside a <b> and closed inside it simply nests. This is the
-    // case people EXPECT to split and it does not, because the </b> arrives
+    // case people expect to split and it does not, because the </b> arrives
     // after the </p> and finds nothing block-level still open.
     expect_tree("<b>one<p>two</p></b>", R"(html(head body(b("one" p("two")))))",
                 "a block opened and closed inside a formatting element just nests");
 }
 
 void test_adoption_agency_with_a_furthest_block() {
-    // THE case the adoption agency exists for. The </b> arrives while the <p>
+    // The case the adoption agency exists for. The </b> arrives while the <p>
     // is still open, so a tree would have to hold the <p> both inside and
     // outside the <b>. Browsers show <b>1</b><p><b>2</b>3</p>.
     expect_tree("<b>1<p>2</b>3</p>", R"(html(head body(b("1") p(b("2") "3"))))",
@@ -191,7 +198,7 @@ void test_overlapping_formatting() {
     if (got.find(R"(i("y"))") == std::string::npos) { std::printf("  got: %s\n", got.c_str()); }
 }
 
-// --- attributes -----------------------------------------------------------
+// --- Attributes -----------------------------------------------------------
 
 void test_attribute_syntax() {
     parsed p;
@@ -211,15 +218,9 @@ void test_attribute_syntax() {
     check(txn.has_attribute(div, p.atoms.intern("checked")), "valueless attributes");
 }
 
-// <html>, <head> AND <body> KEEP THEIR ATTRIBUTES.
-//
-// All three elements are created implicitly - the tree builder needs somewhere
-// to put content before it has seen the tag that names it - so by the time the
-// start tag arrives the element is already in the tree. The handler returned
-// early, and everything the author wrote on it was dropped: `<body class=dark>`
-// and `<body style="margin:0">` are as ordinary as markup gets, and neither
-// applied. Nothing looked broken, because the element was there and the cascade
-// ran - it simply never saw the attributes it should have matched on.
+// <html>, <head> and <body> keep their attributes. All three may be created
+// implicitly before their start tag arrives, so the tag's attributes must be
+// merged onto the existing element rather than dropped.
 void test_root_elements_keep_their_attributes() {
     parsed p;
     (void)parse_html(p.doc, R"(<html lang=en><head data-h=1></head>)"
@@ -249,7 +250,7 @@ void test_root_elements_keep_their_attributes() {
     }
 }
 
-// A SECOND <body> CHANGES NOTHING. The spec adds only attributes that are not
+// A second <body> changes nothing. The spec adds only attributes that are not
 // already present, so the first tag supplies them - which is what stops stray
 // markup halfway down a page from restyling everything above it.
 void test_a_second_body_tag_does_not_overwrite() {
@@ -290,7 +291,7 @@ void test_tag_and_attribute_names_fold_case() {
                 "tag names fold to lowercase");
 }
 
-// --- text-only elements ---------------------------------------------------
+// --- Text-only elements ---------------------------------------------------
 
 void test_raw_text_elements() {
     // The reason the tokenizer has content models at all: inside <script>, a
@@ -310,7 +311,7 @@ void test_raw_text_elements() {
                 "<textarea> keeps its markup as text");
 }
 
-// --- character references -------------------------------------------------
+// --- Character references -------------------------------------------------
 
 void test_character_references() {
     expect_tree("<p>a &amp; b</p>", R"(html(head body(p("a & b"))))", "named references decode");
@@ -324,7 +325,7 @@ void test_character_references() {
                 "and one with no such prefix stays literal");
     expect_tree("<p>a & b</p>", R"(html(head body(p("a & b"))))", "a bare ampersand is text");
     // The rule that keeps query strings intact. `&copy=` inside an attribute
-    // must NOT become a copyright sign, or every URL with a `copy` parameter
+    // must not become a copyright sign, or every URL with a `copy` parameter
     // breaks.
     parsed p;
     (void)parse_html(p.doc, R"(<a href="/x?a=1&copy=2">link</a>)");
@@ -339,11 +340,11 @@ void test_character_references() {
           "a semicolon-less reference before '=' stays literal in an attribute");
 }
 
-// --- comments and doctype -------------------------------------------------
+// --- Comments and doctype -------------------------------------------------
 
-// The dumper prints elements and text only, so what these say is that a
-// doctype and a comment produce no ELEMENT and no TEXT; the nodes they do
-// produce are unit/dom_special_nodes' to check.
+// The dumper prints elements and text only, so these cases check that a
+// doctype and a comment produce no element and no text. The nodes they do
+// produce are checked in unittests/unit/dom/special_nodes.cpp.
 void test_comments_and_doctype() {
     expect_tree("<!doctype html><p>a", R"(html(head body(p("a"))))",
                 "a doctype produces no element and no text");
@@ -374,7 +375,7 @@ void test_comments_and_doctype() {
     }
 }
 
-// --- robustness -----------------------------------------------------------
+// --- Robustness -----------------------------------------------------------
 
 void test_pathological_input_terminates() {
     // The failure mode a hand-written parser has is not a wrong tree, it is a
@@ -399,7 +400,7 @@ void test_pathological_input_terminates() {
     check(!g.tree(closes).empty(), "500 stray close tags terminate");
 }
 
-// THE DEPTH CAP (max_dom_depth): past it the parser flattens, as Blink does,
+// The depth cap (max_dom_depth): past it the parser flattens, as Blink does,
 // so no tree it builds can take a recursive walk past it - and the tokenizer
 // and the option/selectedcontent clone stop recursing per token.
 void test_depth_is_capped() {
@@ -412,11 +413,12 @@ void test_depth_is_capped() {
 
     parsed b;
     std::string select = "<select><button><selectedcontent></selectedcontent></button>";
-    // The cap flattens the tree, not the open-element stack, which ends
-    // 400000 deep here: every <option> asks whether a <select> is in scope
-    // (the stack's index answers without walking it), and each of the
-    // 200000 option pops at the end walks the <select> (DOS-018; a budget
-    // stops that). Both were quadratic.
+    // The depth cap flattens the tree but not the open-element stack, which
+    // ends 400000 deep here. Every <option> asks whether a <select> is in
+    // scope (the stack index answers that without walking it), and each of the
+    // 200000 option pops at the end walks up to the <select> (a step budget
+    // bounds that). Without those two limits, parsing this input takes
+    // quadratic time.
     for (int i = 0; i < 200000; ++i) { select += "<option><div>"; }
     (void)parse_html(b.doc, select + "x");
     check(deepest(b) < max_dom_depth, "200000 nested <option><div> stay under the depth cap");
@@ -451,6 +453,9 @@ void test_depth_is_capped() {
         many += " a" + std::to_string(i % 1000) + "=" + std::to_string(i);
     }
     check(!e.tree(many + ">").empty(), "2000 attributes terminate");
+    // Past 64 attributes the tokenizer's duplicate check switches from a linear
+    // scan to a hash set (tokenizer.cpp, scan_limit); both paths must keep the
+    // first occurrence.
     const auto txn = e.doc.read();
     const node_id p = txn.children(txn.children(txn.root())[1])[0];
     check(txn.attributes(p).size() == 1000, "duplicates past 64 attributes are still dropped");

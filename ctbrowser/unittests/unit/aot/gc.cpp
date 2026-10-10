@@ -1,25 +1,23 @@
-// ctbrowser.aot: a compiled body under a collector that runs at every safepoint.
+//===- ctbrowser/unittests/unit/aot/gc.cpp - AOT under GC stress ----------===//
 //
-// Phase 4's gate is "forced-GC mixed-mode tests pass under sanitizers", and the
-// master plan calls a forced-GC mode the highest-value test in the phase. This
-// is why: in an ordinary run NOTHING COLLECTS WHILE SCRIPT IS RUNNING. The only
-// production trigger is `collect_if_due`, once per tick, from the browser's
-// frame loop, under a comment that says "collect between callbacks, never
-// inside one".
+// A compiled body under a collector that runs at every safepoint.
 //
-// So every `is_safepoint` flag in aot_helpers.def is an obligation nothing has
-// ever enforced, and a compiled body keeping a live value where the precise
-// collector cannot see it would run correctly for as long as that stayed true.
-// `context::set_gc_stress` makes it stop being true.
+// Forcing a collection at every safepoint is the most valuable test of
+// compiled code, because in an ordinary run a collection happens only when a
+// budget is spent (`collect_if_due`, mostly once per tick from the browser's
+// frame loop). A compiled body keeping a live value where the precise
+// collector cannot see it would usually still run correctly, so the
+// `is_safepoint` flags in aot_helpers.def would go unchecked.
+// `context::set_gc_stress` collects at every safepoint instead.
 //
-// WHAT THIS FOUND, before a line of it was written: a compiled body's receiver
-// was in no root at all. The interpreted path stores it in
-// call_frame::receiver and the collector marks that for every live frame; the
-// bridge never set the field. For an ordinary call it survived by accident,
-// because the receiver is usually still in the caller's register. For `new` it
-// did not - op::construct's fresh instance lives in a C++ local until the body
-// returns - so a collection anywhere inside a compiled constructor freed the
-// object being constructed.
+// The main hazard: a compiled body's receiver must be rooted. The interpreter
+// keeps it in call_frame::receiver, which the collector marks for every live
+// frame, so the AOT bridge must set that field too. op::construct holds a new
+// instance only in a C++ local until the body returns, so without that root a
+// collection inside a compiled constructor frees the object being built.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -41,18 +39,18 @@ namespace {
 
 std::size_t body_calls = 0;
 
-// A COMPILED BODY THAT ALLOCATES, KEEPS THE RESULT ACROSS A SAFEPOINT, AND
-// THEN READS IT BACK.
-//
-// It builds a string, puts it in its own frame slot - which is a register, and
-// registers are traced in full - then calls whatever it was handed. That call
-// is `ct_aot_call`, which the table declares is_safepoint, so under stress the
-// whole heap is collected inside it. Afterwards the body reads its slot again
-// and returns the string.
-//
-// THE POINTER IS RE-FETCHED AFTER THE CALL, deliberately and not as a style
-// choice: `registers_` is a std::vector and a nested call resizes it, so the
-// base moves. This is the same rule the interpreter's own reg() follows.
+/// A compiled body that allocates, keeps the result across a safepoint, and
+/// then reads it back.
+///
+/// It builds a string, puts it in its own frame slot (a register, and
+/// registers are traced in full), then calls whatever it was handed. That call
+/// is `ct_aot_call`, which aot_helpers.def declares is_safepoint, so under
+/// stress the whole heap is collected inside it. Afterwards the body reads its
+/// slot again and returns the string.
+///
+/// The slot pointer must be re-fetched after the call: `registers_` is a
+/// std::vector and a nested call resizes it, so the base moves. The
+/// interpreter's own reg() follows the same rule.
 extern "C" std::int32_t sample_keeps(ctbrowser::aot::ct_aot_ctx * ctx,
                                      const ctbrowser::aot::ct_aot_site * site,
                                      const std::uint64_t * argv, std::uint32_t argc,
@@ -68,8 +66,8 @@ extern "C" std::int32_t sample_keeps(ctbrowser::aot::ct_aot_ctx * ctx,
         return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
     }
 
-    // Allocated INSIDE the frame's lifetime and parked in a slot, which is the
-    // whole discipline this phase exists to make possible.
+    // Allocated inside the frame's lifetime and kept in a frame slot, which is
+    // the rooting discipline compiled code has to follow.
     auto & cx = *reinterpret_cast<context *>(ctx);
     const value kept = cx.string("a string this body must not lose");
     ctbrowser::aot::ct_aot_slots(frame)[0] = kept.bits();
@@ -84,15 +82,15 @@ extern "C" std::int32_t sample_keeps(ctbrowser::aot::ct_aot_ctx * ctx,
         return static_cast<std::int32_t>(called);
     }
 
-    // RE-FETCHED, because the call may have moved the register file.
+    // Re-fetched, because the call may have moved the register file.
     const value recovered = value::from_bits(ctbrowser::aot::ct_aot_slots(frame)[0]);
     *out = ctbrowser::aot::ct_aot_return_value(recovered.bits(), receiver, constructing);
     ctbrowser::aot::ct_aot_leave(frame);
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
 
-// A COMPILED CONSTRUCTOR that allocates before it returns, so a collection
-// inside it has something to free and its receiver has to survive one.
+/// A compiled constructor that reaches a safepoint before it returns, so its
+/// receiver has to survive a collection.
 extern "C" std::int32_t sample_ctor(ctbrowser::aot::ct_aot_ctx * ctx,
                                     const ctbrowser::aot::ct_aot_site * site,
                                     const std::uint64_t * argv, std::uint32_t argc,
@@ -108,10 +106,10 @@ extern "C" std::int32_t sample_ctor(ctbrowser::aot::ct_aot_ctx * ctx,
         return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::failed);
     }
 
-    // A SAFEPOINT WITH THE INSTANCE LIVE. `this` is reachable only through the
-    // frame the bridge pushed; if that field is not set, this collection frees
-    // the object being constructed and everything after it is reading freed
-    // memory.
+    // A safepoint with the instance live. `this` is reachable only through the
+    // frame the bridge pushed; if call_frame::receiver is not set, this
+    // collection frees the object being constructed and everything after it
+    // reads freed memory.
     std::uint64_t ignored = value::undefined().bits();
     const auto called = static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_call(
         frame, callee, value::undefined().bits(), nullptr, 0u, 0u, site, &ignored));
@@ -122,9 +120,8 @@ extern "C" std::int32_t sample_ctor(ctbrowser::aot::ct_aot_ctx * ctx,
         return static_cast<std::int32_t>(called);
     }
 
-    // Write a property on the receiver AFTER the collection, which is what
-    // touches it: a freed instance is a use-after-free here, and a live one
-    // keeps the property.
+    // Write a property on the receiver after the collection: a freed instance
+    // is a use-after-free here, and a live one keeps the property.
     auto & cx = *reinterpret_cast<context *>(ctx);
     const value self = value::from_bits(receiver);
     if (self.is_object()) { cx.store_property(self, "marker", value::number(1234)); }
@@ -138,9 +135,9 @@ constexpr std::string_view fixture =
     "function keeps(f) { return f(); }\n"
     "function Thing(f) { this.made = f(); }\n"
     "function makeThing(f) { var t = new Thing(f); return t; }\n"
-    // A CLASS WITH A FIELD INITIALISER, which is the only shape that opens
+    // A class with a field initialiser, the only shape that opens
     // op::construct's own window: the instance exists, the initialiser runs
-    // USER JAVASCRIPT, and nothing has pushed a frame carrying it yet.
+    // user JavaScript, and no frame carrying the instance has been pushed yet.
     "class Held { made = churn(); }\n"
     "function makeHeld() { return new Held(); }\n"
     "function churn() { var s = ''; for (var i = 0; i < 40; i++) { s = s + i; } return s.length; "
@@ -165,7 +162,7 @@ int main() {
     const value churn = ctx.global("churn");
     check(churn.is_callable(), "the interpreted allocator is reachable");
 
-    // ---- WITHOUT STRESS, which is what every other test in this suite sees --
+    // ---- Without stress, as every other test in this suite runs -----------
     {
         body_calls = 0;
         const std::size_t before = ctx.collections();
@@ -177,7 +174,7 @@ int main() {
               "and NOTHING COLLECTED - which is why this mode has to exist at all");
     }
 
-    // ---- WITH STRESS ------------------------------------------------------
+    // ---- With stress ------------------------------------------------------
     ctx.set_gc_stress(true);
     {
         body_calls = 0;
@@ -185,15 +182,15 @@ int main() {
         const value args[1] = {churn};
         const value out = ctx.call(ctx.global("keeps"), args, value::undefined());
         check(body_calls == 1, "the compiled body ran under stress");
-        // THE COUNTER, NOT THE ANSWER. A stress mode that silently stopped
-        // collecting would produce exactly the same string.
+        // Check the collection counter, not just the answer: a stress mode that
+        // silently stopped collecting would produce exactly the same string.
         check(ctx.collections() > before, "AND A COLLECTION ACTUALLY RAN AT THE SAFEPOINT");
         check(out.is_string(), "the body still returned a string");
         check(ctx.to_string(out) == "a string this body must not lose",
               "AND IT IS THE STRING IT PARKED - the slot kept it alive across the collection");
     }
 
-    // ---- A COMPILED CONSTRUCTOR, WHOSE RECEIVER IS THE THING AT RISK -------
+    // ---- A compiled constructor, whose receiver is at risk -----------------
     {
         body_calls = 0;
         const std::size_t before = ctx.collections();
@@ -207,13 +204,12 @@ int main() {
               "AND THE INSTANCE SURVIVED THE COLLECTION - its receiver was rooted");
     }
 
-    // ---- AND `new` FROM JAVASCRIPT, which is a different opcode -----------
+    // ---- `new` from JavaScript, a different opcode ------------------------
     //
     // The arm above reached the constructor through context::construct, the
     // C++ way in. This one goes through `op::construct`, which builds the
     // instance itself and holds it in a C++ local of its own while field
-    // initialisers run - the same hazard in a second place, which is why it
-    // needed a second fix and needs a second arm.
+    // initialisers run: the same hazard in a second place, rooted separately.
     {
         body_calls = 0;
         const std::size_t before = ctx.collections();
@@ -227,13 +223,12 @@ int main() {
               "AND THE INSTANCE SURVIVED - op::construct rooted it too");
     }
 
-    // ---- A FIELD INITIALISER, which is op::construct's own window ---------
+    // ---- A field initialiser, op::construct's own window ------------------
     //
-    // The arm above did not reach it: `Thing` is a plain function, so
-    // `run_field_initialisers` had nothing to run and could not collect. A
-    // CLASS FIELD runs user JavaScript with the instance in a C++ local and no
-    // frame yet carrying it - which is the whole hazard, and this arm exists
-    // because removing op::construct's root left the suite green without it.
+    // The arm above does not reach it: `Thing` is a plain function, so
+    // `run_field_initialisers` has nothing to run and cannot collect. A class
+    // field runs user JavaScript with the instance in a C++ local and no frame
+    // yet carrying it, so only this arm checks op::construct's own root.
     {
         const std::size_t before = ctx.collections();
         const value held = ctx.call(ctx.global("makeHeld"), {}, value::undefined());
@@ -244,16 +239,14 @@ int main() {
               "AND THE INSTANCE SURVIVED ITS OWN FIELD INITIALISER - op::construct rooted it");
     }
 
-    // ---- AND THE INTERPRETER ITSELF, under the same stress -----------------
+    // ---- The interpreter itself, under the same stress --------------------
     //
-    // Worth doing because it is nearly free and because the mode is only
-    // trustworthy if the paths that were ALREADY correct stay correct under it.
-    // A failure here would be a rooting bug in the VM, not in the AOT bridge.
+    // The stress mode is only trustworthy if paths that are already correct
+    // stay correct under it. A failure here would be a rooting bug in the VM,
+    // not in the AOT bridge.
     //
-    // THE ANSWER IS COMPARED AGAINST ITSELF, not against a number written here.
-    // A constant is a thing to get wrong - this file already did - and the
-    // question is not "what does this program compute" but "does stress change
-    // it", which a differential answers exactly.
+    // The answer is compared with the unstressed run, not with a constant: the
+    // question is whether stress changes the result.
     {
         constexpr std::string_view work =
             "function build(n) {\n"

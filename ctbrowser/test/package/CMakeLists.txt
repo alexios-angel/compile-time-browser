@@ -1,9 +1,8 @@
-# A consumer of the INSTALLED package.
+# A consumer of the installed package.
 #
-# Not built as part of the project - it is configured against an install prefix
-# by tools/check/check-package.sh. That indirection is the point: building it from the
-# source tree would prove nothing, because the source tree is exactly what the
-# install is supposed to make unnecessary.
+# Not built as part of the project: tools/check/check-package.sh configures it
+# against an install prefix. Building it from the source tree would prove
+# nothing, because the install exists to make the source tree unnecessary.
 cmake_minimum_required(VERSION 3.20)
 project(ctbrowser-package-check CXX)
 

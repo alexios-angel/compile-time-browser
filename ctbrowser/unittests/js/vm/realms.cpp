@@ -1,11 +1,15 @@
-// REALMS: a second global environment in one context (ECMA-262 9.3). A frame
-// that runs its own scripts is one - the page calls into it through its
-// window, and the frame's functions must go on reading the FRAME's globals,
-// whoever calls them (10.2.1.1 PrepareForOrdinaryCall step 6). Asserted here
-// on a bare VM, which is the shape both embeddings build on: the second
-// realm's table starts as the template (the builtins, none of the first
-// realm's `var`s), its global object is a proxy over its own table, and the
-// first realm reaches it only through that object.
+//===- ctbrowser/unittests/js/vm/realms.cpp - Realm tests -------*- C++ -*-===//
+//
+// Realms: a second global environment in one context (ECMA-262 9.3). A frame
+// that runs its own scripts is one: the page calls into it through its window,
+// and the frame's functions must keep reading the frame's globals, whoever
+// calls them (ECMA-262 10.2.1.1 PrepareForOrdinaryCall step 6). Tested on a
+// bare VM, the shape both embeddings build on: the second realm's table starts
+// as the template (the builtins, none of the first realm's `var`s), its global
+// object is a proxy over its own table, and the first realm reaches it only
+// through that object.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -18,6 +22,7 @@ using namespace ctbrowser::script;
 
 namespace {
 
+/// A context with a second realm, exposed to the first as the global `other`.
 struct two_realms {
     context cx;
     realm_record * other = nullptr;
@@ -31,7 +36,7 @@ struct two_realms {
         cx.define_global("other", other->global_this);
     }
 
-    // A classic script in the SECOND realm, as a frame's <script> runs.
+    /// Runs a classic script in the second realm, as a frame's <script> runs.
     void run_there(std::string_view source) {
         const context::realm_scope in_other{cx, *other};
         const run_result r = cx.run(cx.own_program(compiler::compile(std::string{source})));
@@ -41,8 +46,8 @@ struct two_realms {
         }
     }
 
-    // A classic script in the first realm, answering what `result` holds after
-    // the turn's microtasks.
+    /// Runs a classic script in the first realm and returns what `result`
+    /// holds after the turn's microtasks.
     std::string run_here(std::string_view source) {
         const run_result r = cx.run(cx.own_program(compiler::compile(std::string{source})));
         if (!r.ok) { return "<error: " + r.error + ">"; }
@@ -76,8 +81,8 @@ void test_separate_bindings() {
     r.expect("other.set('from-frame'); var result = other.x + '|' + x;", "from-frame|page");
     // A closure made in the frame keeps the frame's realm after it escapes.
     r.expect("var result = other.make()();", "from-frame");
-    // A sloppy function called with no receiver gets ITS realm's global
-    // object (10.2.1.2 OrdinaryCallBindThis step 5).
+    // A sloppy function called with no receiver gets its own realm's global
+    // object (ECMA-262 10.2.1.2 OrdinaryCallBindThis step 5).
     r.expect("var h = other.g; var result = (h() === other) + '|' + (h() === globalThis);",
              "true|false");
     // A generator and an async function resume in their own realm, whoever
@@ -92,7 +97,7 @@ void test_separate_bindings() {
 void test_shared_intrinsics() {
     two_realms r;
     r.run_there("var arr = [1, 2, 3];");
-    // ponytail: ONE set of intrinsics - `other.Array === Array` - where a
+    // ponytail: one set of intrinsics (`other.Array === Array`) where a
     // browser has two. What a frame needs first is its own bindings; distinct
     // prototypes are the upgrade when a cross-realm identity test asks.
     r.expect("var result = (other.Array === Array) + '|' + Array.isArray(other.arr);", "true|true");
@@ -118,7 +123,8 @@ void test_global_bindings() {
              " enumerable: true, configurable: false});"
              " (0, eval)('var seen = kept; var kept = 1;'); var result = seen;",
              "x");
-    // 19.1: NaN, Infinity and undefined are read-only and not configurable.
+    // ECMA-262 19.1: NaN, Infinity and undefined are read-only and not
+    // configurable.
     r.expect("undefined = 1; NaN = 2; var d = Object.getOwnPropertyDescriptor(globalThis, 'NaN');"
              " var result = [typeof undefined, NaN !== NaN, d.writable, d.configurable,"
              " delete globalThis.Infinity].join();",

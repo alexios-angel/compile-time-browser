@@ -1,18 +1,22 @@
-// A THROW IS ONE THROW, AND A RECEIVER IS THE ONE THE WRITE BEGAN ON.
+//===- ctbrowser/unittests/js/receivers_and_throws.cpp - Receivers --------===//
+//
+// A throw is one throw, and a receiver is the one the write began on.
 //
 // Two families of test262 failure with one shape each. A native that asks a
 // proxy, a getter or a toJSON something, and is answered by a throw that has
-// already LANDED on the page's handler (context::unwinds), must stop rather
-// than go on to throw a second time over the handler the first consumed - a
+// already landed on the page's handler (context::unwinds), must stop rather
+// than go on to throw a second time over the handler the first consumed: a
 // revoked proxy under `delete`, Object.defineProperty or JSON.stringify, a
 // Symbol handed to toPrecision. And a proxy on a prototype chain is asked
-// with the ORIGINAL receiver (10.1.9.2, 10.1.8.1), so its traps and a
-// setter's `this` see it.
+// with the original receiver (ECMA-262 10.1.9.2, 10.1.8.1), so its traps and
+// a setter's `this` see it.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 int main() {
-    // Each of these threw twice and the second throw escaped the `try`.
+    // Each of these throws once, so the `try` catches it.
     js_expect(
         "(function(){var h = Proxy.revocable({}, {}); h.revoke();"
         "try { Object.defineProperty(h.proxy, 'x', {value: 1}); } catch (e) { return e.name; }"
@@ -56,7 +60,7 @@ int main() {
               "return Object.getOwnPropertyNames(s).join(); })()",
               "0,1,5,length,k");
 
-    // for-in walks the WHOLE chain for every kind of object (14.7.5.9): a
+    // for-in walks the whole chain for every kind of object (ECMA-262 14.7.5.9): a
     // String wrapper's indices, and an enumerable key a page put on a
     // built-in prototype, once, unless something nearer shadows it.
     js_expect("(function(){var out = []; for (var k in new String('ab')) out.push(k);"
@@ -77,7 +81,7 @@ int main() {
               "var a = []; a.sp = 5; var own = a.hasOwnProperty('sp');"
               "delete Array.prototype.sp; return got + ',' + own; })()",
               "5,false");
-    // ...but an object literal's property is DEFINED, whatever a read-only
+    // ...but an object literal's property is defined, whatever a read-only
     // Object.prototype property of the same name says.
     js_expect("(function(){Object.defineProperty(Object.prototype, 'ro',"
               " {value: 1, writable: false, configurable: true});"
@@ -97,8 +101,8 @@ int main() {
     js_expect("(function(){class C { set #f(v) {} read() { return this.#f; } }"
               "try { new C().read(); return 'read'; } catch (e) { return e.name; } })()",
               "TypeError");
-    // A FUNCTION'S OWN KEYS: integer keys ascending, then `length`, `name`,
-    // `prototype` where they were made - a redefinition does not move one -
+    // A function's own keys: integer keys ascending, then `length`, `name`,
+    // `prototype` where they were made (a redefinition does not move one),
     // then strings, then symbols; the compiler's `__home` is not one of them.
     js_expect("(function(){var f = () => {}; f.a = 1;"
               "Object.defineProperty(f, 'length', {enumerable: true});"
@@ -117,7 +121,7 @@ int main() {
               "return '' + d.writable + d.enumerable + d.configurable; })()",
               "falsefalsefalse");
     // `Object` under a subclass's NewTarget makes the subclass's instance,
-    // whatever it was handed (20.1.1.1 step 1); a plain call still passes an
+    // whatever it was handed (ECMA-262 20.1.1.1 step 1); a plain call still passes an
     // object through.
     js_expect("(function(){class O extends Object {} var o = new O({a: 1});"
               "var r = Reflect.construct(Object, [{b: 2}], O); var p = {c: 3};"
@@ -125,7 +129,7 @@ int main() {
               " (Object.getPrototypeOf(r) === O.prototype) + (Object(p) === p) +"
               " (new Object(p) === p); })()",
               "undefined,undefined,truetruetruetrue");
-    // A String receiver refuses a WRITE, and an empty one has none to refuse.
+    // A String receiver refuses a write, and an empty one has none to refuse.
     js_expect("(function(){var s = [].sort.call(''); var r = [].reverse.call('a');"
               "var t; try { [].sort.call('ba'); t = 'sorted'; } catch (e) { t = e.name; }"
               "return (s instanceof String) + ',' + (r instanceof String) + ',' + t; })()",
@@ -135,7 +139,7 @@ int main() {
               "try { x.push('x'); } catch (err) { e = err.name; }"
               "return n + ',' + e + ',' + x[4294967295] + ',' + x.length; })()",
               "4294967295,RangeError,x,4294967295");
-    // A `has` trap is asked with a property KEY, a string, for an index.
+    // A `has` trap is asked with a property key, a string, for an index.
     js_expect("(function(){var seen = []; var p = new Proxy([[1], 2], {has: function (t, k) {"
               " seen.push(typeof k + k); return k in t; }});"
               "Array.prototype.flat.call(p); return seen.join(); })()",
@@ -146,9 +150,10 @@ int main() {
               "Object.defineProperties({}, new Proxy({a: {value: 0}, b: {value: 1}}, logger));"
               "return log.join(); })()",
               "ownKeys,getOwnPropertyDescriptor,get,getOwnPropertyDescriptor,get");
-    // An operator's left operand stops it only on its OWN throw: a
+    // An operator's left operand stops it only on its own throw: a
     // `return()` IteratorClose calls while the TypeError that closed the
-    // iterator is in flight still adds (Array/from/iter-set-elem-prop-err.js).
+    // iterator is in flight still adds (test262
+    // built-ins/Array/from/iter-set-elem-prop-err.js).
     js_expect("(function(){ var n = 0; var it = {[Symbol.iterator]() { return {"
               " next() { return {done: false, value: 1}; },"
               " return() { n += 1; return {}; } }; }};"
@@ -156,9 +161,9 @@ int main() {
               " {writable: true, configurable: false}); }, it); } catch (e) {}"
               " return n; })()",
               "1");
-    // `null[k]` is the TypeError BEFORE k's ToPropertyKey (GetValue/PutValue
-    // step 3.a), so a key whose toString throws neither runs nor leaves its
-    // throw pending under the TypeError - which made the pair uncatchable.
+    // `null[k]` throws the TypeError before k's ToPropertyKey (ECMA-262
+    // GetValue/PutValue step 3.a), so a key whose toString throws is never
+    // called and no second throw is left pending.
     js_expect("(function(){ var base = null, k = {toString() { throw 1; }};"
               " try { base[k] ^= 1; } catch (e) { return e instanceof TypeError; } })()",
               "true");
@@ -168,7 +173,7 @@ int main() {
     js_expect("(function(){ var k = {toString() { throw 'key'; }};"
               " try { return ({})[k]; } catch (e) { return e; } })()",
               "key");
-    // Object.fromEntries closes the iterator on an entry's throw AND keeps
+    // Object.fromEntries closes the iterator on an entry's throw and keeps
     // the throw.
     js_expect("(function(){ var closed = 0; var it = { [Symbol.iterator]() { return {"
               " next() { return {done: false, value: { get 0() { throw 'key'; } }}; },"
@@ -181,7 +186,7 @@ int main() {
               " return e.constructor.name; } return 'none'; })()",
               "ReferenceError");
     js_expect("(function(){ let x = [1]; for (let y of x) { return y; } })()", "1");
-    // `break`/`continue` to an OUTER loop closes the for-of it leaves.
+    // `break`/`continue` to an outer loop closes the for-of it leaves.
     js_expect("(function(){ var closed = 0; var it = { [Symbol.iterator]() { return {"
               " next() { return {done: false, value: 1}; },"
               " return() { closed++; return {}; } }; } };"
@@ -191,7 +196,7 @@ int main() {
               " return closed; })()",
               "3");
     // A strict write through a `with` object that lost the binding meanwhile
-    // (9.1.1.2.5 SetMutableBinding) - sloppy code writes it back.
+    // (ECMA-262 9.1.1.2.5 SetMutableBinding); sloppy code writes it back.
     js_expect("(function(){ var scope = { get x() { delete this.x; return 2; } };"
               " with (scope) { return (function(){ 'use strict'; try { x += 1; }"
               " catch (e) { return e.constructor.name; } return 'none'; })(); } })()",
@@ -199,10 +204,10 @@ int main() {
     js_expect("(function(){ var scope = { get x() { delete this.x; return 2; } };"
               " with (scope) { x += 1; } return scope.x; })()",
               "3");
-    // A SPREAD'S ITERATOR THROWS ONCE: @@iterator, next(), a result's `value`
-    // getter - each throw landed on the page's handler and the spread went on
-    // to throw a TypeError of its own over it, which escaped the `try`. A
-    // present but non-callable @@iterator is GetIterator's TypeError.
+    // A spread's iterator throws once: a throw from @@iterator, next() or a
+    // result's `value` getter is the only one, and the spread must not throw a
+    // TypeError of its own over it. A present but non-callable @@iterator is
+    // GetIterator's TypeError.
     js_expect("(function () { function Boom() {} var out = [];"
               " var bad = [function () { throw new Boom(); }, function () { return {next:"
               " function () { throw new Boom(); } }; }, function () { return {next: function ()"
@@ -216,9 +221,9 @@ int main() {
               " return null; }}); try { [...nul]; out.push('none'); } catch (e) {"
               " out.push(e.name); } return out.join(); })()",
               "true,true,true,true,true,true,TypeError");
-    // `.return()` AT A `yield*` reads the inner `return` ONCE, and a throw
-    // from calling it - or from its result's `done` - is thrown AT the yield,
-    // where the generator's own catch sees it (14.4.14 step 7.c).
+    // `.return()` at a `yield*` reads the inner `return` once, and a throw
+    // from calling it, or from its result's `done`, is thrown at the yield,
+    // where the generator's own catch sees it (ECMA-262 14.4.14 step 7.c).
     js_expect("(function () { var gets = 0, thrown = {}; var inner = {next: function () {"
               " return {done: false}; }, get return() { gets += 1; return null; }};"
               " inner[Symbol.iterator] = function () { return inner; };"
@@ -230,7 +235,7 @@ int main() {
               " caught === thrown].join(); })()",
               "1,2,true,true");
     // `super.m()` where the home object's [[Prototype]] is the implicit
-    // Object.prototype - a class with no `extends`, a plain literal - calls
+    // Object.prototype (a class with no `extends`, a plain literal) calls
     // Object.prototype's m (GetSuperBase), and an explicit null is nothing.
     js_expect("(function(){ class A { m() { return super.toString(); } } return new A().m(); })()",
               "[object Object]");
@@ -238,8 +243,8 @@ int main() {
     js_expect("(function(){ var o = { m() { return super.toString(); } };"
               " Object.setPrototypeOf(o, null); try { o.m(); } catch (e) { return e.name; } })()",
               "TypeError");
-    // A numeric operator converts its LEFT operand first, and a throw there -
-    // a valueOf, a Symbol's TypeError - is the operator's: the right one is
+    // A numeric operator converts its left operand first, and a throw there
+    // (a valueOf, a Symbol's TypeError) is the operator's: the right one is
     // never converted.
     js_expect("(function(){ var x = {valueOf: function () { throw 'x'; }};"
               " var y = {valueOf: function () { throw 'y'; }};"
@@ -252,7 +257,7 @@ int main() {
         "})()",
         "TypeErrorl");
     // A function's [[Prototype]] set to null is null, not the unset link that
-    // means Function.prototype - so a static method's `super.x = v` throws.
+    // means Function.prototype, so a static method's `super.x = v` throws.
     js_expect("(function(){ function F() {} Object.setPrototypeOf(F, null);"
               " return Object.getPrototypeOf(F) === null; })()",
               "true");

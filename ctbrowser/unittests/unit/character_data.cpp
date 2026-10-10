@@ -1,24 +1,27 @@
-// CharacterData, WHICH IS FOUR NODE TYPES SHARING ONE STRING - and the string
-// is measured in UTF-16 CODE UNITS while this engine stores UTF-8.
+//===- unittests/unit/character_data.cpp - CharacterData in UTF-16 --------===//
 //
-// That is the whole reason this file exists rather than being more of
-// element_attrs or node_methods. Every offset in `CharacterData` and in
-// `Text.splitText` is a `unsigned long` counting UTF-16 code units:
-// `substringData(39, 2)` on a string with CJK in it and `replaceData(5, 8, ..)`
-// on one with an astral character in it are the two shapes of the same
-// question, and a byte offset answers both of them wrongly in a way that only
+// CharacterData is four node types sharing one string, and the string is
+// measured in UTF-16 code units while this engine stores UTF-8.
+//
+// That is why this file exists separately from element_attrs or node_methods.
+// Every offset in `CharacterData` and in `Text.splitText` is an `unsigned long`
+// counting UTF-16 code units: `substringData(39, 2)` on a string with CJK in it
+// and `replaceData(5, 8, ..)` on one with an astral character in it ask the
+// same question, and a byte offset answers both wrongly in a way that only
 // shows up on non-ASCII text. `dom/nodes/CharacterData-*.html` runs the whole
-// battery against a Text AND a Comment, which is why the cases below do the
-// same rather than trusting one to stand for the other.
+// battery against a Text and a Comment, so the cases below do the same rather
+// than trusting one to stand for the other.
 //
-// The other half is the ARITHMETIC AROUND THE EDGE. An offset is ToUint32'd
+// The other half is the arithmetic around the edge. An offset is ToUint32'd
 // before it is compared, so `-1` is 4294967295 and throws IndexSizeError while
 // `-0x100000000 + 2` is 2 and does not; a count is clamped to the end rather
-// than throwing. Those are five separate conventions in one signature and the
-// corpus tests each of them by name.
+// than throwing. The WPT corpus tests each of these conventions by name.
 //
-// The bindings are the block headed "CharacterData" at the bottom of
-// lib/Shell/bindings/element/character_data.cpp.
+// The file also covers Attr and NamedNodeMap details, the Text/Comment/
+// DocumentFragment constructors, and isEqualNode/isSameNode. The bindings are
+// in lib/Shell/bindings/element/character_data.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -36,14 +39,16 @@ namespace {
 constexpr const char * page_html = R"(<!DOCTYPE html>
 <html><body><div id=host>text</div></body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks that `expression` evaluates to `expected` on a fresh page per case,
+/// since many of these mutate the document.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
 
-// The two node types the corpus runs its whole CharacterData battery against.
-// Both, every time, because a method installed on `Text.prototype` by accident
-// rather than on `CharacterData.prototype` passes half of it.
+/// Runs `body` (which sees `node`) once on a Text and once on a Comment, the
+/// two node types the corpus runs its whole CharacterData battery against.
+/// Both, every time, because a method installed on `Text.prototype` by accident
+/// rather than on `CharacterData.prototype` passes half of it.
 void both(const std::string & body, const std::string & expected) {
     for (const char * make :
          {"document.createTextNode('test')", "document.createComment('test')"}) {
@@ -54,11 +59,12 @@ void both(const std::string & body, const std::string & expected) {
 // --- a removed Attr keeps what it had ---------------------------------------
 
 void test_a_removed_attribute_keeps_its_value() {
-    // AN Attr IS LIVE ONLY WHILE IT HAS AN ELEMENT. Every Attr this engine
+    // An Attr is live only while it has an element. Every Attr this engine
     // hands out reads its value through to the element that names it, which is
-    // right until the attribute is REMOVED - and `removeNamedItem` hands the
-    // Attr back precisely so a page can put it somewhere else. Reading through
-    // then answers "", because the element genuinely no longer has it.
+    // right until the attribute is removed, and `removeNamedItem` hands the
+    // Attr back precisely so a page can put it somewhere else. So a removed
+    // Attr must keep its own copy of the value; reading through would answer
+    // "" because the element no longer has it.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('a', '1');
@@ -68,7 +74,7 @@ void test_a_removed_attribute_keeps_its_value() {
     })())JS",
        "a,1,1,1,true,false");
     // The namespaced spelling is a second implementation of the same removal
-    // and had the same fault.
+    // and needs the same guarantee.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttributeNS('urn:x', 'p:a', 'v');
@@ -76,8 +82,8 @@ void test_a_removed_attribute_keeps_its_value() {
         return gone.value + ',' + gone.namespaceURI + ',' + gone.prefix + ',' + gone.localName;
     })())JS",
        "v,urn:x,p,a");
-    // ...and so is `removeAttributeNode`, which is the one that hands back the
-    // OBJECT THE PAGE PASSED IN rather than one made at the point of removal.
+    // ...and so is `removeAttributeNode`, which hands back the object the page
+    // passed in rather than one made at the point of removal.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('a', '1');
@@ -87,8 +93,8 @@ void test_a_removed_attribute_keeps_its_value() {
                (node.ownerElement === null);
     })())JS",
        "true,1,1,true");
-    // AND AN ATTACHED Attr IS STILL LIVE, which is the half a fix could easily
-    // trade away: `attributes.html`'s "Attribute values should not be parsed"
+    // An attached Attr is still live, which a fix for the above could easily
+    // break: `attributes.html`'s "Attribute values should not be parsed"
     // writes through one and reads the element back.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -100,7 +106,7 @@ void test_a_removed_attribute_keeps_its_value() {
         return read + ',' + e.getAttribute('a');
     })())JS",
        "2,3");
-    // A DETACHED Attr IS WRITABLE and the write goes nowhere near the element.
+    // A detached Attr is writable and the write goes nowhere near the element.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('a', '1');
@@ -114,12 +120,11 @@ void test_a_removed_attribute_keeps_its_value() {
 // --- a NamedNodeMap is reached by name as well as by index ------------------
 
 void test_the_attribute_map_answers_to_a_name() {
-    // `element.attributes.x` IS THE ATTRIBUTE CALLED x. A NamedNodeMap is a
-    // legacy platform object with a named property getter and the indexed half
-    // was the only half here, so an attribute could be reached by position and
-    // not by name.
+    // `element.attributes.x` is the attribute called x: a NamedNodeMap is a
+    // legacy platform object with a named property getter as well as an
+    // indexed one.
     //
-    // THE SAME Attr, not a second one: an Attr is one node under two ways of
+    // It is the same Attr, not a second one: an Attr is one node under two ways of
     // reaching it, so `el.attributes[0] === el.attributes.x` - which is also
     // one wrapper per attribute per read rather than two.
     is(R"JS((function () {
@@ -130,7 +135,7 @@ void test_the_attribute_map_answers_to_a_name() {
                (map[0] === map.x);
     })())JS",
        "1,first,true,true");
-    // A namespace makes no difference to the name it answers to: the QUALIFIED
+    // A namespace makes no difference to the name it answers to: the qualified
     // name is the key either way.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -138,7 +143,7 @@ void test_the_attribute_map_answers_to_a_name() {
         return e.attributes.length + ',' + e.attributes.x.value;
     })())JS",
        "1,first");
-    // NEVER OVER A METHOD OR OVER `length`. An attribute a page can name
+    // Never over a method or over `length`. An attribute a page can name
     // `setNamedItem` or `length` must not break the map it is written into -
     // which is three subtests of `attributes-namednodemap.html` and the reason
     // the named half is a guarded write rather than a loop.
@@ -151,10 +156,10 @@ void test_the_attribute_map_answers_to_a_name() {
                typeof e.attributes.item + ',' + typeof e.attributes.toString;
     })())JS",
        "3,function,function,function");
-    // A REMOVED ATTRIBUTE STOPS ANSWERING, which is the half an add-only loop
-    // would get wrong: the map is refilled in place and keeps its identity, so
-    // a name left behind would outlive the attribute it named. Read through
-    // `e.attributes` each time, because THAT is the accessor which refills it.
+    // A removed attribute stops answering, which an add-only loop would get
+    // wrong: the map is refilled in place and keeps its identity, so a name
+    // left behind would outlive the attribute it named. Read through
+    // `e.attributes` each time, because that is the accessor which refills it.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('x', 'first');
@@ -173,16 +178,16 @@ void test_the_data_is_measured_in_code_units() {
     // `CharacterData-data.html`, first case: the length of "test" is 4 and it
     // is not a byte count.
     both("return node.data + ',' + node.length;", "test,4");
-    // NON-ASCII, WHICH IS WHERE A BYTE COUNT AND A CODE-UNIT COUNT PART. Seven
+    // Non-ASCII, which is where a byte count and a code-unit count part. Seven
     // CJK characters are 21 bytes and 7 code units; "test, append more " is 18
     // of each. `CharacterData-appendData.html` asserts exactly 25.
     both(R"(node.appendData(', append more 資料，測試資料');
             return node.length;)",
          "25");
-    // ...and one astral character is TWO code units for its four bytes, which
+    // ...and one astral character is two code units for its four bytes, which
     // is the only place the two counts diverge for a single character.
     both(R"(node.data = '🌠 test 🌠 TEST'; return node.length;)", "15");
-    // `data = null` IS THE EMPTY STRING and `data = undefined` is the word:
+    // `data = null` is the empty string and `data = undefined` is the word:
     // `data` is [LegacyNullToEmptyString], so this is a rule about null alone
     // and ToString would have written four letters for it.
     both("node.data = null; return node.data + ',' + node.length;", ",0");
@@ -191,45 +196,45 @@ void test_the_data_is_measured_in_code_units() {
 }
 
 void test_an_offset_throws_where_a_count_clamps() {
-    // AN OFFSET PAST THE END IS AN IndexSizeError - a DOMException with the
+    // An offset past the end is an IndexSizeError: a DOMException with the
     // legacy code 1, which is what `assert_throws_dom("IndexSizeError", ...)`
     // and its older spelling `"INDEX_SIZE_ERR"` both check for.
     both("try { node.substringData(5, 0); } catch (e) { return e.name + ',' + e.code + ',' + "
          "(e.constructor === DOMException); } return 'did not throw';",
          "IndexSizeError,1,true");
-    // `-1` IS 4294967295, because the offset is a WebIDL `unsigned long` and
+    // `-1` is 4294967295, because the offset is a WebIDL `unsigned long` and
     // ToUint32 wraps rather than clamping. So a negative offset throws...
     both("try { node.substringData(-1, 0); } catch (e) { return e.name; } return 'did not throw';",
          "IndexSizeError");
-    // ...unless it wraps back INTO range, which is the same rule read the other
+    // ...unless it wraps back into range, which is the same rule read the other
     // way and is a subtest of its own in three of these files.
     both("return node.substringData(-0x100000000 + 2, 1);", "s");
     both("node.insertData(-0x100000000 + 2, 'X'); return node.data;", "teXst");
     // A very large offset wraps to a small one rather than throwing.
     both("return node.substringData(0x100000000 + 1, 1);", "e");
-    // AND A NON-NUMBER IS ZERO: ToUint32(NaN) is 0, so `substringData("test", 3)`
+    // A non-number is zero: ToUint32(NaN) is 0, so `substringData("test", 3)`
     // reads from the start.
     both("return node.substringData('test', 3);", "tes");
-    // A COUNT CLAMPS instead. Negative is "to the end", and so is 20.
+    // A count clamps instead. Negative is "to the end", and so is 20.
     both("return node.substringData(0, -1) + ',' + node.substringData(2, 20);", "test,st");
     both("node.replaceData(2, -1, 'yo'); return node.data;", "teyo");
-    // TOO FEW ARGUMENTS IS A LANGUAGE ERROR, not a DOMException: the argument
+    // Too few arguments is a TypeError, not a DOMException: the argument
     // is missing before any DOM algorithm can look at it.
     both("try { node.substringData(0); } catch (e) { return e.name; } return 'did not throw';",
          "TypeError");
     both("try { node.appendData(); } catch (e) { return e.name; } return 'did not throw';",
          "TypeError");
-    // A FAILED CALL CHANGES NOTHING, which is the half of "with invalid offset"
+    // A failed call changes nothing, which is the half of "with invalid offset"
     // that a throw in the wrong place would still pass.
     both("try { node.replaceData(5, 1, 'x'); } catch (e) {} return node.data;", "test");
-    // THE ARGUMENTS ARE CONVERTED FIRST, LEFT TO RIGHT, AND THEN THE NODE IS
-    // READ. Both halves are observable through a `toString`: the order the
+    // The arguments are converted first, left to right, and then the node is
+    // read. Both halves are observable through a `toString`: the order the
     // three conversions run in, and the fact that an edit one of them makes is
-    // in the text the operation then edits. An offset argument that is an
-    // OBJECT is what makes the first half visible at all, and it is why these
-    // go through the re-entering ToNumber rather than the static one - the
-    // static form cannot call back into the VM and answers NaN for every
-    // object, which would have made this offset 0.
+    // in the text the operation then edits. An object offset argument makes
+    // the first half visible, which is why these go through the re-entering
+    // ToNumber rather than the static one: the static form cannot call back
+    // into the VM and answers NaN for every object, which would make this
+    // offset 0.
     both(R"(var seen = [];
             node.replaceData({ toString: function () { seen.push('a'); return 4; } },
                              { toString: function () { seen.push('b'); return 0; } },
@@ -244,7 +249,7 @@ void test_an_offset_throws_where_a_count_clamps() {
 
 void test_the_five_methods_edit_one_string() {
     both("node.appendData('bar'); return node.data;", "testbar");
-    // ToString, so null is the WORD here - appendData's argument is an ordinary
+    // ToString, so null is the word here - appendData's argument is an ordinary
     // DOMString and not the [LegacyNullToEmptyString] one `data` is.
     both("node.appendData(null); return node.data;", "testnull");
     both("node.appendData(undefined); return node.data;", "testundefined");
@@ -255,8 +260,8 @@ void test_the_five_methods_edit_one_string() {
     both("node.replaceData(1, 1, 'waddup'); node.replaceData(1, 1, 'yup'); return node.data;",
          "tyupaddupst");
     both("node.replaceData(4, 20, 'yo'); return node.data;", "testyo");
-    // EVERY ONE OF THEM IN CODE UNITS. This is the case that a byte offset
-    // passes every other line of this file and fails: 33 code units into a
+    // Every one of them counts in code units. A byte-offset implementation
+    // passes every other line of this file and fails this one: 33 code units into a
     // string with CJK in it is 33 characters and 47 bytes.
     both(R"(node.data = 'This is the character data test, append ' +
                         '資料，更多資料';
@@ -268,8 +273,8 @@ void test_the_five_methods_edit_one_string() {
                         '資料，更多文字';
             return node.substringData(12, 4) + ',' + node.substringData(39, 2);)",
          "char,資料");
-    // ...and an astral character counts TWO. Both boundaries here fall between
-    // whole characters; one that fell BETWEEN the halves of a surrogate pair
+    // ...and an astral character counts two. Both boundaries here fall between
+    // whole characters; one that fell between the halves of a surrogate pair
     // cannot be represented in UTF-8 at all - see utf16_to_byte.
     both(R"(node.data = '🌠 test 🌠 TEST';
             return node.substringData(5, 8);)",
@@ -289,7 +294,7 @@ void test_split_text_keeps_the_head_and_hands_back_the_tail() {
         return 'did not throw';
     })())JS",
        "IndexSizeError");
-    // A DETACHED Text splits and the NEW node stays detached: "Split root"
+    // A detached Text splits and the new node stays detached: "Split root"
     // asserts `new_text.parentNode` is null, and that is the case a
     // `parent.appendChild` in the wrong place would break.
     is(R"JS((function () {
@@ -298,7 +303,7 @@ void test_split_text_keeps_the_head_and_hands_back_the_tail() {
         return '[' + text.data + '],[' + made.data + '],' + (made.parentNode === null);
     })())JS",
        "[com],[té],true");
-    // AN OFFSET IN CODE UNITS here too: "comté" is 5 code units and 6 bytes, so
+    // The offset is in code units here too: "comté" is 5 code units and 6 bytes, so
     // splitting at 5 leaves the whole string behind and an empty tail.
     is(R"JS((function () {
         var text = document.createTextNode('comté');
@@ -306,7 +311,7 @@ void test_split_text_keeps_the_head_and_hands_back_the_tail() {
         return '[' + text.data + '],[' + made.data + ']';
     })())JS",
        "[comté],[]");
-    // ...and an ATTACHED one puts the tail straight after itself.
+    // ...and an attached one puts the tail straight after itself.
     is(R"JS((function () {
         var parent = document.createElement('div');
         var text = document.createTextNode('bleu');
@@ -340,9 +345,9 @@ void test_whole_text_stops_at_the_first_element() {
 // --- the three node interfaces a page may construct -------------------------
 
 void test_text_comment_and_fragment_are_constructible() {
-    // THE PROTOTYPE CHAIN IS WHAT THE FILE OPENS WITH, and it is a real chain
-    // rather than three names: Text -> CharacterData -> Node, each link the
-    // same object the global names.
+    // The prototype chain is a real chain, not three names: Text ->
+    // CharacterData -> Node, each link the same object the global names (the
+    // first check in Comment-Text-constructor.js).
     for (const char * ctor : {"Text", "Comment"}) {
         is("(function () { var o = new " + std::string{ctor} + "(); return " +
                "(Object.getPrototypeOf(o) === " + ctor + ".prototype) + ',' + " +
@@ -354,10 +359,10 @@ void test_text_comment_and_fragment_are_constructible() {
                "(); return (o instanceof Node) + ',' + (o instanceof CharacterData) + ',' + " +
                "(o instanceof " + ctor + "); })()",
            "true,true,true");
-        // NO ARGUMENT IS THE EMPTY STRING and `undefined` is too - the IDL
-        // defaults the parameter, and a defaulted argument is not a passed one.
-        // The next line is the reason that distinction is written down: the
-        // very same coercion in `appendData` writes the WORD "undefined".
+        // No argument is the empty string and `undefined` is too: the IDL
+        // defaults the parameter, and a defaulted argument is not a passed
+        // one. The distinction matters because the same coercion in
+        // `appendData`, which has no default, writes the word "undefined".
         is("(function () { var o = new " + std::string{ctor} +
                "(); return '[' + o.data + '],[' + o.nodeValue + '],' + " +
                "(o.ownerDocument === document) + ',' + (o.parentNode === null); })()",
@@ -366,7 +371,7 @@ void test_text_comment_and_fragment_are_constructible() {
         is("new " + std::string{ctor} + "(null).data", "null");
         is("new " + std::string{ctor} + "(42).data", "42");
         is("new " + std::string{ctor} + "('<!--').data", "<!--");
-        // ONE ARGUMENT, CONVERTED ONCE. The second is never looked at, which
+        // One argument, converted once. The second is never looked at, which
         // `Comment-Text-constructor.js` checks with a toString that would fail
         // the test if it ran.
         is("(function () { var seen = []; var o = new " + std::string{ctor} +
@@ -375,7 +380,7 @@ void test_text_comment_and_fragment_are_constructible() {
                "return o.data + ',' + seen.join('+'); })()",
            "text,first");
     }
-    // A CONSTRUCTED NODE IS A REAL ONE: it can be edited by the CharacterData
+    // A constructed node is a real one: it can be edited by the CharacterData
     // methods and put into the tree.
     is(R"JS((function () {
         var t = new Text('hello');
@@ -393,9 +398,8 @@ void test_text_comment_and_fragment_are_constructible() {
                (f.firstChild === t);
     })())JS",
        "11,#document-fragment,true,true");
-    // AND THE OTHER EIGHTY-EIGHT STILL THROW, which is the half that makes the
-    // three above a decision rather than an accident: a browser refuses
-    // `new HTMLDivElement()` too.
+    // Other DOM interfaces, such as HTMLDivElement, still throw on `new`, as in
+    // a browser, so the three constructors above are deliberate.
     is("(function () { try { new HTMLDivElement(); } catch (e) { return e.name; } " +
            std::string{"return 'did not throw'; })()"},
        "TypeError");
@@ -404,8 +408,8 @@ void test_text_comment_and_fragment_are_constructible() {
 // --- equal is not the same as same ------------------------------------------
 
 void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
-    // `isSameNode` IS IDENTITY, so two nodes built the same way are not it -
-    // which is the only thing separating it from `isEqualNode` and is why they
+    // `isSameNode` is identity, so two nodes built the same way are not the
+    // same node, which is the only thing separating it from `isEqualNode` and is why they
     // are two methods.
     is(R"JS((function () {
         var a = document.createTextNode('data');
@@ -414,8 +418,8 @@ void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
                a.isEqualNode(b);
     })())JS",
        "true,false,false,true");
-    // AN ELEMENT IS COMPARED ON ITS QUALIFIED NAME AND ITS NAMESPACE, and the
-    // PREFIX is part of the name: `prefix:localName` and `prefix2:localName`
+    // An element is compared on its qualified name and its namespace, and the
+    // prefix is part of the name: `prefix:localName` and `prefix2:localName`
     // are different elements.
     is(R"JS((function () {
         var one = document.createElementNS('namespace', 'prefix:localName');
@@ -430,10 +434,10 @@ void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
                 one.isEqualNode(extra)].join(',');
     })())JS",
        "true,true,false,false,false,false");
-    // ...AND AN ATTRIBUTE IS NOT. The two rules are opposite on purpose: an
+    // ...and an attribute is not. The two rules are opposite on purpose: an
     // attribute is compared on (namespace, local name, value) and its prefix
     // takes no part, so `prefix:localName` and `prefix2:localName` on two
-    // elements leave them EQUAL. That single `true` in the middle is the whole
+    // elements leave them equal. That single `true` in the middle is the whole
     // difference between this and comparing serialised markup.
     is(R"JS((function () {
         function el(ns, name, value) {
@@ -449,7 +453,7 @@ void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
                 one.isEqualNode(el('namespace', 'prefix:localName', 'value2'))].join(',');
     })())JS",
        "true,false,true,false,false");
-    // THE CHILDREN, PAIRWISE AND IN ORDER - "node equality testing should test
+    // The children, pairwise and in order: "node equality testing should test
     // descendant equality too", which is the recursion and the reason a
     // comparison of the two nodes alone would pass most of this file.
     is(R"JS((function () {
@@ -464,7 +468,7 @@ void test_two_nodes_are_equal_by_structure_and_same_by_identity() {
         return empty + ',' + one_sided + ',' + matched + ',' + a.isEqualNode(b);
     })())JS",
        "true,false,true,false");
-    // A fragment has nothing of its own to compare and IS its children.
+    // A fragment has nothing of its own to compare and is its children.
     is(R"JS((function () {
         var a = new DocumentFragment();
         var b = new DocumentFragment();

@@ -1,3 +1,5 @@
+//===- ctbrowser/unittests/unit/url/wpt.cpp - URL WPT corpus ----*- C++ -*-===//
+//
 // The URL Standard's own conformance corpus, driven through shell/net/url.hpp
 // with no VM in between: url/resources/urltestdata.json (the parser and the
 // serialiser, ~900 inputs) and setters_tests.json (the §6.1 setter steps, ~280
@@ -5,17 +7,18 @@
 // ~/.cache/wpt. Read when present, like the html5lib fixtures; absent, the
 // hand-written cases below still run and the file passes.
 //
-// EVERY CASE PASSES at the WPT commit tools/wpt/fetch-wpt.sh pins (893 of 893
-// and 278 of 278, 2026-09-16) - so the file asserts the total rather than a
-// ratchet.
+// Every case passes at the WPT commit tools/wpt/fetch-wpt.sh pins (893 parser
+// and 278 setter cases), so the file asserts the total rather than a ratchet.
 //
-// IdnaTestV2.json is a RATCHET at 2,668 of 2,671: its JSON is generated with
-// --exclude-bidi, so CheckBidi (now done, see domain_to_ascii) does not move
+// IdnaTestV2.json is a ratchet at 2,668 of 2,671: its JSON is generated with
+// --exclude-bidi, so CheckBidi (implemented in domain_to_ascii) does not move
 // it, and the three that miss turn on a handful of code points whose mapping
 // status differs between the fetched IdnaMappingTable and unicodedata's Unicode
 // release (the drift the generator's docstring names). Raise the floor if that
-// closes; never lower it. The CheckBidi wins are in url/toascii.window.js,
-// which carries its Bidi cases inline.
+// closes; never lower it. CheckBidi is covered by
+// test_checkbidi_and_the_ascii_short_circuit, from url/toascii.window.js.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 #include <ctbrowser/core/json.hpp>
@@ -32,6 +35,7 @@ using namespace ctbrowser::shell;
 
 namespace {
 
+/// ~/.cache/wpt/url/resources, or an empty path when HOME is unset.
 [[nodiscard]] std::filesystem::path corpus_dir() {
     if (const char * home = std::getenv("HOME"); home != nullptr) {
         return std::filesystem::path{home} / ".cache" / "wpt" / "url" / "resources";
@@ -39,6 +43,7 @@ namespace {
     return {};
 }
 
+/// The value of `key` in a JSON object, or null if absent or not an object.
 [[nodiscard]] const json_value * member(const json_value & object, std::string_view key) {
     const auto * fields = std::get_if<json_value::object>(&object.data);
     if (fields == nullptr) { return nullptr; }
@@ -48,6 +53,7 @@ namespace {
     return nullptr;
 }
 
+/// The string `v` holds, or "" for null or a non-string.
 [[nodiscard]] std::string text_of(const json_value * v) {
     const auto * s = v == nullptr ? nullptr : std::get_if<std::string>(&v->data);
     return s == nullptr ? std::string{} : *s;
@@ -96,7 +102,7 @@ void test_the_parser_corpus() {
             if (const json_value * origin = member(c, "origin"); ok && origin != nullptr) {
                 ok = url->origin() == text_of(origin);
             }
-            // And the serialisation re-parses to itself - see the setters below.
+            // The serialisation must re-parse to itself; see the setters below.
             const std::optional<url_record> again = parse_url(url->serialize());
             if (!again || again->serialize() != url->serialize()) { ok = false; }
         }
@@ -173,9 +179,9 @@ void test_the_setters_corpus() {
             for (const json_value::member & e : *fields) {
                 if (read(*url, e.key) != text_of(&e.value)) { ok = false; }
             }
-            // THE BINDINGS KEEP THE SERIALISATION, NOT THE RECORD (bindings/
-            // window/url.cpp re-parses on every read), so every record a
-            // setter can produce must survive the round trip unchanged.
+            // The bindings keep the serialisation, not the record
+            // (lib/Shell/bindings/window/url.cpp re-parses on every read), so
+            // every record a setter can produce must survive the round trip.
             if (const std::optional<url_record> again = parse_url(url->serialize());
                 !again || again->serialize() != url->serialize() ||
                 again->pathname() != url->pathname() || again->host != url->host ||
@@ -198,6 +204,8 @@ void test_the_setters_corpus() {
 
 // --- the rows docs/history/ada-url.md measured, now pinned --------------------------
 
+/// The eight inputs where an RFC 3986 parser and a browser disagreed; each now
+/// resolves as the URL Standard says.
 void test_the_eight_rows_that_differed_from_a_browser() {
     CHECK(resolve("http://example.com/", "http://example.com:80/a") == "http://example.com/a");
     CHECK(resolve("http://example.com/", "https://example.com:443/a") == "https://example.com/a");
@@ -223,9 +231,9 @@ void test_form_urlencoded_round_trips() {
     CHECK(serialize_form_urlencoded({{"q", "+1 (555)"}}) == "q=%2B1+%28555%29");
 }
 
-// CheckBidi (RFC 5893) and the all-ASCII short-circuit that carries
-// IgnoreInvalidPunycode - the url/toascii.window.js cases, driven through the
-// whole parser so they run even without the corpus on disk.
+/// CheckBidi (RFC 5893) and the all-ASCII short-circuit that carries
+/// IgnoreInvalidPunycode: the url/toascii.window.js cases, driven through the
+/// whole parser so they run even without the corpus on disk.
 void test_checkbidi_and_the_ascii_short_circuit() {
     const auto host_of = [](const std::string & domain) -> std::optional<std::string> {
         const std::optional<url_record> url = parse_url("https://" + domain + "/x");
@@ -238,12 +246,12 @@ void test_checkbidi_and_the_ascii_short_circuit() {
     // But a domain that already carries non-ASCII must decode every `xn--`
     // label, and one that decodes to an invalid label fails the whole domain.
     CHECK(host_of("xn--a.\xc3\x9f") == std::nullopt); // xn--a.ß
-    // CheckBidi: a Latin letter ends an Arabic (RTL) label - rule 2.
+    // CheckBidi rule 2: a Latin letter ends an Arabic (RTL) label.
     CHECK(host_of("\xd9\x8a"
                   "a") == std::nullopt); // ي then 'a'
-    // An R (Hebrew) point inside a Latin (LTR) label - rule 5.
+    // Rule 5: an R (Hebrew) point inside a Latin (LTR) label.
     CHECK(host_of("look\xd6\xbeout.net") == std::nullopt); // look U+05BE out.net
-    // A well-formed Arabic (RTL) domain still resolves - CheckBidi is not a
+    // A well-formed Arabic (RTL) domain still resolves: CheckBidi is not a
     // blanket ban on right-to-left labels.
     CHECK(host_of("\xd9\x85\xd8\xab\xd8\xa7\xd9\x84") == "xn--mgbh0fb"); // مثال
 }
@@ -257,9 +265,9 @@ void test_a_lone_surrogate_becomes_the_replacement_character() {
 
 // --- IdnaTestV2.json ---------------------------------------------------------
 
-// Through the WHOLE URL parser rather than a private entry point: the domain
-// is what `https://<input>/x` reports as its host, which is the same path
-// url/IdnaTestV2.any.js drives and the only one a page can reach.
+/// Through the whole URL parser rather than a private entry point: the domain
+/// is what `https://<input>/x` reports as its host, which is the same path
+/// url/IdnaTestV2.any.js drives and the only one a page can reach.
 void test_the_idna_corpus() {
     for (const char * name : {"IdnaTestV2.json", "IdnaTestV2-removed.json"}) {
         const std::string text = read_file(corpus_dir() / name);
@@ -294,7 +302,8 @@ void test_the_idna_corpus() {
             }
         }
         std::printf("url_wpt: %s %d / %d\n", name, passed, total);
-        // The ratchet, and the removed-codepoint file which is exact.
+        // The main file is a ratchet (floor 2,668); the small removed-codepoint
+        // file must pass exactly.
         CHECK(passed >= (total > 100 ? 2668 : total));
     }
 }

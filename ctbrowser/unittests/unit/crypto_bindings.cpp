@@ -1,7 +1,11 @@
+//===- ctbrowser/unittests/unit/crypto_bindings.cpp - Web Crypto tests ----===//
+//
 // `crypto.getRandomValues` and `crypto.randomUUID` (WebCryptoAPI §10), against
 // a live page: the types the first accepts, its 65536-byte quota, the UUID's
 // shape, and a statistical smoke test that the bytes are not the seeded
-// Math.random's - two pages must not draw the same values.
+// Math.random's: two pages must not draw the same values.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -59,7 +63,7 @@ void test_the_bytes_look_random() {
        " var mean = sum / a.length;"
        " return seen.every(function (n) { return n > 0; }) && Math.abs(mean - 127.5) < 2;",
        "true");
-    // TWO PAGES DRAW DIFFERENTLY. Math.random is seeded, so two fresh pages
+    // Two pages draw differently. Math.random is seeded, so two fresh pages
     // agree on it; they must not agree on this.
     const std::string draw = "crypto.getRandomValues(new Uint32Array(4)).join()";
     const std::string first = ctbrowser_test::answer_in(page_html, draw);

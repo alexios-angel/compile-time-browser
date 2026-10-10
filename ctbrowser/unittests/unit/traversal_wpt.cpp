@@ -1,9 +1,13 @@
-// DOM 6's NodeIterator and TreeWalker against dom/traversal: the state as
-// read-only accessors on the prototype, a root in another document of the
-// realm, the filter's callback semantics, and the walks. The pattern is
+//===- ctbrowser/unittests/unit/traversal_wpt.cpp - Traversal WPT cases ---===//
+//
+// DOM 6's NodeIterator and TreeWalker, against WPT's dom/traversal tests: the
+// state as read-only accessors on the prototype, a root in another document of
+// the realm, the filter's callback semantics, and the walks. The pattern is
 // unit/dom/nodes_wpt.cpp's: one expression against a fresh page, and whatever
 // it logged. The defaults and the tree-order walks are in
-// unit/document/api_wpt.cpp already.
+// unit/document/api_wpt.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -19,13 +23,15 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=box><span id=a></span>text<!--c--><span id=b><i id=d></i></span></div>
 </body></html>)";
 
+/// Checks that `expression`, evaluated against a fresh `page_html`, yields
+/// `expected`.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
 
 void test_walker_state_is_readonly_on_the_prototype() {
     // TreeWalker-basic.html: root, whatToShow and filter are read-only
-    // accessors, and currentNode is the one that can be set - to a Node only.
+    // accessors, and currentNode is the one that can be set, to a Node only.
     is("(function () { var w = document.createTreeWalker(document.body, 5, null);"
        " var d = Object.getOwnPropertyDescriptor(TreeWalker.prototype, 'root');"
        " w.root = 1; w.whatToShow = 2; var out = [w.root === document.body, w.whatToShow,"
@@ -105,10 +111,10 @@ void test_iterator_moves_both_ways_through_text_and_comments() {
 
 namespace {
 
-// THE PRE-REMOVING STEPS (NodeIterator-removal.html): removing an ancestor of
-// the reference with the pointer AFTER it moves the reference to the node
-// preceding the removed one; removing the reference itself with the pointer
-// BEFORE it moves on to the first node after the removed subtree.
+/// The NodeIterator pre-removing steps (NodeIterator-removal.html): removing an
+/// ancestor of the reference with the pointer after it moves the reference to
+/// the node preceding the removed one; removing the reference itself with the
+/// pointer before it moves on to the first node after the removed subtree.
 void test_iterator_follows_a_removal() {
     is("(function () { var root = document.createElement('div');"
        " root.innerHTML = '<a></a><b><i></i></b><c></c>'; document.body.appendChild(root);"
@@ -120,7 +126,7 @@ void test_iterator_follows_a_removal() {
        " out.push(it.referenceNode.localName, it.pointerBeforeReferenceNode);"
        " root.remove(); return out.join(); })()",
        "a,false,c,true");
-    // ...and the position a traversal is AT while its filter runs: a filter
+    // The position a traversal is at while its filter runs: a filter
     // that removes the candidate still has it returned, but the reference is
     // where the pre-removing steps moved the position, and the next step goes
     // on from there (NodeIterator-removal-during-filtering.html).

@@ -1,9 +1,13 @@
+//===- unittests/unit/script/rejection_tracker.cpp - Rejection tracker ----===//
+//
 // HostPromiseRejectionTracker (ECMA-262 27.2.1.9) as context::set_rejection_tracker:
 // "reject" (handled=false) when a promise is rejected with no reaction ever
 // attached, "handle" (handled=true) when one is attached to such a promise
-// afterwards - and nothing at all for a rejection that already had a handler,
+// afterwards, and nothing at all for a rejection that already had a handler,
 // or for a fulfilment. The host builds `unhandledrejection` and
 // `rejectionhandled` on top; nothing here dispatches an event.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/script/script.hpp>
 
 #include "check.hpp"
@@ -19,8 +23,8 @@ using ctbrowser::script::value;
 
 namespace {
 
-// Runs `source` with a tracker that appends "R" (reject, unhandled) or "H"
-// (handled later) per call, and answers the sequence.
+/// Runs \p source with a tracker that appends "R" (reject, unhandled) or "H"
+/// (handled later) per call, and returns the sequence.
 std::string track(std::string_view source) {
     const program prog = compiler::compile(source, script_kind::classic);
     context cx;
@@ -45,12 +49,12 @@ void test_rejection_tracker() {
     // Rejected with nobody listening: "reject" once.
     expect_track("Promise.reject(1);", "R");
     expect_track("new Promise((_, j) => j(1));", "R");
-    // A handler attached BEFORE the rejection: [[PromiseIsHandled]] was true.
+    // A handler attached before the rejection: [[PromiseIsHandled]] was true.
     expect_track("let r; const p = new Promise((_, j) => { r = j; }); p.catch(() => {}); r(1);",
                  "");
     expect_track("let r; const p = new Promise((_, j) => { r = j; }); p.then(0, () => {}); r(1);",
                  "");
-    // Attached AFTER: "reject" then "handle", once each - the executor
+    // Attached after: "reject" then "handle", once each - the executor
     // rejects before `.catch` runs.
     expect_track("new Promise((_, j) => j(1)).catch(() => {});", "RH");
     expect_track("const p = Promise.reject(1); p.catch(() => {}); p.catch(() => {});", "RH");

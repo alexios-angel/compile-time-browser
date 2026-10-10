@@ -1,12 +1,16 @@
-// `<color>`, CSS Color 4 and 5 - the grammar `el.style` validates against,
-// the specified serialisation it reads back, and the computed value
+//===- color.cpp - <color> grammar tests ------------------------*- C++ -*-===//
+//
+// `<color>`, CSS Color 4 and 5: the grammar `el.style` validates against, the
+// specified serialisation it reads back, and the computed value
 // `getComputedStyle` reports.
 //
-// Every expectation here is one of css/css-color/parsing's, quoted: those
-// files compare the serialisation byte for byte (or, for the arithmetic ones,
-// to a hundredth), and this is the same reading in a form that runs in a
-// second. The out-of-gamut ones are the matrix check: a wrong constant in the
-// conversions is a fourth-decimal error, invisible to every other test.
+// Every expectation is quoted from WPT css/css-color/parsing: those files
+// compare the serialisation byte for byte (or, for the arithmetic ones, to a
+// hundredth), and this runs the same checks in a second. The out-of-gamut
+// cases check the conversion matrices: a wrong constant there is a
+// fourth-decimal error that no other test sees.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -26,25 +30,28 @@ using ctbrowser::style::css::serialize_color;
 
 namespace {
 
+/// Expects `color: value` to be accepted and to serialize as `serialized`.
 void ok(std::string_view value, std::string_view serialized) {
     const auto answer = check_declaration("color", value);
     CHECK(answer.valid);
     CHECK_EQ(answer.serialized, std::string{serialized});
 }
 
+/// Expects `color: value` to be rejected.
 void bad(std::string_view value) {
     const auto answer = check_declaration("color", value);
     CHECK(!answer.valid);
 }
 
+/// Expects `value` to compute to `expected`, with currentColor red.
 void computed(std::string_view value, std::string_view expected) {
     color_context ctx;
     ctx.current_color = "rgb(255, 0, 0)";
     CHECK_EQ(computed_color(value, ctx), std::string{expected});
 }
 
-// The numbers of two colour strings within `epsilon`, and the text without
-// them equal - color-testcommon.js's fuzzy comparison.
+/// Like computed(), but numbers need only agree within `epsilon` while the text
+/// around them must match exactly (color-testcommon.js's fuzzy comparison).
 void computed_near(std::string_view value, std::string_view expected, double epsilon = 0.01) {
     color_context ctx;
     ctx.current_color = "rgb(255, 0, 0)";
@@ -164,7 +171,7 @@ void test_relative_colours_and_mixing() {
        "rgb(from rgba(51, 102, 153, 0.8) r g b / alpha)");
     ok("rgb(from rebeccapurple b calc(r * .5) 10)", "rgb(from rebeccapurple b calc(0.5 * r) 10)");
     // An origin keeps the modern form when rgb() would lose a missing channel
-    // or a powerless hue - the computed value is computed from this text.
+    // or a powerless hue; the computed value is computed from this text.
     ok("hsl(from hsl(120deg none 50% / .5) h s l)", "hsl(from hsl(120 none 50 / 0.5) h s l)");
     ok("hsl(from hsl(120 0% 50%) h s l)", "hsl(from hsl(120 0 50) h s l)");
     ok("hsl(from hsl(120 50% 50%) h s l)", "hsl(from rgb(64, 191, 64) h s l)");
@@ -245,7 +252,7 @@ void test_the_computed_value() {
     computed_near("lch(from hsl(180 0.001% 50%) l c h)", "lch(53.389 0 none)");
     computed_near("color-mix(in hsl, lch(none 20 180), hsl(11 33 44))",
                   "color(srgb 1.09909 -0.21909 -0.11806)");
-    // §12.2's analogous sets: hwb's white and black carry to hsl's saturation
+    // CSS Color 4 §12.2 analogous components: hwb's white and black carry to hsl's saturation
     // and lightness when both are missing, x carries to r, a missing
     // saturation makes the hue powerless, and lab's b at nought is hue 0.
     computed("hsl(from hwb(180 none none) h s l)", "hsl(180 none none)");
@@ -282,9 +289,9 @@ void test_the_computed_value() {
     CHECK_EQ(serialize_color("12px"), std::string{});
 }
 
-// The cascade's fold leaves a colour's math to the colour code: a relative
-// colour's channel keywords are its symbols, and an infinite chroma is its
-// own to clamp, not a length's 2^25.
+/// The cascade's fold leaves a colour's math to the colour code: a relative
+/// colour's channel keywords are its symbols, and an infinite chroma is its
+/// own to clamp, not clamped to 2^25 (33554432) as a length would be.
 void test_the_cascade_leaves_colour_math_alone() {
     using ctbrowser::style::css::fold_math;
     using ctbrowser::style::css::math_context;
@@ -293,7 +300,7 @@ void test_the_cascade_leaves_colour_math_alone() {
              std::string{"rgb(from red calc(r * 2) g b)"});
     CHECK_EQ(fold_math("lch(50 calc(infinity) 0)", ctx, math_context::any).text,
              std::string{"lch(50 calc(infinity) 0)"});
-    // ...but an absolute rgb() is folded, because paint reads that text.
+    // An absolute rgb() is folded, because paint reads that text.
     CHECK_EQ(fold_math("calc(1 + 1) rgb(calc(1 + 1) 0 0)", ctx, math_context::any).text,
              std::string{"2 rgb(2 0 0)"});
     CHECK_EQ(fold_math("oklch(0.5 calc(infinity) 0)", ctx, math_context::any).text,
@@ -302,8 +309,8 @@ void test_the_cascade_leaves_colour_math_alone() {
     computed("lch(50 10 calc(infinity))", "lch(50 10 0)");
 }
 
-// The interpolation API: a colour in a named space, missing components
-// carried, and its serialisation back.
+/// The interpolation API: a colour in a named space, missing components
+/// carried, and its serialisation back.
 void test_a_colour_in_a_space() {
     using ctbrowser::style::css::color_from_space;
     using ctbrowser::style::css::color_in_space;
@@ -311,7 +318,7 @@ void test_a_colour_in_a_space() {
     const std::optional<space_color> white = color_in_space("white", "oklch", {});
     CHECK(white.has_value());
     CHECK(std::fabs(white->c[0] - 1.0) < 0.001);
-    CHECK(white->none[2]); // an achromatic colour has no hue
+    CHECK(white->none[2]); // An achromatic colour has no hue.
     const std::optional<space_color> gray = color_in_space("lab(50 none none)", "lch", {});
     CHECK(gray.has_value());
     CHECK(gray->none[1] && gray->none[2]);
@@ -322,8 +329,8 @@ void test_a_colour_in_a_space() {
     CHECK(!color_in_space("12px", "srgb", {}).has_value());
 }
 
-// HTML's colour well serialisation (html/semantics/forms/the-input-element/
-// color.window.js): eight bits per channel in sRGB, `#rrggbb` when opaque.
+/// HTML's colour well serialisation (html/semantics/forms/the-input-element/
+/// color.window.js): eight bits per channel in sRGB, `#rrggbb` when opaque.
 void test_the_color_well() {
     using ctbrowser::style::css::sanitize_color;
     CHECK_EQ(sanitize_color("", false, false), std::string{"#000000"});
@@ -347,9 +354,9 @@ void test_the_color_well() {
                   "color(display-p3 0.791711 0.191507 0.257367)", 0.0001);
 }
 
-// A colour nests through contrast-color(), color-mix() and `from`; past the
-// depth resolve() gives up at the reader refuses it rather than recursing
-// twenty thousand frames deep.
+/// A colour nests through contrast-color(), color-mix() and `from`. Past the
+/// depth limit at which resolve() gives up, the parser rejects the value
+/// instead of recursing twenty thousand frames deep.
 void test_colour_nesting_is_capped() {
     const auto nest = [](int levels) {
         std::string out;

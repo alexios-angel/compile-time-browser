@@ -1,14 +1,16 @@
-// THE CANVAS CONTEXTS THROUGH THE BINDINGS: the 2D transform and path family,
-// text alignment, the fill rule, every composite operation, ImageData, `clip()`
-// and a canvas as an image source - and `getContext('webgl')`'s buffer sizes and
-// its null after '2d'. widgets_basics.cpp asks the same canvas what it DRAWS;
-// this asks what a script GETS BACK. Whether a p5 WEBGL sketch constructs and
-// refuses cleanly moved to test/corpus/p5/p5_page.cpp on 2026-10-09.
+//===- unittests/unit/canvas_context.cpp - Canvas contexts via bindings ---===//
 //
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// The canvas contexts through the bindings: the 2D transform and path family,
+// text alignment, the fill rule, every composite operation, ImageData, `clip()`
+// and a canvas as an image source, plus `getContext('webgl')`'s buffer sizes
+// and its null after '2d'. widgets_basics.cpp asks the same canvas what it
+// draws; this asks what a script gets back. p5 WEBGL sketch tests live in
+// test/corpus/p5/p5_page.cpp.
+//
+// Shared helpers are in chrome_probe.hpp; `find_id` is
+// test/support/dom_probe.hpp's.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -43,9 +45,9 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-// The canvas additions p5.js draws through: the transform family, ellipse and
-// Path2D. A Path2D is a RECORDING - built once and replayed by fill(path) or
-// stroke(path), which is how p5 draws every 2D shape.
+/// The canvas additions p5.js draws through: the transform family, ellipse and
+/// Path2D. A Path2D is a recording, built once and replayed by fill(path) or
+/// stroke(path), which is how p5 draws every 2D shape.
 void test_canvas_transform_and_paths() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas>
@@ -104,8 +106,9 @@ void test_canvas_transform_and_paths() {
     }
 }
 
-// Coordinates near +-FLT_MAX overflow float differences to inf/NaN; the scanline
-// sort must not see a NaN crossing (QSORT-001).
+/// Coordinates near +-FLT_MAX overflow float differences to inf/NaN; the scanline
+/// sort must not see a NaN crossing, which breaks std::sort's strict weak
+/// ordering and can read out of bounds.
 void test_huge_coordinate_fill() {
     browser page{browser_options{200, 200}};
     page.load_html(R"(<html><body><canvas id=c width=50 height=50></canvas><script>
@@ -121,11 +124,10 @@ void test_huge_coordinate_fill() {
     check(page.script_error().empty(), "huge-coordinate fill ran: " + page.script_error());
 }
 
-// textAlign and textBaseline - where text sits relative to the point it was
-// given. The most-used canvas properties this engine did not have: p5.js sets
-// textAlign 229 times, and without them every label started at x on the
-// alphabetic baseline, so a right-aligned one ran off the edge it was aligned
-// to and a centred one was centred nowhere.
+/// textAlign and textBaseline: where text sits relative to the point it was
+/// given. p5.js sets textAlign heavily; without it every label starts at x on
+/// the alphabetic baseline, so a right-aligned one runs off the edge it is
+/// aligned to.
 void test_text_alignment() {
     browser page{browser_options{400, 400}};
     page.load_html(R"(<html><body><canvas id=c width=300 height=360></canvas><script>
@@ -190,7 +192,7 @@ void test_text_alignment() {
     const auto [mid_lo, mid_hi] = ink_x(50, 75);
     const auto [right_lo, right_hi] = ink_x(90, 115);
     check(left_hi > left_lo, "the left-aligned run drew something");
-    // Left STARTS at the anchor, right ENDS at it, centre straddles it. Stated
+    // Left starts at the anchor, right ends at it, centre straddles it. Stated
     // as inequalities against the anchor rather than exact columns, because the
     // glyphs' own side bearings are the font's business and not this test's.
     check(left_lo >= 149 && left_hi > 150, "textAlign left starts at the anchor");
@@ -202,19 +204,18 @@ void test_text_alignment() {
     const auto [base_lo, base_hi] = ink_y(220, 290);
     const auto [bottom_lo, bottom_hi] = ink_y(300, 360);
     check(top_hi > top_lo, "the top-baseline run drew something");
-    // `top` hangs BELOW its anchor, `bottom` sits entirely above it, and
+    // `top` hangs below its anchor, `bottom` sits entirely above it, and
     // `alphabetic` sits on it with only descenders below.
     check(top_lo >= 170, "textBaseline top puts the text below the anchor");
     check(bottom_hi <= 331, "textBaseline bottom puts it above the anchor");
     check(base_lo < 250 && base_hi <= 256, "textBaseline alphabetic sits on the anchor");
 }
 
-// WHICH POINTS ARE INSIDE a path that crosses itself.
-//
-// The spec's default is nonzero winding and this filled even-odd, so a star -
-// or anything else drawn as one continuous self-crossing path, which is most
-// of what beginShape/vertex is used for - came out with a hole in the middle
-// and nothing said so.
+/// Which points are inside a path that crosses itself.
+///
+/// The default fill rule is nonzero winding; even-odd must be asked for. A star
+/// drawn as one self-crossing path (most of what beginShape/vertex produces) is
+/// solid under nonzero and hollow under even-odd.
 void test_fill_rule() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><canvas id=c width=200 height=100></canvas><script>
@@ -237,7 +238,7 @@ void test_fill_rule() {
     check(pixels != nullptr, "the canvas has pixels");
     if (pixels == nullptr) { return; }
     const auto at = [&](int x, int y) { return color{pixels->at(x, y)}; };
-    // A star's arms are inside under BOTH rules; only its middle differs.
+    // A star's arms are inside under both rules; only its middle differs.
     check(at(50, 20) == color::rgba(255, 0, 0), "the default fills the star's arm");
     check(at(150, 20) == color::rgba(0, 0, 255), "so does even-odd");
     // The centre is the whole difference: nonzero solid, even-odd hollow.
@@ -245,13 +246,13 @@ void test_fill_rule() {
     check(at(150, 50) == color::rgba(255, 255, 255), "even-odd leaves it hollow");
 }
 
-// `globalCompositeOperation` - EVERY MODE, because ignoring it was a silent
-// wrong answer and half-implementing it would be another.
-//
-// The maths is the W3C Compositing and Blending Level 1 formula (see
-// shell/page/composite.hpp), so the expectations here are computed from the spec by
-// hand rather than recorded from a run - a test that records what the code did
-// cannot tell you the code is right.
+/// `globalCompositeOperation`, every mode, because ignoring it or implementing
+/// only some modes gives a silent wrong answer.
+///
+/// The maths is the W3C Compositing and Blending Level 1 formula (see
+/// shell/page/composite.hpp), so the expectations here are computed from the spec by
+/// hand rather than recorded from a run - a test that records what the code did
+/// cannot tell you the code is right.
 void test_composite_operations() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><canvas id=c width=80 height=40></canvas><script>
@@ -317,17 +318,17 @@ void test_composite_operations() {
           "an unknown operator draws as source-over rather than not at all");
 }
 
-// THE FIVE OPERATORS THAT CLEAR WHAT THE SOURCE NEVER TOUCHED.
-//
-// Put as = 0 in the formula and ao comes out 0 for source-in, source-out,
-// destination-in, destination-atop and copy. So `destination-in` with a small
-// shape does not mask that shape - it throws away everything outside it, which
-// is what a page uses it for. Compositing only the pixels the source covered
-// would leave the rest of the canvas untouched and look almost right.
-//
-// This is the half of globalCompositeOperation that is easy to skip, and p5's
-// tint() depends on it: the destination-in pass is what restores the alpha
-// channel the multiply destroyed.
+/// The five operators that clear what the source never touched.
+///
+/// Put as = 0 in the formula and ao comes out 0 for source-in, source-out,
+/// destination-in, destination-atop and copy. So `destination-in` with a small
+/// shape does not mask that shape - it throws away everything outside it, which
+/// is what a page uses it for. Compositing only the pixels the source covered
+/// would leave the rest of the canvas untouched and look almost right.
+///
+/// This is the half of globalCompositeOperation that is easy to skip, and p5's
+/// tint() depends on it: the destination-in pass is what restores the alpha
+/// channel the multiply destroyed.
 void test_composite_clears_untouched_pixels() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><canvas id=c width=40 height=40></canvas><script>
@@ -341,7 +342,7 @@ void test_composite_clears_untouched_pixels() {
     check(page.script_error().empty(), "the destination-in script ran: " + page.script_error());
     const auto pixels = page.canvases().pixels_of(find_id(page, "c"));
     if (pixels == nullptr) { return; }
-    // Inside the shape: the BACKDROP survives - destination-in keeps the
+    // Inside the shape: the backdrop survives - destination-in keeps the
     // destination's colour and takes the source's alpha.
     check(color{pixels->at(5, 5)} == color::rgba(255, 0, 0),
           "destination-in keeps the backdrop where the source covered it");
@@ -349,9 +350,9 @@ void test_composite_clears_untouched_pixels() {
     check(pixels->at(30, 30) == 0, "and clears everything the source did not touch");
 }
 
-// getImageData / putImageData / createImageData - reading back what was
-// drawn and writing back what was computed. Every filter, every colour pick
-// and every `pixels[]` loop goes through them.
+/// getImageData / putImageData / createImageData - reading back what was
+/// drawn and writing back what was computed. Every filter, every colour pick
+/// and every `pixels[]` loop goes through them.
 void test_image_data() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><canvas id=c width=40 height=20></canvas><script>
@@ -383,7 +384,7 @@ void test_image_data() {
     check(page.script_error().empty(), "the image-data script ran: " + page.script_error());
     const auto & log = log_of(page);
     check(log[0] == "size=40x20,3200", "the buffer is four bytes a pixel: " + log[0]);
-    // RGBA in that order, which is NOT the engine's packed ARGB - getting it
+    // RGBA in that order, which is not the engine's packed ARGB; getting it
     // wrong swaps red and blue and looks almost right.
     check(log[1] == "rgba=32,64,128,255", "getImageData reads RGBA in order: " + log[1]);
     check(log[2] == "inverted=223,191,127", "putImageData writes them back: " + log[2]);
@@ -393,6 +394,8 @@ void test_image_data() {
     check(log[6] == "patch=0,255,0", "getImageData reads from the offset given: " + log[6]);
 }
 
+/// ImageData conversions on hostile numbers: clipping of out-of-range
+/// rectangles, buffer shapes and the errors the constructors throw.
 void test_image_data_numeric_bounds() {
     browser page{browser_options{80, 60}};
     page.load_html(R"(<canvas id=c width=4 height=2></canvas><script>
@@ -458,6 +461,9 @@ void test_image_data_numeric_bounds() {
     }
 }
 
+/// Rasteriser arithmetic on non-finite and huge inputs: pixel rounding
+/// saturates, rectangles clip before indexing, and far-off or enormous glyphs
+/// draw nothing out of bounds.
 void test_raster_numeric_bounds() {
     constexpr float infinity = std::numeric_limits<float>::infinity();
     constexpr float nan = std::numeric_limits<float>::quiet_NaN();
@@ -489,8 +495,8 @@ void test_raster_numeric_bounds() {
           "large font scales remain defined and drawing visits only clipped pixels");
 }
 
-// bufferData(target, size) takes a page's number: NaN, negatives, infinities and 1e12
-// must set a GL error rather than crash, and Int32Array([-1]) uploads modularly.
+/// bufferData(target, size) takes a page's number: NaN, negatives, infinities and 1e12
+/// must set a GL error rather than crash, and Int32Array([-1]) uploads modularly.
 void test_webgl_buffer_data_sizes() {
     browser page{browser_options{100, 100}};
     page.load_html(R"(<html><body><script>
@@ -517,11 +523,11 @@ void test_webgl_buffer_data_sizes() {
     check(found, "the sizes line was logged");
 }
 
-// A CLIP MASK IS SIZED TO THE BITMAP IT WAS BUILT FOR. When the surface is
-// re-dimensioned under a live clip (WebGL's present() once did it), indexing
-// the old mask with the new width read past its end. A stale mask now clips
-// out everything, until a resize or restore() replaces it. 2D only, so the
-// asan preset (no WebGL) can run it.
+/// A clip mask is sized to the bitmap it was built for. If the surface is
+/// re-dimensioned under a live clip, indexing the old mask with the new width
+/// would read past its end, so a stale mask clips out everything until a resize
+/// or restore() replaces it. 2D only, so the
+/// asan preset (no WebGL) can run it.
 void test_clip_after_surface_resized() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=40></canvas><script>
@@ -550,10 +556,10 @@ void test_clip_after_surface_resized() {
     check(color{pixels->at(305, 5)} == color::rgba(0, 255, 0), "restore() drops the stale clip");
 }
 
-// ONE CONTEXT PER CANVAS. A canvas that handed out a 2D context answers null
-// to `webgl`; sharing the bitmap let present() re-dimension it under the 2D
-// clip mask (a heap overread). A canvas whose surface predates a width change
-// gets a WebGL context over a surface of the new size.
+/// One context per canvas. A canvas that handed out a 2D context answers null
+/// to `webgl`; sharing the bitmap would let present() re-dimension it under the
+/// 2D clip mask (a heap overread). A canvas whose surface predates a width change
+/// gets a WebGL context over a surface of the new size.
 void test_webgl_after_2d_is_null() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=40></canvas>
@@ -583,9 +589,9 @@ void test_webgl_after_2d_is_null() {
     check(pixels != nullptr && pixels->width == 400, "the WebGL surface takes the new width");
 }
 
-// A CANVAS IS AN IMAGE SOURCE. `drawImage(otherCanvas, ...)` is how a page
-// composites one surface onto another - and it is what p5's `image(g, ...)` does
-// with a createGraphics, so an offscreen buffer drew nothing at all.
+/// A canvas is an image source. `drawImage(otherCanvas, ...)` is how a page
+/// composites one surface onto another, and it is what p5's `image(g, ...)` does
+/// with a createGraphics offscreen buffer.
 void test_canvas_as_image_source() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body>
@@ -607,9 +613,9 @@ void test_canvas_as_image_source() {
     }
 }
 
-// `clip()` CONFINES what is drawn after it, and `restore()` is the only way
-// back. The region is an INTERSECTION of paths, so two clips leave what they
-// have in common - which is what makes nesting them work.
+/// `clip()` confines what is drawn after it, and `restore()` is the only way
+/// back. The region is an intersection of paths, so two clips leave what they
+/// have in common - which is what makes nesting them work.
 void test_clip() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=100></canvas><script>
@@ -639,7 +645,7 @@ void test_clip() {
     check(at(70, 30) == color::rgba(255, 255, 255), "nor rightwards past the first");
     check(at(75, 75) == color::rgba(0, 0, 255), "restore() puts the old region back");
 
-    // `addPath(other, matrix)` APPLIES the matrix. The verbs are copied with
+    // `addPath(other, matrix)` applies the matrix. The verbs are copied with
     // their coordinates already transformed, which is what makes a path built
     // once reusable at several places.
     browser moved{browser_options{300, 200}};
@@ -671,10 +677,10 @@ void test_clip() {
     }
 }
 
-// THE CONTEXT THE WEBIDL WAY: attributes that refuse what they cannot hold and
-// read back their own serialisation, the paints a fill can use, and the path
-// verbs that were missing. Each line is one rule of HTML 4.12.5.1 that a page
-// can observe; html/canvas/element in WPT has the full set.
+/// The context the WebIDL way: attributes that refuse what they cannot hold and
+/// read back their own serialisation, the paints a fill can use, and the less
+/// common path verbs. Each line is one rule of HTML 4.12.5.1 that a page
+/// can observe; html/canvas/element in WPT has the full set.
 void test_attributes_paints_and_verbs() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas><script>
@@ -729,7 +735,7 @@ void test_attributes_paints_and_verbs() {
     }
 }
 
-// The pixels of the same calls, before reset() cleared them.
+/// The pixels of the same calls, before reset() cleared them.
 void test_gradients_caps_and_round_corners() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas><script>
@@ -757,9 +763,9 @@ void test_gradients_caps_and_round_corners() {
     check(at(87, 40).alpha() == 0, "by half the width and no further");
 }
 
-// THE REVIEW'S CASES (round 14): what a page can observe of each - an explicit
-// undefined maxWidth, a style object across save()/restore(), createPattern's
-// order of checks, the ImageData brand and DOMMatrix2DInit's conversion.
+/// Edge cases a page can observe: an explicit undefined maxWidth, a style object
+/// across save()/restore(), createPattern's order of checks, the ImageData brand
+/// and DOMMatrix2DInit's conversion.
 void test_argument_conversions() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas><script>
@@ -857,9 +863,9 @@ void test_argument_conversions() {
     }
 }
 
-// WORK BOUNDED BY WHAT LANDS: a dash pattern along a line a billion pixels
-// long, a stroke of text two thousand pixels wide and a shadow thrown 1e20
-// pixels each finish at once - and still draw what reaches the canvas.
+/// Work bounded by what lands: a dash pattern along a line a billion pixels
+/// long, a stroke of text two thousand pixels wide and a shadow thrown 1e20
+/// pixels each finish at once - and still draw what reaches the canvas.
 void test_bounded_work() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><canvas id=c width=100 height=60></canvas>

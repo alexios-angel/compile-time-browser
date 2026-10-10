@@ -1,8 +1,13 @@
-// A USER'S EDIT, TOLD TO THE PAGE: `beforeinput` (cancelable) before the value
-// changes and `input` (not) after, both InputEvents naming the edit; `change`
-// on blur only for a value the user changed; a <select>'s arrow keys pick an
-// option and fire input then change. Each case names the WPT file it stands in
-// for.
+//===- ctbrowser/unittests/unit/input/events_typing.cpp - Typing events ---===//
+//
+// How a user's edit is announced to the page: `beforeinput` (cancelable)
+// before the value changes and `input` (not cancelable) after, both
+// InputEvents naming the edit; `change` on blur only for a value the user
+// changed; a <select>'s arrow keys pick an option and fire input then change;
+// and the keyboard pressing and clicking a focused control. Each case names the
+// WPT file it stands in for.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -34,6 +39,8 @@ constexpr const char * page_source = R"(<!doctype html><body>
     }
     </script></body>)";
 
+/// Returns what the page pushed onto its `seen` array since the last call, as
+/// "seen=" followed by the space-joined entries, and empties the array.
 [[nodiscard]] std::string seen(browser & page) {
     (void)page.run_script("console.log('seen=' + seen.join(' ')); seen = [];");
     std::string last;

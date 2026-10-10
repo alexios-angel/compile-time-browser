@@ -1,15 +1,19 @@
-// WHERE A THROW HAPPENED, AND WHERE IT LANDS.
+//===- ctbrowser/unittests/js/throw_sites.cpp - Throw sites -----*- C++ -*-===//
+//
+// Where a throw happened, and where it lands.
 //
 // context::last_throw_site is the position an embedder reports an uncaught
 // exception at (an ErrorEvent's lineno and colno): the instruction the throw
-// left, in the program that instruction belongs to - a parked throw rethrown
-// at a native's call site keeps the site inside the callback. A parse error
-// carries its line and column as numbers too (program::error_line).
+// left, in the program that instruction belongs to. A throw inside a callback
+// that a native parked and rethrew at its call site keeps the site inside the
+// callback. A parse error carries its line and column as numbers too
+// (program::error_line).
 //
-// And a throw at a `yield*` (14.4.14 step 7): every getter on the inner
-// iterator and its result that throws is thrown AT THE YIELD, where the
-// generator's own `catch` takes it - a parked throw counted as an unwind, and
-// every one of them went to the caller of `.throw()` instead.
+// A throw at a `yield*` (ECMA-262 14.4.14 step 7): when a getter on the inner
+// iterator or its result throws, the exception is raised at the `yield*`, so
+// the generator's own `catch` handles it rather than the caller of `.throw()`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -19,8 +23,8 @@ namespace {
 
 using namespace ctbrowser::script;
 
-// The line and column the throw of `source` was recorded at, as "L:C", or
-// "none" / "RAN" when there was no site or nothing threw.
+/// Returns the line and column the throw of `source` was recorded at, as
+/// "L:C", or "none" / "RAN" when there was no site or nothing threw.
 std::string site_of(std::string_view source) {
     context cx;
     install_builtins(cx);
@@ -34,6 +38,7 @@ std::string site_of(std::string_view source) {
            std::to_string(lines.column_of(site.offset));
 }
 
+/// Fails the test unless site_of(source) equals `want`.
 void expect_site(std::string_view source, std::string_view want) {
     const std::string got = site_of(source);
     if (got != want) {
@@ -52,7 +57,7 @@ int main() {
     expect_site("var e = 'bar';\ntry {\n  throw e;\n} catch (x) {}\n  throw e;\n", "5:9");
     expect_site("[1].forEach(function () {\n  throw 1;\n});\n", "2:9");
     // A finally's rethrow, and an iterator close's, keep the site of the throw
-    // they carry on - unless a throw caught inside the finally replaced it.
+    // they carry on, unless a throw caught inside the finally replaced it.
     expect_site("var n = 0;\ntry {\n  null.x;\n} finally {\n  n = 1;\n}\n", "3:8");
     expect_site("for (const v of [1]) {\n  try {\n    null.x;\n  } finally {}\n}\n", "3:10");
     expect_site("try {\n  null.x;\n} finally {\n  try { throw 2; } catch (e) {}\n}\n", "none");

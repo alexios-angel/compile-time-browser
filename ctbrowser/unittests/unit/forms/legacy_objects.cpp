@@ -1,8 +1,12 @@
+//===- legacy_objects.cpp - Legacy form object tests ------------*- C++ -*-===//
+//
 // HTMLFormElement and HTMLSelectElement as legacy platform objects (WebIDL
-// 3.9, bindings/element/control_methods/legacy_objects.cpp): a form's indexed
-// and named properties and its past names map, a select's indexed getter and
-// setter - and that the proxy the page holds is still the node every binding
-// and every identity comparison expects.
+// 3.9, lib/Shell/bindings/element/control_methods/legacy_objects.cpp): a
+// form's indexed and named properties and its past names map, a select's
+// indexed getter and setter, and that the proxy the page holds is still the
+// node every binding and every identity comparison expects.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

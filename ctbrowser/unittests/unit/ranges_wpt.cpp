@@ -1,7 +1,11 @@
-// DOM 5's Range and StaticRange against dom/ranges - one case per algorithm
-// of DOM 5.5, each on a tiny tree, named after the WPT file that asserts it.
-// The pattern is unit/dom/nodes_wpt.cpp's: one expression against a fresh
-// page, and whatever it logged.
+//===- ctbrowser/unittests/unit/ranges_wpt.cpp - Range tests ----*- C++ -*-===//
+//
+// DOM 5's Range and StaticRange against the WPT dom/ranges tests: one case per
+// algorithm of DOM 5.5, each on a tiny tree, named after the WPT file that
+// asserts it. The pattern is unit/dom/nodes_wpt.cpp's: one expression against
+// a fresh page, and whatever it logged.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -17,6 +21,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=box><p id=p1>Abcd</p><p id=p2>Efgh</p><!--c--><span id=s>ij</span></div>
 </body></html>)";
 
+/// Checks that \p expression, evaluated in a fresh copy of page_html, gives
+/// \p expected.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -238,13 +244,11 @@ void test_insert_node_and_surround_contents() {
        "InvalidStateError,InvalidNodeTypeError");
 }
 
-// --- StaticRange ------------------------------------------------------------------
-
 // --- the live range steps, DOM 5.5 --------------------------------------------
 
-// Range-mutations-{appendChild,insertBefore,removeChild}.html: a boundary on
-// the parent past the edit moves with it; one inside a removed node lands
-// where the node was.
+/// Range-mutations-{appendChild,insertBefore,removeChild}.html: a boundary on
+/// the parent past the edit moves with it; one inside a removed node lands
+/// where the node was.
 void test_a_range_follows_tree_edits() {
     is("(function () { var box = document.getElementById('box'), p1 = "
        "document.getElementById('p1'),"
@@ -263,9 +267,9 @@ void test_a_range_follows_tree_edits() {
        "2-4|2-4|1-3|true:1|2-2:true");
 }
 
-// Range-mutations-{insertData,deleteData,replaceData,dataChange}.html,
-// Range-mutations-splitText.html, Node-normalize: the replace data steps, the
-// split steps and the absorption steps.
+/// Range-mutations-{insertData,deleteData,replaceData,dataChange}.html,
+/// Range-mutations-splitText.html, Node-normalize: the replace data steps, the
+/// split steps and the absorption steps.
 void test_a_range_follows_data_edits() {
     is("(function () { var t = document.getElementById('p1').firstChild;"
        " var r = document.createRange(); r.setStart(t, 1); r.setEnd(t, 3); var out = [];"
@@ -282,6 +286,8 @@ void test_a_range_follows_data_edits() {
        " return out.join('|'); })()",
        "3-5|2-4|2-2|0-0|true:1,true:2|1-4,true,true:2,1");
 }
+
+// --- StaticRange ------------------------------------------------------------------
 
 void test_static_range_is_a_snapshot() {
     // StaticRange-constructor.html: four required members, a doctype or an

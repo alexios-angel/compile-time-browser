@@ -1,7 +1,11 @@
+//===- ctbrowser/unittests/unit/html/dom/parser.cpp - DOMParser interface -===//
+//
 // `DOMParser` (HTML 8.5.1) as an interface: `new` required, parseFromString on
-// the prototype and branded, and a document whose URL is the PARSER's window's
-// document's - a frame's constructor makes the frame's, whichever realm's
+// the prototype and branded, and a document whose URL is the parser's window's
+// document's. A frame's constructor makes the frame's, whichever realm's
 // method is called (domparsing/DOMParser-parseFromString-url.html).
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -15,7 +19,8 @@ namespace {
 
 constexpr const char * inner_html = "<!DOCTYPE html><html><body>inner</body></html>";
 
-// The page with one frame, and what the expression logged once both loaded.
+/// Loads a page with one frame and returns what \p expression logged once both
+/// documents had loaded.
 [[nodiscard]] std::string answer(const std::string & expression) {
     ctbrowser::browser page{ctbrowser::browser_options{400, 300}};
     page.set_location("file:///pages/the-page.html");
@@ -32,6 +37,7 @@ constexpr const char * inner_html = "<!DOCTYPE html><html><body>inner</body></ht
     return logged.back();
 }
 
+/// Checks that \p expression, evaluated by answer(), logs \p expected.
 void is(const std::string & expression, const std::string & expected) {
     const std::string got = answer(expression);
     CHECK_EQ(got, expected);

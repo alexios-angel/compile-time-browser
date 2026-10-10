@@ -1,8 +1,13 @@
+//===- container_queries.cpp - Container query tests ------------*- C++ -*-===//
+//
 // Container queries (CSS Conditional 5): the `@container` prelude read and
 // written back, the container a query picks by the axes it reads, the
 // scroll-state() features, the container's own font in the query, and the
-// `cq*` units. The browser's half - answering the size hook from a layout -
-// is the WPT suite's; here the hook is a table.
+// `cq*` units. Also font-variant shorthand and line-clamp serialisation.
+// Answering the size hook from a real layout is left to WPT; here the hook
+// is a table. Comments naming a WPT file give the test the cases come from.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -20,6 +25,8 @@ using namespace ctbrowser::style;
 
 namespace {
 
+/// Parses an `@container` prelude and serialises it back, or returns
+/// "<invalid>" if it does not parse.
 [[nodiscard]] std::string conditions_of(std::string_view prelude) {
     const auto parsed = css::parse_container_conditions(prelude);
     return parsed ? css::serialize_container_conditions(*parsed) : std::string{"<invalid>"};
@@ -77,7 +84,7 @@ void test_selection() {
     expect_value(f, span, "z-index", "1", "width from the inline-size container");
     expect_value(f, span, "order", "2", "height skips it for the size container");
     expect_value(f, span, "opacity", "0.5", "the size container's height, not the inline one's");
-    CHECK(f.value_of(span, "color").empty()); // (hover): a feature no container has
+    CHECK(f.value_of(span, "color").empty()); // (hover) is a feature no container has.
     CHECK(!f.styles.container_sizes_changed());
     f.styles.set_container_size([](node_id) { return engine::container_size{1, 1}; });
     CHECK(f.styles.container_sizes_changed());
@@ -105,7 +112,7 @@ void test_scroll_state() {
     expect_value(f, span, "z-index", "1", "scrollable: bottom");
     CHECK(f.value_of(span, "order").empty());
     expect_value(f, span, "opacity", "0.5", "neither stuck nor snapped");
-    CHECK(f.value_of(span, "color").empty()); // an unknown value stays unknown under `not`
+    CHECK(f.value_of(span, "color").empty()); // Unknown stays unknown under `not`.
 }
 
 // font-relative-units and container-units-basic: an `em` in a query is the
@@ -141,7 +148,7 @@ void test_var() {
     expect_value(f, span, "z-index", "1", "var() from the container");
     CHECK(f.value_of(span, "order").empty());
     expect_value(f, span, "opacity", "0.5", "the fallback");
-    CHECK(f.value_of(span, "color").empty()); // a length against a number
+    CHECK(f.value_of(span, "color").empty()); // A length compared with a number.
 }
 
 // font-variant-shorthand-serialization and font-shorthand-variant.

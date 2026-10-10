@@ -1,18 +1,17 @@
-// `querySelector` and friends, on the Selectors engine rather than beside it.
+//===- ctbrowser/unittests/unit/selectors.cpp - querySelector tests -------===//
 //
-// This file exists because there were TWO MATCHERS. `lib/Style/css/selector.cpp`
-// compiled the whole grammar for the cascade - combinators, attribute selectors,
-// `:not`, `:is`, `:nth-child`, the sibling forms - and `dom_bindings::query` was a
-// separate hand-rolled one that gave up on any selector containing a space or a
-// `>`. Script reached the weaker one, so `document.querySelector('ul > li')`
-// answered null on a document with a `<li>` in a `<ul>`, and `el.matches(s)` and
-// `[...root.querySelectorAll(s)].includes(el)` could disagree with each other.
+// `querySelector`, `matches` and `closest`, which must use the cascade's
+// selector engine (lib/Style/css/selector/), so script and stylesheets never
+// disagree about what a selector matches.
 //
-// Every case below is a selector the old matcher got wrong, a rule of the DOM
-// specification about which method throws, or a guard on the one thing that must
-// NOT happen: `querySelector` throwing SyntaxError for a valid selector this
-// engine merely cannot match. `::before` and `:focus-visible` are real CSS;
-// refusing to answer is a missing answer, and throwing is a wrong one.
+// Each case below is a selector a weaker matcher got wrong (combinators,
+// attribute selectors, structural pseudo-classes), a DOM rule about which
+// method throws, or a guard that a valid selector this engine cannot match
+// answers null instead of throwing SyntaxError. `::before` and
+// `:focus-visible` are real CSS; refusing to answer is a missing answer, and
+// throwing is a wrong one.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -26,10 +25,10 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-// The document every case below runs against. Deliberately shaped so that a
-// matcher without combinators cannot fake its way through: two `<p>`s that differ
-// only by their parent, siblings that differ only by position, and an attribute
-// that appears on one element of a tag that appears three times.
+/// The document most cases run against. Shaped so that a matcher without
+/// combinators cannot fake its way through: two `<p>`s that differ only by
+/// their parent, siblings that differ only by position, and an attribute that
+/// appears on one element of a tag that appears three times.
 constexpr const char * page_html = R"(<html><body>
 <div id=outer class="box wide">
   <p id=p1 class=lead data-kind="a">one</p>
@@ -44,12 +43,12 @@ constexpr const char * page_html = R"(<html><body>
 <p id=p3>outside</p>
 </body></html>)";
 
-// A second document, because `:lang()` and `:dir()` are the only selectors here
-// that ask about an ANCESTOR's attribute rather than about the subject. Shaped so
-// that every rule of HTML §3.2.6 has an element that turns on it: an inherited
-// language, an overriding one, an `lang=""` that means "unknown" rather than
-// "keep looking", an `xml:lang` that must NOT count in an HTML document, and a
-// `Content-Language` pragma that the root's own `lang` beats.
+/// A second document, because `:lang()` and `:dir()` are the only selectors
+/// here that ask about an ancestor's attribute rather than about the subject.
+/// Shaped so that every rule of HTML §3.2.6 has an element that turns on it: an
+/// inherited language, an overriding one, a `lang=""` that means "unknown"
+/// rather than "keep looking", an `xml:lang` that must not count in an HTML
+/// document, and a `Content-Language` pragma that the root's own `lang` beats.
 constexpr const char * lang_html = R"(<html lang="en-GB"><head>
 <meta http-equiv="Content-Language" content="ko">
 </head><body>
@@ -62,8 +61,10 @@ constexpr const char * lang_html = R"(<html lang="en-GB"><head>
 <div id=j dir=auto>hello</div>
 </body></html>)";
 
-// The two helpers every page below needs, appended to whichever document a case
-// runs against so that no case has to carry them.
+/// The two script helpers every case uses, appended to whichever document a
+/// case runs against: `ids(s)` joins the ids querySelectorAll finds, and
+/// `one(s)` gives querySelector's id or "null". Both answer "threw:<name>" on
+/// an exception.
 constexpr const char * helpers = R"(<script>
 function ids(selector) {
   try {
@@ -83,9 +84,9 @@ function one(selector) {
 }
 </script>)";
 
-// Run one expression against a page and answer what it logged. A fresh page
-// per case: a selector that mutates nothing cannot affect the next one, but a
-// page that failed to load would otherwise report every case as the same silence.
+/// Loads \p document_html in a fresh page, evaluates \p expression and returns
+/// what it logged. A fresh page per case: a page that failed to load would
+/// otherwise report every case as the same silence.
 [[nodiscard]] std::string answer_in(const std::string & document_html,
                                     const std::string & expression) {
     browser page{browser_options{400, 300}};
@@ -99,6 +100,8 @@ function one(selector) {
     return logged.back();
 }
 
+/// Checks that \p expression evaluated against \p document_html gives
+/// \p expected, printing the expression on a mismatch. is() uses page_html.
 void is_in(const std::string & document_html, const std::string & expression,
            const std::string & expected) {
     const std::string got = answer_in(document_html, expression);
@@ -110,7 +113,7 @@ void is(const std::string & expression, const std::string & expected) {
     is_in(page_html, expression, expected);
 }
 
-// --- what the old matcher could already do --------------------------------
+// --- compound selectors ---------------------------------------------------
 
 void test_the_compound_selectors_still_work() {
     is("ids('p')", "p1,p2,p3");
@@ -128,12 +131,12 @@ void test_the_compound_selectors_still_work() {
     is("one('.nothing-here')", "null");
 }
 
-// --- the combinators, none of which matched anything before ----------------
+// --- the combinators ------------------------------------------------------
 
 void test_the_four_combinators() {
     is("ids('div p')", "p1,p2");         // descendant
     is("ids('ul > li')", "li1,li2,li3"); // child
-    is("ids('body > p')", "p3");         // ...and the child combinator EXCLUDES p1/p2
+    is("ids('body > p')", "p3");         // ...and the child combinator excludes p1/p2
     is("ids('#li1 + li')", "li2");       // next sibling
     is("ids('#li1 ~ li')", "li2,li3");   // subsequent siblings
     is("ids('div.box p.lead')", "p1");
@@ -160,8 +163,8 @@ void test_the_rest_of_the_grammar() {
     is("ids('ul li:nth-of-type(3)')", "li3");
 }
 
-// `:heading` and `:heading(<integer>#)`, Selectors 5 (css/selectors/heading.html,
-// parsing/parse-heading.html): h1-h6 by level, integers only in the list.
+/// `:heading` and `:heading(<integer>#)`, Selectors 5 (css/selectors/heading.html,
+/// parsing/parse-heading.html): h1-h6 by level, integers only in the list.
 void test_heading() {
     is_in("<html><body><h1 id=a></h1><h2 id=b></h2><section><h6 id=c></h6></section>"
           "<h7 id=d></h7><p id=e role=heading aria-level=1></p>"
@@ -219,7 +222,7 @@ void test_scope_and_has() {
     // no such element - a whole-document query, or a stylesheet.
     is("ids(':scope')", "");
     is("document.querySelector(':scope').tagName", "HTML");
-    // `:root` is the DOCUMENT's root element and nothing else: not a fragment's
+    // `:root` is the document's root element and nothing else: not a fragment's
     // top-level children, not a detached element.
     is("document.querySelector(':root').tagName", "HTML");
     is("(function () { var f = document.createDocumentFragment();"
@@ -264,12 +267,12 @@ void test_scope_and_has() {
 // --- the subtree forms: an element's own query, matches, closest ------------
 
 void test_scoped_queries_and_matches() {
-    // A search rooted at an element is over its DESCENDANTS and never itself.
+    // A search rooted at an element is over its descendants and never itself.
     is("[].map.call(document.getElementById('list').querySelectorAll('li'), "
        "function (e) { return e.id; }).join(',')",
        "li1,li2,li3");
     is("document.getElementById('list').querySelectorAll('ul').length", "0");
-    // ...but the selector is still matched against the WHOLE tree above the root:
+    // ...but the selector is still matched against the whole tree above the root:
     // `body li` holds of these three because the body is an ancestor of the list.
     is("document.getElementById('list').querySelectorAll('body li').length", "3");
     is("document.getElementById('p1').matches('div > p.lead')", "true");
@@ -307,12 +310,12 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     is("one('#0d6efd')", "threw:SyntaxError");
     is("one('4')", "threw:SyntaxError");
     is("one('li:nth-child(fred)')", "threw:SyntaxError");
-    // VALID CSS THIS ENGINE CANNOT MATCH. Every one of these must answer null
-    // rather than throw: a page feature-detecting `:has()` gets "no match", which
-    // is a missing answer, where a throw would be a wrong one.
+    // Valid CSS this engine cannot match must answer null rather than throw: a
+    // page feature-detecting `::before` gets "no match", a missing answer,
+    // where a throw would be a wrong one.
     is("one('p::before')", "null");
     is("one('p:focus-visible')", "null");
-    // A NAMESPACE PREFIX IS A SYNTAX ERROR HERE. Selectors API §2 gives
+    // A namespace prefix is a syntax error here. Selectors API §2 gives
     // `querySelector` no namespace resolver, so `svg|rect` is undeclared in every
     // browser, and so is `[xlink|href]`. `*|` and `|` need no declaration.
     is("one('svg|rect')", "threw:SyntaxError");
@@ -321,15 +324,15 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     is("ids('*|p')", "p1,p2,p3");
     is("ids('[*|data-kind=a]')", "p1");
     is("ids('[|data-kind=a]')", "p1");
-    is("one('|p')", "null"); // every element the HTML parser makes has a namespace
+    is("one('|p')", "null"); // Every element the HTML parser makes has a namespace.
     // Two combinators in a row are not one combinator.
     is("one('div ++ p')", "threw:SyntaxError");
     is("one('div ~~ p')", "threw:SyntaxError");
     is("one('div > > p')", "threw:SyntaxError");
     is("one('div >p')", "p1");
-    // A `:lang()` this engine parses but whose argument is malformed is
-    // unmatchable rather than a syntax error, on the same reading
-    // `:nth-child(of S)` is refused under.
+    // A `:lang()` with a malformed argument makes the compound unmatchable
+    // rather than a syntax error, the same leniency the parser applies to
+    // the unsupported `:nth-child(An+B of S)` form.
     is("one('p:lang()')", "null");
     is("one('p:lang(en,)')", "null");
     // ...and this document declares no language at all, so `:lang(en)` has
@@ -355,31 +358,24 @@ void test_syntax_errors_and_the_selectors_that_are_merely_unsupported() {
     is("one(':has-slotted(div > span)')", "threw:SyntaxError");
 }
 
-// A DETACHED ELEMENT IS MATCHED AGAINST ITSELF, and it was not.
-//
-// `engine::element_matches` entered depth 0 from `txn.root()` unconditionally.
-// A `document.createElement("div")` is not among the root's children, so the
-// sibling walk ran to the end and the subject came out as the LAST element
-// child of `<html>` - `document.createElement("div").matches("div")` was
-// answered about `<body>`. A silent wrong answer, and the one a
-// `querySelector` inside a shadow tree runs into first.
+/// A detached element is matched against itself, not against the document.
+/// A matcher that starts its sibling walk at `txn.root()` answers
+/// `document.createElement('div').matches('div')` about <body> instead, and a
+/// `querySelector` inside a shadow tree runs into the same mistake.
 void test_a_detached_element_matches_against_itself() {
     is("document.createElement('div').matches('div')", "true");
     is("document.createElement('div').matches('span')", "false");
     is("(function () { var e = document.createElement('div'); e.className = 'x';"
        " return e.matches('.x') + ',' + e.matches('div.x') + ',' + e.matches('#nope'); })()",
-       // `div.x` is the SAME COMPOUND as `.x` with a tag on it, and the element
-       // is a div carrying that class - so it matches. The expectation used to
-       // say false, which was written to the behaviour of a `matches` that ran
-       // a document query and could never find a detached element at all.
+       // `div.x` matches: the element is a div carrying class x.
        "true,true,false");
     // A parentless subject is an only child, which is what the structural
     // pseudo-classes have to say about a node that is in no tree at all.
     is("document.createElement('p').matches(':only-child')", "true");
     is("document.createElement('p').matches(':first-child')", "true");
-    // A DESCENDANT COMBINATOR CANNOT MATCH one: there is no ancestor.
+    // A descendant combinator cannot match one: there is no ancestor.
     is("document.createElement('p').matches('body p')", "false");
-    // And a detached SUBTREE still matches within itself.
+    // And a detached subtree still matches within itself.
     is("(function () {"
        " var box = document.createElement('div');"
        " box.innerHTML = '<span class=inner>x</span>';"
@@ -391,11 +387,11 @@ void test_a_detached_element_matches_against_itself() {
 
 // --- `:lang()` and `:dir()` -------------------------------------------------
 //
-// Both used to be unmatchable, which the ten
-// `html/dom/elements/global-attributes/the-lang-attribute-*.html` tests detect
-// by putting `:lang(xx)` on an element they then expect to be `display: none`.
+// The WPT html/dom/elements/global-attributes/the-lang-attribute-*.html tests
+// depend on these: they hide an element with `:lang(xx)` and check it is
+// `display: none`.
 void test_lang_and_dir() {
-    // An INHERITED language. #a declares none, so the root's `en-GB` is its.
+    // An inherited language. #a declares none, so the root's `en-GB` is its.
     is_in(lang_html, "ids('div:lang(en-GB)')", "a,f,g,i,j");
     // ...and RFC 4647 extended filtering, not string equality: the range `en`
     // matches the language `en-GB`, which is the whole reason `:lang()` is not
@@ -407,15 +403,15 @@ void test_lang_and_dir() {
     // all - which #d, whose `lang=""` means "unknown", is not.
     is_in(lang_html, "ids('div:lang(*-CH)')", "e");
     is_in(lang_html, "ids('div:lang(*)')", "a,b,c,e,f,g,i,j");
-    // `lang=""` STOPS the search rather than being skipped past: #d is inside a
+    // `lang=""` stops the search rather than being skipped past: #d is inside a
     // `lang="de"` and is still not German.
     is_in(lang_html, "one('#d:lang(de)')", "null");
-    // `xml:lang` DOES NOT COUNT in an HTML document - the parser's foreign
+    // `xml:lang` does not count in an HTML document - the parser's foreign
     // attribute adjustment does not run on an HTML element, so #f holds an
     // attribute literally named `xml:lang` and inherits `en-GB` regardless.
-    // `the-lang-attribute-002.html` is exactly this, and asserts the MISS.
+    // `the-lang-attribute-002.html` is exactly this, and asserts the miss.
     is_in(lang_html, "one('#f:lang(ko)')", "null");
-    // The `Content-Language` pragma is the DOCUMENT DEFAULT, so the root's own
+    // The `Content-Language` pragma is the document default, so the root's own
     // `lang` beats it. Above it loses; here, with no `lang` anywhere, it wins.
     is_in(lang_html, "ids('div:lang(ko)')", "");
     is_in("<html><head><meta http-equiv='Content-Language' content='ko'></head>"
@@ -436,7 +432,7 @@ void test_lang_and_dir() {
     is_in(lang_html, "one('#h:dir(ltr)')", "null");
     // ...the default with no `dir` anywhere is left-to-right...
     is_in(lang_html, "one('#a:dir(ltr)')", "a");
-    // ...and `dir=auto` reads the first STRONG character of the subtree, so a
+    // ...and `dir=auto` reads the first strong character of the subtree, so a
     // Hebrew aleph makes #i right-to-left and `hello` leaves #j left-to-right.
     is_in(lang_html, "one('#i:dir(rtl)')", "i");
     is_in(lang_html, "one('#j:dir(ltr)')", "j");
@@ -489,8 +485,9 @@ void test_defined() {
 
 namespace {
 
-// Functional pseudo-classes nest through one count; past it the selector is a
-// syntax error rather than a recursion as deep as the author typed.
+/// Functional pseudo-classes nest at most 32 deep (selector_parser::max_depth
+/// in lib/Style/css/selector/internal.hpp); deeper nesting is a syntax error
+/// rather than unbounded recursion.
 void test_nesting_past_the_cap_is_a_syntax_error() {
     is("one(':is('.repeat(10) + '#p1' + ')'.repeat(10))", "p1");
     is("one(':not('.repeat(40) + 'p' + ')'.repeat(40))", "threw:SyntaxError");

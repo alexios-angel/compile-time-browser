@@ -1,13 +1,17 @@
-// FOREIGN CONTENT, HTML 13.2.6.5, as the page sees it: `<math>` is MathML -
-// `node_ns::other` with its URI on the document - with the text integration
-// points handing children back to HTML; the tokenizer lowercases every name
-// and the adjustment tables put `viewBox`, `foreignObject` and
-// `definitionURL` back; only the ten listed foreign attributes get a
-// namespace; and a fragment parses in ITS ELEMENT'S context, so
-// `table.innerHTML = "<tr>"` is a row and `svg.innerHTML` makes SVG.
+//===- treebuilder_foreign.cpp - Foreign content tests ----------*- C++ -*-===//
+//
+// Foreign content, HTML 13.2.6.5, as the page sees it: `<math>` is MathML
+// (`node_ns::other` with its URI recorded on the document), with the text
+// integration points handing children back to HTML; the tokenizer lowercases
+// every name and the adjustment tables restore `viewBox`, `foreignObject` and
+// `definitionURL`; only the ten listed foreign attributes get a namespace; and
+// a fragment parses in its element's context, so `table.innerHTML = "<tr>"` is
+// a row and `svg.innerHTML` makes SVG.
 //
 // The html5lib fixtures (html5lib_fixtures) cover the tree shapes case by
 // case; this is the handful of facts a script observes on top of them.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>

@@ -1,12 +1,17 @@
-// EVAL DECLARATION INSTANTIATION (19.2.1.3) FOR THE GLOBAL VARIABLE
-// ENVIRONMENT: an indirect eval's, and a direct one's from global code. A
+//===- ctbrowser/unittests/js/eval_declarations.cpp - Eval declarations ---===//
+//
+// EvalDeclarationInstantiation (ECMA-262 19.2.1.3) for the global variable
+// environment: an indirect eval's, and a direct one's from global code. A
 // `var` or function of the eval colliding with a global `let` is a
-// SyntaxError, one the global object cannot take is a TypeError - both before
-// any binding exists - and a function is made with
+// SyntaxError, and one the global object cannot take is a TypeError, both
+// raised before any binding exists. A function is made with
 // CreateGlobalFunctionBinding(fn, fo, true): writable, enumerable and
-// configurable, over a configurable property the global object had. And a
-// class's `prototype` is { writable: false, enumerable: false,
+// configurable, over a configurable property the global object had. Also
+// checks that a class's `prototype` is { writable: false, enumerable: false,
 // configurable: false } (15.7.14, MakeConstructor(F, false, proto)).
+// "Step" numbers below refer to 19.2.1.3.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -20,7 +25,8 @@ namespace {
 
 using namespace ctbrowser::script;
 
-// Runs each script in turn in one context; answers "ok" or the last error.
+/// Runs each script in turn in one context; answers "ok", the last script's
+/// error, or "COMPILE <error>".
 std::string last_of(std::initializer_list<std::string_view> scripts) {
     context cx;
     install_builtins(cx);
@@ -34,6 +40,7 @@ std::string last_of(std::initializer_list<std::string_view> scripts) {
     return answer;
 }
 
+/// Checks that last_of(scripts) contains `want`.
 void expect(std::initializer_list<std::string_view> scripts, std::string_view want) {
     const std::string got = last_of(scripts);
     if (got.find(want) == std::string::npos) {

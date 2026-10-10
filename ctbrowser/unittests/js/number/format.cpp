@@ -1,15 +1,13 @@
+//===- ctbrowser/unittests/js/number/format.cpp - Number format tests -----===//
+//
 // Numbers turning into text, and text turning back into numbers.
 //
-// EVERY EXPECTATION HERE CAME OUT OF V8 (node v26, the engine Chrome ships) and
-// not out of this engine. That distinction is the whole point of the file: it
-// was written against `Number::toString` as the specification defines it while
-// `context::to_string` was still `std::to_string(double)`, which is `%f` to six
-// decimals - so `String(1/3)` was "0.333333" and most of this file failed on the
-// day it was committed. Expectations copied from the code under test would have
-// pinned the bug instead.
+// Every expectation here was produced by V8 (Node v26), not by this engine,
+// so the tests check the specification's output rather than pinning
+// whatever this engine happens to print.
 //
-// THE ROUND TRIP IS THE ASSERTION THAT MATTERS. ECMA-262 6.1.6.1.20 does not
-// ask for "enough digits"; it asks for the SHORTEST digit string that reads back
+// The round trip is the assertion that matters. ECMA-262 6.1.6.1.20 does not
+// ask for "enough digits"; it asks for the shortest digit string that reads back
 // as the same double. `round_trips` below checks exactly that, which is a
 // property rather than a table and so cannot be satisfied by tuning a precision
 // until the listed cases pass.
@@ -20,6 +18,8 @@
 // golden for a reason no diff would explain. `std::to_chars`/`from_chars` are
 // the locale-independent pair, which is the same argument docs/build.md already
 // makes for preferring `from_chars` to `strtod`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -28,15 +28,12 @@
 
 namespace {
 
-// `Number(String(x)) === x`, asked of the engine in its own terms. A literal is
-// not enough on its own - the LEXER has to read the constant correctly too, and
-// this closes over both halves at once.
+/// Checks `Number(String(x)) === x` for the literal \p literal, asked of the
+/// engine in its own terms. The lexer has to read the constant correctly too,
+/// so this covers both halves at once.
 void round_trips(std::string_view literal) {
-    // Through js_run, like every other assertion in this file. It costs one
-    // repetition of the literal - this used to bind `let x` and compare against
-    // it - and buys the guarantee that this suite renders a result exactly as
-    // its neighbours do, which is the whole reason js_expect.hpp exists. Lexing
-    // the constant twice tests the lexer at least as hard as lexing it once.
+    // Goes through js_run like the other assertions, so the result is rendered
+    // exactly as theirs is.
     const std::string l{literal};
     const std::string got = ctbrowser_test::js_run("Number(String(" + l + ")) === " + l +
                                                    " ? 'yes' : ('no: ' + String(" + l + "))");
@@ -50,7 +47,7 @@ void round_trips(std::string_view literal) {
 } // namespace
 
 int main() {
-    // --- Number::toString, the default path ---------------------------------
+    // --- Number::toString, the default path. ---------------------------------
     // Integral values print with no decimal point, and -0 prints as "0" (the
     // sign survives in the double and is deliberately not shown; Object.is is
     // what distinguishes them).
@@ -61,7 +58,7 @@ int main() {
     js_expect("100", "100");
     js_expect("9007199254740992", "9007199254740992");
 
-    // Fractions, and THE case that `%f` to six decimals gets wrong.
+    // Fractions, and the case that `%f` to six decimals gets wrong.
     js_expect("0.5", "0.5");
     js_expect("-2.5", "-2.5");
     js_expect("1/3", "0.3333333333333333");
@@ -69,11 +66,11 @@ int main() {
     js_expect("4.35", "4.35");
     js_expect("1.005", "1.005");
 
-    // WHERE THE NOTATION SWITCHES, which is where `%g` and JavaScript part
-    // company. The specification's rule is on the DECIMAL EXPONENT n: plain
+    // Where the notation switches, which is where `%g` and JavaScript part
+    // company. The specification's rule is on the decimal exponent n: plain
     // digits while -6 < n <= 21, exponential outside it. `%g` switches on
     // precision instead, so it would print 1e20 as "1e+20" and 0.000001 as
-    // "1e-06" - both wrong here, and the second wrong twice over because
+    // "1e-06", both wrong here, and the second wrong twice over because
     // JavaScript writes no leading zero in an exponent.
     js_expect("1e20", "100000000000000000000");
     js_expect("1e21", "1e+21");
@@ -95,7 +92,7 @@ int main() {
     js_expect("1/0", "Infinity");
     js_expect("-1/0", "-Infinity");
 
-    // --- the property, not the table ----------------------------------------
+    // --- The property, not the table. ----------------------------------------
     for (const char * literal : {"0",
                                  "1",
                                  "-1",
@@ -119,17 +116,17 @@ int main() {
         round_trips(literal);
     }
 
-    // --- toString(radix) ----------------------------------------------------
-    // Not a to_chars question - the radix path is this engine's own long
-    // division - but it shares `to_string` for radix 10 and for the non-finite
-    // values, so it is pinned beside it.
+    // --- toString(radix) -----------------------------------------------------
+    // Not a to_chars question (the radix path is this engine's own long
+    // division), but it shares `to_string` for radix 10 and for the non-finite
+    // values, so it is tested beside it.
     js_expect("(255).toString(16)", "ff");
     js_expect("(0.5).toString(2)", "0.1");
     js_expect("(255).toString(10)", "255");
     js_expect("(1/0).toString(16)", "Infinity");
 
-    // --- toFixed ------------------------------------------------------------
-    // 1.005 is the classic: the double nearest 1.005 is slightly BELOW it, so
+    // --- toFixed -------------------------------------------------------------
+    // 1.005 is the classic: the double nearest 1.005 is slightly below it, so
     // the correctly-rounded answer is "1.00" and not "1.01". Same for 1.45.
     js_expect("(1.005).toFixed(2)", "1.00");
     js_expect("(1.45).toFixed(1)", "1.4");
@@ -139,33 +136,34 @@ int main() {
     // Past 1e21 toFixed hands back ToString, exponent and all.
     js_expect("(1e21).toFixed(2)", "1e+21");
 
-    // --- toExponential ------------------------------------------------------
+    // --- toExponential -------------------------------------------------------
     // One exponent digit, not C's minimum of two: "7.71e+1", never "7.71e+01".
     js_expect("(77.1234).toExponential(2)", "7.71e+1");
     js_expect("(0).toExponential(1)", "0.0e+0");
     js_expect("(5).toExponential()", "5e+0");
-    // A TIE ROUNDS UP (21.1.3.2 step 10.b picks the larger n; to_chars picks
-    // the even one, which is what "1.234e+3" was - test262's
-    // toExponential/return-values.js pins (25).toExponential(0) as "3e+1").
+    // A tie rounds up: ECMA-262 21.1.3.2 step 10.b picks the larger n, whereas
+    // std::to_chars rounds half to even and would print (1234.5).toExponential(3)
+    // as "1.234e+3". test262's toExponential/return-values.js pins
+    // (25).toExponential(0) as "3e+1".
     js_expect("(1234.5).toExponential(3)", "1.235e+3");
     js_expect("(25).toExponential(0)", "3e+1");
     js_expect("(12345).toExponential(3)", "1.235e+4");
     js_expect("(0.125).toExponential(1)", "1.3e-1");
-    js_expect("(9.5).toExponential(0)", "1e+1");    // the carry moves the exponent
-    js_expect("(1.25).toExponential(1)", "1.3e+0"); // 1.25 is exact, so a tie
-    js_expect("(1.35).toExponential(1)", "1.4e+0"); // 1.35 is not (1.350000000000000088...)
+    js_expect("(9.5).toExponential(0)", "1e+1");    // The carry moves the exponent.
+    js_expect("(1.25).toExponential(1)", "1.3e+0"); // 1.25 is exact, so a tie.
+    js_expect("(1.35).toExponential(1)", "1.4e+0"); // 1.35 is not (1.350000000000000088...).
 
-    // --- toPrecision --------------------------------------------------------
+    // --- toPrecision ---------------------------------------------------------
     js_expect("(1234.5).toPrecision(2)", "1.2e+3");
     js_expect("(0.000123).toPrecision(2)", "0.00012");
     js_expect("(123456).toPrecision(3)", "1.23e+5");
     js_expect("(1.5).toPrecision(3)", "1.50");
-    js_expect("(1234.5).toPrecision(4)", "1235"); // the same tie rule, 21.1.3.5
+    js_expect("(1234.5).toPrecision(4)", "1235"); // The same tie rule, ECMA-262 21.1.3.5.
     js_expect("(2.5).toPrecision(1)", "3");
     js_expect("(99.5).toPrecision(2)", "1.0e+2");
 
-    // --- the way back: ToNumber on a string ---------------------------------
-    // Trailing garbage is NaN rather than a prefix - that is ToNumber, and it is
+    // --- The way back: ToNumber on a string. ---------------------------------
+    // Trailing garbage is NaN rather than a prefix; that is ToNumber, and it is
     // what separates it from parseFloat below. An empty or all-whitespace string
     // is 0, which surprises people and is nonetheless the specification.
     js_expect("Number(' 12 ')", "12");
@@ -182,8 +180,8 @@ int main() {
     js_expect("parseFloat('3.14xyz')", "3.14");
     js_expect("parseFloat('abc')", "NaN");
 
-    // A DECIMAL POINT IS A POINT, in every locale. `strtod` and `%f` consult
-    // LC_NUMERIC and would answer differently under, say, de_DE - which is how
+    // A decimal point is a point, in every locale. `strtod` and `%f` consult
+    // LC_NUMERIC and would answer differently under, say, de_DE, which is how
     // a byte-compared golden starts depending on the machine that rendered it.
     // Nothing in this file may go through either.
     js_expect("Number('1.5') + 1", "2.5");

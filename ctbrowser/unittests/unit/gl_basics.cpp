@@ -1,15 +1,15 @@
-// A REAL GLES DEVICE, AND WHICH DRIVERS ANSWER.
+//===- ctbrowser/unittests/unit/gl_basics.cpp - GLES device smoke test ----===//
 //
-// The first test of the rewritten stack (docs/history/webgl-rewrite.md). It asks
-// the question the plan queued rather than guessing at it: construct a device
-// with EACH driver in turn and print `ok()` and `renderer()` for both, side by
-// side, in one run. Thirteen WebGL tests fail on a box with no GPU, and the
-// hypothesis is that `driver::fastest` cannot come up there while
-// `deterministic` can - which is a measurement, not a belief.
+// Constructs a GLES device with each driver (`fastest` and `deterministic`),
+// prints ok() and renderer() for both side by side, then checks that the
+// deterministic (SwiftShader) device clears, draws a triangle and depth-tests.
+// Background: docs/history/webgl-rewrite.md.
 //
-// OPTIONAL, like svg_basics without plutosvg: a checkout that has not run
-// tools/fetch-angle.sh builds and passes and SAYS it did not look. What it must
-// not do is pass in silence.
+// Optional, like svg_basics without plutosvg: a checkout that has not run
+// tools/fetch-angle.sh builds and passes, and prints SKIP to say it did not
+// look. What it must not do is pass in silence.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cstdio>
 
@@ -22,20 +22,22 @@ using namespace ctbrowser;
 
 namespace {
 
+/// What one driver reported when a device was constructed with it.
 struct outcome {
     bool ok = false;
     bool webgl = false;
     std::string renderer;
 };
 
+/// Constructs a 64x48 device with \p which and prints its result under \p name.
 [[nodiscard]] outcome try_driver(raster::gl::driver which, const char * name) {
     raster::gl::device device{64, 48, which};
     outcome out;
     out.ok = device.ok();
     out.webgl = device.webgl_compatible();
     out.renderer = device.renderer();
-    // BOTH, ALWAYS, SIDE BY SIDE. A run that prints only the failure leaves the
-    // reader guessing whether the other one was even tried.
+    // Print both drivers, always, side by side. A run that prints only the
+    // failure leaves the reader guessing whether the other one was even tried.
     std::printf("     %-14s ok=%s  webgl=%s  %s\n", name, out.ok ? "yes" : "NO ",
                 out.webgl ? "yes" : "NO ", out.ok ? out.renderer.c_str() : device.error().c_str());
     return out;
@@ -52,24 +54,22 @@ int main() {
     const outcome fastest = try_driver(raster::gl::driver::fastest, "fastest");
     const outcome deterministic = try_driver(raster::gl::driver::deterministic, "deterministic");
 
-    // SWIFTSHADER IS THE FLOOR. It is software, it needs no GPU, and the
-    // byte-compared goldens depend on it - so a build with ANGLE where this
-    // fails is broken however well the other one does.
+    // SwiftShader is the floor. It is software, it needs no GPU, and the
+    // byte-compared goldens depend on it, so a build with ANGLE where this
+    // fails is broken however well the other driver does.
     CHECK(deterministic.ok);
     if (deterministic.ok) {
         CHECK(deterministic.renderer.find("SwiftShader") != std::string::npos);
     }
 
-    // THE CONTEXT IS A BROWSER'S, NOT A NATIVE APP'S. Without WebGL
-    // compatibility mode ANGLE skips the validation that makes a page's mistake
-    // an INVALID_OPERATION, and a uniform buffer with no storage behind it
-    // reaches the Vulkan back end as a null dereference - which is what rung 10
-    // spent five commits calling a WebGL bug. Asserted rather than reported,
-    // because a context that quietly comes up without it is a crash waiting for
-    // the right page.
+    // The context must be in WebGL compatibility mode. Without it ANGLE skips
+    // the validation that turns a page's mistake into INVALID_OPERATION, and,
+    // for example, a uniform buffer with no storage reaches the Vulkan back end
+    // as a null dereference. Asserted, not just reported, because a context
+    // without it crashes on the wrong page.
     CHECK(deterministic.webgl);
 
-    // `fastest` MAY legitimately fail: a headless box with no GPU has nothing
+    // `fastest` may legitimately fail: a headless box with no GPU has nothing
     // for it to pick. That is why it is reported rather than asserted - and why
     // the engine must fall back rather than hand a page a null context.
     if (!fastest.ok) {
@@ -77,7 +77,7 @@ int main() {
                     "deterministic is what a page will get\n");
     }
 
-    // --- and the device clears -------------------------------------------------
+    // --- The device clears ------------------------------------------------------
     {
         raster::gl::device device{64, 48, raster::gl::driver::deterministic};
         CHECK(device.ok());
@@ -94,22 +94,14 @@ int main() {
         if (((pixel >> 16) & 0xFF) != 255) { std::printf("     clear came back %08x\n", pixel); }
     }
 
-    // --- AND THE DEVICE DRAWS --------------------------------------------------
+    // --- The device draws -------------------------------------------------------
     //
-    // THIS IS THE INSTRUMENT, and its absence is why "clears but draws no
-    // geometry" survived five commits. The section above was labelled "and the
-    // device draws" and only cleared - so the one unit test of the GL device
-    // asserted exactly the half of the symptom that works, and every defect in
-    // the half that does not was invisible to the suite.
-    //
-    // It is the shape of webgl2_ratchet's rung 10 - a corner pixel and a centre
-    // pixel, the clear and the geometry read separately - but at DEVICE level:
-    // no page, no bindings, no JavaScript, no Babylon. When a corpus stops
-    // painting, this says in one command whether ANGLE draws at all or whether
-    // the engine loses the draw between here and the canvas.
-    //
-    // With the software rasteriser deleted (56bb66f) there is no oracle left to
-    // diff against, so a positive pixel assertion is the whole of the evidence.
+    // Draw a green triangle over a red clear and read a corner pixel (the clear)
+    // and the centre pixel (the geometry) separately, at device level with no
+    // page or JavaScript involved. When a WebGL page stops painting, this shows
+    // whether ANGLE draws at all or the engine loses the draw on the way to the
+    // canvas. There is no software rasteriser to diff against, so the pixel
+    // assertions are the only evidence.
     {
         // GL's numbers, spelled out. `raster::gl::device` takes plain ints on
         // purpose - the values a page passes arrive from JavaScript already as
@@ -166,8 +158,8 @@ int main() {
         device.bind_buffer(gl_array_buffer, buffer);
         device.buffer_data(gl_array_buffer, xy, sizeof(xy), gl_static_draw);
 
-        // ASKED OF THE LINKED PROGRAM. A location the engine invents agrees with
-        // the shader only by coincidence.
+        // The location is asked of the linked program. A location the engine
+        // invents agrees with the shader only by coincidence.
         const int location = device.attribute_location(program, "xy");
         CHECK(location >= 0);
         if (location >= 0) {
@@ -182,10 +174,10 @@ int main() {
         device.clear(1.0F, 0.0F, 0.0F, 1.0F);
         device.draw_arrays(gl_triangles, 0, 3);
 
-        // NOTHING MAY HAVE GONE WRONG SILENTLY. A draw that GL rejected returns
-        // normally and paints nothing, which is the entire failure mode this
-        // file exists to catch - so the error queue is part of the assertion,
-        // not a diagnostic beside it.
+        // Nothing may have gone wrong silently. A draw that GL rejected returns
+        // normally and paints nothing, which is the failure mode this file
+        // exists to catch, so the error queue is part of the assertion, not a
+        // diagnostic beside it.
         const std::uint32_t error = device.take_error();
         CHECK(error == 0);
         if (error != 0) { std::printf("     GL error after the draw: 0x%04X\n", error); }
@@ -196,12 +188,12 @@ int main() {
         const std::uint32_t corner = into.at(1, 1);
         const std::uint32_t centre = into.at(32, 24);
 
-        // THE CLEAR REACHED THE PIXELS - the half that already worked.
+        // The clear reached the pixels.
         CHECK(((corner >> 16) & 0xFF) == 255);
         CHECK(((corner >> 8) & 0xFF) == 0);
 
-        // AND THE GEOMETRY DID - the half that did not. Green where the
-        // triangle is, and not the clear colour.
+        // And so did the geometry: green where the triangle is, not the clear
+        // colour.
         CHECK(centre != corner);
         CHECK(((centre >> 8) & 0xFF) == 255);
         CHECK(((centre >> 16) & 0xFF) == 0);
@@ -211,18 +203,16 @@ int main() {
         }
     }
 
-    // --- AND THE DEVICE HONOURS DEPTH ------------------------------------------
+    // --- The device honours depth -----------------------------------------------
     //
-    // The triangle above proves a draw lands. It says NOTHING about depth, and
-    // the p5 WEBGL page differs from its golden by exactly that: a sphere the
-    // software rasteriser hid behind a box is drawn over the top of it. A
-    // device-level answer separates "this device cannot depth-test" from "the
-    // engine never asked it to", which are different bugs in different files.
+    // The triangle above proves a draw lands but says nothing about depth. This
+    // separates "the device cannot depth-test" from "the engine never enabled
+    // it", which are bugs in different files.
     //
-    // Order matters here and is the whole point: NEAR-THEN-FAR is the case a
-    // missing depth buffer passes by accident, because painter's order gives
-    // the right answer when the far thing is drawn second only if it is
-    // REJECTED.
+    // Draw order matters: near first, then far. Without a working depth test
+    // the far triangle, drawn second, paints over the near one, so this order
+    // fails unless depth testing rejects it. Far-then-near would pass by
+    // accident.
     {
         constexpr int gl_vertex_shader = 0x8B31;
         constexpr int gl_fragment_shader = 0x8B30;
@@ -283,7 +273,7 @@ int main() {
         device.depth_func(gl_less);
         device.depth_mask(true);
 
-        // NEAR FIRST, THEN FAR. The far triangle must be REJECTED; if depth is
+        // Near first, then far. The far triangle must be rejected; if depth is
         // not working it paints over and the centre comes back green.
         device.clear(1.0F, 0.0F, 0.0F, 1.0F);
         blue();

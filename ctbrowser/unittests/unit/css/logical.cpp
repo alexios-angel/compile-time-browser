@@ -1,8 +1,12 @@
+//===- ctbrowser/unittests/unit/css/logical.cpp - CSS Logical tests -------===//
+//
 // CSS Logical 1: a flow-relative property is the physical one it maps to on
 // its element, decided by that element's writing mode and direction (§2), at
 // computed-value time, with the later declaration of a logical property group
 // winning whichever spelling it used (§4). One case per rule, each named for
-// the css/css-logical file it moves.
+// the WPT css/css-logical file it makes pass. Bare § numbers are CSS Logical 1.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
@@ -17,7 +21,7 @@ using ctbrowser::style::css::physical_property_of;
 
 namespace {
 
-// §2: the mapping itself, for every writing mode and both directions.
+/// §2: the mapping itself, for every writing mode and both directions.
 void test_the_mapping() {
     const auto h = [](std::string_view p) {
         return physical_property_of(p, "horizontal-tb", "ltr");
@@ -75,10 +79,10 @@ void test_the_mapping() {
     CHECK_EQ(physical_property_of("inset-block-start", "sideways-rl", "ltr"), std::string{"right"});
 }
 
-// margin-block-inline-computed, border-block-style-computed, inline-size-
-// computed, inheritance: the cascade stores the physical side and both
-// spellings read it back; §4's group rule orders logical against physical by
-// source position; a vertical writing mode maps to the other axis.
+/// margin-block-inline-computed, border-block-style-computed, inline-size-
+/// computed, inheritance: the cascade stores the physical side and both
+/// spellings read it back; §4's group rule orders logical against physical by
+/// source position; a vertical writing mode maps to the other axis.
 void test_what_a_page_reads_back() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;

@@ -1,20 +1,23 @@
-#pragma once
-// THE API-SURFACE PAWL, shared by the four *_api.cpp corpus tests.
+//===- ctbrowser/test/support/api_pawl.hpp - API-surface ratchet check ----===//
 //
-// Each of them loads a bundle, runs the probes in its <corpus>-api-probe.js,
-// and gets one JSON report back: from support/engine.hpp's call() in p5, Phaser
-// and Babylon, through alert() in webgl2. What happens to that report
-// is the same in every corpus: parse it BY HAND, check every probe is accounted
-// for, print the summary, and hold the recorded surface - a recorded pass that
-// now fails is a FAIL, a new pass prints ADVANCE, a known failure is the work
-// queue. There were four copies of this before it moved here.
+// The API-surface ratchet shared by the *_api.cpp corpus tests (p5, Phaser,
+// Babylon, webgl2). Each test loads a bundle, runs the probes in its
+// <corpus>-api-probe.js and gets one JSON report back (through
+// support/engine.hpp's call() in p5, Phaser and Babylon, through alert() in
+// webgl2). A "pawl" stops a ratchet slipping back: every probe recorded as
+// passing must still pass (a regression is a FAIL), a newly passing probe
+// prints ADVANCE so the record can be moved forward, and known failures are
+// the work queue.
 //
-// Parsed by hand rather than through the JSON builtin: this is the test
-// harness, and a harness that depends on the thing under test to report its
-// own results is a harness that can pass because two bugs cancelled.
+// The report is parsed by hand rather than through the JSON builtin: a harness
+// that depends on the code under test to report its own results can pass
+// because two bugs cancelled.
 //
 // tools/corpus/ratchet.py reads the `probes -`, `!!` and `+` lines by regex,
 // so the printed text is part of the contract.
+//
+//===----------------------------------------------------------------------===//
+#pragma once
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,14 +30,15 @@
 
 namespace ctbrowser_test {
 
+/// The probe names a report puts in each of its three lists.
 struct outcome {
     std::vector<std::string> passed;
     std::vector<std::string> failed;
     std::vector<std::string> skipped;
 };
 
-// Pull one `"..."` list out of `"key": [ ... ]`. Enough for the shape the
-// runner emits, and it does not pretend to be a JSON parser.
+/// Pulls one `"..."` list out of `"key": [ ... ]`. Enough for the shape the
+/// runner emits; it does not pretend to be a JSON parser.
 [[nodiscard]] inline std::vector<std::string> field(const std::string & json,
                                                     const std::string & key) {
     std::vector<std::string> out;
@@ -43,11 +47,8 @@ struct outcome {
     std::size_t i = json.find('[', at);
     if (i == std::string::npos) { return out; }
     ++i;
-    // A `]` ENDS THE ARRAY ONLY OUTSIDE A STRING. The p5 harness learned this
-    // the expensive way: it found the first one anywhere, so a probe whose
-    // failure MESSAGE contained a bracket truncated the list - silently, and
-    // only for the probes that sorted after it. Five failures vanished from a
-    // report that still looked complete.
+    // A `]` ends the array only outside a string: a failure message that
+    // contains a bracket must not truncate the list.
     while (i < json.size() && json[i] != ']') {
         if (json[i] != '"') {
             ++i; // a comma or whitespace between items
@@ -65,15 +66,17 @@ struct outcome {
     return out;
 }
 
+/// The probe name in a "name: message" failure entry.
 [[nodiscard]] inline std::string name_of(const std::string & failure) {
     const std::size_t colon = failure.find(": ");
     return colon == std::string::npos ? failure : failure.substr(0, colon);
 }
 
-// `reported` is the runner's JSON; `label` names the corpus in the summary
-// line ("p5 API"); `record_path` is the recorded surface and `tool` the
-// script that advances it. Failures bump ctbrowser_test_failures; the caller
-// REPORT()s.
+/// Checks one probe report against the recorded surface and prints the
+/// summary. `reported` is the runner's JSON; `label` names the corpus in the
+/// summary line ("p5 API"); `record_path` is the recorded surface and `tool`
+/// the script that advances it. Failures bump ctbrowser_test_failures; the
+/// caller still calls REPORT().
 inline void api_pawl(const char * label, const std::string & reported, const char * record_path,
                      const char * tool) {
     outcome now;
@@ -82,9 +85,9 @@ inline void api_pawl(const char * label, const std::string & reported, const cha
     now.skipped = field(reported, "skipped");
 
     const std::size_t total = now.passed.size() + now.failed.size() + now.skipped.size();
-    // EVERY PROBE MUST BE ACCOUNTED FOR. The runner reports how many it was
-    // given and every one lands in exactly one of the three lists, so a
-    // mismatch means the report lost some whatever it says about the rest.
+    // Every probe must be accounted for. The runner reports how many it was
+    // given and each lands in exactly one of the three lists, so a mismatch
+    // means the report lost some, whatever it says about the rest.
     const std::vector<std::string> declared = field(reported, "count");
     const std::size_t expected =
         declared.empty() ? total : static_cast<std::size_t>(std::atoll(declared[0].c_str()));
@@ -97,7 +100,7 @@ inline void api_pawl(const char * label, const std::string & reported, const cha
                 now.passed.size(), now.failed.size(), now.skipped.size());
     for (const std::string & failure : now.failed) { std::printf("     !! %s\n", failure.c_str()); }
 
-    // --- the pawl ----------------------------------------------------------
+    // The pawl: compare against the recorded surface.
     const std::string record = read_file(record_path);
     if (record.empty()) {
         std::printf("FAIL %s is missing - it is the recorded surface\n", record_path);

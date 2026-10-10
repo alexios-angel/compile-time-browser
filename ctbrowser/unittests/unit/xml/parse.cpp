@@ -1,6 +1,12 @@
-// The XML front end - dom/xml.hpp - and the six places it disagrees with the
-// HTML tree builder. Every assertion here is a thing that was measurably wrong
-// when an `.xhtml` file was handed to `parse_html`.
+//===- ctbrowser/unittests/unit/xml/parse.cpp - XML parser tests ----------===//
+//
+// The XML front end (dom/xml.hpp, parse_xml) and the places it disagrees with
+// the HTML tree builder: CDATA sections, preserved case, nothing implied,
+// self-closing tags, namespaces, fatal well-formedness errors and entities.
+// Also its resource limits: entity expansion and nesting depth.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 
@@ -13,8 +19,7 @@ using namespace ctbrowser;
 
 namespace {
 
-// The tag of the first descendant of `from` whose text matches, or "" - a
-// tiny walker, because these documents are five nodes deep.
+/// `from` and every node below it, in tree order.
 [[nodiscard]] std::vector<node_id> descendants(const read_txn & r, node_id from) {
     std::vector<node_id> out;
     std::vector<node_id> stack{from};
@@ -28,15 +33,15 @@ namespace {
     return out;
 }
 
+/// The element's tag name, or "" for a node that is not an element.
 [[nodiscard]] std::string tag_of(const atom_table & atoms, const read_txn & r, node_id id) {
     return std::string{atoms.text(r.tag(id).value_or(atom{}))};
 }
 
-// THE ONE THAT COST TWELVE WPT FILES. In XML a `<script>` body is written
-// inside a marked section, because `<` is not allowed raw; the HTML tokenizer
-// has no marked sections outside foreign content, so the script the engine
-// compiled began with the six characters `<![CDA` and every one of those files
-// reported `parse error: expression - at 1:1` without running an assertion.
+/// In XML a `<script>` body is written inside a CDATA marked section, because
+/// `<` is not allowed raw. The section's content must become plain text with
+/// the markers stripped; otherwise the compiled script starts with `<![CDATA[`
+/// and fails to parse (twelve WPT Element-*-xhtml.xhtml files rely on this).
 void test_cdata_is_character_data() {
     atom_table atoms;
     document doc{atoms};
@@ -51,8 +56,8 @@ var a = 1 < 2;
     for (const node_id id : all) {
         if (tag_of(atoms, r, id) == "script") {
             for (const node_id kid : r.children(id)) {
-                // A CDATASection is a Text node - `is_text_kind` - and that is
-                // exactly what lets a script written the XML way run.
+                // A CDATASection is a Text node (`is_text_kind`), which is what
+                // lets a script written the XML way run.
                 if (is_text_kind(r.kind(kid).value_or(node_kind::element))) {
                     script_text += std::string{r.text(kid)};
                 }
@@ -63,10 +68,10 @@ var a = 1 < 2;
     CHECK(script_text.find("var a = 1 < 2;") != std::string::npos);
 }
 
-// A CDATA section is character data, legal only inside the document element.
-// After a self-closed root there is no open element, and `cdata()` read an
-// empty `open_` stack - UB, a crash under asan (security review OOBREAD-001).
-// It is a well-formedness error now, reported rather than crashed on.
+/// A CDATA section is character data, legal only inside the document element.
+/// After a self-closed root no element is open, and cdata() must report a
+/// well-formedness error rather than read the empty `open_` stack (an
+/// out-of-bounds read found by ASan).
 void test_cdata_outside_the_root_is_an_error_not_a_crash() {
     atom_table atoms;
     document doc{atoms};
@@ -74,8 +79,8 @@ void test_cdata_outside_the_root_is_an_error_not_a_crash() {
     CHECK(!out.error.empty());
 }
 
-// `viewBox` stays `viewBox` and `<i>` stays `i`. The HTML tokenizer folds both
-// and `dom/nodes/Node-nodeName-xhtml.xhtml` asserts the second by name.
+/// `viewBox` stays `viewBox` and `<i>` stays `i`. The HTML tokenizer folds
+/// both, and WPT's `dom/nodes/Node-nodeName-xhtml.xhtml` asserts the second.
 void test_case_is_preserved() {
     atom_table atoms;
     document doc{atoms};
@@ -96,8 +101,8 @@ void test_case_is_preserved() {
     CHECK(saw);
 }
 
-// Nothing is implied. `<p>a<p>b` is ONE paragraph containing text and a
-// paragraph, because in XML an element ends where its end tag says.
+/// Nothing is implied. `<p>a<p>b` is one paragraph containing text and a
+/// paragraph, because in XML an element ends where its end tag says.
 void test_nothing_is_implied() {
     atom_table atoms;
     document doc{atoms};
@@ -112,7 +117,7 @@ void test_nothing_is_implied() {
     CHECK_EQ(r.children(kids[0]).size(), 2u);
 }
 
-// Every tag may self-close, not only the fourteen HTML void elements.
+/// Every tag may self-close, not only the fourteen HTML void elements.
 void test_any_tag_self_closes() {
     atom_table atoms;
     document doc{atoms};
@@ -128,8 +133,8 @@ void test_any_tag_self_closes() {
     CHECK(r.children(kids[1]).empty());
 }
 
-// A prefix is resolved against the scope it is written in, and an UNPREFIXED
-// attribute is in no namespace however the default namespace is bound.
+/// A prefix is resolved against the scope it is written in, and an unprefixed
+/// attribute is in no namespace however the default namespace is bound.
 void test_namespaces() {
     atom_table atoms;
     document doc{atoms};
@@ -155,7 +160,8 @@ void test_namespaces() {
     CHECK(r.element_ns(out.tree.root) == node_ns::html);
 }
 
-// XML is draconian, and this is the half a browser shows an error page for.
+/// XML is draconian: a well-formedness error is fatal, and a browser shows an
+/// error page instead of the document.
 void test_wellformedness_is_fatal() {
     {
         atom_table atoms;
@@ -211,9 +217,9 @@ void test_wellformedness_is_fatal() {
     }
 }
 
-// The five predefined entities and both spellings of a character reference.
-// `&copy;` is NOT one of them - that is an HTML entity, and an XML document
-// that uses it without declaring it does not load.
+/// The five predefined entities and both spellings of a character reference.
+/// `&copy;` is not one of them: that is an HTML entity, and an XML document
+/// that uses it without declaring it does not load.
 void test_references() {
     atom_table atoms;
     document doc{atoms};
@@ -225,12 +231,12 @@ void test_references() {
     CHECK_EQ(text, std::string{"<&>\"'AB"});
 }
 
-// A general entity the internal subset declares expands where it is
-// referenced - as CONTENT, so markup in it makes elements - and in an
-// attribute value; character references in its value are resolved when it is
-// declared; the first declaration wins; a parameter entity, an external one
-// and the other declaration kinds are passed over; and a self-reference is
-// an error rather than a loop. (Element-firstElementChild-entity-xhtml.xhtml.)
+/// A general entity the internal subset declares expands where it is
+/// referenced (as content, so markup in it makes elements) and in an attribute
+/// value; character references in its value are resolved when it is declared;
+/// the first declaration wins; a parameter entity, an external one and the
+/// other declaration kinds are passed over; and a self-reference is an error
+/// rather than a loop. (WPT Element-firstElementChild-entity-xhtml.xhtml.)
 void test_internal_subset_entities() {
     atom_table atoms;
     document doc{atoms};
@@ -270,10 +276,11 @@ void test_internal_subset_entities() {
     CHECK(!undeclared.error.empty());
 }
 
-// DOS-019: a 100 KB entity referenced ten thousand times is a gigabyte of
-// text; the expansion stops at 16 MB. Many small references, nested ones
-// included, still expand exactly - they are written into the consumed prefix
-// rather than re-copying the whole input each time.
+/// Entity-expansion bomb: a 100 KB entity referenced ten thousand times is a
+/// gigabyte of text, so expansion stops at 16 MB (max_expanded_bytes in
+/// lib/DOM/xml.cpp). Many small references, nested ones included, still expand
+/// exactly: they are written into the consumed prefix rather than re-copying
+/// the whole input each time.
 void test_entity_expansion_is_bounded() {
     std::string bomb = "<!DOCTYPE a [<!ENTITY big \"" + std::string(100 * 1024, 'x') + "\">]><a>";
     for (int i = 0; i < 10000; ++i) { bomb += "&big;"; }
@@ -298,7 +305,7 @@ void test_entity_expansion_is_bounded() {
              std::string{"abab"});
 }
 
-// The document knows what it is, and an XML document is never in quirks mode.
+/// The document knows what it is, and an XML document is never in quirks mode.
 void test_document_is_marked() {
     atom_table atoms;
     document doc{atoms};
@@ -318,8 +325,8 @@ void test_extension() {
     CHECK(!is_xml_extension("noextension"));
 }
 
-// Comments and processing instructions in the prolog do not stop the parse -
-// `ProcessingInstruction-escapes-1.xhtml` opens with one.
+/// Comments and processing instructions in the prolog do not stop the parse;
+/// WPT's `ProcessingInstruction-escapes-1.xhtml` opens with one.
 void test_prolog() {
     atom_table atoms;
     document doc{atoms};
@@ -333,11 +340,11 @@ void test_prolog() {
     const auto r = doc.read();
     CHECK_EQ(tag_of(atoms, r, out.tree.root), std::string{"html"});
 }
-// THE DEPTH CAP (max_dom_depth): 100000 nested elements are a fatal error
-// rather than a tree deeper than every recursive walk downstream can take.
-// 511 nested elements still parse (the last sits 511 below the Document), a
-// comment inside the 511th would sit at 512 and is refused, and text inside
-// the 510th parses.
+/// The depth cap (max_dom_depth, 512): 100000 nested elements are a fatal
+/// error rather than a tree deeper than every recursive walk downstream can
+/// take. 511 nested elements still parse (the last sits 511 below the
+/// Document), a comment inside the 511th would sit at 512 and is refused, and
+/// text inside the 510th parses.
 void test_nesting_is_capped() {
     const auto nested = [](std::size_t levels, std::string_view inner) {
         std::string out;

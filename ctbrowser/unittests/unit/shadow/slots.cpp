@@ -1,13 +1,17 @@
-// The shadow DOM BEYOND the root itself: the rest of `attachShadow`'s init
-// dictionary read back, slots and their assignments, and the declarative
-// shadow roots `setHTMLUnsafe` attaches. `unit/shadow/dom.cpp` beside this one
-// covers attachShadow and the root as a node.
+//===- slots.cpp - Shadow DOM slots and declarative roots -------*- C++ -*-===//
 //
-// The regression net for lib/Shell/bindings/shadow_dom.cpp and the init half
-// of element/shadow.cpp. What it pins down is that an
-// assignment is COMPUTED from the two trees - move the child, and the answer
-// moves with it - and that `innerHTML` and `setHTMLUnsafe` differ in exactly
+// The shadow DOM beyond the root itself: the rest of `attachShadow`'s init
+// dictionary read back, slots and their assignments, and the declarative
+// shadow roots `setHTMLUnsafe` and the page parser attach.
+// unittests/unit/shadow/dom.cpp covers attachShadow and the root as a node.
+//
+// This guards lib/Shell/bindings/shadow_dom.cpp and the init-dictionary half
+// of lib/Shell/bindings/element/shadow.cpp. It pins down that a slot
+// assignment is computed from the two trees (move the child and the answer
+// moves with it), and that `innerHTML` and `setHTMLUnsafe` differ in exactly
 // one thing: whether a `<template shadowrootmode>` becomes a shadow root.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -54,7 +58,7 @@ void test_the_init_dictionary_is_readable_back() {
 }
 
 // The assignment is a function of the two trees: the light child names a slot,
-// the FIRST slot of that name in the shadow tree gets it, and a closed root
+// the first slot of that name in the shadow tree gets it, and a closed root
 // hides which slot that was from the light side.
 void test_slots_assign_by_name() {
     CHECK_EQ(said("<html><body><div id=h><span id=a slot=one></span><b id=b></b></div><script>"
@@ -107,9 +111,9 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
                   "alert(e.children.length + ',' + e.children[0].textContent);"
                   "alert(!!e.shadowRoot + ',' + e.shadowRoot.innerHTML);"
                   "alert(e.shadowRoot.clonable);"
-                  // The declarative root is CLAIMED by a matching attachShadow,
-                  // once, and emptied; the mismatching mode and the second call
-                  // are both refused.
+                  // A matching attachShadow claims the declarative root, once,
+                  // and empties it; a mismatching mode and a second call are
+                  // both refused.
                   "alert(threw(function(){ e.attachShadow({mode: 'closed'}); }));"
                   "var same = e.attachShadow({mode: 'open'});"
                   "alert((same === e.shadowRoot) + ',' + same.innerHTML);"
@@ -131,8 +135,8 @@ void test_set_html_unsafe_attaches_a_declarative_root() {
              "true,false;true;true,true,<b>s</b>,about:blank,1");
 }
 
-// THE PAGE'S OWN PARSER attaches them as it meets the template, not
-// afterwards: a script inside the root already runs connected, the host keeps
+// The page's own parser attaches declarative roots as it meets the template,
+// not afterwards: a script inside the root already runs connected, the host keeps
 // only its light children, and a template on an element that cannot host one
 // - or on one that already does - stays an ordinary template. DOMParser's
 // document does not allow declarative roots at all.
@@ -156,7 +160,7 @@ void test_the_page_parser_attaches_declarative_roots() {
              "ran:in;true,1;true,null;null,2;null");
 }
 
-// setHTMLUnsafe's OPTIONS AND ITS TEMPLATE TARGET: with `runScripts` the
+// setHTMLUnsafe's options and its template target: with `runScripts` the
 // parsed scripts run once the whole fragment is in, one inside a declarative
 // shadow root included, and without it none does; a <template>'s markup goes
 // into its contents, never under the element.
@@ -174,7 +178,7 @@ void test_set_html_unsafe_options() {
              "2,3;0,B");
 }
 
-// THE TEMPLATE'S DECLARATIVE ATTRIBUTES, reflected: the mode as an
+// The template's declarative attributes, reflected: the mode as an
 // enumerated attribute limited to known values, the slot assignment with
 // "named" for missing and invalid, and the booleans.
 void test_template_reflects_its_declarative_attributes() {
@@ -194,9 +198,10 @@ void test_template_reflects_its_declarative_attributes() {
 
 } // namespace
 
-// slotchange-event.html: not synchronous, once per change however many
-// mutations, at a slot removed after its assignment moved, after the
-// mutation observers' callbacks; and none for a slot nothing moved on.
+// slotchange-event.html: slotchange is not synchronous, fires once per slot
+// however many mutations changed it (including at a slot removed after its
+// assignment changed), runs after the mutation observers' callbacks, and is
+// not fired for a slot whose assignment did not change.
 void test_slotchange_events() {
     browser page{browser_options{200, 100}};
     page.load_html(

@@ -1,7 +1,11 @@
+//===- ctbrowser/unittests/unit/select_event.cpp - select event -----------===//
+//
 // The `select` event of a text control (HTML 4.10.19.7 "set the selection
-// range"): queued once per CHANGE of the selection, never for a repeat of
+// range"): queued once per change of the selection, never for a repeat of
 // the same range, and never synchronously. Stands in for
 // html/semantics/forms/textfieldselection/select-event.html.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -42,9 +46,9 @@ void test_select_fires_once_per_change() {
     (void)page.run_script("step2()");
     for (int i = 0; i < 3; ++i) { (void)page.tick(16.0); }
     (void)page.run_script("report()");
-    // step2: i.select() repeats (nothing); t: selectionStart=1 repeats, the
-    // range (1,1) repeats. Changing the direction and selecting "x" each
-    // queue one event; repeating either operation queues nothing.
+    // In step2, i.select() is a repeat (nothing), and for t both
+    // selectionStart=1 and the range (1,1) are repeats. Changing the direction
+    // and selecting "x" each queue one event; repeating either queues nothing.
     CHECK_EQ(page.bindings().console_output().back(),
              std::string{"seen=sync:0|i:select,true,true|i:handler|t:select,true,true|t:handler|"
                          "t:select,true,true|t:handler|t:select,true,true|t:handler"});

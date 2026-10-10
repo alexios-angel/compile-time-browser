@@ -1,4 +1,11 @@
-// The shared Core reader must preserve JSON's observable VM adapter behavior.
+//===- ctbrowser/unittests/js/vm/json_core.cpp - JSON.parse behaviour -----===//
+//
+// JSON.parse, JSON.rawJSON and JSON.isRawJSON go through the shared JSON
+// reader; these cases pin the behaviour scripts can observe: key order and
+// duplicates, `__proto__` as an own key, reviver order and deletion, and the
+// SyntaxError messages.
+//
+//===----------------------------------------------------------------------===//
 #include "expect.hpp"
 
 int main() {
@@ -24,7 +31,8 @@ int main() {
             Object.is(p[5], -0) + '|' + JSON.stringify(p);
     )JS",
                   R"(true|true|true|true|[{"a":[]},null,true,false,"x",0])");
-    // A pair is two units, a lone surrogate one; the from_chars cases are V8's.
+    // A surrogate pair is two code units and a lone surrogate one. The
+    // from_chars (number) cases match V8's results.
     expect_result(R"JS(
         return JSON.parse('"\\ud83d\\ude00"').length + '|' +
             JSON.parse('"\\ud800"').length + '|' + JSON.parse('1e400') + '|' +

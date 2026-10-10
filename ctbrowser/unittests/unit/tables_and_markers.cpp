@@ -1,24 +1,17 @@
-// Tables, list markers, disclosure triangles and <select>.
+//===- tables_and_markers.cpp - Tables, markers, select ---------*- C++ -*-===//
 //
-// Stage 7's subject is the things a page can put on screen that are not just
-// boxes and text: content the ENGINE generates (a bullet, a number, a
-// triangle), a formatting context whose boxes size each other (a table), and a
-// control whose label lives in its children (<select>).
+// Covers what a page can put on screen beyond plain boxes and text:
+// engine-generated content (bullets, list numbers, disclosure triangles), the
+// table formatting context, whose boxes size each other, and <select>, whose
+// label comes from its <option> children. Also inter-element whitespace and
+// baseline alignment.
 //
-// Each of these had a specific failure before: a table laid out as a stack of
-// ordinary blocks, list items had no marker at all, and a <select> drew an
-// EMPTY RECTANGLE - it passed an empty string as its label and never read
-// <option>.
+// The scrollbar, popups, clipboard and page selection are tested in
+// page/chrome.cpp; text controls in control/editing.cpp and
+// control/scrolling.cpp; listener rules in event/listeners.cpp. Helpers shared
+// with the other chrome tests are in chrome_probe.hpp.
 //
-// This file keeps that subject. The scrollbar, the popups, the clipboard and
-// the page selection that shared the original file are page/chrome.cpp; the
-// controls are control/editing.cpp and control/scrolling.cpp; the listener
-// rules are event/listeners.cpp.
-//
-// One of five files carved out of unittests/unit/chrome_basics.cpp on
-// 2026-09-07, when it had reached 2,299 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the five needs are in
-// chrome_probe.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -36,7 +29,7 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-// Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
+// From test/support/dom_probe.hpp, which other unit tests also use.
 using ctbrowser_test::box_of;
 using ctbrowser_test::commands;
 using ctbrowser_test::draws_text;
@@ -54,8 +47,8 @@ void test_a_closed_details_hides_its_content() {
     page.frame();
     check(draws_text(page, "more"), "the summary is visible");
     // The content of a closed <details> is not laid out at all. This cannot be
-    // a UA rule - `details > :not(summary)` needs a selector the cascade does
-    // not have - so it is decided in the box builder.
+    // a UA rule (`details > :not(summary)` needs a selector the cascade does
+    // not have), so it is decided in the box builder.
     check(!draws_text(page, "the secret"), "and the content is NOT");
     check(box_of(page, "body").empty(), "the hidden content has no box");
 }
@@ -73,8 +66,8 @@ void test_clicking_a_summary_opens_it() {
     page.frame();
     check(draws_text(page, "the secret"), "clicking the summary reveals the content");
 
-    // And closes again - it is a toggle, and the state is the `open`
-    // ATTRIBUTE, so a script reading it agrees with what the user did.
+    // A second click closes it again: it is a toggle, and the state is the
+    // `open` attribute, so a script reading it agrees with what the user did.
     check(page.run_script("console.log(String(document.getElementById('d').getAttribute('open') "
                           "!== null));"),
           "the script runs");
@@ -92,11 +85,10 @@ void test_a_summary_draws_its_triangle() {
     check(draws_text(page, ">"), "a closed summary has a right-pointing triangle");
     const rect summary = box_of(page, "s");
 
-    // AND IT IS ON SCREEN. A list marker is drawn at `box.x - size` because
-    // its gutter is the parent <ul>'s padding; a summary's gutter is its OWN
-    // padding-left, so the same arithmetic put the triangle at a NEGATIVE x
-    // for a <details> at the page margin - drawn, but off the left edge of the
-    // window, which is exactly as useful as not drawing it.
+    // The triangle must be on screen. A list marker is drawn at `box.x - size`
+    // because its gutter is the parent <ul>'s padding; a summary's gutter is
+    // its own padding-left, so the same arithmetic would put the triangle at a
+    // negative x for a <details> at the page margin, off the window's left edge.
     float marker_x = -1;
     for (const auto & c : commands(page)) {
         if (c.op == paint::paint_op::text_run && c.text == ">") { marker_x = c.bounds.x; }
@@ -104,7 +96,7 @@ void test_a_summary_draws_its_triangle() {
     check(marker_x >= summary.x, "the triangle is INSIDE the summary, not off to its left");
     check(marker_x < summary.x + 18, "in the gutter its padding reserves");
 
-    // And the LABEL is not drawn on top of it. The gutter is only a gutter if
+    // The label is not drawn on top of it. The gutter is only a gutter if
     // the summary's own padding-left actually moves its text.
     float label_x = -1;
     for (const auto & c : commands(page)) {
@@ -122,9 +114,9 @@ void test_a_summary_draws_its_triangle() {
 
 void test_a_space_between_inline_elements_is_rendered() {
     browser page{browser_options{600, 200}};
-    // The space between </label> and <input> is a whitespace-only TEXT NODE.
-    // Dropped outright, every label was glued to its control and the words of
-    // two adjacent inline elements ran together.
+    // The space between </label> and <input> is a whitespace-only text node.
+    // Dropping it would glue every label to its control and run the words of
+    // two adjacent inline elements together.
     page.load_html("<body><label id=l>name</label> <input type=text id=f size=6></body>");
     page.frame();
     const rect label = box_of(page, "l");
@@ -135,7 +127,7 @@ void test_a_space_between_inline_elements_is_rendered() {
 
 void test_a_space_between_blocks_is_not_rendered() {
     browser page{browser_options{600, 300}};
-    // The control: between BLOCKS the same whitespace is nothing at all.
+    // The control case: between blocks the same whitespace is nothing at all.
     // Rendering it would put a stray space-height line between every pair of
     // paragraphs in every page ever written.
     browser plain{browser_options{600, 300}};
@@ -179,7 +171,7 @@ void test_a_table_is_a_grid() {
     const rect d = box_of(page, "d");
     check(!a.empty() && !b.empty() && !c.empty() && !d.empty(), "every cell got a box");
 
-    // THE property that makes it a table rather than a stack of blocks: cells
+    // The property that makes it a table rather than a stack of blocks: cells
     // in the same row share a row, and cells in the same column share a column.
     check(a.y == b.y, "the first row's cells are on one line");
     check(c.y == d.y, "and so are the second row's");
@@ -188,7 +180,7 @@ void test_a_table_is_a_grid() {
     check(b.x == d.x, "and column two at another");
     check(a.x < b.x, "in order");
 
-    // AUTO sizing: the column with the long cell is the wide one, and the
+    // Auto sizing: the column with the long cell is the wide one, and the
     // narrow column is not stretched to match it.
     check(b.width > a.width * 2, "the column sizes to its widest content");
 }
@@ -206,7 +198,7 @@ void test_a_table_shrinks_to_its_content() {
 
 void test_table_sections_are_transparent() {
     // <thead>/<tbody> are inserted by the tree builder whether a page writes
-    // them or not, so rows have to be found THROUGH them.
+    // them or not, so rows have to be found through them.
     browser page{browser_options{600, 200}};
     page.load_html(R"(<body><table>
       <thead><tr><th id=h>head</th></tr></thead>
@@ -239,15 +231,15 @@ void test_list_markers() {
     </body>)");
     page.frame();
 
-    // An ordered list NUMBERS its items, counted among their siblings.
+    // An ordered list numbers its items, counted among their siblings.
     check(draws_text(page, "1."), "the first ordered item is numbered");
     check(draws_text(page, "2."), "and the second");
     check(draws_text(page, "3."), "and the third");
-    // ...and an unordered one does not.
+    // An unordered one does not.
     check(!draws_text(page, "0."), "an unordered item is not numbered");
 
-    // The bullet is drawn as a filled box in the gutter, to the LEFT of the
-    // item's own box - which is what the UA sheet's padding-left reserves.
+    // The bullet is drawn as a filled box in the gutter, to the left of the
+    // item's own box, which is what the UA sheet's padding-left reserves.
     const std::vector<paint::paint_command> all = commands(page);
     bool bullet = false;
     for (const auto & c : all) {
@@ -264,7 +256,7 @@ void test_disclosure_triangle() {
     page.load_html("<body><details open><summary>shown</summary><p>body</p></details>"
                    "<details><summary>hidden</summary><p>body</p></details></body>");
     page.frame();
-    // Open points down, closed points right - the one thing the marker says.
+    // Open points down, closed points right: the one thing the marker says.
     check(draws_text(page, "v"), "an open details points down");
     check(draws_text(page, ">"), "a closed one points right");
 }
@@ -279,25 +271,24 @@ void test_select_shows_its_option() {
     </body>)");
     page.frame();
 
-    // It drew an EMPTY BOX before: the label was a literal empty string and
-    // <option> was never read.
+    // The label comes from the selected <option>; without reading the options
+    // a select draws an empty box.
     check(draws_text(page, "first"), "a select shows its first option");
     check(draws_text(page, "two"), "and the marked one when there is one");
     check(!draws_text(page, "second"), "but only the selected one, not the list");
 }
 
-// --- what the reports were about ------------------------------------------
+// --- baseline alignment, block-level tables and source newlines ----------
 
-// Text of different sizes on one line sits on a shared BASELINE: every item is
-// placed so that `y + ascent` is the same, which is what the rasterizer then
-// draws. Aligning the BOXES is only right when every item has the same metrics
-// - tops made <big> hang above its neighbours, and bottoms are a box's descent
-// below the baseline, which two faces do not share.
-//
-// REAL FONTS, deliberately: font8x8 quantises 13px, 16px and 19px to the same
-// 8x8 cell, so all three have the same ascent and every alignment looks
-// identical. The bug was only ever visible with outline faces, which is where
-// it was reported.
+/// Text of different sizes on one line sits on a shared baseline: every item is
+/// placed so that `y + ascent` is the same, which is what the rasterizer then
+/// draws. Aligning the boxes is only right when every item has the same
+/// metrics: aligning tops makes <big> hang above its neighbours, and bottoms
+/// are a box's descent below the baseline, which two faces do not share.
+///
+/// Real fonts, deliberately: font8x8 quantises 13px, 16px and 19px to the same
+/// 8x8 cell, so all three have the same ascent and every alignment looks
+/// identical. The difference is only visible with outline faces.
 void test_inline_text_shares_a_baseline() {
     if (!raster::ttf_available()) { return; }
     browser page{browser_options{600, 200}};
@@ -334,15 +325,15 @@ void test_inline_text_shares_a_baseline() {
     check(std::abs(small_base - big_base) < 0.6f, "small and big share a baseline");
     check(std::abs(medium_base - big_base) < 0.6f, "and so does the one between them");
 
-    // Which is NOT the same as aligning the boxes, and this is the check that
-    // says so: bigger text starts HIGHER, and the boxes do not end together.
+    // That is not the same as aligning the boxes, and this check says so:
+    // bigger text starts higher, and the boxes do not end together.
     check(small.y > big.y, "the smaller text starts lower down the line");
     check(std::abs(small.bottom() - big.bottom()) > 0.5f, "the boxes are not bottom-aligned");
 }
 
-// A table is BLOCK-level: it starts on its own line and the next thing starts
-// below it. Left inline-level it shared a line with whatever came before -
-// two tables sat side by side, and a table sat beside the link above it.
+/// A table is block-level: it starts on its own line and the next thing starts
+/// below it. An inline-level table would share a line with whatever came
+/// before, so two tables would sit side by side, or beside a link above them.
 void test_tables_are_block_level() {
     browser page{browser_options{600, 400}};
     page.load_html(R"(<body>
@@ -366,12 +357,11 @@ void test_tables_are_block_level() {
 }
 
 void test_html_whitespace_collapses() {
-    // A newline in a page's own SOURCE is not a character - HTML folds every
-    // run of whitespace into one space. the engine passed it straight to the
-    // rasterizer, where font8x8 drew nothing (so nobody noticed) and a real
-    // font draws .notdef, which is a BOX. It also broke wrapping: the wrap
-    // splits on ' ' alone, so two words joined by a newline were one
-    // unbreakable word.
+    // A newline in a page's own source is not a character: HTML folds every
+    // run of whitespace into one space. A newline that reached the rasterizer
+    // would draw nothing in font8x8 but a .notdef box in a real font, and
+    // since the wrap splits on ' ' alone, two words joined by a newline would
+    // be one unbreakable word.
     browser page{browser_options{400, 200}};
     page.load_html("<body><p>in\nthe\tmind</p></body>");
     page.frame();
@@ -385,10 +375,10 @@ void test_html_whitespace_collapses() {
     }
     check(found, "the text was recorded");
 
-    // ...and <pre> preserves the LINE STRUCTURE, which is the point of <pre>.
-    // It does NOT hand the newline to the rasterizer: a kept newline is a line
-    // break, and drawing it draws .notdef - a box - which is exactly what a
-    // <pre> block looked like. Two lines means two runs, on two rows.
+    // <pre> preserves the line structure, which is the point of <pre>, but it
+    // still does not hand the newline to the rasterizer: a kept newline is a
+    // line break, and drawing it would draw a .notdef box. Two lines means two
+    // runs, on two rows.
     browser pre{browser_options{400, 200}};
     pre.load_html("<body><pre>first\nsecond</pre></body>");
     pre.frame();
@@ -404,13 +394,12 @@ void test_html_whitespace_collapses() {
     check(second_y > first_y, "and the second is BELOW the first");
 }
 
-// The artifact in the report: text that runs past where it is allowed to be.
-// A newline is not a break opportunity - the wrap splits on ' ' alone - so
-// words joined by one were a single unbreakable word. The line then could not
-// be broken anywhere and ran off the end of its box.
+/// Source newlines must become break opportunities. The wrap splits on ' '
+/// alone, so if newlines were left in the text, words joined by them would be
+/// a single unbreakable word and the line would run off the end of its box.
 void test_a_newline_is_a_break_opportunity() {
     browser page{browser_options{240, 200}};
-    // Every gap is a NEWLINE, exactly as a page's own source has them. This has
+    // Every gap is a newline, exactly as a page's own source has them. This has
     // to wrap; with the newlines left in the text it cannot, because the whole
     // thing is one word.
     page.load_html("<body><p>there's\nthe\nrub\nFor\nin\nthat\nsleep\nof\ndeath\n"
@@ -435,13 +424,12 @@ void test_table_caption_and_border() {
     page.frame();
 
     // The caption is a child of the table that is neither a row nor a row
-    // group, so a table that only looked for rows never laid it out - it
-    // simply vanished.
+    // group, so a table that only looked for rows would never lay it out.
     // One word, not the phrase: the table is only as wide as its one cell, so
     // the caption wraps and each line is its own run.
     check(draws_text(page, "bordered"), "the caption is drawn");
 
-    // `border=1` frames the table AND every cell, which is what the attribute
+    // `border=1` frames the table and every cell, which is what the attribute
     // has always meant.
     std::size_t frames = 0;
     for (const auto & c : commands(page)) {
@@ -452,7 +440,7 @@ void test_table_caption_and_border() {
     // Four edges for the table, four for the cell.
     check(frames >= 8, "the table and its cell are both framed");
 
-    // And a table with no border attribute draws none.
+    // A table with no border attribute draws none.
     browser plain{browser_options{500, 300}};
     plain.load_html("<body><table><tr><td>op</td></tr></table></body>");
     plain.frame();

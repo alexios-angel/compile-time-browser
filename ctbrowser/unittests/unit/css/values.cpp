@@ -1,23 +1,32 @@
+//===- ctbrowser/unittests/unit/css/values.cpp - CSS value tests ----------===//
+//
+// Unit tests for CSS value validation and serialisation: ok(property, input,
+// serialised) expects acceptance with that CSSOM serialisation, bad() expects
+// rejection (both live in values/support.hpp). Names such as
+// `calc-integer.html` or `var-parsing` are the WPT tests (mostly
+// css/css-values) whose behaviour each case pins.
+//
+//===----------------------------------------------------------------------===//
 #include "values/math.hpp"
 
 namespace {
 
 void test_lengths_and_the_unitless_zero() {
     ok("width", "10px", "10px");
-    ok("width", "10PX", "10px");     // units are ASCII case-insensitive
-    ok("width", "  10px  ", "10px"); // and whitespace is not part of the value
+    ok("width", "10PX", "10px");     // Units are ASCII case-insensitive,
+    ok("width", "  10px  ", "10px"); // and whitespace is not part of the value.
     ok("width", "50%", "50%");
-    ok("width", "10.500px", "10.5px"); // shortest form, CSSOM 6.7.2
-    // A UNITLESS ZERO IS A LENGTH AND NOTHING ELSE IS. `width: 0` is valid and
+    ok("width", "10.500px", "10.5px"); // Shortest form, CSSOM 6.7.2.
+    // A unitless zero is a length and nothing else is. `width: 0` is valid and
     // serialises as `0px`; `width: 1` is not a length at all, and answering
     // `1px` for it is the single most common way a permissive parser is wrong.
     ok("width", "0", "0px");
     bad("width", "1");
     bad("width", "10");
-    bad("width", "-1px"); // width is non-negative; margin-left is not
+    bad("width", "-1px"); // Width is non-negative; margin-left is not.
     ok("margin-left", "-1px", "-1px");
     ok("margin-left", "auto", "auto");
-    bad("width", "10 px"); // a space makes it two values
+    bad("width", "10 px"); // A space makes it two values.
     bad("width", "px");
     bad("width", "10pxx");
     ok("width", "10em", "10em");
@@ -29,19 +38,19 @@ void test_numbers_integers_and_keywords() {
     ok("z-index", "3", "3");
     ok("z-index", "-3", "-3");
     ok("z-index", "auto", "auto");
-    bad("z-index", "3.5"); // <integer>, and 3.5 is not one
+    bad("z-index", "3.5"); // An <integer>, and 3.5 is not one.
     bad("z-index", "3px");
     ok("opacity", "0.5", "0.5");
     ok("opacity", ".5", "0.5");
-    ok("opacity", "50%", "0.5"); // an <opacity-value>'s percentage is its number
+    ok("opacity", "50%", "0.5"); // An <opacity-value>'s percentage is its number.
     ok("flex-grow", "2", "2");
-    bad("flex-grow", "-2"); // non-negative
-    // A unitless number IS a line-height, which is the case that makes
+    bad("flex-grow", "-2"); // Non-negative.
+    // A unitless number is a line-height, which is the case that makes
     // `number_length` a kind of its own: `line-height: 2` is not `2px`.
     ok("line-height", "2", "2");
     ok("line-height", "2px", "2px");
     ok("line-height", "normal", "normal");
-    ok("display", "BLOCK", "block"); // keywords fold to lowercase
+    ok("display", "BLOCK", "block"); // Keywords fold to lowercase.
     bad("display", "blocks");
     bad("display", "10px");
     ok("position", "absolute", "absolute");
@@ -53,44 +62,42 @@ void test_the_css_wide_keywords_apply_to_everything() {
     ok("display", "INITIAL", "initial");
     ok("z-index", "unset", "unset");
     ok("margin", "revert", "revert");
-    // ...including a property this table has never heard of.
+    // The CSS-wide keywords apply even to a property this table does not know.
     ok("scroll-snap-type", "inherit", "inherit");
 }
 
 void test_the_things_that_must_survive() {
-    // ACCEPTED-ON-PURPOSE. Each of these is a value a page in the corpora
-    // actually writes, and refusing any of them is how this file could break a
-    // render that works today.
-    ok("margin", "10px 20px", "10px 20px");         // a shorthand is freeform
-    ok("border", "1px solid red", "1px solid red"); // ...and so is this one
-    ok("color", "#0d6efd", "rgb(13, 110, 253)");    // a hex colour is a legacy sRGB colour
-    ok("width", "var(--w)", "var(--w)");            // substitution defers the answer
+    // Accepted on purpose: real pages in the test page sets write each of these,
+    // and refusing one would break a render that works today.
+    ok("margin", "10px 20px", "10px 20px");         // A shorthand is free-form text,
+    ok("border", "1px solid red", "1px solid red"); // and so is this one.
+    ok("color", "#0d6efd", "rgb(13, 110, 253)");    // A hex colour is a legacy sRGB colour.
+    ok("width", "var(--w)", "var(--w)");            // Substitution defers the answer.
     ok("width", "calc(100% - 10px)", "calc(100% - 10px)");
     ok("width", "clamp(1rem, 2vw, 3rem)", "clamp(1rem, 2vw, 3rem)");
-    // THE AUTHOR'S BYTES for anything the grammar does not model, spacing and
-    // all. `test_valid_value` asserts the round-trip exactly, and normalising a
-    // value whose grammar is UNKNOWN turned two passing `css-values` files into
-    // failing ones on 2026-09-07. A math function's grammar is known, so its
-    // argument list is re-serialised and `min(10px,5%)` gains its space.
+    // A value whose grammar is not modelled keeps the author's bytes exactly,
+    // spacing and all, because WPT's `test_valid_value` asserts the exact
+    // round-trip. A math function's grammar is known, so its arguments are
+    // re-serialised and `min(10px,5%)` gains its space.
     ok("width", "min(10px, 5%)", "min(10px, 5%)");
     ok("width", "min(10px,5%)", "min(10px, 5%)");
     ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
-    // A FONT FAMILY LOSES ITS QUOTES when the name is an identifier sequence
-    // and keeps them, doubled, when it is not - CSSOM's serialize-a-string
+    // A font family loses its quotes when the name is an identifier sequence
+    // and keeps them, doubled, when it is not: CSSOM's serialize-a-string
     // rule for `font-family` in particular, and the same answer the computed
     // value gives (css/cssom's serialize-values and font-family-serialization-001).
     ok("font-family", "\"Helvetica Neue\", sans-serif", "Helvetica Neue, sans-serif");
     ok("font-family", "'Lucida Grande'", "Lucida Grande");
     ok("font-family", "Arial", "Arial");
     ok("font-family", "'34J', \"serif\", 'A  B'", "\"34J\", \"serif\", \"A  B\"");
-    // A NEGATIVE ZERO IS `0` ON ITS OWN AND `-0` INSIDE A MATH FUNCTION, where
+    // A negative zero is `0` on its own and `-0` inside a math function, where
     // `1 / sign(-0)` still has to come out as -infinity (signed-zero).
     ok("scale", "-0", "0");
     ok("scale", "clamp(-1, 1 / sign(calc(-0)), 1)", "calc(-1)");
     ok("scale", "clamp(-1, 1 / sign(min(-0, 0)), 1)", "calc(-1)");
     ok("scale", "sign(-0)", "calc(0)");
-    ok("width", "min(-0%, 0%)", "min(0%, 0%)"); // ...but a percentage's zero has no sign
-    // `decimal` IS THE DEFAULT COUNTER STYLE and CSSOM does not write it.
+    ok("width", "min(-0%, 0%)", "min(0%, 0%)"); // A percentage's zero has no sign.
+    // `decimal` is the default counter style and CSSOM does not write it.
     ok("content", "counter(par-num, decimal)", "counter(par-num)");
     ok("content", "counters(par-num, \".\", DECIMAL )", "counters(par-num, \".\")");
     ok("content", "counter(par-num, upper-roman)", "counter(par-num, upper-roman)");
@@ -122,18 +129,18 @@ void test_the_things_that_must_survive() {
     ok("text-fit", "GROW consistent 300%", "grow consistent 300%");
     bad("text-fit", "grow 150% consistent");
     bad("text-fit", "consistent 100%");
-    // AN ARBITRARY SUBSTITUTION FUNCTION IS A VALUE FOR ANY PROPERTY, CSS
-    // Values 5: what its arguments mean is decided after parsing, so a length
-    // grammar has no business refusing one.
+    // An arbitrary substitution function is a value for any property (CSS
+    // Values 5): what its arguments mean is decided after parsing, so a length
+    // grammar must not refuse one.
     ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
     ok("left", "inherit(--x)", "inherit(--x)");
     ok("left", "inherit(--x,)", "inherit(--x,)");
-    ok("view-transition-name", "ident( myident)", "ident( myident)"); // and NOT respaced
+    ok("view-transition-name", "ident( myident)", "ident( myident)"); // It is not respaced.
     ok("view-transition-name", "ident(rgb(1, 2, 3))", "ident(rgb(1, 2, 3))");
-    // ...but its ARGUMENT LIST is known now, and two of them have one worth
-    // checking. `ident( <declaration-value> )` takes one argument and not an
-    // empty one; `inherit()` takes a custom property name and an optional
-    // fallback after a comma.
+    // Its argument list is still checked where the function defines one:
+    // `ident( <declaration-value> )` takes one argument and not an empty one;
+    // `inherit()` takes a custom property name and an optional fallback after
+    // a comma.
     bad("view-transition-name", "ident()");
     bad("view-transition-name", "ident( )");
     bad("view-transition-name", "ident({})");
@@ -141,21 +148,21 @@ void test_the_things_that_must_survive() {
     bad("left", "inherit(, foo)");
     bad("left", "inherit(!!, foo)");
 
-    // An UNKNOWN property is stored, not refused: CSSOM lets a page set one.
+    // An unknown property is stored, not refused: CSSOM lets a page set one.
     ok("-webkit-line-clamp", "3", "3");
     ok("scroll-snap-type", "x mandatory", "x mandatory");
 }
 
 void test_important_and_the_empty_value() {
-    // `!important` is a DECLARATION's business, never a value's. CSSOM's
+    // `!important` belongs to a declaration, never to a value. CSSOM's
     // setProperty takes the priority as its own argument, and the IDL setter
-    // (`el.style.width = "1px !important"`) has to refuse it - which is what
+    // (`el.style.width = "1px !important"`) has to refuse it, which is what
     // the default `allow_important = false` says.
     bad("color", "red !important");
     bad("width", "10px !important");
-    // ...but a `style` ATTRIBUTE may carry one, and there refusing it would
-    // DROP the declaration: an inline `width: 100px !important` that stops
-    // applying is far worse than a mis-reported priority.
+    // A `style` attribute may carry one, and there refusing it would drop the
+    // declaration: an inline `width: 100px !important` that stops applying is
+    // far worse than a mis-reported priority.
     {
         const auto answer = check_declaration("width", "100px !important", true);
         CHECK(answer.valid);
@@ -170,11 +177,11 @@ void test_important_and_the_empty_value() {
     // The value is still validated with the priority removed, not before it.
     CHECK(!check_declaration("width", "100 !important", true).valid);
     CHECK(supports_condition("(width: 10px !important)"));
-    // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
-    // `el.style` still stores the value. Five `css/css-values` files guard
-    // their assertions on `CSS.supports` and went from passing vacuously to
-    // running and failing when this said yes to everything. The substitution
-    // functions are all performed now, so all six are support.
+    // CSS.supports() answers false for a function this engine cannot evaluate
+    // (image-set(), var() with type()), even though `el.style` still stores the
+    // value: WPT tests guard assertions on CSS.supports, and a false yes runs
+    // assertions that then fail. Substitution functions the engine performs
+    // (attr(), random-item(), var()) are supported.
     CHECK(supports_declaration("content", "attr(data-foo)"));
     CHECK(supports_declaration("font-family", "random-item(auto, serif)"));
     CHECK(supports_declaration("color", "random-item(fixed 0, rgb(1, 0, 0), rgb(0, 1, 0))"));
@@ -187,11 +194,11 @@ void test_important_and_the_empty_value() {
     // guards a hundred and forty assertions on this answer.
     CHECK(supports_declaration("width", "random(0px, 100px)"));
     CHECK(supports_declaration("scale", "random(--foo element-scoped, 2, 12)"));
-    // A `!` INSIDE A BLOCK IS A DELIM, not a priority: `if(style(--x!): a; else:
+    // A `!` inside a block is a delim, not a priority: `if(style(--x!): a; else:
     // b)` is a value whose condition is false (if-conditionals 39, 117, 118).
     CHECK(check_declaration("--p", "if(style(--x!): 1px; else: 2px)").valid);
     CHECK(check_declaration("width", "calc(1px * var(--x, a!b))").valid);
-    // ...and var()'s first argument is exactly one custom property name
+    // The first argument of var() is exactly one custom property name
     // (var-parsing.html).
     CHECK(!check_declaration("width", "var(--x!)").valid);
     CHECK(!check_declaration("width", "var()").valid);
@@ -202,13 +209,13 @@ void test_important_and_the_empty_value() {
     CHECK(check_declaration("width", "var(--x, var(--y, 1px))").valid);
     CHECK(!check_declaration("--p", "1px !").valid);
     CHECK(!check_declaration("width", "1px !").valid);
-    // ...and the value is still STORED, which is the difference between the two
-    // questions this file answers.
+    // The value is still stored: check_declaration (does `el.style` keep it?)
+    // and supports_declaration (does CSS.supports say yes?) answer differently.
     CHECK(check_declaration("content", "attr(data-foo)").valid);
     CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
     CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
     // An empty value is reported invalid because both callers want the same
-    // thing from it - store nothing - and `el.style.width = ""` is how a page
+    // thing from it (store nothing), and `el.style.width = ""` is how a page
     // removes a declaration.
     bad("width", "");
     bad("width", "   ");
@@ -217,8 +224,8 @@ void test_important_and_the_empty_value() {
 void test_a_custom_property_takes_anything_that_tokenises() {
     ok("--x", "anything at all", "anything at all");
     ok("--x", "10px", "10px");
-    // ...and its NAME is case-sensitive, unlike every other property, which is
-    // why `css_name_of` leaves it alone.
+    // A custom property's name is case-sensitive, unlike every other
+    // property's, which is why `css_name_of` leaves it alone.
     CHECK_EQ(css_name_of("--myVar"), std::string{"--myVar"});
     CHECK_EQ(idl_name_of("--myVar"), std::string{"--myVar"});
 }
@@ -229,9 +236,9 @@ void test_the_two_spellings_of_one_property() {
     CHECK_EQ(css_name_of("zIndex"), std::string{"z-index"});
     CHECK_EQ(idl_name_of("background-color"), std::string{"backgroundColor"});
     CHECK_EQ(idl_name_of("z-index"), std::string{"zIndex"});
-    // THE TWO EXCEPTIONS CSSOM NAMES BY HAND, and both had been wrong in both
-    // copies of this conversion: a prefixed property's IDL name drops the
-    // leading dash, and `float` is a reserved word in the IDL.
+    // The two exceptions CSSOM spells out by hand: a vendor-prefixed property's
+    // IDL name drops the leading dash, and `float` is `cssFloat` because `float`
+    // is reserved in IDL.
     CHECK_EQ(css_name_of("webkitTransform"), std::string{"-webkit-transform"});
     CHECK_EQ(idl_name_of("-webkit-transform"), std::string{"webkitTransform"});
     CHECK_EQ(css_name_of("cssFloat"), std::string{"float"});
@@ -240,19 +247,18 @@ void test_the_two_spellings_of_one_property() {
 
 void test_the_property_table_itself() {
     CHECK(find_property("width") != nullptr);
-    CHECK(find_property("WIDTH") != nullptr); // property names fold
+    CHECK(find_property("WIDTH") != nullptr); // Property names fold to lowercase.
     CHECK(find_property("wdith") == nullptr);
     CHECK(known_properties().size() > 100);
-    // The shorthands are marked, because CSSOM enumerates the LONGHANDS and
-    // answers `in` for both. This used to be a second list in
-    // `computed_style.cpp`, which is one list too many.
+    // Shorthands are flagged because CSSOM enumerates only longhands but answers
+    // `in` for both.
     CHECK(find_property("margin")->shorthand);
     CHECK(find_property("border-top")->shorthand);
     CHECK(!find_property("margin-top")->shorthand);
     CHECK(!find_property("width")->shorthand);
     // Every entry has an initial value, because `getComputedStyle` answers it
-    // for a property nothing declared - and an empty one there reads as
-    // `undefined` to a page, which is the failure this table exists to end.
+    // for a property nothing declared, and an empty one there reads as
+    // `undefined` to a page.
     for (const auto & one : known_properties()) {
         CHECK(!one.name.empty());
         // `font` and `all` are the two shorthands with no one initial value.
@@ -263,8 +269,8 @@ void test_the_property_table_itself() {
 void test_css_supports() {
     CHECK(supports_declaration("width", "10px"));
     CHECK(!supports_declaration("width", "10"));
-    // An UNKNOWN property is false here even though `el.style` stores it: §5 of
-    // CSS Conditional 3 asks whether the declaration would be DROPPED, and one
+    // An unknown property is false here even though `el.style` stores it: §5 of
+    // CSS Conditional 3 asks whether the declaration would be dropped, and one
     // naming a property the engine does not implement would be.
     CHECK(!supports_declaration("nonsense-property", "1px"));
     CHECK(supports_declaration("--x", "anything"));
@@ -295,7 +301,7 @@ void test_css_supports() {
     CHECK(!supports_condition(""));
     // `!important` is part of a <declaration> and does not change the answer.
     CHECK(supports_condition("(width: 10px !important)"));
-    // A FUNCTION THIS ENGINE CANNOT EVALUATE IS NOT SUPPORT, even though
+    // A function this engine cannot evaluate is not supported, even though
     // `el.style` still stores the value; a substitution it performs is.
     CHECK(supports_declaration("content", "attr(data-foo)"));
     CHECK(!supports_declaration("background-image", "image-set(url(a.png) 1x)"));
@@ -303,21 +309,16 @@ void test_css_supports() {
     CHECK(supports_declaration("width", "var(--w)"));
     CHECK(supports_declaration("width", "calc(1px + 2px)"));
     CHECK(supports_declaration("background-color", "rgb(1, 2, 3)"));
-    // ...and the value is still STORED, which is the difference between the two
-    // questions this file answers.
+    // The value is still stored: check_declaration (does `el.style` keep it?)
+    // and supports_declaration (does CSS.supports say yes?) answer differently.
     CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").valid);
     CHECK(check_declaration("background-image", "image-set(url(a.png) 1x)").uses_unknown_function);
 }
 
-// AN `<integer>` PROPERTY ROUNDS ITS MATH, and CSS Values 4 §10.10 says which
-// way. `z-index: calc(3 / 2)` is valid CSS whose computed value is 2, and this
-// engine reported `1.5` - a number no `<integer>` property has ever taken.
-//
-// The direction is the whole of the difference: a value exactly halfway goes
-// toward POSITIVE INFINITY, so `calc(-3 / 2)` is -1 and not -2. `std::round`
-// would have got every negative half wrong, and
-// `css/css-values/calc-z-index-fractions-001.html` is six subtests of nothing
-// else. `calc-integer.html` is the other three.
+/// An <integer> property rounds its math result (CSS Values 4 §10.10): halves
+/// go toward +infinity, so `calc(3 / 2)` is 2 and `calc(-3 / 2)` is -1 (not
+/// std::round's -2). Covered by WPT calc-z-index-fractions-001.html and
+/// calc-integer.html.
 void test_an_integer_property_rounds_its_math() {
     using ctbrowser::style::css::fold_math;
     using ctbrowser::style::css::length_context;
@@ -333,35 +334,34 @@ void test_an_integer_property_rounds_its_math() {
 
     CHECK_EQ(whole("calc(2)"), std::string{"2"});
     CHECK_EQ(whole("calc(4 / 2)"), std::string{"2"});
-    CHECK_EQ(whole("calc(1 / 2)"), std::string{"1"}); // a half rounds UP
+    CHECK_EQ(whole("calc(1 / 2)"), std::string{"1"}); // A half rounds up,
     CHECK_EQ(whole("calc(0.5)"), std::string{"1"});
-    CHECK_EQ(whole("calc(1 / 3)"), std::string{"0"}); // ...and a third rounds down
+    CHECK_EQ(whole("calc(1 / 3)"), std::string{"0"}); // and a third rounds down.
     CHECK_EQ(whole("calc(6 / 2.0)"), std::string{"3"});
-    // The six of calc-z-index-fractions-001, and the four negatives are the
-    // ones that say "toward positive infinity" rather than "away from zero".
+    // The six cases of calc-z-index-fractions-001; the four negatives are the
+    // ones that tell "toward positive infinity" from "away from zero".
     CHECK_EQ(whole("calc(2.5 / 2)"), std::string{"1"});
     CHECK_EQ(whole("calc(3 / 2)"), std::string{"2"});
     CHECK_EQ(whole("calc(3.5 / 2)"), std::string{"2"});
     CHECK_EQ(whole("calc(-2.5 / 2)"), std::string{"-1"});
     CHECK_EQ(whole("calc(-3 / 2)"), std::string{"-1"});
     CHECK_EQ(whole("calc(-3.5 / 2)"), std::string{"-2"});
-    // ONLY THE FINISHED CONVERSION ROUNDS. A nested calc is an intermediate and
+    // Only the finished conversion rounds. A nested calc is an intermediate and
     // rounding it would make this 0.
     CHECK_EQ(whole("calc(calc(1 / 3) * 3)"), std::string{"1"});
     // Nothing else moves: the context is per-property, so the same expression in
     // `opacity` keeps its fraction.
     CHECK_EQ(fold_math("calc(1 / 2)", ctx, math_context::any).text, std::string{"0.5"});
-    // A specified value is NOT rounded - CSS Values 4 §10.12 keeps the function
+    // A specified value is not rounded: CSS Values 4 §10.12 keeps the function
     // as written, and `el.style.zIndex` reads back the simplified form.
     ok("z-index", "calc(3 / 2)", "calc(1.5)");
     ok("z-index", "2", "2");
     bad("z-index", "1.5");
 }
 
-// `random-item( <declaration-value>, [ <declaration-value>? ]# )`, CSS Values 5.
-// The function is an arbitrary substitution one, so only its ARGUMENT LIST is
-// decided at parse time - but it is decided, and `random-item-invalid` is
-// fourteen assertions of exactly that.
+/// `random-item( <declaration-value>, [ <declaration-value>? ]# )`, CSS Values 5.
+/// It is an arbitrary substitution function, so only its argument list is
+/// checked at parse time (WPT random-item-invalid).
 void test_the_random_item_argument_list() {
     // The key is required, and so is the comma after it.
     bad("font-family", "random-item()");
@@ -371,39 +371,36 @@ void test_the_random_item_argument_list() {
     // `<declaration-value>` forbids a top-level `;` or `!`.
     bad("font-family", "random-item(auto, !)");
     bad("font-family", "random-item(auto, ;)");
-    // AN UNMATCHED BRACKET, which is why this MATCHES brackets rather than
-    // counting them: `{serif)` closes a brace with a paren, and a depth counter
-    // reads that as balanced.
+    // An unmatched bracket is invalid. Brackets are matched, not counted:
+    // `{serif)` closes a brace with a paren, which a depth counter reads as
+    // balanced.
     bad("font-family", "random-item(auto, })");
     bad("font-family", "random-item(auto, ])");
     bad("font-family", "random-item(auto, {serif)");
     bad("font-family", "random-item(auto, serif})");
     bad("font-family", "random-item(auto, {Times, serif)");
     bad("font-family", "random-item({auto, serif, sans-serif)");
-    // A `{}` block is how an ITEM containing a comma is written, so it is the
+    // A `{}` block is how an item containing a comma is written, so it is the
     // whole item or it is not an item at all.
     bad("font-family", "random-item(auto, {Times, serif} extra)");
     bad("font-family", "random-item(auto, extra {Times, serif})");
 
-    // ...and every one of these must still SURVIVE, spacing and all.
+    // Every one of these is valid and keeps its spacing.
     ok("font-family", "random-item(auto ,serif)", "random-item(auto ,serif)");
     ok("width", "random-item(auto, 1px, 2px, 3px)", "random-item(auto, 1px, 2px, 3px)");
-    ok("font-family", "random-item(auto,)", "random-item(auto,)"); // an item may be EMPTY
+    ok("font-family", "random-item(auto,)", "random-item(auto,)"); // An item may be empty.
     ok("font-family", "random-item(fixed 0, rgb(4, 5, 6), blue)",
        "random-item(fixed 0, rgb(4, 5, 6), blue)");
     ok("font-family", "random-item(auto, {Times, serif}, sans-serif)",
        "random-item(auto, {Times, serif}, sans-serif)");
-    // EOF CLOSES EVERY OPEN BLOCK, CSS Syntax 3 §5.4.9, so an unterminated one
+    // EOF closes every open block (CSS Syntax 3 §5.4.9), so an unterminated one
     // is a value and not a parse error.
     ok("font-family", "random-item(auto, serif", "random-item(auto, serif)");
 }
 
-// `interpolate-size` is a real property with a real two-keyword grammar. As an
-// UNKNOWN one `el.style` stored `interpolate-size: 100%` and `getComputedStyle`
-// did not publish the property at all - which is the two assertions of
-// `calc-size/interpolate-size-computed.html` and three of `-parsing.html`.
-// calc-size-parsing: the basis is judged against the property, the
-// calculation is a length over `size`, and both are written canonically.
+/// calc-size(): the basis is checked against the property, the calculation is
+/// a length over `size`, and both serialise canonically (WPT
+/// calc-size-parsing).
 void test_calc_size() {
     ok("width", "calc-size(auto, size)", "calc-size(auto, size)");
     ok("min-height", "calc-size(auto, size)", "calc-size(auto, size)");
@@ -440,9 +437,9 @@ void test_calc_size() {
     bad("width", "calc-size(0px, 0)");
 }
 
-// random-serialize: a specified random() spells its key - the dashed name,
-// `element-scoped`, and the UA ident the scoping words mean - and its bounds
-// in canonical units.
+/// random-serialize: a specified random() spells its key (the dashed name,
+/// `element-scoped`, and the UA ident the scoping words mean) and its bounds
+/// in canonical units.
 void test_random_spells_its_key() {
     ok("width", "random(0px, 100px)", "random(element-scoped ua-width-1, 0px, 100px)");
     ok("height", "random(auto, 0px, 100px)", "random(element-scoped ua-height-1, 0px, 100px)");
@@ -466,7 +463,7 @@ void test_random_spells_its_key() {
     ok("margin", "random(0px, 1px) random(0px, 1px)",
        "random(element-scoped ua-margin-1, 0px, 1px) random(element-scoped ua-margin-2, 0px, 1px)");
     ok("width", "calc(2 * random(--foo, 0px, 100px))", "calc(2 * random(--foo, 0px, 100px))");
-    // ...and the sharing grammar (random-invalid).
+    // The sharing grammar (WPT random-invalid).
     ok("width", "random(--foo ua-width-1, 10px, 20%)", "random(--foo ua-width-1, 10px, 20%)");
     ok("width", "random(--foo ua-x element-scoped, 10px, 20%)",
        "random(--foo element-scoped ua-x, 10px, 20%)");
@@ -480,8 +477,8 @@ void test_random_spells_its_key() {
     bad("width", "random(1px)");
 }
 
-// urls/url-request-modifiers-*: the modifiers in one order, the unknown ones
-// dropped, duplicates and anything that is not an ident or a function refused.
+/// urls/url-request-modifiers-*: the modifiers in one order, the unknown ones
+/// dropped, duplicates and anything that is not an ident or a function refused.
 void test_url_request_modifiers() {
     const std::string u = "url(\"a.png\"";
     ok("background-image", u + " cross-origin(anonymous))", u + " cross-origin(anonymous))");
@@ -512,7 +509,7 @@ void test_url_request_modifiers() {
     CHECK(supports_declaration("background-image", u + " cross-origin(anonymous))"));
 }
 
-// calc-rounds-to-integer: `steps()` takes an <integer>, which `1e1` is not.
+/// calc-rounds-to-integer: `steps()` takes an <integer>, which `1e1` is not.
 void test_steps_takes_an_integer() {
     ok("animation-timing-function", "steps(10)", "steps(10)");
     ok("transition-timing-function", "steps(calc(10.1))", "steps(calc(10.1))");
@@ -523,7 +520,7 @@ void test_steps_takes_an_integer() {
     bad("animation-timing-function", "steps(1e1)");
     bad("animation-timing-function", "steps(10.1)");
     bad("transition-timing-function", "steps(1.1e1, start)");
-    // ...and so do the <integer> slots of the freeform properties: a counter's
+    // The <integer> slots of the free-form properties are checked too: a counter's
     // step, a grid line, repeat()'s count, a feature tag's value, and the
     // second value of initial-letter - but not its first, which is a <number>.
     ok("counter-increment", "foo 10", "foo 10");
@@ -539,7 +536,7 @@ void test_steps_takes_an_integer() {
     bad("text-combine-upright", "digits 1e1");
 }
 
-// A three-channel colour function takes three or four components.
+/// A three-channel colour function takes three or four components.
 void test_colour_function_arity() {
     bad("background-color", "rgb(0)");
     bad("color", "rgb(1, 2)");
@@ -563,20 +560,20 @@ void test_interpolate_size_is_a_property() {
     CHECK(!supports_declaration("interpolate-size", "auto"));
 }
 
-// `<position>`, CSS Values 5 - the one multi-component value this table models,
-// and the only one whose canonical form REORDERS what the author wrote.
+/// `<position>`, CSS Values 5: the one multi-component value this table models,
+/// and the only one whose canonical form reorders what the author wrote.
 void test_the_position_grammar() {
-    // ONE COMPONENT names one axis and the other is `center`, which is why a
+    // One component names one axis and the other is `center`, which is why a
     // per-token matcher cannot produce this: `top` is `center top` and `10%` is
     // `10% center`.
     ok("object-position", "10%", "10% center");
     ok("object-position", "left", "left center");
     ok("object-position", "top", "center top");
     ok("object-position", "center", "center center");
-    ok("object-position", "x-start", "x-start center"); // level 5's logical keywords
+    ok("object-position", "x-start", "x-start center"); // Level 5's logical keywords.
     ok("object-position", "y-start", "center y-start");
-    // TWO COMPONENTS are horizontal then vertical, and the `&&` branch lets two
-    // KEYWORDS arrive the other way round - but only keywords, so `bottom right`
+    // Two components are horizontal then vertical, and the `&&` branch lets two
+    // keywords arrive the other way round, but only keywords, so `bottom right`
     // is a position and `10px right` is not.
     ok("object-position", "30px center", "30px center");
     ok("object-position", "40px top", "40px top");
@@ -584,17 +581,17 @@ void test_the_position_grammar() {
     ok("object-position", "center left", "left center");
     ok("object-position", "top center", "center top");
     ok("object-position", "10px y-start", "10px y-start");
-    bad("object-position", "left right"); // two horizontals
-    bad("object-position", "bottom 10%"); // a vertical keyword in the first slot
-    // FOUR COMPONENTS are two `<side> <offset>` pairs, one per axis, in either
-    // order - and `center` takes no offset, so it cannot appear in this form.
+    bad("object-position", "left right"); // Two horizontals.
+    bad("object-position", "bottom 10%"); // A vertical keyword in the first slot.
+    // Four components are two `<side> <offset>` pairs, one per axis, in either
+    // order, and `center` takes no offset, so it cannot appear in this form.
     ok("object-position", "right 30% top 60px", "right 30% top 60px");
     ok("object-position", "bottom 10% right 20%", "right 20% bottom 10%");
     ok("object-position", "y-end 20% left 10px", "left 10px y-end 20%");
-    bad("object-position", "bottom 10% top 20%"); // both pairs vertical
-    // THE THREE-VALUE FORM IS GONE in level 5. `left 4px top` is still a valid
-    // `background-position` and is no longer a `<position>`, which is eight of
-    // `position/position-invalid.tentative`'s twenty-one assertions.
+    bad("object-position", "bottom 10% top 20%"); // Both pairs vertical.
+    // Level 5 drops the three-value form: `left 4px top` is still a valid
+    // `background-position` but not a `<position>` (WPT
+    // position/position-invalid.tentative).
     bad("object-position", "left 4px top");
     bad("object-position", "center left 1px");
     bad("object-position", "right 3% center");
@@ -603,12 +600,12 @@ void test_the_position_grammar() {
     bad("object-position", "auto");
     bad("object-position", "garbage left top");
     bad("object-position", "left 10px top 10px garbage");
-    // ...and a math function anywhere in it keeps the author's bytes rather than
+    // A math function anywhere in it keeps the author's bytes rather than
     // being refused: this reader does not evaluate the components.
     ok("object-position", "calc(50% - 1px) center", "calc(50% - 1px) center");
 }
 
-// CSS Gap Decorations 1's lists, and the grammars that came with them.
+/// CSS Gap Decorations 1's lists, and the neighbouring grammars.
 void test_gap_rule_lists_and_their_neighbours() {
     ok("column-rule-width", "10px, repeat(4, THIN), repeat(auto, 0)",
        "10px, repeat(4, thin), repeat(auto, 0px)");
@@ -616,8 +613,8 @@ void test_gap_rule_lists_and_their_neighbours() {
     ok("row-rule-color", "red, repeat(auto, blue)", "red, repeat(auto, blue)");
     bad("column-rule-width", "30%");
     bad("column-rule-width", "repeat(0, 10px)");
-    bad("column-rule-width", "repeat(auto, 1px), repeat(auto, 2px)"); // one auto repeat
-    bad("column-rule-width", "thin medium");                          // a list needs commas
+    bad("column-rule-width", "repeat(auto, 1px), repeat(auto, 2px)"); // Only one auto repeat.
+    bad("column-rule-width", "thin medium");                          // A list needs commas.
     bad("column-rule-style", "repeat(2, 10px)");
     // fit-content() on a sizing property, one component inside it.
     ok("width", "fit-content(10%)", "fit-content(10%)");
@@ -638,7 +635,7 @@ void test_gap_rule_lists_and_their_neighbours() {
     bad("outline-color", "invert");
     CHECK(supports_declaration("grid-template-columns", "repeat(2, minmax(10px, 1fr))"));
     CHECK(supports_declaration("transform", "skewX(10deg)"));
-    // transform's functions are counted and typed (transform-valid/-invalid).
+    // Transform functions are counted and typed (transform-valid/-invalid).
     ok("transform", "translateX(-4px) scale(250%, 1) skew(90deg, 0)",
        "translateX(-4px) scale(2.5, 1) skew(90deg, 0deg)");
     ok("transform", "perspective(none) rotate3d(1, 0, 0, 0)",
@@ -651,8 +648,8 @@ void test_gap_rule_lists_and_their_neighbours() {
     bad("transform", "perspective(1000)");
 }
 
-// CSS Shapes 1's <basic-shape>, specified: defaults left out, positions and
-// sides canonical, the default box dropped; and computed and blended.
+/// CSS Shapes 1's <basic-shape>, specified: defaults left out, positions and
+/// sides canonical, the default box dropped; and computed and blended.
 void test_basic_shapes() {
     ok("clip-path", "circle(closest-side)", "circle()");
     ok("clip-path", "circle(4% at top right)", "circle(4% at right top)");
@@ -696,9 +693,9 @@ void test_basic_shapes() {
         std::string{"path(\"M 0 0 H 15\")"});
 }
 
-// CSS Shapes 2's shape(): the default fill rule, anchor, sweep, size and
-// rotation left out; computed with its positions resolved; blended command by
-// command, a path() as the shape() it draws.
+/// CSS Shapes 2's shape(): the default fill rule, anchor, sweep, size and
+/// rotation left out; computed with its positions resolved; blended command by
+/// command, a path() as the shape() it draws.
 void test_the_shape_function() {
     ok("clip-path", "shape(EvenOdd from 0 0Px, CLOSE)", "shape(evenodd from 0px 0px, close)");
     ok("clip-path", "shape(nonzero from 1px 2px, line to 10px 10px)",
@@ -752,9 +749,9 @@ void test_the_shape_function() {
                               0.5));
 }
 
-// An <opacity-value>'s percentage is the number it is, and a math function
-// over percentages alone has an answer; font-synthesis's style slot takes
-// `oblique-only`.
+/// An <opacity-value>'s percentage is the number it is, and a math function
+/// over percentages alone has an answer; font-synthesis's style slot takes
+/// `oblique-only`.
 void test_opacity_and_font_synthesis() {
     ok("opacity", "50%", "0.5");
     ok("opacity", "-100%", "-1");

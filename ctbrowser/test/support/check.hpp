@@ -1,3 +1,12 @@
+//===- ctbrowser/test/support/check.hpp - Test assertions -------*- C++ -*-===//
+//
+// The assertion macros every ctbrowser test uses (CHECK, CHECK_EQ, REPORT,
+// and the sentence-style check()), small file helpers, and handlers that print
+// a stack trace when a test dies from an uncaught exception or a fatal signal.
+// A test passes when it exits 0; every failure prints its own file:line so a
+// log says what broke without a debugger.
+//
+//===----------------------------------------------------------------------===//
 #ifndef CTBROWSER_V2_TEST_CHECK_HPP
 #define CTBROWSER_V2_TEST_CHECK_HPP
 
@@ -16,11 +25,10 @@
 
 #include <csignal>
 
-// CPPTRACE, NOT <stacktrace>. The llvm-mingw cross build has <format> but NOT
-// <stacktrace> - checked, not assumed - so half the platforms this engine ships
-// on had no trace at all, and almost every expensive bug here has been the
-// Windows-only kind. cpptrace supports mingw explicitly (StackWalk64, libgcc
-// _Unwind_Backtrace, dbghelp) and gives both platforms the same output.
+// cpptrace rather than <stacktrace>: the llvm-mingw cross build has <format> but
+// not <stacktrace>, and Windows-only bugs are the ones that most need a trace.
+// cpptrace supports mingw explicitly (StackWalk64, libgcc _Unwind_Backtrace,
+// dbghelp) and gives both platforms the same output.
 #if __has_include(<cpptrace/cpptrace.hpp>)
 #include <cpptrace/cpptrace.hpp>
 #define CTBROWSER_TEST_HAS_TRACE 1
@@ -28,14 +36,13 @@
 #define CTBROWSER_TEST_HAS_TRACE 0
 #endif
 
-// Same shape as the previous engine's tests: a non-zero exit fails ctest, and every failure
-// prints its own file:line so a CI log says what broke without a debugger.
+/// Number of failed checks so far; REPORT() exits non-zero when it is not 0,
+/// which fails the test under ctest.
 inline int ctbrowser_test_failures = 0;
 
-// CHECK() below prints the expression that failed. Layout and page failures
-// read far better as prose ("second block stacks below the first") than as a
-// float comparison or a stringified call, so most of the suite asserts with a
-// sentence instead. There were 22 file-local copies of this before it moved here.
+/// Records a failure when `ok` is false, printing `what`. CHECK() prints the
+/// failed expression; this prints a sentence instead, which reads better for
+/// layout and page checks ("second block stacks below the first").
 inline void check(bool ok, std::string_view what) {
     if (!ok) {
         std::printf("FAIL %.*s\n", static_cast<int>(what.size()), what.data());
@@ -43,9 +50,8 @@ inline void check(bool ok, std::string_view what) {
     }
 }
 
-// A file as bytes-in-a-string, or empty when it is not there. Every corpus
-// test slurps its bundle and its record this way; ctest runs from ctbrowser/,
-// so relative paths name the checkout. There were 14 copies of this.
+/// Returns a file's bytes as a string, or an empty string when it is missing.
+/// ctest runs from ctbrowser/, so relative paths name files in the checkout.
 [[nodiscard]] inline std::string read_file(const std::filesystem::path & path) {
     std::ifstream in{path, std::ios::binary};
     if (!in) { return {}; }
@@ -54,7 +60,7 @@ inline void check(bool ok, std::string_view what) {
     return all.str();
 }
 
-// Text as the bytes an asset registry takes. Seven tests had one each.
+/// Converts text to the byte vector an asset registry takes.
 [[nodiscard]] inline std::vector<std::byte> bytes_of(std::string_view text) {
     const auto * begin = reinterpret_cast<const std::byte *>(text.data());
     return {begin, begin + text.size()};
@@ -62,13 +68,9 @@ inline void check(bool ok, std::string_view what) {
 
 namespace ctbrowser_test {
 
-// PRINT THE VALUE, NOT THE EXPRESSION. CHECK_EQ used to report `a == b` and
-// leave you to work out what a and b were, which turns a five-second failure
-// into a rebuild-with-printfs.
-//
-// The `if constexpr` matters: this suite compares bitmaps, spans and engine
-// structs as well as ints and strings, and a hard requirement on formattability
-// would make CHECK_EQ unusable for exactly the types whose failures are worst.
+/// Formats a value for CHECK_EQ's failure message, or "<not printable>" when
+/// T has no std::formatter. The suite also compares bitmaps, spans and engine
+/// structs, so CHECK_EQ must not require formattability.
 template <typename T> [[nodiscard]] std::string shown(const T & value) {
     if constexpr (std::formattable<const T &, char>) {
         return std::format("{}", value);
@@ -77,12 +79,9 @@ template <typename T> [[nodiscard]] std::string shown(const T & value) {
     }
 }
 
-// WHY A TEST DIED, when it did not die through CHECK.
-//
-// An uncaught exception reaches std::terminate and ctest reports "Subprocess
-// aborted" with no location at all. That cost real time this session: a dangling
-// url_view surfaced as a thrown "leftover" from valid input, and the message
-// named the error while nothing named the line.
+/// Terminate handler. An uncaught exception reaches std::terminate, and ctest
+/// then reports only "Subprocess aborted" with no location. This prints the
+/// exception and a stack trace first.
 inline void report_terminate() {
     std::printf("\nTERMINATED without reporting a failure\n");
     if (const std::exception_ptr held = std::current_exception()) {
@@ -103,16 +102,10 @@ inline void report_terminate() {
     std::abort();
 }
 
-// WHY A TEST DIED WHEN IT DIED WITHOUT UNWINDING AT ALL.
-//
-// A segfault is not an exception: std::terminate never runs, the handler above
-// never fires, and ctest reports "Subprocess aborted" with nothing else. That
-// cost real time on 2026-08-02 - `export default 42` crashed the compiler
-// because an AST walk followed a flag as a node index - and the evidence went
-// with it, because the probe's stdout was still buffered when the process died.
-//
-// So: print the trace, flush, and re-raise with the default handler so the
-// shell still sees a signal death rather than a clean exit.
+/// Fatal-signal handler. A segfault is not an exception: std::terminate never
+/// runs and ctest reports only "Subprocess aborted". Print a trace, flush stdout
+/// (buffered output is lost otherwise), then re-raise with the default handler
+/// so the shell still sees a signal death.
 extern "C" inline void report_signal(int number) {
     const char * name = number == SIGSEGV   ? "SIGSEGV (bad memory access)"
                         : number == SIGABRT ? "SIGABRT"
@@ -122,9 +115,8 @@ extern "C" inline void report_signal(int number) {
     std::printf("\nDIED ON %s\n", name);
 #if CTBROWSER_TEST_HAS_TRACE
     // Strictly, only async-signal-safe calls belong in a handler and this is
-    // not one. It is the right trade for a TEST BINARY: the process is already
-    // dying, and a trace that occasionally deadlocks beats no trace at all,
-    // which is what the alternative measured.
+    // not one. It is the right trade for a test binary: the process is already
+    // dying, and a trace that occasionally deadlocks beats no trace at all.
     cpptrace::generate_trace().print();
 #endif
     std::fflush(stdout);
@@ -132,8 +124,8 @@ extern "C" inline void report_signal(int number) {
     std::raise(number);
 }
 
-// Installed by a namespace-scope initialiser, because terminate can happen long
-// before main's first statement - a throwing static initialiser, for one.
+/// Installs both handlers from a namespace-scope initialiser, because terminate
+/// can happen before main's first statement (a throwing static initialiser).
 inline const bool trace_installed = [] {
     std::set_terminate(&report_terminate);
     for (const int fatal : {SIGSEGV, SIGABRT, SIGFPE, SIGILL}) {
@@ -144,6 +136,7 @@ inline const bool trace_installed = [] {
 
 } // namespace ctbrowser_test
 
+/// Fails the test, printing the expression and its location, when `cond` is false.
 #define CHECK(cond)                                                                                \
     do {                                                                                           \
         if (!(cond)) {                                                                             \
@@ -152,6 +145,7 @@ inline const bool trace_installed = [] {
         }                                                                                          \
     } while (0)
 
+/// Fails the test when `a != b`, printing both values (see shown()).
 #define CHECK_EQ(a, b)                                                                             \
     do {                                                                                           \
         const auto lhs_ = (a);                                                                     \
@@ -164,6 +158,7 @@ inline const bool trace_installed = [] {
         }                                                                                          \
     } while (0)
 
+/// Prints "ok <name>" when nothing failed and returns main's exit status.
 #define REPORT(name)                                                                               \
     do {                                                                                           \
         if (ctbrowser_test_failures == 0) { std::printf("ok %s\n", name); }                        \

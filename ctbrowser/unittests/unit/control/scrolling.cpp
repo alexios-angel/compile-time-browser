@@ -1,12 +1,13 @@
-// A FIELD'S VIEW: a single-line input scrolling sideways and a textarea
+//===- unittests/unit/control/scrolling.cpp - Form control scrolling ------===//
+//
+// A field's view: a single-line input scrolling sideways and a textarea
 // scrolling by line to keep the caret visible, the wheel over a field going to
 // the field and not the page, auto-scroll while drag-selecting past the edge,
-// and the caret blink - the one thing an idle page has to wake up for.
+// and the caret blink, the one thing an idle page has to wake up for.
 //
-// One of five files carved out of unittests/unit/chrome_basics.cpp on
-// 2026-09-07, when it had reached 2,299 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the five needs are in
-// chrome_probe.hpp beside this.
+// Helpers shared with the other control tests are in ../chrome_probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -24,7 +25,8 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-// Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
+// box_of and find_id come from test/support/dom_probe.hpp; the rest are
+// ../chrome_probe.hpp's.
 using ctbrowser_test::box_of;
 using ctbrowser_test::caret_bars;
 using ctbrowser_test::caret_of;
@@ -46,8 +48,8 @@ namespace {
     return state == nullptr ? 0 : state->scroll_line;
 }
 
-// A single-line <input> never scrolled sideways: the value ran off the clip and
-// the caret went with it, so you could not see what you were typing.
+/// Typing past the right edge of a single-line <input> scrolls it sideways so
+/// the caret stays visible.
 void test_a_single_line_field_scrolls_horizontally() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input type=text id=t size=8></body>");
@@ -61,7 +63,7 @@ void test_a_single_line_field_scrolls_horizontally() {
     page.frame();
     check(scroll_x_of(page, "t") > 0, "typing past the right edge scrolls the view");
     // ...and the caret came with it. caret_bars only counts bars strictly
-    // INSIDE the box, so this is exactly the "can I see what I am typing" test.
+    // inside the box, so this is exactly the "can I see what I am typing" test.
     check(caret_bars(page, "t").size() == 1, "and the caret is still visible");
 
     (void)page.handle(input_event::key_press("Home"));
@@ -70,8 +72,8 @@ void test_a_single_line_field_scrolls_horizontally() {
     check(caret_bars(page, "t").size() == 1, "with the caret visible there too");
 }
 
-// The painter subtracts the scroll and the click mapping adds it back. Get the
-// sign wrong in either and they disagree by twice the scroll.
+/// The painter subtracts the scroll and the click mapping adds it back. Get the
+/// sign wrong in either and they disagree by twice the scroll.
 void test_clicking_a_scrolled_field_lands_where_you_pointed() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input type=text id=t size=8></body>");
@@ -83,7 +85,7 @@ void test_clicking_a_scrolled_field_lands_where_you_pointed() {
     check(scroll_x_of(page, "t") > 0, "the field is scrolled");
 
     // Click at the left inside edge: that is the first character still visible,
-    // which is NOT offset 0 - it is wherever the scroll starts.
+    // which is not offset 0; it is wherever the scroll starts.
     click(page, box.x + 7, box.y + box.height / 2);
     page.frame();
     const std::size_t at = caret_of(page, "t");
@@ -100,8 +102,9 @@ void test_clicking_a_scrolled_field_lands_where_you_pointed() {
     }
 }
 
-// The stale-scroll class, killed by clamping the view where the geometry is
-// derived rather than chasing every writer of the value.
+/// When script shrinks the value, the stored scroll offset can point past the
+/// end. The view is clamped where layout computes the geometry, so every code
+/// path that writes the value is covered.
 void test_a_shrinking_value_does_not_leave_an_empty_field() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=2 cols=12></textarea>"
@@ -124,8 +127,8 @@ void test_a_shrinking_value_does_not_leave_an_empty_field() {
 
 // --- the wheel over a field -------------------------------------------------
 
-// A tall page with a small textarea in it, so "did the FIELD scroll or the
-// PAGE" is answerable.
+/// A tall page with a small textarea in it, so "did the field scroll or the
+/// page" is answerable.
 [[nodiscard]] std::string wheel_page() {
     return "<body><textarea id=t rows=2 cols=12>aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh</textarea>"
            "<div style='height:900px'>tall</div></body>";
@@ -138,7 +141,7 @@ void test_the_wheel_scrolls_the_textarea_under_the_pointer() {
     check(page.max_scroll() > 0, "the page itself can scroll, so a stray page scroll would show");
     const rect box = box_of(page, "t");
 
-    // Over the textarea: the FIELD moves and the page does not.
+    // Over the textarea: the field moves and the page does not.
     (void)page.handle(input_event::wheel_at(box.x + 4, box.y + 4, -1));
     page.frame();
     check(scroll_line_of(page, "t") > 0, "the wheel scrolls the textarea under the pointer");
@@ -162,8 +165,8 @@ void test_the_wheel_scrolls_the_textarea_under_the_pointer() {
     check(other.scroll_y() > 0, "a wheel away from the field scrolls the page");
     check(scroll_line_of(other, "t") == 0, "and not the field");
 
-    // And a wheel with NO pointer position cannot pick a field, so it is the
-    // page's - which is what the headless wheel_by helper means.
+    // And a wheel with no pointer position cannot pick a field, so it is the
+    // page's, which is what the headless wheel_by helper means.
     browser blind{browser_options{300, 200}};
     blind.load_html(wheel_page());
     blind.frame();
@@ -171,10 +174,10 @@ void test_the_wheel_scrolls_the_textarea_under_the_pointer() {
     check(blind.scroll_y() > 0, "a wheel with no position scrolls the page");
 }
 
-// RULE 1 AGAINST RULE 2. The wheel moves the view and leaves the caret where it
-// was, off screen if that is where it ends up - anything else makes the wheel
-// useless, because the view would snap back the instant it moved. The caret
-// comes back on the next keystroke, not before.
+/// Two rules can conflict here: typing scrolls the field to show the caret, and
+/// the wheel scrolls the field without moving the caret. The wheel wins until
+/// the next keystroke. If the view followed the caret, it would jump back as
+/// soon as the wheel moved it, so the wheel would be useless.
 void test_wheeling_away_from_the_caret_leaves_it_until_you_type() {
     browser_options options{300, 200};
     options.caret_blink_ms = 0; // a solid caret, so its absence means absent
@@ -198,7 +201,7 @@ void test_wheeling_away_from_the_caret_leaves_it_until_you_type() {
     check(caret_bars(page, "t").empty(), "and the caret is left off screen, not chased");
     check(caret_of(page, "t") == 0, "the caret itself did not move");
 
-    // Now type. Rule 1 fires and the view comes back to the caret.
+    // Now type: the field scrolls back to show the caret.
     check(page.text_input("X"), "typing is accepted");
     page.frame();
     check(scroll_line_of(page, "t") < scrolled, "typing snaps the view back to the caret");
@@ -227,10 +230,11 @@ void test_pageup_and_pagedown_belong_to_a_focused_textarea() {
 
 // --- auto-scroll while drag-selecting ---------------------------------------
 
-// Holding the pointer below the field keeps scrolling it with NO further mouse
-// events. Without this the selection freezes one line short of the window:
-// offset_at_point clamps to what the value has, so a stationary pointer picks
-// the same offset for ever, and you could only select what was already visible.
+/// Holding the pointer below the field keeps scrolling it with no further mouse
+/// events. Without this the selection would freeze one line short of the
+/// window: offset_at_point clamps to what the value has, so a stationary pointer
+/// picks the same offset forever, and only what is already visible could be
+/// selected.
 void test_dragging_below_a_textarea_keeps_scrolling_it() {
     browser_options options{300, 200};
     options.caret_blink_ms = 0; // so next_wakeup_ms reports the autoscroll term alone
@@ -241,7 +245,7 @@ void test_dragging_below_a_textarea_keeps_scrolling_it() {
 
     (void)page.handle(input_event::mouse_down_at(box.x + 4, box.y + 6));
     check(page.focused() == find_id(page, "t"), "the drag focused the field");
-    // Below the box, and then NOTHING further happens by mouse.
+    // Below the box, and then nothing further happens by mouse.
     (void)page.handle(input_event::mouse_move_to(box.x + 4, box.bottom() + 30));
     const std::size_t before = scroll_line_of(page, "t");
     const std::size_t caret_before = caret_of(page, "t");
@@ -253,7 +257,7 @@ void test_dragging_below_a_textarea_keeps_scrolling_it() {
     check(caret_of(page, "t") > caret_before, "and the selection grows with it");
     check(selection_of(page, "t").first == 0, "the anchor stays where the drag began");
 
-    // Keep going to the end, and then it must STOP asking to be woken - a
+    // Keep going to the end, and then it must stop asking to be woken: a
     // pointer parked below a fully-scrolled field would otherwise spin the
     // event loop at the step interval for ever.
     for (int i = 0; i < 20; ++i) { (void)page.tick(500); }
@@ -269,8 +273,8 @@ void test_dragging_below_a_textarea_keeps_scrolling_it() {
     check(page.next_wakeup_ms() > 1e9, "with no wakeup pending");
 }
 
-// The rate rises with distance, so a small overshoot creeps and a big one
-// races. Same elapsed time, two distances, more steps for the further one.
+/// The rate rises with distance, so a small overshoot creeps and a big one
+/// races. Same elapsed time, two distances, more steps for the further one.
 void test_autoscroll_goes_faster_the_further_out_you_drag() {
     const auto steps_at = [](float beyond) {
         browser_options options{300, 200};
@@ -291,8 +295,8 @@ void test_autoscroll_goes_faster_the_further_out_you_drag() {
     check(far > near, "and one far outside scrolls further in the same time");
 }
 
-// A drag that never leaves the field must not arm anything - the idle page
-// contract is that a browser with nothing to do asks for no wakeups at all.
+/// A drag that never leaves the field must not arm anything: the idle page
+/// contract is that a browser with nothing to do asks for no wakeups at all.
 void test_dragging_inside_a_field_asks_for_no_wakeups() {
     browser_options options{300, 200};
     options.caret_blink_ms = 0;
@@ -328,7 +332,7 @@ void test_the_caret_blinks() {
     page.frame();
     check(caret_bars(page, "f").size() == 1, "and back again");
 
-    // TYPING RESTARTS IT SOLID. A caret that blinks out from under the
+    // Typing restarts the blink solid. A caret that blinks out from under the
     // character you just typed reads as a dropped keystroke.
     (void)page.tick(600);
     page.frame();
@@ -338,11 +342,8 @@ void test_the_caret_blinks() {
     check(caret_bars(page, "f").size() == 1, "typing brings the caret straight back");
 }
 
-// The loop has to be TOLD to draw, and a blink is the case where nothing else
-// tells it: no event arrived and no callback ran. A loop that redraws only
-// when it did something itself shows a caret that appears late or not at all -
-// which is the same shape as the scrollbar that did not appear until the next
-// mouse move.
+/// A blink changes the picture with no event or callback, so the page itself
+/// must report needs_frame(); otherwise the caret appears late or never.
 void test_the_page_asks_for_a_frame_when_the_caret_blinks() {
     browser_options options{400, 200};
     options.caret_blink_ms = 500;
@@ -359,7 +360,7 @@ void test_the_page_asks_for_a_frame_when_the_caret_blinks() {
     check(page.tick(600) == 0, "no callbacks ran");
     check(page.needs_frame(), "but the page wants a frame, because the caret changed");
 
-    // And it says when the NEXT one is due, so an idle loop can block instead
+    // And it says when the next one is due, so an idle loop can block instead
     // of waking sixty times a second to find out.
     page.frame();
     const double due = page.next_wakeup_ms();
@@ -373,7 +374,7 @@ void test_an_idle_page_asks_for_nothing() {
     check(!page.needs_frame(), "nothing to draw");
     check(page.tick(1000) == 0, "and nothing to run");
     check(!page.needs_frame(), "still nothing to draw after a whole second");
-    // Infinity is what lets an application BLOCK rather than poll - the
+    // Infinity is what lets an application block rather than poll: the
     // difference between an idle browser costing nothing and costing a core.
     check(page.next_wakeup_ms() > 1e9, "and no wakeup is due at all");
 }
@@ -391,8 +392,8 @@ void test_a_blink_does_not_relayout() {
     const std::size_t layouts = page.layout_count();
     (void)page.tick(600);
     page.frame();
-    // Only the caret changed. the previous engine re-ran layout every frame for exactly this,
-    // and it is the reason the engine has a dirty level per stage.
+    // Only the caret changed, so a blink must repaint without running layout
+    // again. This is why the engine tracks a separate dirty level per stage.
     check(page.layout_count() == layouts, "a blink re-PAINTS and does not re-lay-out");
 }
 

@@ -1,13 +1,14 @@
-// THE NODE AND ELEMENT METHOD SURFACE: walking and editing the tree, the live
+//===- ctbrowser/unittests/unit/node/methods.cpp - Node method tests ------===//
+//
+// The Node and Element method surface: walking and editing the tree, the live
 // collections, the constructible DOM (`createComment`, fragments, the insertion
 // methods, `document.implementation`, `createElementNS`), `querySelector` on an
-// element, and the four ways of putting markup or text into one - `innerHTML`,
-// `innerText`, `insertAdjacentHTML` and its two sibling spellings.
+// element, the ways of putting markup or text into one (`innerHTML`,
+// `innerText`, `insertAdjacentHTML` and its two sibling spellings), the table
+// model and the DOM depth cap. Helpers shared with sibling test files are in
+// ../chrome_probe.hpp.
 //
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -39,12 +40,11 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-// parentNode / remove / insertBefore - WALKING the tree, not just editing it.
-//
-// appendChild and removeChild already worked; nothing could find a parent. That
-// makes `this.elt.parentNode.removeChild(this.elt)` - the ordinary way to take
-// an element out of a page - throw, which is how p5.js's discarded default
-// canvas stayed in the document underneath the real one.
+/// parentNode / remove / insertBefore: walking the tree, not just editing it.
+///
+/// `this.elt.parentNode.removeChild(this.elt)` is the ordinary way to take an
+/// element out of a page (p5.js removes its default canvas this way), so it
+/// needs a working parentNode as much as a working removeChild.
 void test_tree_navigation() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=box><span id=a></span><span id=b></span></div><script>
@@ -71,15 +71,15 @@ void test_tree_navigation() {
     check(log[4] == "self=1", "remove() takes an element out itself: " + log[4]);
 }
 
-// getElementsByClassName and getElementsByName, and the property that makes
-// them hard: they are LIVE. A page takes the collection, mutates the document
-// and reads the collection AGAIN, expecting the new answer - which a snapshot
-// array cannot give, and which is what five of web-platform-tests' own
-// getElementsByClassName tests do. Asserted here rather than only there because
-// WPT is opt-in, needs a 40 MB corpus, and takes four minutes.
+/// getElementsByClassName and getElementsByName, and the property that makes
+/// them hard: they are live. A page takes the collection, mutates the document
+/// and reads the collection again, expecting the new answer, which a snapshot
+/// array cannot give; five of web-platform-tests' own getElementsByClassName
+/// tests do this. Asserted here as well because WPT is opt-in, needs a 40 MB
+/// corpus, and takes four minutes.
 void test_element_collections_are_live() {
     browser page{browser_options{400, 300}};
-    // A DOCTYPE, because the case-sensitivity asserted below is the
+    // A doctype, because the case-sensitivity asserted below is the
     // standards-mode rule: a quirks-mode document folds case (DOM 4.5).
     page.load_html(R"(<!DOCTYPE html><html class="a"><body class="a">
       <p id=p1 class="x  y"></p><input id=i1 name=q><script>
@@ -125,9 +125,8 @@ void test_element_collections_are_live() {
     check(log[8] == "attr=true,false", "hasAttribute after removeAttribute: " + log[8]);
 }
 
-// The rest of the constructible DOM: a comment, a fragment, the five insertion
-// methods that take any number of arguments, cloneNode and contains. A page
-// could make an element and a text node and nothing else before this.
+/// The rest of the constructible DOM: a comment, a fragment, the five insertion
+/// methods that take any number of arguments, cloneNode and contains.
 void test_the_constructible_dom() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><ul id=list><li id=b>B</li></ul><script>
@@ -195,8 +194,10 @@ void test_the_constructible_dom() {
     check(log[6] == "clone=list,0,8,true", "cloneNode is shallow or deep, and detached: " + log[6]);
 }
 
-// `document.implementation`, whose absence cost 136 assertions in one WPT file
-// and reported none of them by name.
+/// `document.implementation`: hasFeature, createDocumentType, and
+/// createHTMLDocument/createDocument returning a second Document, not this one
+/// (see unittests/unit/second_document.cpp). One WPT file has 136 assertions
+/// that need it.
 void test_document_implementation() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><script>
@@ -227,10 +228,10 @@ void test_document_implementation() {
           "createHTMLDocument makes a SECOND document: " + log[2]);
 }
 
-// `createElementNS`, and the round trip that has to survive it: the exact
-// namespace, the qualified name, the prefix and the local part, none of them
-// case-folded. A createElementNS that lost the namespace would be worse than
-// none - a page would build an SVG element that styled and painted as HTML.
+/// `createElementNS`, and the round trip that has to survive it: the exact
+/// namespace, the qualified name, the prefix and the local part, none of them
+/// case-folded. A createElementNS that lost the namespace would be worse than
+/// none: a page would build an SVG element that styled and painted as HTML.
 void test_create_element_ns() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><svg id=s><rect/></svg><script>
@@ -288,10 +289,9 @@ void test_create_element_ns() {
     check(log[7] == "bytag=3,0,1", "getElementsByTagNameNS matches both halves: " + log[7]);
 }
 
-// `querySelector` ON AN ELEMENT, searching its own subtree rather than the
-// document. The document had both and an element had neither, so "find
-// something inside this" - what a library does with a container it owns -
-// threw. p5.js's describe() builds an offscreen tree and queries it.
+/// `querySelector` on an element searches its own subtree rather than the
+/// document. Libraries do this with containers they own; p5.js's describe()
+/// builds an offscreen tree and queries it.
 void test_element_query_selector() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body>
@@ -314,14 +314,11 @@ void test_element_query_selector() {
     check(log[3] == "miss=true", "no match is null: " + log[3]);
 }
 
-// `innerHTML` PARSES, and `textContent` does not.
-//
-// innerHTML was a plain property on the wrapper: assigning markup stored a
-// string, built no nodes, rendered nothing and reported nothing - and reading
-// it back gave whatever the page last wrote rather than what the DOM holds. It
-// goes through the same WHATWG tokenizer and tree builder the page did, because
-// the alternative is a second and worse parser for the commonest way a page
-// builds content.
+/// `innerHTML` parses, and `textContent` does not.
+///
+/// Assigning innerHTML builds real nodes through the same WHATWG tokenizer and
+/// tree builder the page went through, and reading it serialises what the DOM
+/// holds rather than echoing the last string written.
 void test_inner_html() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><head><style>.k { background-color: #008000 }</style></head>
@@ -348,11 +345,11 @@ void test_inner_html() {
     check(log[2] == "text=hithere", "textContent is every text node under it: " + log[2]);
     check(log[3] == "replaced=1,only", "assigning again replaces: " + log[3]);
     check(log[4] == "asText=0,<not markup>", "textContent stores text, not markup: " + log[4]);
-    // And the parsed nodes are in the CASCADE, which is what says they are
-    // really in the document rather than in a side table.
+    // The parsed nodes take part in the cascade, which shows they are really
+    // in the document rather than in a side table.
     page.frame();
 
-    // A <script>'s textContent is its SOURCE, unmangled. p5's error system
+    // A <script>'s textContent is its source, unmangled. p5's error system
     // reads it back and parses it, so anything lost here becomes a syntax
     // error in a file the page never wrote.
     browser scripts{browser_options{200, 200}};
@@ -372,10 +369,8 @@ console.log('src=' + document.getElementById('t').textContent.split('\n').join('
     }
 }
 
-// A CONTROL'S `value` IS LIVE, and a canvas is an image source.
-//
-// Both were the same shape of bug: a property written on whatever tick a sync
-// next ran, read by a page in the statement that created it.
+/// A control's `value` and `checked` are live: a page reads them in the
+/// statement after it sets them, so they cannot wait for a later sync.
 void test_control_value_is_live() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><input id=static value="s"><script>
@@ -405,23 +400,21 @@ void test_control_value_is_live() {
     check(log[1] == "created=from-attribute",
           "a control created by script reads it immediately: " + log[1]);
     check(log[2] == "assigned=assigned", "an assignment is read back: " + log[2]);
-    // The attribute must NOT come back and undo it.
+    // The attribute must not come back and undo it.
     check(log[3] == "cleared=[]", "assigning the empty string clears the field: " + log[3]);
     check(log[4] == "checked=true", "checked round-trips: " + log[4]);
 }
 
-// `innerText` AND `outerText` ASSIGN TEXT AND LINE BREAKS, which is the half of
-// those two properties that does not need layout.
-//
-// The assigned string is cut at every CR, LF or CRLF pair: each run of other
-// characters becomes a Text node and each break becomes a <br> ELEMENT. That is
-// what separates it from `textContent`, which would have stored the newline as
-// a character and rendered nothing, and from `innerHTML`, which would have read
-// `<` as a tag and turned a U+0000 into U+FFFD.
-//
-// The GETTERS are deliberately absent - reading either is `undefined` - because
-// innerText reads the rendered box tree and this engine lays out on a frame
-// rather than on demand. See the note in lib/Shell/bindings/element/interfaces.cpp.
+/// The `innerText` and `outerText` setters assign text and line breaks.
+///
+/// The assigned string is cut at every CR, LF or CRLF pair: each run of other
+/// characters becomes a Text node and each break becomes a <br> element. That is
+/// what separates it from `textContent`, which would store the newline as a
+/// character and render nothing, and from `innerHTML`, which would read `<` as a
+/// tag and turn a U+0000 into U+FFFD.
+///
+/// This test covers the setters only. Both setters and getters (the inner text
+/// collection steps) are in lib/Shell/bindings/element/rendered_text.cpp.
 void test_inner_text_and_outer_text_assign() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><div id=d>old</div>
@@ -473,9 +466,9 @@ void test_inner_text_and_outer_text_assign() {
     check(log[7] == "svg=0", "innerText is HTMLElement's, not Element's: " + log[7]);
 }
 
-// `insertAdjacentHTML` - a fragment parse at one of four places relative to the
-// element. Same parser and same copy as innerHTML; only where the nodes land
-// differs.
+/// `insertAdjacentHTML`: a fragment parse at one of four places relative to the
+/// element. Same parser and same copy as innerHTML; only where the nodes land
+/// differs.
 void test_insert_adjacent_html() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><div id=box><span id=mid>mid</span></div><script>
@@ -498,12 +491,9 @@ void test_insert_adjacent_html() {
     check(log[1] == "inner=in-first in-last", "afterbegin and beforeend place children: " + log[1]);
 }
 
-// THE OTHER TWO SPELLINGS OF THE SAME ALGORITHM. `insertAdjacentElement` and
-// `insertAdjacentText` take a node rather than markup and are otherwise
-// `insertAdjacentHTML` exactly, which is why all three go through one
-// "insert adjacent" now - and why `afterend` is the case worth a test: it used
-// to APPEND to the parent, so a node placed after an element with a later
-// sibling landed at the end of the list instead of beside it.
+/// insertAdjacentElement and insertAdjacentText: the insertAdjacentHTML
+/// algorithm with a node instead of markup. `afterend` must insert directly
+/// after the element, not append to the parent, when a later sibling exists.
 void test_insert_adjacent_element_and_text() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><div id=box><span id=a>a</span><span id=z>z</span></div>
@@ -601,10 +591,10 @@ void test_the_table_model() {
           "delete removes them and a wrong tHead is refused: " + log[6]);
 }
 
-// THE DEPTH CAP (max_dom_depth): an insertion that would put a node 512
-// levels down is a HierarchyRequestError, whether it grows one level at a
-// time or moves a tall subtree in whole - so no walk over the tree a page
-// builds can run the stack out.
+/// The depth cap (max_dom_depth): an insertion that would put a node 512
+/// levels down is a HierarchyRequestError, whether it grows one level at a
+/// time or moves a tall subtree in whole, so no walk over the tree a page
+/// builds can run the stack out.
 void test_depth_cap() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><script>

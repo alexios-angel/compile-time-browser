@@ -1,8 +1,11 @@
-// WHAT css/cssom ASKS THE OBJECT MODEL, one case per behaviour that moved.
+//===- ctbrowser/unittests/unit/cssom/wpt.cpp - WPT css/cssom tests -------===//
 //
-// The third CSSOM file beside rules.cpp and sheets.cpp: every case
-// here is a string or a boolean a `css/cssom` test compares, and each one names
-// the file it stands in for. `logged` is shared through probe.hpp.
+// CSSOM behaviour checked by WPT's css/cssom tests (beside rules.cpp and
+// sheets.cpp). Each case asserts a string or boolean a WPT test compares;
+// where a comment names a WPT file, that is the test it mirrors. `logged`
+// comes from probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -321,8 +324,8 @@ void test_elliptical_radius_cascade() {
     CHECK_EQ(logged(page, "negative="), std::string{"negative=0px 40px"});
 }
 
-// Reflection and hasOwnProperty share the live indexed properties, including
-// mutations that bypass the wrappers, and retain explicitly defined properties.
+/// Reflection and hasOwnProperty share the live indexed properties, including
+/// mutations that bypass the wrappers, and retain explicitly defined properties.
 void test_live_own_descriptors() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<div id="e" class="x y" style="color: red"></div><script>
@@ -361,9 +364,9 @@ void test_live_own_descriptors() {
     CHECK_EQ(logged(page, "defined="), std::string{"defined=x:false:false:false,true"});
 }
 
-// CSS-namespace-object-class-string, CSSStyleDeclaration-iterator, escape,
-// cssom-fontfacerule-constructors: the class strings, the iterator and the
-// namespace object's own tag and arities.
+/// CSS-namespace-object-class-string, CSSStyleDeclaration-iterator, escape,
+/// cssom-fontfacerule-constructors: the class strings, the iterator and the
+/// namespace object's own tag and arities.
 void test_class_strings_and_iterators() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>.a { color: red; width: 1px }</style></head><body><script>
@@ -401,8 +404,8 @@ void test_class_strings_and_iterators() {
     CHECK_EQ(logged(page, "escape="), std::string{"escape=1,TypeError,true"});
 }
 
-// cssom-pagerule "after rule was removed", insertRule-charset-no-index,
-// CSSKeyframesRule, CSSContainerRule: the rule side.
+/// cssom-pagerule "after rule was removed", insertRule-charset-no-index,
+/// CSSKeyframesRule, CSSContainerRule: the rule side.
 void test_removed_rules_charset_keyframes_and_container() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>@charset "UTF-8";
@@ -439,9 +442,9 @@ void test_removed_rules_charset_keyframes_and_container() {
              std::string{"container=true,side,(min-width: 100px),side (min-width: 100px)"});
 }
 
-// rule-restrictions, page-descriptors, cssstyledeclaration-cssfontrule,
-// cssstyledeclaration-csstext-important, setproperty-null-undefined: the
-// three declaration blocks and what each takes.
+/// rule-restrictions, page-descriptors, cssstyledeclaration-cssfontrule,
+/// cssstyledeclaration-csstext-important, setproperty-null-undefined: the
+/// three declaration blocks and what each takes.
 void test_declaration_blocks() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -499,8 +502,8 @@ void test_declaration_blocks() {
              std::string{"in=true,true,true,true,true,false,false,true,false,true"});
 }
 
-// style-sheet-interfaces-001, stylesheet-same-origin: `sheet` on the
-// prototype, and a cross-origin sheet that will not show its rules.
+/// style-sheet-interfaces-001, stylesheet-same-origin: `sheet` on the
+/// prototype, and a cross-origin sheet that will not show its rules.
 void test_sheet_attribute_and_origin() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style id=s>.a { color: red }</style>
@@ -522,8 +525,8 @@ void test_sheet_attribute_and_origin() {
     CHECK_EQ(logged(page, "far="), std::string{"far=SecurityError,SecurityError,0"});
 }
 
-// getComputedStyle-resolved-colors: a system colour resolves to an rgb(),
-// and a logical border longhand answers as its physical one.
+/// getComputedStyle-resolved-colors: a system colour resolves to an rgb(),
+/// and a logical border longhand answers as its physical one.
 void test_resolved_colours() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -543,16 +546,17 @@ void test_resolved_colours() {
     CHECK_EQ(logged(page, "sys="),
              std::string{"sys=rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|"
                          "rgb(247, 247, 247)|rgb(247, 247, 247)|rgb(247, 247, 247)|1px|solid"});
-    // A shadow's colour first and resolved - the system colour, an omitted
-    // one as the element's own `color` - and its lengths in px, padded.
+    // A shadow serialises its colour first, resolved (a system colour to its
+    // rgb(), an omitted one to the element's own `color`), then its lengths in
+    // px with omitted ones filled in.
     CHECK_EQ(logged(page, "shadow="),
              std::string{"shadow=rgb(247, 247, 247) 1px 1px 0px 0px, "
                          "rgb(247, 247, 247) 2px 3px 4px 0px inset|"
                          "rgb(255, 0, 0) 16px 0px 0px|rgb(0, 0, 255) 0px 0px 0px 1px"});
 }
 
-// css-multicol/inheritance and column-rule-computed: line-width keywords
-// compute to lengths even when the rule is hidden, and survive shorthand folding.
+/// css-multicol/inheritance and column-rule-computed: line-width keywords
+/// compute to lengths even when the rule is hidden, and survive shorthand folding.
 void test_column_rule_widths() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><div id=t style="color: lime"></div><script>
@@ -589,11 +593,11 @@ void test_column_rule_widths() {
     CHECK_EQ(logged(page, "borders="), std::string{"borders=0px,3px|0px,3px|3px,3px"});
 }
 
-// getComputedStyle-detached-subtree, getComputedStyle-pseudo-with-argument: an
-// element outside the flat tree - a light child of a shadow host that no
-// `<slot>` takes - has no computed style, while a slotted one keeps its own;
-// a node of another document answers the same empty declaration; and a
-// functional pseudo-element argument parses as the selector grammar does.
+/// getComputedStyle-detached-subtree, getComputedStyle-pseudo-with-argument: an
+/// element outside the flat tree - a light child of a shadow host that no
+/// `<slot>` takes - has no computed style, while a slotted one keeps its own;
+/// a node of another document answers the same empty declaration; and a
+/// functional pseudo-element argument parses as the selector grammar does.
 void test_flat_tree_and_pseudo_arguments() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body>
@@ -632,9 +636,9 @@ void test_flat_tree_and_pseudo_arguments() {
              std::string{"fn=true,true,true,true|false,false,false,false,false,false,false"});
 }
 
-// getComputedStyle-sticky-pos-percent: a sticky inset's percentage resolves
-// against the nearest scroll container's content box, `auto` stays `auto`,
-// and a calc() folds against the same basis.
+/// getComputedStyle-sticky-pos-percent: a sticky inset's percentage resolves
+/// against the nearest scroll container's content box, `auto` stays `auto`,
+/// and a calc() folds against the same basis.
 void test_sticky_insets() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body style="margin: 0">
@@ -652,9 +656,9 @@ void test_sticky_insets() {
     CHECK_EQ(logged(page, "sticky="), std::string{"sticky=250px,49px,0px,auto"});
 }
 
-// mediaquery-sort-dedup: matchMedia serialises the list as written - not
-// sorted, not deduplicated - and answers `matches` from the cascade's own
-// environment.
+/// mediaquery-sort-dedup: matchMedia serialises the list as written - not
+/// sorted, not deduplicated - and answers `matches` from the cascade's own
+/// environment.
 void test_match_media() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><script>
@@ -678,13 +682,14 @@ void test_match_media() {
     CHECK_EQ(logged(page, "mm="),
              std::string{"mm=(min-width: 10px) and (min-height: 10px)|(color) and (color)|"
                          "true,false,true,false|[object MediaQueryList]"});
-    // 400 x 200: 200vh + 5em is 480 (false), 100vh * 2 is 400.
+    // The viewport is 400 x 200, so 200vh + 5em is 480 (false) and 100vh * 2
+    // is 400.
     CHECK_EQ(logged(page, "units="), std::string{"units=true,true,true,false,true,false,true"});
 }
 
-// ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -
-// its `length` follows a removed <style> - and it still iterates, indexes and
-// answers `item()`, and is one object.
+/// ttwf-cssom-doc-ext-load-count: a StyleSheetList held in a variable is live -
+/// its `length` follows a removed <style> - and it still iterates, indexes and
+/// answers `item()`, and is one object.
 void test_live_sheet_list() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>a { color: red }</style><style></style></head><body>
@@ -702,8 +707,8 @@ void test_live_sheet_list() {
              std::string{"live=2,2,2|1,1,true,true,true,true,[object StyleSheetList]"});
 }
 
-// tree-counting/sibling-function-descriptors: a descriptor is on no element,
-// so a tree-counting function in one is invalid and the earlier value stays.
+/// tree-counting/sibling-function-descriptors: a descriptor is on no element,
+/// so a tree-counting function in one is invalid and the earlier value stays.
 void test_descriptors_refuse_tree_counting() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>

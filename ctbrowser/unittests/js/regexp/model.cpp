@@ -1,9 +1,13 @@
-// RegExp.prototype as 22.2.6 writes it: the flag accessors, `source`, `flags`,
-// and the five Symbol methods that String.prototype's match, matchAll,
-// replace, replaceAll, search and split INVOKE rather than reimplement. Each
-// assertion below is one that test262's built-ins/String or built-ins/RegExp
-// rows failed on 2026-09-12 while the model was six own data properties and
-// a per-method regex loop in string.cpp.
+//===- ctbrowser/unittests/js/regexp/model.cpp - RegExp.prototype tests ---===//
+//
+// RegExp.prototype as ECMA-262 22.2.6 defines it: the flag accessors,
+// `source`, `flags`, and the five Symbol methods that String.prototype's
+// match, matchAll, replace, replaceAll, search and split call rather than
+// reimplement. Each assertion reproduces a test262 built-ins/String or
+// built-ins/RegExp failure. The matcher's own limits are tested through
+// ctbrowser::script::rx directly.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../vm/expect.hpp"
 
@@ -22,17 +26,17 @@ void test_accessors() {
     expect_result("return /a/dgimsuy.flags;", "dgimsuy");
     expect_result("return /a/.hasIndices + ',' + /a/s.dotAll + ',' + /a/v.unicodeSets;",
                   "false,true,true");
-    // `flags` is generic: it reads the booleans through [[Get]]
+    // `flags` is generic: it reads the booleans through [[Get]].
     expect_result("return Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags').get"
                   ".call({global: 1, sticky: 'y'});",
                   "gy");
-    // RegExp.prototype itself answers undefined and "(?:)", not a TypeError
+    // RegExp.prototype itself answers undefined and "(?:)", not a TypeError.
     expect_result("return RegExp.prototype.global + '|' + RegExp.prototype.source;",
                   "undefined|(?:)");
     expect_result("try { Object.getOwnPropertyDescriptor(RegExp.prototype, 'global').get.call({});"
                   " return 'no'; } catch (e) { return e.name; }",
                   "TypeError");
-    // EscapeRegExpPattern
+    // EscapeRegExpPattern.
     expect_result("return new RegExp('').source + ' ' + new RegExp('a/b').source + ' ' + "
                   "new RegExp('\\n').source;",
                   "(?:) a\\/b \\n");
@@ -40,11 +44,11 @@ void test_accessors() {
 }
 
 void test_constructor() {
-    // 22.2.4.1 step 4: RegExp(re) with no flags IS re
+    // ECMA-262 22.2.4.1 step 4: RegExp(re) with no flags is re.
     expect_result("const re = /a/g; return RegExp(re) === re;", "true");
     expect_result("const re = /a/g; return new RegExp(re) === re;", "false");
     expect_result("return new RegExp(/a/g).flags + new RegExp(/a/g, 'i').flags;", "gi");
-    // something that claims to be a RegExp is read through [[Get]]
+    // Something that claims to be a RegExp is read through [[Get]].
     expect_result("return new RegExp({[Symbol.match]: true, source: 'b+', flags: 'g'})"
                   ".exec('abbb')[0];",
                   "bbb");
@@ -55,68 +59,68 @@ void test_constructor() {
     expect_result("return Object.getOwnPropertyDescriptor(/a/, 'lastIndex').writable + ',' + "
                   "Object.getOwnPropertyDescriptor(/a/, 'lastIndex').enumerable;",
                   "true,false");
-    // a frozen pattern refuses the lastIndex write with a TypeError
+    // A frozen pattern refuses the lastIndex write with a TypeError.
     expect_result("const re = Object.freeze(/a/g); try { re.exec('a'); return 'no'; } "
                   "catch (e) { return e.name; }",
                   "TypeError");
     expect_result("return RegExp[Symbol.species] === RegExp;", "true");
     // RegExp.escape (ES2025): a leading alphanumeric is hex-escaped, syntax
-    // characters backslashed, other punctuators and spaces \xHH
+    // characters backslashed, other punctuators and spaces \xHH.
     expect_result("return RegExp.escape('1a.b') + ' ' + RegExp.escape('x-y z');",
                   "\\x31a\\.b \\x78\\x2dy\\x20z");
     // (Spelled as JS escapes: a raw line break inside a string literal is a
-    // SyntaxError, 12.9.4.)
+    // SyntaxError, ECMA-262 12.9.4.)
     expect_result("return RegExp.escape('\\t\\n');", "\\t\\n");
     expect_result("try { RegExp.escape(1); return 'no'; } catch (e) { return e.name; }",
                   "TypeError");
 }
 
 void test_exec() {
-    // lastIndex is read through ToLength: a string, a negative, a huge one
+    // lastIndex is read through ToLength: a string, a negative, a huge one.
     expect_result("const re = /a/g; re.lastIndex = '1'; return re.exec('aa').index;", "1");
     expect_result("const re = /a/g; re.lastIndex = -5; return re.exec('aa').index;", "0");
     expect_result("const re = /a/g; re.lastIndex = 9; return re.exec('aa') + ',' + re.lastIndex;",
                   "null,0");
-    // a non-global, non-sticky pattern ignores lastIndex and leaves it alone
+    // A non-global, non-sticky pattern ignores lastIndex and leaves it alone.
     expect_result("const re = /a/; re.lastIndex = 7; re.exec('a'); return re.lastIndex;", "7");
-    // sticky matches at lastIndex or not at all
+    // Sticky matches at lastIndex or not at all.
     expect_result("const re = /b/y; return re.exec('ab') + ',' + re.lastIndex;", "null,0");
     expect_result("const re = /b/y; re.lastIndex = 1; return re.exec('ab')[0] + re.lastIndex;",
                   "b2");
-    // groups is undefined without named groups, null-prototype with them
+    // groups is undefined without named groups, null-prototype with them.
     expect_result("return /(a)/.exec('a').groups;", "undefined");
     expect_result("const g = /(?<x>a)/.exec('a').groups; return Object.getPrototypeOf(g) + ',' + "
                   "g.x + ',' + ('toString' in g);",
                   "null,a,false");
-    // `d`: indices
+    // `d`: indices.
     expect_result("const m = /b(?<c>c)/d.exec('abc'); return m.indices[0] + '|' + m.indices[1] + "
                   "'|' + m.indices.groups.c;",
                   "1,3|2,3|2,3");
-    // a repetition clears the captures of the group it repeats
+    // A repetition clears the captures of the group it repeats.
     expect_result("return /(?:(a)|(b))+/.exec('ab')[1];", "undefined");
     expect_result("return /(a)|(b)/.exec('b')[1];", "undefined");
-    // the s flag, and the default . refusing both line terminators
+    // The s flag, and the default . refusing both line terminators.
     expect_result("return /a.b/.test('a\\nb') + '' + /a.b/s.test('a\\nb') + /a.b/.test('a\\rb');",
                   "falsetruefalse");
-    // a class and the dot consume a whole UTF-8 code point, and a match never
-    // starts inside one
+    // A class and the dot consume a whole UTF-8 code point, and a match never
+    // starts inside one.
     expect_result("return /[^\u{1F49A}]/u.exec('\u{1F49A}') + '|' + 'é'.match(/./)[0] + '|' + "
                   "/(.+).*\\1/u.test('\\ud800\\udc00\\ud800');",
                   "null|é|false");
-    // named backreference, and Annex B's octal for a number past the groups
+    // Named backreference, and Annex B's octal for a number past the groups.
     expect_result("return /(?<q>['\"]).*\\k<q>/.exec('say \"hi\" now')[0];", "\"hi\"");
     expect_result("return /\\1/.test('\\u0001') + '' + /\\8/.test('8');", "truetrue");
 }
 
 void test_symbol_methods() {
     // String.prototype.match with g is the list of matched texts; without,
-    // the exec result
+    // the exec result.
     expect_result("return 'a1b2'.match(/\\d/g).join() + '|' + 'a1b2'.match(/\\d/).index;", "1,2|1");
     expect_result("return 'abc'.match(/x/g);", "null");
-    // an empty match advances by one, so a global match over the empty
-    // pattern terminates with one entry per position
+    // An empty match advances by one, so a global match over the empty
+    // pattern terminates with one entry per position.
     expect_result("return 'ab'.match(/(?:)/g).length;", "3");
-    // replace: the template language, $<name>, and the function form's args
+    // replace: the template language, $<name>, and the function form's args.
     expect_result("return 'abc'.replace(/b/, '[$`|$&|$\\']');", "a[a|b|c]c");
     expect_result("return 'abc'.replace(/(?<mid>b)/, '<$<mid>>');", "a<b>c");
     expect_result("return 'abc'.replace(/b/, '<$<mid>>');", "a<$<mid>>c");
@@ -127,22 +131,22 @@ void test_symbol_methods() {
                   "aobjectc");
     expect_result("return 'aaa'.replace(/a/g, (m, i) => i);", "012");
     // replaceAll: string form finds every position, including with an empty
-    // search string; a non-global RegExp is refused
+    // search string; a non-global RegExp is refused.
     expect_result("return 'abc'.replaceAll('', '_');", "_a_b_c_");
     expect_result("return 'aaa'.replaceAll('a', '$&$&');", "aaaaaa");
     expect_result("try { 'a'.replaceAll(/a/, 'b'); return 'no'; } catch (e) { return e.name; }",
                   "TypeError");
     expect_result("return 'a.b.c'.replaceAll(/\\./g, '-');", "a-b-c");
-    // split through @@split: the sticky walk keeps captures and honours limit
+    // split through @@split: the sticky walk keeps captures and honours limit.
     expect_result("return 'x'.split(/^/).join('|');", "x");
     expect_result("return 'a1b2c'.split(/(\\d)/).join('|');", "a|1|b|2|c");
     expect_result("return 'hello'.split(/l/, 2).join('|');", "he|");
     expect_result("return 'ab'.split(/(?:)/).join('|');", "a|b");
     expect_result("return ''.split(/x/).length + ',' + ''.split(/(?:)/).length;", "1,0");
-    // search: lastIndex is restored afterwards
+    // search: lastIndex is restored afterwards.
     expect_result(
         "const re = /b/g; re.lastIndex = 5; return 'abc'.search(re) + ',' + re.lastIndex;", "1,5");
-    // matchAll: a live iterator over a species copy, the original untouched
+    // matchAll: a live iterator over a species copy, the original untouched.
     expect_result("const re = /a/g; const it = 'aa'.matchAll(re); const a = it.next(); "
                   "return a.value.index + ',' + re.lastIndex + ',' + it.next().value.index + ',' + "
                   "it.next().done;",
@@ -150,8 +154,8 @@ void test_symbol_methods() {
     expect_result("return [...'a1b2'.matchAll(/\\d/g)].map(m => m[0] + m.index).join();", "11,23");
     expect_result("return Object.prototype.toString.call('a'.matchAll(/a/g));",
                   "[object RegExp String Iterator]");
-    // a page's own @@ methods are honoured, and a non-object result from a
-    // custom exec is refused
+    // A page's own @@ methods are honoured, and a non-object result from a
+    // custom exec is refused.
     expect_result("return 'abc'.replace({[Symbol.replace]: (s, r) => s + r}, 'X');", "abcX");
     expect_result("const re = /a/; re.exec = () => 1; try { re.test('a'); return 'no'; } "
                   "catch (e) { return e.name; }",
@@ -160,8 +164,8 @@ void test_symbol_methods() {
 }
 
 void test_substitution_limits() {
-    // Small inputs expand past the existing 2^28-byte string ceiling. Size
-    // preflight must reject them without allocating that result, and numbered
+    // Small inputs can expand past the 2^28-byte (256 MiB) string ceiling. A
+    // size preflight must reject them without allocating that result, and numbered
     // captures are coerced once before expanding the template.
     expect_result("let calls = 0; const text = 'x'.repeat(65536); const re = /x/;"
                   "re.exec = () => ({0: 'x', 1: {toString() { ++calls; return text; }},"
@@ -190,9 +194,9 @@ void test_substitution_limits() {
                   "17");
 }
 
-// The pieces of the grammar the matcher read as something else: `\cX`, a
-// class's `[\b]`, a quantifier bound past int32, and the RepeatMatcher rule
-// that an iteration matching nothing fails once the minimum is met.
+/// The pieces of the grammar that are easy to misread: `\cX`, a
+/// class's `[\b]`, a quantifier bound past int32, and the RepeatMatcher rule
+/// that an iteration matching nothing fails once the minimum is met.
 void test_escapes_and_repetition() {
     expect_result("return /\\cJ/.test('\\n') + ',' + /[\\cJ]/.test('\\n');", "true,true");
     expect_result("return /\\c1/.test('\\\\c1');", "true");
@@ -204,22 +208,22 @@ void test_escapes_and_repetition() {
     expect_result("return String('abc'.match(/(?:(?=(abc)))?a/)[1]);", "undefined");
     expect_result("return 'abc'.match(/(?:(?=(abc))){1,1}a/)[1];", "abc");
     expect_result("return new RegExp('b{' + Number.MAX_SAFE_INTEGER + '}').test('b');", "false");
-    // A lookbehind is matched RIGHT TO LEFT: greedy nearest the position,
+    // A lookbehind is matched right to left: greedy nearest the position,
     // and the captures that reading gives.
     expect_result("return /(?<=(\\d+)(\\d+))$/.exec('1053').slice(1).join();", "1,053");
     expect_result("return /(?<=\\$\\d+\\.)\\d+/.exec('cost $10.53')[0];", "53");
     expect_result("return /(?<!abc)\\w\\w\\w/.exec('abcdef')[0];", "abc");
     expect_result("return /(?<=(b+))c/.exec('abbbbbbc')[1];", "bbbbbb");
-    // An exec() result's index, input and groups are OWN data properties.
+    // An exec() result's index, input and groups are own data properties.
     expect_result(
         "const m = /(?<x>a)/.exec('a'); delete m.input;"
         "return m.hasOwnProperty('groups') + ',' + Object.keys(m).join() + ',' + m.input;",
         "true,0,1,index,groups,undefined");
 }
 
-// Annex B's legacy RegExp features: the static accessors RegExpBuiltinExec
-// updates, refused for any receiver but %RegExp% and emptied by a subclass
-// instance's match; compile refuses a subclass instance.
+/// Annex B's legacy RegExp features: the static accessors RegExpBuiltinExec
+/// updates, refused for any receiver but %RegExp% and emptied by a subclass
+/// instance's match; compile refuses a subclass instance.
 void test_legacy_statics() {
     expect_result("/(b)(c)?/.exec('abd'); return [RegExp.lastMatch, RegExp['$1'], "
                   "RegExp['$2'], RegExp.lastParen, RegExp.leftContext, RegExp.rightContext, "
@@ -250,9 +254,9 @@ void test_legacy_statics() {
                   "SyntaxError");
 }
 
-// The matcher recurses and backtracks; its budget (rx_max_depth,
-// rx_max_steps) and the reader's nesting cap (rx_max_nesting) make a hostile
-// pattern or subject a failed match instead of a stack overflow or a hang.
+/// The matcher recurses and backtracks; its budget (rx_max_depth,
+/// rx_max_steps) and the reader's nesting cap (rx_max_nesting) make a hostile
+/// pattern or subject a failed match instead of a stack overflow or a hang.
 void test_limits() {
     namespace rx = ctbrowser::script::rx;
     const auto search = [](std::string_view pattern, std::string_view flags,
@@ -262,7 +266,8 @@ void test_limits() {
         const bool hit = p.ok && rx::rx_search(p, subject, 0, m);
         return std::pair{hit, m.exhausted};
     };
-    // A quantified group recursed per repetition: 200k of them overflowed.
+    // 200k repetitions of a quantified group exhaust the budget instead of
+    // overflowing the stack.
     CHECK((search("^(?:a|b)+$", "", std::string(200000, 'a')) == std::pair{false, true}));
     // Catastrophic backtracking: 2^40 ways to fail, stopped by the step budget.
     CHECK((search("(a+)+$", "", std::string(40, 'a') + "b") == std::pair{false, true}));
@@ -284,7 +289,7 @@ void test_limits() {
     CHECK(!rx::rx_compile(nested('(', ')', 30000), "v").ok);
     CHECK(!rx::rx_compile(nested('[', ']', 30000), "v").ok);
     // In script: a pattern too deep is a SyntaxError, and a search that gave
-    // up has no answer - a RangeError, never null.
+    // up has no answer: a RangeError, never null.
     expect_result("try { new RegExp('['.repeat(30000) + ']'.repeat(30000), 'v'); return 'no'; }"
                   " catch (e) { return e.name; }",
                   "SyntaxError");

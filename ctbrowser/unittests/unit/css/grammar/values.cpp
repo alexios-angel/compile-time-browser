@@ -1,7 +1,11 @@
-// The smaller value grammars: `display`'s two-value form, the box alignment
-// longhands and `place-*` shorthands, and the filter function list. Every
-// expectation is one of css/css-display, css/css-align or
-// css/filter-effects's parsing files.
+//===- values.cpp - Value grammar tests -------------------------*- C++ -*-===//
+//
+// Value-grammar tests for individual CSS properties: display, box alignment
+// and place-*, small shorthands, grid, keyword combinations, transforms,
+// shadows, background layers, filters and assorted module longhands. The
+// expected values come from WPT css/<module>/parsing/*-{valid,invalid} files.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -21,12 +25,14 @@ using ctbrowser::style::css::set_declaration;
 
 namespace {
 
+/// Expects `property: value` to be accepted and to serialize as `serialized`.
 void ok(std::string_view property, std::string_view value, std::string_view serialized) {
     const auto answer = check_declaration(property, value);
     CHECK(answer.valid);
     CHECK_EQ(answer.serialized, std::string{serialized});
 }
 
+/// Expects `property: value` to be rejected.
 void bad(std::string_view property, std::string_view value) {
     CHECK(!check_declaration(property, value).valid);
 }
@@ -221,9 +227,9 @@ void test_keyword_combinations() {
     ok("counter-reset", "foo", "foo 0");
     ok("counter-increment", "foo 2 bar", "foo 2 bar 1");
     ok("counter-reset", "reversed(foo) 3", "reversed(foo) 3");
-    ok("counter-set", "a\\ 8 9", "a\\ 8 9"); // the counter `a 8`, escaped back
+    ok("counter-set", "a\\ 8 9", "a\\ 8 9"); // The counter `a 8`, escaped back.
     ok("text-align", "justify-all", "justify-all");
-    ok("counter-set", "foo calc(1.6)", "foo calc(1.6)"); // rounded when it computes
+    ok("counter-set", "foo calc(1.6)", "foo calc(1.6)"); // Rounded when it computes.
     bad("counter-reset", "none foo");
     ok("will-change", "TRANSFORM, transform", "TRANSFORM, transform");
     ok("will-change", "auto", "auto");
@@ -382,7 +388,8 @@ void test_filters() {
     CHECK_EQ(computed_filter("brightness(300%)", ctx), std::string{"brightness(3)"});
     CHECK_EQ(computed_filter("grayscale(calc(3))", ctx), std::string{"grayscale(1)"});
     CHECK_EQ(computed_filter("brightness(calc(-10%))", ctx), std::string{"brightness(0)"});
-    // ...and so does the negative literal the cascade folds a calc() to.
+    // A negative literal (what the cascade folds a negative calc() to) also
+    // clamps to 0.
     CHECK_EQ(computed_filter("sepia(-10%)", ctx), std::string{"sepia(0)"});
     CHECK_EQ(computed_filter("hue-rotate()", ctx), std::string{"hue-rotate(0deg)"});
     CHECK_EQ(computed_filter("drop-shadow(1px 2px)", ctx),
@@ -391,8 +398,9 @@ void test_filters() {
              std::string{"drop-shadow(rgb(4, 5, 6) 1px 2px 0px)"});
 }
 
-// The module longhands that were `freeform` rows until they had a grammar.
-// Every line is an assertion of a css/<module>/parsing/*-{valid,invalid} file.
+/// Longhands from assorted CSS modules that are validated against a real value
+/// grammar instead of being accepted as free-form text. Every line is an
+/// assertion of a WPT css/<module>/parsing/*-{valid,invalid} file.
 void test_module_longhands() {
     ok("continue", "discard", "discard");
     ok("word-break", "auto-phrase", "auto-phrase");
@@ -466,7 +474,7 @@ void test_module_longhands() {
     ok("offset-rotate", "0rad reverse", "reverse 0rad");
     bad("offset-rotate", "auto reverse");
     ok("offset-rotate", "calc(90deg - 0.5turn)", "calc(-90deg)");
-    ok("image-resolution", "calc(100dpi + 20dpi)", "calc(1.25dppx)"); // canonical: dppx
+    ok("image-resolution", "calc(100dpi + 20dpi)", "calc(1.25dppx)"); // Canonical unit: dppx.
     ok("offset-anchor", "auto", "auto");
     bad("offset-anchor", "left 10% top");
     ok("offset-position", "10px 20%", "10px 20%");

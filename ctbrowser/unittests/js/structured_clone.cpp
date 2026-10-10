@@ -1,12 +1,16 @@
-// structuredClone WITH A TRANSFER LIST, AND OF A PLATFORM OBJECT (HTML 2.7).
+//===- ctbrowser/unittests/js/structured_clone.cpp - structuredClone ------===//
+//
+// structuredClone with a transfer list, and of a platform object (HTML 2.7).
 //
 // A transferred ArrayBuffer arrives with its bytes and leaves its original
 // detached; a buffer listed twice, a detached one and anything that is not an
-// ArrayBuffer are the DataCloneError, before anything is detached. A view
-// over a buffer shrunk below it is the DataCloneError too. And an instance of
-// an interface the HOST installed - a builtin global that is not an intrinsic -
-// is copied when the host named it serializable, onto the same interface
-// prototype, and refused otherwise.
+// ArrayBuffer throw DataCloneError before anything is detached. A view over a
+// buffer shrunk below it throws DataCloneError too. An instance of an
+// interface the host installed (a builtin global that is not an intrinsic) is
+// copied onto the same interface prototype when the host marked it
+// serializable, and refused otherwise.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -14,8 +18,8 @@ namespace {
 
 using namespace ctbrowser::script;
 
-// `source` run in a context whose host installed a `Widget` interface after
-// the intrinsics, serializable or not.
+/// Runs `source` in a context whose host installed a `Widget` interface after
+/// the intrinsics, marked serializable or not, and returns the result as text.
 std::string with_widget(std::string_view source, bool serializable) {
     context cx;
     install_builtins(cx);
@@ -78,8 +82,8 @@ int main() {
               " try { structuredClone(dv); } catch (e) { return e.name; } })()",
               "DataCloneError");
 
-    // A platform object: refused unless serializable, then its own state -
-    // the internal slot included - on the interface's prototype.
+    // A platform object: refused unless serializable, then its own state
+    // (the internal slot included) on the interface's prototype.
     expect_widget("try { structuredClone(new Widget()); return 'copied'; }"
                   " catch (e) { return e.name; }",
                   false, "DataCloneError");

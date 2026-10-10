@@ -1,9 +1,13 @@
+//===- activation.cpp - Label activation tests ------------------*- C++ -*-===//
+//
 // A <label>'s activation behaviour (HTML 4.10.4): it leaves a click aimed at
-// its interactive content alone, and it clicks its labeled control - which a
+// its interactive content alone, and it clicks its labeled control, which a
 // form-associated custom element can be.
 //
-// clicking-interactive-content.html and ElementInternals-labels.html, each
-// reduced to the case that failed.
+// Reduced from WPT's clicking-interactive-content.html and
+// ElementInternals-labels.html.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -17,6 +21,8 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
+/// Evaluates `expression` on a page holding one empty <label id=label> and
+/// returns what it logged, or "threw:<name>".
 [[nodiscard]] std::string answer(const std::string & expression) {
     browser page{browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><html><body><label id=label></label></body></html>");
@@ -27,6 +33,7 @@ namespace {
     return logged.empty() ? "<nothing logged>" : logged.back();
 }
 
+/// Checks `answer(expression)` against `expected`.
 void is(const std::string & expression, const std::string & expected) {
     CHECK_EQ(answer(expression), expected);
 }

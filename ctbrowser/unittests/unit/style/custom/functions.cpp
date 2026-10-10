@@ -1,6 +1,10 @@
+//===- functions.cpp - @function tests --------------------------*- C++ -*-===//
+//
 // Custom functions, CSS Functions and Mixins 1 §2: `@function` in a sheet and
 // `--name()` calls in the cascade - parameters, defaults, typed slots, locals,
 // the function's scope over the caller's, and how a call goes invalid.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/style/style.hpp>
 

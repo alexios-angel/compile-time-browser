@@ -1,10 +1,10 @@
-// ctbrowser.aot: a whole function, hand-compiled against the ABI.
+//===- unittests/unit/aot/program.cpp - Hand-compiled function vs VM ------===//
 //
-// Phases 2 through 5 have been building the surface a code generator emits
-// against - a frame, rooted slots, a call, the binary operations, comparison,
-// truthiness, property and index reads, interned names, the failure poll. This
-// is the first thing that uses ALL of it at once, and it is the question those
-// phases exist to answer: could a backend emit a real function today?
+// A whole function hand-compiled against the AOT ABI. It is the first test that
+// uses the whole ABI at once (frame, rooted slots, calls, binary operations,
+// comparison, truthiness, property and index reads, interned names and the
+// failure poll) to answer one question: could a backend emit a real function
+// against it today?
 //
 //     function total(items, scale) {
 //       var sum = 0;
@@ -14,22 +14,21 @@
 //       return sum;
 //     }
 //
-// `scale` is INTERPRETED and recurses, which is not decoration. Without a
-// nested call in the loop nothing grows the register file, so a body that
-// forgot to reload its slot pointer after a safepoint would still work - the
-// pointer only goes stale when the vector reallocates. Blinding the reloads
-// left this test green until the call was added.
+// `scale` is interpreted and recurses on purpose. Without a nested call in the
+// loop nothing grows the register file, so a body that forgot to reload its
+// slot pointer after a safepoint would still work: the pointer only goes stale
+// when the vector reallocates.
 //
 // Written by hand the way a backend would emit it, and checked against the
-// INTERPRETER running the same source on the same input. That differential is
-// the shape Phase 12A's oracle will have; getting it right on one function now
-// is worth more than getting it wrong on ninety later.
+// interpreter running the same source on the same input: the same differential
+// the compiler's test oracle uses.
 //
-// AND IT RUNS UNDER FORCED GC, because a compiled body that keeps a live value
-// where the collector cannot see it is the failure this whole ABI is arranged
-// around. Every value that must survive a safepoint is parked in a frame slot
-// and reloaded afterwards - which is the discipline generated code will have to
-// follow, demonstrated rather than described.
+// It also runs under forced GC, because a compiled body that keeps a live value
+// where the collector cannot see it is the failure this ABI is arranged around.
+// Every value that must survive a safepoint is parked in a frame slot and
+// reloaded afterwards, which is the discipline generated code must follow.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -49,9 +48,10 @@ using ctbrowser::script::value;
 
 namespace {
 
+/// How many times compiled_total ran; proves the compiled body was used.
 std::size_t compiled_calls = 0;
 
-// The frame's slots, named the way a backend would name its virtual registers.
+/// The frame's slots, named the way a backend would name its virtual registers.
 enum slot : std::size_t {
     slot_items = 0,
     slot_scale = 1,
@@ -62,20 +62,19 @@ enum slot : std::size_t {
     slot_count = 6,
 };
 
-// THE HAND-COMPILED BODY.
-//
-// Every helper that can collect is followed by a reload of the slot pointer,
-// and every live value crosses those calls in a slot rather than in a C++
-// local. Read it as the output of a code generator, because that is what it is
-// a stand-in for.
+/// The hand-compiled body of `total`, standing in for code-generator output.
+///
+/// Every helper that can collect is followed by a reload of the slot pointer,
+/// and every live value crosses those calls in a slot rather than in a C++
+/// local.
 extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
                                        const ctbrowser::aot::ct_aot_site * site,
                                        const std::uint64_t * argv, std::uint32_t argc,
                                        std::uint64_t receiver, std::uint32_t constructing,
                                        std::uint64_t * out) {
     ++compiled_calls;
-    // READ BEFORE ct_aot_enter: the entry row says enter resizes the register
-    // file, so argv is dangling the moment it returns.
+    // Read argv before ct_aot_enter: enter may resize the register file (see
+    // its entry in aot_helpers.def), which leaves argv dangling.
     const std::uint64_t items = argc > 0 ? argv[0] : value::undefined().bits();
     const std::uint64_t scale = argc > 1 ? argv[1] : value::undefined().bits();
 
@@ -87,10 +86,9 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
     }
 
     const auto leave_with = [&](ctbrowser::aot::ct_aot_status status) {
-        // UNWOUND MEANS THE FRAME IS ALREADY GONE, so leaving again would pop
-        // somebody else's. Every exit goes through here, which is what the plan
-        // asks for: "unregistration in a single exit block that all paths
-        // branch to, rather than duplicated at each return".
+        // `unwound` means the frame is already popped, so leaving again would
+        // pop someone else's. Every exit goes through this one lambda so frame
+        // unregistration is written once rather than at each return.
         if (status != ctbrowser::aot::ct_aot_status::unwound) {
             ctbrowser::aot::ct_aot_leave(frame);
         }
@@ -116,28 +114,23 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
             static_cast<ctbrowser::aot::ct_aot_status>(ctbrowser::aot::ct_aot_get_prop(
                 frame, slots[slot_items], name_length, nullptr, &length));
         if (status != ctbrowser::aot::ct_aot_status::ok) { return leave_with(status); }
-        // RELOADED, AND THIS ONE IS NOT PROVEN. Removing it leaves this test
-        // green, and the reason is measurable rather than mysterious: a probe
-        // showed the register file does not reallocate across this read. It
-        // grows geometrically and settles at a high-water mark, and nothing
-        // reachable inside the 512-frame guard pushes past the mark this
-        // fixture has already reached by the time the loop starts.
-        //
-        // Making it go red meant deepening the getter until it crossed - and at
-        // the depth that worked, the widest case ALSO hit the frame guard, so
-        // the arm that is supposed to be the control failed too. A red for the
-        // wrong reason is worse than an honest gap, so this is the gap: the
-        // reload is correct, it is what generated code must do, and this test
-        // does not enforce it. The one after the nested call below IS enforced.
+        // This reload is correct but not enforced: removing it leaves the test
+        // green, because the register file does not reallocate across this
+        // read. It grows geometrically and settles at a high-water mark, and
+        // nothing reachable inside the 512-frame guard pushes past the mark
+        // this fixture has already reached when the loop starts. Deepening the
+        // getter until it crossed also tripped the frame guard in the control
+        // arm, so the test would fail for the wrong reason. The reload after
+        // the nested call below is enforced.
         slots = ctbrowser::aot::ct_aot_slots(frame);
         slots[slot_length] = length;
     }
 
     for (;;) {
-        // THE LOOP CONDITION: i < length, as a constant compare against the
-        // ordering ct_aot_compare writes. `less` and nothing else - an
-        // UNORDERED result (either side NaN) must exit the loop, which is what
-        // makes `for (i = 0; i < NaN; ...)` run zero times.
+        // Loop condition i < length: compare the ordering ct_aot_compare writes
+        // against `less` and nothing else. An unordered result (either side
+        // NaN) must exit the loop, which makes `for (i = 0; i < NaN; ...)` run
+        // zero times.
         std::int32_t ordering = 0;
         {
             const auto status =
@@ -169,10 +162,10 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
             slots = ctbrowser::aot::ct_aot_slots(frame);
         }
 
-        // scale(width) - a compiled body calling an INTERPRETED function, which
-        // is the AOT -> VM transition and the thing that makes the reloads
-        // below matter: the callee's frame grows the register file, so every
-        // pointer into it taken before this call is stale afterwards.
+        // scale(width): a compiled body calling an interpreted function, the
+        // AOT -> VM transition that makes the reloads below matter: the
+        // callee's frame grows the register file, so every pointer into it
+        // taken before this call is stale afterwards.
         std::uint64_t scaled = value::undefined().bits();
         {
             const std::uint64_t forwarded[1] = {width};
@@ -196,7 +189,7 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
             slots[slot_sum] = sum;
         }
 
-        // i = i + 1, through the STATIC family: the counter is a number this
+        // i = i + 1, through the static family: the counter is a number this
         // body produced, so nothing here can run user code.
         {
             std::uint64_t next = value::undefined().bits();
@@ -209,11 +202,10 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
             slots[slot_index] = next;
         }
 
-        // THE BACK-EDGE POLL. The uncatchable tier - the allocation ceiling,
-        // the depth guard - sets a flag no try/catch can see, and a compiled
-        // loop that never asks runs on past it. One load of one bool, which is
-        // why the row exists at all rather than a status test after every
-        // allocation.
+        // Back-edge poll. Uncatchable failures (allocation ceiling, depth
+        // guard) set a flag no try/catch sees; a compiled loop that never
+        // checks it would run past them. ct_aot_failed is one bool load,
+        // cheaper than a status test after every allocation.
         if (ctbrowser::aot::ct_aot_failed(frame) != 0u) {
             return leave_with(ctbrowser::aot::ct_aot_status::failed);
         }
@@ -224,7 +216,7 @@ extern "C" std::int32_t compiled_total(ctbrowser::aot::ct_aot_ctx * ctx,
 }
 
 constexpr std::string_view source =
-    // DEEP AND WIDE. Depth alone does not force the register file to move: it
+    // Deep and wide. Depth alone does not force the register file to move: it
     // grows geometrically and settles at a high-water mark, so 200 narrow
     // frames fit in capacity something earlier already asked for. Each frame
     // here carries thirty-odd locals, so the getter below is far and away the
@@ -244,8 +236,8 @@ constexpr std::string_view source =
     "  }\n"
     "  return sum;\n"
     "}\n"
-    // `width` IS A GETTER, which is the reason ct_aot_get_prop is may_reenter
-    // at all - reading a property can run a page's own code. With a plain data
+    // `width` is a getter, because reading a property can run a page's own code
+    // (which is why ct_aot_get_prop is may_reenter). With a plain data
     // property nothing nests, the register file never grows, and a body that
     // forgot to reload its slot pointer after the read still worked.
     "class Item {\n"
@@ -258,8 +250,10 @@ constexpr std::string_view source =
     "  return out;\n"
     "}\n";
 
-// Run `total(items)` on a context, with the function either interpreted or
-// stamped with the hand-compiled body.
+/// Runs `total(makeItems(count), scale)` on a fresh context, with `total`
+/// either interpreted or stamped with the hand-compiled body. `stress` forces a
+/// collection at every safepoint; `calls` receives how often the compiled body
+/// ran and `ok` whether everything ran cleanly.
 [[nodiscard]] value run_total(bool stamp, int count, bool stress, std::size_t & calls, bool & ok) {
     program compiled = ctbrowser::script::compiler::compile(source);
     if (!compiled.ok) {
@@ -294,14 +288,14 @@ constexpr std::string_view source =
 } // namespace
 
 int main() {
-    // THE INTERPRETER'S ANSWER FIRST, from the same source. This is the thing
-    // the compiled body has to agree with, and taking it from a constant
-    // written here would be comparing the body against my arithmetic instead.
+    // The interpreter's answer first, from the same source. The compiled body
+    // must agree with it; a constant written here would only check the body
+    // against hand arithmetic.
     std::size_t calls = 0;
     bool ok = true;
     const value interpreted = run_total(false, 12, false, calls, ok);
     check(ok, "the interpreted arm runs cleanly");
-    // A FINITE, KNOWN NUMBER, not just "a number". Two arms that both produce
+    // Check for a finite, known number, not just "a number". Two arms that both produce
     // NaN agree perfectly, and NaN is what this fixture gives if the getter
     // never runs - so a differential alone cannot tell working from broken
     // here. width is i * 3, scale doubles it, so the sum is 6 * (0 + 1 + ... +
@@ -317,8 +311,8 @@ int main() {
               from_body.as_number() == interpreted.as_number(),
           "AND IT AGREES WITH THE INTERPRETER");
 
-    // EMPTY AND ONE-ELEMENT, because a loop that is wrong at its boundaries is
-    // wrong in the way that survives a test with twelve elements in it.
+    // Empty and one-element inputs, because a loop that is wrong at its
+    // boundaries can still pass a test with twelve elements.
     for (const int count : {0, 1, 2, 37}) {
         const value expected = run_total(false, count, false, calls, ok);
         const value got = run_total(true, count, false, calls, ok);
@@ -327,7 +321,7 @@ int main() {
               "and agrees on " + std::to_string(count) + " elements");
     }
 
-    // UNDER FORCED GC. Every safepoint in that body collects the whole heap,
+    // Under forced GC every safepoint in that body collects the whole heap,
     // so a value parked anywhere but a frame slot is freed while it is still
     // needed. Under asan this is where a missing reload shows up.
     {

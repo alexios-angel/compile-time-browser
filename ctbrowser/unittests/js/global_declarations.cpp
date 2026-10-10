@@ -1,9 +1,14 @@
-// GLOBAL DECLARATION INSTANTIATION (16.1.7): the scripts of one realm share
-// a global environment, and a script whose declarations collide with what an
-// earlier one made is a SyntaxError that creates nothing - checked before
-// its first statement runs (context::global_declaration_instantiation). A
-// top-level `let`, `const` or `class` is a binding of that environment and
-// not a property of the global object.
+//===- ctbrowser/unittests/js/global_declarations.cpp - Global scope ------===//
+//
+// GlobalDeclarationInstantiation (ECMA-262 16.1.7): the scripts of one realm
+// share a global environment, and a script whose declarations collide with
+// what an earlier one made is a SyntaxError that creates nothing, checked
+// before its first statement runs (context::global_declaration_instantiation).
+// A top-level `let`, `const` or `class` is a binding of that environment and
+// not a property of the global object. The last case checks that compiled
+// (AOT) code stores globals the same way the interpreter does.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/script.hpp>
@@ -19,8 +24,8 @@ namespace {
 
 using namespace ctbrowser::script;
 
-// Runs each script in turn in one context; answers what the LAST one did:
-// "ok", or the error it failed with.
+/// Runs each script in turn in one context and answers what the last one did:
+/// "ok", the error it failed with, or "COMPILE <error>".
 std::string last_of(std::initializer_list<std::string_view> scripts) {
     context cx;
     install_builtins(cx);
@@ -34,6 +39,7 @@ std::string last_of(std::initializer_list<std::string_view> scripts) {
     return answer;
 }
 
+/// Checks that last_of(scripts) contains `want`.
 void expect(std::initializer_list<std::string_view> scripts, std::string_view want) {
     const std::string got = last_of(scripts);
     if (got.find(want) == std::string::npos) {
@@ -45,6 +51,7 @@ void expect(std::initializer_list<std::string_view> scripts, std::string_view wa
     }
 }
 
+/// The message fragment of a redeclaration SyntaxError.
 constexpr std::string_view refused = "has already been declared";
 
 } // namespace
@@ -63,7 +70,7 @@ int main() {
     expect({"function a() {}", "var a;"}, "ok");
     expect({"let a;", "let b; { let a; }"}, "ok");
     expect({"let a;", "(function () { var a; })();"}, "ok");
-    // A REFUSED SCRIPT CREATES NOTHING: its `var` stays unbound.
+    // A refused script creates nothing: its `var` stays unbound.
     expect({"let a;", "var b; let a;", "b;"}, "ReferenceError");
     // A binding everywhere, and not a property of the global object.
     expect({"let a = 1;", "if (this.hasOwnProperty('a') || a !== 1) { throw 0; }"}, "ok");
@@ -92,14 +99,14 @@ int main() {
             "if (seen !== 'evimplicit' && seen !== 'implicitev') { throw seen; }"},
            "ok");
     // A global assignment to a data property the global object owns writes
-    // THAT property, attributes and all (9.1.1.4.5).
+    // that property, attributes and all (9.1.1.4.5).
     expect({"Object.defineProperty(globalThis, 'd',"
             " {value: 'x', writable: true, enumerable: false, configurable: true});",
             "d = 2; var o = Object.getOwnPropertyDescriptor(globalThis, 'd');"
             "if (o.value !== 2 || o.enumerable || d !== 2) { throw 0; }"},
            "ok");
-    // AN ANNEX B BLOCK FUNCTION'S NAME IS NOT A VarName (B.3.2.2): a global
-    // `let` of it, or a global object that cannot take it, skips it - no
+    // An Annex B block function's name is not a VarName (B.3.2.2): a global
+    // `let` of it, or a global object that cannot take it, skips it, with no
     // SyntaxError, no TypeError, and no binding.
     expect({"let f = 1;", "if (false) { function f() {} } if (f !== 1) { throw 0; }"}, "ok");
     expect({"Object.preventExtensions(globalThis);", "if (false) { function g() {} }"}, "ok");
@@ -118,7 +125,7 @@ int main() {
           "a Script's function may return new.target");
     check(compiler::compile("return 1;").ok, "an embedder's program may return");
 
-    // ct_aot_global_set STORES AS op::set_global DOES (context::assign_global):
+    // ct_aot_global_set stores as op::set_global does (context::assign_global):
     // into a data property the global object owns, not over a read-only one,
     // and into the table otherwise.
     {

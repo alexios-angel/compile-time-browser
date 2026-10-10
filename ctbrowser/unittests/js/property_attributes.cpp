@@ -1,28 +1,31 @@
-// [[Writable]], [[Enumerable]], [[Configurable]] and [[Extensible]] - the four
-// internal slots this engine did not have, and what each of them is now for.
+//===- ctbrowser/unittests/js/property_attributes.cpp - Attributes --------===//
 //
-// test262 measures this gap through `verifyProperty`, which 13,621 of its files
-// call and which fails on contact against an engine with no attributes
-// (docs/test262.md, 2026-09-02). THIS FILE IS THE REGRESSION NET, not that
-// suite: test262 is opt-in (-DCTBROWSER_TEST262=ON), needs a 273 MB corpus that
-// is deliberately not in the repository, and takes five minutes.
+// [[Writable]], [[Enumerable]], [[Configurable]] and [[Extensible]]: the four
+// property and object attributes, and what each of them controls.
 //
-// EVERY CASE HERE IS A DIFFERENT ANSWER, not a crash - so unlike crash_guards
-// beside it, reverting a fix makes this file print a mismatch rather than kill
-// the process. The expected values are node's, checked against V8.
+// test262 checks these through `verifyProperty`, which thousands of its files
+// call. This file is the regression net, not that suite: test262 is opt-in
+// (-DCTBROWSER_TEST262=ON), needs a large corpus that is deliberately not in
+// the repository, and takes minutes.
 //
-// SLOPPY MODE IS THE CONTRACT HERE. A write to a non-writable property, a
+// Every case here is a different answer, not a crash, so unlike crash_guards
+// beside it, a regression makes this file print a mismatch rather than kill
+// the process. The expected values are node's (V8).
+//
+// Sloppy mode is the contract here. A write to a non-writable property, a
 // delete of a non-configurable one and an addition to a non-extensible object
-// are each SILENT in sloppy mode and a TypeError under "use strict". Every
-// case below is sloppy and asserts the silent answer; the strict throw comes
-// off store_rejected_ (the three `return`s in lib/Script/vm/objects/store.cpp)
-// in the run loop's strict_store_check.
+// are each silent in sloppy mode and a TypeError under "use strict". Every
+// case below is sloppy unless it says otherwise. In strict code the store sets
+// store_rejected_ (lib/Script/vm/objects/store.cpp) and the run loop's
+// strict_store_check throws.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 int main() {
     // ================================================================
-    // 1. THE DEFAULTS: a literal and an assignment produce all three
+    // 1. The defaults: a literal and an assignment produce all three.
     // ================================================================
     js_expect("Object.getOwnPropertyDescriptor({x:1},'x').writable", "true");
     js_expect("Object.getOwnPropertyDescriptor({x:1},'x').enumerable", "true");
@@ -32,9 +35,8 @@ int main() {
               "return d.writable&&d.enumerable&&d.configurable;})()",
               "true");
 
-    // ...and defineProperty's are the OPPOSITE: an absent field is false, not
-    // true (10.1.6.3 step 4). Answering true for all three was the old
-    // getOwnPropertyDescriptor's only answer.
+    // ...and defineProperty's defaults are the opposite: an absent field is false
+    // (ECMA-262 10.1.6.3 step 4).
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{value:1});"
               "var d=Object.getOwnPropertyDescriptor(o,'x');"
               "return d.writable+','+d.enumerable+','+d.configurable;})()",
@@ -42,7 +44,7 @@ int main() {
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{value:1});return o.x;})()", "1");
 
     // ================================================================
-    // 2. [[Enumerable]] - four operations that must all agree
+    // 2. [[Enumerable]]: four operations that must all agree.
     // ================================================================
     js_expect("(function(){var o={a:1};Object.defineProperty(o,'x',{value:2});"
               "return Object.keys(o).join(',');})()",
@@ -56,7 +58,7 @@ int main() {
     js_expect("(function(){var o={a:1};Object.defineProperty(o,'x',{value:2});"
               "return o.propertyIsEnumerable('x')+','+o.propertyIsEnumerable('a');})()",
               "false,true");
-    // ...and the two that must NOT agree, because they report every own
+    // ...and the two that must not agree, because they report every own
     // property by definition.
     js_expect("(function(){var o={a:1};Object.defineProperty(o,'x',{value:2});"
               "return Object.getOwnPropertyNames(o).join(',');})()",
@@ -65,7 +67,7 @@ int main() {
               "return o.hasOwnProperty('x');})()",
               "true");
     // Spread and Object.assign are CopyDataProperties and [[Set]]: both skip a
-    // non-enumerable source property (7.3.25 / 7.3.24).
+    // non-enumerable source property (ECMA-262 7.3.25 / 7.3.24).
     js_expect("(function(){var o={a:1};Object.defineProperty(o,'x',{value:2});"
               "return Object.keys({...o}).join(',');})()",
               "a");
@@ -74,19 +76,19 @@ int main() {
               "a");
 
     // ================================================================
-    // 3. [[Writable]] - the write is DISCARDED, silently (sloppy)
+    // 3. [[Writable]]: the write is discarded, silently (sloppy).
     // ================================================================
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{value:1});o.x=2;return o.x;})()",
               "1");
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{value:1,writable:true});"
               "o.x=2;return o.x;})()",
               "2");
-    // AN INHERITED non-writable data property blocks a write through the
-    // instance, which is the half of 10.1.9 that surprises people.
+    // An inherited non-writable data property blocks a write through the
+    // instance, which is the half of ECMA-262 10.1.9 that surprises people.
     js_expect("(function(){var p={};Object.defineProperty(p,'x',{value:1});"
               "var o=Object.create(p);o.x=2;return o.x;})()",
               "1");
-    // ...and an inherited WRITABLE one is shadowed rather than assigned into.
+    // ...and an inherited writable one is shadowed rather than assigned into.
     js_expect("(function(){var p={x:1};var o=Object.create(p);o.x=2;"
               "return o.x+','+p.x+','+o.hasOwnProperty('x');})()",
               "2,1,true");
@@ -129,8 +131,9 @@ int main() {
         return hits + ':' + objects.map(function(o) { return Object.hasOwn(o, 'x'); }).join();
     })())",
               "0:true,true,true,true,true");
-    // op::define_data, not a call of a global: a page that binds the old
-    // helper's name keeps working literals.
+    // Object literals compile to op::define_data, not to a call of the global
+    // __ctbrowser_define_own, so a page that overwrites that global cannot break
+    // its own literals.
     js_expect(R"((function(){
         var saved = globalThis.__ctbrowser_define_own, key = 'b';
         globalThis.__ctbrowser_define_own = function() { throw 1; };
@@ -231,7 +234,7 @@ int main() {
     }
 
     // ================================================================
-    // 4. [[Configurable]] - delete refuses, and so does a redefinition
+    // 4. [[Configurable]]: delete refuses, and so does a redefinition.
     // ================================================================
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{value:1});"
               "delete o.x;return o.x;})()",
@@ -241,24 +244,24 @@ int main() {
               "try{Object.defineProperty(o,'x',{value:2});return 'no throw';}"
               "catch(e){return e.name;}})()",
               "TypeError");
-    // A non-configurable BUT writable property may still change its value, and
-    // may still be made non-writable - the two exceptions in 10.1.6.3.
+    // A non-configurable but writable property may still change its value, and
+    // may still be made non-writable: the two exceptions in ECMA-262 10.1.6.3.
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{value:1,writable:true});"
               "Object.defineProperty(o,'x',{value:2});return o.x;})()",
               "2");
 
     // ================================================================
-    // 5. freeze / seal / preventExtensions, which used to be theatre
+    // 5. freeze / seal / preventExtensions really restrict the object.
     // ================================================================
     js_expect("(function(){var o={a:1};Object.freeze(o);o.a=2;return o.a;})()", "1");
     js_expect("(function(){var o={a:1};Object.freeze(o);o.b=3;return o.b;})()", "undefined");
     js_expect("(function(){var o={a:1};Object.freeze(o);delete o.a;return o.a;})()", "1");
-    // ...AND IN STRICT CODE EVERY ONE OF THOSE REJECTED WRITES IS A TypeError
-    // (13.15.2 step 6.b): a directive, a class body and a module are strict;
-    // a nested function inherits it. An assignment to an unresolvable name is
-    // a ReferenceError there too - in a script, not in a module (a deliberate
-    // leniency, see emit_store).
-    // The directive has to open the FUNCTION body, so it goes before the try.
+    // In strict code every one of those rejected writes is a TypeError
+    // (ECMA-262 13.15.2 step 6.b): a directive, a class body and a module are
+    // strict; a nested function inherits it. An assignment to an unresolvable
+    // name is a ReferenceError there too, in a script but not in a module (a
+    // deliberate leniency, see emit_store).
+    // The directive has to open the function body, so it goes before the try.
     const auto kind = [](const char * body) {
         std::string source{body};
         std::string prologue;
@@ -276,7 +279,7 @@ int main() {
               "TypeError");
     js_expect(kind("'use strict'; var a = [1]; Object.freeze(a); a[0] = 2"), "TypeError");
     js_expect(kind("'use strict'; 'str'.x = 1"), "TypeError");
-    // A proxy's set trap answering false is a rejected write (10.5.9 step 9).
+    // A proxy's set trap answering false is a rejected write (ECMA-262 10.5.9 step 9).
     js_expect(kind("'use strict'; var p = new Proxy({}, { set() { return false; } }); p.x = 1"),
               "TypeError");
     js_expect(kind("var p = new Proxy({}, { set() { return false; } }); p.x = 1"), "no");
@@ -294,7 +297,7 @@ int main() {
     js_expect("(function(){var o={a:1};Object.freeze(o);return Object.isFrozen(o);})()", "true");
     js_expect("(function(){var o={a:1};Object.freeze(o);return Object.isSealed(o);})()", "true");
     js_expect("(function(){var o={a:1};return Object.isFrozen(o);})()", "false");
-    // SEALED IS NOT FROZEN: the value may still change, the property may not go.
+    // Sealed is not frozen: the value may still change, the property may not go.
     js_expect("(function(){var o={a:1};Object.seal(o);o.a=2;return o.a;})()", "2");
     js_expect("(function(){var o={a:1};Object.seal(o);delete o.a;return o.a;})()", "1");
     js_expect("(function(){var o={a:1};Object.seal(o);return Object.isSealed(o);})()", "true");
@@ -303,11 +306,11 @@ int main() {
               "return o.b+','+o.a+','+Object.isExtensible(o);})()",
               "undefined,1,false");
     js_expect("Object.isExtensible({})", "true");
-    // A PRIMITIVE is frozen and sealed and not extensible - 19.1.2.15 answers
+    // A primitive is frozen and sealed and not extensible: ECMA-262 19.1.2.15 answers
     // true for one because there is nothing about it to change.
     js_expect("Object.isFrozen(1)+','+Object.isSealed(1)+','+Object.isExtensible(1)",
               "true,true,false");
-    // A frozen ARRAY, which has no property table and carries its integrity in
+    // A frozen array, which has no property table and carries its integrity in
     // two bools instead (see array_object).
     js_expect("(function(){var a=[1,2];Object.freeze(a);a[0]=9;return a[0];})()", "1");
     js_expect("(function(){var a=[1,2];Object.freeze(a);a.push;a[2]=9;return a.length;})()", "2");
@@ -315,11 +318,11 @@ int main() {
     js_expect("(function(){var a=[1,2];return Object.isFrozen(a);})()", "false");
 
     // ================================================================
-    // 6. THE STANDARD LIBRARY IS NOT ENUMERABLE (clause 17)
+    // 6. The standard library is not enumerable (ECMA-262 clause 17).
     // ================================================================
     //
-    // Every built-in method was enumerable, so `for (k in Array.prototype)`
-    // walked the whole standard library and `Object.keys(Math)` reported it.
+    // Otherwise `for (k in Array.prototype)` would walk the whole standard
+    // library and `Object.keys(Math)` would report it.
     js_expect("Object.keys(Object.prototype).length", "0");
     js_expect("Object.keys(Array.prototype).length", "0");
     js_expect("(function(){var n=0;for(var k in Array.prototype){n++;}return n;})()", "0");
@@ -346,7 +349,7 @@ int main() {
               "true");
 
     // ================================================================
-    // 7. ACCESSORS carry two of the three bits, and no [[Writable]]
+    // 7. Accessors carry two of the three bits, and no [[Writable]].
     // ================================================================
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return 7;}});"
               "return o.x;})()",
@@ -362,8 +365,8 @@ int main() {
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{get:function(){return 7;}});"
               "return Object.keys(o).length;})()",
               "0");
-    // An object literal's accessor IS enumerable and configurable, unlike a
-    // defineProperty one - the defaults differ and both have to be right.
+    // An object literal's accessor is enumerable and configurable, unlike a
+    // defineProperty one: the defaults differ and both have to be right.
     js_expect("(function(){var o={get x(){return 7;}};"
               "var d=Object.getOwnPropertyDescriptor(o,'x');"
               "return d.enumerable+','+d.configurable;})()",
@@ -406,12 +409,11 @@ int main() {
               "9,get x,set x,false,true");
 
     // ================================================================
-    // 8. THE OTHER THREE PROPERTY TABLES, which answered nothing at all
+    // 8. The other three property tables.
     // ================================================================
     //
-    // getOwnPropertyDescriptor only ever looked at object_object, so an array,
-    // a string, a function and a built-in constructor each reported that they
-    // had no properties whatsoever.
+    // getOwnPropertyDescriptor must look beyond object_object: an array, a
+    // string, a function and a built-in constructor all have own properties.
     js_expect("Object.getOwnPropertyDescriptor([1,2],'length').value", "2");
     js_expect("Object.getOwnPropertyDescriptor([1,2],'length').enumerable", "false");
     js_expect("Object.getOwnPropertyDescriptor([7,8],'0').value", "7");
@@ -434,7 +436,7 @@ int main() {
     js_expect("Object.hasOwn(Object,'keys')", "true");
 
     // ================================================================
-    // 9. ENUMERATION ORDER: integer keys first, ascending (6.1.7.1)
+    // 9. Enumeration order: integer keys first, ascending (ECMA-262 6.1.7.1).
     // ================================================================
     js_expect("Object.keys({b:1,2:1,a:1,1:1}).join(',')", "1,2,b,a");
     js_expect("(function(){var o={b:1,2:1,a:1,1:1};var k='';"
@@ -444,13 +446,11 @@ int main() {
     js_expect("Object.keys({z:1,y:1,x:1}).join(',')", "z,y,x");
 
     // ================================================================
-    // 10. AN ARRAY'S ELEMENTS HAVE ATTRIBUTES OF THEIR OWN (since 2026-09-12)
+    // 10. An array's elements have attributes of their own.
     // ================================================================
     //
-    // array_object::element_attrs: three bits, a hole, or an accessor per
-    // element that asks for one, beside a `items` vector that stays dense.
-    // Until then the two integrity bools were all an element had, so
-    // `defineProperty(a, '0', {writable: false})` was dropped.
+    // array_object::element_attrs stores, per element that needs one, its three
+    // attribute bits, a hole marker or an accessor, while `items` stays dense.
     js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{value:5,writable:false});"
               "a[0]=9;return a[0];})()",
               "5");
@@ -458,8 +458,8 @@ int main() {
               "var d=Object.getOwnPropertyDescriptor(a,'0');"
               "return d.writable+','+d.enumerable+','+d.configurable;})()",
               "false,true,true");
-    // A NEW element defined with only a value is { false, false, false }
-    // (10.1.6.3 step 2.c), and redefining it with a different value refuses.
+    // A new element defined with only a value is { false, false, false }
+    // (ECMA-262 10.1.6.3 step 2.c), and redefining it with a different value refuses.
     js_expect("(function(){var a=[];Object.defineProperty(a,'0',{value:-0});"
               "var d=Object.getOwnPropertyDescriptor(a,'0');"
               "return a.length+','+d.writable+','+d.enumerable+','+d.configurable;})()",
@@ -479,7 +479,7 @@ int main() {
               "return a[0]+','+got+','+(typeof d.get)+','+Object.keys(a).join('+')+','"
               "+Object.getOwnPropertyNames(a).join('+');})()",
               "7,3,function,0,0+length");
-    // `delete a[i]` LEAVES A HOLE: the length is unchanged, the index is not
+    // `delete a[i]` leaves a hole: the length is unchanged, the index is not
     // an own property, HasProperty is false, and forEach skips it.
     js_expect("(function(){var a=[1,2,3];delete a[1];return a.length+','+(1 in a)+','"
               "+a.hasOwnProperty(1)+','+Object.keys(a).join('+')+','+a[1];})()",
@@ -488,8 +488,8 @@ int main() {
               "return n;})()",
               "2");
     js_expect("(function(){var a=[1,2];delete a[0];a[0]=5;return (0 in a)+','+a[0];})()", "true,5");
-    // (`delete` evaluates to a constant true here - the compiler's, docs/test262.md -
-    // so a refusal is observed through the element staying.)
+    // A refused delete is checked through the element still being there, not
+    // through the value of the `delete` expression.
     js_expect("(function(){var a=[1];Object.seal(a);delete a[0];return a.hasOwnProperty(0);})()",
               "true");
     js_expect("(function(){var a=[1];Object.defineProperty(a,'0',{configurable:false});"
@@ -497,7 +497,7 @@ int main() {
               "true");
     js_expect("(function(){var a=[1];delete a.length;return a.hasOwnProperty('length');})()",
               "true");
-    // `length` has a writable bit OF ITS OWN: pinning it stops push and a
+    // `length` has a writable bit of its own: pinning it stops push and a
     // write, and leaves the elements alone.
     js_expect("(function(){var a=[1];Object.defineProperty(a,'length',{writable:false});"
               "a[0]=2;a.length=5;return a[0]+','+a.length+','"
@@ -521,7 +521,7 @@ int main() {
               "{value:{valueOf:function(){return 1;}}});return a.length;})()",
               "1");
     js_expect("(function(){var a=[1];Object.freeze(a);a.push(2);})()", "THREW");
-    // ArraySetLength (10.4.2.4 steps 12-19): a non-configurable element stops
+    // ArraySetLength (ECMA-262 10.4.2.4 steps 12-19): a non-configurable element stops
     // the shrink one above itself, and the write is refused there.
     js_expect(
         "(function(){var a=[0,1,2,3];Object.defineProperty(a,'1',{value:1,configurable:false});"
@@ -534,12 +534,13 @@ int main() {
     js_expect("(function(){var a=[0,1,2];Object.seal(a);a.length=1;return a.length;})()", "3");
     js_expect("(function(){var a=[];Object.freeze(a);a.pop();})()", "THREW");
     js_expect("(function(){var a=[1];Object.freeze(a);return Object.isFrozen(a);})()", "true");
-    // A native's `length` USED TO BE absent - a native_fn takes a span and
-    // records no arity - and it is now installed at each call site from the
-    // specification's clause for that method. `Object.keys.length` is 1.
+    // A native's `length` comes from the specification's clause for that
+    // method, passed where the native is installed (a native_fn takes a span
+    // and records no arity). `Object.keys.length` is 1.
     js_expect("Object.keys.length", "1");
-    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
-    // they used to grow a fresh own entry; defineProperty still redefines.
+    // A function's `length` and `name` are non-writable but configurable
+    // (ECMA-262 10.2.5): a sloppy write is ignored, and defineProperty can still
+    // redefine them.
     js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
               "1f");
     js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
@@ -549,8 +550,8 @@ int main() {
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').writable", "false");
     js_expect("Object.getOwnPropertyDescriptor(Object.keys,'length').configurable", "true");
 
-    // Native constructors retain accessor descriptors rather than silently
-    // leaving the previous data property in place (Bootstrap's Array.from).
+    // Redefining a native constructor's property as an accessor replaces the data
+    // property (the vendored Bootstrap bundle does this to Array.from).
     js_expect(R"((function () {
         var original = Array.from, reads = 0, receiver = false;
         function getter() { reads++; receiver = this === Array; return original; }
@@ -616,26 +617,20 @@ int main() {
               "7,true,false");
 
     // ================================================================
-    // A BUILT-IN FUNCTION'S OWN `name` AND `length` - 10.2.5
+    // 11. A built-in function's own `name` and `length` (ECMA-262 10.2.5).
     // ================================================================
     //
-    // Both are { writable: false, enumerable: false, configurable: true } and
-    // both are REAL own properties now. `name` used to be synthesised by
-    // context::own_property out of the C++ object, and a synthesised slot
-    // cannot refuse a write or be deleted - so verifyProperty's probes saw a
-    // write land and a delete fail, and every `name.js` in test262 reported
-    // both at once (33 files in built-ins/Array, 34 in String, 26 in Object,
-    // measured 2026-09-07). `length` was absent entirely, because a native_fn
-    // takes a span and records no arity; it is passed at the install site now,
-    // from the specification's clause for each method.
+    // Both are real own properties with { writable: false, enumerable: false,
+    // configurable: true }, so a write is refused and a delete succeeds, which
+    // is what every test262 `name.js` and `length.js` probes through
+    // verifyProperty. `length` is passed where the native is installed, from
+    // the specification's clause for each method.
     js_expect("Array.prototype.forEach.length", "1");
     js_expect("Array.prototype.slice.length", "2");
     js_expect("Array.prototype.pop.length", "0");
     js_expect("Array.prototype.reduce.length", "1");
     js_expect("Object.defineProperty.length", "3");
     js_expect("Object.keys.length", "1");
-    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
-    // they used to grow a fresh own entry; defineProperty still redefines.
     js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
               "1f");
     js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
@@ -647,7 +642,7 @@ int main() {
     js_expect("Math.random.length", "0");
     js_expect("String.prototype.replace.length", "2");
     js_expect("String.prototype.trim.length", "0");
-    // A CONSTRUCTOR'S OWN length is its clause's, not one: Date takes seven
+    // A constructor's own length is its clause's, not one: Date takes seven
     // components and Array takes one.
     js_expect("Array.length", "1");
     js_expect("Object.length", "1");
@@ -662,39 +657,34 @@ int main() {
     js_expect("(function(){var d=Object.getOwnPropertyDescriptor(Array.prototype.forEach,'length');"
               "return d.writable+','+d.enumerable+','+d.configurable;})()",
               "false,false,true");
-    // ...which means a write is DROPPED and a delete WORKS, both silently -
-    // this is sloppy mode, as the header says.
+    // ...which means a write is dropped and a delete works, both silently:
+    // this is sloppy mode, as the file header says.
     js_expect("(function(){Array.prototype.map.name='x';return Array.prototype.map.name;})()",
               "map");
     js_expect("(function(){Math.floor.length=99;return Math.floor.length;})()", "1");
     js_expect("(function(){var f=Array.prototype.map;delete f.length;"
               "return Object.hasOwn(f,'length');})()",
               "false");
-    // ...AND `name` DOES NOT COME BACK EITHER. `context::own_property`
-    // synthesises a native's `name` from the C++ object when the table has none
-    // (own_property, lib/Script/vm/objects/descriptors.cpp), so deleting the own
-    // entry USED TO uncover
-    // the synthesised one and `hasOwnProperty` stayed true - which was the
-    // whole remaining reason test262's `name.js` files failed, because
-    // verifyProperty's isConfigurable() deletes and then asks.
-    //
-    // `native_object::name_erased` closes it: the fallback still answers for
-    // the 400 natives `define_native` makes with no own entry, and stops
-    // answering the moment one is deleted.
+    // Deleting a native's own `name` must not expose the fallback name that
+    // context::own_property (lib/Script/vm/objects/descriptors.cpp) synthesises
+    // from the C++ object for natives with no own entry.
+    // native_object::name_erased turns the fallback off once the property is
+    // deleted. test262's verifyProperty deletes the property and then calls
+    // hasOwnProperty.
     js_expect("(function(){var f=Array.prototype.map;delete f.name;"
               "return Object.hasOwn(f,'name');})()",
               "false");
-    // In CREATION ORDER, which 10.2.5 gives as length then name.
+    // In creation order, which ECMA-262 10.2.5 gives as length then name.
     js_expect("Object.getOwnPropertyNames(Math.floor).join(',')", "length,name");
     // Neither is enumerable, so neither reaches for-in, Object.keys or a
-    // spread - and nor do the String statics, which were installed through
-    // `set` with the DEFAULT attributes and were therefore enumerable.
+    // spread, and nor do the String statics (installing them through `set`
+    // with the default attributes would make them enumerable).
     js_expect("Object.getOwnPropertyDescriptor(Math.floor,'name').enumerable", "false");
     js_expect("Object.getOwnPropertyDescriptor(String,'fromCharCode').enumerable", "false");
     js_expect("Object.getOwnPropertyDescriptor(String,'raw').enumerable", "false");
     js_expect("Object.keys(Math).length", "0");
-    // `Number.parseFloat` and `Number.parseInt` are THE SAME FUNCTION OBJECTS
-    // as the globals (21.1.2.12, 21.1.2.13), not copies. Both were absent.
+    // `Number.parseFloat` and `Number.parseInt` are the same function objects
+    // as the globals (ECMA-262 21.1.2.12, 21.1.2.13), not copies.
     js_expect("Number.parseFloat === parseFloat", "true");
     js_expect("Number.parseInt === parseInt", "true");
     js_expect("Number.parseFloat('1.5px')", "1.5");
@@ -704,14 +694,13 @@ int main() {
     js_expect("Object.getOwnPropertyDescriptor(Number,'isFinite').enumerable", "false");
 
     // ================================================================
-    // 9. `Object.create`'s SECOND ARGUMENT - 20.1.2.2 step 3
+    // 12. Object.create's second argument (ECMA-262 20.1.2.2 step 3).
     // ================================================================
     //
-    // It was accepted and IGNORED: `Object.create({}, {x: {value: 1}})` made an
-    // empty object and said nothing. test262 devotes 304 of its 320 files in
-    // built-ins/Object/create to that argument. It is ObjectDefineProperties
-    // (7.3.7), the same operation `Object.defineProperties` is, so the
-    // defaults below are defineProperty's all-false ones and not a literal's.
+    // Most of test262's built-ins/Object/create files test this argument. It
+    // is ObjectDefineProperties (ECMA-262 7.3.7), the same operation
+    // `Object.defineProperties` is, so the defaults below are defineProperty's
+    // all-false ones and not a literal's.
     js_expect("Object.create({}, {p: {value: 1}}).p", "1");
     js_expect(R"((function () {
         var d = Object.getOwnPropertyDescriptor(Object.create({}, {p: {value: 1}}), 'p');
@@ -723,15 +712,15 @@ int main() {
               "a");
     js_expect("Object.create({}, {p: {get: function () { return 7; }}}).p", "7");
     js_expect("Object.create({m: 5}).m", "5");
-    // 7.3.7 reads each descriptor through [[Get]], so an INHERITED field
-    // counts - ~250 of test262's defineProperties files are that shape.
+    // ECMA-262 7.3.7 reads each descriptor through [[Get]], so an inherited
+    // field counts; many of test262's defineProperties files are that shape.
     js_expect(R"((function () {
         function Descriptor() {}
         Descriptor.prototype.value = 5;
         return Object.create({}, {p: new Descriptor()}).p;
     })())",
               "5");
-    // TWO PASSES: every descriptor is read and validated before ANY is
+    // Two passes: every descriptor is read and validated before any is
     // applied, so a malformed second one leaves the first undefined.
     js_expect(R"((function () {
         var made = {};
@@ -740,7 +729,7 @@ int main() {
     })())",
               "false");
     // Step 1: the prototype must be an Object or null, and `undefined` is
-    // neither - `Object.create()` is a TypeError, not an empty object.
+    // neither, so `Object.create()` is a TypeError, not an empty object.
     js_expect("(function(){try{Object.create(1);}catch(e){return e.constructor.name;}"
               "return 'none';})()",
               "TypeError");
@@ -749,13 +738,13 @@ int main() {
               "TypeError");
 
     // ================================================================
-    // 10. ToPropertyDescriptor's OWN refusals - 6.2.6.6 steps 6, 8, 10
+    // 13. ToPropertyDescriptor's own refusals (ECMA-262 6.2.6.6 steps 6, 8, 10).
     // ================================================================
     //
     // A different question from ValidateAndApplyPropertyDescriptor, which asks
     // whether a well-formed descriptor may be applied. Without these,
-    // `{get: 1}` installed a getter that could not be called and
-    // `{get: g, value: 1}` installed one of the two silently.
+    // `{get: 1}` would install a getter that cannot be called and
+    // `{get: g, value: 1}` would silently install one of the two.
     js_expect("(function(){try{Object.defineProperty({},'x',{get:1});}"
               "catch(e){return e.constructor.name;}return 'none';})()",
               "TypeError");
@@ -771,8 +760,8 @@ int main() {
     js_expect("(function(){try{Reflect.defineProperty({},'x',{get:1});}"
               "catch(e){return e.constructor.name;}return 'none';})()",
               "TypeError");
-    // ...and an explicit `undefined` get is LEGAL, and still an accessor: the
-    // field is PRESENT, which is the distinction the whole clause is written
+    // ...and an explicit `undefined` get is legal, and still an accessor: the
+    // field is present, which is the distinction the whole clause is written
     // in terms of.
     js_expect(R"((function () {
         var made = {};
@@ -781,9 +770,9 @@ int main() {
         return ('get' in d) + ',' + ('value' in d);
     })())",
               "true,false");
-    // A FUNCTION AND AN ARRAY ARE OBJECTS, so either may be the descriptor -
-    // 24 of test262's defineProperty files use one. `is_object()` is true only
-    // of a plain table here, so both used to be refused as "not an object".
+    // A function and an array are objects, so either may be the descriptor;
+    // some of test262's defineProperty files use one. `is_object()` is true
+    // only of a plain table here, so the check must not rely on it.
     js_expect(R"((function () {
         var descriptor = function () {};
         descriptor.value = 9;
@@ -792,8 +781,8 @@ int main() {
         return made.x;
     })())",
               "9");
-    // ToPropertyKey runs ONCE. It ran a second time to build the error
-    // message, so a key object's `toString` was called twice for one define.
+    // ToPropertyKey runs once, so a key object's `toString` is called once per
+    // define (building the error message must not convert the key again).
     js_expect(R"((function () {
         var calls = 0;
         var key = {toString: function () { calls += 1; return 'x'; }};
@@ -803,13 +792,13 @@ int main() {
               "1");
 
     // ================================================================
-    // 11. ToObject: the statics are GENERIC, and null is the only refusal
+    // 14. ToObject: the statics are generic, and null is the only refusal.
     // ================================================================
     //
-    // All of these opened with `is_object()` and answered a default for
-    // everything else - so `Object.keys([1,2])` was `[]`, `Object.values('ab')`
-    // was `[]`, `Object.assign(fn, src)` did nothing, and `Object.keys(null)`
-    // was `[]` rather than the TypeError step 1 requires.
+    // A guard on `is_object()` that answered a default for everything else
+    // would make `Object.keys([1,2])` and `Object.values('ab')` `[]`, make
+    // `Object.assign(fn, src)` do nothing, and make `Object.keys(null)` `[]`
+    // rather than the TypeError step 1 requires.
     js_expect("Object.keys([7,8]).join(',')", "0,1");
     js_expect("Object.values([7,8]).join(',')", "7,8");
     js_expect("Object.entries([7]).length", "1");
@@ -819,7 +808,7 @@ int main() {
     js_expect("(function(){function f(){}f.a=1;return Object.keys(f).join(',');})()", "a");
     js_expect("(function(){var t=function(){};Object.assign(t,{a:1});return t.a;})()", "1");
     js_expect("Object.keys(Object.assign({}, 'ab')).join(',')", "0,1");
-    // A nullish SOURCE is skipped rather than an error (20.1.2.1 step 4.a),
+    // A nullish source is skipped rather than an error (ECMA-262 20.1.2.1 step 4.a),
     // which is what makes `Object.assign({}, maybe)` idiomatic.
     js_expect("(function(){var t={};Object.assign(t,null,undefined,{a:1});return t.a;})()", "1");
     for (const char * refusal :
@@ -832,7 +821,7 @@ int main() {
                       ";}catch(e){return e.constructor.name;}return 'none';})()",
                   "TypeError");
     }
-    // 20.1.2.7: an entry that is not an object is a TypeError, not a skipped
+    // ECMA-262 20.1.2.7: an entry that is not an object is a TypeError, not a skipped
     // element, and each entry is read through [[Get]] of "0" and "1".
     js_expect("Object.fromEntries([['a',1],['b',2]]).b", "2");
     js_expect("(function(){try{Object.fromEntries([1]);}catch(e){return e.constructor.name;}"
@@ -840,16 +829,15 @@ int main() {
               "TypeError");
 
     // ================================================================
-    // 12. [[GetPrototypeOf]] - what a plain object's prototype IS
+    // 15. [[GetPrototypeOf]]: what a plain object's prototype is.
     // ================================================================
     //
-    // `Object.getPrototypeOf({})` was `null`, because object_object::prototype
-    // is null for anything that did not come from `class` or `Object.create`.
-    // That contradicted the engine's own behaviour: lookup_property ends EVERY
-    // chain walk at the Object.prototype table, which is why
-    // `({}).hasOwnProperty` resolves at all. An EXPLICIT null - Object.create
-    // (null), setPrototypeOf(o, null) - is told apart from the implicit one
-    // (object_object::prototype), so a dictionary object inherits nothing.
+    // object_object::prototype is null for anything that did not come from
+    // `class` or `Object.create`, but lookup_property ends every chain walk at
+    // the Object.prototype table, which is why `({}).hasOwnProperty` resolves.
+    // `Object.getPrototypeOf({})` must agree and answer Object.prototype. An
+    // explicit null (Object.create(null), setPrototypeOf(o, null)) is told
+    // apart from the implicit one, so a dictionary object inherits nothing.
     js_expect("Object.getPrototypeOf({}) === Object.prototype", "true");
     js_expect("Object.getPrototypeOf(Object.create(null))", "null");
     js_expect("typeof Object.create(null).toString", "undefined");
@@ -859,8 +847,8 @@ int main() {
               "+','+Object.getPrototypeOf(o);})()",
               "undefined,null");
     js_expect("(function(){var o=Object.create(null);o.__proto__=1;return o.__proto__;})()",
-              "1"); // no B.2.2.1 setter on the chain: a plain own property
-    js_expect("String(Object.create(null))", "THREW"); // 7.1.1.1 step 4
+              "1"); // No B.2.2.1 setter on the chain: a plain own property.
+    js_expect("String(Object.create(null))", "THREW"); // ECMA-262 7.1.1.1 step 4.
     js_expect("Object.keys(Object.create(null, {a: {value: 1, enumerable: true}})).join()", "a");
     js_expect("Object.getPrototypeOf(Object.prototype)", "null");
     js_expect("Object.getPrototypeOf([]) === Array.prototype", "true");
@@ -871,19 +859,19 @@ int main() {
     js_expect("Object.getPrototypeOf(TypeError) === Error", "true");
     js_expect("(function(){var p={};return Object.getPrototypeOf(Object.create(p)) === p;})()",
               "true");
-    // 20.1.2.22 step 2: a prototype must be an Object or null.
+    // ECMA-262 20.1.2.22 step 2: a prototype must be an Object or null.
     js_expect("(function(){try{Object.setPrototypeOf({},1);}catch(e){return e.constructor.name;}"
               "return 'none';})()",
               "TypeError");
     js_expect("(function(){var o={};return Object.setPrototypeOf(o,null) === o;})()", "true");
-    // ...and isPrototypeOf walks the SAME chain, so the implicit tables count.
+    // ...and isPrototypeOf walks the same chain, so the implicit tables count.
     js_expect("Object.prototype.isPrototypeOf({})", "true");
     js_expect("Array.prototype.isPrototypeOf([])", "true");
     js_expect("({}).isPrototypeOf(1)", "false");
     js_expect("(function(){var p={};return p.isPrototypeOf(Object.create(p));})()", "true");
 
     // ================================================================
-    // 13. Object.prototype: the tag table, toLocaleString, and ToObject
+    // 16. Object.prototype: the tag table, toLocaleString, and ToObject.
     // ================================================================
     js_expect("Object.prototype.toString.call(undefined)", "[object Undefined]");
     js_expect("Object.prototype.toString.call(null)", "[object Null]");
@@ -896,7 +884,7 @@ int main() {
     js_expect("Object.prototype.toString.call(TypeError.prototype)", "[object Object]");
     js_expect("Object.prototype.toString.call(Object.create(Error.prototype))", "[object Object]");
     js_expect("Object.prototype.toString.call(/x/)", "[object RegExp]");
-    // 20.1.3.6 step 15: a STRING @@toStringTag replaces the built-in tag, and
+    // ECMA-262 20.1.3.6 step 15: a string @@toStringTag replaces the built-in tag, and
     // anything else is ignored rather than stringified.
     js_expect("(function(){var o={};o[Symbol.toStringTag]='X';"
               "return Object.prototype.toString.call(o);})()",
@@ -904,13 +892,13 @@ int main() {
     js_expect("(function(){var o={};o[Symbol.toStringTag]=5;"
               "return Object.prototype.toString.call(o);})()",
               "[object Object]");
-    // 20.1.3.5 is Invoke(O, "toString"), not a second copy of the table.
+    // ECMA-262 20.1.3.5 is Invoke(O, "toString"), not a second copy of the table.
     js_expect("({a:1}).toLocaleString()", "[object Object]");
     js_expect("(function(){var o={toString:function(){return 'T';}};"
               "return o.toLocaleString();})()",
               "T");
-    // ToPropertyKey of the ARGUMENT, so an absent one asks about "undefined"
-    // rather than about "". It was `str_at`, which answers "".
+    // ToPropertyKey of the argument, so an absent one asks about "undefined"
+    // rather than about "" (which a plain string accessor would answer).
     js_expect("(function(){var o={undefined:1};return o.hasOwnProperty();})()", "true");
     js_expect("({}).hasOwnProperty()", "false");
     for (const char * refusal :
@@ -924,12 +912,12 @@ int main() {
     }
 
     // ================================================================
-    // 14. B.2.2, the four __*etter__ methods - 54 test262 files, all absent
+    // 17. Annex B.2.2: the four __*etter__ methods.
     // ================================================================
     //
     // Annex B and normative for a browser: the pre-ES5 way to define and read
     // an accessor, still in shipped code. Their descriptor default is
-    // { enumerable: true, configurable: true }, which is NOT
+    // { enumerable: true, configurable: true }, which is not
     // defineProperty's all-false one.
     js_expect("(function(){var o={};o.__defineGetter__('x',function(){return 4;});"
               "return o.x;})()",
@@ -947,9 +935,9 @@ int main() {
     js_expect("(function(){var o={};var g=function(){return 1;};o.__defineGetter__('x',g);"
               "return o.__lookupGetter__('x') === g;})()",
               "true");
-    // The whole chain, own property first - a DATA property SHADOWS an
+    // The whole chain, own property first: a data property shadows an
     // inherited accessor, so the answer is undefined rather than the one
-    // further up (B.2.2.4 step 4.b).
+    // further up (Annex B.2.2.4 step 4.b).
     js_expect(R"((function () {
         var root = {};
         root.__defineGetter__('x', function () { return 1; });
@@ -968,12 +956,11 @@ int main() {
               "TypeError");
 
     // ================================================================
-    // 15. Function.prototype: IsCallable is step 1 of all three
+    // 18. Function.prototype: IsCallable is step 1 of all three.
     // ================================================================
     //
-    // `call`, `apply` and `bind` each answered `undefined` for a receiver that
-    // was not callable, so a probe written as `try { f.bind(o) } catch (e)`
-    // saw nothing at all.
+    // `call`, `apply` and `bind` throw a TypeError for a receiver that is not
+    // callable, so a probe written as `try { f.bind(o) } catch (e)` sees it.
     for (const char * refusal :
          {"Function.prototype.call.call({})", "Function.prototype.apply.call({}, null, [])",
           "Function.prototype.bind.call({})"}) {
@@ -981,10 +968,10 @@ int main() {
                       ";}catch(e){return e.constructor.name;}return 'none';})()",
                   "TypeError");
     }
-    // CreateListFromArrayLike, 7.3.18: `apply` read `items` off a real Array
-    // and passed NO arguments for anything else, so `f.apply(o, arguments)`
-    // called `f()`. A nullish argArray is an empty list; a non-object one is a
-    // TypeError.
+    // CreateListFromArrayLike, ECMA-262 7.3.18: `apply` takes its arguments
+    // from any array-like, not only a real Array, so `f.apply(o, arguments)`
+    // passes them on. A nullish argArray is an empty list; a non-object one is
+    // a TypeError.
     js_expect(
         "(function(){function f(a,b){return a+b;}return f.apply(null,{length:2,0:1,1:2});})()",
         "3");
@@ -994,14 +981,14 @@ int main() {
     js_expect("(function(){function f(){}try{f.apply(null,3);}catch(e){"
               "return e.constructor.name;}return 'none';})()",
               "TypeError");
-    // 20.2.3.2 step 7: a bound function's `length` comes from the target's OWN
-    // `length` and only when that is a Number. It was read through the
-    // prototype chain and coerced.
+    // ECMA-262 20.2.3.2 step 7: a bound function's `length` comes from the
+    // target's own `length`, and only when that is a Number; it is not read
+    // through the prototype chain or coerced.
     js_expect("(function(){function f(a,b,c){}return f.bind(null,1).length;})()", "2");
     js_expect("(function(){function f(a){}return f.bind(null,1,2,3).length;})()", "0");
-    // 20.2.3.6 %Function.prototype[@@hasInstance]%, which did not exist. Its
-    // own descriptor is { false, false, false }, unlike every other method on
-    // that table, and its name is 10.2.9's bracketed form.
+    // ECMA-262 20.2.3.6 %Function.prototype[@@hasInstance]%. Its own
+    // descriptor is { false, false, false }, unlike every other method on that
+    // table, and its name is 10.2.9's bracketed form.
     js_expect("typeof Function.prototype[Symbol.hasInstance]", "function");
     js_expect("Function.prototype[Symbol.hasInstance].length", "1");
     js_expect("Function.prototype[Symbol.hasInstance].name", "[Symbol.hasInstance]");
@@ -1013,19 +1000,19 @@ int main() {
     js_expect("(function(){function C(){}"
               "return Function.prototype[Symbol.hasInstance].call(C, new C());})()",
               "true");
-    // 10.2.5 CREATION ORDER for a closure's synthesised properties, which read
-    // prototype, name, length.
+    // ECMA-262 10.2.5 creation order for a closure's properties: length, name,
+    // then prototype.
     js_expect("Object.getOwnPropertyNames(function f(a) {}).join(',')", "length,name,prototype");
 
     // ================================================================
-    // 16. `Object.getOwnPropertySymbols`, and Reflect's two wrong answers
+    // 19. `Object.getOwnPropertySymbols`, and Reflect's symbol keys.
     // ================================================================
     //
-    // getOwnPropertySymbols did not exist, so the guarded
-    // `if (Object.getOwnPropertySymbols)` every spread helper opens with took
-    // the other branch. THE SYMBOL IT RETURNS IS NOT `===` TO THE ORIGINAL -
-    // a property table keeps only the key string - so what is asserted here is
-    // what the returned symbol can DO, which is everything but compare.
+    // Every transpiler spread helper opens with
+    // `if (Object.getOwnPropertySymbols)`, so it must exist. The symbol it
+    // returns is not `===` to the original (a property table keeps only the key
+    // string), so what is asserted here is what the returned symbol can do,
+    // which is everything but compare.
     js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;"
               "return Object.getOwnPropertySymbols(o).length;})()",
               "1");
@@ -1046,20 +1033,20 @@ int main() {
     // HasProperty, not "reads as something other than undefined".
     js_expect("Reflect.has({x: undefined}, 'x')", "true");
     js_expect("Reflect.ownKeys([1]).join(',')", "0,length");
-    // ...and it answers SYMBOLS, the ones the properties were defined with.
+    // ...and it answers symbols, the ones the properties were defined with.
     js_expect("(function(){var s=Symbol('k');var o={a:1};o[s]=1;var ks=Reflect.ownKeys(o);"
               "return [ks.length, typeof ks[1], ks[1] === s, Object.getOwnPropertySymbols(o)[0] "
               "=== s].join();})()",
               "2,symbol,true,true");
     js_expect("Object.getOwnPropertySymbols(Array.prototype)[0] === Symbol.iterator", "true");
-    // 10.1.11.1: integers, then strings, then symbols, each in creation order.
+    // ECMA-262 10.1.11.1: integers, then strings, then symbols, each in creation order.
     js_expect("(function(){var s=Symbol('k');var o={};o[s]=1;o.b=1;o[2]=1;o.a=1;"
               "return Reflect.ownKeys(o).map(String).join();})()",
               "2,b,a,Symbol(k)");
     js_expect("Object.prototype.toString.call(Math) + Object.prototype.toString.call(JSON)",
               "[object Math][object JSON]");
     js_expect("Object.getOwnPropertyNames(Array.prototype).indexOf('@@iterator')", "-1");
-    // 10.5.11: a proxy's ownKeys trap, its list checked and the target's
+    // ECMA-262 10.5.11: a proxy's ownKeys trap, its list checked and the target's
     // non-configurable keys required.
     js_expect("Reflect.ownKeys(new Proxy({}, {ownKeys: () => ['b', 'a']})).join()", "b,a");
     js_expect("Object.keys(new Proxy({a: 1}, {ownKeys: () => ['a']})).join()", "a");
@@ -1073,25 +1060,14 @@ int main() {
               "THREW");
 
     // ================================================================
-    // 17. A NATIVE METHOD IS AN ORDINARY FUNCTION OBJECT
+    // 20. A native method is an ordinary function object.
     // ================================================================
     //
-    // WPT's `dom/nodes/Element-classlist.html` calls every one of its 1,404
-    // subtests through `list[funcName].apply(list, args)`, and 855 of them
-    // reported ``TypeError: `apply` is undefined``. THE OBVIOUS READING - that
-    // a native, installed by `method()` or straight out of a DOM binding, does
-    // not reach Function.prototype - IS WRONG, and this section is what says
-    // so without needing a browser to ask: `lookup_property`'s native arm falls
-    // through to Function.prototype and then to Object.prototype, and has since
-    // functions were given the chain numbers and strings already had.
-    //
-    // What that file actually hits is one writable property: `classList` is
-    // installed as a plain data property, its first subtest is
-    // `e.classList = "foo"`, and [[Set]] on a writable slot takes the write -
-    // so every later subtest asks a STRING for `add`. That is a binding to fix
-    // in lib/Shell, not a chain to fix here, and the two are indistinguishable
-    // from the message alone. Pinned so the question is not answered wrongly a
-    // second time.
+    // Natives, including DOM bindings, inherit from Function.prototype and then
+    // Object.prototype (lookup_property's native arm), so `apply`, `call` and
+    // `bind` work on them. (When WPT's Element-classlist.html reported "`apply`
+    // is undefined", the cause was `classList` being a writable data property
+    // that the test overwrote with a string, not a missing prototype chain.)
     js_expect("typeof Object.keys", "function");
     js_expect("Object.getPrototypeOf(Object.keys) === Function.prototype", "true");
     js_expect("Object.keys instanceof Function", "true");
@@ -1100,8 +1076,6 @@ int main() {
     js_expect("typeof Object.keys.bind", "function");
     js_expect("Object.keys.name", "keys");
     js_expect("Object.keys.length", "1");
-    // ...and both synthesised slots REFUSE a write (10.2.5: non-writable) where
-    // they used to grow a fresh own entry; defineProperty still redefines.
     js_expect("(function(){function f(a){} f.length=5; f.name='x';return f.length+f.name;})()",
               "1f");
     js_expect("(function(){function f(a){} Object.defineProperty(f,'length',{value:9});"
@@ -1113,8 +1087,8 @@ int main() {
     // call on an arbitrary object.
     js_expect("typeof Object.keys.hasOwnProperty", "function");
     js_expect("Object.keys.hasOwnProperty('name')", "true");
-    // THE HARNESS'S OWN SHAPE, spelled out: the method comes off the object
-    // through a COMPUTED key, is detached from it, and is called back with the
+    // The harness's own shape, spelled out: the method comes off the object
+    // through a computed key, is detached from it, and is called back with the
     // object as its receiver.
     js_expect("(function(){var o=Math,n='max';return o[n].apply(o,[1,2]);})()", "2");
     js_expect("(function(){var f=Object.keys;return f.apply(null,[{a:1,b:2}]).join(',');})()",
@@ -1123,9 +1097,9 @@ int main() {
     js_expect("(function(){var f=Math.max.bind(null,5);return f(1);})()", "5");
 
     // ================================================================
-    // CLASS MEMBERS ARE NOT ENUMERABLE (15.7.14): a method, an accessor,
-    // `constructor`, a static method - while an instance field and a static
-    // FIELD are. verifyProperty in test262 asks every one of these, 460 files.
+    // 21. Class members are not enumerable (ECMA-262 15.7.14): a method, an
+    // accessor, `constructor`, a static method; an instance field and a static
+    // field are. test262's verifyProperty checks every one of these.
     // ================================================================
     js_expect(
         "(function(){class C { m() {} get a() { return 1; } static s() {} static f = 3; x = 1; }"
@@ -1148,16 +1122,16 @@ int main() {
     js_expect("(function(){class C { static v = C.make(); static make() { return 7; } static w; }"
               "return C.v + '/' + ('w' in C) + '/' + C.w;})()",
               "7/true/undefined");
-    // A class's static ACCESSOR is configurable, so `delete` removes it - it
-    // answered true and the getter stayed (a closure's accessors were never
-    // looked at).
+    // A class's static accessor is configurable, so `delete` really removes it
+    // (answering true while the getter stays would be wrong).
     js_expect("(function(){class C { static get x() { return 2; } }"
               "var d = delete C.x; return d + '/' + C.x + '/' + ('x' in C);})()",
               "true/undefined/false");
 
-    // A CLASS'S METHODS ARE DEFINED, not assigned (15.4.4 DefineMethodProperty):
-    // neither a setter nor a read-only property up the parent's chain sees
-    // them - `class S extends Set { size() {} }` defined no `size` at all.
+    // A class's methods are defined, not assigned (ECMA-262 15.4.4
+    // DefineMethodProperty): neither a setter nor a read-only property up the
+    // parent's chain sees them, so `class S extends Set { size() {} }` does
+    // define its own `size`.
     js_expect("(function(){var hits = 0; class P { set m(v) { hits++; } static set s(v) {"
               " hits++; } } class C extends P { m() { return 1; } static s() { return 2; } }"
               "class S extends Set { size() { return 3; } }"

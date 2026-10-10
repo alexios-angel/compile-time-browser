@@ -1,15 +1,18 @@
-// THE THREE NODE KINDS A PAGE HOLDS AND NEVER SEES DRAWN: DocumentType,
-// ProcessingInstruction and CDATASection, and the Document node's child list
+//===- special_nodes.cpp - non-rendered nodes ----------------- -*- C++ -*-===//
+//
+// The three node kinds a page holds but never sees drawn: DocumentType,
+// ProcessingInstruction and CDATASection, plus the Document node's child list
 // they live in.
 //
-// What these pin down is the SHAPE, not the bindings: that `<!DOCTYPE html>`
-// becomes a node ahead of `<html>` under the Document node, that the document
-// element sits in that list WITHOUT a parent pointer (document::document_node
-// says why), that the XML front end produces all three kinds where XML has
-// them, and that each kind carries exactly what DOM 4.4 says it carries. The
-// script-visible half - nodeType, nodeName, `document.doctype`, the insertion
-// rules - is in unit/document/node.cpp and unit/document/api_wpt.cpp.
-
+// These tests pin down the tree shape, not the bindings: `<!DOCTYPE html>`
+// becomes a node ahead of `<html>` under the Document node, the document
+// element sits in that list without a parent pointer (document::document_node
+// says why), the XML parser produces all three kinds where XML has them, and
+// each kind carries exactly what DOM 4.4 says it carries. The script-visible
+// half (nodeType, nodeName, `document.doctype`, the insertion rules) is tested
+// in unittests/unit/document/node.cpp and unittests/unit/document/api_wpt.cpp.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 
@@ -22,6 +25,7 @@ using namespace ctbrowser;
 
 namespace {
 
+/// The kinds of `parent`'s children, in order.
 std::vector<node_kind> kinds_of(const read_txn & txn, node_id parent) {
     std::vector<node_kind> out;
     for (const node_id child : txn.children(parent)) {
@@ -30,6 +34,7 @@ std::vector<node_kind> kinds_of(const read_txn & txn, node_id parent) {
     return out;
 }
 
+/// The fields DOM 4.4 gives each kind, set by the create_* methods.
 void test_created_nodes_carry_what_the_dom_says() {
     atom_table atoms;
     document doc{atoms};
@@ -40,10 +45,10 @@ void test_created_nodes_carry_what_the_dom_says() {
     const node_id cdata = doc.create_cdata_section("<b>not markup</b>");
     const auto r = doc.read();
     CHECK(r.kind(doctype).value() == node_kind::document_type);
-    CHECK(r.name(doctype) == atoms.intern("HTML")); // as written, never folded
+    CHECK(r.name(doctype) == atoms.intern("HTML")); // As written, never case-folded.
     CHECK_EQ(std::string{r.public_id(doctype)}, std::string{"-//W3C//DTD//EN"});
     CHECK_EQ(std::string{r.system_id(doctype)}, std::string{"http://example.test/x.dtd"});
-    // NOT an element: `tag()` is how half the engine asks "is this an element".
+    // Not an element: much of the engine asks "is this an element" via `tag()`.
     CHECK(!r.tag(doctype).has_value());
     CHECK(!r.tag(pi).has_value());
     CHECK(r.kind(pi).value() == node_kind::processing_instruction);
@@ -81,8 +86,8 @@ void test_the_html_parser_puts_the_doctype_ahead_of_html() {
     CHECK_EQ(std::string{r.public_id(doctype)}, std::string{"-//W3C//DTD XHTML 1.0 Strict//EN"});
     CHECK_EQ(std::string{r.system_id(doctype)},
              std::string{"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"});
-    // THE DOCTYPE'S PARENT IS THE DOCUMENT NODE; THE ELEMENT'S IS EMPTY. The
-    // second half is the invariant every engine walk depends on.
+    // The doctype's parent is the Document node; the element has no parent.
+    // Every tree walk in the engine depends on that second half.
     CHECK(r.parent(doctype) == r.document_node());
     CHECK(!r.parent(html));
     CHECK(is_document_child(r, doctype));
@@ -99,7 +104,7 @@ void test_a_document_without_a_doctype_has_one_child() {
     CHECK_EQ(kinds_of(r, r.document_node()).size(), 1u);
     CHECK(r.children(r.document_node())[0] == r.root());
     CHECK(doc.quirks());
-    // A doctype AFTER content is a parse error and ignored - HTML 13.2.6.4.
+    // A doctype after content is a parse error and is ignored (HTML 13.2.6.4).
     atom_table atoms2;
     document late{atoms2};
     (void)parse_html(late, "<p>x</p><!DOCTYPE html>");
@@ -118,7 +123,7 @@ void test_the_xml_parser_produces_all_three_kinds() {
 <?tail?>)");
     CHECK_EQ(out.error, std::string{});
     const auto r = doc.read();
-    // The XML declaration is NOT a processing instruction and leaves nothing.
+    // The XML declaration is not a processing instruction and leaves no node.
     const std::vector<node_kind> kinds = kinds_of(r, r.document_node());
     const std::vector<node_kind> expected{node_kind::processing_instruction,
                                           node_kind::document_type,
@@ -186,9 +191,9 @@ void test_document_children_move_like_any_node() {
         const std::span<const node_id> kids = r.children(r.document_node());
         CHECK_EQ(kids.size(), 3u);
         CHECK(kids.size() == 3 && kids[1] == fresh);
-        CHECK(!is_document_child(r, html)); // the old one is out of the list
+        CHECK(!is_document_child(r, html)); // The old one is out of the list.
     }
-    // And on an EMPTY document the element goes where it is asked to.
+    // On an empty document the element goes where it is asked to.
     atom_table atoms2;
     document empty{atoms2};
     CHECK(empty.root() == empty.document_node());
@@ -204,9 +209,9 @@ void test_document_children_move_like_any_node() {
     }
 }
 
-// DOM 4.13: a PI's attribute map is parsed from its data by the xml-stylesheet
-// pseudo-attribute rules, and an attribute write is serialised back into the
-// data - see document::update_pi_attributes and update_pi_data.
+/// DOM 4.13: a PI's attribute map is parsed from its data by the xml-stylesheet
+/// pseudo-attribute rules, and an attribute write is serialised back into the
+/// data; see document::update_pi_attributes and update_pi_data.
 void test_a_processing_instruction_keeps_its_attributes_in_its_data() {
     atom_table atoms;
     document doc{atoms};
@@ -233,7 +238,7 @@ void test_a_processing_instruction_keeps_its_attributes_in_its_data() {
     CHECK(doc.set_text(pi, " one=\"1\"  two='2' ").has_value());
     CHECK_EQ(names(pi), std::string{"one=1;two=2;"});
     // A write goes back into the data, escaped, and a name the parser would
-    // refuse SURVIVES - the map is stored, not re-derived.
+    // refuse survives: the map is stored, not re-derived from the data.
     CHECK(doc.set_attribute(pi, atoms.intern("two"), "a<b>&\"c\"").has_value());
     CHECK(doc.set_attribute(pi, atoms.intern("$"), "").has_value());
     CHECK_EQ(std::string{doc.read().text(pi)},
@@ -247,9 +252,9 @@ void test_a_processing_instruction_keeps_its_attributes_in_its_data() {
     CHECK(!doc.set_attribute(comment, atoms.intern("a"), "b").has_value());
 }
 
-// HTML 13.2.5.72-76: `<?target data?>` is a ProcessingInstruction node now, and
-// `<?xml ...?>` - any target that is `xml` or `xml-stylesheet`, or no name at
-// all - is the bogus comment it always was.
+/// HTML 13.2.5.72-76: `<?target data?>` becomes a ProcessingInstruction node,
+/// while `<?xml ...?>`, `<?xml-stylesheet ...?>` and a nameless `<?...?>`
+/// remain bogus comments.
 void test_the_html_parser_makes_processing_instructions() {
     atom_table atoms;
     document doc{atoms};
@@ -273,7 +278,7 @@ void test_the_html_parser_makes_processing_instructions() {
     CHECK_EQ(std::string{r.text(top[3])}, std::string{"a=\"b\""});
     CHECK_EQ(std::string{r.attribute_value(top[3], atoms.intern("a"))}, std::string{"b"});
     CHECK(r.name(top[4]) == atoms.intern("_u"));
-    CHECK_EQ(std::string{r.text(top[4])}, std::string{"?"}); // `??>`: one `?` is data
+    CHECK_EQ(std::string{r.text(top[4])}, std::string{"?"}); // `??>`: one `?` is data.
     CHECK_EQ(std::string{r.text(top[5])}, std::string{"x?y"});
     CHECK_EQ(std::string{r.text(top[6])}, std::string{"?9 no?"});
     // Inside the body, where a comment would go, with the target's trailing

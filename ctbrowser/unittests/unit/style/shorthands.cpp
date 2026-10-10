@@ -1,8 +1,11 @@
-// Shorthands: a shorthand IS its longhands, expanded at record time so the
-// cascade sees four declarations with the shorthand's source order. Carved out
-// of unit/style_basics.cpp on 2026-09-08, when that file was 2,155 lines; the
-// five other style_*.cpp files beside this one are the rest of it, and
-// fixture.hpp is the document-and-resolve fixture they all share.
+//===- shorthands.cpp - Shorthand expansion tests ---------------*- C++ -*-===//
+//
+// A shorthand is its longhands, expanded when the declaration is recorded, so
+// the cascade sees one declaration per longhand in the shorthand's source
+// order. fixture.hpp is the document-and-resolve fixture shared with the other
+// style tests.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -21,16 +24,15 @@ using namespace ctbrowser::style;
 
 namespace {
 
-// A shorthand's parts are separated by whitespace, EXCEPT the whitespace inside
-// a function or a string. That sounds like pedantry and is the single largest
-// paint bug this project has had.
+/// A shorthand's parts are separated by whitespace, except the whitespace
+/// inside a function or a string. Getting this wrong hides every border whose
+/// colour is written as a function.
 void test_a_shorthand_does_not_split_inside_a_function() {
     {
-        // `border: 1px solid rgba(0, 0, 0, 0.175)` is THREE parts. Split on the
-        // spaces inside the colour it is five, of which the third - and therefore
-        // the whole `border-color` - is the string `rgba(0,`. That fails to parse,
-        // so every card, alert, table and input in Bootstrap had a border in the
-        // box model and NOTHING drawn.
+        // `border: 1px solid rgba(0, 0, 0, 0.5)` is three parts. Splitting on the
+        // spaces inside the colour gives five, and the colour part becomes
+        // `rgba(0,`, which fails to parse, so every Bootstrap card, alert, table
+        // and input would have a border in the box model but draw none.
         fixture f;
         f.load("<div id=a></div>", "#a { border: 1px solid rgba(0, 0, 0, 0.5) }");
         const node_id a = f.find("div");
@@ -40,15 +42,15 @@ void test_a_shorthand_does_not_split_inside_a_function() {
                      "and the colour survives its own commas");
     }
     {
-        // A quoted string can hold a bracket or a space too.
+        // An ordinary space-separated value still splits.
         fixture f;
         f.load("<div id=a></div>", "#a { margin: 1px 2px }");
         expect_value(f, f.find("div"), "margin-right", "2px", "and an ordinary split still splits");
     }
 }
 
-// The per-side form of `border`, which is how Bootstrap draws every divider it
-// has - a card header's rule, a card footer's, the line under a navbar.
+/// The per-side form of `border`, which is how Bootstrap draws every divider it
+/// has: a card header's rule, a card footer's, the line under a navbar.
 void test_the_per_side_border_shorthands_expand() {
     {
         fixture f;
@@ -57,15 +59,14 @@ void test_the_per_side_border_shorthands_expand() {
         expect_value(f, a, "border-bottom-width", "2px", "the side's width");
         expect_value(f, a, "border-bottom-style", "dashed", "its style");
         expect_value(f, a, "border-bottom-color", "#123456", "and its colour");
-        // AND NOT THE UNIFORM ONES. Setting those "so it draws" was tried: a
-        // `border-bottom` then inset the box on all four sides and painted a full
-        // ring, which cost 8 differences on one fixture and 18 on another.
+        // The uniform properties stay unset. If `border-bottom` also set them,
+        // the box would be inset on all four sides and painted as a full ring.
         expect_value(f, a, "border-top-width", "", "the other sides are untouched");
         expect_value(f, a, "border-width", "", "and so is the uniform property");
     }
     {
         // `border` sets all twelve longhands, so a per-side one written after it
-        // can override a single edge - which it cannot do if the first
+        // can override a single edge, which it could not do if the first
         // declaration only wrote a uniform value.
         fixture f;
         f.load("<div id=a></div>", "#a { border: 1px solid red; border-bottom-color: blue }");
@@ -75,14 +76,14 @@ void test_the_per_side_border_shorthands_expand() {
     }
 }
 
-// `border-radius` and `gap`, which are shorthands over CORNERS and over AXES
-// rather than over the four sides - so neither can reuse the side expansion and
-// each gets the order wrong in its own way if it tries.
+/// `border-radius` and `gap` are shorthands over corners and over axes rather
+/// than over the four sides, so neither can reuse the side expansion; each gets
+/// the order wrong in its own way if it tries.
 void test_corner_and_axis_shorthands_expand() {
     {
-        // FOUR VALUES GO CLOCKWISE FROM THE TOP LEFT, not top/right/bottom/left:
-        // these name corners. The two-value form is the two DIAGONALS, which has
-        // no analogue at all among the edge shorthands.
+        // Four values go clockwise from the top left, not top/right/bottom/left:
+        // these name corners. The two-value form names the two diagonals, which
+        // has no analogue among the edge shorthands.
         fixture f;
         f.load("<div id=a></div>", "#a { border-radius: 1px 2px 3px 4px }");
         const node_id a = f.find("div");
@@ -101,9 +102,9 @@ void test_corner_and_axis_shorthands_expand() {
         expect_value(f, a, "border-bottom-left-radius", "6px", "...both of its corners");
     }
     {
-        // `.rounded-pill { border-radius: 50rem }`, which is what makes this
-        // matter: the value survives as a real length and the SCALING to the box
-        // happens at paint time, where the box's size is known.
+        // Bootstrap's `.rounded-pill { border-radius: 50rem }`: the value survives
+        // as a real length, and scaling it to the box happens at paint time, where
+        // the box's size is known.
         fixture f;
         f.load("<div id=a></div>", "#a { border-radius: 50rem }");
         expect_value(f, f.find("div"), "border-top-left-radius", "800px",
@@ -116,8 +117,8 @@ void test_corner_and_axis_shorthands_expand() {
                      "both axes of an elliptical corner survive expansion");
     }
     {
-        // `gap` is ROW then COLUMN - the block axis first, which is the opposite
-        // of how every other two-value shorthand here reads.
+        // `gap` is row then column: the block axis first, the opposite of how
+        // every other two-value shorthand here reads.
         fixture f;
         f.load("<div id=a></div>", "#a { gap: 1px 2px }");
         expect_value(f, f.find("div"), "row-gap", "1px", "the FIRST value is the row gap");
@@ -156,7 +157,7 @@ void test_overflow_shorthand_expands_in_cascade_order() {
     }
     {
         // Substitution happens after the cascade. A winning shorthand that
-        // becomes invalid then behaves as unset for BOTH of its longhands,
+        // becomes invalid then behaves as unset for both of its longhands,
         // rather than exposing an earlier axis declaration again.
         fixture f;
         f.load("<div id=a></div>",
@@ -175,13 +176,10 @@ void test_overflow_shorthand_expands_in_cascade_order() {
     }
 }
 
-// `margin: 1px 2px` IS four declarations. Expanding at RECORD time rather than
-// where the property is read is what makes the cascade come out right - the
-// four carry the shorthand's source order, so a longhand written after it wins
-// and one written before it loses, which is what CSS says.
-//
-// Before this, only the shorthand was read, so every per-side longhand in every
-// sheet did nothing - including the UA sheet's own `ul { padding-left: 40px }`.
+/// `margin: 1px 2px` is four declarations. Expanding when the declaration is
+/// recorded, rather than where the property is read, makes the cascade come out
+/// right: the four carry the shorthand's source order, so a longhand written
+/// after it wins and one written before it loses, as CSS says.
 void test_shorthands_expand() {
     {
         fixture f;
@@ -215,7 +213,7 @@ void test_shorthands_expand() {
         expect_value(f, a, "padding-bottom", "3px", "three values: bottom");
         expect_value(f, a, "padding-left", "2px", "three values: left mirrors right");
     }
-    // SOURCE ORDER, both ways round. This is the half that reading "shorthand
+    // Source order, both ways round. This is the half that reading "shorthand
     // first, then longhand" gets backwards.
     {
         fixture f;
@@ -228,8 +226,8 @@ void test_shorthands_expand() {
         f.load("<div id=a></div>", "#a { padding-left: 9px; padding: 1px }");
         expect_value(f, f.find("div"), "padding-left", "1px", "a shorthand AFTER overwrites it");
     }
-    // And through the style ATTRIBUTE, which takes a different path into the
-    // cascade than a sheet does.
+    // The style attribute takes a different path into the cascade than a sheet
+    // does, and expands too.
     {
         fixture f;
         f.load("<div id=a style='margin: 7px 8px'></div>", "");
@@ -238,13 +236,12 @@ void test_shorthands_expand() {
     }
 }
 
-// THE `border` SHORTHAND, which is `<width> || <style> || <color>` in ANY order - so
-// its parts are classified by WHAT THEY ARE, unlike the positional side lists.
-//
-// It produced nothing at all before: paint reads `border-width` and `border-color`,
-// the shorthand set neither, and every card, table and list-group border was
-// invisible. It could not be expanded before var() resolved either, because
-// `border: var(--w) solid var(--c)` has an unknowable component count until then.
+/// The `border` shorthand is `<width> || <style> || <color>` in any order, so
+/// its parts are classified by what they are, unlike the positional side lists.
+///
+/// Paint reads only the longhands, so `border` must set them. Expansion has to
+/// wait until var() is substituted, because `border: var(--w) solid var(--c)`
+/// has an unknown number of parts until then.
 void test_border_shorthand() {
     {
         fixture f;
@@ -254,7 +251,7 @@ void test_border_shorthand() {
         expect_value(f, f.find_id("a"), "border-color", "#dee2e6", "colour from the shorthand");
     }
     {
-        // ANY ORDER. This is the case that positional splitting gets wrong.
+        // Any order: the case that positional splitting gets wrong.
         fixture f;
         f.load("<p id=a></p>", "p { border: #dee2e6 1px solid }");
         expect_value(f, f.find_id("a"), "border-width", "1px", "width, written last but one");
@@ -270,9 +267,9 @@ void test_border_shorthand() {
         expect_value(f, f.find_id("a"), "border-color", "#010101", "colour through a var");
     }
     {
-        // ONE var() EXPANDING TO THE WHOLE SHORTHAND - `.alert` does exactly this, via
-        // `--bs-alert-border: 1px solid #9ec5fe`. Expansion has to happen AFTER
-        // substitution or the single token becomes one unclassifiable part.
+        // One var() expanding to the whole shorthand, as Bootstrap's `.alert`
+        // does via `--bs-alert-border: 1px solid #9ec5fe`. Expansion has to happen
+        // after substitution or the single token becomes one unclassifiable part.
         fixture f;
         f.load("<html><body><p id=a></p></body></html>",
                ":root { --all: 1px solid #9ec5fe } p { border: var(--all) }");
@@ -281,16 +278,16 @@ void test_border_shorthand() {
         expect_value(f, f.find_id("a"), "border-color", "#9ec5fe", "colour from a whole-value var");
     }
     {
-        // `border: 0` sets every longhand it governs, including the ones it did not
-        // mention - which is what makes it RESET a style set elsewhere.
+        // `border: 0` sets every longhand it governs, including the ones it does
+        // not mention, which is what makes it reset a style set elsewhere.
         fixture f;
         f.load("<p id=a></p>", "p { border-style: dashed } p { border: 0 }");
         expect_value(f, f.find_id("a"), "border-width", "0", "width zero");
         expect_value(f, f.find_id("a"), "border-style", "none", "and the style is reset");
     }
     {
-        // A longhand written AFTER the shorthand still wins, which is the source-order
-        // property that moving expansion into the cascade had to preserve.
+        // A longhand written after the shorthand still wins: expansion in the
+        // cascade preserves source order.
         fixture f;
         f.load("<p id=a></p>", "p { border: 1px solid red; border-color: #020202 }");
         expect_value(f, f.find_id("a"), "border-color", "#020202", "a longhand after wins");
@@ -298,10 +295,10 @@ void test_border_shorthand() {
     }
 }
 
-// The `flex` shorthand. Bootstrap's grid is `.col { flex: 1 0 0 }`, and a
-// `.flex-grow-0` utility written after it has to win - which only works if the
-// shorthand becomes longhands in the cascade rather than being read by the flex
-// algorithm later.
+/// The `flex` shorthand. Bootstrap's grid is `.col { flex: 1 0 0 }`, and a
+/// `.flex-grow-0` utility written after it has to win, which only works if the
+/// shorthand becomes longhands in the cascade rather than being read by the
+/// flex algorithm later.
 void test_flex_shorthand() {
     const auto three = [](fixture & f, std::string_view grow, std::string_view shrink,
                           std::string_view basis, std::string_view why) {
@@ -315,7 +312,7 @@ void test_flex_shorthand() {
         three(f, "1", "0", "0", ".col's own declaration");
     }
     {
-        // ONE NUMBER takes the shorthand's defaults, which are NOT the longhands'
+        // One number takes the shorthand's defaults, which are not the longhands'
         // initial values: flex-basis initial is `auto`, but `flex: 1` is `1 1 0%`.
         fixture f;
         f.load("<div id=a></div>", "div { flex: 1 }");
@@ -332,8 +329,8 @@ void test_flex_shorthand() {
         three(f, "1", "1", "auto", "auto");
     }
     {
-        // A single WIDTH is a basis, not a grow factor - the two one-value forms are
-        // told apart by whether the value carries a unit.
+        // A single width is a basis, not a grow factor: the two one-value forms
+        // are told apart by whether the value carries a unit.
         fixture f;
         f.load("<div id=a></div>", "div { flex: 200px }");
         three(f, "1", "1", "200px", "a bare basis");
@@ -344,19 +341,19 @@ void test_flex_shorthand() {
         three(f, "2", "3", "0%", "grow and shrink");
     }
     {
-        // ...and a second value with a unit is the BASIS, leaving shrink at 1.
+        // A second value with a unit is the basis, leaving shrink at 1.
         fixture f;
         f.load("<div id=a></div>", "div { flex: 2 30% }");
         three(f, "2", "1", "30%", "grow and basis");
     }
     {
-        // THE POINT OF EXPANDING AT ALL: a longhand written after the shorthand
-        // wins, and one written before it is overwritten. Bootstrap's `.col` plus a
-        // `.flex-grow-0` utility is exactly this pair.
+        // The reason to expand at all: a longhand written after the shorthand
+        // wins, and one written before it is overwritten. Bootstrap's `.col` plus
+        // a `.flex-grow-0` utility is exactly this pair.
         fixture f;
-        // Both selectors are one class, so SOURCE ORDER decides - which is the
-        // property under test. A tag selector here would have lost to `.col` on
-        // specificity and proved nothing.
+        // Both selectors are one class, so source order decides, which is the
+        // property under test. A tag selector here would lose to `.col` on
+        // specificity and prove nothing.
         f.load("<div id=a class=\"col flex-grow-0\"></div>",
                ".col { flex: 1 0 0 } .flex-grow-0 { flex-grow: 0 }");
         expect_value(f, f.find_id("a"), "flex-grow", "0", "the later longhand wins");
@@ -369,9 +366,10 @@ void test_flex_shorthand() {
     }
 }
 
+/// The cascade (css::expand_cascaded_shorthand) and CSSOM (css::set_declaration)
+/// share one assignment grammar. CSSOM owns canonical strings; the cascade
+/// returns views borrowed from the substituted tokens.
 void test_native_and_cssom_expansion_contracts() {
-    // Both callers exercise the shared assignment grammar, while CSSOM owns
-    // canonical strings and the cascade keeps borrowed substituted tokens.
     const std::pair<std::string_view, std::string_view> examples[]{{"margin", "1px 2px 3px"},
                                                                    {"padding", "1px 2px 3px 4px"},
                                                                    {"inset", "auto 2px"},

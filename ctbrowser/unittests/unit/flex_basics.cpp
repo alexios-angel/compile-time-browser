@@ -1,29 +1,30 @@
-// ctbrowser.layout: the flex formatting context, CSS Flexible Box Layout 1 §9.
+//===- ctbrowser/unittests/unit/flex_basics.cpp - Flex layout tests -------===//
 //
-// The point of this file is the arithmetic, not the plumbing. A flex item's size
-// is a function of its SIBLINGS - free space is shared out, one item's min-width
-// violation is redistributed among the others, and that redistribution can
-// create a new violation - so almost every case here is one that a single
-// proportional pass gets subtly and silently wrong. §9.7 is a fixed-point
-// iteration; these are the fixed points.
+// The flex formatting context, CSS Flexible Box Layout 1 §9.
+//
+// The point of this file is the arithmetic, not the plumbing. A flex item's
+// size is a function of its siblings: free space is shared out, one item's
+// min-width violation is redistributed among the others, and that
+// redistribution can create a new violation. So almost every case here is one
+// that a single proportional pass gets subtly and silently wrong. §9.7 is a
+// fixed-point iteration; these are the fixed points.
 //
 // Text is measured with monospace_measure, so every width in here is an exact
-// number rather than a font's opinion: one character is `font_size * 0.6`, which
-// is 9.6px at the default 16.
+// number rather than a font's opinion: one character is `font_size * 0.6`,
+// which is 9.6px at the default 16.
 //
-// THE TRACED CASE, and the reason this rung exists at all, is
-// test_the_bootstrap_grid_traced: a 960px `.container` with 12px padding gives
-// 936 of content, `.row`'s -12px side margins widen it back to 960, and three
-// `.col`s with `flex: 1 0 0` take 320 each. Getting the sign of those margins
-// wrong is invisible until the gutters double, so it is asserted rather than
-// inferred.
+// The key case is test_the_bootstrap_grid_traced: a 960px `.container` with
+// 12px padding gives 936px of content, `.row`'s -12px side margins widen it
+// back to 960, and three `.col`s with `flex: 1 0 0` take 320 each. A wrong
+// margin sign only shows up as doubled gutters, so it is asserted directly.
+//
+//===----------------------------------------------------------------------===//
 
 #include "layout/fixture.hpp"
 
 namespace {
 
-// Every test lays a document out at a viewport width and asks about elements by
-// id, so the whole of the boilerplate is this.
+/// A document laid out at a viewport width, queried for elements by id.
 struct laid_out {
     fixture f;
     fragment out;
@@ -33,10 +34,10 @@ struct laid_out {
         engine eng{monospace_measure()};
         out = eng.run(f.root, viewport);
     }
+    /// The fragment for the element with `id`, or null.
     [[nodiscard]] const fragment * at(std::string_view id) { return out.find(f.find_id(id)); }
-    // Absolute x, which is what a reader of these tests cares about: bounds are
-    // stored relative to the containing block, so a nested item's own x says
-    // nothing on its own.
+    /// Absolute x of the element with `id`: bounds are stored relative to the
+    /// containing block, so a nested item's own x says nothing on its own.
     [[nodiscard]] float x_of(std::string_view id) {
         const node_id want = f.find_id(id);
         float found = 0;
@@ -47,6 +48,7 @@ struct laid_out {
         walk(walk, out, 0);
         return found;
     }
+    /// Absolute y of the element with `id`; see x_of.
     [[nodiscard]] float y_of(std::string_view id) {
         const node_id want = f.find_id(id);
         float found = 0;
@@ -59,10 +61,10 @@ struct laid_out {
     }
 };
 
-// The preamble every test shares: a body with no box of its own, so a number is
-// about flex rather than about the UA sheet - and `box-sizing: border-box` on
-// `*`, as Bootstrap sets it, so that a stated size here is the border box the
-// grid arithmetic below was traced with.
+/// The preamble every test shares: a body with no box of its own, so a number is
+/// about flex rather than about the UA sheet - and `box-sizing: border-box` on
+/// `*`, as Bootstrap sets it, so that a stated size here is the border box the
+/// grid arithmetic below was traced with.
 constexpr std::string_view reset = "body { margin: 0; padding: 0 } * { box-sizing: border-box } ";
 
 // --- 1. the box tree ------------------------------------------------------
@@ -73,10 +75,10 @@ void test_display_flex_makes_a_flex_container() {
     const box_node * a = box_for(f.root, f.find_id("a"));
     check(a != nullptr && a->kind == box_kind::flex, "display:flex makes a flex box");
     check(a != nullptr && a->is_block_level(), "a flex container is block-level");
-    // THE TRAP THE PARALLEL DRIVER RESTS ON. A flex container's children are flex
-    // items whatever they are made of, so it never establishes an inline context
-    // - and engine::run_parallel reads exactly this predicate to decide whether a
-    // box's children are independent.
+    // A flex container's children are flex items whatever they contain, so it
+    // never establishes an inline formatting context; layout dispatch
+    // (block_flow, algorithm.cpp) relies on this predicate to choose the
+    // algorithm for a box's children.
     check(a != nullptr && !a->establishes_inline_context(),
           "a flex container establishes no inline context");
 }
@@ -92,7 +94,7 @@ void test_inline_flex_is_inline_level() {
 
 void test_inline_runs_become_anonymous_items() {
     {
-        // A homogeneous run STILL WRAPS, which is what makes the flex rule
+        // A homogeneous run still wraps, which is what makes the flex rule
         // different from the block one: a flex container has no inline formatting
         // context to fall back on.
         fixture f;
@@ -102,9 +104,9 @@ void test_inline_runs_become_anonymous_items() {
               "text alone in a flex container becomes one anonymous item");
     }
     {
-        // TEXT is what gets wrapped, not "everything inline-level". A replaced
+        // Text is what gets wrapped, not "everything inline-level". A replaced
         // element is inline-level and is an item in its own right - wrapping two
-        // <img>s in an anonymous box would make them ONE item and lay them out on
+        // <img>s in an anonymous box would make them one item and lay them out on
         // a line inside it.
         fixture f;
         f.load("<html><body><div id=a>alpha<img id=i>beta</div></body></html>",
@@ -117,7 +119,7 @@ void test_inline_runs_become_anonymous_items() {
         check(i != nullptr && i->kind == box_kind::replaced, "and the <img> is an item itself");
     }
     {
-        // An inline ELEMENT is not part of the run either: being a flex item
+        // An inline element is not part of the run either: being a flex item
         // blockified it, so it flushes whatever text came before it.
         fixture f;
         f.load("<html><body><div id=a>one <b id=t>two</b></div></body></html>",
@@ -127,7 +129,7 @@ void test_inline_runs_become_anonymous_items() {
         check(a != nullptr && count_kind(*a, box_kind::anonymous) == 1, "one of them anonymous");
     }
     {
-        // A run of ONLY WHITESPACE is not rendered, which is what stops the
+        // A run of only whitespace is not rendered, which is what stops the
         // newline between two items becoming a third column.
         fixture f;
         f.load("<html><body><div id=a>\n  <img id=i>\n  <img id=j>\n</div></body></html>",
@@ -141,9 +143,9 @@ void test_a_flex_items_display_is_blockified() {
     fixture f;
     f.load("<html><body><div id=a><span id=s>x</span></div></body></html>", "#a { display: flex }");
     const box_node * s = box_for(f.root, f.find_id("s"));
-    // CSS Display 3 §2.7. Without it a <span> item is an inline box inside a
-    // container that has no inline algorithm to lay it out with - and Chrome
-    // reports `block` for `<a class=nav-link>` on 50 of one fixture's elements.
+    // CSS Display 3 §2.7 blockifies flex items: without it a <span> item would
+    // be an inline box in a container with no inline algorithm. Chrome reports
+    // `display: block` for a flex-item `<a class=nav-link>`.
     check(s != nullptr && s->kind == box_kind::block, "an inline flex item is blockified");
 }
 
@@ -158,8 +160,8 @@ void test_items_share_one_line() {
               .c_str());
     expect_near(t.x_of("a"), 0, "first item at the start");
     expect_near(t.y_of("a"), 0, "...");
-    // THE HEADLINE. Before this rung both divs were blocks and b sat BELOW a,
-    // which is why 102 of the grid fixture's 111 elements differed on @y.
+    // The basic flex behaviour: two items sit side by side on one line, not
+    // stacked as blocks.
     expect_near(t.x_of("b"), 100, "the second item sits BESIDE the first");
     expect_near(t.y_of("b"), 0, "not below it");
 }
@@ -185,7 +187,7 @@ void test_the_bootstrap_grid_traced() {
     const fragment * row = t.at("r");
     check(row != nullptr, "the row produced a fragment");
     if (row == nullptr) { return; }
-    // THE SIGN TRAP. `.row`'s negative margins WIDEN it: 936 of content less
+    // The sign trap: `.row`'s negative margins widen it: 936 of content less
     // twice -12 is 960. Subtracting them the other way gives 912, which looks
     // plausible and doubles every gutter on the page.
     expect_near(row->bounds.width, 960, "negative side margins widen the row to 960");
@@ -217,7 +219,7 @@ void test_a_stated_width_is_the_flex_base_size() {
 }
 
 void test_a_flexible_item_takes_what_the_stated_ones_leave() {
-    // The case the freeze loop earns itself on: one item is inflexible at a third
+    // The case that needs the freeze loop: one item is inflexible at a third
     // of the row and the other must take exactly the rest.
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div><div id=b>b</div></div></body></html>",
@@ -234,8 +236,8 @@ void test_a_flexible_item_takes_what_the_stated_ones_leave() {
 }
 
 void test_shrinking_is_weighted_by_the_base_size() {
-    // GROW IS NOT WEIGHTED AND SHRINK IS. Two items with the same `flex-shrink`
-    // give up the same PROPORTION of themselves, not the same number of pixels -
+    // Grow is not weighted and shrink is. Two items with the same `flex-shrink`
+    // give up the same proportion of themselves, not the same number of pixels -
     // which is what stops a narrow item collapsing beside a wide one.
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div><div id=b>b</div></div></body></html>",
@@ -252,7 +254,7 @@ void test_shrinking_is_weighted_by_the_base_size() {
 
 void test_a_flex_factor_under_one_takes_only_its_share() {
     // §9.7.3. With the unfrozen factors summing to less than one, only that
-    // FRACTION of the free space is distributed - so `flex-grow: .5` takes half
+    // fraction of the free space is distributed - so `flex-grow: .5` takes half
     // the room rather than all of it, which is the case an unguarded
     // free * grow / sum gets exactly backwards.
     laid_out t;
@@ -269,7 +271,7 @@ void test_the_sub_one_share_is_of_the_INITIAL_free_space() {
     // §9.7.4, and the case that separates a correct freeze loop from a plausible
     // one. Two items grow from zero in 1000px with factors summing to .75; the
     // first hits `max-width: 100px` and freezes, and the second's share is then
-    // .25 of the free space as it was BEFORE anything froze - 250 - not .25 of
+    // .25 of the free space as it was before anything froze - 250 - not .25 of
     // what is left after the freeze, which would be 225.
     //
     // Nothing catches this with one item or with factors summing past one, which
@@ -291,7 +293,7 @@ void test_the_sub_one_share_is_of_the_INITIAL_free_space() {
 }
 
 void test_shrinking_is_weighted_by_the_INNER_base_size() {
-    // §9.7.4 weights a shrink by the item's CONTENT-box base size, not its border
+    // §9.7.4 weights a shrink by the item's content-box base size, not its border
     // box - a distinction with no effect until one item is padded, and then a
     // large one. Two 200px items shrinking into 300px are 150/150 unpadded; give
     // one of them 100px of padding and its inner base is 100 against the other's
@@ -312,8 +314,8 @@ void test_shrinking_is_weighted_by_the_INNER_base_size() {
 }
 
 void test_a_stretched_item_still_honours_its_own_maximum() {
-    // §9.4.11: stretch is clamped by the item's used min and max cross size. It
-    // was not, on the row axis only, so the two axes disagreed about one rule.
+    // §9.4.11: stretch is clamped by the item's used min and max cross size, on
+    // both axes.
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div></div></body></html>",
           std::string{reset}
@@ -325,10 +327,9 @@ void test_a_stretched_item_still_honours_its_own_maximum() {
 }
 
 void test_a_percentage_maximum_that_cannot_resolve_is_no_maximum() {
-    // A column with no stated height has an INDEFINITE main size, so `max-height:
-    // 100%` has nothing to resolve against and behaves as `none`. Resolving it
-    // against zero instead made it a definite maximum of 0, which then clamped the
-    // automatic minimum to 0 as well and collapsed the item to nothing.
+    // A column with no stated height has an indefinite main size, so
+    // `max-height: 100%` behaves as `none`; resolving it against 0 would clamp
+    // the automatic minimum to 0 too and collapse the item.
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div></div></body></html>",
           std::string{reset}
@@ -342,10 +343,10 @@ void test_a_percentage_maximum_that_cannot_resolve_is_no_maximum() {
 }
 
 void test_reverse_puts_the_leading_margin_at_the_flex_start_edge() {
-    // Under `row-reverse` the main-start edge is the RIGHT one, so the margin that
-    // leads is `margin-right`. Naming the margins physically offset every reversed
-    // item by exactly (trailing - leading), which is invisible whenever the two
-    // are equal - so a symmetric test cannot see it.
+    // Under `row-reverse` the main-start edge is the right one, so the margin
+    // that leads is `margin-right`. Using physical margins instead would offset
+    // every reversed item by (trailing - leading), which a symmetric test cannot
+    // see, so the margins here differ.
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div></div></body></html>",
           std::string{reset}
@@ -359,7 +360,7 @@ void test_reverse_puts_the_leading_margin_at_the_flex_start_edge() {
 }
 
 void test_a_min_width_violation_is_redistributed() {
-    // THE CASE THAT NEEDS THE LOOP. Three items grow from zero in a 300px row:
+    // The case that needs the loop: three items grow from zero in a 300px row:
     // one pass gives 100 each, but the first has a 200px minimum. Freezing it
     // there leaves 100 for the other two, which is 50 apiece - an answer no
     // single proportional pass produces.
@@ -370,7 +371,7 @@ void test_a_min_width_violation_is_redistributed() {
               .append("#r { display: flex; width: 300px } "
                       "#r > div { flex-grow: 1; flex-shrink: 1; flex-basis: 0; min-width: 0 } "
                       // `#r > div#a`, not `#a`: the general rule above carries an
-                      // id AND a type, so a bare `#a` loses to it on specificity
+                      // id and a type, so a bare `#a` loses to it on specificity
                       // and the minimum this test is about would never be set.
                       "#r > div#a { min-width: 200px }")
               .c_str());
@@ -397,7 +398,7 @@ void test_a_max_width_violation_is_redistributed() {
 }
 
 void test_the_automatic_minimum_size() {
-    // §4.5: `min-width: auto` on a flex item is the CONTENT-BASED minimum, not
+    // §4.5: `min-width: auto` on a flex item is the content-based minimum, not
     // zero. A ten-character word is 96px wide at the monospace measure, and an
     // item with a zero basis and no grow is exactly that wide rather than empty.
     const std::string html =
@@ -414,8 +415,8 @@ void test_the_automatic_minimum_size() {
         }
     }
     {
-        // AND `min-width: 0` DEFEATS IT, which is exactly why Bootstrap's `.card`
-        // carries that declaration - the evidence that the rule above is real.
+        // `min-width: 0` defeats it, which is why Bootstrap's `.card` carries that
+        // declaration.
         laid_out t;
         t.run(html, std::string{reset}
                         .append("#r { display: flex; width: 600px } "
@@ -441,7 +442,7 @@ void test_wrapping_collects_into_lines() {
     expect_near(t.x_of("b"), 140, "second item fits beside it");
     expect_near(t.y_of("b"), 0, "...on the same line");
     // The third does not fit, and the second line's cross position is the first
-    // line's cross SIZE - which is why lines are collected before anything is
+    // line's cross size, which is why lines are collected before anything is
     // placed rather than as it goes.
     expect_near(t.x_of("d"), 0, "the third starts a new line");
     expect_near(t.y_of("d"), 20, "below the first line's cross size");
@@ -519,7 +520,7 @@ void test_align_items_and_align_self() {
         expect_near(t.y_of("b"), 0, "align-self overrides it for one item");
     }
     {
-        // STRETCH IS A SIZE, not a position - and it is the default, which is why
+        // Stretch is a size, not a position - and it is the default, which is why
         // every column of a Bootstrap row is as tall as the tallest.
         laid_out t;
         t.run(html, std::string{reset}
@@ -555,7 +556,7 @@ void test_align_content_distributes_the_lines() {
         expect_near(t.y_of("d"), 100, "...");
     }
     {
-        // STRETCH IS THE DEFAULT and the only value that changes a SIZE rather
+        // Stretch is the default and the only value that changes a size rather
         // than a position: the two lines share the leftover, so the second starts
         // halfway down.
         laid_out t;
@@ -568,7 +569,7 @@ void test_align_content_distributes_the_lines() {
 void test_auto_margins_absorb_the_free_space() {
     // §9.5, and it is how Bootstrap pushes half a navbar to the right:
     // `.navbar-nav { margin-right: auto }`. An auto margin eats the free space
-    // BEFORE justify-content sees any of it.
+    // before justify-content sees any of it.
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div><div id=b>b</div></div></body></html>",
           std::string{reset}
@@ -611,7 +612,7 @@ void test_gaps() {
         expect_near(t.x_of("d"), 120, "...");
     }
     {
-        // `gap: 1rem 2rem` is ROW then COLUMN - the block axis first, which is the
+        // `gap: 1rem 2rem` is row then column - the block axis first, which is the
         // opposite of how every other two-value shorthand here reads.
         laid_out t;
         t.run("<html><body><div id=r><div id=a>a</div><div id=b>b</div><div id=d>c</div>"
@@ -669,9 +670,9 @@ void test_inline_flex_shrinks_to_fit() {
                       "#r > div { flex: 0 0 100px; min-width: 0 }")
               .c_str());
     const fragment * r = t.at("r");
-    // A block-level flex container would be 800 wide here. Shrink-to-fit is the
-    // one thing `inline-flex` does differently, and the reason `inline_level` is
-    // a field on box_node rather than a fifth box_kind.
+    // A block-level flex container would be 800 wide here; `inline-flex` shrinks
+    // to fit. That is its only difference, which is why `inline_level` is a flag
+    // on box_node rather than a separate box_kind.
     if (r != nullptr) { expect_near(r->bounds.width, 200, "an inline-flex box wraps its content"); }
 }
 
@@ -694,16 +695,10 @@ void test_a_flex_container_can_be_a_flex_item() {
 }
 
 void test_a_descendants_padding_counts_toward_the_item() {
-    // An auto-basis item is as wide as its content WANTS, and what its content
-    // wants includes its own children's padding, margins and stated widths.
-    // Dropping them did not just make the item narrow: the child was then laid out
-    // at a content width of max(0, 48 - 100) = 0, words_that_fit answers 0 for a
-    // non-positive width, and THE TEXT PRODUCED NO FRAGMENT AT ALL.
-    //
-    // The path existed before flex and was reachable only from a table cell, which
-    // is why nothing caught it; flex reaches it on every content-sized item, and
-    // the visible symptom was a Bootstrap `.nav-item` measuring exactly its
-    // `.nav-link` child's 32px of padding too narrow.
+    // An auto-basis item is as wide as its content's max-content size, which
+    // includes its children's padding, margins and stated widths. Leaving them
+    // out lays the child at a non-positive width, and its text then produces no
+    // fragment at all.
     laid_out t;
     t.run("<html><body><div id=r><div id=a><div id=i>hello</div></div></div></body></html>",
           std::string{reset}
@@ -725,9 +720,10 @@ void test_a_descendants_padding_counts_toward_the_item() {
 
 void test_padding_is_inside_the_flex_base_size() {
     // Under `box-sizing: border-box` - which Bootstrap sets on `*`, and the
-    // reset above does too - a stated size is the BORDER box. An item's padding
+    // reset above does too - a stated size is the border box. An item's padding
     // therefore comes out of its flex base size rather than adding to it, and
-    // its content is what is left. (layout_sizing has the content-box twin.)
+    // its content is what is left. (unittests/unit/layout/sizing.cpp has the
+    // content-box twin.)
     laid_out t;
     t.run("<html><body><div id=r><div id=a>a</div></div></body></html>",
           std::string{reset}
@@ -740,9 +736,10 @@ void test_padding_is_inside_the_flex_base_size() {
 }
 
 void test_nested_growable_containers_measure_once_each() {
-    // DOS-021: a flex container measures each item twice (its contribution, and
-    // again for a growable one), so thirty nested `display: flex; flex-grow: 1`
-    // divs made 2^30 measurements before measure_box was memoised per call.
+    // Denial-of-service guard: a flex container measures each item twice (its
+    // contribution, then again if it can grow), so thirty nested growable flex
+    // divs would take 2^30 measurements without measure_box's per-call
+    // memoisation.
     fixture f;
     std::string html = "<html><body>";
     for (int i = 0; i < 30; ++i) { html += "<div>"; }

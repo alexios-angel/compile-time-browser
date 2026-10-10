@@ -1,7 +1,11 @@
+//===- ctbrowser/unittests/js/vm/functions.cpp - VM function tests --------===//
+//
 // Functions: parameters, `this`, `arguments`, closures and the scopes they
-// capture, and the function object itself. Carved out of js/vm_basics.cpp on
-// 2026-09-08 - operators.cpp names the family, and expect.hpp is the
-// assertion every file in it shares.
+// capture, and the function object itself. expect.hpp holds the shared
+// assertion helpers; functions/constructors.cpp holds the class and
+// constructor cases. Section numbers are ECMA-262's.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -17,38 +21,33 @@ using namespace ctbrowser::script;
 
 namespace {
 
-// HALF OF A SIGNATURE USED TO BE DROPPED.
-//
-// The parser has always carried both - a default is the parameter node's `a`
-// child and a rest is `d == 1` - and the compiler read neither. So an omitted
-// argument stayed undefined instead of taking its default, and `...rest` bound
-// the one positional argument in that slot rather than an array of what was
-// left. Silent in both directions.
+// Default and rest parameters: an omitted argument takes its default, and
+// `...rest` binds an array of the remaining arguments. In the parse tree a
+// default is the parameter node's `a` child and a rest has `d == 1`.
 void test_default_parameters() {
     expect_result("function f(a, b = 2) { return a + b; } return f(1);", "3");
     expect_result("function f(a, b = 2) { return a + b; } return f(1, 10);", "11");
-    // undefined takes the default; null does NOT - they are different questions
+    // undefined takes the default; null does not.
     expect_result("function f(a = 5) { return a; } return f(undefined);", "5");
     expect_result("function f(a = 5) { return a; } return f(null);", "null");
-    // a default may be an expression, and may see earlier parameters
+    // A default may be an expression, and may see earlier parameters...
     expect_result("function f(a, b = a * 2) { return b; } return f(4);", "8");
-    // ...INCLUDING A CAPTURED ONE. `a` is boxed because the arrow closes over
-    // it; the default read it through cell_get before the box existed and
-    // got undefined - zod's `_instanceof(cls, params = {error: cls.name})`
-    // with `(data) => data instanceof cls` in its body, which is what p5's
-    // parameter validator calls. Both the read and the default's own write
-    // go through the cell.
+    // ...including a captured one. `a` is boxed because the arrow closes over
+    // it, so the box must exist before the default reads it; both the read
+    // and the default's own write go through the cell. (zod's
+    // `_instanceof(cls, params = {error: cls.name})`, used by p5's parameter
+    // validator, has this shape.)
     expect_result("function f(a, b = a * 2) { return () => a + b; } return f(4)();", "12");
     expect_result("function f(a, b = a * 2) { const g = () => b; return g(); } return f(3);", "6");
     expect_result("function f(a, b = a) { const g = () => b; b = 7; return g(); } return f(3);",
                   "7");
     expect_result("function f(...r) { const g = () => r.length; return g(); } return f(1, 2, 3);",
                   "3");
-    // and it is only evaluated when it is needed
+    // It is only evaluated when it is needed.
     expect_result("let hit = 0; function d() { hit = 1; return 1; } "
                   "function f(a = d()) { return a; } f(9); return hit;",
                   "0");
-    // arrow functions take the same path
+    // Arrow functions take the same path.
     expect_result("const f = (a, b = 3) => a + b; return f(1);", "4");
 }
 
@@ -57,79 +56,75 @@ void test_rest_parameters() {
     expect_result("function f(...rest) { return rest[1]; } return f('a', 'b');", "b");
     expect_result("function f(a, ...rest) { return rest.join('-'); } return f(1, 2, 3, 4);",
                   "2-3-4");
-    // no extra arguments is an EMPTY array, not undefined
+    // No extra arguments is an empty array, not undefined.
     expect_result("function f(a, ...rest) { return rest.length; } return f(1);", "0");
     expect_result(
         "function f(...rest) { return Array.isArray(rest) && rest.length === 0; } return f();",
         "true");
-    // the rest array is a real array and the locals after it are undisturbed
+    // The rest array is a real array and the locals after it are undisturbed.
     expect_result(
         "function f(a, ...rest) { let x = 7; return a + rest.length + x; } return f(1, 2, 3);",
         "10");
-    // and a body long enough to reuse the registers the arguments arrived in
+    // A body long enough to reuse the registers the arguments arrived in.
     expect_result("function f(a, ...rest) { let p = 1, q = 2, r = 3, s = 4, t = 5; "
                   "return rest.join(',') + '|' + (p + q + r + s + t); } return f(0, 8, 9);",
                   "8,9|15");
 }
 
-// A NESTED FUNCTION DECLARATION IS A BINDING IN ITS SCOPE, and this used to
-// emit set_global at every depth. Two helpers with the same name in two
-// different closures collided in one table, and a nested function meant to
-// capture an enclosing local read a global instead - which is the point of an
-// IIFE, silently undone, in a tree where every bundle is one.
+// A nested function declaration is a binding in its scope, not a global.
+// Otherwise two helpers with the same name in two different closures collide,
+// and a nested function meant to capture an enclosing local reads a global
+// instead, undoing the point of an IIFE.
 void test_nested_function_declarations_are_local() {
-    // the inner name does not escape
+    // The inner name does not escape.
     expect_result("function outer() { function helper() { return 1; } return helper(); } "
                   "outer(); return typeof helper;",
                   "undefined");
-    // two scopes, same name, no collision
+    // Two scopes, same name, no collision.
     expect_result("function a() { function h() { return 'a'; } return h(); } "
                   "function b() { function h() { return 'b'; } return h(); } "
                   "return a() + b();",
                   "ab");
-    // and it still captures the enclosing local rather than a global
+    // It still captures the enclosing local rather than a global.
     expect_result(
         "var n = 'global'; "
         "function outer() { let n = 'local'; function read() { return n; } return read(); } "
         "return outer();",
         "local");
-    // recursion resolves to itself, not to a global of the same name
+    // Recursion resolves to itself, not to a global of the same name.
     expect_result("function outer() { function fact(k) { return k <= 1 ? 1 : k * fact(k - 1); } "
                   "return fact(5); } return outer();",
                   "120");
-    // a top-level declaration is STILL a global - pages define functions the
-    // host calls by name, and that is deliberate
+    // A top-level declaration is still a global: pages define functions the
+    // host calls by name.
     expect_result("function top() { return 7; } return typeof top;", "function");
 }
 
-// AN ARROW SEES THE `this` WHERE IT WAS WRITTEN. It used to get its own frame
-// with an undefined receiver, so `this` inside an arrow inside a method - which
-// is where arrows are usually written - was undefined.
+// An arrow sees the `this` of the scope where it was written; it has no
+// receiver of its own, so `this` in an arrow inside a method is the method's.
 void test_arrow_this_is_lexical() {
     expect_result(
         "const o = { n: 5, get() { const f = () => this.n; return f(); } }; return o.get();", "5");
-    // through two levels of arrow
+    // Through two levels of arrow.
     expect_result("const o = { n: 6, get() { const f = () => () => this.n; return f()(); } }; "
                   "return o.get();",
                   "6");
-    // an arrow inside a callback still sees the method's object
+    // An arrow inside a callback still sees the method's object.
     expect_result("const o = { n: 3, sum() { return [1, 2].map(x => x * this.n).join(','); } }; "
                   "return o.sum();",
                   "3,6");
-    // an ordinary function still gets its OWN receiver
+    // An ordinary function still gets its own receiver.
     expect_result("const o = { n: 1, get() { return this.n; } }; return o.get();", "1");
-    // and a class method's arrow sees the instance
+    // A class method's arrow sees the instance.
     expect_result("class C { constructor() { this.v = 9; } read() { const f = () => this.v; "
                   "return f(); } } return new C().read();",
                   "9");
 }
 
-// `f(...args)` - the single construct that stopped more of p5.js than any
-// other. `nk::spread` was not a case in compile_expr at all, so it reached the
-// default arm and refused the whole call.
+// Spread arguments: `f(...args)`, method and computed calls, natives and `new`.
 void test_spread_in_a_call() {
     expect_result("function f(a, b, c) { return a + b + c; } return f(...[1, 2, 3]);", "6");
-    // mixed with ordinary arguments, in any position
+    // Mixed with ordinary arguments, in any position.
     expect_result("function f(a, b, c) { return a + '-' + b + '-' + c; } "
                   "return f(1, ...[2, 3]);",
                   "1-2-3");
@@ -139,70 +134,68 @@ void test_spread_in_a_call() {
     expect_result("function f(a, b, c, d) { return a + b + c + d; } "
                   "return f(...[1, 2], ...[3, 4]);",
                   "10");
-    // a METHOD call keeps its receiver
+    // A method call keeps its receiver...
     expect_result(
         "const o = { n: 10, add(a, b) { return this.n + a + b; } }; return o.add(...[1, 2]);",
         "13");
-    // and so does a computed one
+    // ...and so does a computed one.
     expect_result("const o = { n: 10, add(a, b) { return this.n + a + b; } }; "
                   "const k = 'add'; return o[k](...[1, 2]);",
                   "13");
-    // it reaches natives too
+    // It reaches natives too.
     expect_result("return Math.max(...[3, 9, 4]);", "9");
-    // spread of a computed array, not just a literal
+    // Spread of a computed array, not just a literal...
     expect_result("function f(a, b) { return a * b; } const xs = [3, 4]; return f(...xs);", "12");
-    // ...and it composes with a rest parameter on the other side
+    // ...and it composes with a rest parameter on the other side.
     expect_result("function f(...rest) { return rest.length; } return f(...[1, 2, 3], 4);", "4");
     expect_result("function f(a, ...rest) { return rest.join(','); } return f(...[1, 2, 3]);",
                   "2,3");
-    // `new C(...args)`
+    // `new C(...args)`.
     expect_result("class P { constructor(a, b) { this.v = a + b; } } return new P(...[2, 3]).v;",
                   "5");
     expect_result("class P { constructor(a, b, c) { this.v = a + b + c; } } "
                   "return new P(1, ...[2, 3]).v;",
                   "6");
-    // a spread of an empty array passes nothing
+    // A spread of an empty array passes nothing.
     expect_result("function f(a) { return typeof a; } return f(...[]);", "undefined");
 }
 
-// DESTRUCTURING. A binding position may hold a SHAPE, and every one of these
-// used to be a PARSE ERROR: the declarator read `{` as the variable's name and
-// the parser desynchronised from there. It stopped seventeen of p5.js's
-// seventy-one modules, each at the first destructuring in the file.
+// Destructuring declarations: a binding position may hold an object or array
+// pattern instead of a name.
 void test_destructuring_declarations() {
     expect_result("const {a, b} = {a: 1, b: 2}; return a + b;", "3");
     expect_result("const [x, y] = [3, 4]; return x * y;", "12");
     expect_result("const {a: renamed} = {a: 7}; return renamed;", "7");
-    // defaults, and only for undefined
+    // Defaults, and only for undefined.
     expect_result("const {a = 5} = {}; return a;", "5");
     expect_result("const {a = 5} = {a: 0}; return a;", "0");
     expect_result("const [p = 1, q = 2] = [9]; return p + ',' + q;", "9,2");
-    // holes
+    // Holes.
     expect_result("const [, second] = ['a', 'b']; return second;", "b");
-    // rest, in both shapes
+    // Rest, in both shapes.
     expect_result("const [head, ...tail] = [1, 2, 3]; return head + '|' + tail.join(',');",
                   "1|2,3");
     expect_result("const {a, ...rest} = {a: 1, b: 2, c: 3}; "
                   "return a + '|' + Object.keys(rest).join(',');",
                   "1|b,c");
-    // a computed key is excluded from the rest too (14.3.3.3 excludedNames)
+    // A computed key is excluded from the rest too (14.3.3.3 excludedNames).
     expect_result("const k = 'b'; const {[k]: v, ...rest} = {a: 1, b: 2, c: 3}; "
                   "return v + '|' + Object.keys(rest).join(',');",
                   "2|a,c");
     expect_result("let b, rest; ({['fo' + 'o']: b, ...rest} = {foo: 1, bar: 2}); "
                   "return b + '|' + Object.keys(rest).join(',');",
                   "1|bar");
-    // nested
+    // Nested.
     expect_result("const {a: {b}} = {a: {b: 'deep'}}; return b;", "deep");
     expect_result("const [[m], [n]] = [[1], [2]]; return m + n;", "3");
     expect_result("const {list: [first]} = {list: ['x']}; return first;", "x");
-    // a computed key
+    // A computed key.
     expect_result("const k = 'dyn'; const {[k]: got} = {dyn: 42}; return got;", "42");
-    // a missing property is undefined, not an error
+    // A missing property is undefined, not an error.
     expect_result("const {nope} = {}; return typeof nope;", "undefined");
-    // inside a function, so the binding is a local rather than a global
+    // Inside a function, so the binding is a local rather than a global.
     expect_result("function f(o) { const {a, b} = o; return a - b; } return f({a: 9, b: 4});", "5");
-    // and a nested function can capture a name a pattern bound
+    // A nested function can capture a name a pattern bound.
     expect_result("function f(o) { const {v} = o; const get = () => v; return get(); } "
                   "return f({v: 'captured'});",
                   "captured");
@@ -213,15 +206,15 @@ void test_destructuring_parameters() {
     expect_result("function f([a, b]) { return a * b; } return f([3, 4]);", "12");
     expect_result("function f({x = 10}) { return x; } return f({});", "10");
     expect_result("const f = ({n}) => n * 2; return f({n: 21});", "42");
-    // mixed with ordinary parameters and with a rest
+    // Mixed with ordinary parameters and with a rest.
     expect_result("function f(a, {b}, ...rest) { return a + b + rest.length; } "
                   "return f(1, {b: 2}, 9, 9);",
                   "5");
-    // a whole-parameter default alongside a pattern
+    // A whole-parameter default alongside a pattern.
     expect_result("function f({x} = {x: 'fallback'}) { return x; } return f();", "fallback");
-    // A GENERATOR EVALUATES ITS PARAMETERS WHEN CALLED (10.2.1 step 8), not
+    // A generator evaluates its parameters when called (10.2.1 step 8), not
     // on the first `.next()`: the default runs at g(), a throw is g()'s, and
-    // the body itself has not started - `.return()` before a `.next()` still
+    // the body itself has not started, so `.return()` before a `.next()` still
     // finishes it without running anything.
     expect_result("var ran = 0; function* g(a = (ran++, 1)) { yield a; }"
                   "var it = g(); var before = ran; var v = it.next().value;"
@@ -247,9 +240,9 @@ void test_destructuring_assignment() {
     expect_result("let a = 1, b = 2; [a, b] = [b, a]; return a + ',' + b;", "2,1");
     expect_result("let x; ({x} = {x: 'set'}); return x;", "set");
     expect_result("let x, y; ({x, y: y} = {x: 1, y: 2}); return x + y;", "3");
-    // a hole skips a position - which is why array literals had to learn them
+    // A hole skips a position.
     expect_result("let second; [, second] = ['a', 'b']; return second;", "b");
-    // a member expression is a legal target
+    // A member expression is a legal target.
     expect_result("const o = {}; [o.first] = ['here']; return o.first;", "here");
 }
 
@@ -259,24 +252,24 @@ void test_destructuring_in_for_of() {
     expect_result(
         "let names = ''; for (const {n} of [{n: 'a'}, {n: 'b'}]) { names += n; } return names;",
         "ab");
-    // for-in with no declaration keyword, assigning to an existing binding
+    // for-in with no declaration keyword, assigning to an existing binding.
     expect_result("let k, seen = ''; for (k in {a: 1, b: 2}) { seen += k; } return seen;", "ab");
 }
 
-// EVERY FUNCTION HAS A `prototype`, made on first use. `function F() {}; new F()
-// instanceof F` is the constructor-function pattern every transpiler emits -
-// Babel's own `_classCallCheck` guard is exactly that test - and a plain
-// function had none, so `new F()` produced an object with no prototype.
+// Every ordinary function has a `prototype` object, made on first use, so
+// `function F() {}; new F() instanceof F` holds. This is the
+// constructor-function pattern every transpiler emits (Babel's
+// `_classCallCheck` guard is exactly that test).
 void test_functions_have_a_prototype() {
     expect_result("function F() {} return typeof F.prototype;", "object");
     expect_result("function F() {} return F.prototype.constructor === F;", "true");
     expect_result("function F() {} return new F() instanceof F;", "true");
-    // the same object every time, or nothing built on it would hold
+    // The same object every time, or nothing built on it would hold.
     expect_result("function F() {} return F.prototype === F.prototype;", "true");
-    // methods installed on it are found by an instance
+    // Methods installed on it are found by an instance.
     expect_result("function F() {} F.prototype.m = function () { return 4; }; return new F().m();",
                   "4");
-    // an arrow is not a constructor and gets none
+    // An arrow is not a constructor and gets none.
     expect_result("const a = () => 1; return typeof a.prototype;", "undefined");
 }
 
@@ -284,13 +277,13 @@ void test_function_prototype() {
     expect_result("function f(a) { return this.v + a; } return f.call({ v: 1 }, 2);", "3");
     expect_result("function f(a) { return this.v + a; } return f.apply({ v: 1 }, [2]);", "3");
     expect_result("function f(a) { return this.v + a; } return f.bind({ v: 1 })(2);", "3");
-    // bind is a PARTIAL APPLICATION, not just a receiver change
+    // bind is a partial application, not just a receiver change.
     expect_result("function f(a, b) { return this.v + a + b; } return f.bind({ v: 1 }, 10)(2);",
                   "13");
-    // the constructor-borrowing pattern every transpiler emits
+    // The constructor-borrowing pattern every transpiler emits.
     expect_result("function P() { this.v = 1; } function C() { P.call(this); } return new C().v;",
                   "1");
-    // and a native has the same prototype
+    // A native has the same prototype.
     expect_result("return typeof Math.max.apply;", "function");
 }
 
@@ -340,44 +333,33 @@ void test_apply_reads_argument_properties() {
     }
 }
 
-// A FUNCTION HAS A [[Prototype]] OF ITS OWN, and it is not its `prototype`
-// property. Babel's `_inherits` sets both - the subclass's prototype property
-// so instances find inherited methods, and the subclass FUNCTION so STATICS are
-// inherited - and answering null for a function broke every transpiled
-// `extends`.
+// A function has a [[Prototype]] of its own, distinct from its `prototype`
+// property. Babel's `_inherits` sets both: the subclass's prototype property
+// so instances find inherited methods, and the subclass function's
+// [[Prototype]] so statics are inherited.
 void test_function_prototype_link() {
     expect_result("function B() {} function D() {} Object.setPrototypeOf(D, B); "
                   "return Object.getPrototypeOf(D) === B;",
                   "true");
-    // static inheritance through it
+    // Static inheritance through it.
     expect_result("function B() {} B.tag = 'base'; function D() {} Object.setPrototypeOf(D, B); "
                   "return D.tag;",
                   "base");
-    // two levels
+    // Two levels.
     expect_result("function A() {} A.tag = 'a'; function B() {} function C() {} "
                   "Object.setPrototypeOf(B, A); Object.setPrototypeOf(C, B); return C.tag;",
                   "a");
-    // an ordinary object still answers with its own prototype
+    // An ordinary object still answers with its own prototype.
     expect_result("const base = {}; const o = Object.create(base); "
                   "return Object.getPrototypeOf(o) === base;",
                   "true");
 }
 
-// A DESTRUCTURED NAME IS A LOCAL, NOT A TEMPORARY.
-//
-// `const { data } = f()` allocated `data`'s register INSIDE the reg_mark that
-// exists to free the temporary holding f()'s result - so release_to handed the
-// local's slot back and the next temporary in the same scope wrote over it.
-//
-// It only showed inside a BLOCK. In a function's top scope the name is hoisted,
-// so nothing was allocated and every test of destructuring passed. In a try
-// block, `const { data } = f(); return 'len=' + data.length` read `data` as the
-// string "len=" - a plausible value, from a plausible-looking line, with nothing
-// reporting anything.
-//
-// This is what stopped p5.js loading an image: `loadImage` destructures the
-// result of its fetch inside a try, so its bytes were a fragment of its own
-// error message and the decode failed with no explanation.
+// A destructured name is a local, not a temporary: its register must be
+// allocated outside the reg_mark that frees f()'s result, or the next
+// temporary in the block overwrites it. Only visible inside a block, since
+// a function's top-level names are hoisted. (p5.js's `loadImage` destructures
+// its fetch result inside a try.)
 void test_destructuring_in_a_block() {
     expect_result(
         "function f() { return { data: 'abc' }; }\n"
@@ -413,20 +395,10 @@ void test_destructuring_in_a_block() {
                   "v/1");
 }
 
-// A DECLARATION SHADOWS, IT DOES NOT WRITE THROUGH.
-//
-// Deciding whether a new binding needs a slot asked whether the name existed
-// ANYWHERE in the frame - and a hoisted name is function-scoped, so a `const`
-// inside a block reused the outer slot and assigned through to it.
-//
-// p5.js has a top-level `function boolean(...)` and, in a block,
-// `for (const { arity, boolean } of OperatorTable)`. Both wrote to one cell, so
-// zod's builder became the boolean `true` - and the failure surfaced 25,000
-// instructions later, in a different function, as "a captured variable is
-// boolean (true), not a function".
-// The TypeError for calling a non-function is built WITHOUT running page code:
-// an object inheriting Function.prototype.toString had that native throw a
-// second TypeError under the first, which took the page's own catch with it.
+// The TypeError for calling a non-function is built without running page
+// code: describing the callee through an inherited Function.prototype.toString
+// could throw a second TypeError under the first and escape the page's own
+// catch.
 void test_call_type_error_is_catchable() {
     expect_result("function P() {} function F() {} F.prototype = P; const o = new F(); "
                   "try { o(); return 'no'; } catch (e) { return e.name; }",
@@ -436,8 +408,13 @@ void test_call_type_error_is_catchable() {
     expect_result("try { (5)(); } catch (e) { return e.message.includes('(5)'); }", "true");
 }
 
+// A declaration shadows; it does not write through. A `const` in a block gets
+// its own slot even when the frame has a hoisted name of the same spelling,
+// rather than reusing the outer slot and assigning through to it. (p5.js has a
+// top-level `function boolean(...)` and, in a block,
+// `for (const { arity, boolean } of OperatorTable)`.)
 void test_a_declaration_shadows() {
-    // a block-scoped const over a hoisted function of the same name
+    // A block-scoped const over a hoisted function of the same name...
     expect_result("function f() { function v() { return 'fn'; } "
                   "{ const v = 'shadow'; } return v(); } return f();",
                   "fn");
@@ -445,7 +422,7 @@ void test_a_declaration_shadows() {
     expect_result("function f() { function v() { return 'fn'; } "
                   "{ const v = 'shadow'; return v; } } return f();",
                   "shadow");
-    // the same through a DESTRUCTURING, which is the shape p5 has
+    // The same through a destructuring, which is the shape p5 has.
     expect_result("function f() { function boolean(x) { return 'fn:' + x; } "
                   "for (const { boolean } of [{ boolean: true }]) { } "
                   "return boolean(1); } return f();",
@@ -454,34 +431,33 @@ void test_a_declaration_shadows() {
                   "for (const { boolean } of [{ boolean: true }]) { seen = boolean; } "
                   "return seen + '|' + boolean(); } return f();",
                   "true|fn");
-    // a captured binding survives a shadow in a sibling block
+    // A captured binding survives a shadow in a sibling block.
     expect_result("function f() { function v() { return 'fn'; } const get = () => v(); "
                   "{ const v = 1; } return get(); } return f();",
                   "fn");
-    // and a var of the same name at function scope still REUSES its slot
+    // A var of the same name at function scope still reuses its slot.
     expect_result("function f() { var x = 1; var x = 2; return x; } return f();", "2");
 }
 
-// `f.toString()` RETURNS THE SOURCE. An engine with no answer here cannot run
-// a library that reads its own code, and p5.js's error system parses the
-// sketch it was handed. A closure knows which program its protos came from and
-// the program keeps its text, so this is a substring rather than a
-// reconstruction.
+// `f.toString()` returns the source. Libraries read their own code, and
+// p5.js's error system parses the sketch it was handed. A closure knows which
+// program its protos came from and the program keeps its text, so this is a
+// substring rather than a reconstruction.
 void test_function_to_string() {
     expect_result("function hi(x) { return x + 1; } return hi.toString();",
                   "function hi(x) { return x + 1; }");
     expect_result("const f = (a, b) => a + b; return f.toString();", "(a, b) => a + b");
     expect_result("const g = z => z * 2; return g.toString();", "z => z * 2");
-    // an expression keeps its own name and body
+    // An expression keeps its own name and body.
     expect_result("const h = function named() { return 1; }; return h.toString();",
                   "function named() { return 1; }");
-    // a method's span starts at its NAME, which is what a browser returns
+    // A method's span starts at its name, which is what a browser returns...
     expect_result("class C { m(a) { return a; } } return C.prototype.m.toString();",
                   "m(a) { return a; }");
     expect_result("const o = { go(n) { return n; } }; return o.go.toString();",
                   "go(n) { return n; }");
     // ...after its `static` (not part of the MethodDefinition, 15.7.1) and
-    // WITH its `async` / `get` (which are).
+    // with its `async` / `get` (which are).
     expect_result("class C { static /* s */ m() {} static get g() { return 1; }"
                   " static async * ag() {} } return [C.m, Object.getOwnPropertyDescriptor(C, 'g')"
                   ".get, C.ag].map(String).join('|');",
@@ -494,15 +470,15 @@ void test_function_to_string() {
     // A symbol-named native shows no IdentifierName (the syntax makes it
     // optional) rather than its internal spelling.
     expect_result("return String([][Symbol.iterator]).indexOf('@@') < 0;", "true");
-    // A CLASS IS ITS WHOLE TEXT (20.2.3.5), explicit constructor or not. The
-    // synthesised constructor used to keep the offsets of the "(function ()
-    // {})" it was compiled from, read against the program's own source.
+    // A class is its whole text (20.2.3.5), explicit constructor or not. A
+    // synthesised constructor must not report the offsets of the
+    // "(function () {})" it was compiled from.
     expect_result("class C { m(a) { return a; } } return String(C);",
                   "class C { m(a) { return a; } }");
     expect_result("const D = class E { constructor(x) { this.x = x; } }; return String(D);",
                   "class E { constructor(x) { this.x = x; } }");
     expect_result("class F {} class G extends F {} return String(G);", "class G extends F {}");
-    // a native says so rather than returning something a parser would accept
+    // A native says so rather than returning something a parser would accept.
     expect_result("return Math.max.toString().indexOf('native code') >= 0;", "true");
 }
 
@@ -510,18 +486,18 @@ void test_functions() {
     expect_result("function add(a, b) { return a + b; } return add(2, 3);", "5");
     expect_result("function f() { return 7; } return f();", "7");
     expect_result("function id(x) { return x; } return id('hi');", "hi");
-    // hoisting: callable before its declaration appears
+    // Hoisting: callable before its declaration appears.
     expect_result("let r = twice(21); function twice(n) { return n * 2; } return r;", "42");
-    // recursion, and therefore real frame handling
+    // Recursion, and therefore real frame handling.
     expect_result(
         "function fact(n) { if (n <= 1) { return 1; } return n * fact(n - 1); } return fact(10);",
         "3628800");
     expect_result(
         "function fib(n) { if (n < 2) { return n; } return fib(n-1) + fib(n-2); } return fib(20);",
         "6765");
-    // a missing argument is undefined, not an error
+    // A missing argument is undefined, not an error.
     expect_result("function f(a, b) { return typeof b; } return f(1);", "undefined");
-    // function expressions and arrows
+    // Function expressions and arrows.
     expect_result("let f = function(x) { return x * 3; }; return f(4);", "12");
     expect_result("let f = (x) => x + 1; return f(41);", "42");
     expect_result("let f = x => x * x; return f(9);", "81");
@@ -542,66 +518,64 @@ void test_script_scope_is_shared_with_functions() {
 }
 
 // Real closures, via boxed cells. Every case here is one that capture-by-value
-// would get WRONG rather than merely slow, which is why the compiler used to
-// refuse instead of guessing.
+// would get wrong, not merely slow.
 void test_closures() {
-    // the counter: the canonical case. Capture-by-value returns 0 forever.
+    // The counter, the canonical case. Capture-by-value returns 0 forever.
     expect_result(
         "function counter() { let n = 0; function inc() { n = n + 1; return n; } return inc; }"
         "let c = counter(); c(); c(); return c();",
         "3");
 
-    // two closures over the SAME cell must see each other's writes
+    // Two closures over the same cell must see each other's writes.
     expect_result("function pair() { let n = 0;"
                   "  return { bump: function() { n = n + 1; }, read: function() { return n; } }; }"
                   "let p = pair(); p.bump(); p.bump(); return p.read();",
                   "2");
 
-    // separate invocations must NOT share a cell
+    // Separate invocations must not share a cell.
     expect_result("function counter() { let n = 0; return function() { n = n + 1; return n; }; }"
                   "let a = counter(); let b = counter(); a(); a(); return a() + ',' + b();",
                   "3,1");
 
-    // capture of a parameter, not just a local
+    // Capture of a parameter, not just a local.
     expect_result("function adder(x) { return function(y) { return x + y; }; }"
                   "let add5 = adder(5); return add5(37);",
                   "42");
 
-    // TWO levels of nesting: the innermost function captures a variable from
+    // Two levels of nesting: the innermost function captures a variable from
     // its grandparent, which only works if the middle function re-exports it
-    // as its own upvalue
+    // as its own upvalue.
     expect_result("function outer() { let v = 'deep';"
                   "  function middle() { function inner() { return v; } return inner(); }"
                   "  return middle(); }"
                   "return outer();",
                   "deep");
 
-    // mutation from the innermost level, visible at the outermost
+    // Mutation from the innermost level, visible at the outermost.
     expect_result("function outer() { let n = 1;"
                   "  function middle() { function inner() { n = n * 10; } inner(); }"
                   "  middle(); middle(); return n; }"
                   "return outer();",
                   "100");
 
-    // a closure outliving the frame that created it - the cell must survive
+    // A closure outliving the frame that created it: the cell must survive.
     expect_result("function make() { let msg = 'alive'; return function() { return msg; }; }"
                   "let f = make(); return f();",
                   "alive");
 
-    // closures in a loop capture the loop's binding
+    // Closures in a loop capture the loop's binding.
     expect_result("function build() { let fns = []; let i = 0;"
                   "  while (i < 3) { fns[i] = function() { return i; }; i = i + 1; }"
                   "  return fns[0](); }"
                   "return build();",
-                  "3"); // `let i` outside the loop body is ONE binding, so all three see 3
+                  "3"); // `let i` outside the body is one binding: all see 3.
 
-    // A `let`/`const` DECLARED IN THE BODY is a fresh binding per iteration
+    // A `let`/`const` declared in the body is a fresh binding per iteration
     // (ECMA-262 evaluates the block's declarations in a new declarative
     // environment each time), so a closure from iteration 0 keeps iteration
-    // 0's value. AT THE TOP LEVEL OF A SCRIPT, on purpose: inside a function
-    // this always held, but a classic script's var_decl arm sent every
-    // declaration to set_global regardless of block depth, so the loop had
-    // one `el` and out[0] saw out[1]'s. Every loop form, and a nested block.
+    // 0's value. These run at the top level of a script on purpose: a block's
+    // lexical declaration there must not become a global. Every loop form,
+    // and a nested block.
     expect_result("var out = []; for (const id of ['a', 'b']) { const el = id + '!';"
                   "  out.push(function (e) { return e === el; }); }"
                   "return out[0]('a!') + ',' + out[1]('b!') + ',' + out[1]('a!');",
@@ -626,16 +600,16 @@ void test_closures() {
                   "  out.push(function () { return el; }); } }"
                   "return out[0]() + ',' + out[1]();",
                   "a!,b!");
-    // and the loop variable itself, which was per-iteration already
+    // The loop variable itself is per-iteration too.
     expect_result("var out = []; for (const id of ['a', 'b']) { out.push(function () {"
                   "  return id; }); } return out[0]() + ',' + out[1]();",
                   "a,b");
-    // the same shape inside a function, which held before and must still
+    // The same shape inside a function.
     expect_result("function f() { var out = []; for (const id of ['a', 'b']) {"
                   "  const el = id + '!'; out.push(function () { return el; }); }"
                   "  return out[0]() + ',' + out[1](); } return f();",
                   "a!,b!");
-    // a top-level `var` in a block is still the script's own, shared binding
+    // A top-level `var` in a block is still the script's own, shared binding.
     expect_result("var out = []; for (const id of ['a', 'b']) { var el = id + '!';"
                   "  out.push(function () { return el; }); }"
                   "return out[0]() + ',' + out[1]() + ',' + el;",
@@ -643,15 +617,14 @@ void test_closures() {
 }
 
 void test_this() {
-    // `this` compiled to undefined unconditionally, so no method could see the
-    // object it was called on - which is most of what objects are for.
+    // A method sees the object it was called on.
     expect_result("var o = {n: 7, get: function () { return this.n; }}; return o.get();", "7");
-    // and it follows the CALL SITE, not the definition
+    // `this` follows the call site, not the definition.
     expect_result("var a = {n: 1, get: function () { return this.n; }};"
                   "var b = {n: 2, get: a.get}; return b.get();",
                   "2");
-    // A SLOPPY FUNCTION CALLED WITH NO RECEIVER sees the global object
-    // (10.2.1.2 step 5.a) - a plain `f()`, a callback a native fires with
+    // A sloppy function called with no receiver sees the global object
+    // (10.2.1.2 step 5.a): a plain `f()`, a callback a native fires with
     // undefined, `f.call(null)`; strict code keeps the undefined it was given.
     expect_result("function f() { return this === globalThis; } return f();", "true");
     expect_result("function f() { return this === globalThis; } return [1].map(f)[0];", "true");
@@ -660,27 +633,23 @@ void test_this() {
     expect_result("const f = () => this === globalThis; return f();", "true");
 }
 
-// `new Function(body)` - A COMPILER AT RUN TIME.
-//
-// It existed and refused. Two things had to be true first, and both now are: a
-// closure records which PROGRAM its nested functions live in
-// (`closure_object::owner`), so a frame from one program can call into another;
-// and the context OWNS the programs it compiles, so they outlive the closures
-// holding pointers into them.
+// `new Function(body)` compiles at run time. It works because a closure
+// records which program its nested functions belong to
+// (`closure_object::owner`), so a frame from one program can call into
+// another, and the context owns every program it compiles, so they outlive
+// the closures that point into them.
 void test_new_function() {
     expect_result("return typeof new Function();", "function");
     expect_result("return new Function('return 41 + 1;')();", "42");
     expect_result("return new Function('a', 'return a * 2;')(21);", "42");
     expect_result("return new Function('a', 'b', 'return a + b;')(1, 2);", "3");
     // Every argument but the last names a parameter, and one argument may name
-    // several - `new Function('a,b', ...)` is the form a minifier emits.
+    // several: `new Function('a,b', ...)` is the form a minifier emits.
     expect_result("return new Function('a,b', 'return a - b;')(5, 2);", "3");
     // Called without `new`, which is the same thing.
     expect_result("return Function('return 3;')();", "3");
-    // The body sees the globals, which is the only scope it has - a function
-    // built from text closes over nothing else.
-    // A top-level `var` IS a global here by design (see above), which is the
-    // only scope a function built from text can see.
+    // The body sees the globals, which is the only scope it has: a function
+    // built from text closes over nothing else. A top-level `var` is a global.
     expect_result("var g = 7; return new Function('return g;')();", "7");
     expect_result("var f = function (x) { return x + 1; };"
                   "return new Function('return f(1);')();",
@@ -689,7 +658,7 @@ void test_new_function() {
     expect_result("return new Function('var f = function () { return 5; }; return f();')();", "5");
     expect_result("return new Function('a', 'b', 'return 1;').length;", "2");
     expect_result("return new Function('return 1;').name;", "anonymous");
-    // A bad body is a SyntaxError a page can CATCH, because building a
+    // A bad body is a SyntaxError a page can catch, because building a
     // function from user-supplied text is exactly where one is expected.
     expect_result("try { new Function('this is not javascript ((('); } catch (e) { return e.name; }"
                   "return 'not thrown';",
@@ -698,7 +667,7 @@ void test_new_function() {
                   "'for (in xs) {}', '{*a(){}}']) { try { Function(body); } catch (e) { "
                   "if (e instanceof SyntaxError) caught++; } } return caught;",
                   "5");
-    // It runs NESTED, so it must not drain the microtask queue: that belongs to
+    // It runs nested, so it must not drain the microtask queue: that belongs to
     // the turn, not to the program that happened to build a function.
     expect_after_turn(
         "var result = ''; Promise.resolve(1).then(function () { result += 'then;'; });"
@@ -707,24 +676,18 @@ void test_new_function() {
         "built(1);then;");
 }
 
-// A DESTRUCTURED PARAMETER THAT A NESTED FUNCTION CAPTURES.
-//
-// Two things box a local, and both were running: the pattern binding boxes the
-// names it declares as it binds them, and the parameter loop boxed everything
-// the frame had declared - which by then included those names. The result was a
-// cell inside a cell, so reading the variable gave the inner CELL rather than
-// the value: an object with no properties, and no error anywhere.
-//
-// It only showed when the name was CAPTURED, because an uncaptured local is
-// never boxed at all - which is why every simpler test of destructured
-// parameters passed. colorjs's `toGamutCSS(origin, { space } = {})` is exactly
-// this shape, and got a cell where it wanted a colour space.
+// A destructured parameter that a nested function captures must be boxed
+// exactly once. The pattern binding boxes the names it declares as it binds
+// them, so the parameter loop must not box them again; a cell inside a cell
+// would make reads return the inner cell instead of the value. Only captured
+// names are boxed, so only this shape exercises it (colorjs's
+// `toGamutCSS(origin, { space } = {})`).
 void test_captured_destructured_parameters() {
     expect_result("const o = { id: 'x' };"
                   "function f(n, { space } = {}) { const read = () => space; return read().id; }"
                   "return f(1, { space: o });",
                   "x");
-    // The inner and outer reads must be the SAME binding.
+    // The inner and outer reads must be the same binding.
     expect_result("const o = { id: 'y' };"
                   "function f(n, { space } = {}) { const read = function () { return space; };"
                   "  return space === read() ? 'same' : 'different'; }"
@@ -742,15 +705,14 @@ void test_captured_destructured_parameters() {
         "fallback");
 }
 
-// A NAME USED ONLY INSIDE A TEMPLATE HOLE IS STILL CAPTURED.
+// A name used only inside a template hole is still captured.
 //
-// A template literal is ONE node carrying its whole source, substitutions
-// included - the parser does not break them out into children - so every walk
-// over the tree was blind to them. The two that matter decide whether a local
-// is BOXED and whether `arguments` is materialised, and a name that appeared
-// only in a hole was invisible to both: the enclosing frame never boxed it, the
-// nested function resolved it as a global, and it read undefined. p5.js builds
-// its CDN url that way, with the version number in a hole.
+// A template literal is one node carrying its whole source, substitutions
+// included (the parser does not break them out into children), so the tree
+// walks that decide whether a local is boxed and whether `arguments` is
+// materialised must scan the holes explicitly. Otherwise the enclosing frame
+// never boxes the name and the nested function reads it as an undefined
+// global. (p5.js builds its CDN URL with the version number in a hole.)
 void test_template_holes_capture() {
     expect_result("const V = '1.2.3'; const f = function () { return `v=${V}`; }; return f();",
                   "v=1.2.3");
@@ -771,13 +733,11 @@ void test_template_holes_capture() {
         "n=3");
 }
 
-// `obj[key](...)` PASSES ITS ARGUMENTS, not the key.
+// `obj[key](...)` passes its arguments, not the key.
 //
-// call_computed reads its arguments from base+1 upwards, and the compiler was
-// evaluating the key into that same register - so every computed call with
-// arguments arrived shifted by one, with the KEY as argument 0 and the last
-// argument dropped. Silent, and only in the form with arguments, which is why
-// `xs[0]()` looked fine.
+// call_computed reads its arguments from base+1 upwards, so the compiler must
+// not evaluate the key into that register; if it did, every computed call
+// with arguments would arrive shifted by one, with the key as argument 0.
 void test_computed_calls_pass_their_arguments() {
     expect_result("var t = { k: function (a, b, c) { return a + '|' + b + '|' + c; } };"
                   "return t['k'](1, 2, 3);",
@@ -794,12 +754,12 @@ void test_computed_calls_pass_their_arguments() {
                   "7");
 }
 
-// `arguments` - every value a call actually received.
+// `arguments`: every value a call actually received.
 //
-// It has to be materialised at ENTRY. Built where the name is mentioned, it
-// read the frame's registers as they were at that moment, and the expression
-// around it had already reused the ones holding arguments past the last
-// declared parameter.
+// It has to be materialised at entry. Built where the name is mentioned, it
+// would read the frame's registers as they are at that moment, after the
+// surrounding expression may have reused the ones holding arguments past the
+// last declared parameter.
 void test_arguments() {
     expect_result("function f(a, b, c) { return arguments.length; } return f(1);", "1");
     expect_result("function f(a, b, c) { return arguments.length; } return f(1, 2, 3, 4);", "4");
@@ -809,7 +769,7 @@ void test_arguments() {
     expect_result("function h() { return Array.prototype.slice.call(arguments).join('|'); }"
                   "return h(1, 2, 3);",
                   "1|2|3");
-    // ONE object per call, not one per mention.
+    // One object per call, not one per mention.
     expect_result("function s() { return arguments === arguments; } return s(1);", "true");
     // An arrow has none of its own and sees the enclosing function's.
     expect_result("function outer(a, b) { var f = () => arguments.length + ':' + arguments[1];"
@@ -821,13 +781,13 @@ void test_arguments() {
                   "3");
     // A parameter of that name shadows it, which is what makes this safe to add.
     expect_result("function shadow(arguments) { return arguments; } return shadow(7);", "7");
-    // A DEFAULT may mention it (10.2.11 step 15-22), body or no body.
+    // A default may mention it (10.2.11 steps 15-22), body or no body.
     expect_result("function d(x = arguments[2], y = arguments.length, z) { return x + ':' + y; }"
                   "return d(undefined, undefined, 'third');",
                   "third:3");
-    // NOT AN ARRAY (10.4.4): on Object.prototype, "[object Arguments]", with
-    // Array.prototype.values as its iterator and `callee` - the function when
-    // mapped, the %ThrowTypeError% accessor when strict.
+    // Not an array (10.4.4): on Object.prototype, "[object Arguments]", with
+    // Array.prototype.values as its iterator and `callee` (the function when
+    // mapped, the %ThrowTypeError% accessor when strict).
     expect_result("function f() { return Array.isArray(arguments) + ',' + "
                   "Object.prototype.toString.call(arguments) + ',' + typeof arguments.map + ',' +"
                   "(arguments instanceof Array) + ',' + (arguments instanceof Object) + ',' +"
@@ -844,10 +804,10 @@ void test_arguments() {
                   "true,true,false,true,0,");
 }
 
-// A CLOSURE MADE BY ITS OWN INITIALISER, in a block: `let y = () => y` boxes
+// A closure made by its own initialiser, in a block: `let y = () => y` boxes
 // `y`, and the cell has to exist before the arrow is made or the arrow holds
 // the register's undefined and never the cell. At a function's top level the
-// name is hoisted and boxed at entry, so only the block form was wrong.
+// name is hoisted and boxed at entry, so only the block form exercises this.
 void test_self_referencing_block_closure() {
     expect_result("function f() { { let y = () => y; return typeof y(); } } return f();",
                   "function");
@@ -859,20 +819,19 @@ void test_self_referencing_block_closure() {
     expect_result("{ let y = () => y; var out = typeof y(); } return out;", "function");
 }
 
-// A NAMED FUNCTION EXPRESSION BINDS ITS OWN NAME.
+// A named function expression binds its own name.
 //
-// `function me() {}` as an EXPRESSION puts `me` in scope inside its own body
+// `function me() {}` as an expression puts `me` in scope inside its own body
 // and nowhere else. It is the only way an otherwise-anonymous function can
 // reach itself, and every self-driving callback is written that way:
-// `(function pump() { requestAnimationFrame(pump); })()` never ran a second
-// time here, silently, because a callback that is undefined is not an error at
-// the point it is registered.
+// `(function pump() { requestAnimationFrame(pump); })()`. Registering an
+// undefined callback is not an error, so getting this wrong fails silently.
 void test_named_function_expressions() {
     expect_result("var f = function me(n) { return n <= 0 ? 'done' : me(n - 1); };"
                   "return f(3);",
                   "done");
     expect_result("var g = function named() { return typeof named; }; return g();", "function");
-    // ...and NOWHERE ELSE: the name is not a declaration in the enclosing scope.
+    // ...and nowhere else: the name is not a declaration in the enclosing scope.
     expect_result("var g = function named() { return 1; }; return typeof named;", "undefined");
     // A parameter of the same name shadows the binding, which is what makes it
     // safe to add: it can only ever be read where nothing else defined the name.
@@ -881,16 +840,14 @@ void test_named_function_expressions() {
     expect_result("var f = function me(n) { return (function () { return typeof me; })(); };"
                   "return f(1);",
                   "function");
-    // A declaration is unaffected - its name is in the enclosing scope as well.
+    // A declaration is unaffected: its name is in the enclosing scope as well.
     expect_result("function d() { return typeof d; } return d() + ',' + typeof d;",
                   "function,function");
 }
 
 // NamedEvaluation (8.4.5): an anonymous function, arrow or class takes the
-// name of what it initialises - a binding, a property, a default, a field.
-// Every one of these read "" before 2026-09-12; test262 has 1,056 files that
-// ask, and a stack trace through `var handler = function () {}` said
-// "<anonymous>" for the same reason.
+// name of what it initialises: a binding, a property, a default, a field.
+// Stack traces read the same name.
 void test_anonymous_functions_take_the_binding_name() {
     expect_result("var f = function () {}; return f.name;", "f");
     expect_result("let g = () => 1; return g.name;", "g");
@@ -913,13 +870,12 @@ void test_anonymous_functions_take_the_binding_name() {
                   "own,g");
 }
 
-// AN ARRAY PATTERN IS THE ITERATOR PROTOCOL (8.6.2), not `src[i]`: it takes
-// anything with a Symbol.iterator, steps exactly as many times as it has
-// elements, and closes the iterator (`return()`) when it stops early - also
-// on a throw out of a default. A `next()` that throws marks the record done,
-// so nothing is closed after it. Each of these was wrong before 2026-09-12:
-// a user iterable destructured to undefineds, and a generator was drained
-// to the end however many elements the pattern had.
+// An array pattern uses the iterator protocol (8.6.2), not `src[i]`: it
+// accepts anything with a Symbol.iterator, steps exactly as many times as it
+// has elements, and calls `return()` when it stops before the iterator is
+// done. A throw out of a default does not close the iterator (see
+// compile_array_pattern), and a `next()` that throws marks the record done,
+// so nothing is closed after it either.
 void test_array_patterns_iterate() {
     const std::string counter =
         "var steps = 0, closed = 0;"
@@ -928,7 +884,7 @@ void test_array_patterns_iterate() {
     expect_result(
         counter + "var [a, b] = it; return a + ',' + b + ' steps ' + steps + ' closed ' + closed;",
         "1,2 steps 2 closed 1");
-    // exhausted by the pattern: nothing left to close
+    // Exhausted by the pattern: nothing left to close.
     expect_result(
         counter +
             "var [a, b, c, d, e, f] = it; return f + ' steps ' + steps + ' closed ' + closed;",
@@ -936,31 +892,31 @@ void test_array_patterns_iterate() {
     expect_result(counter + "var [x, ...rest] = it; return rest.join('') + ' closed ' + closed;",
                   "2345 closed 0");
     expect_result(counter + "var [, , third] = it; return third + ' steps ' + steps;", "3 steps 3");
-    // A throw from a default is the original throw. (The iterator is NOT
-    // closed on that path - see compile_array_pattern for why.)
+    // A throw from a default is the original throw. (The iterator is not
+    // closed on that path; see compile_array_pattern for why.)
     expect_result(counter + "try { var [q = (function () { throw new Error('dflt'); })()] ="
                             " { [Symbol.iterator]() { return { next() { return { done: false }; },"
                             " return() { closed++; return {}; } }; } }; }"
                             " catch (e) { return e.message; }",
                   "dflt");
-    // a throwing next() is not closed after
+    // A throwing next() is not closed after.
     expect_result("var closed = 0; try { var [z] = { [Symbol.iterator]() { return { next() {"
                   " throw new Error('step'); }, return() { closed++; } }; } }; }"
                   " catch (e) { return e.message + ' closed ' + closed; }",
                   "step closed 0");
-    // a generator is pulled lazily: two elements, two resumes
+    // A generator is pulled lazily: two elements, two resumes.
     expect_result("var pulled = 0; function* g() { for (;;) { pulled++; yield pulled; } }"
                   "var [m, n] = g(); return m + n + ' pulled ' + pulled;",
                   "3 pulled 2");
-    // not iterable, and null or undefined as an object pattern: TypeError
+    // Not iterable, and null or undefined as an object pattern: TypeError.
     expect_result("try { var [w] = 5; } catch (e) { return e.constructor.name; }", "TypeError");
     expect_result("try { var {} = null; } catch (e) { return e.constructor.name; }", "TypeError");
     expect_result("try { (function ({}) {})(undefined); } catch (e) { return e.constructor.name; }",
                   "TypeError");
-    // assignment patterns take the same walk
+    // Assignment patterns take the same walk.
     expect_result(counter + "var a, b; [a, b] = it; return a + b + ' closed ' + closed;",
                   "3 closed 1");
-    // for-of and spread see a user iterable too
+    // for-of and spread see a user iterable too.
     expect_result(counter + "var got = []; for (var v of it) got.push(v); return got.join('');",
                   "12345");
     expect_result(counter + "return [...it].length;", "5");
@@ -970,7 +926,7 @@ void test_array_patterns_iterate() {
 } // namespace
 
 // 10.2.4: `caller` and `arguments` are %ThrowTypeError% accessors on
-// Function.prototype - a strict function, an arrow, a class and a built-in
+// Function.prototype: a strict function, an arrow, a class and a built-in
 // throw; a sloppy function answers null, as every browser does.
 void test_restricted_properties() {
     expect_result("function f() {} return f.caller + ',' + f.arguments;", "null,null");

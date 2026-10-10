@@ -1,10 +1,14 @@
-// FOCUS, HTML 6.6: only a focusable area takes focus - `focus()` on anything
-// else finds a focusable area for it or does nothing - Tab walks the
+//===- focus_navigation.cpp - Focus and Tab navigation tests ----*- C++ -*-===//
+//
+// Focus, HTML 6.6: only a focusable area takes focus (`focus()` on anything
+// else finds a focusable area for it or does nothing); Tab walks the
 // flattened tabindex-ordered focus navigation scopes of the document, its
-// shadow hosts and their slots, a host that delegates focus hands it on, a
-// radio group is one stop, and `:focus` is the focused element and the shadow
+// shadow hosts and their slots; a host that delegates focus hands it on; a
+// radio group is one stop; and `:focus` is the focused element and the shadow
 // hosts around it, never its other ancestors. Each case names the WPT file it
 // stands in for.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -24,8 +28,9 @@ using ctbrowser_test::logged;
 
 namespace {
 
-// The id of what has focus, looked for through the shadow roots it is in -
-// the LAST such line, since every call logs one.
+/// Returns "active=<id>" for the focused element, looked for through the
+/// shadow roots it is in. Reads the last such console line, since every call
+/// logs one.
 [[nodiscard]] std::string active(browser & page) {
     (void)page.run_script("var a = document.activeElement;"
                           "while (a && a.shadowRoot && a.shadowRoot.activeElement)"
@@ -38,6 +43,7 @@ namespace {
     return last;
 }
 
+/// Presses Tab, or Shift+Tab when `shift` is set.
 void tab(browser & page, bool shift = false) {
     (void)page.handle(input_event::key_press("Tab", shift));
 }
@@ -118,7 +124,7 @@ void test_tab_goes_on_from_a_scope_out_of_the_order() {
 }
 
 // shadow-dom/focus-navigation/focus-with-negative-index.html: from an
-// element out of the order, Tab and Shift+Tab go to its neighbours in TREE
+// element out of the order, Tab and Shift+Tab go to its neighbours in tree
 // order that are in it - not to where a tabindex of zero would put it.
 void test_tab_from_out_of_the_order_goes_by_tree_order() {
     browser page{browser_options{400, 300}};

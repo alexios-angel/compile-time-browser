@@ -1,6 +1,14 @@
-// Script entry receives a realm value; it is not a bare function call and it
-// does not look up the mutable globalThis binding. Keep the program alive for
-// every closure it creates, including arrows called during a later turn.
+//===- ctbrowser/unittests/unit/script/this.cpp - Script `this` tests -----===//
+//
+// A classic script's `this` is its realm's global object, passed in at entry.
+// It is neither the undefined of a bare function call nor a lookup of the
+// writable `globalThis` binding. These tests also check that the program stays
+// alive for every closure it created, including arrows called in a later turn
+// after a garbage collection, and that the interpreter and the AOT entry ABI
+// agree.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/script.hpp>
 
@@ -21,6 +29,8 @@ using ctbrowser::script::value;
 
 namespace {
 
+/// Runs \p source as a \p kind script and fails the test unless its global
+/// `result` stringifies to \p expected.
 void expect_script(std::string_view source, std::string_view expected,
                    script_kind kind = script_kind::classic) {
     const program prog = compiler::compile(source, kind);
@@ -123,9 +133,10 @@ void test_later_turn_and_collection() {
 
 std::size_t compiled_entries = 0;
 
-// The same entry ABI a generated script uses. Observe both the explicit
-// receiver argument and load_this's helper, so testing only one cannot mask a
-// disagreement between dispatcher and frame setup.
+/// A hand-written script entry with the ABI a generated script uses. It
+/// records both the explicit receiver argument and what load_this's helper
+/// sees, so testing only one cannot mask a disagreement between dispatcher and
+/// frame setup.
 extern "C" std::int32_t sample_script_receiver(ctbrowser::aot::ct_aot_ctx * ctx,
                                                const ctbrowser::aot::ct_aot_site * site,
                                                const std::uint64_t *, std::uint32_t,

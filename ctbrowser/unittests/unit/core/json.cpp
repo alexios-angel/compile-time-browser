@@ -1,4 +1,10 @@
+//===- unittests/unit/core/json.cpp - Core JSON parser --------------------===//
+//
 // A native client of JSON parsing links Core alone and owns every parsed byte.
+// Covers values, strings and escapes, numbers, error offsets and the nesting
+// depth cap of ctbrowser::parse_json.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/json.hpp>
 
 #include "check.hpp"
@@ -7,6 +13,7 @@
 
 using namespace ctbrowser;
 
+/// Parses `text`, checking that it succeeds; returns the value.
 [[nodiscard]] static json_value parsed(std::string_view text) {
     auto result = parse_json(text);
     CHECK(result.has_value());
@@ -71,7 +78,7 @@ int main() {
                                                                             "\xED\xB0\x80");
     CHECK_EQ(std::get<std::string>(parsed(R"("\ud800\ud800\udc00")").data),
              "\xED\xA0\x80\xF0\x90\x80\x80");
-    // The original reader passes raw bytes through, including malformed UTF-8.
+    // Raw bytes pass through unvalidated, including malformed UTF-8.
     CHECK_EQ(std::get<std::string>(parsed("\"\xC3\xA9\xFF\xED\xA0\x80\"").data),
              "\xC3\xA9\xFF\xED\xA0\x80");
 
@@ -86,7 +93,9 @@ int main() {
     }
     CHECK(std::signbit(std::get<double>(parsed("-0").data)));
     CHECK(std::signbit(std::get<double>(parsed("-0.0e+1").data)));
-    // Preserve the old reader's ignored from_chars out-of-range result.
+    // Underflow and overflow (1e400, -1e-400) parse as +0.0: from_chars reports
+    // out-of-range and the parser keeps its zero-initialized result, losing
+    // the sign. Pinned so changing that is deliberate.
     CHECK(!std::signbit(std::get<double>(parsed("-1e-400").data)));
 
     struct bad_case {
@@ -142,9 +151,9 @@ int main() {
         CHECK(!parse_json(source));
     }
     CHECK(!parse_json(std::string_view{"null\0", 5}));
-    // Nesting past the depth cap is an error, not a native stack overflow
-    // (security review DOS-001): 2000 unterminated arrays would recurse
-    // parse -> parse_array -> parse until the stack ran out.
+    // Nesting past the depth cap is an error, not a native stack overflow:
+    // 2000 unterminated arrays would otherwise recurse parse -> parse_array ->
+    // parse until the stack ran out.
     CHECK(!parse_json(std::string(2000, '[')));
     CHECK(!parse_json(std::string(2000, '[') + std::string(2000, ']')));
     // A document at the legal depth still parses.

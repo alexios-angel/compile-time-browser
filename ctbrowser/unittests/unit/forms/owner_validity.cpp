@@ -1,7 +1,11 @@
-// Two answers the forms give outside a script: a control's form owner when the
-// parser's form element pointer made it (HTML 13.2.6.1, 4.10.18.3) - a form a
-// table popped at once still owns the controls after it - and what :valid and
-// :invalid match (4.16.3), dom_bindings::control_validity.
+//===- owner_validity.cpp - Form owner and validity tests -------*- C++ -*-===//
+//
+// Two answers the forms give outside a script: a control's form owner when
+// the parser's form element pointer made it (HTML 13.2.6.1, 4.10.18.3), where
+// a form a table popped at once still owns the controls after it; and what
+// :valid and :invalid match (4.16.3), dom_bindings::control_validity.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -65,7 +69,8 @@ void test_control_validity() {
 }
 
 // A pattern whose match runs out of the matcher's depth or step budget is a
-// mismatch, not a stack overflow: `(?:a|b)+` recursed per character.
+// mismatch, not a stack overflow (a backtracking matcher recurses once per
+// character on `(?:a|b)+`).
 void test_pattern_budget() {
     ctbrowser::browser page{ctbrowser::browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><body><input id=deep pattern=\"(?:a|b)+\" value=" +

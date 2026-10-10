@@ -1,23 +1,22 @@
-// THE ATTRIBUTE API ON Element, WHICH IS THREE QUESTIONS AND NOT ONE.
+//===- ctbrowser/unittests/unit/element/attrs.cpp - Element attribute API -===//
 //
-// `getAttribute(qualifiedName)` matches the QUALIFIED name irrespective of
-// namespace and answers the FIRST such attribute; `getAttributeNS(ns, local)`
-// matches the PAIR, in which the prefix takes no part; and `element.attributes`
-// hands back the whole list as Attr nodes, each of which knows which of the
-// three it is. An element may hold `x` in no namespace and `x` in two others at
-// once, and every one of those lookups has a different right answer.
+// The attribute API on Element, which answers three different questions:
+// `getAttribute(qualifiedName)` matches the qualified name in any namespace and
+// answers the first such attribute; `getAttributeNS(ns, local)` matches the
+// (namespace, local name) pair and ignores the prefix; and `element.attributes`
+// returns the whole list as Attr nodes. An element may hold `x` in no namespace
+// and `x` in two others at once, and each lookup has a different right answer.
 //
-// WHAT MAKES THIS WORTH A FILE OF ITS OWN rather than more of node_methods:
-// every case below turns on a DISTINCTION - qualified against namespaced, HTML
-// against foreign, a name that serialises against a name that parses - and each
-// of them used to have one answer where two belong. `node_methods` asks
-// whether a binding works; these ask whether two bindings that look alike are
-// being kept apart.
+// Every case turns on a distinction (qualified against namespaced, HTML against
+// foreign, a name that serialises against a name that parses) and checks that
+// two bindings that look alike are kept apart. Also covered: dataset, ARIA and
+// enumerated reflection, classList, and the [SameObject] attributes.
 //
-// The DOM layer under them is `struct attribute`'s interned namespace and the
-// six lookups in dom/document.hpp; the binding layer is the block headed
-// "ATTRIBUTES AS NODES" in lib/Shell/bindings/element/attributes.cpp.
-
+// The DOM layer underneath is `struct attribute` (dom/node.hpp) and the
+// namespace-aware lookups in dom/document.hpp; the bindings are the
+// Attr/NamedNodeMap section of lib/Shell/bindings/element/attributes.cpp.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
@@ -29,19 +28,19 @@
 
 namespace {
 
-// `xml:lang` ON AN HTML ELEMENT AND `xlink:href` INSIDE <svg> are the pair
-// `Attr-prefix.html` draws, and they are here rather than built from script
-// because what they pin down is what the PARSER stored: a colon in an HTML
-// start tag is part of the name and nothing else, and the same colon in
-// foreign content binds a real namespace. Only a parsed document can tell the
-// two apart.
+/// `xml:lang` on an HTML element and `xlink:href` inside <svg> are the pair
+/// `Attr-prefix.html` contrasts. They are in the markup rather than built from
+/// script because they check what the parser stored: a colon in an HTML start
+/// tag is just part of the name, while the same colon in foreign content binds
+/// a real namespace. Only a parsed document can tell the two apart.
 constexpr const char * page_html = R"(<!DOCTYPE html>
 <html><body>
 <div id=test xml:lang="with prefix" class="without prefix"></div>
 <svg id=s><g xlink:href="with prefix" class="without prefix"></g></svg>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Evaluates `expression` on a fresh copy of page_html (many cases mutate the
+/// document) and checks that it stringifies to `expected`.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -49,7 +48,7 @@ void is(const std::string & expression, const std::string & expected) {
 // --- the qualified lookup and the namespaced one are different questions ----
 
 void test_the_first_attribute_wins_the_qualified_lookup() {
-    // Element-setAttribute.html, first subtest: a `setAttribute` CHANGES the
+    // Element-setAttribute.html, first subtest: a `setAttribute` changes the
     // first attribute with that qualified name rather than adding a second one
     // in the null namespace, and which one it found is observable through the
     // namespaced read.
@@ -62,8 +61,8 @@ void test_the_first_attribute_wins_the_qualified_lookup() {
                e.getAttributeNS('foo', 'x') + ',' + e.getAttributeNS('foo2', 'x');
     })())JS",
        "2,changed,changed,second");
-    // Element-removeAttribute.html: removing by qualified name takes the FIRST
-    // one away and the OTHER becomes the answer to the same question.
+    // Element-removeAttribute.html: removing by qualified name takes the first
+    // one away and the other becomes the answer to the same question.
     is(R"JS((function () {
         var e = document.createElement('p');
         e.setAttribute('x', 'first');
@@ -73,7 +72,7 @@ void test_the_first_attribute_wins_the_qualified_lookup() {
                e.getAttributeNS('foo', 'x') + ',' + e.attributes.length;
     })())JS",
        "second,null,second,1");
-    // ...and `hasAttribute` asks about presence irrespective of namespace,
+    // `hasAttribute` asks about presence in any namespace,
     // where `getAttributeNS(null, ...)` is asking about the null one.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -84,8 +83,8 @@ void test_the_first_attribute_wins_the_qualified_lookup() {
                e.getAttribute('attr');
     })())JS",
        "true,true,true,false,t1");
-    // `removeAttributeNS` takes a LOCAL name. Handing it a qualified one
-    // removes nothing at all, which is the whole of Element-removeAttributeNS.
+    // `removeAttributeNS` takes a local name. Handing it a qualified one
+    // removes nothing at all, which is all of WPT's Element-removeAttributeNS.
     is(R"JS((function () {
         var XML = 'http://www.w3.org/XML/1998/namespace';
         var e = document.createElement('foo');
@@ -98,12 +97,12 @@ void test_the_first_attribute_wins_the_qualified_lookup() {
        "1,0");
 }
 
-// --- and the fold is the ELEMENT's, not the API's --------------------------
+// --- Lowercasing depends on the element, not the API ----------------------
 
 void test_only_an_html_element_folds_its_attribute_names() {
     // attributes.html, "setAttribute should lowercase its name argument": the
-    // fold happens on the way IN, so the namespaced read - which does not fold -
-    // finds the lowercase spelling and not the one that was written.
+    // lowercasing happens on the way in, so the namespaced read (which does not
+    // lowercase) finds the lowercase spelling, not the one that was written.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('CHEEseCaKe', 'tasty');
@@ -111,7 +110,7 @@ void test_only_an_html_element_folds_its_attribute_names() {
                ',' + e.getAttribute('CHEEseCaKe');
     })())JS",
        "null,tasty,tasty");
-    // ...and setAttributeNS does NOT fold, so the same element can hold a name
+    // setAttributeNS does not lowercase, so the same element can hold a name
     // no `getAttribute` on an HTML element can ever ask for.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -120,10 +119,9 @@ void test_only_an_html_element_folds_its_attribute_names() {
                e.hasAttributeNS(null, 'ALIGN') + ',' + e.getAttributeNS('', 'ALIGN');
     })())JS",
        "false,false,true,left");
-    // THE FOLD IS THE HTML NAMESPACE'S. An SVG element keeps its capitals, and
-    // this is the case that used to be silently unreachable: `viewBox` interned
-    // as `viewbox`, which is a name nothing in the rasteriser or the style
-    // engine ever looks for.
+    // Only elements in the HTML namespace lowercase. An SVG element keeps its
+    // capitals: `viewBox` must not be stored as `viewbox`, a name the
+    // rasteriser and the style engine never look for.
     is(R"JS((function () {
         var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         s.setAttribute('viewBox', '0 0 4 3');
@@ -135,8 +133,8 @@ void test_only_an_html_element_folds_its_attribute_names() {
 // --- an attribute name is a serialisation rule, not the Name production -----
 
 void test_what_an_attribute_may_be_called() {
-    // productions.js's whole list. Twelve of the thirteen are refused by the
-    // XML `Name` production and every one of them must SUCCEED: the rule is
+    // productions.js's whole list. Most of the thirteen are refused by the
+    // XML `Name` production, yet every one of them must succeed: the rule is
     // that a name has to survive being written into a start tag and read back.
     is(R"JS((function () {
         var e = document.createElement('foo');
@@ -150,7 +148,7 @@ void test_what_an_attribute_may_be_called() {
         return ok + ',' + names.length;
     })())JS",
        "13,13");
-    // The empty string is the ONLY one productions.js calls invalid...
+    // The empty string is the only one productions.js calls invalid...
     is("document.createElement('foo').setAttribute('', 'x')", "threw:InvalidCharacterError");
     // ...and the break set is the other half of the rule: these four are the
     // characters the tokenizer's attribute name state stops on.
@@ -158,8 +156,8 @@ void test_what_an_attribute_may_be_called() {
     is("document.createElement('foo').setAttribute('a/b', 'x')", "threw:InvalidCharacterError");
     is("document.createElement('foo').setAttribute('a=b', 'x')", "threw:InvalidCharacterError");
     is("document.createElement('foo').setAttribute('a>b', 'x')", "threw:InvalidCharacterError");
-    // Name validation precedes value conversion; the shared DOM helper must
-    // not make the adapter evaluate a value for an invalid name.
+    // Name validation precedes value conversion: an invalid name throws before
+    // the value's toString runs.
     is(R"JS((function () {
         var e = document.createElement('foo');
         var conversions = 0;
@@ -169,7 +167,7 @@ void test_what_an_attribute_may_be_called() {
         return 'did not throw';
     })())JS",
        "InvalidCharacterError,0,0");
-    // `xmlns` is an ordinary attribute name to `setAttribute` - the namespace
+    // `xmlns` is an ordinary attribute name to `setAttribute`: the namespace
     // rules below belong to `setAttributeNS` and to nothing else.
     is(R"JS((function () {
         var e = document.createElement('foo');
@@ -180,6 +178,9 @@ void test_what_an_attribute_may_be_called() {
        "a,b");
 }
 
+/// toggleAttribute: the name is lowercased on HTML elements, `force` is
+/// converted only when the name is valid, and MutationObserver sees a record
+/// only for a real change.
 void test_toggle_attribute_preserves_conversion_and_notifications() {
     is(R"JS((function () {
         var e = document.createElement('button');
@@ -196,8 +197,10 @@ void test_toggle_attribute_preserves_conversion_and_notifications() {
                absent + ',' + e.toggleAttribute('disabled') + ',' + e.hasAttribute('disabled');
     })())JS",
        "true,,true:kept,0,false,false,true,true");
-    // Element's current explicit-undefined behavior differs from PI's. Keep
-    // this refactor from silently changing either adapter's WebIDL conversion.
+    // An explicit `undefined` force behaves differently on Element and on
+    // ProcessingInstruction: the PI treats it as omitted (WebIDL) and flips, so
+    // an absent attribute is added (with its case kept). Both behaviours are
+    // pinned so neither changes by accident.
     is(R"JS((function () {
         var pi = document.createProcessingInstruction('pi', '');
         return pi.toggleAttribute('Mixed', undefined) + ',' + pi.hasAttribute('Mixed') + ',' +
@@ -243,7 +246,7 @@ void test_toggle_attribute_preserves_conversion_and_notifications() {
 // --- "validate and extract", and its two different throws -------------------
 
 void test_setattributens_validates_then_extracts() {
-    // THE ORDER IS PART OF THE ANSWER: the shape of the name is decided before
+    // The order of checks matters: the shape of the name is decided before
     // the namespace is looked at, so a bad name in the XMLNS namespace is an
     // InvalidCharacterError and not the NamespaceError it would otherwise earn.
     is("document.createElement('foo')"
@@ -266,7 +269,7 @@ void test_setattributens_validates_then_extracts() {
     is("document.createElement('foo')"
        ".setAttributeNS('http://www.w3.org/2000/xmlns/', 'b:foo', 'fail')",
        "threw:NamespaceError");
-    // And the four spellings that are LEGAL, which are what stops the rules
+    // The four spellings that are legal, which stop the rules
     // above from being written as "refuse anything with a colon".
     is(R"JS((function () {
         var XML = 'http://www.w3.org/XML/1998/namespace';
@@ -283,7 +286,7 @@ void test_setattributens_validates_then_extracts() {
        "4,one,two,three,four");
     // "Setting the same attribute with another prefix should not change the
     // prefix" - the write finds the attribute by (namespace, local name) and
-    // changes its VALUE, never its name.
+    // changes its value, never its name.
     is(R"JS((function () {
         var e = document.createElement('foo');
         e.setAttributeNS('a', 'foo:bar', 'X');
@@ -306,7 +309,7 @@ void test_the_map_holds_attr_nodes() {
                 a.name, a.nodeName, a.nodeType, a.specified, a.ownerElement === e].join(',');
     })())JS",
        "1,1,1,bar,foo,foo,foo:bar,foo:bar,2,true,true");
-    // An attribute with NO namespace has no prefix and no local name to split
+    // An attribute with no namespace has no prefix and no local name to split
     // off: the whole qualified name is the local name, colons and all.
     is(R"JS((function () {
         var e = document.createElement('foo');
@@ -315,7 +318,7 @@ void test_the_map_holds_attr_nodes() {
         return a.localName + ',' + (a.prefix === null) + ',' + (a.namespaceURI === null);
     })())JS",
        "x:y,true,true");
-    // WRITING THROUGH ONE reaches the element, which is what makes an Attr a
+    // Writing through an Attr reaches the element, which is what makes it a
     // view rather than a copy. attributes.html's "Attribute values should not
     // be parsed" is exactly this, entity and all.
     is(R"JS((function () {
@@ -326,7 +329,7 @@ void test_the_map_holds_attr_nodes() {
         return a.value + ',' + a.nodeValue + ',' + a.textContent + ',' + e.getAttribute('x');
     })())JS",
        "Y&lt;,Y&lt;,Y&lt;,Y&lt;");
-    // ...and it is LIVE on the way out too: the map is read out of the document
+    // The map is live on the way out too: it is read out of the document
     // when it is asked for, not when the wrapper was made.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -338,9 +341,8 @@ void test_the_map_holds_attr_nodes() {
 }
 
 void test_the_map_is_iterable_and_named() {
-    // FOR-OF AND SPREAD, which is what p5's XML module and Bootstrap
-    // respectively walk one with. They go through `iterable_values`, which
-    // yields nothing at all for a proxy - hence an array-like object.
+    // for-of and spread: p5's XML module and Bootstrap walk `attributes` these
+    // two ways, both through `context::iterable_values`.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('a', '1');
@@ -359,8 +361,8 @@ void test_the_map_is_iterable_and_named() {
                ',' + m.getNamedItemNS('urn:x', 'a').value + ',' + (m.getNamedItem('no') === null);
     })())JS",
        "p:a,true,1,1,true");
-    // Removing by name ANSWERS with the attribute it removed, and THROWS when
-    // there is nothing to remove - the half that is easy to leave out.
+    // Removing by name returns the attribute it removed, and throws when
+    // there is nothing to remove (the half that is easy to leave out).
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('a', '1');
@@ -381,10 +383,10 @@ void test_the_map_is_iterable_and_named() {
        "false,true,true");
 }
 
-// --- what the PARSER stored, which is the other half of Attr-prefix ---------
+// --- What the parser stored, the other half of Attr-prefix ----------------
 
 void test_a_parsed_attribute_keeps_the_namespace_it_was_given() {
-    // A colon in an HTML start tag is part of the NAME and binds nothing:
+    // A colon in an HTML start tag is part of the name and binds nothing:
     // `xml:lang` on a <div> is one unprefixed attribute called "xml:lang".
     is(R"JS((function () {
         var a = document.getElementById('test').getAttributeNodeNS(null, 'xml:lang');
@@ -392,7 +394,7 @@ void test_a_parsed_attribute_keeps_the_namespace_it_was_given() {
                (a.prefix === null) + ',' + a.name;
     })())JS",
        "with prefix,xml:lang,true,true,xml:lang");
-    // The same colon in FOREIGN content binds a real namespace, and the local
+    // The same colon in foreign content binds a real namespace, and the local
     // name and the prefix are then derived from the pair.
     is(R"JS((function () {
         var g = document.getElementsByTagName('g')[0];
@@ -400,7 +402,7 @@ void test_a_parsed_attribute_keeps_the_namespace_it_was_given() {
         return a.value + ',' + a.localName + ',' + a.namespaceURI + ',' + a.prefix + ',' + a.name;
     })())JS",
        "with prefix,href,http://www.w3.org/1999/xlink,xlink,xlink:href");
-    // ...while an ordinary attribute on the same element has no namespace at
+    // An ordinary attribute on the same element has no namespace at
     // all, which is what keeps the case above from being "everything in <svg>".
     is(R"JS((function () {
         var a = document.getElementsByTagName('g')[0].getAttributeNodeNS(null, 'class');
@@ -419,8 +421,9 @@ void test_a_parsed_attribute_keeps_the_namespace_it_was_given() {
 }
 
 void test_an_element_searches_its_own_subtree_by_namespace() {
-    // `getElementsByTagNameNS` on an ELEMENT, which only the document had.
-    // "*" is any on either half, and the element is not one of its own results.
+    // `getElementsByTagNameNS` on an element rather than the document.
+    // "*" matches anything on either half, and the element is not one of its
+    // own results.
     is(R"JS((function () {
         var svg = document.getElementById('s');
         return svg.getElementsByTagNameNS('http://www.w3.org/2000/svg', 'g').length + ',' +
@@ -431,12 +434,12 @@ void test_an_element_searches_its_own_subtree_by_namespace() {
        "1,1,0,0");
 }
 
-// --- element.dataset, and the mangling that is two functions ----------------
+// --- element.dataset: two name conversions, one per direction -------------
 
 void test_dataset_maps_data_attributes_both_ways() {
-    // ATTRIBUTE -> KEY. A `-` followed by an ASCII lowercase letter uppercases
-    // it; a `-` in front of anything else - including the end of the name - is
-    // carried across.
+    // Attribute to key: a `-` followed by an ASCII lowercase letter uppercases
+    // that letter; a `-` in front of anything else (including the end of the
+    // name) is kept.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttribute('data-foo', '1');
@@ -450,7 +453,7 @@ void test_dataset_maps_data_attributes_both_ways() {
                 e.dataset['-Foo'], e.dataset[''], e.dataset.toString].join(',');
     })())JS",
        "1,2,3,4,5,6,7");
-    // THE TWO DIRECTIONS ARE NOT INVERSES, which is the whole reason there are
+    // The two directions are not inverses, which is the reason there are
     // two functions: `data--foo` reads back as `Foo`, so `-foo` names nothing.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -466,7 +469,7 @@ void test_dataset_maps_data_attributes_both_ways() {
         return (e.dataset.foo === undefined) + ',' + ('Foo' in e.dataset);
     })())JS",
        "true,false");
-    // KEY -> ATTRIBUTE, through to the document.
+    // Key to attribute, through to the document.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.dataset.fooBar = 'v1';
@@ -476,12 +479,12 @@ void test_dataset_maps_data_attributes_both_ways() {
                e.getAttribute('data-') + ',' + e.getAttributeNames().join(' ');
     })())JS",
        "v1,v2,v3,data-foo-bar data--foo data-");
-    // ...and the two DIFFERENT throws a write can earn.
+    // The two different exceptions a write can throw.
     is("(function () { document.createElement('div').dataset['-foo'] = 'x'; })()",
        "threw:SyntaxError");
     is("(function () { document.createElement('div').dataset['foo bar'] = 'x'; })()",
        "threw:InvalidCharacterError");
-    // LIVE in both directions: the map reads the document rather than a
+    // Live in both directions: the map reads the document rather than a
     // snapshot taken when the element was wrapped.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -493,8 +496,8 @@ void test_dataset_maps_data_attributes_both_ways() {
                (e.dataset.foo === undefined);
     })())JS",
        "false,x,false,true");
-    // ON AN HTML, SVG OR MathML ELEMENT AND NOTHING ELSE - the last of which is
-    // the only reason the property is conditional at all.
+    // Only HTML, SVG and MathML elements have `dataset`; elements in any other
+    // namespace are the reason the property is conditional at all.
     is(R"JS((function () {
         var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         var math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'math');
@@ -502,8 +505,8 @@ void test_dataset_maps_data_attributes_both_ways() {
         return (typeof svg.dataset) + ',' + (typeof math.dataset) + ',' + (typeof other.dataset);
     })())JS",
        "object,object,undefined");
-    // ENUMERABLE, and only over the names that qualify. `dataset-enumeration`
-    // sets three attributes AFTER the element is made and counts the keys, so
+    // Enumerable, and only over the names that qualify. `dataset-enumeration`
+    // sets three attributes after the element is made and counts the keys, so
     // the list cannot be built once when the element is wrapped.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -517,8 +520,8 @@ void test_dataset_maps_data_attributes_both_ways() {
         return count + ',' + after;
     })())JS",
        "2,foo");
-    // IT IS A DOMStringMap, which is a question about the object behind the
-    // proxy - and Object.prototype still shines through it, which is the pair
+    // It is a DOMStringMap, which is a question about the object behind the
+    // proxy, and Object.prototype still shows through it: the pair
     // `dataset-prototype.html` asks about together.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -528,9 +531,9 @@ void test_dataset_maps_data_attributes_both_ways() {
                (typeof e.dataset.hasOwnProperty);
     })())JS",
        "true,true,function");
-    // A WRITE LANDS IN NO NAMESPACE. An element already carrying the same
-    // qualified name in two namespaces of its own gains a THIRD attribute
-    // rather than having one of those rewritten - `custom-attrs.html`, whole.
+    // A write lands in no namespace. An element already carrying the same
+    // qualified name in two namespaces gains a third attribute rather than
+    // having one of those rewritten (all of WPT's `custom-attrs.html`).
     is(R"JS((function () {
         var e = document.createElement('div');
         e.setAttributeNS('foo', 'data-my-custom-attr', 'first');
@@ -540,7 +543,7 @@ void test_dataset_maps_data_attributes_both_ways() {
                e.getAttributeNS(null, 'data-my-custom-attr');
     })())JS",
        "3,first,third");
-    // A MAP THE PAGE KEPT is still the document's, not a copy of it: the keys
+    // A map the page kept still reads the document, not a copy of it: the keys
     // it enumerates are as of the last read, and reading a value always asks.
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -552,7 +555,7 @@ void test_dataset_maps_data_attributes_both_ways() {
        "true,false");
 }
 
-// --- ARIA, which is the reflection table's one nullable type ----------------
+// --- ARIA, the reflection table's one nullable string type -----------------
 
 void test_aria_reflects_as_a_nullable_string() {
     // `role` and the forty-odd `aria-*` names reflect on Element, so a <div>
@@ -574,8 +577,8 @@ void test_aria_reflects_as_a_nullable_string() {
         return e.getAttribute('aria-label') + ',' + e.getAttribute('aria-valuenow');
     })())JS",
        "y,51");
-    // NULLABLE, which is the whole reason this is a type of its own: an absent
-    // one is `null` and not "", and writing null or undefined REMOVES it rather
+    // Nullable, which is the reason this is a type of its own: an absent
+    // one is `null` and not "", and writing null or undefined removes it rather
     // than writing those four or nine characters. `testNullable` in
     // aria-attribute-reflection.html runs exactly this on every row.
     is(R"JS((function () {
@@ -591,7 +594,7 @@ void test_aria_reflects_as_a_nullable_string() {
                e.hasAttribute('aria-checked');
     })())JS",
        "true,mixed,null,false,null,false");
-    // A plain DOMString row is NOT nullable, and the two must not converge:
+    // A plain DOMString row is not nullable, and the two must stay different:
     // `el.id` is "" when absent and assigning null writes "null".
     is(R"JS((function () {
         var e = document.createElement('div');
@@ -601,12 +604,12 @@ void test_aria_reflects_as_a_nullable_string() {
        "[null],[]");
 }
 
-// --- the enumerated types, which are two rules and not twenty attributes -----
+// --- Enumerated attributes: two rules shared by every row ------------------
 
 void test_an_enumerated_attribute_is_limited_to_its_keywords() {
     // HTML 2.6.5, and the four answers a row of the table can give: the missing
     // value default when the attribute is absent, the keyword when the value is
-    // an ASCII case-insensitive match for one, and the INVALID value default
+    // an ASCII case-insensitive match for one, and the invalid value default
     // for everything else. `<input type=TEXT>` and `<input type=text>` are the
     // same state, and `reflection.js` spells every keyword in upper case, in
     // lower case and with a letter sliced off the front to say so.
@@ -620,10 +623,10 @@ void test_an_enumerated_attribute_is_limited_to_its_keywords() {
         return absent + ',' + upper + ',' + invalid;
     })())JS",
        "text,checkbox,text");
-    // AN ATTRIBUTE THAT IS PRESENT BUT EMPTY MATCHES NO KEYWORD, so it takes
-    // the invalid value default like any other unrecognised value. This read as
-    // "" for a long time, which is right only for the rows - `dir`, `scope`,
-    // `referrerPolicy` - whose invalid value default happens to be "".
+    // An attribute that is present but empty matches no keyword, so it takes
+    // the invalid value default like any other unrecognised value. That is ""
+    // only for the rows whose invalid value default is "" (`dir`, `scope`,
+    // `referrerPolicy`).
     is(R"JS((function () {
         var input = document.createElement('input');
         input.setAttribute('type', '');
@@ -634,8 +637,8 @@ void test_an_enumerated_attribute_is_limited_to_its_keywords() {
         return input.type + ',' + track.kind + ',[' + div.dir + ']';
     })())JS",
        "text,metadata,[]");
-    // ASCII-ONLY, on purpose: U+212A KELVIN SIGN case-folds to `k` under
-    // Unicode and must NOT match one here, or `<marquee behavior=slide>` would
+    // ASCII-only, on purpose: U+212A KELVIN SIGN case-folds to `k` under
+    // Unicode and must not match one here, or `<marquee behavior=slide>` would
     // depend on the locale. `core/algorithms.hpp` says the same thing about
     // every fold in the engine.
     is(R"JS((function () {
@@ -646,9 +649,9 @@ void test_an_enumerated_attribute_is_limited_to_its_keywords() {
         return '[' + kelvin + '],' + e.as;
     })())JS",
        "[],track");
-    // THE SETTER WRITES WHAT IT IS GIVEN. An enumerated attribute does not
-    // canonicalise on the way in - `getAttribute` reports the capitals the page
-    // wrote, and only the IDL getter folds them.
+    // The setter writes what it is given. An enumerated attribute does not
+    // canonicalise on the way in: `getAttribute` reports the capitals the page
+    // wrote, and only the IDL getter lowercases them.
     is(R"JS((function () {
         var e = document.createElement('form');
         e.method = 'POST';
@@ -658,8 +661,8 @@ void test_an_enumerated_attribute_is_limited_to_its_keywords() {
 }
 
 void test_a_nullable_enumerated_attribute_defaults_to_null() {
-    // `crossOrigin` is 2.6.5 with a null MISSING value default and a keyword
-    // INVALID one, which is why it is a type of its own: `typeof` changes with
+    // `crossOrigin` is 2.6.5 with a null missing value default and a keyword
+    // invalid one, which is why it is a type of its own: `typeof` changes with
     // the presence of the attribute, and neither the plain enumerated rule nor
     // the nullable DOMString one can say that.
     is(R"JS((function () {
@@ -674,7 +677,7 @@ void test_a_nullable_enumerated_attribute_defaults_to_null() {
                e.crossOrigin;
     })())JS",
        "true,object,use-credentials,anonymous,anonymous");
-    // Setting null or undefined REMOVES it, as it does for the nullable string
+    // Setting null or undefined removes it, as it does for the nullable string
     // above; anything else is written through unchanged.
     is(R"JS((function () {
         var e = document.createElement('link');
@@ -687,8 +690,8 @@ void test_a_nullable_enumerated_attribute_defaults_to_null() {
         return written + ',' + cleared + ',' + e.hasAttribute('crossorigin');
     })())JS",
        "Anonymous,anonymous,false,null,false");
-    // ON THE FOUR INTERFACES THAT HAVE IT AND NOWHERE ELSE: a <div> has no
-    // `crossorigin` content attribute, so the property is not there to read.
+    // Only the interfaces that have a `crossorigin` content attribute get the
+    // property; a <div> does not.
     is(R"JS((function () {
         return (typeof document.createElement('video').crossOrigin) + ',' +
                (typeof document.createElement('script').crossOrigin) + ',' +
@@ -697,12 +700,12 @@ void test_a_nullable_enumerated_attribute_defaults_to_null() {
        "object,object,undefined");
 }
 
-// --- and `width` is three different types, depending on who is asked ---------
+// --- `width` has a different type depending on the element ----------------
 
 void test_width_and_height_reflect_the_type_their_interface_names() {
     // `<td>`, `<marquee>` and `<iframe>` reflect width and height as DOMStrings
-    // - "50", not 50 - and `<input>` and `<video>` as unsigned longs. The
-    // corpus spells the difference out per element in `elements-tabular.js`,
+    // ("50", not 50), and `<input>` and `<video>` as unsigned longs. WPT
+    // spells the difference out per element in `elements-tabular.js`,
     // `elements-obsolete.js` and `elements-forms.js`, and it is not a
     // presentation detail: `td.width + 1` is "501" and `input.width + 1` is 51.
     is(R"JS((function () {
@@ -716,11 +719,11 @@ void test_width_and_height_reflect_the_type_their_interface_names() {
                marquee.height + ',' + (typeof input.width) + ',' + input.width;
     })())JS",
        "string,50,string,6,number,50");
-    // THE SAME ANSWER FOR A PARSED ELEMENT. The wrapper installs its own
+    // The same answer for a parsed element. The wrapper also installs its own
     // numeric `width`/`height` pair on any element carrying either attribute,
-    // and an own property shadows the prototype - so before the table was asked
-    // first, a <td> written in the markup answered 50 and one built by script
-    // answered "50".
+    // and an own property shadows the prototype, so the reflection table must be
+    // consulted first or a <td> from markup would answer 50 while one built by
+    // script answers "50".
     is(R"JS((function () {
         document.body.innerHTML = '<table><tr><td width="50"></td></tr></table>' +
                                   '<div id="plain" width="50"></div>';
@@ -743,9 +746,10 @@ void test_width_and_height_reflect_the_type_their_interface_names() {
 }
 
 void test_class_list_preserves_conversion_and_updates() {
-    // The old binding evaluated has(tokens_now(), arg_string(...)). C++ leaves
-    // those argument evaluations unordered; retain the toolchain's existing
-    // answer when toString changes the attribute being inspected.
+    // classList.contains evaluates has(tokens_now(), arg_string(...)). C++ does
+    // not specify the order in which those two arguments are evaluated, so the
+    // expected result when toString rewrites the class depends on the compiler.
+    // This replays the same expression to compute that compiler's answer.
     std::string attribute = "before";
     const auto tokens_now = [&] { return std::vector<std::string>{attribute}; };
     const auto arg_string = [&] {
@@ -770,8 +774,9 @@ void test_class_list_preserves_conversion_and_updates() {
                e.classList.contains('') + ',' + e.classList.contains('after later');
     })())JS",
        std::string{before_extraction ? "true" : "false"} + ",1,after,false,false");
-    // Convert every argument before validating the first invalid token. Neither
-    // failed call writes, and add/remove preserve the same first-error priority.
+    // Every argument is converted before the first invalid token is reported.
+    // Neither failed call writes, and add and remove report the same first
+    // error.
     is(R"JS((function () {
         var out = [];
         var e = document.createElement('div');
@@ -829,15 +834,12 @@ void test_class_list_preserves_conversion_and_updates() {
        "false:0,a b:1,3:a b:a b:a b");
 }
 
-// --- what a page may NOT overwrite -----------------------------------------
+// --- What a page may not overwrite -----------------------------------------
 
 void test_a_same_object_attribute_survives_being_assigned_to() {
-    // `[SameObject, PutForwards=value] readonly attribute DOMTokenList
-    // classList`, and it was a writable data property: `e.classList = 'foo'`
-    // REPLACED the token list with the string, so every `add`, `contains` and
-    // `item` after it was a method on a primitive. `Element-classlist.html` is
-    // 1,420 subtests and its FIRST case is that assignment. The write FORWARDS
-    // to the list's `value` - the class becomes "foo" - and the list stays.
+    // `classList` is [SameObject, PutForwards=value]: `e.classList = 'foo'` sets
+    // the class to "foo" and keeps the same DOMTokenList (the first case of
+    // Element-classlist.html).
     is(R"JS((function () {
         var e = document.createElement('div');
         e.classList = 'foo';
@@ -845,15 +847,14 @@ void test_a_same_object_attribute_survives_being_assigned_to() {
         return (typeof e.classList) + ',' + e.className + ',' + e.classList.contains('bar');
     })())JS",
        "object,foo bar,true");
-    // `style` is readonly TOO, and its write has a meaning:
+    // `style` is readonly too, and its write has a meaning:
     // [PutForwards=cssText] sends `el.style = "color: red"` to
-    // `el.style.cssText`, and the cssText setter writes the SERIALISED block
-    // back to the attribute (CSSOM 6.7.1 "update style attribute for") - so
-    // the attribute reads `margin-top: 4px;`, not the author's string, exactly
-    // as cssstyledeclaration-csstext-setter.window.js asserts. Losing the
-    // declaration object is what made
-    // `testEl.style = ""` - the first line of every css/css-values case -
-    // replace the proxy with a string and every later property write vanish.
+    // `el.style.cssText`, and the cssText setter writes the serialised block
+    // back to the attribute (CSSOM 6.7.1 "update style attribute for"), so the
+    // attribute reads `margin-top: 4px;`, not the author's string, as
+    // cssstyledeclaration-csstext-setter.window.js asserts. Every WPT
+    // css/css-values case starts with `testEl.style = ""` and then writes
+    // properties, so the declaration object must survive the assignment.
     is(R"JS((function () {
         var e = document.createElement('div');
         e.style.color = 'red';

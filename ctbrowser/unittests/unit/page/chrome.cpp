@@ -1,13 +1,13 @@
-// THE BROWSER'S OWN CHROME ON A PAGE: the scrollbar and what a click on it is
+//===- ctbrowser/unittests/unit/page/chrome.cpp - Browser chrome tests ----===//
+//
+// The browser's own chrome on a page: the scrollbar and what a click on it is
 // not, the <select> popup, the context menu and a page taking it over, the
 // clipboard with cut and paste, the cursor following the element under the
-// pointer, and page-level text selection - drawn, copied, and surviving a
-// relayout.
+// pointer, and page-level text selection (drawn, copied, and surviving a
+// relayout). Helpers shared with the other page tests live in
+// ../chrome_probe.hpp and test/support/dom_probe.hpp.
 //
-// One of five files carved out of unittests/unit/chrome_basics.cpp on
-// 2026-09-07, when it had reached 2,299 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the five needs are in
-// chrome_probe.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -25,7 +25,7 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-// Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
+// Shared with widgets_basics and bootstrap_layout: test/support/dom_probe.hpp.
 using ctbrowser_test::box_of;
 using ctbrowser_test::commands;
 using ctbrowser_test::draws_text;
@@ -36,6 +36,7 @@ namespace {
 
 // --- the scrollbar --------------------------------------------------------
 
+/// A page of 40 paragraphs, tall enough to scroll in any viewport used here.
 [[nodiscard]] std::string tall_page() {
     std::string html = "<body>";
     for (int i = 0; i < 40; ++i) { html += "<p>line " + std::to_string(i) + "</p>"; }
@@ -58,12 +59,13 @@ void test_scrollbar_appears_only_when_needed() {
 }
 
 void test_the_scrollbar_reserves_its_width() {
-    // Content laid out at the full width would run UNDER the bar. Two passes:
+    // Content laid out at the full width would run under the bar. Two passes:
     // lay out, and if it overflows, lay out again in what is left.
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
     page.frame();
-    // Every fragment ends before the scrollbar starts.
+    // Every fragment ends before the scrollbar starts. 15 is
+    // browser_options::scrollbar_width's default.
     float rightmost = 0;
     const auto walk = [&](auto && self, const layout::fragment & f, float dx, float dy) -> void {
         const float right = f.bounds.x + dx + f.bounds.width;
@@ -114,10 +116,9 @@ void test_a_click_on_the_scrollbar_is_not_a_click_on_the_page() {
 }
 
 void test_the_scrollbar_thumb_follows_the_scroll() {
-    // The thumb is a function of where the page IS. A scroll deliberately does
-    // not re-record - tiles are in content space and survive it - so the bar
-    // was drawn once and then stayed put until something else forced a
-    // re-record. That is the delay.
+    // The thumb must move as soon as the page scrolls. A scroll does not
+    // re-record the page (tiles are in content space), so the scrollbar has to
+    // be redrawn separately or it stays where it was.
     browser page{browser_options{300, 200}};
     page.load_html(tall_page());
     page.frame();
@@ -229,8 +230,8 @@ void test_clipboard_round_trip() {
     const auto txn = page.doc().read();
     check(page.forms().state_of(txn, page.atoms(), find_id(page, "b")).value == "hello",
           "copy and paste move the text between fields");
-    // WITHOUT a system clipboard installed - this is headless - which is what
-    // makes the whole path testable.
+    // This runs without a system clipboard installed (the test is headless),
+    // which is what makes the whole path testable.
 }
 
 void test_cut_removes_what_it_copied() {
@@ -247,20 +248,12 @@ void test_cut_removes_what_it_copied() {
           "cut empties the field");
 }
 
-// A `cut` LISTENER THAT CREATES CONTROLS, which is the ordinary shape of a
-// clipboard handler in a page that builds UI, and which used to leave the
-// engine writing through a freed pointer.
-//
-// `clipboard_verb` took a `control_state *` into the form store, dispatched
-// `cut` to the page, and then used the pointer. The store is a
-// boost::unordered_flat_map - open addressing, no reference stability - so a
-// listener that seeds even one new control can rehash it and move every entry.
-// Reading `.value` of a control is what seeds it, and creating one is what a
-// listener like this does.
-//
-// THE ASSERTION IS THE FIELD'S VALUE, not a sanitizer report, so this is red
-// without ASan too: the deletion went to the FREED table, leaving the live
-// entry - the one the rest of the engine reads - untouched at "cutme".
+/// A `cut` listener that creates controls. The form store is a
+/// boost::unordered_flat_map with no reference stability, so clipboard_verb
+/// must not hold a pointer into it across dispatching `cut`: a listener that
+/// seeds new controls (reading `.value` seeds one) can rehash and move every
+/// entry. The assertion is the field's value, so this fails even without ASan:
+/// a write through a stale pointer would leave the live entry at "cutme".
 void test_a_cut_listener_may_create_controls() {
     browser page{browser_options{600, 400}};
     page.load_html(R"(<body><input id=a type=text value=cutme><input id=seen type=text>
@@ -288,9 +281,9 @@ void test_a_cut_listener_may_create_controls() {
     (void)page.handle(input_event::key_press("KeyA", false, true)); // Ctrl+A
     (void)page.handle(input_event::key_press("KeyX", false, true)); // Ctrl+X
 
-    // THE MUTATION LANDED. Without this the case passes when the listener never
-    // ran, which is exactly how a page whose script failed to compile looks -
-    // and then the whole test measures nothing.
+    // Check that the listener ran. Without this the case passes when it never
+    // ran, which is how a page whose script failed to compile looks, and then
+    // the test measures nothing.
     check(value_of(page, "seen") == "96", "the cut listener created 96 controls");
     check(value_of(page, "a").empty(), "Cut empties the field the listener did not touch");
 }
@@ -310,12 +303,12 @@ void test_the_cursor_follows_the_element() {
 
 // --- page-level text selection --------------------------------------------
 //
-// Selecting inside a FIELD already worked; this is selecting across the page,
-// which is what "the browser can be used to read things" needs. A position is
-// (node, code point in that node), not a fragment pointer: a node's text is
-// split across as many fragments as it has visual lines, and a relayout
-// rebuilds all of them - a selection has to survive a window resize.
+// Selection across the page, not inside a form field. A position is
+// (node, code point in that node), not a fragment pointer: a node's text spans
+// one fragment per visual line, and a relayout rebuilds them all, so a
+// selection must survive a resize.
 
+/// Presses the left button at (x1, y1), moves to (x2, y2) and releases there.
 void drag(browser & page, float x1, float y1, float x2, float y2) {
     (void)page.handle(input_event::mouse_down_at(x1, y1));
     (void)page.handle(input_event::mouse_move_to(x2, y2));
@@ -335,7 +328,7 @@ void test_dragging_selects_text() {
     check(page.selected_text().find("selectable") != std::string::npos,
           "and the selected text is what was dragged over");
 
-    // A click WITHOUT a drag selects nothing - otherwise every click on a page
+    // A click without a drag selects nothing; otherwise every click on a page
     // would leave a stray one-character selection.
     (void)page.handle(input_event::mouse_down_at(box.x + 20, middle));
     (void)page.handle(input_event::mouse_up_at(box.x + 20, middle));
@@ -411,10 +404,10 @@ void test_copying_the_page_selection() {
     const rect box = box_of(page, "p");
     const float middle = box.y + box.height / 2;
     drag(page, box.x + 1, middle, box.right() - 1, middle);
-    // Ctrl+C with nothing editable focused takes the PAGE selection.
+    // Ctrl+C with nothing editable focused takes the page selection.
     (void)page.handle(input_event::key_press("KeyC", false, true));
 
-    // ...and it can be pasted into a field, which is the whole point of
+    // It can be pasted into a field, which is the whole point of
     // selecting text on a page.
     const rect field = box_of(page, "field");
     (void)page.handle(input_event::mouse_down_at(field.x + 5, field.y + 5));
@@ -426,10 +419,10 @@ void test_copying_the_page_selection() {
     check(pasted.find("copy") != std::string::npos, "the page selection pastes into a field");
 }
 
-// A selection that crosses a LINE BREAK, which is where the offsets have to be
-// right: a wrap drops the space it broke at, so the fragments do not partition
-// the node's text, and summing their lengths puts every position past the first
-// line one character early.
+/// A selection that crosses a line break, which is where the offsets have to be
+/// right: a wrap drops the space it broke at, so the fragments do not partition
+/// the node's text, and summing their lengths puts every position past the
+/// first line one character early.
 void test_selection_across_a_wrap() {
     browser page{browser_options{200, 200}};
     // Narrow enough that this must wrap.
@@ -447,7 +440,7 @@ void test_selection_across_a_wrap() {
 }
 
 void test_selection_survives_a_relayout() {
-    // THE reason a position is (node, code point) and not a fragment pointer:
+    // The reason a position is (node, code point) and not a fragment pointer:
     // a resize rebuilds every fragment.
     browser page{browser_options{400, 200}};
     page.load_html("<body><p id=p>this text outlives a resize</p></body>");
@@ -460,10 +453,10 @@ void test_selection_survives_a_relayout() {
     (void)page.handle(input_event::resized(300, 200));
     page.frame();
     check(page.has_selection(), "the selection survived the relayout");
-    // EXACTLY the same text, across a relayout that rebuilt every fragment and
+    // Exactly the same text, across a relayout that rebuilt every fragment and
     // rewrapped the paragraph. That is what a (node, code point) position buys,
     // and it is why the offsets are found by searching the node's text rather
-    // than by summing fragment lengths - a wrap drops the space it broke at.
+    // than by summing fragment lengths: a wrap drops the space it broke at.
     check(page.selected_text() == before, "and it is the same text");
 }
 

@@ -1,6 +1,10 @@
-// CSSOM VIEW through the bindings: the metrics on an element (§7, §8), the
+//===- ctbrowser/unittests/unit/cssom/view.cpp - CSSOM View tests ---------===//
+//
+// CSSOM View through the bindings: the metrics on an element (§7, §8), the
 // scroll APIs (§6) and the document's geometry methods (§5). Each case names
 // the css/cssom-view file whose assertion it stands in for.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -19,8 +23,8 @@ using ctbrowser_test::logged;
 
 namespace {
 
-// scrollWidthHeight-negative-margin-002, table-client-props, client-props-root:
-// the scrolling area, the padding box and the border edges.
+/// scrollWidthHeight-negative-margin-002, table-client-props, client-props-root:
+/// the scrolling area, the padding box and the border edges.
 void test_scroll_and_client_metrics() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><html><head><style>
@@ -52,9 +56,9 @@ void test_scroll_and_client_metrics() {
     CHECK_EQ(logged(page, "detached="), std::string{"detached=0"});
 }
 
-// offsetTopLeft-border-box, offsetParent-body-and-html, offsetParent-fixed:
-// offsetLeft is against the offsetParent's PADDING edge, and who the
-// offsetParent is follows §8.
+/// offsetTopLeft-border-box, offsetParent-body-and-html, offsetParent-fixed:
+/// offsetLeft is measured from the offsetParent's padding edge, and which
+/// element is the offsetParent follows §8.
 void test_offset_parent_and_offsets() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><html><head><style>
@@ -84,8 +88,8 @@ void test_offset_parent_and_offsets() {
     CHECK_EQ(logged(page, "offset="), std::string{"offset=10,7,10,0"});
 }
 
-// HTMLImageElement-x-and-y-ignore-transforms: layout metrics discard both
-// the element's translation and every ancestor's, including percentages.
+/// HTMLImageElement-x-and-y-ignore-transforms: layout metrics discard both
+/// the element's translation and every ancestor's, including percentages.
 void test_layout_coordinates_ignore_transforms() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><style>
@@ -119,10 +123,10 @@ void test_layout_coordinates_ignore_transforms() {
     CHECK_EQ(logged(page, "boxless="), std::string{"boxless=0,0,0,0"});
 }
 
-// elementScroll, scrollLeftTop, element-scroll-arguments: a scroll
-// container's offset is read and written through scrollTop/scrollLeft and
-// the three methods, clamped to its scrolling area; a box with nothing to
-// scroll ignores the write, and the `scroll` event arrives on the next tick.
+/// elementScroll, scrollLeftTop, element-scroll-arguments: a scroll
+/// container's offset is read and written through scrollTop/scrollLeft and
+/// the three methods, clamped to its scrolling area; a box with nothing to
+/// scroll ignores the write, and the `scroll` event arrives on the next tick.
 void test_element_scrolling() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><html><head><style>
@@ -169,10 +173,10 @@ void test_element_scrolling() {
     CHECK_EQ(logged(page, "events="), std::string{"events=1"});
 }
 
-// scrollingElement, scrolling-quirks-vs-nonquirks, scrollintoview,
-// elementFromPoint: the viewport's position through window.scrollTo and the
-// root's scrollTop, what getBoundingClientRect and elementFromPoint answer
-// once it has moved, and scrollIntoView on the viewport.
+/// scrollingElement, scrolling-quirks-vs-nonquirks, scrollintoview,
+/// elementFromPoint: the viewport's position through window.scrollTo and the
+/// root's scrollTop, what getBoundingClientRect and elementFromPoint answer
+/// once it has moved, and scrollIntoView on the viewport.
 void test_viewport_scrolling_and_hit_testing() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><html><head><style>
@@ -215,9 +219,9 @@ void test_viewport_scrolling_and_hit_testing() {
     CHECK_EQ(page.scroll_y(), 750.0f);
 }
 
-// scrollingElement.html and HTMLBody-ScrollArea_quirksmode: a quirks-mode
-// document scrolls through its body unless the body is potentially
-// scrollable, and the root's scrollTop is then dead.
+/// scrollingElement.html and HTMLBody-ScrollArea_quirksmode: a quirks-mode
+/// document scrolls through its body unless the body is potentially
+/// scrollable, and the root's scrollTop is then dead.
 void test_quirks_mode_scrolling_element() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>body { margin: 0 } #a { height: 1000px }</style></head>
@@ -237,9 +241,9 @@ void test_quirks_mode_scrolling_element() {
     CHECK_EQ(logged(page, "potentially="), std::string{"potentially=null"});
 }
 
-// cssom-getBoxQuads-001, cssom-geometryutils-convertPointFromNode,
-// getClientRects, DOMRectList, checkVisibility, scrollParent: the geometry
-// interfaces and GeometryUtils, translation only.
+/// cssom-getBoxQuads-001, cssom-geometryutils-convertPointFromNode,
+/// getClientRects, DOMRectList, checkVisibility, scrollParent: the geometry
+/// interfaces and GeometryUtils, translation only.
 void test_geometry_utils() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><html><head><style>
@@ -308,9 +312,9 @@ void test_geometry_utils() {
     CHECK_EQ(logged(page, "scrollParent="), std::string{"scrollParent=scroller,true,null,0,0"});
 }
 
-// scrollintoview.html: a viewport whose propagated overflow is hidden keeps
-// no scrollbar - clientWidth is innerWidth - and still scrolls
-// programmatically; scrollIntoView(null) is the dictionary arm.
+/// scrollintoview.html: a viewport whose propagated overflow is hidden keeps
+/// no scrollbar - clientWidth is innerWidth - and still scrolls
+/// programmatically; scrollIntoView(null) is the dictionary arm.
 void test_hidden_viewport_overflow_keeps_no_scrollbar() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><html><head><style>
@@ -332,7 +336,7 @@ void test_hidden_viewport_overflow_keeps_no_scrollbar() {
     CHECK(!page.has_scrollbar());
 }
 
-// A scaled ancestor changes both rectangle APIs, without changing layout metrics.
+/// A scaled ancestor changes both rectangle APIs, without changing layout metrics.
 void test_transformed_client_rects() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<!doctype html><style>

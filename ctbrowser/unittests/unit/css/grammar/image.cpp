@@ -1,6 +1,10 @@
-// `<image>` lists, CSS Images 3 and 4 - the gradients as `el.style` reads
-// them back and as `getComputedStyle` reports them. Every expectation is one
-// of css/css-images/parsing's or css/css-backgrounds/parsing's.
+//===- image.cpp - <image> grammar tests ------------------------*- C++ -*-===//
+//
+// `<image>` lists, CSS Images 3 and 4: the gradients as `el.style` reads them
+// back and as `getComputedStyle` reports them. Every expectation comes from WPT
+// css/css-images/parsing or css/css-backgrounds/parsing.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -95,6 +99,8 @@ void test_the_specified_value() {
     bad("cross-fade(red 20% 30%, green)");
     bad("cross-fade(url(a.png) blue, green)");
     bad("none, auto");
+    // 17 levels of nesting exceed the depth cap of 16 in
+    // lib/Style/css/properties/image.cpp's image_list, so the value is rejected.
     std::string nested = "red";
     for (int i = 0; i < 17; ++i) { nested = "cross-fade(blue, " + nested + ")"; }
     bad(nested);

@@ -1,11 +1,14 @@
-// PAINT TIMING, AND THE `load` A STYLESHEET OR SCRIPT OWES ITS ELEMENT.
+//===- ctbrowser/unittests/unit/paint/timing.cpp - Paint timing tests -----===//
 //
-// html/dom/render-blocking measures render-blocking through time: it waits for
-// the element's `load` (LoadObserver), then polls
-// `performance.getEntriesByType('paint')` and asserts every paint entry came
-// after that load. Both halves were missing - `performance` was `now` alone,
-// and only <img> and <iframe> ever fired `load`. See
-// lib/Shell/bindings/performance.cpp and browser/styles.cpp.
+// Paint timing entries, and the `load`/`error` events a stylesheet or script
+// fires at its element.
+//
+// The WPT html/dom/render-blocking tests wait for an element's `load`
+// (LoadObserver), then poll performance.getEntriesByType('paint') and assert
+// every paint entry came after that load. See lib/Shell/bindings/performance.cpp
+// and lib/Shell/browser/styles.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -30,8 +33,8 @@ using ctbrowser_test::logged;
 
 namespace {
 
-// The two paint entries appear with the first frame and not before, and they
-// are PerformancePaintTiming objects a page can feature-detect and filter.
+/// The two paint entries appear with the first frame and not before, and they
+/// are PerformancePaintTiming objects a page can feature-detect and filter.
 void test_paint_entries_are_recorded_by_the_first_frame() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><p>text</p><script>
@@ -62,11 +65,11 @@ void test_paint_entries_are_recorded_by_the_first_frame() {
              std::string{"lookup=2,1,0,name+entryType+startTime+duration"});
 }
 
-// Parser-inserted: `load` at a <link rel=stylesheet>, a <style> and a
-// <script src>, `error` where the bytes were not there, nothing at an inline
-// classic script - and all of it a tick AFTER the page's script registered the
-// listeners, with the sheet applied and the script run - and BEFORE the
-// window's own `load`, which HTML delays until the subresources have settled.
+/// Parser-inserted: `load` at a <link rel=stylesheet>, a <style> and a
+/// <script src>, `error` where the bytes were not there, nothing at an inline
+/// classic script. All of it fires a tick after the page's script registered
+/// the listeners, with the sheet applied and the script run, and before the
+/// window's own `load`, which HTML delays until the subresources have settled.
 void test_parsed_sheets_and_scripts_fire_load_or_error_at_the_element() {
     browser page{browser_options{400, 200}};
     page.assets().add("red.css", bytes_of(".target { color: rgb(255, 0, 0); }"));
@@ -98,8 +101,8 @@ void test_parsed_sheets_and_scripts_fire_load_or_error_at_the_element() {
                          "s:load:true:true:false,j:load:true:true:false,dummy=1,k:error,window"});
 }
 
-// Script-inserted: a <link> and a <style> appended after load are announced
-// once their sheet has applied, which is the restyle the insertion scheduled.
+/// Script-inserted: a <link> and a <style> appended after load are announced
+//// once their sheet has applied, which is the restyle the insertion scheduled.
 void test_inserted_sheets_fire_load_once_applied() {
     browser page{browser_options{400, 200}};
     page.assets().add("red.css", bytes_of(".target { color: rgb(255, 0, 0); }"));

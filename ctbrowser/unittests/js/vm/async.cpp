@@ -1,9 +1,13 @@
-// Pending promises, `await`, the microtask queue, and generators - everything
-// that suspends and resumes. Every promise case reads its answer AFTER THE TURN
-// through `expect_after_turn`, because a handler runs when the queue drains and
-// not when it is attached. Carved out of js/vm_basics.cpp on 2026-09-08 -
-// operators.cpp names the family, and expect.hpp is the assertion every
-// file in it shares.
+//===- ctbrowser/unittests/js/vm/async.cpp - Async tests --------*- C++ -*-===//
+//
+// Pending promises, `await`, the microtask queue, and generators: everything
+// that suspends and resumes. Every promise case reads its answer after the
+// turn through `expect_after_turn`, because a handler runs when the queue
+// drains, not when it is attached. The other files in unittests/js/vm/ cover
+// the rest of the VM; expect.hpp holds the shared assertions. Section numbers
+// are ECMA-262's.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -18,18 +22,16 @@ using namespace ctbrowser::script;
 
 namespace {
 
-// A PROMISE CAN BE PENDING. It was settled-only - created already resolved,
-// `then` running immediately, `new Promise(executor)` absent because an
-// executor implies pending state. p5.js opens with
-// `Promise.all([waitForDocumentReady(), ...]).then(_globalInit)`, so the
-// library could not begin without it.
+// Promises that start pending and settle later, including through
+// `new Promise(executor)`. (p5.js starts with
+// `Promise.all([waitForDocumentReady(), ...]).then(_globalInit)`.)
 //
-// Every handler here runs at the END OF THE TURN, so these read the result out
+// Every handler here runs at the end of the turn, so these read the result out
 // of a global afterwards rather than returning it: a `return` is evaluated
 // before the microtask queue drains and cannot see anything a `then` did.
 void test_pending_promises() {
     expect_after_turn("var result = 0; new Promise(r => r(5)).then(v => { result = v; });", "5");
-    // Pending until something resolves it - and `before` proves the handler had
+    // Pending until something resolves it, and `before` proves the handler had
     // not run at the point of resolution either, which is the queue's whole job.
     expect_after_turn(
         "var result = ''; let go; const p = new Promise(r => { go = r; });"
@@ -38,44 +40,39 @@ void test_pending_promises() {
         "const atResolve = seen;"
         "Promise.resolve().then(() => { result = before + '|' + atResolve + '|' + seen; });",
         "0|0|7");
-    // reject reaches catch, not then
+    // reject reaches catch, not then.
     expect_after_turn("var result = ''; let ok = '', bad = '';"
                       "new Promise((r, j) => j('no')).then(v => { ok = v; }, e => { bad = e; })"
                       "  .finally(() => { result = ok + '|' + bad; });",
                       "|no");
     expect_after_turn("var result = ''; new Promise((r, j) => j('x')).catch(e => { result = e; });",
                       "x");
-    // a rejection passes THROUGH a bare then to a later catch
+    // A rejection passes through a bare then to a later catch.
     expect_after_turn("var result = ''; new Promise((r, j) => j('y')).then(v => v)"
                       "  .catch(e => { result = e; });",
                       "y");
-    // then CHAINS: the next promise gets what the handler returned
+    // then chains: the next promise gets what the handler returned.
     expect_after_turn("var result = 0; new Promise(r => r(1)).then(v => v + 1)"
                       "  .then(v => { result = v; });",
                       "2");
-    // a handler returning a promise is adopted rather than nested
+    // A handler returning a promise is adopted rather than nested.
     expect_after_turn("var result = 0; new Promise(r => r(1))"
                       "  .then(v => new Promise(r2 => r2(v + 10))).then(v => { result = v; });",
                       "11");
-    // settle once: a second resolve is ignored
+    // Settle once: a second resolve is ignored.
     expect_after_turn(
         "var result = 0; new Promise(r => { r(1); r(2); }).then(v => { result = v; });", "1");
-    // Promise.all over already-settled promises
+    // Promise.all over already-settled promises.
     expect_after_turn("var result = ''; Promise.all([Promise.resolve(1), Promise.resolve(2)])"
                       "  .then(v => { result = v.join(','); });",
                       "1,2");
 }
 
-// GENERATORS. Landed for Babylon.js, where 622 `function*` bodies are not an
-// author writing generators at all - TypeScript compiles every `async` function
-// into one driven by an `__awaiter` helper, so `yield` there is what `await`
-// became. That helper is the shape these pin.
-// `yield*` DELEGATES (14.4.14): every inner value is yielded by the outer
+// `yield*` delegates (14.4.14): every inner value is yielded by the outer
 // generator, the expression's value is what the inner one returned, `next(v)`
-// is forwarded, a sync `.next()` answers the inner RESULT OBJECT itself, and
+// is forwarded, a sync `.next()` returns the inner result object itself, and
 // `.throw()`/`.return()` while delegating reach the inner iterator's own
-// `throw`/`return` before anything else happens. The parser used to eat the
-// star and yield the operand.
+// `throw`/`return` before anything else happens.
 void test_yield_delegation() {
     expect_result("function* inner() { yield 1; yield 2; return 'r'; }"
                   "function* outer() { const got = yield* inner(); yield got; }"
@@ -132,10 +129,10 @@ void test_yield_delegation() {
                   "TypeError");
 }
 
-// `.return(v)` AT A YIELD RUNS THE FINALLY BLOCKS ON THE WAY OUT (27.5.3.4):
+// `.return(v)` at a yield runs the finally blocks on the way out (27.5.3.4):
 // the return completion travels through the body, a catch clause does not
 // see it, a `yield` inside a finally suspends again, and a finally that
-// returns overrides the value. It used to finish the generator on the spot.
+// returns overrides the value.
 void test_generator_return_runs_finally() {
     expect_result("var log = []; function* g() { try { yield 1; } finally { log.push('f'); } }"
                   "const it = g(); it.next(); const r = it.return(9);"
@@ -171,6 +168,10 @@ void test_generator_return_runs_finally() {
         "0,5,true");
 }
 
+// Generators. Babylon.js has hundreds of `function*` bodies that are not
+// hand-written generators: TypeScript compiles every `async` function into one
+// driven by an `__awaiter` helper, so `yield` there is what `await` became.
+// That helper's shape is the last case below.
 void test_generators() {
     // 27.3 / 27.4 / 27.7: the three function-kind intrinsics. A `function*`'s
     // [[Prototype]] is %GeneratorFunction.prototype%, whose `prototype` is
@@ -204,7 +205,7 @@ void test_generators() {
                   " f.prototype.constructor === f].join();",
                   "true,true");
     // GeneratorValidate: a receiver that is not a generator is a TypeError;
-    // the instance's prototype is read AFTER the parameters ran (27.5.3.x
+    // the instance's prototype is read after the parameters ran (27.5.3.x
     // EvaluateBody: FunctionDeclarationInstantiation first).
     expect_result("const next = Object.getPrototypeOf(function* () {}).prototype.next;"
                   " try { next.call({}); return 'no'; } catch (e) { return e.name; }",
@@ -226,24 +227,23 @@ void test_generators() {
                   "const it = g(); it.next(); const c = it.next(); const d = it.next();"
                   "return c.value + ',' + c.done + ',' + d.done;",
                   "undefined,true,true");
-    // `return v` in the body is the value of the DONE record.
+    // `return v` in the body is the value of the done record.
     expect_result("function* g() { yield 1; return 9; }"
                   "const it = g(); it.next(); const r = it.next();"
                   "return r.value + ',' + r.done;",
                   "9,true");
-    // WHAT `.next(v)` SENDS IN. `var x = yield y` sees it, and this is the half
-    // an eager implementation gets wrong by yielding the operand and never
-    // resuming.
+    // What `.next(v)` sends in: `var x = yield y` sees it. An eager
+    // implementation that yields the operand and never resumes gets this wrong.
     expect_result("function* g() { const x = yield 1; yield x * 2; }"
                   "const it = g(); it.next(); return it.next(21).value;",
                   "42");
-    // The body runs NOTHING until the first next().
+    // The body runs nothing until the first next().
     expect_result("var ran = false;"
                   "function* g() { ran = true; yield 1; }"
                   "const it = g(); const before = ran; it.next();"
                   "return before + ',' + ran;",
                   "false,true");
-    // State survives across suspensions - the register window is the point.
+    // State survives across suspensions: the register window is the point.
     expect_result("function* g() { let n = 0; while (n < 3) { yield n; n++; } }"
                   "const it = g(); return it.next().value + ',' + it.next().value + ','"
                   " + it.next().value + ',' + it.next().done;",
@@ -252,7 +252,7 @@ void test_generators() {
     expect_result("function* g(a, b) { yield a; yield b; yield a + b; }"
                   "const it = g(3, 4); it.next(); it.next(); return it.next().value;",
                   "7");
-    // `.throw()` throws AT THE YIELD, which is how __awaiter turns a rejected
+    // `.throw()` throws at the yield, which is how __awaiter turns a rejected
     // promise back into an exception inside the async function's body.
     expect_result("function* g() { try { yield 1; } catch (e) { yield 'caught ' + e; } }"
                   "const it = g(); it.next(); return it.throw('boom').value;",
@@ -261,7 +261,7 @@ void test_generators() {
     expect_result("function* g() { yield 1; yield 2; yield 3; }"
                   "let sum = 0; for (const v of g()) { sum += v; } return sum;",
                   "6");
-    // A generator EXPRESSION, which is the form TypeScript actually emits.
+    // A generator expression, which is the form TypeScript actually emits.
     expect_result("const g = function* () { yield 5; };"
                   "return g().next().value;",
                   "5");
@@ -273,7 +273,7 @@ void test_generators() {
                   "const a = g(), b = g(); a.next();"
                   "return a.next().value + ',' + b.next().value;",
                   "2,1");
-    // THE __awaiter SHAPE ITSELF, which is the only reason this exists.
+    // The __awaiter shape itself: a driver feeding each yielded value back in.
     expect_result("function drive(gen) {"
                   "  const it = gen(); let step = it.next(); let last;"
                   "  while (!step.done) { last = step.value; step = it.next(last * 2); }"
@@ -288,36 +288,35 @@ void test_async_and_promises() {
     // out, so these run to completion inside the turn.
     expect_result("return await 3;", "3");
     expect_result("async function f() { return 5; } return await f();", "5");
-    // An async function hands back a PROMISE, not the bare value - otherwise
+    // An async function hands back a promise, not the bare value; otherwise
     // `f().then(...)` has nothing to call.
     expect_result("async function f() { return 5; } return typeof f().then;", "function");
     expect_result("async function f() { return 1; } async function g() { return await f() + 1; }"
                   "return await g();",
                   "2");
-    // await inside a loop, which is the fetchboard shape.
+    // `await` inside a loop, as in examples/demos/fetchboard.cpp.
     expect_result(
         "async function one(n) { return n * 2; }"
         "async function run() { var t = 0; for (const n of [1,2,3]) { t += await one(n); }"
         "  return t; } return await run();",
         "12");
     expect_result("return await Promise.resolve(7);", "7");
-    // `Promise.all` HANDS BACK A PENDING PROMISE even when every input is
-    // already settled - 27.2.4.1.2 step 4.i attaches with `then`, and a
-    // reaction is a job - so this await suspends and its answer is only there
-    // once the queue has drained. It read `1,2` from a `return` while `all`
-    // settled synchronously, which is the thing that was wrong.
+    // `Promise.all` returns a pending promise even when every input is already
+    // settled (27.2.4.1.2 step 4.i attaches with `then`, and a reaction is a
+    // job), so the await suspends and the answer exists only after the queue
+    // drains.
     expect_after_turn("var result = ''; async function f() {"
                       "  const p = await Promise.all([Promise.resolve(1), 2]);"
                       "  result = p.join(','); } f();",
                       "1,2");
-    // Awaiting a rejected promise THROWS, which is what makes try/catch around
+    // Awaiting a rejected promise throws, which is what makes try/catch around
     // an await behave the way pages assume.
     expect_result("var r = 0; try { await Promise.reject(9); } catch (e) { r = e; } return r;",
                   "9");
 }
 
 void test_await_promise_resolve() {
-    // Await uses PromiseResolve(%Promise%, value) before suspending: read a
+    // Await uses PromiseResolve(%Promise%, value) before suspending: it reads a
     // promise's constructor once, and leave its then alone when it matches.
     expect_after_turn(
         "var result = ''; const P = Promise; const p = P.resolve(7);"
@@ -370,13 +369,13 @@ void test_await_promise_resolve() {
                   "42");
 }
 
-// A HANDLER RUNS AT THE END OF THE TURN, NOT WHEN THE PROMISE SETTLES.
+// A handler runs at the end of the turn, not when the promise settles.
 //
-// The difference is observable and pages are written against it. It used to run
-// on settle, which also let a chain reenter code that was halfway through its
-// own work. Each case here is asserted TWICE: `expect_result` says the handler
-// has not run yet at the point of return, and `expect_after_turn` says it has
-// by the time the queue drains.
+// The difference is observable and pages are written against it; running on
+// settle would also let a chain re-enter code that is halfway through its own
+// work. Each case here is asserted twice: `expect_result` says the handler has
+// not run yet at the point of return, and `expect_after_turn` says it has by
+// the time the queue drains.
 void test_promise_handlers_are_microtasks() {
     expect_result("var r = 0; Promise.resolve(2).then(function (v) { r = v * 3; }); return r;",
                   "0");
@@ -397,10 +396,9 @@ void test_promise_handlers_are_microtasks() {
                       "9");
     expect_after_turn("var result = 0; Promise.resolve(1).finally(function () { result = 5; });",
                       "5");
-    // `finally` RUNS EITHER WAY AND CHANGES NOTHING: no argument, its return
-    // value ignored, the outcome passing through. It used to call its callback
-    // the moment it was registered and hand back the SAME promise, so it ran
-    // before the rejection it was meant to follow.
+    // `finally` runs either way and changes nothing: no argument, its return
+    // value ignored, the outcome passing through. It runs as a reaction, after
+    // the settlement it follows, and returns a new promise.
     expect_after_turn(
         "var result = ''; Promise.resolve('kept').finally(function () { return 'x'; })"
         "  .then(function (v) { result = v; });",
@@ -425,7 +423,7 @@ void test_promise_handlers_are_microtasks() {
                       "new Promise(function (f) { go = f; }).then(function (v) { result = v; });"
                       "go(7);",
                       "7");
-    // THE ORDER ACROSS SEVERAL CHAINS, which is what a queue is for: every
+    // The order across several chains, which is what a queue is for: every
     // first-round handler runs before any second-round one.
     expect_after_turn("var result = '';"
                       "Promise.resolve(1).then(function (v) { result += 'a'; return v; })"
@@ -435,10 +433,9 @@ void test_promise_handlers_are_microtasks() {
                       "syncacb");
 }
 
-// AN ASYNC FUNCTION NEVER THROWS AT ITS CALLER (27.7.5.2): a throw its body
-// does not catch rejects the promise it returned - before a suspension, after
-// one, and from an arrow. Before 2026-09-12 the first threw synchronously out
-// of `f()` and the second was an uncaught engine fault.
+// An async function never throws at its caller (27.7.5.2): a throw its body
+// does not catch rejects the promise it returned, whether before a suspension,
+// after one, or from an arrow.
 void test_async_rejection() {
     expect_after_turn(
         "var result = ''; async function f() { throw new Error('boom'); }"
@@ -454,7 +451,7 @@ void test_async_rejection() {
     expect_after_turn("var result = ''; const f = async () => { throw new TypeError('t'); };"
                       "f().catch(e => { result = e instanceof TypeError; });",
                       "true");
-    // A throw INSIDE a try the body catches is not the fence's business.
+    // A throw the body catches itself does not reject the promise.
     expect_after_turn(
         "var result = ''; async function f() { try { throw 1; } catch (e) { return e + 1; } }"
         "f().then(v => { result = v; });",
@@ -466,11 +463,10 @@ void test_async_rejection() {
         "fr");
 }
 
-// TWO ASYNC FUNCTIONS SUSPENDED AT ONCE. An interpreted callee's frame starts
-// inside its caller's window (op::call: base + a + 1), and the suspension cut
-// the register stack at the callee's base - every caller register above the
-// callee slot went with it, and the NEXT call's resize refilled them with
-// undefined. `f(1); g(2);` had g read `v` as undefined (2026-09-17).
+// Two async functions suspended at once. An interpreted callee's frame
+// starts inside its caller's register window (op::call: base + a + 1), so
+// suspending the callee must not truncate the register stack at the
+// callee's base: the caller's registers above that slot must survive.
 void test_concurrent_awaits() {
     expect_after_turn("var result = '';"
                       "async function f(v) { const r = await v; return r + '/' + v; }"
@@ -482,13 +478,12 @@ void test_concurrent_awaits() {
                       "  static async b(v) { return await this.#a(v); } }"
                       "class D { static async b(v) { return await v; } }"
                       "C.b(1).then(x => { result += x; }); D.b(2).then(x => { result += x; });",
-                      "21"); // D settles first: C.b awaits twice
-    // THE SAME CUT FROM THE CALLER'S SIDE: testharness.js's promise_setup calls
-    // the page's async function and then reads its own `properties` - the
-    // registers above the suspended callee's slot - and got undefined
-    // ("Cannot read properties of undefined (reading 'hasOwnProperty')",
-    // every WPT file using promise_setup). The callee suspends INSIDE the
-    // caller's window; the caller's registers must survive it.
+                      "21"); // D settles first: C.b awaits twice.
+    // The same invariant from the caller's side: testharness.js's
+    // promise_setup calls the page's async function and then reads its own
+    // `properties`, which live in registers above the suspended callee's
+    // slot. The callee suspends inside the caller's window; the caller's
+    // registers must survive it.
     expect_after_turn("var result = '';"
                       "function promise_setup(func, properties = {}) {"
                       "  Promise.resolve().then(function () {"
@@ -575,7 +570,7 @@ void test_async_generators() {
         "TypeError");
 }
 
-// `.return(v)` ON AN ASYNC GENERATOR AWAITS v, then resumes the body with a
+// `.return(v)` on an async generator awaits v, then resumes the body with a
 // return completion (27.6.3.8): the finally blocks run, a finally may yield
 // or return instead, a rejected v is thrown at the yield, and with no yield
 // to resume the request settles with the awaited value (27.6.3.9).
@@ -596,7 +591,7 @@ void test_async_generator_return() {
                       "r.value + r.done; return it.next(); }).then(r => { result += r.value + "
                       "r.done; });",
                       "infalsertrue");
-    // v is awaited: a promise unwraps, a rejection is thrown at the yield
+    // v is awaited: a promise unwraps, a rejection is thrown at the yield.
     expect_after_turn("var result = ''; async function* g() { yield 1; }"
                       "const it = g(); it.next().then(() => it.return(Promise.resolve(42)))"
                       ".then(r => { result = r.value + ':' + r.done; });",
@@ -614,7 +609,7 @@ void test_async_generator_return() {
                       "const it = g(); it.return(Promise.reject('x')).then(() => { result = 'no'; "
                       "}, e => { result = e; });",
                       "x");
-    // `.return()` and `.throw()` at an async `yield*` go to the inner iterator
+    // `.return()` and `.throw()` at an async `yield*` go to the inner iterator.
     expect_after_turn(
         "var result = ''; const inner = { [Symbol.iterator]() { return { next() { return "
         "{ value: 1, done: false }; }, return(v) { result += 'R' + v; return { value: 'v', "
@@ -689,7 +684,7 @@ void test_for_await() {
                       "12");
     // GetIterator(async), 7.4.3: a [Symbol.asyncIterator] that is present but
     // not callable is the TypeError; [Symbol.iterator] is asked only when it
-    // is absent - so the sync getter here is never read.
+    // is absent, so the sync getter here is never read.
     expect_after_turn("var result = ''; var it = { get [Symbol.iterator]() { result += 'sync'; }, "
                       "[Symbol.asyncIterator]: false };"
                       "(async () => { try { for await (const v of it) {} } catch (e) { result += "
@@ -730,8 +725,8 @@ void test_for_await() {
                       " result = e.name; });",
                       "RangeError");
     // A constructor as `this` takes the elements through defineProperty: a
-    // non-configurable slot is a TypeError, not an endless loop (test262
-    // this-constructor-with-unsettable-element ran the box out of memory).
+    // non-configurable slot is a TypeError, not an endless loop (test262's
+    // this-constructor-with-unsettable-element).
     expect_after_turn(
         "var result = ''; function M() { Object.defineProperty(this, 0, {value: 0,"
         "  writable: true, configurable: false}); }"

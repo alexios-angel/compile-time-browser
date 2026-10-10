@@ -1,10 +1,13 @@
-// WHAT `html/dom` MEASURED AND WHAT WAS CHANGED FOR IT.
+//===- ctbrowser/unittests/unit/html/dom/wpt.cpp - WPT html/dom subtests --===//
 //
-// One case per behaviour, each written the way the corpus writes it: a page
-// script does the thing and reads back in the same statement, and the console
-// carries the answer out. A case here is a WPT subtest family in miniature -
-// the file name beside each says which - so a regression fails a unit test on
-// the devbox rather than a suite on the shared box a day later.
+// Small versions of WPT html/dom subtests.
+//
+// Each case runs page script that acts and reads the result back in the same
+// statement, and the console carries the answer out. The WPT file each case
+// mirrors is named beside it, so a regression fails here quickly instead of
+// only in a full WPT run.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -24,7 +27,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=host></div>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks that \p expression logs \p expected, in a fresh page per case
+/// because many of these mutate the document.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -51,7 +55,7 @@ void test_legacy_null_to_empty_string_rows_write_nothing_for_null() {
 
 void test_nonce_is_a_slot_in_front_of_the_attribute() {
     // reflection-metadata.html, `link.nonce: IDL set to ...`: setting the IDL
-    // attribute changes what it reads back and NOT the content attribute.
+    // attribute changes what it reads back and not the content attribute.
     is("(function () { var l = document.createElement('link');"
        " l.setAttribute('nonce', 'a'); l.nonce = 'b';"
        " return l.nonce + '/' + l.getAttribute('nonce'); })()",
@@ -63,9 +67,9 @@ void test_nonce_is_a_slot_in_front_of_the_attribute() {
 }
 
 void test_the_rows_the_element_tables_name_are_all_there() {
-    // elements-grouping.js, -embedded.js and -forms.js name four rows the
-    // table lacked; `button.value` is the one with a trap, because a button is
-    // a control here and a control's own `value` accessor shadowed the row.
+    // elements-grouping.js, -embedded.js and -forms.js name these rows;
+    // `button.value` is the one with a trap, because a button is a control
+    // here and a control's own `value` accessor would shadow the row.
     is("(function () { var b = document.createElement('button');"
        " b.setAttribute('value', 'v'); var was = b.value; b.value = 'w';"
        " return was + ',' + b.getAttribute('value'); })()",
@@ -80,7 +84,7 @@ void test_the_rows_the_element_tables_name_are_all_there() {
        " o.data = 'http://site.example/x'; return o.data; })()",
        "http://site.example/x");
     // reflection-tabular, `td.rowSpan: setAttribute() to -36`: a clamped
-    // unsigned long parses with the NON-NEGATIVE rules, so a negative fails
+    // unsigned long parses with the non-negative rules, so a negative fails
     // the parse and is the default 1, not the clamp's floor of 0.
     is("(function () { var t = document.createElement('td');"
        " t.setAttribute('rowspan', '-36'); var a = t.rowSpan;"
@@ -145,8 +149,8 @@ void test_an_anchor_reports_the_parts_of_its_url() {
 void test_a_located_document_resolves_its_url_attributes() {
     // The bulk of reflection-*.html's URL rows: with a location set before
     // the load, `img.src` and `a.href` resolve against it (the URL standard
-    // trims the spaces) and read the same,
-    // and the document's three names for its address all say it.
+    // trims the spaces) and read the same, and the document's three names for
+    // its address all say it.
     browser page{browser_options{400, 300}};
     page.set_location("file:///srv/pages/index.html#top");
     page.load_html("<!DOCTYPE html><img id=i src=' cat.png '><a id=a href=' cat.png '>"
@@ -208,8 +212,8 @@ void test_an_inserted_script_runs_when_it_connects() {
        " var t = document.createElement('script'); t.textContent = 'window.after = 1';"
        " document.body.appendChild(s); document.body.appendChild(t); return window.after; })()",
        "1");
-    // ...and STILL `currentScript` while its uncaught throw - and its parse
-    // error - is reported: "execute the script element" restores the previous
+    // A script is still `currentScript` while its uncaught throw, or its parse
+    // error, is reported: "execute the script element" restores the previous
     // one after "run a classic script" has reported (Document.currentScript
     // .html, "script-window-error").
     is("(function () { window.seen = []; window.onerror = function () {"
@@ -238,7 +242,7 @@ void test_an_inserted_script_runs_when_it_connects() {
         CHECK_EQ(logged[0], std::string{"ran:empty"});
         CHECK_EQ(logged[1], std::string{"after"});
     }
-    // A <template>'s script never started, so its CLONE runs when the clone
+    // A <template>'s script never started, so its clone runs when the clone
     // connects; the parser's own script that ran is started, and its clone
     // does not (remove-next-sibling-during-replace-with.html).
     browser cloned{browser_options{400, 300}};
@@ -284,7 +288,7 @@ void test_aria_element_references_reflect_both_ways() {
        " f.ariaLabelledByElements = null; seen.push(String(f.ariaLabelledByElements));"
        " return seen.join(); })()",
        "2,true,true,true,true,,null");
-    // ANOTHER DOCUMENT'S ELEMENT reads and writes its own tree, and keeps the
+    // Another document's element reads and writes its own tree, and keeps the
     // reference through adoption (aria-element-reflection.html, "Adopting
     // element keeps references").
     is("(function () { var other = document.implementation.createHTMLDocument('o');"
@@ -324,8 +328,9 @@ void test_translate_inherits_through_elements_and_stops_at_a_fragment() {
 
 // --- innerText / outerText getters -------------------------------------------
 
-// getter.html's shape: markup into a connected container, then the first
-// child's innerText, JSON-encoded so a newline or a tab is visible.
+/// Mirrors getter.html: puts \p markup (a JavaScript string expression) into a
+/// connected container and returns the innerText of `#target` or the first
+/// child, JSON-encoded so a newline or a tab is visible.
 [[nodiscard]] std::string inner_text_of(const std::string & markup) {
     return ctbrowser_test::answer_in(page_html,
                                      "(function () { var h = document.getElementById('host');"
@@ -357,7 +362,7 @@ void test_inner_text_reads_the_inline_style_it_can_see() {
     CHECK_EQ(inner_text_of("'<div style=display:none>abc  def'"), "\"abc  def\"");
     CHECK_EQ(inner_text_of("'<div><table><tr><td>abc<td>def<tr><td>ghi</table>'"),
              "\"abc\\tdef\\nghi\"");
-    // A replaced element has no text, and outerText reads the same as innerText.
+    // A replaced element has no text.
     CHECK_EQ(inner_text_of("'<textarea>abc'"), "\"\"");
     // The input stream's CR is a newline; a hidden element adds no breaks of
     // its own; a flex container's children are blockified; a <select>'s text
@@ -370,6 +375,7 @@ void test_inner_text_reads_the_inline_style_it_can_see() {
              "\"1\\n2\"");
     CHECK_EQ(inner_text_of("'<div><select>abc<option>x</option></select></div>'"), "\"x\"");
     CHECK_EQ(inner_text_of("'<div><svg><defs><text>abc</text></defs></svg></div>'"), "\"\"");
+    // outerText reads the same as innerText.
     is("(function () { var h = document.getElementById('host'); h.innerHTML = '<p>a<br>b';"
        " return JSON.stringify(h.firstChild.outerText); })()",
        "\"a\\nb\"");

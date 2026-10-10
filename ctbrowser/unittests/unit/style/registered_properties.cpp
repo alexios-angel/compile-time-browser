@@ -1,7 +1,11 @@
+//===- registered_properties.cpp - @property tests --------------*- C++ -*-===//
+//
 // Registered custom properties, CSS Properties and Values API 1: `@property`
 // in a sheet and `CSS.registerProperty()` from script, and what each does to
 // the cascade - a syntax, an initial value, an inheritance flag, and a
 // computed value of the type the syntax names.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>

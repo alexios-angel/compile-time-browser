@@ -1,3 +1,10 @@
+//===- unittests/unit/asset_reads.cpp - asset_registry file reads ---------===//
+//
+// Tests how shell::asset_registry reads files: binary contents, query and
+// fragment stripping, re-reads after a change, sealing, confinement to the base
+// directory, and that a page's fetch() cannot escape that directory.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
@@ -10,6 +17,7 @@
 
 namespace {
 
+/// Removes a temporary directory tree when it goes out of scope.
 struct scratch_directory {
     std::filesystem::path path;
 
@@ -19,6 +27,7 @@ struct scratch_directory {
     }
 };
 
+/// Writes `text` to `path` in binary mode; returns false on any I/O error.
 bool write_file(const std::filesystem::path & path, std::string_view text) {
     std::ofstream out{path, std::ios::binary};
     out.write(text.data(), static_cast<std::streamsize>(text.size()));
@@ -61,9 +70,9 @@ void test_asset_reads() {
     CHECK(assets.load(binary.string()) == expected);
 }
 
-// CONFINEMENT: a name resolves inside its root or not at all - `..`, an
-// absolute path and a symlink out of the root all fail; `..` that stays
-// inside is fine.
+/// Confinement: a name resolves inside its root or not at all - `..`, an
+/// absolute path and a symlink out of the root all fail; `..` that stays
+/// inside is fine.
 void test_contained() {
     using ctbrowser::shell::asset_registry;
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -116,13 +125,14 @@ void test_contained() {
     const std::string inside_url = "file://" + (root / "inside.txt").generic_string();
     CHECK(assets.load_file_url(inside_url, "file:///page.html") == bytes_of("inside"));
     CHECK(assets.load_file_url(inside_url, "https://example.com/").empty());
-    // Unconfined is the old probe order, for trusted local content only.
+    // With confinement off, any readable path loads; use this only for trusted
+    // local content.
     assets.set_confine(false);
     CHECK(assets.load((outside / "secret.txt").string()) == bytes_of("secret"));
 }
 
-// THE PAGE'S VIEW: fetch of an absolute path, a file: URL and a `..` name all
-// reject, while an ordinary relative asset loads.
+/// The page's view: fetch of an absolute path, a file: URL and a `..` name all
+/// reject, while an ordinary relative asset loads.
 void test_fetch_is_confined() {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root =

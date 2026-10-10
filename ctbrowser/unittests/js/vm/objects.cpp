@@ -1,7 +1,10 @@
+//===- ctbrowser/unittests/js/vm/objects.cpp - VM object and class tests --===//
+//
 // Objects and classes: fields, accessors, descriptors, prototypes,
-// `new.target`, and the class-expression scoping that broke p5.js. Carved out
-// of js/vm_basics.cpp on 2026-09-08 - operators.cpp names the family, and
-// expect.hpp is the assertion every file in it shares.
+// `new.target`, proxies, and class-expression scoping. expect.hpp holds the
+// shared assertions.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -16,31 +19,28 @@ using namespace ctbrowser::script;
 
 namespace {
 
-// AN INSTANCE FIELD BELONGS TO THE INSTANCE.
-//
-// Field initialisers used to be evaluated ONCE, at class-definition time, and
-// stored on the prototype - so every instance of `class A { items = [] }`
-// shared one array. Push to one and it appeared in all of them, with nothing
-// wrong at any stage. It is the nastiest shape in this batch, because the
-// symptom shows up arbitrarily far from the cause.
+/// An instance field belongs to the instance: its initialiser runs once per
+/// `new`, so two instances of `class A { items = [] }` hold two arrays. A field
+/// stored once on the prototype would be shared, and the symptom would show up
+/// arbitrarily far from the cause.
 void test_class_fields_are_per_instance() {
     expect_result("class A { n = 1; } const x = new A(); const y = new A(); x.n = 99; return y.n;",
                   "1");
-    // the case that actually bites: a mutable field
+    // A mutable field is where sharing would show.
     expect_result("class A { items = []; } const x = new A(); const y = new A(); "
                   "x.items.push(1); return y.items.length;",
                   "0");
-    // a field with no initialiser is still a field
+    // A field with no initialiser is still a field.
     expect_result("class A { x; } const a = new A(); return typeof a.x;", "undefined");
-    // an initialiser is an expression, evaluated per instance
+    // An initialiser is an expression, evaluated per instance.
     expect_result("let made = 0; class A { id = ++made; } new A(); new A(); return new A().id;",
                   "3");
-    // it may capture an enclosing local
+    // It may capture an enclosing local.
     expect_result(
         "function build(v) { class A { val = v; } return new A().val; } return build(42);", "42");
-    // A COMPUTED NAME IS THE CLASS'S, evaluated once when it is defined and
-    // in order with the methods' keys (15.7.10) - only the initialiser runs
-    // per instance.
+    // A computed field name belongs to the class: it is evaluated once, when
+    // the class is defined, in order with the methods' keys (ECMA-262
+    // 15.7.10). Only the initialiser runs per instance.
     expect_result("let x = 1; class C { [x++] = x++; [x++] = x++; } const a = new C();"
                   " const b = new C(); return [a[1], a[2], b[1], b[2]].join();",
                   "3,4,5,6");
@@ -54,13 +54,14 @@ void test_class_fields_are_per_instance() {
                   " return e.constructor.name; } return 'none';",
                   "TypeError");
     expect_result("const k = Symbol('k'); class C { [k] = 7; } return new C()[k];", "7");
-    // an object literal's method: `super` starts at the implicit Object.prototype
+    // In an object literal's method, `super` starts at the implicit
+    // Object.prototype.
     expect_result(
         "const o = { m() { return super.hasOwnProperty === Object.prototype.hasOwnProperty; } };"
         " o.hasOwnProperty = null; return o.m();",
         "true");
     // `super.x = v` is [[Set]] on the parent with `this` as the receiver: the
-    // parent's setter runs, not this class's own of the same name
+    // parent's setter runs, not this class's own of the same name.
     expect_result("class P { set x(v) { this._x = v; } get x() { return this._x; } }"
                   " class C extends P { set x(v) { super.x = v * 2; } get x() { return super.x; } }"
                   " const c = new C(); c.x = 2; return c.x;",
@@ -69,78 +70,78 @@ void test_class_fields_are_per_instance() {
                   " const o = { __proto__: proto, m() { super.p = 1; super['q'] = 2;"
                   " return this.r + ':' + Object.keys(this).join(); } }; return o.m();",
                   "ok:m,r,q");
-    // `super[k]()` calls the parent's method with `this`
+    // `super[k]()` calls the parent's method with `this`.
     expect_result(
         "class P { m() { return 'p' + this.t; } }"
         " class C extends P { go() { this.t = 1; return super['m']() + super['m'](...[]); } }"
         " return new C().go();",
         "p1p1");
-    // a block's `let` of a class with a computed field name keeps the class
-    // (the name's hidden cell is a local of its own - see field_key_name)
+    // A block's `let` of a class with a computed field name keeps the class
+    // (the name's hidden cell is a local of its own; see field_key_name).
     expect_result("{ let C = class { [9] = 9; }; return typeof C + new C()[9]; }", "function9");
-    // a script's `eval` that is not a function is the TypeError of calling it
+    // Calling a script's `eval` that is not a function is a TypeError.
     expect_result("var eval = ''; try { eval(); } catch (e) { return e instanceof TypeError; }"
                   " return 'none';",
                   "true");
-    // a method has no `prototype` (MakeMethod, never MakeConstructor); a
-    // generator method and the class itself do
+    // A method has no `prototype` (MakeMethod, never MakeConstructor); a
+    // generator method and the class itself do.
     expect_result(
         "class C { m() {} get g() {} *gen() {} } const d = Object.getOwnPropertyDescriptor("
         "C.prototype, 'g'); return ['prototype' in C.prototype.m, 'prototype' in d.get,"
         " 'prototype' in C.prototype.gen, typeof C.prototype].join();",
         "false,false,true,object");
-    // a string spreads (and rests) as the String object it is ToObject'd to
+    // A string spreads (and rests) as the String object ToObject makes of it.
     expect_result("var r; ({...r} = 'xy'); return JSON.stringify({...'ab'}) + JSON.stringify(r);",
                   "{\"0\":\"a\",\"1\":\"b\"}{\"0\":\"x\",\"1\":\"y\"}");
-    // a `for (using ...)` head's resources are disposed as the loop completes
+    // A `for (using ...)` head's resources are disposed as the loop completes.
     expect_result("var log = [], n = 0; var r = { [Symbol.dispose]() { log.push('d'); } };"
                   " for (using x = r; n < 2; n++) log.push(n); log.push('after');"
                   " return log.join();",
                   "0,1,d,after");
-    // a function is an object a `using` declaration may hold
+    // A function is an object that a `using` declaration may hold.
     expect_result("Function.prototype[Symbol.dispose] = function () { this.gone = true; };"
                   " var f; { using g = function () {}; f = g; }"
                   " delete Function.prototype[Symbol.dispose]; return f.gone + ':' + f.name;",
                   "true:g");
-    // a heritage that is no constructor is the TypeError, named without
-    // running its code (a proxy's `get` trap would throw instead)
+    // A heritage that is not a constructor is a TypeError, raised without
+    // running its code (a proxy's `get` trap would throw instead).
     expect_result("const p = new Proxy(() => {}, { get() { throw 'trap'; } });"
                   " try { class C extends p {} } catch (e) { return e.name; } return 'none';",
                   "TypeError");
-    // a computed static accessor meets the non-configurable `prototype`
+    // A computed static accessor named `prototype` hits the non-configurable
+    // `prototype` and throws.
     expect_result("try { class C { static get ['prototype']() {} } } catch (e) { return e.name; }"
                   " return 'none';",
                   "TypeError");
-    // `static constructor() {}` is a static method, not the class's constructor
+    // `static constructor() {}` is a static method, not the class's constructor.
     expect_result("class C { static constructor() { return 's'; } constructor() { this.v = 1; } }"
                   " return C.constructor() + new C().v;",
                   "s1");
-    // an instance field's home object is the prototype: `super` reads the parent
+    // An instance field's home object is the prototype, so `super` reads the
+    // parent.
     expect_result("class A { get g() { return 'a'; } } class B extends A { v = super.g; }"
                   " return new B().v;",
                   "a");
-    // fields arrive before the constructor body, which may then use them
+    // Fields arrive before the constructor body, which may then use them.
     expect_result("class A { n = 2; constructor() { this.n = this.n * 5; } } return new A().n;",
                   "10");
-    // INHERITED fields are initialised too, base first
+    // Inherited fields are initialised too, base first.
     expect_result("class B { b = 'base'; } class D extends B { d = 'derived'; } "
                   "const o = new D(); return o.b + '/' + o.d;",
                   "base/derived");
-    // and a STATIC field is the opposite case - one value on the class, which
-    // is what it should always have been
+    // A static field is the opposite case: one value, on the class.
     expect_result("class A { static count = 0; } A.count = 5; return A.count;", "5");
-    // methods still live on the prototype and are shared
+    // Methods still live on the prototype and are shared.
     expect_result("class A { n = 1; get2() { return 2; } } "
                   "return new A().get2() + new A().get2();",
                   "4");
 }
 
-// A PRIVATE NAME IS A DISTINCT NAME. The `#` used to be skipped as an unknown
-// byte, so `this.#count` became `this.count`: a private field silently aliased
-// a public one, and every later stage agreed with the wrong reading. p5.js
-// declares 174 of them. Since 2026-09-12 a READ is a brand check too (7.3.31):
-// the key is `@#n:N` for the Nth class body, so two classes' `#n` are two
-// names, and an object the class did not initialise is the TypeError.
+/// A private name is a distinct name: `this.#count` never aliases a public
+/// `count`. A read is also a brand check (ECMA-262 7.3.31): the key is `@#n:N`
+/// for the Nth class body (compiler_impl::member_key), so two classes' `#n` are
+/// two names, and reading one from an object the class did not initialise is
+/// a TypeError.
 void test_private_names_are_distinct() {
     expect_result("class A { #x = 'a'; static read(o) { return o.#x; } }"
                   "class B { #x = 'b'; static read(o) { return o.#x; } }"
@@ -170,13 +171,13 @@ void test_private_names_are_distinct() {
     expect_result(
         "class C { static #hidden = 3; static read() { return C.#hidden; } } return C.read();",
         "3");
-    // a private method
+    // A private method.
     expect_result("class C { #twice(x) { return x * 2; } run() { return this.#twice(4); } } "
                   "return new C().run();",
                   "8");
-    // and the public field of the same name is untouched from outside
+    // The public field of the same name is untouched from outside.
     expect_result("class C { #n = 1; n = 2; } const c = new C(); c.n = 9; return c.n;", "9");
-    // A PRIVATE NAME IS NOT A PROPERTY KEY (its key is `@#n`, which no source
+    // A private name is not a property key (its key is `@#n`, which no source
     // can spell): reflection, `in`, hasOwnProperty and the string index see
     // nothing, and a public `"#n"` string key is a different property.
     expect_result("class C { #n = 1; #m() {} static #s = 2; } const c = new C();"
@@ -190,44 +191,43 @@ void test_private_names_are_distinct() {
                   "1,pub");
 }
 
-// ACCESSORS. A property that runs code when it is read, which is a different
-// thing from a property that HOLDS a function - installing a getter as a data
-// property made `obj.v` be the function rather than call it, and a setter of
-// the same name overwrote the getter outright.
-//
-// They live in a table BESIDE the data properties rather than widening every
-// property into a descriptor, so the dozen places that iterate props - the DOM
-// bindings among them - were untouched, and an object with no accessors pays
-// one bool.
+/// Accessors: a property that runs code when it is read is different from a
+/// property that holds a function. A getter and a setter of the same name
+/// share one property.
+///
+/// Accessors live in a table beside the data properties rather than widening
+/// every property into a descriptor, so code that iterates data properties
+/// (the DOM bindings among it) is unaffected, and an object with no accessors
+/// pays one bool.
 void test_accessors() {
     expect_result("const o = { get v() { return 42; } }; return o.v;", "42");
     expect_result("const o = { n: 0, set v(x) { this.n = x * 2; } }; o.v = 21; return o.n;", "42");
     expect_result("const o = { n: 1, get v() { return this.n; }, set v(x) { this.n = x; } }; "
                   "o.v = 9; return o.v;",
                   "9");
-    // a getter is CALLED, not returned
+    // A getter is called, not returned.
     expect_result("const o = { get v() { return 1; } }; return typeof o.v;", "number");
-    // on a class, and on its prototype so every instance sees it
+    // On a class, an accessor lives on the prototype so every instance sees it.
     expect_result("class C { constructor() { this.n = 3; } get double() { return this.n * 2; } } "
                   "return new C().double;",
                   "6");
     expect_result("class C { constructor() { this.n = 0; } set v(x) { this.n = x + 1; } } "
                   "const c = new C(); c.v = 4; return c.n;",
                   "5");
-    // a static accessor lives on the constructor
+    // A static accessor lives on the constructor.
     expect_result("class C { static get name2() { return 'C'; } } return C.name2;", "C");
-    // an accessor INHERITED through extends still reads the instance
+    // An accessor inherited through `extends` still reads the instance.
     expect_result("class B { get kind() { return 'b:' + this.n; } } "
                   "class D extends B { constructor() { super(); this.n = 7; } } "
                   "return new D().kind;",
                   "b:7");
-    // a write with no setter is discarded rather than shadowing the getter
+    // A write with no setter is discarded rather than shadowing the getter.
     expect_result("const o = { get v() { return 1; } }; o.v = 99; return o.v;", "1");
-    // an own DATA property wins over an inherited accessor
+    // With no own `v`, the inherited accessor answers.
     expect_result("class B { get v() { return 'proto'; } } class D extends B {} "
                   "const d = new D(); return d.v;",
                   "proto");
-    // and Object.keys sees an accessor, because it is a property
+    // Object.keys lists an accessor, because it is a property.
     expect_result("const o = { a: 1, get b() { return 2; } }; return Object.keys(o).join(',');",
                   "a,b");
 }
@@ -241,7 +241,7 @@ void test_object_descriptors() {
     expect_result("const o = {}; Object.defineProperty(o, 'x', { get() { return 1; } }); "
                   "const d = Object.getOwnPropertyDescriptor(o, 'x'); return typeof d.get;",
                   "function");
-    // create + getPrototypeOf round-trip
+    // Object.create and getPrototypeOf round-trip.
     expect_result("const base = { greet() { return 'hi'; } }; const o = Object.create(base); "
                   "return o.greet();",
                   "hi");
@@ -261,27 +261,25 @@ void test_symbol() {
     expect_result("return Symbol('tag').description;", "tag");
     expect_result("return Symbol('a') === Symbol('a');", "false");
     expect_result("return Symbol.iterator === Symbol.iterator;", "true");
-    // usable as a property key, which is the whole point
+    // A symbol is usable as a property key.
     expect_result("const s = Symbol('k'); const o = {}; o[s] = 5; return o[s];", "5");
     expect_result("const s = Symbol('k'); const o = {}; o[s] = 5; return o.k;", "undefined");
     expect_result("const o = {}; o[Symbol.iterator] = 1; return o[Symbol.iterator];", "1");
     expect_result("return Symbol('x').toString();", "Symbol(x)");
 }
 
-// `new.target` - the meta-property, and a PARSE ERROR here until 2026-08-02.
-//
-// Every transpiler emits it: Babel's `_classCallCheck` is built on the
-// undefined test below, and Babylon.js uses it in its decorator metadata, which
-// is the first thing in that 11.6 MB bundle this engine's parser stopped on.
+/// The `new.target` meta-property. Transpilers emit it: Babel's
+/// `_classCallCheck` is built on the undefined test below, and Babylon.js uses
+/// it in its decorator metadata.
 void test_new_target() {
     // Called as a constructor: the function itself.
     expect_result("function F() { return typeof new.target; } return new F() && 'made';", "made");
     expect_result("function F() { this.t = new.target === F; } return String(new F().t);", "true");
-    // Called ordinarily: undefined. THIS is the test real code performs - a
+    // Called ordinarily: undefined. This is the test real code performs: a
     // guard asks whether it is undefined, not which constructor it is.
     expect_result("function F() { return new.target === undefined; } return String(F());", "true");
     expect_result("function F() { return typeof new.target; } return F();", "undefined");
-    // The transpiler guard itself, which is the whole reason this exists.
+    // The transpiler guard itself.
     expect_result(
         "function F() { if (new.target === undefined) { return 'needs new'; } return 'ok'; }"
         "return F() + ',' + (new F() === undefined ? '?' : 'constructed');",
@@ -298,9 +296,9 @@ void test_new_target() {
     }
 }
 
-// A DERIVED CLASS WITH NO CONSTRUCTOR still runs its parent's. An empty one was
-// synthesised instead, so the parent never ran and the instance had none of its
-// state - and the failure surfaced at the first method that needed it.
+/// A derived class with no constructor still runs its parent's, passing all
+/// arguments through. Otherwise the instance would lack the parent's state and
+/// the failure would surface only at the first method that needed it.
 void test_implicit_super() {
     expect_result(
         "class B { constructor(v) { this.v = v; } } class D extends B {} return new D(7).v;", "7");
@@ -313,12 +311,9 @@ void test_implicit_super() {
                   "5");
 }
 
-// A CLASS EXPRESSION is as ordinary as a function expression. `class` had no
-// case in primary(), so `const X = class {...}` read a global named `class` and
-// the body's members leaked out as top-level statements - silently.
-// A static member named `name` or `length` is DEFINED over the constructor's
-// own read-only one (15.7.14 uses DefineMethodProperty), so it does not trip
-// the strict-mode rejected-store TypeError that a set would.
+/// A static member named `name` or `length` is defined over the constructor's
+/// own read-only one (ECMA-262 15.7.14 uses DefineMethodProperty), so it does
+/// not trip the strict-mode TypeError that a rejected [[Set]] would.
 void test_static_name_and_length() {
     expect_result("class C { static name() { return 'm'; } static length = 3; }"
                   "return C.name() + C.length + Object.keys(C).join(',');",
@@ -326,6 +321,7 @@ void test_static_name_and_length() {
     expect_result("class X {} return X.name;", "X");
 }
 
+/// A class expression is as ordinary as a function expression.
 void test_class_expressions() {
     expect_result("const X = class { constructor() { this.v = 1; } }; return new X().v;", "1");
     expect_result("const X = class Named { m() { return 'ok'; } }; return new X().m();", "ok");
@@ -333,13 +329,13 @@ void test_class_expressions() {
                   "5");
 }
 
-// A COMPUTED KEY ON A METHOD OR AN ACCESSOR (15.4.5 step 1: the key is
-// evaluated, then the function is made) - `[k]() {}`, `get [k]() {}`, and a
-// Symbol as the key. Every one compiled to a member named "" before
-// 2026-09-12, so `new C()[k]` was undefined.
+/// A computed key on a method or an accessor (ECMA-262 15.4.5 step 1: the key
+/// is evaluated, then the function is made): `[k]() {}`, `get [k]() {}`, and a
+/// Symbol as the key.
 void test_computed_member_keys() {
-    // A KEY NAMES THE FUNCTION IT HOLDS (SetFunctionName, 10.2.9): a symbol
-    // in brackets, an accessor with its prefix, a literal key at compile time.
+    // A key names the function it holds (SetFunctionName, ECMA-262 10.2.9): a
+    // symbol in brackets, an accessor with its prefix, a literal key at
+    // compile time.
     expect_result(
         "const s = Symbol('t'), e = Symbol(), g = Symbol('g'); const o = { [s]: function () {},"
         " [e]: () => 0, ['k' + 1]() {}, get [g]() {}, 'q': class {}, 2: function () {} };"
@@ -375,11 +371,10 @@ void test_computed_member_keys() {
                   "bd0");
 }
 
-// A NAMED CLASS EXPRESSION BINDS ITS OWN NAME, and its methods see it.
-// `let X = class Inner { static m() { return Inner; } }` - `Inner` inside those
-// methods is the class, not any outer binding. It is how p5.js declares itself
-// (`let p5$2 = class p5 {...}`), and without it every static method that named
-// the class read an undefined global.
+/// A named class expression binds its own name, and its methods see it: in
+/// `let X = class Inner { static m() { return Inner; } }`, `Inner` inside the
+/// methods is the class, not any outer binding. p5.js declares itself this way
+/// (`let p5$2 = class p5 {...}`).
 void test_named_class_expression_binds_itself() {
     expect_result("let X = class Inner { static who() { return typeof Inner; } }; return X.who();",
                   "function");
@@ -389,37 +384,26 @@ void test_named_class_expression_binds_itself() {
     expect_result("let X = class Inner { constructor() { this.self = Inner; } }; "
                   "return new X().self === X;",
                   "true");
-    // AND NOWHERE ELSE. This used to read `inner|function`, recorded as a known
-    // approximation with a TODO and the note that "nothing in p5.js depends on
-    // the difference, and a leaked binding is visible rather than wrong".
-    //
-    // Both halves of that were wrong. p5's bundle is `let p5$2 = class p5 {...}`,
-    // so the module scope acquired a `p5` holding undefined; every function
-    // compiled after that point captured it instead of the global, and `new
-    // p5.TableRow()` three thousand lines later read undefined.TableRow. The
-    // reported error named `TableRow`. It cost an afternoon to find, which is the
-    // argument against leaving a known approximation in a compiler: the
-    // difference between visible and wrong is whoever happens to look.
-    //
-    // The name now lives in a scope of its own, opened before the methods are
-    // compiled - so they capture it - and closed after, so nothing else sees it.
+    // And nowhere else: the name lives in a scope opened before the methods are
+    // compiled (so they capture it) and closed after (so nothing else sees it).
+    // test_a_named_class_expression_does_not_leak has the p5.js failure a
+    // leaked name causes.
     expect_result("let Outer = class Inner { static who() { return 'inner'; } }; "
                   "return Outer.who() + '|' + typeof Inner;",
                   "inner|undefined");
-    // The enclosing binding it used to overwrite is left alone, which is the
-    // failure that actually bit.
+    // An enclosing binding of the same name is left alone.
     expect_result("var Shared = { tag: 'outer' }; "
                   "var alias = class Shared { static who() { return 'inner'; } }; "
                   "return Shared.tag + '|' + alias.who();",
                   "outer|inner");
 }
 
-// A CLASS DECLARATION IS A HOISTED BINDING, and the reason is register
-// allocation rather than semantics: a local first declared while an EXPRESSION
-// is being compiled sits above the statement's register mark, so the statement
-// releases it and the next statement's temporaries reuse the slot. `class S {}`
-// followed by two `new S()` therefore worked once and found an object the
-// second time.
+/// A class declaration is a hoisted binding, for register allocation rather
+/// than semantics: a local first declared while an expression is being
+/// compiled sits above the statement's register mark, so the statement would
+/// release it and the next statement's temporaries would reuse the slot. Then
+/// `class S {}` followed by two `new S()` would work once and find an
+/// unrelated object the second time.
 void test_class_declaration_survives_the_statement() {
     expect_result("class S { constructor(x) { this.id = x; } } "
                   "const a = new S('a'); const b = new S('b'); return a.id + b.id;",
@@ -428,12 +412,13 @@ void test_class_declaration_survives_the_statement() {
                   "const a = new S('a'); const b = new S('b'); const c = new S('c'); "
                   "return a.id + b.id + c.id; } return f();",
                   "abc");
-    // with a static field, which is what put a fresh object in the register
+    // With a static field, whose value is the object that would land in the
+    // reused register.
     expect_result(
         "function f() { class S { constructor(x) { this.id = x; } static r = new Map(); } "
         "const a = new S('a'); const b = new S('b'); return a.id + b.id; } return f();",
         "ab");
-    // and a class used before its declaration in the same scope still binds
+    // A class used before its declaration in the same scope still binds.
     expect_result("function f() { function make() { return new S(1); } class S { constructor(v) "
                   "{ this.v = v; } } return make().v; } return f();",
                   "1");
@@ -447,19 +432,19 @@ void test_proxy() {
     expect_result("const p = new Proxy({ a: 1 }, { has(t, k) { return k === 'z'; } }); "
                   "return ('z' in p) + '|' + ('a' in p);",
                   "true|false");
-    // the trap p5.js needs at its top level
+    // The `construct` trap, which p5.js uses at its top level.
     expect_result("class B { constructor(v) { this.v = v; } } "
                   "const P = new Proxy(B, { construct(t, args) { return new t(args[0] * 2); } }); "
                   "return new P(4).v;",
                   "8");
-    // an absent trap falls through to the target rather than being skipped
+    // An absent trap falls through to the target.
     expect_result("class B { constructor() { this.v = 'base'; } } "
                   "const P = new Proxy(B, {}); return new P().v;",
                   "base");
     expect_result("return typeof Reflect.get({ a: 5 }, 'a');", "number");
     expect_result("return Reflect.get({ a: 5 }, 'a');", "5");
-    // A TRAP IS READ THROUGH [[Get]] (GetMethod): one the handler inherits
-    // counts, a non-callable one is a TypeError, a revoked proxy is a
+    // A trap is read through [[Get]] (GetMethod): one the handler inherits
+    // counts, a non-callable one is a TypeError, and a revoked proxy is a
     // TypeError rather than a silent pass-through.
     expect_result("const h = Object.create({ get(t, k) { return 'inherited'; } });"
                   "return new Proxy({}, h).x;",
@@ -479,8 +464,8 @@ void test_proxy() {
     expect_result("let seen; function T() { seen = new.target; } const P = new Proxy(T, {});"
                   "new P(); return seen === P;",
                   "true");
-    // The invariants: a `get` answering the wrong value for a frozen data
-    // property, a `set` answering true over one, a `has` hiding one.
+    // Invariant violations throw: a `get` returning the wrong value for a
+    // frozen data property, a `set` returning true over one, a `has` hiding one.
     expect_result("const t = Object.freeze({ x: 1 });"
                   "try { new Proxy(t, { get() { return 2; } }).x; } catch (e) { return e.name; }",
                   "TypeError");
@@ -492,16 +477,15 @@ void test_proxy() {
                   "try { 'x' in new Proxy(t, { has() { return false; } }); } catch (e) { return "
                   "e.name; }",
                   "TypeError");
-    // Reflect.set answers what the trap answered.
+    // Reflect.set returns what the trap returned.
     expect_result("return Reflect.set(new Proxy({}, { set() { return false; } }), 'x', 1);",
                   "false");
 }
 
-// `Object.defineProperty` with a descriptor that has no value, get or set
-// describes ATTRIBUTES ONLY and must leave the existing value alone. Writing
-// undefined instead is how `Object.defineProperty(C, "prototype",
-// {writable: false})` - which every Babel class emits - wiped the prototype it
-// had just filled in.
+/// `Object.defineProperty` with a descriptor that has no value, get or set
+/// changes attributes only and must leave the existing value alone. Every Babel
+/// class emits `Object.defineProperty(C, "prototype", {writable: false})`;
+/// writing undefined would wipe the prototype it had just filled in.
 void test_define_property_attributes_only() {
     expect_result(
         "const o = { v: 1 }; Object.defineProperty(o, 'v', { writable: false }); return o.v;", "1");
@@ -509,7 +493,7 @@ void test_define_property_attributes_only() {
                   "Object.defineProperty(F, 'prototype', { writable: false }); "
                   "return typeof F.prototype.m;",
                   "function");
-    // a FUNCTION is an object: Babel defines onto the constructor as well
+    // A function is an object: Babel defines onto the constructor as well.
     expect_result("function F() {} Object.defineProperty(F, 'tag', { value: 'x' }); return F.tag;",
                   "x");
 }
@@ -517,7 +501,7 @@ void test_define_property_attributes_only() {
 void test_object_prototype() {
     expect_result("const o = { a: 1 }; return o.hasOwnProperty('a') + '|' + o.hasOwnProperty('b');",
                   "true|false");
-    // an INHERITED property is not an own one, which is the whole question
+    // An inherited property is not an own one.
     expect_result("const base = { a: 1 }; const o = Object.create(base); "
                   "return o.a + '|' + o.hasOwnProperty('a');",
                   "1|false");
@@ -528,24 +512,19 @@ void test_object_prototype() {
     expect_result("return [1, 2].hasOwnProperty('length');", "true");
 }
 
-// A NAMED CLASS EXPRESSION BINDS ITS NAME INSIDE ITSELF, AND NOWHERE ELSE.
-//
-// `let x = class C {}` used to declare `C` in the ENCLOSING scope, so everything
-// compiled after it captured that binding - which holds undefined, because the
-// class value goes to `x`. Exactly like a named function expression, whose name
-// is visible only in its own body.
-//
-// COMPILE ORDER decided whether it bit, which is what made it look arbitrary: a
-// hoisted function declaration is compiled before the leak exists and reads the
-// outer binding correctly; a class method written later does not.
-//
-// It broke p5.js. The bundle has `let p5$2 = class p5 { ... }`, so the module
-// scope acquired a `p5` holding undefined and `new p5.TableRow()` - three
-// thousand lines later, inside p5.Table's addRow - read undefined.TableRow. The
-// error named `TableRow`, which is not where the problem was.
+/// A named class expression binds its name inside itself and nowhere else,
+/// like a named function expression. If `let x = class C {}` declared `C` in
+/// the enclosing scope, everything compiled after it would capture that
+/// binding, which holds undefined because the class value goes to `x`.
+///
+/// Compile order decides whether such a leak shows: a hoisted function
+/// declaration is compiled before the leak exists and reads the outer binding
+/// correctly; a class method written later does not. In p5.js, whose bundle has
+/// `let p5$2 = class p5 { ... }`, a leaked `p5` makes `new p5.TableRow()`
+/// inside p5.Table's addRow read undefined.TableRow, far from the cause.
 void test_a_named_class_expression_does_not_leak() {
-    // The reader is a CLASS METHOD, compiled after the expression - the case that
-    // failed. A function declaration is hoisted and would pass either way.
+    // The reader is a class method, compiled after the expression. A function
+    // declaration is hoisted and would pass either way.
     expect_result(
         "var Shared = { tag: 'outer' };\n"
         "var alias = class Shared { static who() { return 'inner'; } };\n"
@@ -559,8 +538,7 @@ void test_a_named_class_expression_does_not_leak() {
         "var read = function () { return Shared === undefined ? 'LEAKED' : Shared.tag; };\n"
         "return read();",
         "outer");
-    // The class can still see its OWN name from inside, which is what the
-    // enclosing binding was there for.
+    // The class can still see its own name from inside.
     expect_result("var alias = class Inner { static me() { return typeof Inner; } };\n"
                   "return alias.me();",
                   "function");
@@ -573,8 +551,8 @@ void test_a_named_class_expression_does_not_leak() {
                   "class Reader { read() { return typeof Shared; } }\n"
                   "return new Reader().read();",
                   "string");
-    // And a class DECLARATION still binds its name in the enclosing scope -
-    // that is the whole difference, and breaking it would be the mirror bug.
+    // A class declaration, unlike an expression, does bind its name in the
+    // enclosing scope.
     expect_result("class Kept { static tag() { return 'declared'; } }\n"
                   "class User { read() { return Kept.tag(); } }\n"
                   "return new User().read();",
@@ -604,7 +582,7 @@ void test_objects_and_arrays() {
         "let a = [1,2,3]; let s = 0; for (let i = 0; i < a.length; i++) { s = s + a[i]; } "
         "return s;",
         "6");
-    // nested structure
+    // Nested structure.
     expect_result("let o = { inner: { deep: 42 } }; return o.inner.deep;", "42");
 }
 
@@ -616,13 +594,13 @@ void test_object_statics() {
 
 void test_own_properties_beat_the_prototype() {
     // A page that puts its own `join` on an object must get its own, not the
-    // array method. Prototype lookup has to come SECOND.
+    // array method: own properties are looked up before the prototype.
     expect_result("var o = {join: function () { return 'mine'; }}; return o.join();", "mine");
 }
 
 void test_computed_and_named_lookup_agree() {
-    // `a["length"]` and `a.length` went down different paths, so a page that
-    // computed a property name silently saw undefined.
+    // `a["length"]` and `a.length` must agree, though they take different
+    // paths through the compiler.
     expect_result("var a = [1,2,3]; return a['length'];", "3");
     expect_result("var s = 'abc'; return s['length'];", "3");
     expect_result("var a = [1,2]; var m = 'push'; a[m](3); return a.length;", "3");
@@ -649,7 +627,7 @@ void test_new_and_classes() {
                   "class B extends A { who() { return 'B'; } } return new B().who();",
                   "B");
 
-    // `super(...)` runs the parent constructor against the SAME object, so the
+    // `super(...)` runs the parent constructor against the same object, so the
     // fields it sets are on the instance.
     expect_result("class A { constructor(n) { this.n = n; } }"
                   "class B extends A { constructor() { super(3); this.m = 4; } }"
@@ -661,8 +639,9 @@ void test_new_and_classes() {
                   "class B extends A { constructor() { super(); this.n = 1; }"
                   "  label() { return super.label() + 'B'; } } return new B().label();",
                   "A1B");
-    // Three deep. This is what resolving super against `this` gets wrong: C's
-    // method would find itself again and recurse until the stack gave out.
+    // Three deep. Resolving `super` against `this` instead of the method's
+    // home object would make B's method find itself again and recurse until
+    // the stack ran out.
     expect_result("class A { who() { return 'A'; } }"
                   "class B extends A { who() { return super.who() + 'B'; } }"
                   "class C extends B { who() { return super.who() + 'C'; } }"
@@ -671,9 +650,9 @@ void test_new_and_classes() {
     expect_result("class A { }; return typeof new A().constructor;", "function");
 }
 
-// A SYMBOL-KEYED PROPERTY ON A CLASS. Babylon's decorator metadata does exactly
-// this - `new.target[Symbol.metadata] = {}` and then reads it straight back -
-// and throws a named error if the read comes back empty.
+/// A symbol-keyed property on a class. Babylon's decorator metadata does this:
+/// `new.target[Symbol.metadata] = {}`, then reads it straight back, and throws
+/// a named error if the read comes back empty.
 void test_symbol_keys_on_functions() {
     expect_result("const s = Symbol('m'); const o = {}; o[s] = 3; return o[s];", "3");
     expect_result("const s = Symbol('m'); function F() {} F[s] = 2; return F[s];", "2");
@@ -685,7 +664,7 @@ void test_symbol_keys_on_functions() {
                   "class E { constructor() { const t = new.target; t[s] = t[s] || {v: 5}; } }"
                   "new E(); return E[s].v;",
                   "5");
-    // NEW.TARGET THROUGH A super() CHAIN. Babylon reads it in a derived
+    // `new.target` through a super() chain. Babylon reads it in a derived
     // constructor, after super(...), to hang decorator metadata off the class
     // actually being constructed.
     expect_result("var seen = 'unset';"
@@ -718,7 +697,7 @@ void test_object_literal_keys() {
     expect_result("var o = {1: 'one'}; return o[1];", "one");
     // Spread copies own properties in sequence, so a later key still wins.
     expect_result("var a = {x: 1, y: 2}; var b = {...a, y: 3}; return b.x + b.y;", "4");
-    expect_result("var a = {x: 1}; var b = {...a}; b.x = 9; return a.x;", "1"); // a copy
+    expect_result("var a = {x: 1}; var b = {...a}; b.x = 9; return a.x;", "1"); // A copy.
     expect_result("var a = {x: 1}; var b = {y: 2, ...a}; var keys = '';"
                   "for (const k in b) { keys += k; } return keys;",
                   "yx");

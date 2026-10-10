@@ -1,12 +1,19 @@
-// `\p{...}` and Canonicalize under `iu` (22.2.2.9, 22.2.2.7.3) - the parts of
-// the matcher that read lib/Script/regex_properties.inc. Each assertion is
-// one test262 built-ins/RegExp/property-escapes shape, reduced to a line.
+//===- ctbrowser/unittests/js/regexp/unicode.cpp - Unicode RegExp tests ---===//
+//
+// `\p{...}` and Canonicalize under `iu` (ECMA-262 22.2.2.9, 22.2.2.7.3): the
+// parts of the matcher that read lib/Script/regex_properties.inc. Each
+// assertion is one test262 built-ins/RegExp/property-escapes shape, reduced to
+// a line. Also code-unit matching without `u`, the `v` flag's class set
+// syntax, and the RegExp constructor's early errors and modifiers.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../vm/expect.hpp"
 
 namespace {
 
-// A literal that must be a SyntaxError AT PARSE TIME (22.2.1.1 early errors).
+/// Fails the test unless the regular-expression literal \p literal is a
+/// SyntaxError at parse time (ECMA-262 22.2.1.1 early errors).
 void refused(std::string_view literal) {
     const program prog = compiler::compile(std::string{literal} + ";");
     if (prog.ok || !prog.error.starts_with("parse error:")) {
@@ -20,8 +27,8 @@ void test_property_escapes() {
     expect_result("return /^\\p{Lu}+$/u.test('ABC') + ',' + /^\\p{Lu}+$/u.test('AbC');",
                   "true,false");
     expect_result("return /\\P{Lu}/u.test('A') + ',' + /\\P{Lu}/u.test('a');", "false,true");
-    // the lone form takes a General_Category value or a binary property,
-    // under any of its aliases; the pair form takes gc, sc and scx only
+    // The lone form takes a General_Category value or a binary property,
+    // under any of its aliases; the pair form takes gc, sc and scx only.
     expect_result("return /^[\\p{Letter}\\p{L}\\p{gc=L}\\p{General_Category=Letter}]{4}$/u"
                   ".test('a\\u00e9\\u0391\\u4e00');",
                   "true");
@@ -29,7 +36,7 @@ void test_property_escapes() {
                   "/^\\p{sc=Latn}+$/u.test('\\u0391');",
                   "true,false");
     // U+00B7 MIDDLE DOT is Common by Script and Latin (among others) by
-    // Script_Extensions
+    // Script_Extensions.
     expect_result("return /\\p{Script=Latin}/u.test('\\u00b7') + ',' + "
                   "/\\p{scx=Latn}/u.test('\\u00b7');",
                   "false,true");
@@ -39,17 +46,18 @@ void test_property_escapes() {
         "return /\\p{Any}/u.test('\\u{10FFFF}') + ',' + /\\p{Assigned}/u.test('\\u0378');",
         "true,false");
     expect_result("return /[\\p{Hex}\\P{Hex}]/u.test('\\u{1D306}');", "true");
-    // without `u` it is the letter p
+    // Without `u` it is the letter p.
     expect_result("return /\\p{Lu}/.test('p{Lu}') + ',' + /\\p{Lu}/.test('A');", "true,false");
     // `\P` is the complement of the set and `[^...]` inverts the match: they
-    // differ under `iu`, where Canonicalize runs between the two
+    // differ under `iu`, where Canonicalize runs between the two.
     expect_result("return /\\P{Lu}/iu.test('A') + ',' + /[^\\p{Lu}]/iu.test('A');", "true,false");
-    // the properties of strings need `v`, and match a whole sequence
+    // The properties of strings need `v`, and match a whole sequence.
     expect_result("return /^\\p{RGI_Emoji_Flag_Sequence}$/v.test('\\u{1F1FA}\\u{1F1F8}') + ',' + "
                   "/^\\p{Basic_Emoji}$/v.test('\\u231A');",
                   "true,true");
-    // no loose matching, no unknown names, no properties the table does not
-    // list, no strings under `u` or negated (all 22.2.1.1 early errors)
+    // No loose matching, no unknown names, no properties the table does not
+    // list, no strings under `u` or negated (all ECMA-262 22.2.1.1 early
+    // errors).
     refused("/\\p{ Lu }/u");
     refused("/\\p{lu}/u");
     refused("/\\p{Nope}/u");
@@ -69,8 +77,8 @@ void test_property_escapes() {
 }
 
 void test_canonicalize() {
-    // simple case folding under `iu`: K and the KELVIN SIGN share a fold, as
-    // do s and LATIN SMALL LETTER LONG S - and only under `u`
+    // Simple case folding under `iu`: K and the KELVIN SIGN share a fold, as
+    // do s and LATIN SMALL LETTER LONG S, and only under `u`.
     expect_result("return /k/iu.test('\\u212a') + ',' + /\\u212a/iu.test('k') + ',' + "
                   "/k/i.test('\\u212a');",
                   "true,true,false");
@@ -79,24 +87,24 @@ void test_canonicalize() {
                   "true,false,false");
     expect_result("return /[\\u03c3]/iu.test('\\u03a3') + ',' + /[\\u03c3]/iu.test('\\u03c2');",
                   "true,true");
-    // a pattern character above ASCII is one atom: the quantifier repeats
-    // the character, not its last byte
+    // A pattern character above ASCII is one atom: the quantifier repeats
+    // the character, not its last byte.
     expect_result(
         "return /^\u00e9+$/.test('\\u00e9\\u00e9') + ',' + /^\u00e9{2}$/.test('\\u00e9');",
         "true,false");
-    // \s is WhiteSpace and LineTerminator, not the ASCII five
+    // \s is WhiteSpace and LineTerminator, not the ASCII five.
     expect_result("return /\\s/.test('\\u00a0') + ',' + /\\s/.test('\\u2028') + ',' + "
                   "/\\S/.test('\\u3000');",
                   "true,true,false");
     expect_result("return /[\\D]/.test('5') + ',' + /[\\D]/.test('x');", "false,true");
-    // a million repetitions of one class is a loop, not a recursion
+    // A million repetitions of one class is a loop, not a recursion.
     expect_result("let s = ''; for (let i = 0; i < 200; i++) s += 'abcdefghij'.repeat(1000);"
                   "return /^\\p{L}+$/u.test(s) + ',' + /^[a-j]*$/.test(s) + ',' + s.length;",
                   "true,true,2000000");
 }
 
 void test_unicode_sets() {
-    // ClassSetExpression: union, `--`, `&&`, nested classes, `\q{...}`
+    // ClassSetExpression: union, `--`, `&&`, nested classes, `\q{...}`.
     expect_result("return /^[[0-9]--[0-9]]+$/v.test('0') + ',' + /^[[0-9]&&\\d]+$/v.test('5') + "
                   "',' + /^[\\w--\\d]+$/v.test('ab_') + ',' + /^[\\w--\\d]+$/v.test('a1');",
                   "false,true,true,false");
@@ -112,13 +120,13 @@ void test_unicode_sets() {
                   "/^[\\p{Emoji_Keycap_Sequence}&&\\q{0|2|4|9\\uFE0F\\u20E3}]+$/v"
                   ".test('9\\uFE0F\\u20E3');",
                   "true,false,true");
-    // under `vi` an operand is folded before it is complemented, so `\P{Lu}`
-    // no longer takes "A" - the documented break between u and v
+    // Under `vi` an operand is folded before it is complemented, so `\P{Lu}`
+    // no longer takes "A": the documented break between u and v.
     expect_result("return /\\P{Lu}/ui.test('A') + ',' + /\\P{Lu}/vi.test('A') + ',' + "
                   "/[\\p{Lu}--[a-c]]/vi.test('A') + ',' + /[\\p{Lu}--[a-c]]/vi.test('D');",
                   "true,false,false,true");
-    // the syntax characters must be escaped, the double punctuators are
-    // reserved, operators do not mix, a range is a union's
+    // The syntax characters must be escaped, the double punctuators are
+    // reserved, operators do not mix, a range is a union's.
     for (const char * bad : {"/[(]/v", "/[-]/v", "/[&&]/v", "/[^^^]/v", "/[_^^]/v", "/[a-z--b]/v",
                              "/[a--b&&c]/v", "/[^\\q{ab}]/v", "/\\P{RGI_Emoji}/v"}) {
         refused(bad);
@@ -128,10 +136,10 @@ void test_unicode_sets() {
                   "true,true,false");
 }
 
-// `new RegExp(p, f)` is judged by the same early-error scan a literal gets
-// (22.2.3.4), a class range out of order is one of those errors in both
-// readers, `\k` outside `u` is Annex B's letter k, and `(?ims-ims:...)` sets
-// the modifiers for its body alone (22.2.2.1.1).
+/// `new RegExp(p, f)` is judged by the same early-error scan a literal gets
+/// (ECMA-262 22.2.3.4), a class range out of order is one of those errors in
+/// both readers, `\k` outside `u` is Annex B's letter k, and `(?ims-ims:...)`
+/// sets the modifiers for its body alone (22.2.2.1.1).
 void test_constructor_and_modifiers() {
     for (const char * bad :
          {"a**", "??", "+a", "x{1}{1,}", "[b-a]", "(?s-s:a)", "(?x:a)", "(?-:a)", "[\\\\d-x]"}) {
@@ -154,30 +162,30 @@ void test_constructor_and_modifiers() {
                   "true,true,true,false,false,false");
 }
 
-// 22.2.1.1 GroupName: an ID_Start/ID_Continue name over DECODED code points
-// (test262 language/literals/regexp/named-groups/invalid-non-id-*).
+/// ECMA-262 22.2.1.1 GroupName: an ID_Start/ID_Continue name over decoded code
+/// points (test262 language/literals/regexp/named-groups/invalid-non-id-*).
 void test_group_names() {
     for (const char * bad : {"/(?<$\u{275E}>a)/", "/(?<\u2764>a)/", "/(?<a\\uD801>.)/",
                              "/(?<a\\uDCA4>.)/u", "/(?<a\\u{1F08B}>.)/", "/(?<\\>.)/",
                              "/(?<a\\u{110000}>.)/u", "/(?<a\\uD83D\\uDF12>.)/"}) {
         refused(bad);
     }
-    // escapes decode to the name they spell, a surrogate pair to one point
+    // Escapes decode to the name they spell, a surrogate pair to one point.
     expect_result("return 'ab'.match(/(?<\\u0061>a)/).groups.a;", "a");
     expect_result("return 'x'.match(/(?<\\ud835\\udcd1>x)/).groups['\\u{1d4d1}'];", "x");
     expect_result("return /(?<the\\u{1d7da}>t)\\k<the\\ud835\\udfda>/u.test('tt');", "true");
     expect_result("try { new RegExp('(?<\\u{1d7da}the>t)'); return 'no'; } "
                   "catch (e) { return e.name; }",
                   "SyntaxError");
-    // `(?<a>)` and `(?<\u0061>)` bind one name twice
+    // `(?<a>)` and `(?<\u0061>)` bind one name twice.
     refused("/(?<a>x)(?<\\u0061>y)/");
 }
 
 } // namespace
 
-// WITHOUT `u` THE INPUT IS CODE UNITS (22.2.2): `.` takes one half of a pair,
-// a literal pair in the pattern is two characters, and every position is a
-// unit. With `u` a `\uHHHH\uHHHH` pair of escapes is one code point.
+/// Without `u` the input is code units (ECMA-262 22.2.2): `.` takes one half of
+/// a pair, a literal pair in the pattern is two characters, and every position
+/// is a unit. With `u` a `\uHHHH\uHHHH` pair of escapes is one code point.
 void test_code_units() {
     expect_result("return [/^.$/.test('\\u{10300}'), /^..$/.test('\\u{10300}'),"
                   " /^.$/u.test('\\u{10300}')].join();",
@@ -189,7 +197,8 @@ void test_code_units() {
     expect_result("return /^\\ud834\\udf06$/u.test('\\u{1d306}') + ',' +"
                   " /^[\\ud834\\udf06]$/u.test('\\u{1d306}');",
                   "true,true");
-    // ...and so does the compile-time check: a range between two pairs.
+    // The compile-time check reads such a pair as one code point too: a range
+    // between two pairs.
     expect_result("return /^[\\ud834\\udf06-\\ud834\\udf08]$/u.test('\\u{1d307}');", "true");
     // A pair written in the pattern: without `u`, `+` repeats its second half.
     expect_result("return /^\\u{1d306}+$/u.test('\\u{1d306}\\u{1d306}') + ',' +"

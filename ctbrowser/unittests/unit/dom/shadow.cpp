@@ -1,3 +1,10 @@
+//===- ctbrowser/unittests/unit/dom/shadow.cpp - shadow root tests --------===//
+//
+// Unit tests for document::attach_shadow and the shadow-root bookkeeping:
+// which elements may host a shadow root (DOM 4.2.14), how shadow trees nest
+// and report their roots, and that shadow metadata belongs to one document.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/dom/document.hpp>
 
 #include "check.hpp"
@@ -8,6 +15,8 @@ using namespace ctbrowser;
 
 namespace {
 
+/// The valid host names, the invalid ones (including custom-element-like names
+/// the spec reserves), non-HTML elements and non-elements.
 void test_host_validation() {
     atom_table atoms;
     document doc{atoms};
@@ -20,7 +29,7 @@ void test_host_validation() {
         CHECK(root.has_value());
         const auto duplicate = doc.attach_shadow(host, false);
         CHECK(!duplicate && duplicate.error() == dom_error::shadow_root_exists);
-        CHECK(doc.shadow_tree_of(host) == nullptr);
+        CHECK(doc.shadow_tree_of(host) == nullptr); // The host is not itself a root.
     }
     for (const std::string_view name :
          {"table", "input", "unknown", "my-Widget", "X-widget", "annotation-xml", "color-profile",
@@ -48,6 +57,8 @@ void test_host_validation() {
     CHECK_EQ(doc.node_count(), before);
 }
 
+/// A shadow root is not a child of its host. root_of_tree stops at the shadow
+/// root, or with `true` (the shadow-including root) continues through hosts.
 void test_nested_tree_and_detachment() {
     atom_table atoms;
     document doc{atoms};
@@ -57,7 +68,7 @@ void test_nested_tree_and_detachment() {
     CHECK(doc.append_child(html, host).has_value());
     const auto version = doc.version();
     const node_id root = doc.attach_shadow(host, true).value();
-    CHECK_EQ(doc.version(), version); // attaching a detached tree never dirtied layout
+    CHECK_EQ(doc.version(), version); // attach_shadow alone does not bump the version.
     const node_id inner_host = doc.create_element(atoms.intern("section"));
     CHECK(doc.append_child(root, inner_host).has_value());
     const node_id closed = doc.attach_shadow(inner_host, false).value();
@@ -90,17 +101,18 @@ void test_nested_tree_and_detachment() {
     CHECK(std::ranges::find(roots, closed) != roots.end());
     const node_id another = doc.create_element(atoms.intern("aside"));
     CHECK(doc.attach_shadow(another, true).has_value());
-    CHECK_EQ(roots.size(), 2u); // the enumeration is a snapshot
+    CHECK_EQ(roots.size(), 2u); // The enumeration is a snapshot.
     CHECK_EQ(doc.shadow_roots().size(), 3u);
 }
 
+/// Shadow metadata is per document, even though equal node ids exist in both.
 void test_metadata_belongs_to_its_document() {
     atom_table atoms;
     document first{atoms};
     document second{atoms};
     const node_id host = first.create_element(atoms.intern("div"));
     const node_id other_host = second.create_element(atoms.intern("div"));
-    CHECK(host == other_host); // node handles alone carry no document identity
+    CHECK(host == other_host); // Node handles alone carry no document identity.
     const node_id root = first.attach_shadow(host, true).value();
     CHECK(!second.shadow_root_of(other_host));
     CHECK(second.shadow_tree_of(root) == nullptr);

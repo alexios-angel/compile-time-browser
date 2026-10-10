@@ -1,19 +1,17 @@
-// THE DOCUMENT IS A NODE, and here it barely was one.
+//===- node.cpp - Document-as-Node tests ------------------------*- C++ -*-===//
 //
-// Twenty-two members of `Node` and `ParentNode` read `undefined` on `document`
-// before this file existed - `contains`, `compareDocumentPosition`,
-// `isConnected`, `textContent`, `append`, `createAttribute` and the rest - and
-// a cluster of `dom/nodes` HARNESS_ERRORs stood behind them, because a harness
-// error means the test could not START and every subtest in it is lost.
+// `document` as a Node: the Node and ParentNode members (contains,
+// compareDocumentPosition, isConnected, textContent, append, createAttribute,
+// ...) on the document object. A missing member here makes WPT dom/nodes tests
+// fail as harness errors, losing every subtest in the file.
 //
-// WHAT MAKES THIS WORTH A FILE OF ITS OWN rather than more of node_methods:
-// this tree builder has NO DOCUMENT NODE. `txn.root()` is the `<html>` element
-// and `document` is a plain script object with no handle at all, so every case
-// below is asking whether a Document that does not exist is being modelled
-// consistently - not whether a method returns the right number. The block above
-// `install_document_as_node` in lib/Shell/bindings/document/as_node.cpp is the decision
-// these cases pin down; the ones that assert a THROW pin down its limits, which
-// is the half that would otherwise drift into a quiet wrong answer.
+// This tree builder has no Document node: `txn.root()` is `<html>` and
+// `document` is a plain script object. These cases pin down how
+// install_document_as_node (lib/Shell/bindings/document/as_node.cpp) models a
+// Document anyway, and the cases that expect a throw pin down where that model
+// stops, so it cannot drift into a quietly wrong answer.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -29,11 +27,11 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-// `xmlns:bar` ON THE ROOT is not decoration: `lookupNamespaceURI` and
-// `lookupPrefix` on a Document are defined as the element algorithm run on
-// documentElement, and with no declaration anywhere the only answer they could
-// give is the one the element's own namespace already provides - which would
-// pass without the attribute walk being written at all.
+/// The test page. The `xmlns:bar` on the root is deliberate: `lookupNamespaceURI`
+/// and `lookupPrefix` on a Document run the element algorithm on
+/// documentElement, and without a declaration the only answer they could give
+/// comes from the element's own namespace, which would pass even if the
+/// attribute walk were never implemented.
 constexpr const char * page_html = R"(<!DOCTYPE html>
 <html xmlns:bar="barURI"><body>
 <div id=outer>
@@ -41,7 +39,9 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 </div>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks that \p expression evaluates to \p expected on a fresh copy of
+/// `page_html` (a fresh page per case, since many of these mutate the
+/// document).
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -53,14 +53,14 @@ void test_the_document_reports_itself_as_a_node() {
     is("document.nodeName", "#document");
     is("document.nodeValue === null", "true");
     is("document.ownerDocument === null", "true");
-    // A Document is ALWAYS connected: its root is itself.
+    // A Document is always connected: its root is itself.
     is("document.isConnected", "true");
-    // NULL, NOT "" - the table in DOM 4.4 gives a Document a null textContent,
+    // Null, not "": the table in DOM 4.4 gives a Document a null textContent,
     // and "" would tell a page the document is empty.
     is("document.textContent === null", "true");
     is("typeof document.textContent", "object");
-    // And the assignment is defined to do NOTHING, which is why it is an
-    // accessor: a data property would let `document.textContent = 'x'` stick.
+    // Assigning it is defined to do nothing, which is why it is an accessor: a
+    // data property would let `document.textContent = 'x'` stick.
     is("(function () { document.textContent = 'x'; return document.textContent === null; })()",
        "true");
     is("document.getRootNode() === document", "true");
@@ -106,13 +106,13 @@ void test_contains_and_the_document_containing_everything() {
     is("document.contains(document.body)", "true");
     is("document.contains(document.getElementById('p1'))", "true");
     is("document.contains(document.getElementById('p1').firstChild)", "true");
-    // NULL IS FALSE, NOT A THROW. `Node-contains.html` opens with exactly this
-    // assertion for every one of its twenty-three nodes, so a throw here loses
-    // the whole file.
+    // contains(null) is false, not a throw. `Node-contains.html` opens with
+    // exactly this assertion for every one of its twenty-three nodes, so a
+    // throw here loses the whole file.
     is("document.contains(null)", "false");
     is("document.contains(undefined)", "false");
     is("document.contains(document.createElement('div'))", "false");
-    // A node that WAS in the page and is not any more.
+    // A node that was in the page and has been removed.
     is("(function () { var p = document.getElementById('p1'); p.remove(); "
        "return document.contains(p); })()",
        "false");
@@ -129,7 +129,8 @@ void test_compare_document_position_reports_the_real_bitmask() {
     is("document.DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC", "32");
     // "If other and reference are the same object, return zero."
     is("document.compareDocumentPosition(document)", "0");
-    // Everything in the page is CONTAINED_BY the document and FOLLOWS it.
+    // Everything in the page is CONTAINED_BY (16) the document and FOLLOWING
+    // (4) it.
     is("document.compareDocumentPosition(document.body)", "20");
     is("document.compareDocumentPosition(document.getElementById('p1')) & "
        "document.DOCUMENT_POSITION_CONTAINED_BY",
@@ -142,11 +143,12 @@ void test_compare_document_position_reports_the_real_bitmask() {
     is("document.compareDocumentPosition(document.body) & "
        "(document.DOCUMENT_POSITION_CONTAINS | document.DOCUMENT_POSITION_PRECEDING)",
        "0");
-    // A detached node is DISCONNECTED, IMPLEMENTATION_SPECIFIC and - because
-    // the document is first in every order this engine could pick - FOLLOWING.
+    // A detached node is DISCONNECTED | IMPLEMENTATION_SPECIFIC | FOLLOWING
+    // (1 + 32 + 4 = 37); FOLLOWING because the document is first in every
+    // order this engine could pick.
     is("document.compareDocumentPosition(document.createElement('div'))", "37");
-    // CONSISTENT, which is the only thing the specification asks of the
-    // direction: the same pair answers the same way twice.
+    // The direction must be consistent, which is all the specification asks:
+    // the same pair answers the same way twice.
     is("(function () { var d = document.createElement('div'); "
        "return document.compareDocumentPosition(d) === document.compareDocumentPosition(d); })()",
        "true");
@@ -157,23 +159,22 @@ void test_compare_document_position_reports_the_real_bitmask() {
 
 void test_lookup_namespace_uri_and_its_two_siblings() {
     // A Document delegates all three to documentElement, and <html> is in the
-    // XHTML namespace with no prefix - so the null prefix finds it, and the
+    // XHTML namespace with no prefix, so the null prefix finds it, and the
     // empty string is the null prefix.
     is("document.lookupNamespaceURI(null)", "http://www.w3.org/1999/xhtml");
     is("document.lookupNamespaceURI('')", "http://www.w3.org/1999/xhtml");
-    // The declaration on the root, read off the attribute's qualified name -
-    // `struct attribute` has nowhere to put a namespace, so `xmlns:bar` as
-    // WRITTEN is the whole of the evidence.
+    // The declaration on the root is read off the attribute's qualified name
+    // `xmlns:bar`, since the HTML parser stores it in the null namespace.
     is("document.lookupNamespaceURI('bar')", "barURI");
     is("document.lookupNamespaceURI('nope') === null", "true");
-    // `xml` and `xmlns` are bound at every element with no declaration saying
-    // so - they are reserved, and nothing in the tree could answer them.
+    // `xml` and `xmlns` are bound at every element with no declaration: they
+    // are reserved, and nothing in the tree could answer them.
     is("document.lookupNamespaceURI('xml')", "http://www.w3.org/XML/1998/namespace");
     is("document.lookupNamespaceURI('xmlns')", "http://www.w3.org/2000/xmlns/");
     is("document.lookupPrefix('barURI')", "bar");
     is("document.lookupPrefix('http://www.example.org/') === null", "true");
     is("document.lookupPrefix(null) === null", "true");
-    // isDefaultNamespace compares against what the NULL prefix locates, so a
+    // isDefaultNamespace compares against what the null prefix locates, so a
     // document whose root is in the XHTML namespace answers false to null.
     is("document.isDefaultNamespace('http://www.w3.org/1999/xhtml')", "true");
     is("document.isDefaultNamespace(null)", "false");
@@ -185,23 +186,23 @@ void test_lookup_namespace_uri_and_its_two_siblings() {
 
 void test_append_and_prepend_on_the_document() {
     // "A Document may have at most one element child", and this one already has
-    // <html>. Both of these are the SPECIFIED answer rather than this engine's
-    // limitation, which is why they name a DOMException the DOM does put here.
+    // <html>. Both of these are the specified answer rather than this engine's
+    // limitation, which is why they name the DOMException the DOM specifies.
     is("document.append(document.createElement('x'))", "threw:HierarchyRequestError");
     is("document.prepend(document.createElement('x'))", "threw:HierarchyRequestError");
-    // A string argument becomes a Text node - which a Document may never have.
+    // A string argument becomes a Text node, which a Document may never have.
     is("document.append('text')", "threw:HierarchyRequestError");
     is("document.prepend('text')", "threw:HierarchyRequestError");
     // No arguments is a documented no-op.
     is("String(document.append()) + ',' + document.childNodes.length", "undefined,2");
-    // EVERY ARGUMENT IS CHECKED BEFORE ANYTHING IS INSERTED, which is what
+    // Every argument is checked before anything is inserted, which is what
     // `append-on-Document.html` measures: the child list is untouched after.
     is("(function () { try { document.append(document.createElement('x'), "
        "document.createElement('y')); } catch (e) { return e.name + ',' + "
        "document.childNodes.length; } return 'no throw'; })()",
        "HierarchyRequestError,2");
     is("document.appendChild(document.createElement('x'))", "threw:HierarchyRequestError");
-    // A Comment IS a legal child of a Document, before or after the element,
+    // A Comment is a legal child of a Document, before or after the element,
     // and a second doctype is not.
     is("(function () { var c = document.createComment('c'); document.appendChild(c);"
        " return (document.lastChild === c) + ',' + (c.parentNode === document) + ',' +"
@@ -219,14 +220,14 @@ void test_append_and_prepend_on_the_document() {
     is("document.replaceChildren()", "threw:NotSupportedError");
     is("document.insertBefore(document.createElement('x'), document.documentElement)",
        "threw:HierarchyRequestError");
-    // "If child is non-null and its parent is not parent, throw NotFoundError"
-    // - and it comes BEFORE the check on what is being inserted.
+    // "If child is non-null and its parent is not parent, throw NotFoundError",
+    // and that check comes before the check on what is being inserted.
     is("document.insertBefore(document.createElement('x'), document.body)", "threw:NotFoundError");
     is("document.removeChild(document.body)", "threw:NotFoundError");
     is("document.removeChild(document.documentElement)", "threw:NotSupportedError");
     is("document.replaceChild(document.createElement('x'), document.body)", "threw:NotFoundError");
     // `cloneNode` is a second document: empty when shallow, the doctype and
-    // the tree when deep - and equal to this one only then.
+    // the tree when deep, and isEqualNode to this one only when deep.
     is("(function () { var d = document.cloneNode(); return d.nodeType + ',' + d.childNodes.length"
        " + ',' + (d !== document) + ',' + d.contentType + ',' + d.compatMode; })()",
        "9,0,true,text/html,CSS1Compat");
@@ -246,7 +247,7 @@ void test_append_and_prepend_on_the_document() {
 
 void test_normalize_merges_the_text_nodes_below_the_document() {
     // Three text nodes and an empty one, which is the case the specification
-    // orders: the empty node is removed FIRST, so it does not stop the two
+    // orders: the empty node is removed first, so it does not stop the two
     // around it being joined.
     is("(function () { var d = document.createElement('div'); "
        "d.appendChild(document.createTextNode('a')); "
@@ -268,8 +269,9 @@ void test_normalize_merges_the_text_nodes_below_the_document() {
 // --- createElement's name rule: two rests, DOM 4.9 -------------------------
 
 void test_create_element_and_its_name_rule() {
-    // After an ASCII alpha anything but a tag-name break; after `:`, `_` or a
-    // non-ASCII start only name characters (name-validation.html).
+    // After an initial ASCII letter, anything but a tag-name break is allowed;
+    // after an initial `:`, `_` or non-ASCII character, only name characters
+    // (name-validation.html).
     is("document.createElement('a!').localName", "a!");
     is("document.createElement('f}oo').localName", "f}oo");
     is("document.createElement('_a-b.c:d').localName", "_a-b.c:d");
@@ -284,11 +286,10 @@ void test_create_element_and_its_name_rule() {
 // --- createAttribute, and the name rule that is worth more than the object --
 
 void test_create_attribute_and_its_name_rule() {
-    // THE EMPTY STRING IS THE ONE NAME THAT THROWS. `dom/nodes/productions.js`
-    // lists exactly one invalid name and thirteen valid ones, and every one of
-    // the thirteen is refused by the XML `Name` production - an attribute name
-    // is measured by whether it survives being written into a start tag, and
-    // nothing below would fail to.
+    // Of productions.js' list, the empty string is the one name that throws.
+    // `dom/nodes/productions.js` lists one invalid name and thirteen valid
+    // ones that the XML `Name` production would all refuse: an attribute name
+    // is valid if it survives being written into a start tag.
     is("document.createAttribute('')", "threw:InvalidCharacterError");
     is("document.createAttribute('a b')", "threw:InvalidCharacterError");
     is("document.createAttribute('a>b')", "threw:InvalidCharacterError");
@@ -310,8 +311,8 @@ void test_create_attribute_and_its_name_rule() {
                                                             {"'", "'"}}) {
         is(std::string{"document.createAttribute(\""} + written + "\").name", expected);
     }
-    // AN HTML DOCUMENT LOWERCASES, and name, nodeName and localName are the
-    // same string for a createAttribute attribute - there is no prefix split.
+    // An HTML document lowercases the name, and name, nodeName and localName
+    // are the same string for a createAttribute attribute (no prefix split).
     is("document.createAttribute('TITLE').name", "title");
     is("document.createAttribute('TITLE').nodeName", "title");
     is("document.createAttribute('TITLE').localName", "title");
@@ -327,9 +328,8 @@ void test_create_attribute_and_its_name_rule() {
     is("document.createAttribute('x').prefix === null", "true");
     is("document.createAttribute('x').namespaceURI === null", "true");
     is("document.createAttribute('x').ownerElement === null", "true");
-    // ONE STRING BEHIND THREE SPELLINGS: writing `value` has to be visible
-    // through `nodeValue` and `textContent`, which three data properties would
-    // not have been.
+    // One string behind three names: writing `value` has to be visible through
+    // `nodeValue` and `textContent`, which three data properties would not be.
     is("(function () { var a = document.createAttribute('x'); a.value = 'v'; "
        "return a.nodeValue + ',' + a.textContent; })()",
        "v,v");
@@ -343,25 +343,25 @@ void test_create_attribute_and_its_name_rule() {
     is("document.createAttributeNS(null, 'p:Local')", "threw:NamespaceError");
     is("document.createAttributeNS('http://www.example.org/', 'xmlns')", "threw:NamespaceError");
     is("document.createAttributeNS('http://www.w3.org/2000/xmlns/', 'xmlns').name", "xmlns");
-    // The NAME is validated before the namespace, so a bad name in the XMLNS
+    // The name is validated before the namespace, so a bad name in the XMLNS
     // namespace is an InvalidCharacterError rather than the NamespaceError its
     // namespace would otherwise earn.
     is("document.createAttributeNS('http://www.w3.org/2000/xmlns/', 'a b')",
        "threw:InvalidCharacterError");
 }
 
-// `document.fonts` - a FontFaceSet whose `ready` is already resolved, because
-// `browser::load_page_fonts` runs before any script does. Ten `css/css-values`
-// files call `document.fonts.ready.then(...)` on their first line and every one
-// of them died there on `` `then` is undefined ``.
+/// `document.fonts` is a FontFaceSet whose `ready` is already resolved, because
+/// `browser::load_page_fonts` runs before any script does. Many WPT
+/// `css/css-values` files call `document.fonts.ready.then(...)` on their first
+/// line.
 void test_the_font_face_set() {
     is("typeof document.fonts", "object");
     is("document.fonts.status", "loaded");
     is("document.fonts.size", "0");
     is("typeof document.fonts.ready.then", "function");
     is("document.fonts.check('12px serif')", "true");
-    // Two reads are the same promise's shape, not two different objects with
-    // one working - the accessor is what roots the set.
+    // Both reads return a working promise, not one working object and one
+    // stale one; the accessor is what keeps the set alive.
     is("(function () { var a = document.fonts.ready, b = document.fonts.ready;"
        " return (typeof a.then) + ',' + (typeof b.then); })()",
        "function,function");

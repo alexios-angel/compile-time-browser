@@ -1,27 +1,30 @@
-// ctbrowser.layout: positioning - CSS 2.1 §9.3 and §10.
+//===- ctbrowser/unittests/unit/position_basics.cpp - Positioning tests ---===//
 //
-// The claim being tested is the one that makes positioning different from every
-// other part of layout: THE BOX THAT DECIDES WHERE A CHILD GOES IS NOT ITS
-// PARENT. An absolutely positioned box is placed against the nearest positioned
-// ANCESTOR, which may be ten levels up and which finished laying out long before
-// the child was reached - so the flows leave an empty fragment at the child's
-// static position and layout::apply_positioning places it afterwards, when the
-// chain is known.
+// ctbrowser.layout positioning, CSS 2.1 §9.3 and §10.
+//
+// What makes positioning different from the rest of layout: the box that
+// decides where a child goes is not its parent. An absolutely positioned box
+// is placed against its nearest positioned ancestor, which may be ten levels
+// up and finished laying out long before the child was reached. So the flows
+// leave an empty fragment at the child's static position, and
+// layout::apply_positioning places it afterwards, when the chain is known.
 //
 // Almost every case here distinguishes two things that look alike and are not:
 // `relative` leaves its slot behind and `absolute` does not; an `auto` offset is
-// the static position and not zero; a containing block is a PADDING box and not
-// a content box; and both offsets on an axis STRETCH a box where one of them
+// the static position and not zero; a containing block is a padding box and not
+// a content box; and both offsets on an axis stretch a box where one of them
 // shrink-wraps it.
 //
 // Text is measured with monospace_measure: one character is `font_size * 0.6`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "layout/fixture.hpp"
 
 namespace {
 
-// The shared fixture, laid out: positioning is the one stage where the
-// viewport HEIGHT matters, because a fixed box is placed against it.
+/// The shared fixture, laid out. Positioning is the one stage where the
+/// viewport height matters, because a fixed box is placed against it.
 struct placed {
     fixture page;
     fragment out;
@@ -32,9 +35,10 @@ struct placed {
         out = eng.run(page.root, width, height);
     }
 
-    // ABSOLUTE coordinates, which is the only frame in which a positioned box's
-    // place can be stated: its fragment's own bounds are relative to whichever
-    // parent it happens to hang off, and that parent is not its containing block.
+    /// Returns the box of the element with id \p id in absolute coordinates,
+    /// the only frame in which a positioned box's place can be stated: its
+    /// fragment's own bounds are relative to whichever parent it hangs off, and
+    /// that parent is not its containing block.
     [[nodiscard]] rect at(std::string_view id) {
         const node_id want = page.find_id(id);
         rect found{};
@@ -56,8 +60,8 @@ constexpr std::string_view reset = "body { margin: 0; padding: 0 } ";
 // --- relative -------------------------------------------------------------
 
 void test_relative_moves_but_keeps_its_slot() {
-    // THE WHOLE DIFFERENCE between relative and absolute, in one document. The
-    // moved box is drawn 10 across and 20 down from where it was; the box AFTER
+    // The whole difference between relative and absolute, in one document. The
+    // moved box is drawn 10 across and 20 down from where it was; the box after
     // it does not notice, because the slot is still occupied.
     placed f;
     f.load("<html><body><div id=a></div><div id=b></div></body></html>",
@@ -77,7 +81,7 @@ void test_relative_with_bottom_and_right_moves_the_other_way() {
                .append("div { height: 40px } "
                        "#a { position: relative; bottom: 15px; right: 5px }")
                .c_str());
-    // `bottom` and `top` are opposites, so a bottom offset moves the box UP.
+    // `bottom` and `top` are opposites, so a bottom offset moves the box up.
     expect_near(f.at("a").y, -15, "`bottom` moves it up");
     expect_near(f.at("a").x, -5, "and `right` moves it left");
 }
@@ -91,7 +95,7 @@ void test_absolute_leaves_no_slot_behind() {
                .append("div { height: 40px } #a { position: absolute; top: 100px }")
                .c_str());
     expect_near(f.at("a").y, 100, "the absolute box goes where it was told");
-    // The sibling moves UP into the space, which a relative box would have kept.
+    // The sibling moves up into the space, which a relative box would have kept.
     expect_near(f.at("b").y, 0, "and its sibling takes the space it vacated");
 }
 
@@ -148,7 +152,7 @@ void test_a_static_position_collapses_hypothetical_margins() {
 void test_both_offsets_stretch_and_one_shrink_wraps() {
     const std::string html = "<html><body><div id=anchor><div id=a>hi</div></div></body></html>";
     {
-        // Both given and the width auto: the box stretches BETWEEN them, which is
+        // Both given and the width auto: the box stretches between them, which is
         // how a full-width overlay is written.
         placed f;
         f.load(html, std::string{reset}
@@ -160,7 +164,7 @@ void test_both_offsets_stretch_and_one_shrink_wraps() {
         expect_near(f.at("a").width, 250, "and stretches to `right`");
     }
     {
-        // Only one given: it SHRINKS TO FIT, which is why
+        // Only one given: it shrinks to fit, which is why
         // `.position-absolute.top-0.start-0` is the size of its text and not the
         // size of the page.
         placed f;
@@ -176,7 +180,8 @@ void test_auto_margins_between_two_offsets_are_solved() {
     // CSS 2.1 §10.3.7 rule 6 and §10.6.4: both offsets and a size given, the
     // auto margins take what is left - equally for a pair, which is how an
     // absolutely positioned box is centred - and the used margins are what the
-    // fragment carries for CSSOM (computed-style-005 reads them as 10px).
+    // fragment carries for CSSOM (the WPT test computed-style-005 reads them as
+    // 10px).
     const std::string html = "<html><body><div id=anchor><div id=a></div></div></body></html>";
     placed f;
     f.load(html, std::string{reset}
@@ -262,8 +267,8 @@ void test_fixed_is_placed_against_the_WINDOW() {
 
 void test_translate_offsets_by_a_share_of_the_box_itself() {
     // `.translate-middle` is `translate(-50%, -50%)` and it is how every centred
-    // overlay in Bootstrap is anchored. The percentages are of the box's OWN
-    // size, which is what makes it centre ON its anchor point.
+    // overlay in Bootstrap is anchored. The percentages are of the box's own
+    // size, which is what makes it centre on its anchor point.
     placed f;
     f.load("<html><body><div id=anchor><div id=a>hi</div></div></body></html>",
            std::string{reset}
@@ -312,7 +317,7 @@ void test_the_inset_shorthand() {
 
 void test_a_positioned_box_is_still_an_anchor_with_no_offsets() {
     // `.position-relative` with nothing else is one of Bootstrap's commonest
-    // declarations: it exists ONLY to be a containing block.
+    // declarations: it exists only to be a containing block.
     placed f;
     f.load("<html><body><div id=pad></div><div id=anchor><div id=a></div></div></body></html>",
            std::string{reset}

@@ -1,20 +1,25 @@
-// WHAT A SHADOW TREE HIDES AND WHAT MOVES WITH IT, each the smallest
-// expression that fails if its fix goes:
+//===- hits_and_moves.cpp - Shadow tree hit tests and moves -----*- C++ -*-===//
 //
-//   * a ShadowRoot has elementFromPoint and elementsFromPoint of its own,
-//     null off the viewport, and the document is answered with a host
-//     (shadowroot-methods test-007). What a shadow root sees INSIDE its tree
-//     waits on shadow trees being laid out at all - the box tree is the light
-//     tree's today - so the hit is the host for both askers;
+// What a shadow tree hides and what moves with it, each as the smallest
+// expression that fails if its fix is reverted:
+//
+//   * a ShadowRoot has its own elementFromPoint and elementsFromPoint, null
+//     off the viewport, and the document's answer is the host
+//     (shadowroot-methods test-007). Shadow trees are not laid out yet (the
+//     box tree is the light tree), so the hit is the host for both callers;
+//   * window.event is set around each listener and restored after a nested
+//     dispatch (event-global.html);
 //   * a shadow root cannot be cloned (Node-prototype-cloneNode.html);
-//   * a custom element inside the shadow tree of a PLAIN host that moveBefore
-//     moved gets connectedMoveCallback (custom-element-move-reactions.html);
-//   * the selection lets go of a range in a shadow tree whose host was
-//     removed, even when it came straight back - `replaceChild(host, host)`
+//   * a custom element inside the shadow tree of a plain host moved by
+//     moveBefore gets connectedMoveCallback (custom-element-move-reactions.html);
+//   * the selection drops a range in a shadow tree whose host was removed,
+//     even when it came straight back - `replaceChild(host, host)`
 //     (selection-range-in-shadow-after-the-shadow-removed.tentative.html);
 //   * createElementNS constructs a custom element and gives it its prefix
-//     only once the constructor has returned (Document-createElementNS-prefix-
-//     timing.html).
+//     only after the constructor has returned
+//     (Document-createElementNS-prefix-timing.html).
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -53,9 +58,9 @@ void test_element_from_point_is_retargeted() {
 }
 
 void test_window_event_is_set_around_each_listener() {
-    // DOM "inner invoke": the listener's global's current event, left alone
-    // for a step inside a shadow tree, and put back after each call - so a
-    // nested dispatch hands the outer event back (event-global.html).
+    // DOM "inner invoke" sets the listener's global's current event, leaves it
+    // undefined for a listener inside a shadow tree, and restores it after each
+    // call, so a nested dispatch hands the outer event back (event-global.html).
     is(R"JS((function () {
         var log = [];
         var host = document.getElementById('host');

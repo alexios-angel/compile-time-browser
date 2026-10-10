@@ -1,17 +1,20 @@
-// A BINDING THAT CANNOT BE ASSIGNED (9.1.1.1.5 SetMutableBinding step 5).
+//===- ctbrowser/unittests/js/immutable_bindings.cpp - Immutable bindings -===//
 //
-// `const`, `using`, an import and a class's own name inside its body refuse
-// every assignment with a TypeError; a named function expression's own name
-// refuses it in strict code and ignores it in sloppy code. The compiler knew
-// none of this, so `const x = 1; x = 2` quietly wrote 2. See
-// compiler_impl::binding_immutability.
+// Bindings that cannot be assigned (ECMA-262 9.1.1.1.5 SetMutableBinding
+// step 5). `const`, `using`, an import and a class's own name inside its body
+// refuse every assignment with a TypeError; a named function expression's own
+// name refuses it in strict code and ignores it in sloppy code. The compiler
+// decides which is which in compiler_impl::binding_immutability.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 #include <string>
 
 namespace {
-// What `body` throws, by constructor name, or "none".
+/// Builds an expression answering what `body` throws, by constructor name, or
+/// "none".
 std::string thrown(std::string_view body) {
     return "(function(){ try { " + std::string{body} +
            "; return 'none'; } catch (e) { return e.constructor.name; } })()";

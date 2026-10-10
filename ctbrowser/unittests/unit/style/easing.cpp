@@ -1,3 +1,11 @@
+//===- easing.cpp - Easing and interpolation tests --------------*- C++ -*-===//
+//
+// Timing functions (linear, ease-*, steps(), cubic-bezier()) and the value
+// interpolation, addition and accumulation that animations and transitions
+// use: lengths, colours, filters, grid tracks, shadows, transforms and
+// calc-size().
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/style/easing.hpp>
 
 #include "check.hpp"
@@ -93,8 +101,8 @@ void test_interpolation() {
     CHECK(interpolate_text("left", "0px", "100px", -0.25, context) == "-25px");
     CHECK(interpolate_text("left", "0px", "100px", 1.25, context) == "125px");
     CHECK(interpolate_text("left", "1em", "40px", 0.5, context) == "30px");
-    // A lone colour is not a gap rule list, whatever commas it holds inside -
-    // this recursed until the stack ran out.
+    // A lone colour is not a gap rule list, whatever commas it holds inside;
+    // treating it as one recursed until the stack ran out.
     CHECK_EQ(
         interpolate_text("column-rule-color", "rgb(170, 70, 70)", "rgb(70, 170, 70)", 0.3, context),
         std::string{"rgba(140.0000, 100.0000, 70.0000, 1.0000)"});
@@ -127,6 +135,7 @@ void test_interpolation() {
     CHECK(interpolate_text("font-weight", "100", "900", 2, context) == "1000");
     CHECK(interpolate_text("font-weight", "100", "900", -1, context) == "1");
     CHECK(interpolate_text("left", "calc(2 * 3px)", "12px", 0, context) == "6px");
+    // Infinite lengths clamp to 2^25 px (Chrome's LayoutUnit maximum).
     CHECK(interpolate_text("left", "0px", "calc(infinity * 1px)", 0.5, context) == "33554432px");
     CHECK(interpolate_text("left", "0px", "calc(NaN * 1px)", 0.5, context) == "0px");
     CHECK(interpolate_text("text-align", "left", "right", 0.49, context) == "left");

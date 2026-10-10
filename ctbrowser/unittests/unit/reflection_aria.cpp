@@ -1,14 +1,18 @@
-// THE ENUMERATED ARIA ATTRIBUTES - twenty of the `aria-*` rows in the
-// reflection table (lib/Shell/bindings/element/reflection.cpp) that w3c/aria#2484
-// turned from a nullable DOMString into a nullable ENUMERATED attribute:
-// `ariaBusy`, `ariaChecked`, `ariaLive` and the rest. What this pins down is
-// the rule's two defaults per row: the getter folds a keyword, a non-keyword
-// reads the invalid value default - a keyword or null per row - and an absent
-// attribute is null, while the content attribute keeps exactly what was
-// written.
+//===- ctbrowser/unittests/unit/reflection_aria.cpp - ARIA enums ---------===//
 //
-// `aria-attribute-reflection-enumerated.tentative.html` is the corpus file, and
+// The enumerated ARIA attributes: twenty of the `aria-*` rows in the
+// reflection table (lib/Shell/bindings/element/reflection_rows.cpp) that
+// w3c/aria#2484 turned from a nullable DOMString into a nullable enumerated
+// attribute: `ariaBusy`, `ariaChecked`, `ariaLive` and the rest. This pins
+// down the rule's two defaults per row: the getter folds a keyword, a
+// non-keyword reads the invalid value default (a keyword or null per row), and
+// an absent attribute is null, while the content attribute keeps exactly what
+// was written.
+//
+// The WPT file is `aria-attribute-reflection-enumerated.tentative.html`, and
 // unit/element/attrs.cpp holds the nullable-DOMString half of the same table.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -23,6 +27,8 @@ namespace {
 
 constexpr const char * page_html = "<!DOCTYPE html><html><body></body></html>";
 
+/// Checks that \p expression, evaluated in a fresh copy of page_html, gives
+/// \p expected.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }

@@ -1,12 +1,14 @@
-// Typed arrays, ArrayBuffer and DataView - clauses 23.2, 25.1 and 25.3 - as
-// built by lib/Script/builtins/collections/typed_arrays/. vm/stdlib.cpp keeps
-// the older coercion assertions; this file is the rest: the %TypedArray%
-// intrinsic and its prototype methods, buffers that resize and detach, a
-// DataView in both byte orders, and the Uint8Array base64/hex codecs.
+//===- ctbrowser/unittests/js/typed_arrays.cpp - Typed array tests --------===//
 //
-// The lines that are NOT here are the ones the VM cannot answer yet (the
-// constructors file says which): `ta.buffer === ta.buffer`, a subclass
-// instance.
+// Typed arrays, ArrayBuffer and DataView (ECMA-262 clauses 23.2, 25.1 and
+// 25.3) as built by lib/Script/builtins/collections/typed_arrays/.
+// vm/stdlib.cpp keeps the coercion assertions; this file is the rest: the
+// %TypedArray% intrinsic and its prototype methods, buffers that resize and
+// detach, a DataView in both byte orders, and the Uint8Array base64/hex
+// codecs. Typed-array subclasses are tested in vm/functions/constructors.cpp
+// (test_builtin_subclasses).
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -45,7 +47,7 @@ int main() {
     throws("new Int32Array(new ArrayBuffer(6))", "RangeError");
     throws("new Int32Array(new ArrayBuffer(8), 4, 2)", "RangeError");
     throws("new Int32Array(new ArrayBuffer(8), 12)", "RangeError");
-    // A view SHARES the bytes, in both directions, at any offset.
+    // A view shares the bytes, in both directions, at any offset.
     js_expect("(() => { const b = new ArrayBuffer(4); const u8 = new Uint8Array(b); "
               "new Uint16Array(b, 2, 1)[0] = 258; return u8.join(); })()",
               "0,0,2,1");
@@ -56,7 +58,7 @@ int main() {
               "return a[0]; })()",
               "1");
 
-    // --- from and of coerce into the KIND, 23.2.2 ------------------------------
+    // --- from and of coerce into the kind, 23.2.2 ------------------------------
     js_expect("Float32Array.from([1.5]).join() + '|' + Uint8Array.from([1.5]).join()", "1.5|1");
     js_expect("Uint8Array.from([1, 2], x => x * 2).join()", "2,4");
     js_expect("Uint8Array.from({length: 2, 0: 5, 1: 6}).join()", "5,6");
@@ -285,7 +287,7 @@ int main() {
     js_expect("(() => { const a = new Uint8Array(4); const r = a.setFromBase64('AQID'); "
               "return a.join() + '|' + r.read + '|' + r.written; })()",
               "1,2,3,0|4|3");
-    // Only WHOLE chunks that fit are decoded: 'BAU' would be two bytes and
+    // Only whole chunks that fit are decoded: 'BAU' would be two bytes and
     // one slot is left, so the read stops at the chunk before it.
     js_expect("(() => { const a = new Uint8Array(4); const r = a.setFromBase64('AQIDBAU'); "
               "return a.join() + '|' + r.read + '|' + r.written; })()",
@@ -324,7 +326,7 @@ int main() {
     js_expect("Object.getPrototypeOf(BigInt64Array) === Object.getPrototypeOf(Int8Array)", "true");
     js_expect("Object.prototype.toString.call(new BigUint64Array(1))", "[object BigUint64Array]");
     js_expect("typeof new BigInt64Array(2)[0] + '|' + new BigInt64Array(2)[1]", "bigint|0");
-    // ToBigInt64 / ToBigUint64 wrap modulo 2^64 - in either storage shape.
+    // ToBigInt64 / ToBigUint64 wrap modulo 2^64, in either storage shape.
     js_expect("(() => { const a = new BigInt64Array(2); a[0] = 2n ** 63n; a[1] = -1n; "
               "return a[0] + '|' + a[1]; })()",
               "-9223372036854775808|-1");
@@ -338,11 +340,11 @@ int main() {
     throws("(() => { const a = new BigInt64Array(1); a[0] = 1; })()", "TypeError");
     throws("new BigInt64Array([1])", "TypeError");
     throws("new BigInt64Array(1).fill(1)", "TypeError");
-    // ...and a valueOf that throws stops the write with ITS throw.
+    // ...and a valueOf that throws stops the write with its own exception.
     throws("(() => { const a = new BigInt64Array(1);"
            " a[0] = {valueOf() { throw new RangeError('mine'); }}; })()",
            "RangeError");
-    // %TypedArray%.prototype.toString IS Array.prototype.toString (23.2.3.32).
+    // %TypedArray%.prototype.toString is Array.prototype.toString (23.2.3.32).
     js_expect("Object.getPrototypeOf(Int8Array.prototype).hasOwnProperty('toString') +"
               " '|' + (Object.getPrototypeOf(Int8Array.prototype).toString ==="
               " Array.prototype.toString) + '|' + new Int8Array([1, 2])",
@@ -437,13 +439,13 @@ int main() {
               "Reflect.set(new Int8Array(2), 9, v, r); Reflect.set(new Int8Array(2), 0, v, r); "
               "return n + ',' + (r[0] === v) + ',' + Object.keys(r).join(); })()",
               "0,true,0");
-    // OwnPropertyKeys: indices, then strings, then symbols - arrays alike
+    // OwnPropertyKeys: indices, then strings, then symbols, as for arrays.
     js_expect("(() => { const s = Symbol('s'); const a = new Uint8Array(2); a[s] = 1; a.x = 2; "
               "const b = [7]; b[s] = 1; b.y = 2; return Reflect.ownKeys(a).map(String).join() + "
               "'|' + Reflect.ownKeys(b).map(String).join() + '|' + "
               "Object.getOwnPropertySymbols(b).length; })()",
               "0,1,x,Symbol(s)|0,length,y,Symbol(s)|1");
-    // an ordinary array's non-index Number key is the property its ToString names
+    // An ordinary array's non-index Number key is the property its ToString names.
     js_expect("(() => { const a = [1, 2, 3]; a[-1] = 'm'; a[1.5] = 'h'; "
               "return [a[1.5], a['-1'], a.length, Object.keys(a).join('|')].join(); })()",
               "h,m,3,0|1|2|-1|1.5");

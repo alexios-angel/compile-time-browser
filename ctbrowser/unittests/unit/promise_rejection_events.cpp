@@ -1,8 +1,12 @@
+//===- unittests/unit/promise_rejection_events.cpp - Rejection events -----===//
+//
 // Unhandled promise rejections, HTML 8.1.7.x: `unhandledrejection` at the
 // window for a promise nobody handled by the time the notification task
 // runs, `rejectionhandled` for one handled after that, and the
 // PromiseRejectionEvent interface. Stands in for html/webappapis/scripting/
 // processing-model-2/unhandled-promise-rejections/promise-rejection-events.html.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -53,11 +57,11 @@ void test_events() {
                          "unhandled:p3,three,true,true,true|handled:p3,false"});
 }
 
-// "Delayed handling": the notification task is queued at the END of the
-// rejecting script's microtask checkpoint, so a task that script queued - the
-// WPT's queueTask is a <details> toggle - runs first and attaches its handler
-// in time, while a task queued from THAT task is too late. Each checkpoint
-// takes the list as it stands into a task of its own.
+/// "Delayed handling": the notification task is queued at the end of the
+/// rejecting script's microtask checkpoint, so a task that script queued (the
+/// WPT's queueTask is a <details> toggle) runs first and attaches its handler
+/// in time, while a task queued from that task is too late. Each checkpoint
+/// takes the list as it stands into a task of its own.
 void test_task_delayed_handling() {
     browser page{browser_options{400, 300}};
     page.load_html(R"html(<!doctype html><html><body><script>

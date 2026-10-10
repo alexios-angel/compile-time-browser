@@ -1,17 +1,11 @@
-// URL parsing, in ONE place.
+//===- ctbrowser/unittests/unit/url/basics.cpp - URL parser tests ---------===//
 //
-// There used to be two: `detail::parse_url` in shell/net/net.cpp for the HTTP client
-// and `split_url` in shell/bindings.cpp for `location.*`. They were written
-// separately, and they disagreed - which is the whole reason this file exists.
+// Tests for shell/net/url.hpp, the one URL parser shared by the HTTP client
+// (parse_absolute) and the DOM's `location` (location_parts), plus resolve()
+// against a base. Two separate parsers once disagreed on `http://[::1]/`;
+// these cases pin the shared behaviour.
 //
-// THE BUG THAT PROVES IT. `split_url` took `host.rfind(':')` with no bracket
-// guard, so `http://[::1]/` gave hostname `[:` and port `1]`. `net.cpp` guarded
-// exactly that case. One codebase, two parsers, one of them wrong, and nothing
-// compared them - so this test compares them by making them the same code.
-//
-// Written against the NEW header before it existed, so every assertion below
-// failed first and then passed. A test written after the fact proves the code
-// does what it does.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -29,9 +23,8 @@ namespace {
 // --- what the HTTP client asks -------------------------------------------
 
 void test_an_ipv6_host_keeps_its_brackets() {
-    // THE REGRESSION THIS FILE IS NAMED FOR. `[::1]` is a host containing
-    // colons, so anything reaching for the last colon finds one INSIDE the
-    // address rather than the port separator.
+    // `[::1]` is a host containing colons, so anything reaching for the last
+    // colon finds one inside the address rather than the port separator.
     const auto with_port = parse_absolute("http://[::1]:8080/x");
     CHECK(with_port.valid);
     CHECK(with_port.host == "::1"); // the connect address, brackets stripped
@@ -52,7 +45,7 @@ void test_the_host_header_form_is_not_the_connect_address() {
     CHECK(six.host == "::1");
     CHECK(six.authority == "[::1]:8080");
 
-    // The DEFAULT port is omitted, as the RFC asks.
+    // The default port is omitted, as the RFC asks.
     CHECK(parse_absolute("http://h/x").authority == "h");
     CHECK(parse_absolute("https://h/x").authority == "h");
     CHECK(parse_absolute("http://h:8080/x").authority == "h:8080");
@@ -60,9 +53,8 @@ void test_the_host_header_form_is_not_the_connect_address() {
 }
 
 void test_the_scheme_and_host_are_lowercased() {
-    // A URL's scheme and host are case-insensitive; its PATH is not. Getting
-    // that wrong in either direction is a bug - lowercasing the path breaks
-    // every case-sensitive server.
+    // A URL's scheme and host are case-insensitive; its path is not, and
+    // lowercasing the path would break every case-sensitive server.
     const auto out = parse_absolute("HTTP://Example.COM/Path/To/File");
     CHECK(out.valid);
     CHECK(out.scheme == "http");
@@ -71,9 +63,9 @@ void test_the_scheme_and_host_are_lowercased() {
 }
 
 void test_dot_segments_are_removed() {
-    // `/a/b/../c` reached the server verbatim before. Servers are not required
-    // to resolve it, and a cache keyed on the request line sees two URLs where
-    // there is one.
+    // Dot segments are resolved before sending: servers are not required to,
+    // and a cache keyed on the request line would see two URLs where there is
+    // one.
     const auto out = parse_absolute("http://h/a/b/../c");
     CHECK(out.valid);
     CHECK(out.target == "/a/c");
@@ -88,7 +80,7 @@ void test_a_missing_path_becomes_a_slash() {
 }
 
 void test_the_query_is_sent_and_the_fragment_is_not() {
-    // A FRAGMENT IS CLIENT-SIDE. Sending it is a privacy leak and a spec
+    // A fragment is client-side. Sending it is a privacy leak and a spec
     // violation; dropping the query instead would break every search.
     const auto out = parse_absolute("http://h/search?q=1&r=2#results");
     CHECK(out.valid);
@@ -96,9 +88,8 @@ void test_the_query_is_sent_and_the_fragment_is_not() {
 }
 
 void test_credentials_are_dropped() {
-    // DELIBERATE, and carried over rather than inherited by accident: this
-    // client does no HTTP auth, so credentials in the authority would either be
-    // ignored or - much worse - sent as part of the Host header.
+    // Credentials are dropped on purpose: this client does no HTTP auth, so
+    // they would either be ignored or, worse, sent in the Host header.
     const auto out = parse_absolute("http://user:secret@h/x");
     CHECK(out.valid);
     CHECK(out.host == "h");
@@ -117,7 +108,7 @@ void test_only_http_schemes_are_valid_to_fetch() {
 
 void test_location_parts_of_an_http_url() {
     const auto out = location_parts("http://example.com:8080/a/b?q=1#frag");
-    CHECK(out.protocol == "http:"); // WITH the colon, as the DOM reports it
+    CHECK(out.protocol == "http:"); // with the colon, as the DOM reports it
     CHECK(out.host == "example.com:8080");
     CHECK(out.hostname == "example.com");
     CHECK(out.port == "8080");
@@ -128,7 +119,7 @@ void test_location_parts_of_an_http_url() {
 }
 
 void test_location_hostname_keeps_ipv6_brackets() {
-    // The OPPOSITE of parse_absolute above, and both are right. A socket wants
+    // The opposite of parse_absolute above, and both are right. A socket wants
     // the address; `location.hostname` is specified to keep the brackets, so a
     // page reassembling `hostname + ':' + port` produces a valid URL again.
     const auto out = location_parts("http://[::1]:8080/x");
@@ -142,7 +133,7 @@ void test_location_parts_of_a_file_url() {
     CHECK(out.protocol == "file:");
     CHECK(out.pathname == "/home/a/page.html");
     CHECK(out.host.empty());
-    // A file URL has NO origin. "null" is the string the DOM reports, not the
+    // A file URL has no origin. "null" is the string the DOM reports, not the
     // absence of the property.
     CHECK(out.origin == "null");
 }
@@ -156,7 +147,7 @@ void test_location_parts_survive_the_odd_schemes_the_engine_mints() {
 }
 
 void test_an_empty_search_is_empty_not_a_bare_question_mark() {
-    // The DOM reports "" for a URL with no query, not "?" - a page doing
+    // The DOM reports "" for a URL with no query, not "?". A page doing
     // `location.search.slice(1)` on a bare "?" gets an empty string either way,
     // but one doing `if (location.search)` takes the wrong branch.
     const auto out = location_parts("http://h/a");
@@ -166,14 +157,12 @@ void test_an_empty_search_is_empty_not_a_bare_question_mark() {
 }
 
 void test_a_url_with_no_path_still_has_one() {
-    // Separate from the above, because it is a separate claim - and asserting
-    // pathname == "/" for `http://h/a` is how this test first failed, which was
-    // the test being wrong rather than the parser.
+    // A URL with no path still reports pathname "/".
     CHECK(location_parts("http://h").pathname == "/");
     CHECK(location_parts("http://h?q=1").pathname == "/");
 }
 
-// --- the capability neither parser had ------------------------------------
+// --- resolving a reference against a base ---------------------------------
 
 void test_resolve_against_a_base() {
     const std::string base = "http://h/a/b";
@@ -182,18 +171,16 @@ void test_resolve_against_a_base() {
     CHECK(resolve(base, "/abs") == "http://h/abs");
     CHECK(resolve(base, "//other/x") == "http://other/x");
     CHECK(resolve(base, "?q=2") == "http://h/a/b?q=2");
-    // An ABSOLUTE reference ignores the base entirely.
+    // An absolute reference ignores the base entirely.
     CHECK(resolve(base, "https://elsewhere/z") == "https://elsewhere/z");
 }
 
 // --- leniency -------------------------------------------------------------
 
 void test_a_url_a_browser_accepts_is_accepted() {
-    // A raw space and a raw UTF-8 byte in a path: RFC 3986 rejects both and a
-    // browser percent-encodes both, because the URL Standard's path
-    // percent-encode set says so. Boost.URL, a strict RFC 3986 parser, needed
-    // the input pre-encoded to accept them; the standard's parser is lenient
-    // by specification. See wpt.cpp for the whole corpus.
+    // A raw space and a raw UTF-8 byte in a path are percent-encoded, as the
+    // URL Standard's path percent-encode set requires (RFC 3986 would reject
+    // both). See wpt.cpp for the full corpus.
     const auto spaced = parse_absolute("http://h/a b/c");
     CHECK(spaced.valid);
     CHECK(spaced.target == "/a%20b/c");
@@ -202,18 +189,18 @@ void test_a_url_a_browser_accepts_is_accepted() {
     CHECK(utf8.valid);
     CHECK(utf8.target == "/%C3%A9");
 
-    // AND IT DOES NOT DOUBLE-ENCODE what a page already encoded, which is the
+    // It does not double-encode what a page already encoded, which is the
     // failure mode of doing this carelessly: `%20` must not become `%2520`.
     const auto already = parse_absolute("http://h/a%20b");
     CHECK(already.valid);
     CHECK(already.target == "/a%20b");
 }
 
-// --- what changed when the parser became the URL Standard's ------------------
+// --- where the URL Standard differs from RFC 3986 ----------------------------
 
 void test_the_standard_not_rfc_3986() {
-    // Each of these differed from a browser under Boost.URL (docs/plans/
-    // ada-url.md measured them) and is now what the platform says.
+    // Each of these differed from a browser when the parser was Boost.URL
+    // (docs/history/ada-url.md measured them); they now match the URL Standard.
     CHECK(parse_absolute("http://h:80/x").authority == "h"); // a default port is dropped
     CHECK(location_parts("http://h:80/x").port.empty());
     CHECK(location_parts("http:\\\\h\\a").pathname == "/a"); // `\` is `/` when special
