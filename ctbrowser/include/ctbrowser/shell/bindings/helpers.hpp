@@ -37,6 +37,7 @@
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/layout/layout.hpp>
+#include <ctbrowser/page/author_styles.hpp>
 #include <ctbrowser/page/page.hpp>
 #include <ctbrowser/paint/paint.hpp>
 #include <ctbrowser/raster/raster.hpp>

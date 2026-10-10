@@ -62,14 +62,15 @@ target_sources(ctbrowser INTERFACE FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLU
 target_compile_features(ctbrowser INTERFACE cxx_std_23)
 target_link_libraries(ctbrowser INTERFACE
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
-  ctbrowser-paint ctbrowser-raster ctbrowser-page ctbrowser-shell ctbrowser-app)
+  ctbrowser-paint ctbrowser-raster ctbrowser-net ctbrowser-page ctbrowser-shell ctbrowser-app)
 add_library(ctbrowser::ctbrowser ALIAS ctbrowser)
 
 # --- Installing the engine -----------------------------------------------
 # Headers install to include/, archives to lib/.
 set(CTBROWSER_TARGETS
   ctbrowser-core ctbrowser-dom ctbrowser-script ctbrowser-style ctbrowser-layout
-  ctbrowser-paint ctbrowser-raster ctbrowser-page ctbrowser-shell ctbrowser-app ctbrowser)
+  ctbrowser-paint ctbrowser-raster ctbrowser-net ctbrowser-page ctbrowser-shell ctbrowser-app
+  ctbrowser)
 
 install(TARGETS ${CTBROWSER_TARGETS}
   EXPORT ctbrowser-targets
@@ -130,7 +131,7 @@ file(WRITE "${PROJECT_BINARY_DIR}/ctbrowser-config.cmake"
 ${CTBROWSER_CONFIG_DEPS}
 include(\"\${CMAKE_CURRENT_LIST_DIR}/ctbrowser-targets.cmake\")
 # Match build-tree aliases while retaining the existing exported target names.
-foreach(subsystem core dom script style layout paint raster page shell app)
+foreach(subsystem core dom script style layout paint raster net page shell app)
   if(NOT TARGET ctbrowser::\${subsystem})
     add_library(ctbrowser::\${subsystem} ALIAS ctbrowser::ctbrowser-\${subsystem})
   endif()

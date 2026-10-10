@@ -10,38 +10,6 @@
 
 namespace ctbrowser::shell {
 
-namespace {
-
-/// Whether the viewport's overflow hides its scrollbar (CSS Overflow 3 §3.3).
-/// The root's `overflow-y` propagates to the viewport, and when the root's is
-/// `visible` the body's does instead. A viewport at `hidden` or `clip` shows
-/// no scrollbar but still scrolls programmatically, which is what WPT
-/// scrollintoview.html's `body { padding: 4000px; overflow: hidden }`
-/// measures against innerWidth.
-[[nodiscard]] bool viewport_hides_overflow(atom_table & atoms,
-                                           const ctbrowser::style::style_map & resolved,
-                                           const read_txn & txn) {
-    const auto overflow_y = [&](node_id id) -> std::string_view {
-        if (!id) { return {}; }
-        const auto found = resolved.find(ctbrowser::style::engine::key_of(id));
-        if (found == resolved.end() || !found->second) { return {}; }
-        return trim(found->second->get(atoms.intern("overflow-y")), html_whitespace);
-    };
-    const node_id root = txn.root();
-    std::string_view used = overflow_y(root);
-    if (used.empty() || ascii_iequals(used, "visible")) {
-        for (const node_id child : txn.children(root)) {
-            if (txn.element_ns(child) == node_ns::html && txn.local_name(child) == "body") {
-                used = overflow_y(child);
-                break;
-            }
-        }
-    }
-    return ascii_iequals(used, "hidden") || ascii_iequals(used, "clip");
-}
-
-} // namespace
-
 double browser::next_wakeup_ms() {
     double soonest = std::numeric_limits<double>::infinity();
     if (bindings_) {
@@ -282,21 +250,9 @@ void browser::resolve_styles() {
     // resolution's map, kept for the length of this one so the bindings can
     // compare each element's two computed styles once the new map is whole.
     const ctbrowser::style::style_map before = std::move(resolved_);
-    resolved_ = styles_->resolve_all(txn);
-    // A root with `overflow: scroll` always has its scrollbars, and the
-    // viewport units exclude them (viewport_less_scroll_root). The cascade is
-    // re-run at that size when it differs from the window's, which is the one
-    // extra pass a page that asked for scrollbars pays.
-    const auto [width, height] =
-        viewport_less_scroll_root(atoms_, resolved_, txn.root(), static_cast<float>(options_.width),
+    resolved_ =
+        page::resolve_page_styles(*styles_, txn, atoms_, static_cast<float>(options_.width),
                                   static_cast<float>(options_.height), options_.scrollbar_width);
-    ctbrowser::style::css::media_environment env = styles_->environment();
-    if (env.viewport_width != width || env.viewport_height != height) {
-        env.viewport_width = width;
-        env.viewport_height = height;
-        (void)styles_->set_environment(env);
-        resolved_ = styles_->resolve_all(txn);
-    }
     // The style change event: every `animation-name` and every changed
     // property with a matching `transition-property` becomes an animation
     // record now, sampled at this clock, so a read that asked for this flush
@@ -331,36 +287,16 @@ void browser::run_layout() {
         return ctbrowser::layout::box_builder::intrinsic_size{};
     };
     boxes_ = builder.build(txn, txn.root());
-    const ctbrowser::layout::engine eng{measure()};
-    // The page is as tall as its scrolling area (CSSOM View §2), not as its
-    // root box: an absolutely positioned box below the fold is reachable by
-    // scrolling in every browser, and the WPT scroll-behavior-main-frame-window
-    // tests lay their whole content out that way. There is no viewport floor:
-    // a short page stays shorter than the window.
-    const auto page_height = [&](float width) {
-        return std::max(fragments_.bounds.height,
-                        ctbrowser::layout::viewport_scrolling_area(fragments_, width, 0).height);
-    };
-    fragments_ =
-        eng.run(boxes_, static_cast<float>(options_.width), static_cast<float>(options_.height));
-    content_height_ = page_height(static_cast<float>(options_.width));
-
-    // Two passes when the page overflows: the scrollbar takes width away from
-    // the content, and content laid out at the full width would run under it.
-    // A second pass is enough because narrowing a page can only make it
-    // taller, so a page that overflowed still overflows; it never oscillates
-    // between needing a bar and not.
-    layout_width_ = static_cast<float>(options_.width);
-    scrollbar_shown_ = !viewport_hides_overflow(atoms_, resolved_, txn);
-    if (options_.scrollbar_width > 0 && content_height_ > static_cast<float>(options_.height) &&
-        scrollbar_shown_) {
-        layout_width_ = static_cast<float>(options_.width) - options_.scrollbar_width;
-        fragments_ = eng.run(boxes_, layout_width_, static_cast<float>(options_.height));
-        content_height_ = page_height(layout_width_);
-    }
-    content_width_ = ctbrowser::layout::viewport_scrolling_area(fragments_, layout_width_,
-                                                                static_cast<float>(options_.height))
-                         .width;
+    // One pass, or two when the page overflows and the scrollbar takes width
+    // from the content (page::lay_out_page).
+    page::page_layout laid = page::lay_out_page(
+        boxes_, measure(), atoms_, resolved_, txn, static_cast<float>(options_.width),
+        static_cast<float>(options_.height), options_.scrollbar_width);
+    fragments_ = std::move(laid.fragments);
+    layout_width_ = laid.layout_width;
+    content_height_ = laid.content_height;
+    content_width_ = laid.content_width;
+    scrollbar_shown_ = laid.scrollbar_shown;
     scroll_y_ = std::clamp(scroll_y_, 0.0f, max_scroll());
     scroll_x_ = std::clamp(scroll_x_, 0.0f, max_scroll_x());
     // offsetWidth and friends read the fragment tree, so they answer with

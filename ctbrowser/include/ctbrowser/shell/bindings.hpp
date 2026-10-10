@@ -86,6 +86,9 @@ public:
 
     /// The box tree, for getComputedStyle; see observe_styles.
     void observe_boxes(const layout::box_node * boxes) { boxes_ = boxes; }
+    /// The trees and viewport getComputedStyle and the client rects are read
+    /// from, as last observed: what ctbrowser/page answers its queries over.
+    [[nodiscard]] page::page_view view_of_page() const;
     /// The viewport size in CSS pixels, for innerWidth and media queries.
     void observe_viewport(int width, int height);
 
@@ -343,9 +346,6 @@ private:
         node_id id);
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> computed_style_entries(
         node_id id, const style::computed_style_ptr & pseudo);
-    /// The trees and viewport the page queries (computed style, client rects)
-    /// read, as this document's bindings last observed them.
-    [[nodiscard]] page::page_view view_of_page() const;
 
     void install_dom_exception(context & cx);
     void install_abort(context & cx);
@@ -662,13 +662,19 @@ public:
     void install_style_sheets(context & cx);
     void install_sheet_property(context & cx, script::object_object & obj, node_id id);
 
-    using link_sheet = binding_detail::link_sheet;
+    /// What a `<link>` is to the cascade and the object model; see
+    /// ctbrowser/page/author_styles.hpp, which the cascade's walk shares.
+    using link_sheet = page::link_sheet;
     [[nodiscard]] static link_sheet link_sheet_state(std::string_view rel, bool disabled_attribute,
-                                                     bool explicitly_enabled);
+                                                     bool explicitly_enabled) {
+        return page::link_sheet_state(rel, disabled_attribute, explicitly_enabled);
+    }
     [[nodiscard]] bool link_explicitly_enabled(node_id id) const;
     [[nodiscard]] std::string_view preferred_sheet_title();
     [[nodiscard]] static std::string resolve_sheet_href(std::string_view base,
-                                                        std::string_view reference);
+                                                        std::string_view reference) {
+        return page::resolve_sheet_href(base, reference);
+    }
 
     /// Where CSSOM edits reach the cascade. insertRule, deleteRule and
     /// replaceSync change the object model only; re-running the cascade is the
