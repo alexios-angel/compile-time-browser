@@ -299,6 +299,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             mlir::Value(call.getResult()).setType(receiverType(shapeAt(call.getResult())));
         }
     });
+    passRecords(fn);
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

@@ -304,6 +304,11 @@ struct lowering {
                              mlir::Value exponent);
 
     void retype(ctjs::FuncOp fn);
+    /// Gives each data-record call (TypeInference::markRecordReturns) its
+    /// class by value and moves the result into a local (EmitC/Records.cpp).
+    void passRecords(ctjs::FuncOp fn);
+    /// The class a data-record function returns by value, or null.
+    [[nodiscard]] mlir::Type recordReturnType(ctjs::FuncOp fn) const;
 
     static void eraseIfUnused(mlir::Operation * o);
 

@@ -2,6 +2,7 @@
 # shared `lowering` state they all extend.
 target_sources(ctcompile-ctnative-lowering PRIVATE
   Shapes.cpp
+  Records.cpp
   OwnedGlobals.cpp
   Module.cpp
   DOM.cpp

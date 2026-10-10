@@ -1,0 +1,20 @@
+# Native differential test of records.js. The modules come from
+# ctcompile_add_native_pipeline in Native.cmake, which lowers the program to
+# native C++ (writing no module while any function carries `ctnative.not_native`)
+# plus a variant printed with deduced `auto` types and one with a wrong type pin.
+# compilation-unit.py compiles a module standalone, checks with nm that it calls
+# no interpreter, runs it, and compares every global with the interpreter's.
+# compile-clean.py checks a warning-free build on both toolchains with a
+# provenance comment over every definition. print-deduced.py checks that the
+# deduced module differs only in type spellings and that the wrong pin fails.
+# A `not ... --mutate G` line adds one to global G in the C++ and expects the
+# comparison to fail naming G, proving the comparison can catch a difference.
+
+# Object literals returned by value as their shape's class.
+# RUN: %compilation_unit --module %{obj}/records.pipeline.emitc.mlir --js %S/records.js --work %t --name records
+# RUN: not %compilation_unit --module %{obj}/records.pipeline.emitc.mlir --js %S/records.js --work %t --name records_off_by_one --mutate twocalls103 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'twocalls103' differs
+# RUN: %compilation_unit --module %{obj}/records.pipeline.deduced.emitc.mlir --js %S/records.js --work %t --name records_deduced
+# RUN: %compile_clean --module %{obj}/records.pipeline.emitc.mlir --work %t --name records
+# RUN: %compile_clean --module %{obj}/records.pipeline.deduced.emitc.mlir --work %t --name records_deduced
+# RUN: %print_deduced --plain %{obj}/records.pipeline.emitc.mlir --deduced %{obj}/records.pipeline.deduced.emitc.mlir --mutated %{obj}/records.pipeline.mutated.emitc.mlir --work %t --name records

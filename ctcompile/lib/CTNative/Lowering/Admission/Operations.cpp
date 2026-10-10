@@ -909,6 +909,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
 }
 
 bool admission::returned(ctjs::ReturnOp ret) {
+    // A data record is returned by value as its class; closedObject checks it.
+    if (TypeInference::returnsRecord(ret)) { return true; }
     const carrier c = carrierOf(typeOf(ret.getValue()));
     if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
     returnedType =
