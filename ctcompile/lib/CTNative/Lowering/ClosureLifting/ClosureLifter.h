@@ -633,7 +633,10 @@ struct closureLifter {
     /// this lifter is a trial.
     llvm::DenseSet<int64_t> boundTrialCells;
 
-    bool makeRunOnceCellsStatic(liftReport & out);
+    /// With `functions` false, boxes that hold a function are left alone, so
+    /// that a second call can first see which of them the binding rule takes
+    /// once the other boxes are static.
+    bool makeRunOnceCellsStatic(liftReport & out, bool functions);
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 

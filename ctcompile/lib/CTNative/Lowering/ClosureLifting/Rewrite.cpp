@@ -32,8 +32,14 @@ liftReport closureLifter::run() {
     indexAndNewTargets();
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
-    // closures no longer capture them.
-    if (!staticsDone) { makeRunOnceCellsStatic(out); }
+    // closures no longer capture them. Boxes holding a function wait for a
+    // second round: once the data they capture is static, bindLocalFunctions
+    // can often bind them, which turns calls through them into direct calls;
+    // a static variable would keep every such call indirect.
+    if (!staticsDone) {
+        makeRunOnceCellsStatic(out, /*functions=*/false);
+        makeRunOnceCellsStatic(out, /*functions=*/true);
+    }
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides
