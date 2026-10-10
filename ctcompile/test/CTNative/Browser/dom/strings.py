@@ -14,7 +14,7 @@ def main():
     check_regexp_matching(args)
     if args.regexp_only:
         return
-    numbers.check_oracles(args)
+    number_conversion.check_oracles(args)
     uri.check_oracles(args)
     nullable_uri.check_oracles(args)
     boolean_values = [
@@ -104,7 +104,7 @@ function makeElement(value) {
     ]
     local_copy = (args.work / "host_local_function_copy.raw.mlir").read_text()
     assert local_copy.count('ctjs.store_global "host_refusal"') == 1, local_copy
-    prepared.extend(numbers.prepare(args))
+    prepared.extend(number_conversion.prepare(args))
     prepared.extend(uri.prepare(args))
     prepared.extend(nullable_uri.prepare(args))
     for optimize in (False, True):
@@ -145,8 +145,8 @@ function makeElement(value) {
                 if name in uri.CASES:
                     runs.append(uri.client(name, entry, owned))
                     continue
-                if name in numbers.CASES:
-                    runs.append(numbers.client(name, entry, owned))
+                if name in number_conversion.CASES:
+                    runs.append(number_conversion.client(name, entry, owned))
                     continue
                 if name in ("names", "wide") or name in BOOLEAN_CASES:
                     setup = (
@@ -208,7 +208,7 @@ function makeElement(value) {
                 "\n".join(sorted(headers))
                 + "\n"
                 + "\n".join(bodies)
-                + numbers.CLIENT
+                + number_conversion.CLIENT
                 + nullable_uri.CLIENT
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
@@ -220,7 +220,10 @@ function makeElement(value) {
                 )
                 if (
                     result.stdout
-                    != (expected + numbers.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED) * 2
+                    != (
+                        expected + number_conversion.EXPECTED + uri.EXPECTED + nullable_uri.EXPECTED
+                    )
+                    * 2
                 ):
                     raise RuntimeError("native optional String observations disagree with source")
     for name, body in REFUSALS.items():
@@ -366,11 +369,11 @@ function makeElement(value) {
                 emitted(args, native, label)
         replacement_checks += 4
         replacement_checks += regexp_provenance_checks(args, ir, contract, prefix=prefix)
-    numeric_refusals = numbers.refusal_checks(args, prepared)
+    numeric_refusals = number_conversion.refusal_checks(args, prepared)
     uri_refusals = uri.refusal_checks(args, prepared)
     nullable_uri_refusals = nullable_uri.refusal_checks(args, prepared)
     print(
-        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values) + len(numbers.RESULTS) + len(uri.RESULTS) + len(nullable_uri.RESULTS)} Node/VM observations, 8 GCC/Clang binaries, "
+        f"native DOM Strings: {9 + 4 * len(CAPTURE_RETURNS) + len(boolean_values) + len(number_conversion.RESULTS) + len(uri.RESULTS) + len(nullable_uri.RESULTS)} Node/VM observations, 8 GCC/Clang binaries, "
         f"both providers/policies/layouts; {(len(REFUSALS) + len(HOST_REFUSALS)) * 4 + numeric_refusals + uri_refusals + nullable_uri_refusals} source refusal checks, "
         f"{provenance_checks} provenance/depth refusal checks, {method_checks} method provenance checks, "
         f"{capture_checks} capture provenance/budget checks; "

@@ -3,7 +3,7 @@
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.element_iteration import INTRINSICS as SNAPSHOT_INTRINSICS
-from CTNative.Browser.dom.json import quote
+from CTNative.Browser.dom.json_parse import quote
 
 INTRINSICS = [
     *SNAPSHOT_INTRINSICS,

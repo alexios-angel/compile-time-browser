@@ -668,7 +668,7 @@ def check_regexp_matching(args):
                     if value is None:
                         check += f'assert(!doc.read().has_attribute(node, atoms.intern("{key}")));'
                     else:
-                        check += f'assert(doc.read().attribute_value(node, atoms.intern("{key}")) == std::string_view({numbers.cpp_string(value)}, {len(value.encode())}));'
+                        check += f'assert(doc.read().attribute_value(node, atoms.intern("{key}")) == std::string_view({number_conversion.cpp_string(value)}, {len(value.encode())}));'
                 checks.append(check + "}")
         path = args.work / f"regexp-{optimize}.cpp"
         path.write_text(

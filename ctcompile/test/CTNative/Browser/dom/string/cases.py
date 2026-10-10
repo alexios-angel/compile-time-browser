@@ -9,7 +9,7 @@ import shutil
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom import numbers
+from CTNative.Browser.dom import number_conversion
 from CTNative.Browser.dom import nullable_uri
 from CTNative.Browser.dom import uri
 from CTNative.harness import build_and_run, find_compilers, run

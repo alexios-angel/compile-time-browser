@@ -5,8 +5,8 @@ import json
 import re
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom import json as values
-from CTNative.Browser.dom import numbers
+from CTNative.Browser.dom import json_parse as values
+from CTNative.Browser.dom import number_conversion
 from CTNative.Browser.dom.dataset import BOOTSTRAP_FILTER, PREFIX_INTRINSICS
 from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
@@ -387,10 +387,10 @@ def client(name, symbol, owned):
         "{"
         + ",".join(
             "{std::string{"
-            + numbers.cpp_string(key)
+            + number_conversion.cpp_string(key)
             + f", {len(key.encode())}"
             + "},std::string{"
-            + numbers.cpp_string(value)
+            + number_conversion.cpp_string(value)
             + f", {len(value.encode())}"
             + "}}"
             for key, value in attrs

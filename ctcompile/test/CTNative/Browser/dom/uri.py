@@ -4,7 +4,7 @@ import json
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom.numbers import cpp_string, encoded
+from CTNative.Browser.dom.number_conversion import cpp_string, encoded
 from CTNative.harness import run
 
 SELECT = "const text = element.hasAttribute('good') ? 'A%20B%00%C3%A9' : '%E0%80%80';"

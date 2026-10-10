@@ -11,7 +11,7 @@ import re
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom import numbers
+from CTNative.Browser.dom import number_conversion
 from CTNative.Browser.dom import strings
 from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
@@ -108,7 +108,7 @@ ATTRIBUTE_CASES = {
 SOURCES.update(
     (name, f"function {name}(element) {{ {body} }}\n") for name, body in ATTRIBUTE_CASES.items()
 )
-INPUTS = tuple(value for value, _ in numbers.VALUES) + (
+INPUTS = tuple(value for value, _ in number_conversion.VALUES) + (
     "true",
     "false",
     "null",
@@ -307,7 +307,7 @@ def client(name, entry, owned):
         (
             "std::nullopt"
             if value is None
-            else f"std::string{{{numbers.cpp_string(value)}, {len(value.encode())}}}"
+            else f"std::string{{{number_conversion.cpp_string(value)}, {len(value.encode())}}}"
         )
         for value in inputs
     )
@@ -333,7 +333,7 @@ def client(name, entry, owned):
     if name == "json_config_spread_chain":
         later_setup = (
             'const auto later = doc.atoms().intern("data-bs-later"); '
-            f"assert(doc.set_attribute(node, later, {numbers.cpp_string(LATER_INPUT)}));"
+            f"assert(doc.set_attribute(node, later, {number_conversion.cpp_string(LATER_INPUT)}));"
         )
         later_change = 'assert(doc.set_attribute(node, later, "later"));'
     result_type = {

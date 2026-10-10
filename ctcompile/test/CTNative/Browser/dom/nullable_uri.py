@@ -5,7 +5,7 @@ import re
 from urllib.parse import quote_from_bytes
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom import numbers
+from CTNative.Browser.dom import number_conversion
 from CTNative.harness import forge_module, run
 
 READ = "const t = element.getAttribute('data-bs-config');"
@@ -21,7 +21,7 @@ CASES = {
     "nullable_uri_alias": READ
     + "const saved = t; if ('string' != typeof saved) return saved;"
     + DECODE.replace("return t;", "return saved;"),
-    "nullable_uri_saved": READ + numbers.CHANGE + GUARD + DECODE,
+    "nullable_uri_saved": READ + number_conversion.CHANGE + GUARD + DECODE,
     "nullable_uri_assignment": READ
     + GUARD
     + "let saved = 'before'; try { saved = t; saved = decodeURIComponent(t); } catch (ignored) { return saved; } return saved;",
@@ -54,7 +54,7 @@ SOURCES = tuple(
 )
 RESULTS = [result for _ in CASES for _, result in VALUES]
 EXPECTED = "".join(
-    ("null" if value is None else numbers.encoded(value)) + "\n" for value in RESULTS
+    ("null" if value is None else number_conversion.encoded(value)) + "\n" for value in RESULTS
 )
 
 
@@ -71,7 +71,7 @@ def check_oracles(args):
             )
     source = (
         "".join(source for _, source, _ in SOURCES)
-        + numbers.ORACLE_HELPER
+        + number_conversion.ORACLE_HELPER
         + "\n".join(observations)
     )
     node = args.work / "nullable-uri-node.js"
@@ -110,7 +110,7 @@ def optional_string(value):
     return (
         "std::nullopt"
         if value is None
-        else f"std::string{{{numbers.cpp_string(value)}, {len(value.encode())}}}"
+        else f"std::string{{{number_conversion.cpp_string(value)}, {len(value.encode())}}}"
     )
 
 

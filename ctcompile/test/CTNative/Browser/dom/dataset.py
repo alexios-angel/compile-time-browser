@@ -5,7 +5,7 @@ import json
 import re
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom.json import BOOTSTRAP_M, quote
+from CTNative.Browser.dom.json_parse import BOOTSTRAP_M, quote
 from CTNative.harness import build_and_run, run
 from Target.Cpp.harness import FLAGS
 

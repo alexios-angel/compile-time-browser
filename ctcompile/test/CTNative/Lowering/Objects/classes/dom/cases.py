@@ -8,7 +8,7 @@ import re
 import shutil
 
 from CTNative.Browser.dom import dom
-from CTNative.Browser.dom.json import ATTRIBUTE_HELPERS, BOOTSTRAP_M
+from CTNative.Browser.dom.json_parse import ATTRIBUTE_HELPERS, BOOTSTRAP_M
 from CTNative.Browser.dom import strings
 from CTNative.HostContract import contract as host
 from CTNative.harness import build_and_run, find_compilers, run
