@@ -6,9 +6,11 @@ Data storage, event delivery or native initialization of the vendor bundle.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import functools
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -669,6 +671,27 @@ def link_options(args, *, selectors=False, core_only=False):
         "-Wl,-rpath," + str(path) for path in sorted({library.parent for library in libraries})
     ]
     return includes, [*map(str, libraries), "-pthread", *rpaths]
+
+
+def parallel(check, cases):
+    """check(case) for every case, one thread per CPU: the results, in order.
+
+    A driver's cases are independent and every step is a subprocess, so threads
+    overlap them. Each case writes only files named for its own label, case[0],
+    so no two may share one. The first failure is raised once the cases already
+    running finish; the rest never start.
+    """
+    cases = list(cases)
+    labels = [case[0] for case in cases]
+    if len(set(labels)) != len(labels):
+        raise RuntimeError(f"cases share a label and so their files: {labels}")
+    with ThreadPoolExecutor(len(os.sched_getaffinity(0))) as pool:
+        futures = [pool.submit(check, case) for case in cases]
+        try:
+            return [future.result() for future in futures]
+        finally:
+            for future in futures:
+                future.cancel()
 
 
 # Every program standalone() has built and run, by compiler, flags, libraries and
