@@ -36,7 +36,8 @@ namespace ctbrowser::script::builtins_detail {
 
 /// The default case conversion of 22.1.3.28/22.1.3.30 over WTF-8 text:
 /// Unicode's full lower- (`upper` false) or uppercase mapping, Final_Sigma
-/// included. Defined in case_mapping.cpp over the generated case_mapping.inc.
+/// included. Defined in case_mapping.cpp, which forwards to ctbrowser core's
+/// unicode_case (lib/Core/case_mapping.cpp).
 [[nodiscard]] std::string unicode_case(std::string_view s, bool upper);
 
 /// Checks that appending `addition` bytes to a string of `length` bytes stays

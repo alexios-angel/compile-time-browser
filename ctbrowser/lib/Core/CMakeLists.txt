@@ -7,6 +7,8 @@ target_sources(ctbrowser-core PRIVATE
   algorithms.cpp
   allocator.cpp
   atom.cpp
+  case_mapping.cpp
+  case_mapping.inc
   json.cpp
   number_format.cpp
   scheduler.cpp

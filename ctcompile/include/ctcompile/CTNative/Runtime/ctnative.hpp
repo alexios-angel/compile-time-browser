@@ -245,6 +245,22 @@ inline nullable_string to_nullable_string(nullable_scalar value) {
     }
     return out;
 }
+/// `text[index]` for a Number index (ECMA-262 10.4.3.5, StringGetOwnProperty):
+/// the one UTF-16 code unit at a canonical integer index below the length, as
+/// a one-unit string (half of a surrogate pair comes back as that lone
+/// surrogate's WTF-8), else undefined. -0 names index 0,
+/// as ToString(-0) is "0"; NaN, fractions, negatives and out-of-range indices
+/// name no element.
+inline nullable_string string_at(const js_string & text, js_num index) {
+    const double at = index.value();
+    if (!(at >= 0.0) || at != std::floor(at) ||
+        at >= static_cast<double>(string_length(text.value()))) {
+        return {};
+    }
+    const std::u16string units = ctbrowser::wtf8_to_utf16(text.value());
+    return ctbrowser::utf16_to_wtf8(
+        std::u16string_view{units}.substr(static_cast<std::size_t>(at), 1));
+}
 inline bool string_truthy(const nullable_string & value) {
     return value.tag == nullable_string::kind::string && !value.value.empty();
 }

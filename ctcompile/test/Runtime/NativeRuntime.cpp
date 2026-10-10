@@ -14,6 +14,7 @@
 #define CTNATIVE_DOM 1
 #define CTNATIVE_ORDERED_MAPS 1
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
+#include "ctcompile/CTNative/Runtime/Json.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
@@ -943,6 +944,111 @@ int main() {
         CHECK(workerUnbound && workerBound && workerRestored);
         CHECK(ctnative::document.documentElement() == outerRoot);
     }
+    // String.prototype.toLowerCase: ASCII, Latin-1, the U+0130 expansion, a
+    // final sigma against a lone capital one, ß unchanged, a lone surrogate
+    // copied as it was, and the empty string.
+    CHECK(to_lower_case(js_string{"ABC xyz"}) == js_string{"abc xyz"});
+    CHECK(to_lower_case(js_string{"\xC3\x80"
+                                  "B"}) == js_string{"\xC3\xA0"
+                                                     "b"});
+    CHECK(to_lower_case(js_string{"\xC4\xB0"}) == js_string{"i\xCC\x87"});
+    CHECK(to_lower_case(js_string{"\xCE\x9F\xCE\x94\xCE\x9F\xCE\xA3"}) ==
+          js_string{"\xCE\xBF\xCE\xB4\xCE\xBF\xCF\x82"});
+    CHECK(to_lower_case(js_string{"\xCE\xA3"}) == js_string{"\xCF\x83"});
+    CHECK(to_lower_case(js_string{"\xC3\x9F"}) == js_string{"\xC3\x9F"});
+    CHECK(to_lower_case(js_string{"\xED\xA0\x80"}) == js_string{"\xED\xA0\x80"});
+    CHECK(to_lower_case(js_string{}) == js_string{});
+    CHECK(ctbrowser::unicode_case("\xC3\x9F", true) == "SS");
+
+    // String.prototype.trim: ASCII space and line terminators, NBSP, LS and
+    // the BOM are all StrWhiteSpaceChar; interior space stays.
+    CHECK(trim(js_string{" \t a b \r\n"}) == js_string{"a b"});
+    CHECK(trim(js_string{"\xC2\xA0x\xE2\x80\xA8"}) == js_string{"x"});
+    CHECK(trim(js_string{"\xEF\xBB\xBF"}) == js_string{});
+    CHECK(trim(js_string{}) == js_string{});
+
+    // The replace(/[\r ]+$/, '') shape: only the trailing run goes.
+    CHECK(trim_end_any(js_string{"color\r"}, "\r ") == js_string{"color"});
+    CHECK(trim_end_any(js_string{"a \r \r"}, "\r ") == js_string{"a"});
+    CHECK(trim_end_any(js_string{" a b"}, "\r ") == js_string{" a b"});
+    CHECK(trim_end_any(js_string{"\xC3\xA9 \r"}, "\r ") == js_string{"\xC3\xA9"});
+    CHECK(trim_end_any(js_string{" \r "}, "\r ") == js_string{});
+    CHECK(trim_end_any(js_string{}, "\r ") == js_string{});
+
+    // text[index]: UTF-16 units, -0 is index 0, and everything that names no
+    // element is undefined, in the nullable_string carrier.
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{0.0}) == to_nullable_string(js_string{"a"}));
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{-0.0}) ==
+          to_nullable_string(js_string{"a"}));
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{2.0}) == to_nullable_string(js_string{"c"}));
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{3.0}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{1.5}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{-1.0}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{js_nan_t{}}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{std::numeric_limits<double>::infinity()})
+              .tag == nullable_string::kind::undefined);
+    CHECK(string_at(js_string{}, ctnative::js_num{0.0}).tag == nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"\xC3\xA9"}, ctnative::js_num{0.0}) ==
+          to_nullable_string(js_string{"\xC3\xA9"}));
+    // U+1F600 is the pair D83D DE00; each index answers its lone half.
+    CHECK(string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{0.0}) ==
+          to_nullable_string(js_string{"\xED\xA0\xBD"}));
+    CHECK(string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{1.0}) ==
+          to_nullable_string(js_string{"\xED\xB8\x80"}));
+    CHECK(string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{2.0}).tag ==
+          nullable_string::kind::undefined);
+
+    // Math.min: NaN wins on either side, -0 is below +0 in both orders.
+    CHECK(math_min(ctnative::js_num{1.0}, ctnative::js_num{2.0}) == ctnative::js_num{1.0});
+    CHECK(math_min(ctnative::js_num{2.0}, ctnative::js_num{-3.5}) == ctnative::js_num{-3.5});
+    CHECK(std::isnan(math_min(ctnative::js_num{js_nan_t{}}, ctnative::js_num{1.0}).value()));
+    CHECK(std::isnan(math_min(ctnative::js_num{1.0}, ctnative::js_num{js_nan_t{}}).value()));
+    CHECK(std::signbit(math_min(ctnative::js_num{0.0}, ctnative::js_num{-0.0}).value()));
+    CHECK(std::signbit(math_min(ctnative::js_num{-0.0}, ctnative::js_num{0.0}).value()));
+    CHECK(!std::signbit(math_min(ctnative::js_num{0.0}, ctnative::js_num{0.0}).value()));
+    const double infinity = std::numeric_limits<double>::infinity();
+    CHECK(math_min(ctnative::js_num{-infinity}, ctnative::js_num{1.0}) ==
+          ctnative::js_num{-infinity});
+    CHECK(math_min(ctnative::js_num{infinity}, ctnative::js_num{infinity}) ==
+          ctnative::js_num{infinity});
+
+    // QuoteJSONString: short escapes, \u00XX for other controls, a lone
+    // surrogate as \uXXXX, non-ASCII passed through, the empty string.
+    CHECK(json_quote(js_string{"a\"b\\c\n\t\x01"}) == js_string{"\"a\\\"b\\\\c\\n\\t\\u0001\""});
+    CHECK(json_quote(js_string{"\xED\xA0\x80"}) == js_string{"\"\\ud800\""});
+    CHECK(json_quote(js_string{"\xC3\xA9"}) == js_string{"\"\xC3\xA9\""});
+    CHECK(json_quote(js_string{}) == js_string{"\"\""});
+
+    // JSON.stringify of a built tree: member order kept, -0 as 0, NaN and the
+    // infinities as null, Number::toString spellings, nested arrays.
+    {
+        using ctbrowser::json_value;
+        const auto member = [](const char * key, json_value value) {
+            return json_value::member{key, std::move(value)};
+        };
+        const json_value tree{json_value::object{
+            member("v", json_value{1.0}),
+            member("n", json_value{-0.0}),
+            member("x", json_value{std::numeric_limits<double>::quiet_NaN()}),
+            member("y", json_value{-infinity}),
+            member("big", json_value{1e21}),
+            member("s", json_value{std::string{"q\""}}),
+            member("b", json_value{true}),
+            member("z", json_value{nullptr}),
+            member("a", json_value{json_value::array{json_value{1.5}, json_value{std::string{}}}}),
+        }};
+        CHECK(json_stringify(tree) ==
+              js_string{"{\"v\":1,\"n\":0,\"x\":null,\"y\":null,\"big\":1e+21,\"s\":\"q\\\"\","
+                        "\"b\":true,\"z\":null,\"a\":[1.5,\"\"]}"});
+        CHECK(json_stringify(json_value{json_value::object{}}) == js_string{"{}"});
+        CHECK(json_stringify(json_value{json_value::array{}}) == js_string{"[]"});
+        CHECK(json_stringify(json_value{false}) == js_string{"false"});
+    }
+
     CHECK(unbound());
     REPORT("native_runtime");
 }

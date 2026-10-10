@@ -257,6 +257,14 @@ inline void join_surrogates(std::string & text) {
 /// four-byte code point, and lone surrogates use their three-byte encoding.
 [[nodiscard]] std::string utf16_to_wtf8(std::u16string_view units);
 
+/// The default case conversion of ECMA-262 22.1.3.28 (toLowerCase) and
+/// 22.1.3.30 (toUpperCase) over WTF-8 text: Unicode 17.0.0's full lowercase
+/// (`upper` false) or uppercase mapping, with Final_Sigma and without
+/// language-sensitive rules. A lone surrogate is copied unchanged. The tables
+/// are generated (tools/gen/unicode_case.py), so the answer never depends on
+/// the C locale.
+[[nodiscard]] std::string unicode_case(std::string_view text, bool upper);
+
 /// The Unicode 17.0.0 default full lowercase of exactly one UTF-16 code unit.
 /// U+0130 expands to i + U+0307; lone surrogates are unchanged. The unit is
 /// isolated, so the contextual Final_Sigma rule cannot apply; this is not

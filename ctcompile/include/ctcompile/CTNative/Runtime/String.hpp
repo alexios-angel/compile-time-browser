@@ -1,7 +1,9 @@
 //===- String.hpp - The native JavaScript String ----------------*- C++ -*-===//
 //
 // js_string, the C++ type generated native code uses for a JavaScript String,
-// and string_length, which counts UTF-16 code units as JavaScript does.
+// string_length, which counts UTF-16 code units as JavaScript does, and the
+// String.prototype methods native code calls by name (to_lower_case, trim,
+// trim_end_any; string_at is in ctnative.hpp beside nullable_string).
 //
 //===----------------------------------------------------------------------===//
 
@@ -99,6 +101,28 @@ inline std::size_t string_length(std::string_view text) {
         units += ctbrowser::decode_utf8(text, at) >= 0x10000 ? 2 : 1;
     }
     return units;
+}
+
+/// String.prototype.toLowerCase (ECMA-262 22.1.3.28): Unicode's default full
+/// lowercase, Final_Sigma included, from the same core tables the VM uses.
+inline js_string to_lower_case(const js_string & text) {
+    return js_string{ctbrowser::unicode_case(text.value(), false)};
+}
+
+/// String.prototype.trim (ECMA-262 22.1.3.32): TrimString with both ends, over
+/// WhiteSpace and LineTerminator (the StrWhiteSpaceChar set).
+inline js_string trim(const js_string & text) {
+    return js_string{ctbrowser::trim_js_space(text.value())};
+}
+
+/// `text.replace(/[set]+$/, '')` (ECMA-262 22.1.3.19 with a RegExp whose only
+/// match is the maximal run of `set` characters at the end): `text` without
+/// that run. `set` must be ASCII; an ASCII byte is never part of a multibyte
+/// WTF-8 sequence, so the byte scan matches the code point scan.
+inline js_string trim_end_any(const js_string & text, std::string_view set) {
+    const std::string & bytes = text.value();
+    const auto last = bytes.find_last_not_of(set);
+    return js_string{std::string_view{bytes}.substr(0, last == std::string::npos ? 0 : last + 1)};
 }
 
 } // namespace ctnative
