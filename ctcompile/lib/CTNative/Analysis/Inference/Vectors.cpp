@@ -1,8 +1,10 @@
 //===- Vectors.cpp - Vectors of one proved element type -------------------===//
 //
 // The local proof behind arrays that lower to `std::vector<T>` for one proved
-// element carrier T (String today): which values name one such array, which
-// calls on it the native runtime implements, and what is stored into it.
+// element carrier T (a String or a two-element row today): which values name
+// one such array, which calls on it the native runtime implements, and what is
+// stored into it. Also the tuple literal (a row) and the bounded-loop index
+// read.
 // TypeInference types the array from the stores; admission and the emitter
 // ask the same group query, so the three cannot disagree about a use.
 //
@@ -20,7 +22,9 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -278,6 +282,93 @@ bool TypeInference::splitsAString(llvm::ArrayRef<mlir::Value> members) {
         const VectorCall made = vectorCallOf(member.getDefiningOp());
         return made == VectorCall::split || made == VectorCall::splitSpace;
     });
+}
+
+int64_t TypeInference::constantIndex(mlir::Value key) {
+    auto number = ctjs::constantAttr<ctjs::NumberAttr>(key);
+    if (!number) { return -1; }
+    const double value = number.getDouble();
+    if (!(value >= 0.0) || value > 1e9 || value != std::floor(value)) { return -1; }
+    return static_cast<int64_t>(value);
+}
+
+llvm::SmallVector<mlir::Value, 2> TypeInference::tupleParts(mlir::Value array) {
+    llvm::SmallVector<mlir::Value, 2> parts;
+    auto literal = array.getDefiningOp<ctjs::CreateArrayOp>();
+    if (!literal) { return parts; }
+    llvm::append_range(parts, literal.getElements());
+    // Appends run in block order; isTupleLiteral requires them all in the
+    // literal's block, so block order is the position order.
+    for (mlir::Operation & op : *literal->getBlock()) {
+        auto append = llvm::dyn_cast<ctjs::AppendOp>(op);
+        if (append && append.getArray() == array) { parts.push_back(append.getElement()); }
+    }
+    return parts;
+}
+
+bool TypeInference::isTupleLiteral(mlir::Value array) {
+    auto literal = array.getDefiningOp<ctjs::CreateArrayOp>();
+    if (!literal) { return false; }
+    mlir::Block * block = literal->getBlock();
+    mlir::Operation * push = nullptr;
+    unsigned appends = 0;
+    for (mlir::OpOperand & use : array.getUses()) {
+        mlir::Operation * user = use.getOwner();
+        if (user->getBlock() != block) { return false; }
+        if (llvm::isa<ctjs::AppendOp>(user) && use.getOperandNumber() == 0) {
+            ++appends;
+            continue;
+        }
+        // Operand 2 is the call's first argument (callee, receiver, args...).
+        if (use.getOperandNumber() == 2 && vectorCallOf(user) == VectorCall::push && !push) {
+            push = user;
+            continue;
+        }
+        return false;
+    }
+    if (!push || literal.getElements().size() + appends != 2) { return false; }
+    // Every append has to run before the push copies the tuple out.
+    return llvm::all_of(array.getUsers(), [&](mlir::Operation * user) {
+        return user == push || user->isBeforeInBlock(push);
+    });
+}
+
+bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
+    auto counter = read ? llvm::dyn_cast<mlir::BlockArgument>(read.getKey()) : nullptr;
+    if (!counter) { return false; }
+    auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(counter.getOwner()->getParentOp());
+    if (!loop || counter.getOwner()->getParent() != &loop.getAfter()) { return false; }
+    const unsigned index = counter.getArgNumber();
+    // The condition forwards the before-region counter unchanged ...
+    mlir::scf::ConditionOp condition = loop.getConditionOp();
+    mlir::Value before = loop.getBeforeArguments()[index];
+    if (condition.getArgs()[index] != before) { return false; }
+    // ... and holds only while `counter < array.length` for the read's array.
+    auto truthy = condition.getCondition().getDefiningOp<ctjs::TruthyOp>();
+    auto compare = truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : nullptr;
+    if (!compare || compare.getKind() != ctjs::CompareKind::Lt || compare.getLhs() != before) {
+        return false;
+    }
+    auto length = compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>();
+    if (!length || length.getObject() != read.getObject() ||
+        ctjs::constantKey(length.getKey()) != "length") {
+        return false;
+    }
+    // It starts at a non-negative integer and every iteration adds 1, so it
+    // is always an integer at least 0.
+    if (constantIndex(loop.getInits()[index]) < 0) { return false; }
+    auto step = loop.getYieldOp().getOperand(index).getDefiningOp();
+    const auto addsOne = [&](mlir::Value lhs, mlir::Value rhs) {
+        return lhs == counter && constantIndex(rhs) == 1;
+    };
+    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryStaticOp>(step)) {
+        return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
+    }
+    if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step)) {
+        return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
+    }
+    return false;
 }
 
 } // namespace ctcompile::ctnative

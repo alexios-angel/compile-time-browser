@@ -259,6 +259,23 @@ public:
     /// Whether one owner in `members` is a split result.
     static bool splitsAString(llvm::ArrayRef<mlir::Value> members);
 
+    /// Whether `array` is a tuple literal: a two-element array literal whose
+    /// elements are its inline elements and appends, all in its own block,
+    /// and whose only other use is as the one argument of a push onto an
+    /// element vector, after those appends. Its positions are tupleParts.
+    static bool isTupleLiteral(mlir::Value array);
+    /// The values a tuple literal holds, in position order.
+    static llvm::SmallVector<mlir::Value, 2> tupleParts(mlir::Value array);
+    /// The position a constant index reads (`t[1]` is 1), or -1 when the key
+    /// is not a constant integer.
+    static int64_t constantIndex(mlir::Value key);
+    /// Whether the index read `read` (a get_property of an element vector)
+    /// is proved in bounds: its key is the counter of an scf.while whose
+    /// condition is `counter < sameArray.length`, which starts at a
+    /// non-negative integer constant and steps by 1. Element vectors never
+    /// shrink, so the element exists when the body reads it.
+    static bool isBoundedIndexRead(mlir::Operation * read);
+
     /// A value that names a shared binding the closure lift made a
     /// frame-local variable: the `ctjs.create_cell` it marked
     /// `ctnative.carried`, or an entry-block argument its

@@ -42,7 +42,7 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
     using VectorCall = TypeInference::VectorCall;
     llvm::DenseSet<mlir::Value> arrays;
     const auto consider = [&](mlir::Value v) {
-        if (isStringArray(v, lower.typeOf(v))) { arrays.insert(v); }
+        if (isElementArray(v, lower.typeOf(v))) { arrays.insert(v); }
     };
     for (mlir::Block & block : fn.getBody()) {
         for (mlir::BlockArgument argument : block.getArguments()) { consider(argument); }
@@ -63,17 +63,33 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             mark(op, "plumbing");
             return;
         }
+        // A tuple literal and its appends lower to nothing until the push
+        // that copies the tuple into its array builds the std::pair there.
         if (auto literal = llvm::dyn_cast<ctjs::CreateArrayOp>(op)) {
-            if (arrays.contains(literal.getResult())) { mark(op, "create"); }
+            if (TypeInference::isTupleLiteral(literal.getResult())) {
+                mark(op, "tuple");
+            } else if (arrays.contains(literal.getResult())) {
+                mark(op, "create");
+            }
             return;
         }
         if (auto append = llvm::dyn_cast<ctjs::AppendOp>(op)) {
-            if (arrays.contains(append.getArray())) { mark(op, "append"); }
+            if (TypeInference::isTupleLiteral(append.getArray())) {
+                mark(op, "tuple_part");
+            } else if (arrays.contains(append.getArray())) {
+                mark(op, "append");
+            }
             return;
         }
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+            if (carrierOf(lower.typeOf(read.getObject())) == carrier::tuple) {
+                mark(op, "position");
+                return;
+            }
             if (!arrays.contains(read.getObject())) { return; }
-            mark(op, ctjs::constantKey(read.getKey()) == "length" ? "length" : "at");
+            mark(op, ctjs::constantKey(read.getKey()) == "length" ? "length"
+                     : TypeInference::isBoundedIndexRead(op)      ? "element"
+                                                                  : "at");
             return;
         }
         auto call = llvm::dyn_cast<ctjs::CallOp>(op);
@@ -138,6 +154,23 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(callValue(b, where, numeric, "ctnative::vec_length", place(o->getOperand(0))));
         return true;
     }
+    if (kind == "tuple" || kind == "tuple_part") {
+        // Built and erased by the push that copies the tuple out.
+        return true;
+    }
+    if (kind == "position") {
+        // `t[0]` and `t[1]` on a std::pair.
+        const int64_t position = TypeInference::constantIndex(o->getOperand(1));
+        swap(callValue(b, where, o->getResult(0).getType(),
+                       position == 0 ? "std::get<0>" : "std::get<1>", o->getOperand(0)));
+        return true;
+    }
+    if (kind == "element") {
+        // An index proved in bounds reads the element itself.
+        swap(callValue(b, where, o->getResult(0).getType(), "ctnative::vec_element",
+                       mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)}));
+        return true;
+    }
     if (kind == "at") {
         const mlir::Type result = o->getResult(0).getType();
         const mlir::Value value =
@@ -148,7 +181,38 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
-        const std::array<mlir::Value, 2> operands{place(call.getReceiver()), call.getArgs()[0]};
+        mlir::Value value = call.getArgs()[0];
+        mlir::Operation * tuple = value.getDefiningOp();
+        const bool row =
+            tuple && tuple->hasAttr(kStringArrayAction) &&
+            tuple->getAttrOfType<mlir::StringAttr>(kStringArrayAction).getValue() == "tuple";
+        llvm::SmallVector<mlir::Operation *, 2> parts;
+        if (row) {
+            // Build the std::pair the array holds from the tuple's parts, each
+            // widened to its position in the array's element type.
+            auto element = llvm::cast<TupleType>(
+                llvm::cast<VecType>(lower.typeOf(call.getReceiver())).getElementType());
+            llvm::SmallVector<mlir::Value, 2> positions;
+            auto literal = llvm::cast<ctjs::CreateArrayOp>(tuple);
+            llvm::append_range(positions, literal.getElements());
+            for (mlir::Operation * user : literal.getResult().getUsers()) {
+                if (llvm::isa<ctjs::AppendOp>(user)) { parts.push_back(user); }
+            }
+            llvm::sort(parts, [](mlir::Operation * a, mlir::Operation * b) {
+                return a->isBeforeInBlock(b);
+            });
+            for (mlir::Operation * part : parts) {
+                positions.push_back(llvm::cast<ctjs::AppendOp>(part).getElement());
+            }
+            for (std::size_t index = 0; index < positions.size(); ++index) {
+                positions[index] = lower.convertScalar(
+                    b, where, positions[index],
+                    carrierType(context, carrierOf(element.getElements()[index])));
+            }
+            const std::string pair = elementSpelling(element);
+            value = callValue(b, where, ec::OpaqueType::get(context, pair), pair, positions);
+        }
+        const std::array<mlir::Value, 2> operands{place(call.getReceiver()), value};
         if (call.getResult().use_empty()) {
             // No result, so no unused variable under -Werror (see lowering::push).
             callWithConstValueOperands(b, where, mlir::TypeRange{},
@@ -158,6 +222,9 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         } else {
             swap(callValue(b, where, numeric, "ctnative::Array.prototype.push.call", operands));
         }
+        // The tuple literal and its appends are now unused.
+        for (mlir::Operation * part : parts) { lowering::eraseIfUnused(part); }
+        if (row) { lowering::eraseIfUnused(tuple); }
         return true;
     }
     if (kind == "join") {
