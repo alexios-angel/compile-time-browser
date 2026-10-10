@@ -439,6 +439,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // alias group the receiver mark creates. Non-method fields of an
             // immutable prototype are copied onto it.
             auto instance = ctjs::CreateObjectOp::create(at, built.getLoc(), valueType);
+            // An instance of a JavaScript class is spelled after the class.
+            if (jsClasses.count(only.getOperation())) {
+                instance->setAttr(kNativeClassName,
+                                  mlir::StringAttr::get(context, classNameOf(target)));
+            }
             if (prototype) {
                 for (ctjs::SetPropertyOp field : prototype->fields) {
                     // Methods become direct calls with no runtime field. Their
@@ -467,6 +472,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             built.erase();
             ++out.calls;
             ++out.constructors;
+        }
+        // A class's setup goes first: its edges name the prototype and the
+        // constructor, and the class helper call names the constructor.
+        if (auto cls = jsClasses.find(only.getOperation()); cls != jsClasses.end()) {
+            eraseClassSetup(cls->second);
         }
         if (prototype) {
             auto literal = prototype->attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>();

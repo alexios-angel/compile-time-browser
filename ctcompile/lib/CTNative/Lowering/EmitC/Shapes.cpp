@@ -181,6 +181,13 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             std::string nameKey; // the family key: just the names
             std::string typeKey; // the instantiation key: names AND types
             siteShape site;
+            // An instance of a JavaScript class is its own family, named after
+            // the class, however its fields compare with another shape's.
+            const auto className = object->getAttrOfType<mlir::StringAttr>(kNativeClassName);
+            if (className) {
+                nameKey = "class " + className.getValue().str();
+                nameKey.push_back('\0');
+            }
             for (const auto & field : fields) {
                 nameKey += field.first;
                 nameKey.push_back('\0'); // no field name can contain one
@@ -195,6 +202,7 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             site.family = entry->second;
             if (fresh) {
                 family made;
+                if (className) { made.className = className.getValue().str(); }
                 for (const auto & field : fields) { made.fields.push_back(field.first); }
                 made.types = site.types;
                 made.varies = llvm::BitVector(static_cast<unsigned>(fields.size()), false);
@@ -249,6 +257,10 @@ void lowering::nameFamilies() {
         // character, and the squeeze above makes `{a, _b}` a third. The second
         // family to ask gets `_2`. Without this the module would hold two
         // `emitc.class @ctn_a_b` and the symbol-table verifier would reject it.
+        // A class instance is spelled after its JavaScript class instead.
+        if (!f.className.empty()) {
+            squeezed = admission::isReservedInCpp(f.className) ? "js_" + f.className : f.className;
+        }
         f.name = squeezed;
         for (unsigned n = 2; !taken.insert(f.name).second; ++n) {
             f.name = squeezed + "_" + std::to_string(n);
@@ -276,7 +288,8 @@ void lowering::nameFamilies() {
 /// instantiations it has. A reader arriving from a C++ diagnostic gets a place
 /// to start and learns that other sites exist.
 std::string lowering::provenanceOf(const family & f) const {
-    std::string out = "object literal at ";
+    std::string out = f.className.empty() ? "object literal at "
+                                          : "class " + f.className + ", instances made at ";
     const size_t shown = std::min<size_t>(3, f.where.size());
     out += llvm::join(llvm::ArrayRef(f.where).take_front(shown), ", ");
     if (f.where.size() > shown) {
