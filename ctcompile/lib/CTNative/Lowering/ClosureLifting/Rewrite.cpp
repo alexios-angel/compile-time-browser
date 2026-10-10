@@ -239,6 +239,23 @@ liftReport closureLifter::run() {
         }
     }
     unboxCells(out);
+    // The boxes left now refuse their functions. Those of a function that runs
+    // once can become static variables, after which the closures over them
+    // may lift, so the lift runs once more on the result. The verdicts of this
+    // run are cleared first: they describe captures that no longer exist.
+    if (!staticsDone && makeRunOnceCellsStatic(out)) {
+        module.walk([](mlir::Operation * op) {
+            op->removeAttr(kNativeClosureReason);
+            op->removeAttr(kNativeMethodRefusal);
+            op->removeAttr(kNativeCellReason);
+        });
+        closureLifter again{module, censusOn};
+        again.staticsDone = true;
+        liftReport second = again.run();
+        second.add(out);
+        *this = std::move(again);
+        return second;
+    }
     return out;
 }
 

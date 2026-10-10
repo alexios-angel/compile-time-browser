@@ -323,7 +323,9 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
 bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
     llvm::MapVector<mlir::Operation *, functionBinding> plans;
     module.walk([&](ctjs::CreateCellOp cell) {
-        if (!holdsAFunction(cell)) { return; }
+        // A static cell is read by name from other functions, which this
+        // rewrite would not see, so its box has to stay.
+        if (!holdsAFunction(cell) || cell->hasAttr(kNativeStaticCell)) { return; }
         functionBinding plan;
         if (const std::optional<std::string> why = examineFunctionBinding(cell, plan)) {
             whyNotAFunctionBinding[cell.getOperation()] = *why;

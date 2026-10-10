@@ -33,6 +33,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=THIS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/liftedthis.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=LIFTEDTHIS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/newtarget.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=NEWTARGET
@@ -60,6 +63,15 @@
 //
 // THIS: ctjs.func {{.*}}@usesthis$1
 // THIS-SAME: ctnative.not_native = "uses `this`"
+//
+// When the receiver lift judged the function and refused it, the reason the
+// lift recorded on its closure is the actionable one, so it follows the use.
+// Here the method's object has a computed-key write, so its shape is open (the
+// same program as OPENSHAPE in Objects/receiver/refusals.mlir, whose CHECK
+// pins the enclosing function's message).
+//
+// LIFTEDTHIS: ctjs.func {{.*}}@fn$2
+// LIFTEDTHIS-SAME: ctnative.not_native = "uses `this` - a closure used as a value: it is a method field of an object whose shape is not closed, so `f` cannot become a free function taking that object"
 
 // --- argument 1: new.target -------------------------------------------------
 //
@@ -96,6 +108,14 @@
 //--- this.js
 function usesthis(x) { return this ? x : x + 1; }
 var r = usesthis(3);
+
+//--- liftedthis.js
+function opened(k) {
+    var o = { x: 1, f: function () { return this.x; } };
+    o[k] = 5;
+    return o.f();
+}
+var a = opened(2);
 
 //--- newtarget.js
 function constructed(n) { return new.target ? 1 : 2; }

@@ -250,6 +250,25 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
         return;
     }
+    // A static cell (ClosureLifting/RunOnce.cpp) is a namespace-scope variable
+    // rather than a frame-local one. The box itself assigns the initial where
+    // the frame made it; a reference in another function only names the
+    // variable.
+    if (auto cell = llvm::dyn_cast<CreateCellOp>(o)) {
+        if (auto name = o->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+            const auto type = llvm::cast<ec::LValueType>(cell.getResult().getType());
+            statics.try_emplace(name.str(), type.getValueType());
+            mlir::Value place = ec::GetGlobalOp::create(
+                b, where, type, mlir::FlatSymbolRefAttr::get(context, name.getValue()));
+            if (!o->hasAttr(kNativeStaticReference)) {
+                ec::AssignOp::create(
+                    b, where, place,
+                    convertScalar(b, where, cell.getInitial(), type.getValueType()));
+            }
+            swap(place);
+            return;
+        }
+    }
     // A shared binding (`ctjs.create_cell`) becomes a local variable in this
     // frame, initialised to the cell's initial value; `cell_get` and `cell_set`
     // load and assign it. A hoisted `var` starts as tagged undefined, so a read

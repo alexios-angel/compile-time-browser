@@ -16,6 +16,9 @@ namespace ctcompile::ctnative::lowering_detail {
 /// lift's fixpoint judges a closure against the same verdict.
 void closureLifter::singleWriteCensus() {
     module.walk([&](ctjs::CreateCellOp cell) {
+        // A static cell (RunOnce.cpp) is already decided: other functions
+        // name its variable, so it is never unboxed or carried by pointer.
+        if (cell->hasAttr(kNativeStaticCell)) { return; }
         ctjs::CellSetOp store;
         // Every use that must come after the store for its value to be the
         // one this cell yields (conditions 2 and 3), collected in one walk
@@ -88,6 +91,7 @@ void closureLifter::singleWriteCensus() {
 /// diagnostic.
 void closureLifter::sharedCellCensus() {
     module.walk([&](ctjs::CreateCellOp cell) {
+        if (cell->hasAttr(kNativeStaticCell)) { return; }
         // The by-value path has first choice, where it actually works. A cell
         // it takes is copied into a parameter: no pointer, no indirection and
         // no aliasing question. But taking it needs two checks:
@@ -347,6 +351,7 @@ void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
     llvm::SmallVector<ctjs::CreateCellOp> cells;
     module.walk([&](ctjs::CreateCellOp cell) { cells.push_back(cell); });
     for (ctjs::CreateCellOp cell : cells) {
+        if (cell->hasAttr(kNativeStaticCell)) { continue; }
         if (localObjectsOnly &&
             (!constantValueOf(cell).getDefiningOp<ctjs::CreateObjectOp>() ||
              !llvm::all_of(cell.getResult().getUsers(), [](mlir::Operation * user) {
