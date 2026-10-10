@@ -6,6 +6,12 @@
 # the executable. tools/check/check-workload.py's native-run stage finds it by
 # that name.
 
+# The native runtime's page views (CTNative/Runtime/Page.hpp) and the element
+# members a workload's DOM reads use, over a ctbrowser::page::static_page. A
+# test of its own so ctcompile-test-native-runtime links no page library; its
+# source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-page LIBS ctbrowser::page)
+
 set(_native_ctbrowser "${CTCOMPILE_MONOREPO_ROOT}/ctbrowser")
 set(_native_gate "${_native_ctbrowser}/cmake/run-without-vm.cmake")
 set(_native_gate_nm "${CMAKE_NM}")
