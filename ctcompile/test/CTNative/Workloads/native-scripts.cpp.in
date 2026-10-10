@@ -1,0 +1,70 @@
+//===- native-scripts.cpp.in - A workload test's compiled scripts ---------===//
+//
+// Configured by cmake/NativeWorkloads.cmake for one script of a workload test's
+// native build: includes the C++ ctcompile generated from the script, and
+// defines ctbrowser_test::native_scripts (ctbrowser/test/support/
+// native_engine.hpp) so the test's engine can load the script and call its
+// string entry. Each call runs with the test's page bound as the document.
+//
+//   script  @CTCOMPILE_WORKLOAD_SCRIPT@
+//   entry   @CTCOMPILE_WORKLOAD_ENTRY@
+//
+//===----------------------------------------------------------------------===//
+
+// The generated file's DOM and page views must be declared before it calls
+// them.
+#define CTNATIVE_DOM 1
+#include "ctcompile/CTNative/Runtime/Page.hpp"
+
+// The emitted top level is `int main()`; renamed so the test keeps its own.
+#define main ctcompile_workload_top_level
+#include "@CTCOMPILE_WORKLOAD_GENERATED@"
+#undef main
+
+// The engine seam, whose native half (native_engine.hpp) declares the table.
+#include "engine.hpp"
+
+#include <cstddef>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+
+namespace {
+
+/// Calls a string entry with the engine's arguments, one String each.
+template <class Entry, class... Params, std::size_t... Index>
+std::string call_with(Entry entry, std::span<const std::string_view> args,
+                      std::index_sequence<Index...>) {
+    return entry(std::remove_cvref_t<Params>{args[Index]}...).value();
+}
+
+template <class Result, class... Params>
+std::string call_string_entry(Result (*entry)(Params...), std::span<const std::string_view> args) {
+    if (args.size() != sizeof...(Params)) {
+        throw std::invalid_argument("expected " + std::to_string(sizeof...(Params)) +
+                                    " argument(s), got " + std::to_string(args.size()));
+    }
+    return call_with<Result (*)(Params...), Params...>(entry, args,
+                                                       std::index_sequence_for<Params...>{});
+}
+
+int top_level(ctbrowser::page::static_page & page) {
+    const ctnative::page_scope scope{page};
+    return ctcompile_workload_top_level();
+}
+
+std::string entry(ctbrowser::page::static_page & page, std::span<const std::string_view> args) {
+    const ctnative::page_scope scope{page};
+    return call_string_entry(&@CTCOMPILE_WORKLOAD_ENTRY@, args);
+}
+
+constexpr ctbrowser_test::native_entry entries[] = {{"@CTCOMPILE_WORKLOAD_ENTRY@", &entry}};
+constexpr ctbrowser_test::native_script scripts[] = {
+    {"@CTCOMPILE_WORKLOAD_SCRIPT@", &top_level, entries}};
+
+} // namespace
+
+const std::span<const ctbrowser_test::native_script> ctbrowser_test::native_scripts{scripts};
