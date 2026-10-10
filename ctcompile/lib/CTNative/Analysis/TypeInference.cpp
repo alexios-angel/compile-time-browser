@@ -309,7 +309,9 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
             pending = true;
             return {};
         }
-        if (dense && !llvm::isa<StrType>(stored)) { return {}; }
+        // Only Strings are lowered this way yet. Any other element type keeps
+        // the dense proof's type, or none, and with it that proof's refusal.
+        if (!llvm::isa<StrType>(stored)) { return {}; }
         return VecType::get(c, stored);
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
@@ -326,14 +328,16 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         }
         return {};
     }
+    // push, join and sort answer only on a proved vector of Strings.
+    const auto ofStrings = [&](const TypeLattice * lattice) {
+        auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(lattice));
+        return vector && llvm::isa<StrType>(vector.getElementType());
+    };
     switch (vectorCallOf(op)) {
-    case VectorCall::push: return doubleType(c);
-    case VectorCall::join: return stringType(c);
-    case VectorCall::sort: {
-        // `a.sort()` is `a`.
-        auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(operands[1]));
-        return vector ? mlir::Type(vector) : mlir::Type{};
-    }
+    case VectorCall::push: return ofStrings(operands[1]) ? doubleType(c) : mlir::Type{};
+    case VectorCall::join: return ofStrings(operands[1]) ? stringType(c) : mlir::Type{};
+    // `a.sort()` is `a`.
+    case VectorCall::sort: return ofStrings(operands[1]) ? typeOf(operands[1]) : mlir::Type{};
     case VectorCall::split:
     case VectorCall::splitSpace: {
         if (!llvm::isa_and_nonnull<StrType>(typeOf(operands[1]))) { return {}; }

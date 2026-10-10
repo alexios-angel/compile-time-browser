@@ -38,24 +38,22 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             return true;
         }
         if (TypeInference::isDenseVectorSite(literal.getResult())) { return std::nullopt; }
-        // The element-vector proof accepts the uses but the elements are not
-        // all Strings, and the dense numeric proof does not take it.
+        // Only an array that holds a String is meant as an array of Strings,
+        // and only then is the element-vector proof's reason the one to give;
+        // an array of numbers keeps the dense proof's refusal.
+        mlir::Type stored;
+        for (mlir::Value value : TypeInference::elementVectorStores(literal.getResult())) {
+            stored = meet(stored, self.typeOf(value));
+        }
+        const bool holdsStrings =
+            llvm::any_of(TypeInference::elementVectorStores(literal.getResult()),
+                         [&](mlir::Value value) { return isString(value); });
+        if (!holdsStrings) { return std::nullopt; }
         std::string why;
         if (!TypeInference::elementVectorAliases(literal.getResult(), &why).empty()) {
-            auto vector = llvm::dyn_cast_or_null<VecType>(self.typeOf(literal.getResult()));
-            return self.refuse("an array whose elements are " +
-                               printed(vector ? vector.getElementType() : mlir::Type{}) +
-                               ", not Strings");
+            return self.refuse("an array whose elements are " + printed(stored) + ", not Strings");
         }
-        // An array the code calls push, join or sort on is meant as an array
-        // of Strings, so the element-vector proof's reason is the one to give.
-        const bool calledAsArray = llvm::any_of(literal->getUsers(), [](mlir::Operation * user) {
-            auto read = llvm::dyn_cast<GetPropertyOp>(user);
-            const llvm::StringRef key = read ? constantKey(read.getKey()) : llvm::StringRef{};
-            return key == "push" || key == "join" || key == "sort";
-        });
-        if (calledAsArray) { return self.refuse("an array of Strings: " + why); }
-        return std::nullopt;
+        return self.refuse("an array of Strings: " + why);
     }
     if (auto append = llvm::dyn_cast<AppendOp>(o); append && array(append.getArray())) {
         return isString(append.getElement()) ||
