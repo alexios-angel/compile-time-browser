@@ -11,12 +11,16 @@
 //
 // The positives lower completely, print the same `r` as Node and the
 // interpreter with both compilers, and name the variable after the binding.
+// The binding name is debug data in the box's location, so their import is
+// printed with --mlir-print-debuginfo, as tools/check/native-claims.py does;
+// without it the location does not reach ctjs-opt and the variable is
+// `static_binding`.
 // The negatives keep the box, and the factory carries the reason it is not
 // proved to run once: called twice, its closure value passed somewhere that can
 // call it, or calling itself.
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/iife.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/iife.js --mlir-print-debuginfo 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/iife.mlir
 // RUN: FileCheck %s --check-prefix=IIFE --implicit-check-not=ctnative.not_native < %t/iife.mlir
 // RUN: ctjs-opt %t/iife.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/iife.cpp
@@ -26,7 +30,7 @@
 // RUN: %t/iife-clang | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %native_reference %t/iife.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/iife.js | FileCheck %s --check-prefix=OBSERVATION
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/umd.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/umd.js --mlir-print-debuginfo 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/umd.mlir
 // RUN: FileCheck %s --check-prefix=UMD --implicit-check-not=ctnative.not_native < %t/umd.mlir
 // RUN: ctjs-opt %t/umd.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/umd.cpp
@@ -35,7 +39,7 @@
 // RUN: %clangxx -O2 %t/umd.cpp -o %t/umd-clang
 // RUN: %t/umd-clang | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %native_reference %t/umd.js | FileCheck %s --check-prefix=OBSERVATION
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/amd.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/amd.js --mlir-print-debuginfo 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/amd.mlir
 // RUN: FileCheck %s --check-prefix=UMD --implicit-check-not=ctnative.not_native < %t/amd.mlir
 // RUN: ctjs-opt %t/amd.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/amd.cpp
