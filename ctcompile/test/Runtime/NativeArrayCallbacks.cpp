@@ -263,7 +263,7 @@ void test_bound_functions_take_the_arguments_they_declare() {
     // gives it as many of (element, index, array) as it declares.
     const std::vector<js_string> v{js_string{"ab"}, js_string{"abcd"}, js_string{""}};
     const std::vector<js_string> words{js_string{"x"}};
-    CHECK(Array.prototype.filter.call(v, std::bind_front(longer_than, num(1))).size() == 1);
+    CHECK(Array.prototype.filter.call(v, std::bind_front(longer_than, num(2))).size() == 1);
     CHECK(Array.prototype.filter.call(v, non_empty).size() == 2);
     const std::vector<js_string> named =
         Array.prototype.map.call(v, std::bind_front(tagged, js_string{"#"}));

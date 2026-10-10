@@ -1,16 +1,17 @@
 // Array callback methods (forEach, map, filter, some, every, find and reduce)
-// whose callback closure lifting specialises for its one call. EMIT checks the
-// spelling of a call with and without captures; each other prefix is one
-// refusal with its reason, from closure lifting (the callback's shape) or
-// from admission (the types).
+// whose callback closure lifting specialises for its one call. EMIT checks
+// the runtime calls with and without captures, and that nothing is refused;
+// each other prefix is one refusal with its reason, from closure lifting (the
+// callback's shape) or from admission (the types).
 //
 // RUN: split-file %s %t
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | ctjs-translate --mlir-to-cpp | FileCheck %s --check-prefix=EMIT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
 
-// EMIT-DAG: ctnative::Array.prototype.filter.call({{.*}}std::bind_front(
-// EMIT-DAG: ctnative::Array.prototype.some.call(
-// EMIT-DAG: ctnative::Array.prototype.reduce.call(
+// EMIT-DAG: emitc.call_opaque "std::bind_front"
+// EMIT-DAG: emitc.call_opaque "ctnative::Array.prototype.filter.call"
+// EMIT-DAG: emitc.call_opaque "ctnative::Array.prototype.some.call"
+// EMIT-DAG: emitc.call_opaque "ctnative::Array.prototype.reduce.call"
 
 // CHECK-DAG: @reduceNoInit${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: Array.prototype.reduce without an initial value - it throws on an empty array"
 // CHECK-DAG: @thisArg${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: Array.prototype.forEach called with a thisArg"
