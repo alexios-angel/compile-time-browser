@@ -1,0 +1,10 @@
+{
+  "title": "Phaser 3 (ctbrowser/vendor/phaser)",
+  "scripts": [
+    "ctbrowser/vendor/phaser/phaser.js",
+    "ctbrowser/test/corpus/phaser/phaser-api-probe.js",
+    "ctbrowser/test/corpus/phaser/phaser-api-probe/*.js"
+  ],
+  "pages": ["ctbrowser/examples/pages/phaser-*.html"],
+  "ctests": ["phaser_ratchet", "phaser_api", "phaser_invaders", "example-phaser*", "render-phaser*"]
+}

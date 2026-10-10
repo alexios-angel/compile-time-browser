@@ -1,0 +1,18 @@
+{
+  "title": "p5.js (ctbrowser/vendor/p5)",
+  "scripts": [
+    "ctbrowser/vendor/p5/p5.js",
+    "ctbrowser/test/corpus/p5/p5-api-probe.js",
+    "ctbrowser/test/corpus/p5/p5-api-probe/*.js"
+  ],
+  "pages": ["ctbrowser/examples/pages/p5-*.html"],
+  "ctests": [
+    "p5_ratchet",
+    "p5_api",
+    "example-p5*",
+    "render-p5*",
+    {"pattern": "render-angle-p5*", "optional": true},
+    "canvas_context",
+    "page_input"
+  ]
+}

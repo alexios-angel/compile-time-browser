@@ -75,6 +75,23 @@ with it.
   `~/.cache/ctcompile-emitter-merge`. On 2026-10-09 the fork carried 13
   conflicts against 23.1.0. `--self-test` checks the analysis on a planted
   example.
+- `tools/check/check-workload.py` — **whether a workload is DONE**: whether
+  every ctbrowser JS, CSS and HTML test of Bootstrap, p5, Phaser or Babylon
+  runs on native C++ from ctcompile, with no VM.
+  - **Stages.** It measures nine stages, from discovering the tests through
+    the VM reference run, admission (`native-claims.py`), the C++ pipeline,
+    GCC and Clang builds, the no-VM symbol gate and a globals comparison
+    against the VM, to the native run. It names the first gap as NOT DONE
+    with its evidence, written for an LLM.
+  - **Where it runs.** It runs where the build is (the devbox, under the
+    devbox lock). A missing build output is CANNOT CHECK, naming the target.
+  - **Time limits.** Every command, item and run is time-limited; a hang is
+    TIMED OUT (exit 3) and its process group is killed.
+  - **Workload definitions.** They are JSON files in `tools/check/workloads/`,
+    with `defaults.json` merged under each; a `.py` file there can register
+    new stages.
+  - **Proofs.** `fixture` is a hidden workload that must be DONE, proving the
+    checker can say so, and `--self-test` checks the engine without a build.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
   into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
   links (it cannot be header-only), so the Windows presets need this run once.

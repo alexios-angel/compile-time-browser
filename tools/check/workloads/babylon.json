@@ -1,0 +1,16 @@
+{
+  "title": "Babylon.js (ctbrowser/vendor/babylon)",
+  "scripts": [
+    "ctbrowser/vendor/babylon/babylon.js",
+    "ctbrowser/test/corpus/babylon/babylon-api-probe.js"
+  ],
+  "pages": ["ctbrowser/examples/pages/babylon-*.html"],
+  "ctests": [
+    "babylon_ratchet",
+    "babylon_api",
+    "babylon_lighting",
+    "babylon_interaction",
+    "example-babylon*",
+    {"pattern": "render-angle-babylon*", "optional": true}
+  ]
+}

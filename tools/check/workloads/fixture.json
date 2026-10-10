@@ -1,0 +1,7 @@
+{
+  "title": "Checker proof: a script ctcompile already compiles fully natively",
+  "hidden": true,
+  "done_means": "The fixture compiles natively, builds with GCC and Clang, carries no VM and prints the VM's globals. If this is not DONE, the checker or the toolchain is broken, not a workload.",
+  "scripts": ["ctcompile/test/CTNative/Fixtures/ControlFlow/functions.js"],
+  "stages": ["discover", "admission", "emit-cpp", "build-native", "no-vm-gate", "script-run"]
+}

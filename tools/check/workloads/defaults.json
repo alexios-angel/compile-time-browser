@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "done_means": "Every JS, CSS and HTML test ctbrowser has for this workload runs on native C++ that ctcompile generated, with no VM, and passes the same checks it passes on the VM.",
+  "stages": [
+    "discover",
+    "vm-reference",
+    "page-scripts",
+    "admission",
+    "emit-cpp",
+    "build-native",
+    "no-vm-gate",
+    "script-run",
+    "native-run"
+  ],
+  "timeouts": {"command": 1800, "item": 3600, "total": 14400},
+  "options": {
+    "admission": {"timeout": 2700},
+    "native-run": {"runner": null}
+  }
+}
