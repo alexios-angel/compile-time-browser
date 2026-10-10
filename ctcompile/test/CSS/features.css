@@ -1,0 +1,49 @@
+@charset "UTF-8";
+@import url(a.css) layer(base) supports(display: grid) screen;
+@import 'b.css' scope(.card);
+@namespace svg url(http://www.w3.org/2000/svg);
+
+/* Every part of a compiled stylesheet, so a field the emitter drops shows up
+   as a difference in ctcompile_css_emit. */
+@layer base, theme;
+@layer base { .a { color: red } }
+@layer { b { margin: 0 } }
+@layer theme.dark { c { color: blue } }
+
+@media screen and (min-width: 100px) {
+    .a { color: red }
+    @media print { .b { color: blue !important } }
+}
+@media not all and (orientation: portrait), (hover) { i { margin: 1px } }
+
+@container card (min-width: 400px) { .t { font-size: 2em } }
+@container (width > 10px) { @container x (height < 5px) { p { margin: 0 } } }
+
+@scope (.card) to (.content) { img { border: 1px solid } }
+@scope { :scope { color: red } }
+
+@keyframes spin {
+    from { transform: rotate(0) }
+    50%, 75% { opacity: .5 }
+    to { transform: rotate(360deg) }
+}
+
+@font-face { font-family: X; src: url(x.woff2) format('woff2'); font-weight: bold }
+@property --x { syntax: '<length>'; inherits: false; initial-value: 0px }
+@function --double(--n) returns <number> { result: calc(var(--n) * 2) }
+
+div#id.a.b[type=checkbox i] { margin: 0 }
+[data-x|=en][href^='http' s][title~=t][c$=d][e*=f][g] { margin: 0 }
+ul > li + li ~ li a, :root, svg|rect, *|*, |p, [svg|href] { margin: 0 }
+:not(.a, :is(.b, :where(#c))) .d { margin: 0 }
+:has(> img, + p) { margin: 0 }
+li:nth-child(2n+1 of .x):nth-last-of-type(3):nth-of-type(odd) { margin: 0 }
+:lang(en, "*-Latn") :dir(rtl) { margin: 0 }
+:heading(1, 2), :heading { margin: 0 }
+p::before:hover, .a::after, a:hover:focus-visible:checked { margin: 0 }
+::part(x), ::slotted(span), input::placeholder { margin: 0 }
+.card { color: red; & .title { color: blue } .x & { margin: 0 } }
+.foo\:bar { content: "\26 x \"quoted\" \\" }
+#a\:b { --custom: { a } ; color: var(--x, red) }
+.form-select:-moz-focusring { margin: 0 }
+.v { width: calc(50% + 10px); margin: -2147483648px; opacity: 1e-7 }

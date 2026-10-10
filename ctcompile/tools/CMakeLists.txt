@@ -10,6 +10,9 @@ add_subdirectory(ctcompile)
 add_subdirectory(ctbaseline)
 add_subdirectory(ctpageload)
 
+# Compiled CSS: a stylesheet to C++ constants. It needs no MLIR either.
+add_subdirectory(ctcss-translate)
+
 # The MLIR drivers, built only when CTCOMPILE_ENABLE_MLIR builds the pipeline
 # they drive.
 if(CTCOMPILE_ENABLE_MLIR)
