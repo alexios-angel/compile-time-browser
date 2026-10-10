@@ -24,9 +24,9 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Summary (updated 2026-10-10)
 - Active goal: Bootstrap; status: in progress
-- Last verified commit on ctcompile-v1: 986ad747a tools(check): make comment-only.py 25 times faster
-  (built clean with `tools/remote-build.sh all`, 1473/1473, which also builds the
-  2026-10-10 comment sweep; no CTest or lit suite was run on it)
+- Last verified commit on ctcompile-v1: ea50ee7f5 Merge bootstrap-cssdump into
+  ctcompile-v1: string entry parameters (focused checks only; the base 986ad747a
+  built clean with `tools/remote-build.sh all`)
 - Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE (2026-10-10);
   `check-workload.py fixture` -> VERDICT: DONE
 - First gap and next step: admission. The bundle has 19 of 574 functions native
@@ -38,6 +38,22 @@ committing. There is no CI. Do not build on the small local machine.
 - Goals done: none
 - Open questions for the user: none
 - Decisions since the prompt revision: none
+
+### 2026-10-10 claude-ctcompile: string entry parameters
+Commits: 5a19c3618 ctcompile(lowering): type string entry parameters for the
+embedder; merged as ea50ee7f5.
+Checks: devbox, after building ctjs-opt, ctjs-translate and
+ctcompile-test-native-reference: lit `CTNative/Lowering/Admission/string-entry`
+passed (its C++ driver ran with GCC 13.3.0 and Clang 18.1.3);
+`CTNative/Lowering/Admission` 11 passed, `CTNative/Fixtures` 46 passed. Full lit
+and CTest were not run.
+Measured: `check-workload.py fixture` VERDICT: DONE; `check-workload.py
+bootstrap` VERDICT: NOT DONE, admission 19 of 574 bundle functions and 0 of 6
+css-dump.js functions; css_dump_table now refuses for an escaping array literal.
+Next boundary: run-once function cells as namespace-scope variables and a
+host-global `typeof` fold (the UMD factory's AMD/CommonJS arms), then JS classes
+as C++ classes; for css-dump.js, string/number/JSON runtime helpers, vectors and
+DOM geometry.
 
 ## Forwarded captures and literal String equality, 2026-10-07 UTC
 
