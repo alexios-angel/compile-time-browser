@@ -1,6 +1,6 @@
 # Architecture — where everything lives
 
-45,000 lines in nine subsystems, behind one public header — `include/ctbrowser.hpp`,
+45,000 lines in ten subsystems, behind one public header — `include/ctbrowser.hpp`,
 which sits BESIDE the subsystem tree rather than inside it, so the include an
 application writes is `<ctbrowser.hpp>`. Headers are `include/ctbrowser/<sub>/`,
 implementations are `lib/<Sub>/`, CamelCase because an include path is a public name and an implementation directory is not — `include/ctbrowser/script/` against `lib/Script/`. Otherwise the two trees mirror each other exactly.
@@ -20,8 +20,8 @@ lib/Layout/CMakeLists.txt                the target, its sources and its headers
 
 `#include <ctbrowser/layout/layout.hpp>` gets you the whole subsystem;
 including one piece directly is fine when that is all you want. At the top,
-`include/ctbrowser.hpp` includes all nine — which is why one include is the
-entire API.
+`include/ctbrowser.hpp` includes nine of the ten directly, and `page` through the
+shell's headers — which is why one include is the entire API.
 
 **Adding a file** means: the header in `include/ctbrowser/<sub>/`, an
 `#include` in that subsystem's aggregate header, and — if it has definitions to
@@ -72,6 +72,7 @@ script --------- bindings ------------------------------ shell drives all of it
 | `layout` | `ctbrowser::layout` | styled elements -> placed geometry: block, inline and table formatting contexts | `algorithm.hpp` 561, `box.hpp` 530 |
 | `paint` | `ctbrowser::paint` | geometry -> a recorded display list of layers | `command.hpp`, `record.hpp` |
 | `raster` | `ctbrowser::raster` | display list -> pixels, in tiles across the pool | `backend/compositor.hpp`, `draw.hpp`, `text/ttf.hpp` |
+| `page` | `ctbrowser::page` | what a laid-out page answers about its elements with no script engine: getComputedStyle's values and the client rectangles, over a borrowed `page_view` | `view.hpp`, `ctbrowser/lib/Page/computed_style/entries.cpp` |
 | `script` | `ctbrowser::script` | JS -> bytecode -> a register machine over NaN-boxed values, plus the standard library | `ctbrowser/lib/Script/compile/` (eleven files), `ctbrowser/lib/Script/vm/run_loop.cpp` 1694 |
 | `shell` | `ctbrowser::shell` | the assembly: the browser itself, the API a page's script sees, forms, canvas, input, net, images | `browser.hpp` 1539, `bindings.hpp` 685 |
 | `app` | `ctbrowser::app` | the window, the event loop, the clock, screenshots. **The only place that knows SDL exists** | `ctbrowser/lib/App/app/` (two files, from one of 1,034) |

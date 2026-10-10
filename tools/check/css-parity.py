@@ -144,7 +144,7 @@ GEOMETRY = ["@x", "@y", "@w", "@h"]
 # The CSS initial value, substituted when ctbrowser answers nothing. `display` is
 # not here: its initial value is `inline` but almost nothing renders as that (a
 # div is `block` because a UA sheet says so), so ctbrowser reports display from
-# the box tree instead (ctbrowser/lib/Shell/bindings/computed_style/entries.cpp)
+# the box tree instead (ctbrowser/lib/Page/computed_style/entries.cpp)
 # and an empty answer there is a real finding rather than a missing default.
 INITIAL = {
     "box-sizing": "content-box",
