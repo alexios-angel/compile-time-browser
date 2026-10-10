@@ -279,9 +279,19 @@ def main():
             or not all(reasons)
         ):
             raise RuntimeError("Button native census lost functions or precise refusals")
-        # Pinned census: 86 imported functions, 4 lowered natively, and the top
-        # level (_script_$0) refused. Update these together with the vendor pin.
-        if (functions, native) != (86, 4) or "_script_$0" not in refusals:
+        # Pinned census: 86 imported functions, the native count per policy,
+        # and the top level (_script_$0) refused. Update these together with
+        # the vendor pin. With optimization the fifth native function is fn$82,
+        # the probe's own `nextEventId: () => T` arrow: it reads Bootstrap's
+        # event-uid counter, a static variable (static_T) of the module
+        # factory, which runs once only when optimization resolves the call
+        # that makes it. A real native lifecycle gate is still required once
+        # the top level or a Button method becomes native.
+        if (
+            (functions, native) != (86, 5 if optimize else 4)
+            or "_script_$0" not in refusals
+            or ("fn$82" in refusals) == optimize
+        ):
             raise RuntimeError("Button admission changed: require a real native lifecycle gate")
         reports.append(
             dict(optimize=optimize, functions=functions, native=native, refusals=refusals)

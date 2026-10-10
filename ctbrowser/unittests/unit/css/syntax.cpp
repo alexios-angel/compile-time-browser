@@ -8,15 +8,17 @@
 // `/*` inside a string broke it. Bootstrap happens to avoid all of these, so a
 // suite built from Bootstrap alone would not notice.
 //
+// Every input goes through test/support/css_inputs.hpp and is listed in
+// syntax.inputs.json. This build tokenizes and parses at run time; the native
+// build (css_syntax.native) checks the same expectations against what
+// ctcss-translate compiled from that list, with no CSS parsed at run time.
+//
 //===----------------------------------------------------------------------===//
 
-#include <ctbrowser.hpp>
-
 #include "check.hpp"
+#include "css_inputs.hpp"
 
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,7 +27,11 @@ using ctbrowser::style::css::flag_id_hash;
 using ctbrowser::style::css::flag_integer;
 using ctbrowser::style::css::token_stream;
 using ctbrowser::style::css::token_type;
-using ctbrowser::style::css::tokenize;
+using ctbrowser_test::css_declarations;
+using ctbrowser_test::css_sheet;
+using ctbrowser_test::css_sheet_file;
+using ctbrowser_test::css_supports_selector;
+using ctbrowser_test::css_tokens;
 
 namespace {
 
@@ -85,7 +91,7 @@ namespace {
 }
 
 void expect_shape(std::string_view css, std::string_view want) {
-    const token_stream got = tokenize(css);
+    const token_stream got = css_tokens(css);
     if (shape(got) != want) {
         std::printf("FAIL shape of [%s]\n  got  %s\n  want %s\n", std::string{css}.c_str(),
                     shape(got).c_str(), std::string{want}.c_str());
@@ -94,7 +100,7 @@ void expect_shape(std::string_view css, std::string_view want) {
 }
 
 void expect_texts(std::string_view css, std::string_view want) {
-    const token_stream got = tokenize(css);
+    const token_stream got = css_tokens(css);
     if (texts(got) != want) {
         std::printf("FAIL texts of [%s]\n  got  %s\n  want %s\n", std::string{css}.c_str(),
                     texts(got).c_str(), std::string{want}.c_str());
@@ -103,7 +109,7 @@ void expect_texts(std::string_view css, std::string_view want) {
 }
 
 void expect_number(std::string_view css, double want, bool integer) {
-    const token_stream got = tokenize(css);
+    const token_stream got = css_tokens(css);
     const auto & t = got.tokens.front();
     const bool ok = t.number > want - 1e-9 && t.number < want + 1e-9 &&
                     ((t.flags & flag_integer) != 0) == integer;
@@ -159,7 +165,7 @@ void test_numbers_dimensions_and_percentages() {
     expect_number("1e3", 1000, false);
     expect_number(".5", 0.5, false);
 
-    const token_stream d = tokenize("12.5px");
+    const token_stream d = css_tokens("12.5px");
     if (d.unit_of(d.tokens.front()) != "px") {
         std::printf("FAIL unit of 12.5px: [%s]\n",
                     std::string{d.unit_of(d.tokens.front())}.c_str());
@@ -170,20 +176,20 @@ void test_numbers_dimensions_and_percentages() {
 void test_hash_is_id_like_when_its_body_could_be_an_identifier() {
     // The id-like flag says whether the hash body could be an identifier, not
     // whether it is a colour: `#fff` is id-like, and `#fff { }` selects id="fff".
-    const token_stream id = tokenize("#nav");
+    const token_stream id = css_tokens("#nav");
     CHECK((id.tokens.front().flags & flag_id_hash) != 0);
-    const token_stream three = tokenize("#fff");
+    const token_stream three = css_tokens("#fff");
     CHECK((three.tokens.front().flags & flag_id_hash) != 0);
-    const token_stream letters_first = tokenize("#f0a1b2");
+    const token_stream letters_first = css_tokens("#f0a1b2");
     CHECK((letters_first.tokens.front().flags & flag_id_hash) != 0);
     // A digit cannot start an identifier, so this one is not id-like, which is
     // what lets a selector parser reject `#0d6efd` as an id.
-    const token_stream digit_first = tokenize("#0d6efd");
+    const token_stream digit_first = css_tokens("#0d6efd");
     CHECK((digit_first.tokens.front().flags & flag_id_hash) == 0);
-    const token_stream nine = tokenize("#999");
+    const token_stream nine = css_tokens("#999");
     CHECK((nine.tokens.front().flags & flag_id_hash) == 0);
     // A leading `-` is allowed in an identifier, so `#-a` is id-like.
-    const token_stream dash = tokenize("#-a");
+    const token_stream dash = css_tokens("#-a");
     CHECK((dash.tokens.front().flags & flag_id_hash) != 0);
     // A bare `#` is a delim, not an empty hash.
     expect_shape("# ", "delim");
@@ -202,7 +208,7 @@ void test_a_brace_inside_a_string_does_not_desynchronise() {
     // Regression: a `}` inside a string must not close the block (the old brace
     // scanner counted it and mis-parsed every later rule in the file).
     expect_shape("a{content:\"}\"}", "ident { ident colon string }");
-    const token_stream s = tokenize("a{content:\"}\"} b{c:d}");
+    const token_stream s = css_tokens("a{content:\"}\"} b{c:d}");
     CHECK(shape(s) == "ident { ident colon string } ident { ident colon ident }");
 }
 
@@ -217,7 +223,7 @@ void test_a_semicolon_inside_url_is_not_a_declaration_end() {
     // Regression: an un-encoded data URI must keep its `;` (Bootstrap's are
     // percent-encoded, which hid the bug).
     expect_shape("background:url(data:image/svg+xml;base64,AAA)", "ident colon url");
-    const token_stream s = tokenize("background:url(data:image/png;base64,iVBOR)");
+    const token_stream s = css_tokens("background:url(data:image/png;base64,iVBOR)");
     CHECK(std::string{s.value_of(s.tokens.back() /*eof*/)}.empty());
     for (const auto & t : s.tokens) {
         if (t.type == token_type::url) { CHECK(s.text_of(t) == "data:image/png;base64,iVBOR"); }
@@ -251,7 +257,7 @@ void test_strings_and_their_failures() {
     expect_shape("\"ab\ncd\"", "bad-string ident string");
     // EOF inside a string is a parse error but still a normal string, per §4.3.4.
     expect_shape("\"abc", "string");
-    const token_stream s = tokenize("\"a\\\"b\"");
+    const token_stream s = css_tokens("\"a\\\"b\"");
     CHECK(s.tokens.front().type == token_type::string);
     CHECK(s.value_of(s.tokens.front()) == "a\"b");
 }
@@ -265,13 +271,13 @@ void test_urls_quoted_unquoted_and_bad() {
     expect_shape("url(  a.png  )", "url");
     expect_shape("url(a b.png)", "bad-url");
     // A bad url consumes to the `)` so the next rule survives.
-    const token_stream s = tokenize("a{b:url(x y)}c{d:e}");
+    const token_stream s = css_tokens("a{b:url(x y)}c{d:e}");
     CHECK(shape(s) == "ident { ident colon bad-url } ident { ident colon ident }");
-    const token_stream body = tokenize("url(a.png)");
+    const token_stream body = css_tokens("url(a.png)");
     CHECK(body.text_of(body.tokens.front()) == "a.png");
     for (const std::string_view text :
          {R"(url(a\2e png))", R"(url(a\00002epng))", R"(url(a\.png))"}) {
-        const token_stream escaped = tokenize(text);
+        const token_stream escaped = css_tokens(text);
         CHECK(shape(escaped) == "url");
         CHECK(escaped.text_of(escaped.tokens.front()) == "a.png");
     }
@@ -281,25 +287,25 @@ void test_urls_quoted_unquoted_and_bad() {
 void test_escapes_decode_into_the_token() {
     // `\26` is `&`. One trailing space belongs to the escape, so this is one
     // ident `&B` and not `&` followed by `B`.
-    const token_stream amp = tokenize("\\26 B");
+    const token_stream amp = css_tokens("\\26 B");
     CHECK(amp.tokens.front().type == token_type::ident);
     CHECK(amp.text_of(amp.tokens.front()) == "&B");
     // Regression: an escaped colon in a class name, as a framework writes
     // `sm:block` (the old parser split on `:` and made it an unknown pseudo).
-    const token_stream cls = tokenize(".foo\\:bar");
+    const token_stream cls = css_tokens(".foo\\:bar");
     CHECK(shape(cls) == "delim ident");
     for (const auto & t : cls.tokens) {
         if (t.type == token_type::ident) { CHECK(cls.text_of(t) == "foo:bar"); }
     }
     // An escaped sigil keeps the sigil: `#a\:b` is one hash token `#a:b`.
-    const token_stream h = tokenize("#a\\:b");
+    const token_stream h = css_tokens("#a\\:b");
     CHECK(h.tokens.front().type == token_type::hash);
     CHECK(h.text_of(h.tokens.front()) == "#a:b");
     // A hex escape with no trailing space still ends at a non-hex character.
-    const token_stream two = tokenize("\\41\\42");
+    const token_stream two = css_tokens("\\41\\42");
     CHECK(two.text_of(two.tokens.front()) == "AB");
     // Zero and out-of-range become U+FFFD rather than a null byte in the pool.
-    const token_stream zero = tokenize("\\0");
+    const token_stream zero = css_tokens("\\0");
     CHECK(zero.text_of(zero.tokens.front()) == "\xEF\xBF\xBD");
 }
 
@@ -312,7 +318,7 @@ void test_at_keywords_and_the_charset_line() {
     // `@` followed by something that cannot start an identifier is a delim.
     expect_shape("@ media", "delim ident");
     expect_shape("@1x", "delim dimension");
-    const token_stream s = tokenize("@media");
+    const token_stream s = css_tokens("@media");
     CHECK(s.value_of(s.tokens.front()) == "media");
 }
 
@@ -328,7 +334,7 @@ void test_unbalanced_input_terminates() {
     // None of these may hang or read out of bounds; the shapes are secondary.
     for (const std::string_view css : {"a{", "a{b:c", "}", "((((", "url(", "\"", "\\", "/*",
                                        "a{b:url(", "@", "#", "-", "+", ".", "<!--"}) {
-        const token_stream s = tokenize(css);
+        const token_stream s = css_tokens(css);
         CHECK(!s.tokens.empty());
         CHECK(s.tokens.back().type == token_type::eof);
     }
@@ -338,17 +344,17 @@ void test_preprocessing_folds_line_endings() {
     // CRLF, CR and FF all become one LF, so a token's extent does not depend on
     // which editor wrote the file.
     for (const std::string_view css : {"a\r\nb", "a\rb", "a\fb"}) {
-        const token_stream s = tokenize(css);
+        const token_stream s = css_tokens(css);
         CHECK(shape(s) == "ident ident");
     }
-    const token_stream crlf = tokenize("a\r\nb");
+    const token_stream crlf = css_tokens("a\r\nb");
     CHECK(crlf.pool.find('\r') == std::string::npos);
 }
 
 void test_a_real_bootstrap_shaped_rule() {
     const std::string_view css = ".btn{--bs-btn-padding-x:0.75rem;color:var(--bs-btn-color);"
                                  "border:var(--bs-btn-border-width) solid transparent}";
-    const token_stream s = tokenize(css);
+    const token_stream s = css_tokens(css);
     CHECK(s.tokens.back().type == token_type::eof);
     // The custom property is one ident: `--bs-btn-padding-x`. A tokenizer that
     // treated `-` as a delim would make it five tokens and nothing downstream
@@ -372,8 +378,7 @@ void test_a_real_bootstrap_shaped_rule() {
 /// (WPT ident-function-computed).
 void test_an_escaped_identifier_is_stored_as_one() {
     ctbrowser::atom_table atoms;
-    const auto sheet =
-        ctbrowser::style::css::parse_declaration_list("view-transition-name: \\33 myident", atoms);
+    const auto sheet = css_declarations("view-transition-name: \\33 myident", atoms);
     CHECK(sheet.declarations.size() == 1);
     if (sheet.declarations.size() == 1) {
         CHECK(sheet.text_of(sheet.declarations.front()) == "\\33 myident");
@@ -389,15 +394,13 @@ void test_an_escaped_identifier_is_stored_as_one() {
 /// The floor may only be raised; a change that widens the selector grammar
 /// should raise it.
 void test_how_much_of_bootstrap_can_match() {
-    std::ifstream in{"vendor/bootstrap/bootstrap.css", std::ios::binary};
-    if (!in) {
+    ctbrowser::atom_table atoms;
+    const auto parsed = css_sheet_file("vendor/bootstrap/bootstrap.css", atoms);
+    if (!parsed) {
         std::printf("SKIP bootstrap census: vendor/bootstrap/bootstrap.css not readable\n");
         return;
     }
-    std::ostringstream all;
-    all << in.rdbuf();
-    ctbrowser::atom_table atoms;
-    const auto sheet = ctbrowser::style::css::parse_stylesheet(all.str(), atoms);
+    const auto & sheet = *parsed;
 
     std::size_t live = 0;
     for (const auto & sel : sheet.selectors) {
@@ -448,7 +451,7 @@ void test_deep_nesting_invalidates_only_what_holds_it() {
         const std::string css = "a { color: " + nest("(", "", ")", 30000) +
                                 "; width: 1px } b { --kept: " + nest("(", "", ")", 100) +
                                 " } c { color: red }";
-        const auto sheet = ctbrowser::style::css::parse_stylesheet(css, atoms);
+        const auto sheet = css_sheet(css, atoms);
         std::string names;
         for (const auto & d : sheet.declarations) {
             names += std::string{atoms.text(d.property)} + ",";
@@ -457,27 +460,27 @@ void test_deep_nesting_invalidates_only_what_holds_it() {
     }
     {
         ctbrowser::atom_table atoms;
-        const auto list = ctbrowser::style::css::parse_declaration_list(
-            "color: " + nest("f(", "", ")", 30000) + "; width: 1px", atoms);
+        const auto list =
+            css_declarations("color: " + nest("f(", "", ")", 30000) + "; width: 1px", atoms);
         CHECK_EQ(list.declarations.size(), std::size_t{1});
     }
     {
         // Rules thirty thousand deep: the too-deep one styles nothing, the
         // rule after it is untouched.
         ctbrowser::atom_table atoms;
-        const auto sheet = ctbrowser::style::css::parse_stylesheet(
-            nest("a{", "color:red", "}", 30000) + " b { color: blue }", atoms);
+        const auto sheet =
+            css_sheet(nest("a{", "color:red", "}", 30000) + " b { color: blue }", atoms);
         CHECK(!sheet.declarations.empty());
         CHECK_EQ(std::string{atoms.text(sheet.declarations.back().property)}, std::string{"color"});
     }
     // Functional pseudo-classes share one count: :not/:is/:where nested past
     // it are a syntax error, and a selector the component-value cap cut short
     // is too.
-    CHECK(ctbrowser::style::css::supports_selector(nest(":not(", "a", ")", 10)));
-    CHECK(ctbrowser::style::css::supports_selector(nest(":is(:where(", "a", "))", 8)));
-    CHECK(!ctbrowser::style::css::supports_selector(nest(":not(", "a", ")", 40)));
-    CHECK(!ctbrowser::style::css::supports_selector(nest(":is(:where(", "a", "))", 20)));
-    CHECK(!ctbrowser::style::css::supports_selector(nest(":not(", "a", ")", 20000)));
+    CHECK(css_supports_selector(nest(":not(", "a", ")", 10)));
+    CHECK(css_supports_selector(nest(":is(:where(", "a", "))", 8)));
+    CHECK(!css_supports_selector(nest(":not(", "a", ")", 40)));
+    CHECK(!css_supports_selector(nest(":is(:where(", "a", "))", 20)));
+    CHECK(!css_supports_selector(nest(":not(", "a", ")", 20000)));
 }
 
 } // namespace
@@ -503,5 +506,8 @@ int main() {
     test_an_escaped_identifier_is_stored_as_one();
     test_how_much_of_bootstrap_can_match();
     test_deep_nesting_invalidates_only_what_holds_it();
+    // Every input above is listed for the native build, which compiles them
+    // ahead of time rather than parsing them here.
+    ctbrowser_test::check_css_inputs("unittests/unit/css/syntax.inputs.json");
     REPORT("css_syntax");
 }

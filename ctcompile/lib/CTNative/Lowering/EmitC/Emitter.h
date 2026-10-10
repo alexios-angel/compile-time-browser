@@ -11,6 +11,8 @@
 #include "../LoweringSupport.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
+#include <map>
+
 namespace ctcompile::ctnative {
 class OwnedGlobalRoots;
 }
@@ -64,6 +66,10 @@ struct lowering {
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
         : solver(s), context(c), module(m), declarative(declarativePatterns(c)) {}
     llvm::StringSet<> globals; ///< Scalar globals the emitted unit declares.
+    /// Static cells (ClosureLifting/RunOnce.cpp): each namespace-scope variable
+    /// a lowered function names, with its C++ type, declared by
+    /// declareGlobals() in name order.
+    std::map<std::string, mlir::Type> statics;
     /// The joined type of every source store to each global, computed before
     /// any value is retyped. Observation requests and host categories never
     /// choose a global's output type.

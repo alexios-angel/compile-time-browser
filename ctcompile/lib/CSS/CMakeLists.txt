@@ -1,6 +1,7 @@
 add_library(ctcompile-css)
 target_sources(ctcompile-css
   PRIVATE
+    CppEmitter.cpp
     StyleProgramComparator.cpp)
 ctcompile_target(ctcompile-css)
 

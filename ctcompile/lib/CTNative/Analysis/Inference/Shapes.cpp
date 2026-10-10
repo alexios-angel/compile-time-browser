@@ -12,6 +12,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -91,8 +92,16 @@ bool TypeInference::namesACarriedCell(mlir::Value v) {
 llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::groupCells(
     mlir::Operation * top) {
     llvm::EquivalenceClasses<mlir::Value> classes;
+    // A static cell and its references in other functions name one variable
+    // (kNativeStaticCell), so they are one group whatever function they sit in.
+    llvm::StringMap<mlir::Value> statics;
     top->walk([&](ctjs::CreateCellOp cell) {
-        if (cell->hasAttr("ctnative.carried")) { classes.insert(cell.getResult()); }
+        if (!cell->hasAttr("ctnative.carried")) { return; }
+        classes.insert(cell.getResult());
+        if (auto name = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+            const auto [first, inserted] = statics.try_emplace(name.getValue(), cell.getResult());
+            if (!inserted) { classes.unionSets(first->second, cell.getResult()); }
+        }
     });
     top->walk([&](ctjs::CallDirectOp call) {
         auto listed = call->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.cell_args");

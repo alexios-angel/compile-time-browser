@@ -10,5 +10,6 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Rewrite.cpp
   ReturnedClosures.cpp
   MethodTables.cpp
+  RunOnce.cpp
   ClosureLifter.h
 )

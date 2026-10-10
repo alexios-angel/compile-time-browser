@@ -1,0 +1,203 @@
+{
+  "about": "Every CSS input unittests/unit/css/syntax.cpp tokenizes or parses. The native build (css_syntax.native) is compiled from this list by ctcss-translate instead of parsing at run time, and both builds fail when the test asks for an input that is not here or an input here goes unasked. An entry is a string, or a list of strings and {repeat, times} parts joined in order.",
+  "tokens": [
+    "div",
+    "#nav",
+    ".card",
+    "a b",
+    "a>b",
+    "a,b",
+    "a{b:c}",
+    "@media screen",
+    "f(1)",
+    "[type=x]",
+    "<!-- -->",
+    "",
+    "12px",
+    "50%",
+    "1.5",
+    "-3",
+    "+4",
+    ".5em",
+    "1e3",
+    "2e-2",
+    "12 px",
+    "3em",
+    ".5",
+    "12.5px",
+    "#fff",
+    "#f0a1b2",
+    "#0d6efd",
+    "#999",
+    "#-a",
+    "# ",
+    "content:\"a;b\"",
+    "a{content:\"}\"}",
+    "a{content:\"}\"} b{c:d}",
+    "content:\"/*\"",
+    "a:\"/*\";b:c",
+    "background:url(data:image/svg+xml;base64,AAA)",
+    "background:url(data:image/png;base64,iVBOR)",
+    "a/**/b",
+    "/* leading */a",
+    "a/* unterminated",
+    "\"abc\"",
+    "'abc'",
+    "\"ab\ncd\"",
+    "\"abc",
+    "\"a\\\"b\"",
+    "url(a.png)",
+    "url(\"a.png\")",
+    "url('a.png')",
+    "url(  a.png  )",
+    "url(a b.png)",
+    "a{b:url(x y)}c{d:e}",
+    "url(a\\2e  png)",
+    "\\26 B",
+    ".foo\\:bar",
+    "#a\\:b",
+    "\\41\\42",
+    "\\0",
+    "@media",
+    "@import url(a.css);",
+    "@charset \"UTF-8\";",
+    "@ media",
+    "@1x",
+    "color:red!important",
+    "color:red ! important",
+    "a:b!c",
+    "a\r\nb",
+    "url(a\\2e png)",
+    "url(a\\00002epng)",
+    "url(a\\.png)",
+    "a{",
+    "a{b:c",
+    "}",
+    "((((",
+    "url(",
+    "\"",
+    "\\",
+    "/*",
+    "a{b:url(",
+    "@",
+    "#",
+    "-",
+    "+",
+    ".",
+    "<!--",
+    "a\rb",
+    "a\fb",
+    "\ufeffbody{a:b}",
+    ".btn{--bs-btn-padding-x:0.75rem;color:var(--bs-btn-color);border:var(--bs-btn-border-width) solid transparent}"
+  ],
+  "stylesheets": [
+    [
+      "a { color: ",
+      {
+        "repeat": "(",
+        "times": 30000
+      },
+      {
+        "repeat": ")",
+        "times": 30000
+      },
+      "; width: 1px } b { --kept: ",
+      {
+        "repeat": "(",
+        "times": 100
+      },
+      {
+        "repeat": ")",
+        "times": 100
+      },
+      " } c { color: red }"
+    ],
+    [
+      {
+        "repeat": "a{",
+        "times": 30000
+      },
+      "color:red",
+      {
+        "repeat": "}",
+        "times": 30000
+      },
+      " b { color: blue }"
+    ]
+  ],
+  "declaration_lists": [
+    "view-transition-name: \\33 myident",
+    [
+      "color: ",
+      {
+        "repeat": "f(",
+        "times": 30000
+      },
+      {
+        "repeat": ")",
+        "times": 30000
+      },
+      "; width: 1px"
+    ]
+  ],
+  "selectors": [
+    [
+      {
+        "repeat": ":not(",
+        "times": 10
+      },
+      "a",
+      {
+        "repeat": ")",
+        "times": 10
+      }
+    ],
+    [
+      {
+        "repeat": ":is(:where(",
+        "times": 8
+      },
+      "a",
+      {
+        "repeat": "))",
+        "times": 8
+      }
+    ],
+    [
+      {
+        "repeat": ":not(",
+        "times": 40
+      },
+      "a",
+      {
+        "repeat": ")",
+        "times": 40
+      }
+    ],
+    [
+      {
+        "repeat": ":is(:where(",
+        "times": 20
+      },
+      "a",
+      {
+        "repeat": "))",
+        "times": 20
+      }
+    ],
+    [
+      {
+        "repeat": ":not(",
+        "times": 20000
+      },
+      "a",
+      {
+        "repeat": ")",
+        "times": 20000
+      }
+    ]
+  ],
+  "files": [
+    "vendor/bootstrap/bootstrap.css"
+  ]
+}

@@ -38,6 +38,27 @@ struct liftReport {
     unsigned bound = 0;              // of `calls`, the ones made direct from another frame
     unsigned callbackCalls = 0;      // calls through a callback parameter made direct
     unsigned callbackParameters = 0; // call-only function parameters erased
+    unsigned statics = 0;            // boxes of run-once functions made static variables
+
+    /// Adds `other`'s counts to these.
+    void add(const liftReport & other) {
+        functions += other.functions;
+        closures += other.closures;
+        captures += other.captures;
+        calls += other.calls;
+        cells += other.cells;
+        methods += other.methods;
+        receivers += other.receivers;
+        objects += other.objects;
+        constructors += other.constructors;
+        carried += other.carried;
+        locals += other.locals;
+        bindings += other.bindings;
+        bound += other.bound;
+        callbackCalls += other.callbackCalls;
+        callbackParameters += other.callbackParameters;
+        statics += other.statics;
+    }
 };
 
 /// What one use of a `ctjs.create_cell` is. The censuses and the rewrites all
@@ -541,6 +562,45 @@ struct closureLifter {
                                      ctjs::CreateClosureOp holder);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
+
+    // --- Static cells of run-once functions (RunOnce.cpp) ------------------
+
+    /// Set on the lifter that run() starts after a static rewrite, so that the
+    /// rewrite is tried once per module.
+    bool staticsDone = false;
+
+    std::optional<std::string> callsThrough(mlir::Value value, ctjs::FuncOp target,
+                                            llvm::SmallVectorImpl<mlir::Operation *> & sites,
+                                            llvm::DenseSet<mlir::Value> & seen);
+
+    std::optional<std::string> whyNotRunOnce(
+        ctjs::FuncOp fn, const llvm::DenseSet<mlir::Operation *> & once,
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & symbolUsers,
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp>> &
+            creators);
+
+    /// Marks each ctjs.create_closure with its walk-order id for the trial
+    /// lift of RunOnce.cpp; removed again before that function returns.
+    static constexpr llvm::StringLiteral kTrialClosure = "ctnative.trial_closure";
+
+    /// The same for each ctjs.create_cell, so that the trial can say which
+    /// boxes bindLocalFunctions turned into direct calls.
+    static constexpr llvm::StringLiteral kTrialCell = "ctnative.trial_cell";
+
+    /// What a trial lift of a copy of the module did: the closures it left
+    /// unlifted and the boxes it bound as local functions, by trial id.
+    struct trialOutcome {
+        llvm::DenseSet<int64_t> refused;
+        llvm::DenseSet<int64_t> bound;
+    };
+
+    trialOutcome trialLift();
+
+    /// The kTrialCell ids of the boxes bindLocalFunctions bound, filled when
+    /// this lifter is a trial.
+    llvm::DenseSet<int64_t> boundTrialCells;
+
+    bool makeRunOnceCellsStatic(liftReport & out);
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 

@@ -324,6 +324,15 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
     llvm::MapVector<mlir::Operation *, functionBinding> plans;
     module.walk([&](ctjs::CreateCellOp cell) {
         if (!holdsAFunction(cell)) { return; }
+        // A static cell is read by name from other functions, which this
+        // rewrite would not see, so its box has to stay. whyNotABoundFunction
+        // asks for this reason when a closure stored into it is refused.
+        if (cell->hasAttr(kNativeStaticCell)) {
+            whyNotAFunctionBinding[cell.getOperation()] =
+                "it is a static variable of a function that runs once, which other functions "
+                "read by name";
+            return;
+        }
         functionBinding plan;
         if (const std::optional<std::string> why = examineFunctionBinding(cell, plan)) {
             whyNotAFunctionBinding[cell.getOperation()] = *why;
@@ -389,6 +398,9 @@ bool closureLifter::bindLocalFunctions(liftReport & out, bool probeSiblings) {
         if (!taken.contains(entry.first)) { continue; }
         functionBinding & plan = entry.second;
         bindingClosures.insert(plan.closure.getOperation());
+        if (auto id = entry.first->getAttrOfType<mlir::IntegerAttr>(kTrialCell)) {
+            boundTrialCells.insert(id.getInt());
+        }
         // In the frame that owns the box the closure value is in scope, so each
         // read is replaced by it and the ordinary closure lift (`lift()`)
         // rewrites the call, including captures, arity and new.target. That is

@@ -7,8 +7,9 @@
 // is closed, (2) `o.m` is provably one function, (3) the method uses `this`
 // only for constant-key access, and (4) the body is otherwise native. Native
 // code has no runtime fallback, so every refusal must be a diagnostic naming
-// the actual obstacle. It is on the closure, in the function that made it; the
-// nested `fn$N` target still only says it uses `this`.
+// the actual obstacle. It is on the closure, in the function that made it, and
+// the nested `fn$N` target repeats it after "uses `this` - " (pinned in
+// Admission/refusal/corpus-shapes.mlir).
 //
 // One program per file: a refused callee refuses its caller and a refused
 // caller its callee, so a file pinning an acceptance and a refusal pins neither.

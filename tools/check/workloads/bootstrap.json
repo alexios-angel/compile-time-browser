@@ -5,5 +5,11 @@
     {"pattern": "tools/check/css-dump.js", "string_entries": ["css_dump_table"]}
   ],
   "pages": ["ctbrowser/examples/pages/bootstrap-*.html"],
-  "ctests": ["bootstrap_layout", "css_syntax"]
+  "ctests": ["bootstrap_layout", "css_syntax"],
+  "options": {
+    "native-run": {
+      "runner": ["ctest", "--test-dir", "{build}", "--output-on-failure", "--no-tests=error",
+                 "-R", "^{test}[.]native$"]
+    }
+  }
 }
