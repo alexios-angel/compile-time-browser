@@ -261,6 +261,9 @@ public:
     /// of the global object (ECMA-262 19.1.4), so such a read is the undefined
     /// value, whatever else writes the globals table.
     static bool isUndefinedGlobal(mlir::Operation * op);
+    /// Whether `op` loads the global `name` in a program that never stores
+    /// to it, so the load is the realm's own binding of that name.
+    static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
 
     /// Whether the array `members` names is a function's parameter: a
     /// read-only borrow of the caller's array, lowered as std::span.
@@ -378,6 +381,11 @@ private:
     /// vector (elementVectorAliases), or calls split on a String; null when it
     /// does none of these. Sets `pending` when the answer has to wait for a
     /// stored value's lattice.
+    /// The type of a DOM read of an ordinary script: `document.documentElement`
+    /// (an element), an element's tagName, id and className (Strings),
+    /// children (a vector of elements), clientWidth and clientHeight, and
+    /// `window.devicePixelRatio` (Numbers). Null for anything else.
+    mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
 

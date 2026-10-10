@@ -282,6 +282,31 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     return appended == appends_.end() ? element : joinLattices(op, appended->second, element);
 }
 
+mlir::Type TypeInference::domReadType(mlir::Operation * op,
+                                      llvm::ArrayRef<const TypeLattice *> operands) {
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+    if (!read) { return {}; }
+    mlir::MLIRContext * c = op->getContext();
+    const llvm::StringRef key = ctjs::constantKey(read.getKey());
+    if (key == "documentElement" && isRealmGlobal(read.getObject().getDefiningOp(), "document")) {
+        return DOMElementType::get(c);
+    }
+    if (key == "devicePixelRatio" && isRealmGlobal(read.getObject().getDefiningOp(), "window")) {
+        return doubleType(c);
+    }
+    if (!llvm::isa_and_nonnull<DOMElementType>(operands[0]->getValue().getType())) { return {}; }
+    if (key == "tagName" || key == "id" || key == "className") { return stringType(c); }
+    if (key == "children") { return VecType::get(c, DOMElementType::get(c)); }
+    // Only the root's client size is native (Page.hpp's clientWidth throws
+    // for any other element), so only a read straight off documentElement.
+    auto root = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+    if ((key == "clientWidth" || key == "clientHeight") && root &&
+        ctjs::constantKey(root.getKey()) == "documentElement") {
+        return doubleType(c);
+    }
+    return {};
+}
+
 mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                                             llvm::ArrayRef<const TypeLattice *> operands,
                                             bool & pending) {
@@ -295,9 +320,12 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         return joined;
     };
     const auto typeOf = [](const TypeLattice * lattice) { return lattice->getValue().getType(); };
-    // The element types lowered this way: Strings and tuples.
-    const auto lowered = [](mlir::Type type) {
-        return llvm::isa_and_nonnull<StrType, TupleType>(type);
+    // The element types lowered this way: Strings, tuples, and an ordinary
+    // script's DOM elements (a host contract's elements are its own proof's).
+    const bool pageElements = !ownedRoots_ && !domEntry_;
+    const auto lowered = [pageElements](mlir::Type type) {
+        return llvm::isa_and_nonnull<StrType, TupleType>(type) ||
+               (pageElements && llvm::isa_and_nonnull<DOMElementType>(type));
     };
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op); array && isTupleLiteral(array)) {
         // One type per position, each the type of what that position holds.
@@ -700,6 +728,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             propagateIfChanged(result, result->join(TypeValue{mapAnswer}));
         }
         return mlir::success();
+    }
+
+    // The DOM reads of an ordinary script (no host contract): the page's root
+    // element, an element's text members and children, the root's client
+    // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
+    if (!ownedRoots_ && !domEntry_) {
+        if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
     }
 
     // Vectors of one proved element type, and split on a String.
