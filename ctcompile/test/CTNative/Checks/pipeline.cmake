@@ -6,6 +6,7 @@
 # every function is.
 #
 #   -DTRANSLATE= ctjs-translate   -DOPT= ctjs-opt   -DSOURCE= the JS   -DOUTPUT= the module
+#   optional -DSTRING_ENTRIES=name[,name] for functions the embedder calls
 #
 # The module is written with debug info, so every op keeps its JavaScript
 # line:col, which is what the CTCOMPILE_PIN type assertions (see
@@ -39,6 +40,11 @@ if(OPTIMIZATION_REPORT)
 endif()
 if(DEFINED PRECOMPUTE_MAX_STEPS)
   list(APPEND _native_options "precompute-max-steps=${PRECOMPUTE_MAX_STEPS}")
+endif()
+# STRING_ENTRIES: comma-separated globals the embedder calls with String
+# arguments (the lowering's string-entries option).
+if(STRING_ENTRIES)
+  list(APPEND _native_options "string-entries=${STRING_ENTRIES}")
 endif()
 if(DEFINED REACHABILITY_MAX_STEPS)
   list(APPEND _native_options "reachability-max-steps=${REACHABILITY_MAX_STEPS}")

@@ -320,6 +320,11 @@ def CTNativeLowerToEmitC : Pass<"ctnative-lower-to-emitc", "mlir::ModuleOp"> {
            "Explicit ordinary global owner contract; preserve the fingerprinted source IR before admission">,
     Option<"hostMaxSteps", "host-max-steps", "unsigned", "100000",
            "Maximum complete host and ordinary global owner proof work per query">,
+    ListOption<"stringEntries", "string-entries", "std::string",
+               "Globals the embedder calls from outside the script, after it has run, with "
+               "every declared parameter a String. Each must be bound once to a function "
+               "(--ctjs-resolve-globals); that function stays public and keeps its JavaScript "
+               "name in C++">,
     Option<"optimizationReport", "optimization-report", "bool", "false",
            "Report precomputation and reachability counts for the default pipeline">,
     Option<"report", "report", "bool", /*default=*/"false",

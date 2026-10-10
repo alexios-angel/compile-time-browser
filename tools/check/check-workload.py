@@ -203,13 +203,20 @@ def harness(module):
 
 def patterns(entries):
     """Yield (pattern, optional) for each entry. An entry is a glob string, or
-    {"pattern": ..., "optional": bool}; an optional pattern may match nothing."""
+    {"pattern": ..., "optional": bool}; an optional pattern may match nothing.
+    A script entry may also name "string_entries": the functions the embedder
+    calls from outside the script with String arguments (see string_entries)."""
     for entry in entries:
         yield (
             (entry, False)
             if isinstance(entry, str)
             else (entry["pattern"], entry.get("optional", False))
         )
+
+
+def string_entries(script):
+    """The lowering's string-entries value for `script`, or "" when it has none."""
+    return ",".join(script.get("string_entries", []))
 
 
 @stage(
@@ -219,7 +226,9 @@ def patterns(entries):
 )
 def discover(ctx, name):
     for kind in ("scripts", "pages"):
-        for pattern, optional in patterns(ctx.workload.get(kind, [])):
+        for entry in ctx.workload.get(kind, []):
+            ((pattern, optional),) = patterns([entry])
+            entries = [] if isinstance(entry, str) else entry.get("string_entries", [])
             matches = sorted(path for path in ctx.root.glob(pattern) if path.is_file())
             if not matches:
                 status = "PASS" if optional else "ERROR"
@@ -229,7 +238,12 @@ def discover(ctx, name):
                     ctx.pages.append(path)
                     continue
                 item = f"script:{ctx.relative(path)}"
-                ctx.scripts[item] = {"path": path, "origin": "declared", "module": False}
+                ctx.scripts[item] = {
+                    "path": path,
+                    "origin": "declared",
+                    "module": False,
+                    "string_entries": entries,
+                }
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
                 ctx.add(name, item, "PASS", f"{path.stat().st_size} bytes, sha256 {digest}")
     if not ctx.workload.get("ctests"):
@@ -353,6 +367,8 @@ def admission(ctx, name):
         out.parent.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, claims, "--translate", translate, "--opt", opt]
         command += ["--corpus", script["path"], "--name", slug(item), "--json", out]
+        if string_entries(script):
+            command += ["--lower-options", f"string-entries={string_entries(script)}"]
         code, output = ctx.run([*command, "--timeout", seconds], name, item)
         if code or not out.exists():
             ctx.add(name, item, "FAIL", "native-claims.py failed", tail(output))
@@ -397,6 +413,8 @@ def emit_cpp(ctx, name):
         emitc, cpp = Path(f"{base}.emitc.mlir"), Path(f"{base}.cpp")
         source = ctx.scripts[item]["path"]
         command = ["cmake", f"-DTRANSLATE={translate}", f"-DOPT={opt}", f"-DSOURCE={source}"]
+        if string_entries(ctx.scripts[item]):
+            command.append(f"-DSTRING_ENTRIES={string_entries(ctx.scripts[item])}")
         code, output = ctx.run(
             [*command, f"-DOUTPUT={emitc}", *defines, "-P", pipeline], name, item
         )
@@ -780,6 +798,7 @@ def self_test():
             "unknown": {"scripts": ["a.js"], "stages": ["discover", "no-such-stage"]},
             "stale": {"scripts": ["missing.js"]},
             "gap": {"scripts": ["a.js"], "stages": ["discover", "probe-missing"]},
+            "entry": {"scripts": [{"pattern": "a.js", "string_entries": ["f", "g"]}]},
         }
         workloads["slow"]["options"] = {"probe-sleep": {"timeout": 0.5}}
         for name, body in workloads.items():
@@ -788,6 +807,9 @@ def self_test():
         later = time.monotonic() + 60
         results = {name: check(loaded[name], root, later, root) for name in workloads}
         assert results["good"]["verdict"] == "DONE", results["good"]
+        assert results["entry"]["verdict"] == "DONE", results["entry"]
+        assert string_entries({"string_entries": ["f", "g"]}) == "f,g"
+        assert string_entries({"path": root / "a.js"}) == ""
         bad = results["bad"]
         assert bad["verdict"] == "NOT DONE" and bad["first_gap"]["stage"] == "probe-check", bad
         assert [s["status"] for s in bad["stages"]] == ["PASS", "FAIL", "PASS"], bad["stages"]
