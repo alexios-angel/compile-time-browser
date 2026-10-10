@@ -85,6 +85,9 @@
 # A saved child and the longer branch still retain the original child. Canonical
 # String offsets select exact elements; packing arrays remain Passed.
 # Rebased on bee703ed bytecode: offsets and 79 Stored-to-Passed reasons changed; observations and confinement did not.
+# Rebased on 2026-09-28 bytecode, pcs only: a literal's data member is load_string +
+# define_data, not set_prop (80c455fa4), a non-private `in` calls two validating natives
+# first (b3522edb8), and a return pops open handlers (a2e5dbed3: suspended's async one).
 program 55464691d3ebf63f
 fn 0 <script>
 alloc 0 fn 1 0 1 0 0 globals:1 escapes:phase59
@@ -315,8 +318,8 @@ alloc 3 arr 1 1 0 0 0 - escapes:passed
 alloc 15 arr unobserved unclaimed
 fn 4 confinedPredicates
 alloc 8 obj 1 1 0 0 0 - escapes:passed
-alloc 12 obj 1 1 0 0 0 - escapes:passed
-alloc 45 arr 1 0 1 0 0 temporaries:1 escapes:returned
+alloc 13 obj 1 1 0 0 0 - escapes:passed
+alloc 55 arr 1 0 1 0 0 temporaries:1 escapes:returned
 fn 5 confinedLoopCarried
 alloc 2 obj 1 1 0 0 0 - escapes:passed
 fn 6 arrayFramePrivate
@@ -358,440 +361,440 @@ alloc 1 obj 1 1 0 0 0 - escapes:passed
 fn 18 objectFrameCopiedChild
 alloc 3 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 5 obj 1 1 0 0 0 - escapes:passed
-alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:returned
+alloc 10 obj 1 0 1 0 0 temporaries:1 escapes:returned
 fn 19 objectFrameCopiedOverwrite
 alloc 4 obj 1 1 0 0 0 - escapes:stored
 alloc 6 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 8 obj 1 1 0 0 0 - escapes:passed
-alloc 12 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 13 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 20 objectFrameCopiedSavedRead
 alloc 4 obj 1 0 1 0 0 temporaries:1 escapes:stored
 alloc 6 obj 1 1 0 0 0 - escapes:passed
-alloc 10 obj 1 1 0 0 0 - escapes:passed
+alloc 11 obj 1 1 0 0 0 - escapes:passed
 fn 21 objectFrameCopiedConditionalAlias
 alloc 5 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 9 obj 2 2 0 0 0 - escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 37 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 2 0 0 0 - escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 20 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 40 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 22 objectFrameCopiedConditionalSource
 alloc 6 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 2 2 0 0 0 - escapes:passed
-alloc 18 obj 2 2 0 0 0 - escapes:passed
-alloc 28 obj 2 0 2 0 0 temporaries:2 escapes:returned
+alloc 11 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 2 2 0 0 0 - escapes:passed
+alloc 21 obj 2 2 0 0 0 - escapes:passed
+alloc 32 obj 2 0 2 0 0 temporaries:2 escapes:returned
 fn 23 objectFrameCopiedSwitchSaved
 alloc 5 obj 3 0 3 0 0 temporaries:3 escapes:passed
-alloc 9 obj 3 1 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:passed
-alloc 17 obj 3 2 1 0 0 temporaries:1 escapes:passed
-alloc 42 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 58 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 78 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 3 1 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 20 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 45 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 63 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 85 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 24 objectFrameCopiedLiteralOverwrite
 alloc 5 obj 1 1 0 0 0 - escapes:passed
-alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 1 1 0 0 0 - escapes:passed
-alloc 17 obj 1 1 0 0 0 - escapes:passed
+alloc 10 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 1 1 0 0 0 - escapes:passed
+alloc 20 obj 1 1 0 0 0 - escapes:passed
 fn 25 objectFrameSwitchReleased
 alloc 3 obj 3 3 0 0 0 - escapes:passed
-alloc 7 obj 3 2 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 3 2 1 0 0 temporaries:1 escapes:passed
-alloc 74 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 8 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 3 2 1 0 0 temporaries:1 escapes:passed
+alloc 77 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 26 objectFrameNegatedReleased
 alloc 5 obj 4 4 0 0 0 - escapes:passed
-alloc 9 obj 4 0 4 0 0 temporaries:4 escapes:passed
-alloc 13 obj 4 0 4 0 0 temporaries:4 escapes:passed
-alloc 40 obj 4 0 4 0 0 temporaries:4 escapes:passed
+alloc 10 obj 4 0 4 0 0 temporaries:4 escapes:passed
+alloc 15 obj 4 0 4 0 0 temporaries:4 escapes:passed
+alloc 42 obj 4 0 4 0 0 temporaries:4 escapes:passed
 fn 27 objectFrameTypeofReleased
 alloc 6 obj 5 5 0 0 0 - escapes:passed
-alloc 10 obj 5 0 5 0 0 temporaries:5 escapes:passed
-alloc 14 obj 5 0 5 0 0 temporaries:5 escapes:passed
-alloc 46 obj 5 0 5 0 0 temporaries:5 escapes:passed
+alloc 11 obj 5 0 5 0 0 temporaries:5 escapes:passed
+alloc 16 obj 5 0 5 0 0 temporaries:5 escapes:passed
+alloc 48 obj 5 0 5 0 0 temporaries:5 escapes:passed
 fn 28 objectFrameVoidReleased
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 42 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 29 objectFrameStaticBinaryReleased
 alloc 11 obj 2 2 0 0 0 - escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 80 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 82 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 30 objectFrameStaticBinaryOpaque
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 45 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 31 objectFrameStaticBinaryBigInt
 alloc 4 obj 1 1 0 0 0 - escapes:passed
-alloc 8 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 12 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 34 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 14 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 36 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 32 objectFrameArithmeticUnaryReleased
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 60 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 33 objectFrameArithmeticUnarySaved
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 64 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 66 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 34 objectFrameArithmeticUnaryOpaque
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 43 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 35 objectFrameArithmeticUnaryBigInt
 alloc 5 obj 1 1 0 0 0 - escapes:passed
-alloc 9 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 37 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 39 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 36 objectFrameLooseEqualityReleased
 alloc 11 obj 2 2 0 0 0 - escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 75 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 77 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 37 objectFrameLooseEqualitySaved
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 65 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 67 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 38 objectFrameLooseEqualityOpaque
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 39 objectFrameLooseEqualityBigInt
 alloc 6 obj 1 1 0 0 0 - escapes:passed
-alloc 10 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 14 obj 1 0 1 0 0 temporaries:1 escapes:passed
-alloc 44 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 11 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 16 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 46 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 40 objectFrameLooseEqualityRelational
 alloc 9 obj 2 2 0 0 0 - escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 63 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 65 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 41 objectFrameLooseEqualityLiteral
 alloc 11 obj 2 2 0 0 0 - escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 76 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 78 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 42 objectFrameRelationalSaved
 alloc 11 obj 2 2 0 0 0 - escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 87 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 89 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 43 objectFrameRelationalUnordered
 alloc 11 obj 2 2 0 0 0 - escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 76 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 78 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 44 objectFrameRelationalOpaque
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 45 objectFrameRelationalBigInt
 alloc 9 obj 2 2 0 0 0 - escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 63 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 65 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 46 objectFrameRelationalRetained
 alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 54 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 47 objectFrameArithmeticBinarySaved
 alloc 10 obj 2 2 0 0 0 - escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 85 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 20 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 87 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 48 objectFrameArithmeticBinaryNumbers
 alloc 10 obj 2 2 0 0 0 - escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 76 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 20 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 78 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 49 objectFrameArithmeticBinaryOpaque
 alloc 9 obj 2 2 0 0 0 - escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 63 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 65 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 50 objectFrameArithmeticBinaryBigInt
 alloc 10 obj 2 2 0 0 0 - escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 70 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 20 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 72 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 51 objectFrameArithmeticBinaryRetained
 alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 74 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 76 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 52 objectFrameAddConcatSaved
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 21 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 75 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 24 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 78 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 53 objectFrameAddConcatNumbers
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 61 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 63 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 54 objectFrameAddConcatTemplate
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 22 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 82 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 25 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 85 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 55 objectFrameAddConcatOpaqueAdd
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 56 objectFrameAddConcatOpaqueTemplate
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 54 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 57 objectFrameAddConcatBigInt
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 65 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 67 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 58 objectFrameAddConcatRetained
 alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 60 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 62 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 59 objectFrameBigIntEqualitySaved
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 84 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 86 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 60 objectFrameBigIntEqualityOpaque
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 61 objectFrameBigIntEqualityMixed
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 62 objectFrameBigIntEqualityRetained
 alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 63 objectFrameBigIntRelationalSaved
 alloc 10 obj 2 2 0 0 0 - escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 91 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 20 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 93 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 64 objectFrameBigIntRelationalOpaque
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 49 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 65 objectFrameBigIntRelationalMixed
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 66 objectFrameBigIntRelationalComputed
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 60 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 67 objectFrameBigIntRelationalRetained
 alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 60 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 62 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 68 objectFrameBigIntUnarySaved
 alloc 13 obj 2 2 0 0 0 - escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 27 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 101 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 30 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 104 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 69 objectFrameBigIntUnaryPaths
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 70 objectFrameBigIntUnaryOpaque
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 37 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 71 objectFrameBigIntUnaryMixed
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 52 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 54 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 72 objectFrameBigIntUnaryRetained
 alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 50 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 73 objectFrameStringBigIntSaved
 alloc 10 obj 2 2 0 0 0 - escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 31 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 115 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 35 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 119 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 74 objectFrameStringBigIntPaths
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 60 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 75 objectFrameStringBigIntTemplate
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 64 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 66 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 76 objectFrameStringBigIntOpaqueAdd
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 34 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 36 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 77 objectFrameStringBigIntOpaqueTemplate
 alloc 4 obj 2 2 0 0 0 - escapes:passed
-alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 78 objectFrameStringBigIntObject
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 79 objectFrameStringBigIntMixed
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 80 objectFrameStringBigIntRetained
 alloc 7 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 81 objectFrameBigIntMixedSaved
 alloc 10 obj 2 2 0 0 0 - escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 93 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 20 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 95 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 82 objectFrameBigIntMixedPrimitives
 alloc 9 obj 2 2 0 0 0 - escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 62 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 19 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 64 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 83 objectFrameBigIntMixedPaths
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 54 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 84 objectFrameBigIntMixedNumbers
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 60 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 62 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 85 objectFrameBigIntMixedOpaque
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 86 objectFrameBigIntMixedObject
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:converted
-alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:converted
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 87 objectFrameBigIntMixedRetained
 alloc 6 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 45 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 47 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 88 objectFrameBigIntMixedStrings
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 89 objectFrameBigIntBinarySaved
 alloc 12 obj 2 2 0 0 0 - escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 28 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 113 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 32 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 117 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 90 objectFrameBigIntBinaryPaths
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 91 objectFrameBigIntBinaryOpaque
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 92 objectFrameBigIntBinaryMixed
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 93 objectFrameBigIntBinaryRetained
 alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 55 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 57 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 94 objectFrameBigIntStaticSaved
 alloc 13 obj 2 2 0 0 0 - escapes:passed
-alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 29 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 118 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 33 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 122 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 95 objectFrameBigIntStaticPaths
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 96 objectFrameBigIntStaticOpaque
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 44 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 97 objectFrameBigIntStaticMixed
 alloc 7 obj 2 2 0 0 0 - escapes:passed
-alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 51 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 53 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 98 objectFrameBigIntStaticShift
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 99 objectFrameBigIntStaticRetained
 alloc 8 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 55 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 57 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 100 objectFrameBigIntShiftSaved
 alloc 12 obj 2 2 0 0 0 - escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 29 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 117 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 17 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 33 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 121 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 101 objectFrameBigIntShiftPaths
 alloc 6 obj 2 2 0 0 0 - escapes:passed
-alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 14 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 46 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 11 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 48 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 102 objectFrameBigIntShiftOpaque
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 39 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 10 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 15 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 41 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 103 objectFrameBigIntShiftMixed
 alloc 8 obj 2 2 0 0 0 - escapes:passed
-alloc 12 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 16 obj 2 0 2 0 0 temporaries:2 escapes:passed
-alloc 56 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 13 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 18 obj 2 0 2 0 0 temporaries:2 escapes:passed
+alloc 58 obj 2 0 2 0 0 temporaries:2 escapes:passed
 fn 104 objectFrameBigIntShiftEarly
 alloc 5 obj 2 2 0 0 0 - escapes:passed
-alloc 9 obj 2 1 1 0 0 temporaries:1 escapes:passed
-alloc 13 obj 2 1 1 0 0 temporaries:1 escapes:passed
-site 25 obj 1 0 1 0 0 thrown:1 unclaimed
-alloc 41 obj 1 0 1 0 0 temporaries:1 escapes:passed
+alloc 10 obj 2 1 1 0 0 temporaries:1 escapes:passed
+alloc 15 obj 2 1 1 0 0 temporaries:1 escapes:passed
+site 27 obj 1 0 1 0 0 thrown:1 unclaimed
+alloc 43 obj 1 0 1 0 0 temporaries:1 escapes:passed
 fn 105 objectFrameBigIntShiftCatch
