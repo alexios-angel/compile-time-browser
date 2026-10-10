@@ -1,9 +1,10 @@
 //===- ctcompile/test/Runtime/NativePage.cpp - Native page runtime tests --===//
 //
-// Tests the native runtime's page views (CTNative/Runtime/Page.hpp) against a
-// ctbrowser::page::static_page: the answers generated code gets for
-// getBoundingClientRect, getComputedStyle, clientWidth and devicePixelRatio,
-// and the refusals for what it may not ask.
+// Tests the native runtime's page views (CTNative/Runtime/Page.hpp) and the
+// element members css-dump reads (Browser.hpp: tagName, id, className,
+// children) against a ctbrowser::page::static_page: the answers generated
+// code gets for getBoundingClientRect, getComputedStyle, clientWidth and
+// devicePixelRatio, and the refusals for what it may not ask.
 //
 // Kept apart from NativeRuntime.cpp so that test links no page or layout
 // library: only programs that read geometry or computed style need them.
@@ -46,6 +47,36 @@ struct bound_page {
 
 [[nodiscard]] std::string text(const ctnative::js_string & s) {
     return s.value();
+}
+
+void test_element_members_match_the_vm() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const auto root = ctnative::document.documentElement();
+    CHECK(root.has_value());
+    if (!root) { return; }
+    // An HTML element in an HTML document reports its name uppercased.
+    CHECK_EQ(text(root->tagName()), std::string{"HTML"});
+    const std::vector<ctnative::js_element_t> top = root->children();
+    CHECK_EQ(top.size(), std::size_t{2});
+    if (top.size() == 2) {
+        CHECK_EQ(text(top[0].tagName()), std::string{"HEAD"});
+        CHECK_EQ(text(top[1].tagName()), std::string{"BODY"});
+        // Element children only: the body's text-holding <p> counts, its text
+        // node does not.
+        const std::vector<ctnative::js_element_t> body = top[1].children();
+        CHECK_EQ(body.size(), std::size_t{3});
+        if (body.size() == 3) {
+            CHECK_EQ(text(body[0].id()), std::string{"box"});
+            // className is the attribute as written, spaces and all.
+            CHECK_EQ(text(body[0].className()), std::string{"card  wide"});
+            CHECK_EQ(text(body[1].id()), std::string{});
+            CHECK_EQ(text(body[1].className()), std::string{});
+            // An SVG element keeps its case.
+            CHECK_EQ(text(body[2].tagName()), std::string{"svg"});
+            CHECK_EQ(body[2].children().size(), std::size_t{1});
+        }
+    }
 }
 
 void test_geometry_and_viewport() {
@@ -121,6 +152,7 @@ void test_what_may_not_be_asked() {
 } // namespace
 
 int main() {
+    test_element_members_match_the_vm();
     test_geometry_and_viewport();
     test_computed_style_is_live();
     test_what_may_not_be_asked();
