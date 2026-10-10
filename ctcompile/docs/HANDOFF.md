@@ -24,20 +24,47 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Summary (updated 2026-10-10)
 - Active goal: Bootstrap; status: in progress
-- Last verified commit on ctcompile-v1: ea50ee7f5 Merge bootstrap-cssdump into
-  ctcompile-v1: string entry parameters (focused checks only; the base 986ad747a
-  built clean with `tools/remote-build.sh all`)
+- Last verified commit on ctcompile-v1: 8b5d265e4 Merge bootstrap-host-2 into
+  ctcompile-v1: ctcss-translate, css input seam (each merge since 986ad747a was
+  checked with focused tests only; no full suite ran)
 - Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE (2026-10-10);
   `check-workload.py fixture` -> VERDICT: DONE
-- First gap and next step: admission. The bundle has 19 of 574 functions native
-  (top raw reasons: 271 "uses `this`", 137 "uses its own closure", 70 unproved
-  parameter 0) and tools/check/css-dump.js 0 of 6. Next: lower Bootstrap's
-  class receivers and take css-dump.js (the only JavaScript the Bootstrap
-  CTests run) through every checker stage, then add native engine variants of
-  bootstrap_layout and css_syntax.
+- First gap and next step: admission. On ctcompile-v1 the bundle has 19 of 574
+  functions native and css-dump.js 0 of 6. The unmerged bootstrap-this branch
+  (run-once function cells as namespace-scope statics, the absent-global typeof
+  fold, clause-5 refinements) measures 21 of 574 but still fails focused tests;
+  after it: JS classes as C++ classes (slice 1a plus the VM class-helper fix are
+  drafted, uncommitted, in that worktree). css-dump.js next needs tuples in
+  vectors, vector parameters and returns, the recursive `walk`, JSON and DOM
+  reads. native-run: css_syntax.native (compiled CSS) is in progress;
+  bootstrap_layout.native needs the generated css-dump.js plus static_page.
 - Goals done: none
 - Open questions for the user: none
-- Decisions since the prompt revision: none
+- Decisions since the prompt revision (all 2026-10-10, by the user):
+  - built-ins are constexpr objects in the Element pattern (`ctnative::String`,
+    `Array`, `Math`, `JSON`, `Number`, `Boolean`, `Symbol`; `Object` when used);
+  - a `<name>.native` test may be a separate VM-free executable from the same
+    source and baselines, gated by nm;
+  - a test that runs no JavaScript (css_syntax) needs its CSS compiled by
+    ctcompile; bootstrap_layout may parse CSS and HTML at run time;
+  - the VM's `__ctbrowser_*` class helpers become engine-internal;
+  - validation runs only targeted, focused tests;
+  - every commit carries a Co-Authored-By trailer; merges use a message file.
+
+### 2026-10-10 claude-ctcompile: VM-free page, built-in objects, compiled CSS
+Commits: 9367a35eb (ctbrowser-page: computed style and client rects lifted
+from the shell, static_page, ctbrowser-net, native engine seam); e4ef03b9c
+(core case mapping and JSON quoting, runtime helpers); 2c00bfd6a (built-in
+objects, arrays of Strings, tuple lattice type; cherry-picked); 585c1be32
+(css::compiled_sheet with compile/materialize); 8b5d265e4 (ctcss-translate,
+chunked literals, css_syntax input seam; cherry-picked).
+Checks: focused devbox runs per candidate, among them page_static_parity,
+bootstrap_layout, css_compiled, css_syntax, ctcompile_css_emit,
+ctcompile_native_runtime, ctcompile_ctnative_lattice and the string-arrays lit
+tests; all passed. No full suite ran.
+Measured: `check-workload.py fixture` VERDICT: DONE; bootstrap VERDICT: NOT
+DONE, admission 19 of 574 on ctcompile-v1.
+Next boundary: land bootstrap-this once its focused tests pass, then classes.
 
 ### 2026-10-10 claude-ctcompile: string entry parameters
 Commits: 5a19c3618 ctcompile(lowering): type string entry parameters for the
