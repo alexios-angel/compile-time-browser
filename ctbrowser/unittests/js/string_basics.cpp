@@ -9,8 +9,9 @@
 // lengths and indices below match V8, including for non-ASCII text.
 //
 // Case conversion uses Unicode's default full mapping from a table generated
-// off the pinned Unicode release (builtins/text/case_mapping.cpp). It is
-// compiled in, so a render cannot depend on the host locale.
+// off the pinned Unicode release (lib/Core/case_mapping.cpp, which native
+// code shares). It is compiled in, so a render cannot depend on the host
+// locale.
 //
 //===----------------------------------------------------------------------===//
 

@@ -976,23 +976,31 @@ int main() {
     CHECK(trim_end_any(js_string{}, "\r ") == js_string{});
 
     // text[index]: UTF-16 units, -0 is index 0, and everything that names no
-    // element is undefined.
-    CHECK(string_at(js_string{"abc"}, ctnative::js_num{0.0}) == js_string{"a"});
-    CHECK(string_at(js_string{"abc"}, ctnative::js_num{-0.0}) == js_string{"a"});
-    CHECK(string_at(js_string{"abc"}, ctnative::js_num{2.0}) == js_string{"c"});
-    CHECK(!string_at(js_string{"abc"}, ctnative::js_num{3.0}));
-    CHECK(!string_at(js_string{"abc"}, ctnative::js_num{1.5}));
-    CHECK(!string_at(js_string{"abc"}, ctnative::js_num{-1.0}));
-    CHECK(!string_at(js_string{"abc"}, ctnative::js_num{js_nan_t{}}));
-    CHECK(!string_at(js_string{"abc"}, ctnative::js_num{std::numeric_limits<double>::infinity()}));
-    CHECK(!string_at(js_string{}, ctnative::js_num{0.0}));
-    CHECK(string_at(js_string{"\xC3\xA9"}, ctnative::js_num{0.0}) == js_string{"\xC3\xA9"});
+    // element is undefined, in the nullable_string carrier.
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{0.0}) == to_nullable_string(js_string{"a"}));
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{-0.0}) ==
+          to_nullable_string(js_string{"a"}));
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{2.0}) == to_nullable_string(js_string{"c"}));
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{3.0}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{1.5}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{-1.0}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{js_nan_t{}}).tag ==
+          nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"abc"}, ctnative::js_num{std::numeric_limits<double>::infinity()})
+              .tag == nullable_string::kind::undefined);
+    CHECK(string_at(js_string{}, ctnative::js_num{0.0}).tag == nullable_string::kind::undefined);
+    CHECK(string_at(js_string{"\xC3\xA9"}, ctnative::js_num{0.0}) ==
+          to_nullable_string(js_string{"\xC3\xA9"}));
     // U+1F600 is the pair D83D DE00; each index answers its lone half.
     CHECK(string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{0.0}) ==
-          js_string{"\xED\xA0\xBD"});
+          to_nullable_string(js_string{"\xED\xA0\xBD"}));
     CHECK(string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{1.0}) ==
-          js_string{"\xED\xB8\x80"});
-    CHECK(!string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{2.0}));
+          to_nullable_string(js_string{"\xED\xB8\x80"}));
+    CHECK(string_at(js_string{"\xF0\x9F\x98\x80"}, ctnative::js_num{2.0}).tag ==
+          nullable_string::kind::undefined);
 
     // Math.min: NaN wins on either side, -0 is below +0 in both orders.
     CHECK(math_min(ctnative::js_num{1.0}, ctnative::js_num{2.0}) == ctnative::js_num{1.0});
