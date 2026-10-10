@@ -49,6 +49,13 @@ inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason
 /// (the constructor lift's `new K(...)`): the class's name, which the lowering
 /// gives the C++ class it emits for that shape.
 inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
+/// A callback of an Array method (forEach, map, filter, some, every, find or
+/// reduce) that closure lifting specialised for its one call. On the
+/// `ctjs.call` it is a symbol reference to the callback, whose captures are
+/// the call's leading arguments; on the callback's `ctjs.func` it is a unit
+/// attribute. Written by ClosureLifting/ArrayCallbacks.cpp and read by type
+/// inference, admission and the lowering.
+inline constexpr llvm::StringLiteral kNativeArrayCallback = "ctnative.array_callback";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

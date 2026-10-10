@@ -378,6 +378,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         const mlir::Type stored = element(members);
         return VecType::get(c, stored ? stored : stringType(c));
     }
+    case VectorCall::callback: return arrayCallbackType(op, operands, pending);
     case VectorCall::regexp:
     case VectorCall::none: return {};
     }
@@ -491,6 +492,7 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
+    if (isArrayCallbackParameter(value)) { return; }
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))

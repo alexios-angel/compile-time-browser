@@ -18,6 +18,10 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// Array-method callback calls (ArrayCallbacks.cpp).
+void planArrayCallback(lowering & lower, ctjs::CallOp call);
+bool replaceArrayCallback(lowering & lower, mlir::Operation * o);
+
 namespace {
 
 /// The attribute holding an operation's planned lowering.
@@ -119,6 +123,12 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             break;
         case VectorCall::sort:
             if (arrays.contains(call.getReceiver())) { mark(op, "sort"); }
+            break;
+        case VectorCall::callback:
+            if (arrays.contains(call.getReceiver())) {
+                mark(op, "callback");
+                planArrayCallback(lower, call);
+            }
             break;
         case VectorCall::split: mark(op, "split"); break;
         case VectorCall::splitSpace: mark(op, "split_space"); break;
@@ -259,6 +269,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(lower.convertScalar(b, where, value, result));
         return true;
     }
+    if (kind == "callback") { return replaceArrayCallback(lower, o); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];
