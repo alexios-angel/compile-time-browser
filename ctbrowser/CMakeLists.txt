@@ -38,6 +38,17 @@ set(PROJECT_DESCRIPTION "A browser engine: HTML, CSS and JavaScript, rendered wi
 get_filename_component(CTBROWSER_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}" DIRECTORY)
 set(CTBROWSER_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")
 
+# CCACHE IS NOT AUTOMATIC: CMake hands it a compile only as the compiler
+# launcher. Used whenever it is installed (the devbox's cloud-init installs it,
+# one cache shared by every project). Cache variables, so a configured tree
+# keeps them when a checkout without these lines is synced over it, and
+# -DCMAKE_CXX_COMPILER_LAUNCHER= turns it off.
+find_program(CTBROWSER_CCACHE ccache)
+if(CTBROWSER_CCACHE)
+  set(CMAKE_C_COMPILER_LAUNCHER "${CTBROWSER_CCACHE}" CACHE STRING "Launcher for C compiles")
+  set(CMAKE_CXX_COMPILER_LAUNCHER "${CTBROWSER_CCACHE}" CACHE STRING "Launcher for C++ compiles")
+endif()
+
 include(CMakePackageConfigHelpers)
 include(CMakeDependentOption)
 include(GNUInstallDirs)
