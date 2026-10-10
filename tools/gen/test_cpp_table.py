@@ -23,6 +23,7 @@ class TableTest(unittest.TestCase):
                     flags=re.M,
                 )
                 self.assertEqual(expanded, source)
+                # write_table splits a table into parts of at most 900 lines.
                 parts = list(output.with_suffix("").glob("*.inc"))
                 self.assertEqual(len(parts), (count + 899) // 900)
                 self.assertTrue(all(len(part.read_text().splitlines()) <= 900 for part in parts))

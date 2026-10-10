@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Audit host semantics around the exact source-derived Bootstrap Data wrapper.
+"""Check how Bootstrap's Data module interacts with its host environment.
 
-This is a JavaScript host-boundary oracle, not a native coverage test. The UMD
-wrapper and Data declaration use bootstrap-data-probe.py's checked extraction.
-Every scenario preserves that fragment; none substitutes an isolated factory.
-Node checks ECMAScript observations. An optional ctbrowser reference run records
-differences explicitly, and --require-reference-match turns them into failures.
+Runs scenarios (module-system precedence, console and Map replacement, throws
+during publication, ...) around the unmodified UMD wrapper and Data declaration
+that bootstrap-data-probe.py extracts, and checks the observed trace* globals.
+Node is the authority for expected ECMAScript behaviour. An optional ctbrowser
+reference run records where it differs from Node, and --require-reference-match
+turns those differences into failures. Nothing is compiled natively.
 """
 
 from __future__ import annotations
@@ -34,8 +35,9 @@ var Map = function() {
 };
 """
 
-# Host setup and observations surround the unchanged extracted wrapper. The
-# boolean in each row encloses its execution in try/catch, without editing it.
+# Each row is (setup run before the wrapper, observations run after it,
+# expected values of every `trace*` global, whether to wrap the fragment in a
+# try/catch that records `traceCaught`). The wrapper itself is never edited.
 # Object-valued exception tokens test identity, not engine-specific error text.
 SCENARIOS = {
     "commonjs-precedence": (
@@ -273,6 +275,7 @@ var traceRetained = retained.get(element, "bs.alert");
     ),
 }
 
+# Runs each manifest program in a fresh vm context and prints its trace* globals.
 NODE_DRIVER = r"""const fs = require('node:fs');
 const vm = require('node:vm');
 const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -304,6 +307,8 @@ def check(args: argparse.Namespace) -> None:
         )
         source = before + wrapped + after
         if args.negative_control and name == "callee-read-order":
+            # Negative control: break one expectation on purpose so the run proves
+            # a Node mismatch is reported (main() checks the exact message).
             source += "traceOrder = traceOrder + 1;\n"
         path = (args.work / f"{name}.js").resolve()
         path.write_bytes(source.encode("utf-8"))
@@ -353,9 +358,9 @@ def check(args: argparse.Namespace) -> None:
                 key, separator, value = line.partition("=")
                 if not separator:
                     raise ProbeError(f"invalid reference observation for {name}: {line!r}")
-                # The reference also prints non-trace primitive globals, e.g.
-                # an explicitly undefined globalThis binding. Keep raw output but
-                # compare the same explicit observation roots as Node.
+                # The reference also prints non-trace primitive globals, such as
+                # an explicitly undefined globalThis binding. Keep the raw output
+                # but compare only the trace* globals, as Node reports them.
                 if not key.startswith("trace"):
                     continue
                 if key in values:

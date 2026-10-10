@@ -39,11 +39,13 @@ PIN = "ctcompile/CMakeLists.txt"
 UPSTREAM = "llvm/llvm-project"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
 CACHE = CACHE / "ctcompile-emitter-merge" / "llvm-project"
+# Printed under every new conflict: how to change the fork without adding one.
 ADVICE = (
     "move the added logic into a helper in a neighbouring file (Callables/, Const/, "
     "Exceptions/ beside the fork) and call it from a one-line hook here; leave "
     "upstream's own lines, their order and their formatting untouched"
 )
+# A line that starts a C++ function definition; group 1 is the function name.
 FUNCTION = re.compile(
     r"^(?!(?:if|for|while|switch|return|else|case|do|namespace)\b)"
     r"[^;=]*?\b([A-Za-z_][\w:~]*)\s*\("
@@ -63,6 +65,7 @@ def run(command, cwd=None, binary=False):
 
 
 def header_facts(text):
+    """Return the fork base's tag, upstream path and sha256 from the fork's header."""
     facts = {
         "base": re.search(r"upstream:\s+llvm/llvm-project, tag (\S+)", text),
         "path": re.search(r"^//\s+file:\s+(\S+)", text, re.M),
@@ -75,6 +78,7 @@ def header_facts(text):
 
 
 def pinned_upstream():
+    """Return the llvmorg-X.Y.Z tag of the LLVM version ctcompile is tested against."""
     text = (ROOT / PIN).read_text()
     match = re.search(r'CTCOMPILE_TESTED_LLVM_VERSION\s+"([\d.]+)"', text)
     if not match:
@@ -104,13 +108,14 @@ def upstream_file(cache, ref, path, base_tag):
 
 
 def fork_text(spec):
-    """`worktree` is the file on disk; anything else is a git revision."""
+    """Return the fork's text from the working copy (`worktree`) or a git revision."""
     if spec == "worktree":
         return (ROOT / FORK).read_text()
     return run(["git", "show", f"{spec}:{FORK}"], cwd=ROOT)
 
 
 def merge(fork, base, upstream):
+    """Three-way merge `fork` into `upstream`; return the text with diff3 markers."""
     with tempfile.TemporaryDirectory() as scratch:
         paths = []
         for label, text in (("fork", fork), ("base", base), ("upstream", upstream)):
@@ -120,6 +125,8 @@ def merge(fork, base, upstream):
         labels = ["-L", "fork", "-L", "base", "-L", "upstream"]
         command = ["git", "merge-file", "-p", "--diff3", *labels, *paths]
         result = subprocess.run(command, capture_output=True, text=True)
+    # git merge-file exits with the conflict count (capped at 127); higher
+    # values or negatives are real errors.
     if not 0 <= result.returncode <= 127:
         raise SetupError(f"git merge-file failed: {result.stderr.strip()}")
     return result.stdout
@@ -146,6 +153,7 @@ def parse(merged):
 
 
 def find(lines, block, start):
+    """First index of `block` in `lines` at or after `start`, else from the top."""
     for begin in (start, 0):
         for at in range(begin, len(lines) - len(block) + 1):
             if lines[at : at + len(block)] == block:
@@ -154,6 +162,7 @@ def find(lines, block, start):
 
 
 def function_at(lines, line):
+    """Return (name, 1-based line) of the function definition enclosing `line`."""
     for number in range(min(line, len(lines)) - 1, -1, -1):
         text = lines[number]
         if text[:1].isalpha() or text[:1] == "_":
@@ -164,10 +173,12 @@ def function_at(lines, line):
 
 
 def squash(lines):
+    """Join `lines` with all whitespace runs collapsed, for whitespace-blind compares."""
     return " ".join(" ".join(lines).split())
 
 
 def kind(conflict):
+    """Describe in words what each side did to the conflicting lines."""
     fork, base, upstream = (squash(conflict[s]) for s in ("fork", "base", "upstream"))
     if fork == upstream:
         return "both sides made the same change, differing only in whitespace"
@@ -185,11 +196,14 @@ def kind(conflict):
 
 
 def key(conflict):
+    """Identify a conflict across candidate and baseline merges by its base and
+    upstream text only: the fork side is what the candidate changes."""
     text = squash(conflict["base"]) + "\0" + squash(conflict["upstream"])
     return hashlib.sha1(text.encode()).hexdigest()[:12]
 
 
 def churn(before, after):
+    """Count changed hunks and added/removed lines between two line lists."""
     hunks = added = removed = 0
     matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -199,6 +213,7 @@ def churn(before, after):
 
 
 def diff(before, after, label, limit):
+    """Unified diff body (no file headers) of one conflict side, cut to `limit` lines."""
     lines = list(difflib.unified_diff(before, after, "base", label, n=1, lineterm=""))[2:]
     if limit and len(lines) > limit:
         hidden = len(lines) - limit
@@ -207,6 +222,11 @@ def diff(before, after, label, limit):
 
 
 def analyse(candidate, baseline, base, upstream, limit):
+    """Merge candidate and baseline into upstream and build the report dict.
+
+    A candidate conflict is "new" when the baseline's merge has no conflict
+    with the same key(); baseline conflicts left unmatched are "resolved".
+    """
     lines = candidate.split("\n")
     found, cursor = parse(merge(candidate, base, upstream)), 0
     for index, conflict in enumerate(found, 1):
@@ -262,6 +282,7 @@ def churn_text(stats):
 
 
 def render(report, inputs, only):
+    """Format the report as text; `only` limits detail to one conflict number."""
     out = [f"EMITTER MERGE CHECK - {FORK}", ""]
     out += [
         "WHAT THIS MEASURES",
@@ -338,6 +359,7 @@ def render(report, inputs, only):
 
 
 def self_test():
+    """Check new/resolved detection and function location on a tiny merge."""
     base = "int a;\nint b;\nint c;\nint d;\n"
     upstream = "int a;\nint B;\nint c;\nint d;\n"
     baseline = "int a;\nint b;\nint c;\nint d2;\n"

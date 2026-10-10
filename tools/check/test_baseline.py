@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Baseline provenance checks with temporary files and mocked build commands."""
+"""Unit tests for baseline.py.
+
+The benchmark report must record the binary, corpus and build configuration it
+measured and refuse to report if any of them changes during the run. cmake,
+ninja, git and the benchmark binary are mocked.
+"""
 
 import hashlib
 import importlib.util
@@ -50,6 +55,8 @@ class BaselineTests(unittest.TestCase):
             self.addCleanup(active.stop)
 
     def run_command(self, command, cwd=None):
+        """Stand-in for baseline.run_command: canned output per tool, and the
+        benchmark binary runs self.mutation to simulate a mid-run change."""
         self.calls.append(command)
         if command[0] == "cmake":
             return ""

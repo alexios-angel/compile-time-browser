@@ -4,7 +4,7 @@
 ctbrowser's goldens prove it renders the same as it did yesterday. They say
 nothing about whether it matches a real browser, and feature parity with
 Chrome/Firefox is the actual goal. This opens both, sends each the same clicks
-and keystrokes ONE COMMAND AT A TIME, and screenshots either on demand - so an
+and keystrokes one command at a time, and screenshots either on demand - so an
 AI can drive it, and a human can watch the windows and say "that click missed"
 while it is still happening.
 
@@ -17,7 +17,7 @@ while it is still happening.
     tools/check/compare.py stop
 
 The browsers cannot live inside one invocation - the caller is a shell, and
-every command is a new process - so `start` leaves a DAEMON holding them and
+every command is a new process - so `start` leaves a daemon holding them and
 every other verb is a one-line client that talks to it over loopback TCP.
 
 --engine= picks who is driven: ctbrowse (alias normal), chrome (alias
@@ -27,9 +27,7 @@ does before deciding what ctbrowser should do, and --engine=ctbrowse drives the
 engine by hand with no venv and nothing downloaded.
 
 Stdlib only, except Playwright and Pillow - and those are imported only when a
-real browser is actually selected. Unlike the other tools here this one takes arguments, so
-it uses argparse; gen-assets.py takes none because it is a generator with
-nothing to vary.
+real browser is actually selected.
 """
 
 import argparse
@@ -51,7 +49,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = ROOT / "build" / "compare"
 # TCP on loopback rather than a unix socket, and a file holding the port. The
 # repo lives on a DrvFs mount under WSL, which does not support unix sockets at
-# all - bind() there fails with EOPNOTSUPP. ctdrive is reached the same way.
+# all: bind() there fails with EOPNOTSUPP. ctdrive is reached the same way.
 PORTFILE = OUT / "session.port"
 # Where tools/remote-build.sh puts the tree on the build box, so --remote can
 # find the binary it just built. Same relative layout, so page paths carry over.
@@ -72,8 +70,11 @@ ALIASES = {
 }
 
 
-# Deadlines cover a complete message, including a peer that trickles bytes.
 def receive_line(sock, deadline: float) -> str:
+    """Read one newline-terminated reply from `sock` by `deadline`.
+
+    The deadline covers the complete message, including a peer that trickles bytes.
+    """
     data = bytearray()
     while b"\n" not in data:
         left = deadline - time.monotonic()
@@ -88,6 +89,7 @@ def receive_line(sock, deadline: float) -> str:
 
 
 def exchange(sock, payload: dict, deadline: float) -> dict:
+    """Send `payload` as one JSON line and return the JSON reply."""
     left = deadline - time.monotonic()
     if left <= 0:
         raise TimeoutError("session request deadline expired")
@@ -97,6 +99,7 @@ def exchange(sock, payload: dict, deadline: float) -> dict:
 
 
 def stop_process(proc) -> None:
+    """Terminate `proc`, escalating to kill if it does not exit in CLOSE_TIMEOUT."""
     if proc.poll() is None:
         proc.terminate()
     try:
@@ -166,16 +169,16 @@ def font_conf(path: Path) -> Path:
     """Point a browser at ctbrowser's own faces.
 
     ctbrowser renders in the vendored Tinos / Fira Sans / Cousine; a system
-    browser resolves serif/sans/mono to whatever fontconfig says, which here is
-    Noto. Left alone, EVERY glyph differs and font substitution buries the
+    browser resolves serif/sans/mono to whatever fontconfig says, typically
+    Noto. Left alone, every glyph differs and font substitution buries the
     differences that are actually about the engine.
     """
     fonts = ROOT / "ctbrowser" / "resources" / "fonts"
-    # The CONCRETE names matter as much as the generics. A browser's default
-    # standard font is "Times New Roman", not "serif" - map only the generics
+    # The concrete names matter as much as the generics. A browser's default
+    # standard font is "Times New Roman", not "serif": map only the generics
     # and that request falls through to whatever happens to be first in the
-    # directory, which is how a heading came out sans-serif and looked like an
-    # engine bug for a while. Tinos, Fira Sans and Cousine are metric-compatible
+    # directory, so a heading comes out sans-serif and looks like an engine
+    # bug. Tinos, Fira Sans and Cousine are metric-compatible
     # with the three names below, which is why those pairings and not others.
     families = [
         ("serif", "Tinos"),
@@ -256,12 +259,8 @@ class Ctbrowse:
             raise
 
     def _spawn_local(self, page: Path, size, headed: bool):
-        # build/tools/, because ctdrive is a TOOL now: the monorepo split moved
-        # it out of examples/cli/ into ctbrowser/tools/ctdrive/, and the build
-        # tree mirrors the source tree. The older spellings are still tried
-        # because a build directory configured before a reorg still has the
-        # layout of its day, and "not built" is a much worse thing to say to
-        # someone whose binary is sitting right there.
+        # Current build layout first; the older paths cover build directories
+        # configured before ctdrive moved to ctbrowser/tools/ctdrive/.
         candidates = [
             ROOT / "build" / "tools" / "ctdrive",
             ROOT / "build" / "examples" / "ctdrive",
@@ -288,14 +287,14 @@ class Ctbrowse:
         )
 
     def _spawn_remote(self, page: Path, size, host: str):
-        """ctdrive on the BUILD BOX, over an ssh-forwarded port.
+        """Start ctdrive on the build box, over an ssh-forwarded port.
 
-        This exists because this machine is not allowed to build: a full build
-        of the engine takes the WSL instance down (CLAUDE.md), so the only
-        trustworthy ctdrive is the one the devbox just built. Chrome still runs
-        here, and the two halves meet over loopback.
+        This exists because the engine is built on a remote build box (a full
+        local build exhausts the WSL VM's memory), so the ctdrive to drive is
+        the one built there. Chrome still runs here, and the two halves meet
+        over loopback.
 
-        The port is chosen HERE rather than by the remote OS. `ssh -L` sets its
+        The port is chosen here rather than by the remote OS. `ssh -L` sets its
         forward up at connection time, before ctdrive has bound anything, so
         there is no way to learn a remote port-zero assignment through the
         tunnel - it would have to be read from stdout and then forwarded, which
@@ -333,6 +332,7 @@ class Ctbrowse:
         )
 
     def send(self, **cmd) -> dict:
+        """Send one ctdrive command; any socket error closes the connection."""
         if self.sock is None:
             raise ConnectionError("ctdrive is closed")
         try:
@@ -371,19 +371,10 @@ class Ctbrowse:
         # ctdrive writes PNG when the name ends in .png, so the file lands as
         # asked and a caller can open what it is told.
         if self.remote:
-            # A REMOTE ENGINE WRITES TO A REMOTE DISK. Handing ctdrive this
-            # machine's absolute path asked the build box to write to a directory
-            # it does not have, and the whole verb failed with a message about a
-            # file - which made "does it LOOK right?", a step in the documented
-            # per-rung loop, impossible on the only machine that can run Chrome.
-            # The socket carries JSON and not bytes, so the image comes back the
-            # way the tree got there: over ssh.
-            # RELATIVE, because REMOTE_DIR is a shell expression ($HOME/...)
-            # that only a shell expands and this path travels over the socket as
-            # JSON. ctdrive's working directory is already REMOTE_DIR - the spawn
-            # cds there so the fixtures' `../../vendor/bootstrap/bootstrap.css`
-            # resolves - so a relative path lands in the right place and the fetch
-            # below runs through a shell that can expand the rest.
+            # A remote ctdrive writes to the remote disk, so ask it for a path
+            # relative to its working directory (REMOTE_DIR; a `$HOME/...` path
+            # would not be expanded inside JSON) and copy the file back over ssh,
+            # since the socket carries JSON, not bytes.
             there = f"build/compare/{path.name}"
             answer = self.send(cmd="shot", path=there)
             if answer.get("ok"):
@@ -423,7 +414,7 @@ class Ctbrowse:
 def serve_repo() -> str:
     """A local HTTP server rooted at the repository. Returns its base URL.
 
-    THE PAGE IS SERVED, NOT OPENED. Chrome treats every file:// URL as its own
+    The page is served, not opened. Chrome treats every file:// URL as its own
     origin, so a page's `<script src="../../vendor/p5/p5.js">` is a cross-origin
     request and is blocked - the window comes up blank with nothing in the
     console, which reads as "ctbrowser renders and Chrome does not" when the
@@ -438,7 +429,7 @@ def serve_repo() -> str:
     import http.server
     import threading
 
-    # UTF-8, EXPLICITLY. SimpleHTTPRequestHandler sends `text/javascript` with
+    # Declare UTF-8 explicitly. SimpleHTTPRequestHandler sends `text/javascript` with
     # no charset, and a browser then decodes the script as whatever it guesses -
     # which for p5.js, whose source contains `const π = Math.PI`, splits that
     # identifier into two Latin-1 bytes and rejects the bundle with a syntax
@@ -470,7 +461,7 @@ class Reference:
     def __init__(self, name: str, pw, page_path: Path, size, headed: bool):
         self.name = name
         kind = pw.chromium if name == "chrome" else pw.firefox
-        # CLASSIC SCROLLBARS, DELIBERATELY. Headless Chromium defaults to overlay
+        # Classic scrollbars, deliberately. Headless Chromium defaults to overlay
         # scrollbars, which take no space from the initial containing block, so a
         # 1024-wide viewport lays out at 1024. A real Chrome or Firefox on a Linux
         # desktop reserves ~15px and lays out at 1009 - which is what ctbrowser
@@ -518,7 +509,7 @@ class Reference:
 
     def key(self, code, shift=False, ctrl=False):
         # ctbrowser speaks DOM `code` ("KeyA", "ArrowLeft"); Playwright wants
-        # the key NAME ("a", "ArrowLeft"), so the KeyX/DigitX forms translate
+        # the key name ("a", "ArrowLeft"), so the KeyX/DigitX forms translate
         # and everything else is already the same word.
         name = code
         if code.startswith("Key") and len(code) == 4:
@@ -532,20 +523,20 @@ class Reference:
     def wheel(self, notches, at=None):
         if at is not None:
             self.page.mouse.move(at[0], at[1])
-        # ctbrowser's notch is positive AWAY from the user and it scrolls by
-        # browser_options::wheel_step (53px); Chrome takes pixels. Matched here
-        # so a wheel command means the same distance on both.
+        # ctbrowser's notch is positive away from the user and scrolls by
+        # wheel_step (53px, ctbrowser/lib/Shell/browser/input.cpp); Chrome takes
+        # pixels. Matched here so a wheel command means the same distance on both.
         self.page.mouse.wheel(0, -notches * 53)
         return {"ok": True}
 
     def eval_(self, script):
-        # Shaped like ctdrive's answer, which reports what the script LOGGED -
+        # Shaped like ctdrive's answer, which reports what the script logged -
         # run_script cannot return a value. Wrapping console.log on this side
         # keeps one question askable of both engines.
         # The internals are __cmp_-prefixed because they share a scope with the
         # script being evaluated: named `out`, a page script declaring its own
         # `out` dies with "Identifier 'out' has already been declared" in the
-        # reference browser ONLY, which reads exactly like an engine difference.
+        # reference browser only, which reads exactly like an engine difference.
         logged = self.page.evaluate(
             "(__cmp_src) => { const __cmp_log = []; const __cmp_real = console.log;"
             " console.log = (...a) => __cmp_log.push(a.join(' '));"
@@ -567,6 +558,8 @@ class Reference:
 
 
 class Session:
+    """The daemon's state: the engines being driven and the input delay."""
+
     def __init__(self, args):
         self.delay = args.delay / 1000.0
         self.engines: list = []
@@ -611,7 +604,7 @@ class Session:
                 },
             }
 
-        # The pause is what makes this watchable. It goes BEFORE the input so
+        # The pause is what makes this watchable. It goes before the input so
         # the human sees the page as it was, then the change - not a change
         # they have already missed.
         if verb not in ("shot",) and self.delay:
@@ -623,7 +616,7 @@ class Session:
                 out[engine.name] = self.dispatch(engine, cmd)
             except TimeoutError:
                 raise
-            except Exception as e:  # one engine failing must not kill the rig
+            except Exception as e:  # One engine failing must not kill the rig.
                 out[engine.name] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
                 out["ok"] = False
         return out
@@ -752,6 +745,7 @@ def request(payload: dict) -> dict:
 
 
 def ask(payload: dict) -> int:
+    """Send `payload`, print the reply, and return a process exit status."""
     try:
         answer = request(payload)
     except NoSession as why:
@@ -781,7 +775,7 @@ def stale_session() -> bool:
 
 
 def setup() -> int:
-    """The venv Playwright lives in. Only needed for chrome/firefox."""
+    """Create the venv Playwright lives in. Only needed for chrome/firefox."""
     if not VENV.exists():
         print(f"creating {VENV}")
         subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
@@ -877,7 +871,7 @@ def main() -> int:
             except ImportError:
                 reexec_in_venv()
         if stale_session():
-            PORTFILE.unlink(missing_ok=True)  # a daemon that was killed, not stopped
+            PORTFILE.unlink(missing_ok=True)  # A daemon that was killed, not stopped.
         if PORTFILE.exists():
             print("compare.py: a session is already running; `stop` it first", file=sys.stderr)
             return 1

@@ -5,11 +5,11 @@ validity criterion) normalise with.
 
 Three tables, all from Python's own unicodedata, which carries the UCD:
 
-  * the canonical decompositions, FULLY expanded here so the run time needs no
-    recursion. Hangul is left out: it is algorithmic (Unicode 3.12) and would
-    otherwise be 11,172 rows.
+  * the canonical decompositions, fully expanded here so the run time needs no
+    recursion. Hangul is left out: it is algorithmic (Unicode Standard section
+    3.12) and would otherwise be 11,172 rows.
   * Canonical_Combining_Class, nonzero only.
-  * the canonical pairs that RECOMPOSE. Full_Composition_Exclusion needs no
+  * the canonical pairs that recompose. Full_Composition_Exclusion needs no
     second file: a pair is in the table only when NFC itself puts it back
     together, which is the property's definition rather than a copy of it.
 
@@ -19,6 +19,8 @@ Three tables, all from Python's own unicodedata, which carries the UCD:
 from cpp_table import generate
 import unicodedata
 
+# Hangul syllable constants from the Unicode Standard section 3.12; only SBASE
+# and SCOUNT are used, to skip the 11,172 algorithmic syllables.
 SBASE, LBASE, VBASE, TBASE = 0xAC00, 0x1100, 0x1161, 0x11A7
 LCOUNT, VCOUNT, TCOUNT = 19, 21, 28
 NCOUNT = VCOUNT * TCOUNT
@@ -34,6 +36,8 @@ def canonical(cp):
 
 
 def full_decomposition(cp):
+    """The canonical decomposition of cp, applied recursively until no code
+    point in it decomposes further."""
     out = []
     stack = [cp]
     while stack:
@@ -50,7 +54,7 @@ def main():
     decomps = []
     for cp in range(0x110000):
         if SBASE <= cp < SBASE + SCOUNT:
-            continue  # Hangul is algorithmic
+            continue  # Hangul is algorithmic.
         if canonical(cp):
             decomps.append((cp, full_decomposition(cp)))
     ccc = []

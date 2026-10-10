@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""OF THE CALLEES A ctjs.call_direct NAMES, HOW MANY LIFT AND HOW MANY ARE CLAIMED.
+"""Classify every function named by a ctjs.call_direct after native lowering.
 
-The first report follows the fixed resolver-stage cohort across native lowering.
-It is not the full call graph: native lowering also names callees. A second
-report counts the remaining direct calls after lowering and traverses their
-graph from the script entry. A static path does not prove runtime execution.
-Each function in the resolver cohort is classified as:
+The first report takes the direct-call targets present right after
+--ctjs-resolve-globals and says what native lowering did with each:
 
-  CLAIMED   an emitc.func            - proved and lowered
-  LIFTED    a ctjs.func carrying `ctnative.captures` - the closure lift took its
-            captures into leading parameters, whether or not the body proved
+  CLAIMED   lowered to an emitc.func
+  LIFTED    a ctjs.func carrying `ctnative.captures`: closure lifting turned
+            its captures into leading parameters, whether or not it lowered
   REFUSED   a ctjs.func with `ctnative.not_native = "<reason>"`
 
-A function can be LIFTED and still REFUSED: a lifted capture is a parameter that
-still needs a native carrier, and most module-scope bindings in a bundle are
-objects and functions. The two counts are reported separately for that reason.
+A function can be both LIFTED and REFUSED: a lifted capture still needs a native
+type, and most module-scope bindings in a bundle are objects and functions, so
+the two counts are reported separately.
+
+The second report builds the direct-call graph after lowering (native lowering
+adds direct calls of its own) and lists what is reachable from the script
+entry. A static path does not prove the call runs.
 """
 
 import argparse
@@ -30,6 +31,7 @@ DIRECT = re.compile(r"\b(ctjs\.call_direct|(?:emitc\.)?call) @([A-Za-z0-9_$]+)")
 
 
 def run(cmd, stdin=None):
+    """Run `cmd`, exiting with its stderr on failure; return its stdout bytes."""
     p = subprocess.run(cmd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if p.returncode != 0:
         sys.exit("failed: " + " ".join(cmd) + "\n" + p.stderr.decode("utf-8", "replace")[:4000])
@@ -58,6 +60,8 @@ for kind, name, rest in FUNC.findall(low):
 
 
 def emitted_name(name):
+    """The name a ctjs function has after lowering: the script entry `_script_$0`
+    becomes `main`, and `$` (not valid in a C identifier) becomes `_`."""
     if name in status:
         return name
     return "main" if name == "_script_$0" else name.replace("$", "_")

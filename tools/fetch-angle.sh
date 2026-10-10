@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Fetch the ANGLE build ctbrowser links against.
 #
-# ANGLE is NOT built here and deliberately so: it needs GN, depot_tools and - on
-# Windows - clang-cl and the Windows SDK, which is a second toolchain this
-# repository does not otherwise require. ctbrowser/docs/history/angle.md has the measurements;
+# ANGLE is deliberately not built here: it needs GN, depot_tools and (on
+# Windows) clang-cl and the Windows SDK, a second toolchain this repository does
+# not otherwise require. ctbrowser/docs/history/angle.md has the measurements;
 # the fork at alexios-angel/angle has the build recipe and publishes the result.
 #
-# SO IT IS A PINNED ARTEFACT, the way the clang-std-embed toolchain already is.
-# That matters more here than it looks: `tools/remote-build.sh windows` builds
-# every other dependency on the Linux devbox, and ANGLE cannot join it. Two
-# producers for one dist is only safe if one of them is a fixed version rather
-# than whatever a developer happened to build.
+# So it is a pinned artefact, like the clang-std-embed toolchain.
+# `tools/remote-build.sh windows` builds every other dependency on the Linux
+# devbox, and ANGLE cannot join it; two producers for one dist are only safe if
+# one of them is a fixed version rather than whatever a developer happened to
+# build.
 #
 #   tools/fetch-angle.sh [--clean]
 #
@@ -31,10 +31,8 @@ fetch() {
     local platform="$1"
     local archive="$2"
     local into="$dest/$platform"
-    # KEYED ON THE RELEASE, not on the directory existing. A guard that only
-    # checks for a directory installs once and then never upgrades, so moving
-    # the pin above would change nothing - the trap the clang toolchain sat in
-    # for weeks.
+    # Keyed on the release tag, not on the directory existing, so changing the
+    # pin above actually re-downloads.
     if [ "$(cat "$into/.release" 2>/dev/null)" = "$release" ]; then
         echo "fetch-angle: $platform already at $release"
         return

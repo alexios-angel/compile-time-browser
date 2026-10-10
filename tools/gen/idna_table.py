@@ -2,7 +2,7 @@
 """Regenerate ctbrowser/lib/Shell/net/idna_table.inc - the UTS #46 tables the
 URL parser's `domain to ASCII` runs on.
 
-Five tables, all of them DATA published by Unicode:
+Five tables, all built from Unicode data:
 
   * IdnaMappingTable.txt, collapsed to the four statuses the URL Standard's
     parameters leave (UseSTD3ASCIIRules false, Transitional_Processing false):
@@ -16,11 +16,11 @@ Five tables, all of them DATA published by Unicode:
 
     python3 tools/gen/idna_table.py
 
-Hand-typing 8,000 ranges is how a wrong one gets in and stays in, so this
-fetches them. Everything comes from unicode.org except the two derived
-properties, which Python's own unicodedata already carries - its Unicode
-version and the fetched files' may differ by a release, which moves a handful
-of recently assigned code points and nothing that WPT tests.
+The script fetches the data rather than hand-typing 8,000 ranges.
+IdnaMappingTable.txt and DerivedJoiningType.txt are fetched from unicode.org;
+General_Category, Canonical_Combining_Class and Bidi_Class come from Python's
+unicodedata. Its Unicode version may lag the fetched files by a release, which
+moves a handful of recently assigned code points and nothing WPT tests.
 """
 
 from cpp_table import generate
@@ -35,7 +35,7 @@ VALID, MAPPED, IGNORED, DISALLOWED = 0, 1, 2, 3
 
 def fetch(url):
     with urllib.request.urlopen(url) as response:
-        # split("\n") and NOT splitlines(): a description column can hold
+        # Use split("\n"), not splitlines(): a description column can hold
         # U+0085, U+2028 or U+2029, which splitlines() treats as a break.
         return response.read().decode("utf-8").split("\n")
 
@@ -52,12 +52,14 @@ def rows_of(lines):
 
 
 def idna_table():
+    """(first, last, kind, mapping) rows of IdnaMappingTable.txt, sorted, with
+    adjacent unmapped rows of the same kind merged."""
     rows = []
     for first, last, fields in rows_of(fetch(IDNA_URL)):
         status = fields[0]
         mapping = ()
         if status in ("valid", "disallowed_STD3_valid", "deviation"):
-            # A deviation is VALID with Transitional_Processing false: the
+            # A deviation is valid with Transitional_Processing false: the
             # sharp s stays a sharp s and ZWJ stays a ZWJ.
             kind = VALID
         elif status in ("mapped", "disallowed_STD3_mapped"):
@@ -87,6 +89,7 @@ def idna_table():
 
 
 def ranges_where(predicate):
+    """Maximal [first, last] ranges of the code points that satisfy predicate."""
     out = []
     for cp in range(0x110000):
         if not predicate(cp):
@@ -99,6 +102,7 @@ def ranges_where(predicate):
 
 
 def joining_ranges():
+    """[first, last, type] ranges for Joining_Type L, D, R and T."""
     kinds = {}
     for first, last, fields in rows_of(fetch(JOINING_URL)):
         if fields[0] in ("L", "D", "R", "T"):
@@ -115,8 +119,9 @@ def joining_ranges():
 
 # Bidi_Class, for CheckBidi (RFC 5893, UTS #46 5.4). Only the classes a valid
 # label can carry are named; a code point in no range is L (the default), which
-# is right because every other class is disallowed in a label anyway. unicodedata
-# carries Bidi_Class directly, like the two properties above.
+# is right because every other class is disallowed in a label anyway. The class
+# comes from unicodedata, like General_Category and Canonical_Combining_Class.
+# The values are the one-character codes the generated table stores.
 BIDI_CODE = {
     "R": "R",
     "AL": "A",
@@ -135,7 +140,7 @@ def bidi_ranges():
     out = []
     for cp in range(0x110000):
         code = BIDI_CODE.get(unicodedata.bidirectional(chr(cp)))
-        if code is None:  # L and every disallowed class fall to the default
+        if code is None:  # L and every disallowed class fall to the default.
             continue
         if out and out[-1][1] == cp - 1 and out[-1][2] == code:
             out[-1][1] = cp

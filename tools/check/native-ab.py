@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""THE FOUR NUMBERS - ctcompile part 24 Phase 63 Step 4.
+"""Measure the native C++ backend's output: emitted bytes, compile time, binary size and run time.
 
 Per program, per spelling, per toolchain: emitted bytes, C++ compile seconds,
 stripped binary bytes, run time.  Measured, never estimated, on the devbox the
@@ -8,64 +8,47 @@ project actually builds on.
     flock /tmp/ctbrowser-devbox-build.lock \\
       python3 tools/check/native-ab.py --build build --out ctcompile/docs/native-ab.md
 
-WHAT IS MEASURED, AND WHY EACH ONE IS SHAPED THE WAY IT IS
-----------------------------------------------------------
+What is measured, and why each number is shaped the way it is
+-------------------------------------------------------------
 
 *   **Emitted bytes** are the bytes `ctjs-translate --mlir-to-cpp` writes for
     the module the native pipeline produced.  Three counts per program: the
     plain module (every type spelled), the deduced module (`auto` plus a
     `static_assert` pin per deduced declaration), and the deduced module with
     the pins, their macro block and the `<type_traits>` they need removed.
-    The third is a synthetic count and is computed by the SAME rule
-    check-print-deduced.cmake uses, so the two agree by construction rather
-    than by coincidence.
+    The third is a synthetic count, computed by the same rule as
+    ctcompile/test/CTNative/Checks/print-deduced.py, so the two agree by
+    construction.
 
-*   **Compile seconds** are wall time for the exact command the Phase 63 Step 7
-    gate runs - `-std=c++23 -O2 -pedantic -Wall -Wextra -Werror -Wconversion
-    -ffp-contract=off` - on BOTH g++ and clang++, because Step 7 requires both
-    and a compile-time number from one of them is half an answer.  One untimed
-    compile warms the page cache first; then N timed repetitions, and the
-    report is `median [min-max]`.  THE BOX IS SHARED by several agents
-    building at once, so a single number here would be a number about who else
-    was compiling.
+*   **Compile seconds** are wall time for the command compile-clean.py runs
+    (GATE_FLAGS below), on both g++ and clang++, since the generated C++ must
+    compile clean on both.  One untimed compile warms the page cache, then N
+    timed runs are reported as `median [min-max]`; the devbox is shared, so a
+    single sample would mostly measure other builds.
 
 *   **Stripped binary bytes** are `strip -s` on the linked executable.  This is
     the one column with no measurement noise in it at all.
 
-*   **Run time** is where an honest report costs something.  These fixtures are
-    a few dozen top-level statements; the process spends essentially all of its
-    life in `execve`, the dynamic loader and libc start-up.  So this script
-    measures the FLOOR explicitly - an empty `int main() { return 0; }`
-    compiled and linked by the same compiler with the same flags - and reports
-    the program against it.  A wall-clock number that is inside the floor's own
-    spread is a statement about `fork` and not about the program, and the
-    report says so rather than printing it as a result.
+*   **Run time** is dominated by process start-up: these fixtures are a few
+    dozen top-level statements, so the process spends nearly all of its life
+    in `execve`, the dynamic loader and libc start-up.  The script therefore
+    measures the floor explicitly (an empty `int main() { return 0; }` built by
+    the same compiler with the same flags) and reports it beside the programs.
+    A wall-clock number inside the floor's own spread says nothing about the
+    program.
 
-    Beside it, and this is the number worth reading, is a CALLGRIND
-    instruction count: `valgrind --tool=callgrind` counts instructions
-    deterministically, so it is immune to the other agents on this box.  Part
-    24 Step 4 asks for callgrind by name for this reason: "No hardware
-    performance counters exist in the devbox VM".  Two counts are reported -
-    the whole process, and `main` and its callees alone
-    (`--collect-atstart=no --toggle-collect=main`).  THE SECOND IS THE
-    PROGRAM'S OWN WORK and the first is mostly the dynamic loader.  Isolating
-    the program by subtracting an empty binary's total does NOT work, and the
-    first run of this script proved it: g++ drops libstdc++ from an empty
-    translation unit under --as-needed and keeps it for one that says
-    `std::vector`, so the `arrays` fixture's "body" came out at 1.73 M
-    instructions against 16 K for `structs`.  That was a number about dynamic
-    linking wearing a program's name.
+    The number worth reading is the callgrind instruction count: `valgrind
+    --tool=callgrind` counts instructions deterministically, so other load on
+    the machine does not affect it, and the devbox VM has no hardware
+    performance counters.  Two counts are reported: the whole process, and
+    `main` and its callees alone (`--collect-atstart=no
+    --toggle-collect=main`).  The second is the program's own work; the first
+    is mostly the dynamic loader.  Subtracting an empty binary's total does not
+    isolate the program: g++ links libstdc++ only when the program uses it
+    (--as-needed), so the difference measures dynamic linking.
 
-WHAT THIS SCRIPT DOES NOT REPORT, AND WHY
-------------------------------------------
-
-Step 4 also asks for the numbers "for the specialisation cap at 1 (never
-specialise) and at 4".  THAT AXIS DOES NOT EXIST YET: Phase 62 1/2-B is at
-option 3 (the join) only - there is no specialisation, no `dyn<...>`, and no
-cap knob on any pass in `CTNative/Transforms/Passes.td`.  Reporting a cap
-column filled with the same number twice would be a measurement of nothing.
-It is left out and said out loud instead, which is what the corrections log in
-part 24 exists to encourage.
+This script does not vary the specialisation cap (`ctnative-specialize
+--max-variants`); every program is measured with the default pipeline.
 """
 
 import argparse
@@ -79,9 +62,9 @@ import tempfile
 import time
 from pathlib import Path
 
-# THE GATE'S OWN FLAGS. Spelled once here, and check-compile-clean.cmake and
-# check-native-unit.cmake spell the same list; a compile-time number measured
-# under different flags is a number about a different compile.
+# The compile flags of the compile-clean check. ctcompile/test/CTNative/Checks/
+# compile-clean.py and compilation-unit.py use the same list; a compile time
+# measured under different flags describes a different compile.
 GATE_FLAGS = [
     "-std=c++23",
     "-O2",
@@ -97,6 +80,7 @@ PROGRAMS = ["numeric", "functions", "structs", "arrays"]
 
 
 def run(cmd, **kw):
+    """Run `cmd`, capturing stdout and stderr as text."""
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
@@ -113,10 +97,10 @@ def emit(translate, module):
 def without_pins(text):
     """The deduced file with its pins removed.
 
-    THE SAME RULE AS check-print-deduced.cmake, which is what makes the byte
-    count here comparable with the one that gate prints: drop the
-    `#ifndef CTCOMPILE_NO_TYPE_PINS ... #endif` macro block, the
-    `#include <type_traits>` the pins need, and every `CTCOMPILE_PIN(` line.
+    Uses the same rule as ctcompile/test/CTNative/Checks/print-deduced.py so the
+    byte counts are comparable: drop the `#ifndef CTCOMPILE_NO_TYPE_PINS ...
+    #endif` block, the `#include <type_traits>` the pins need, and every
+    `CTCOMPILE_PIN(` line.
     """
     out = []
     in_macro = False
@@ -136,6 +120,7 @@ def without_pins(text):
 
 
 def compile_once(cxx, src, exe, defines):
+    """Compile `src` to `exe` under GATE_FLAGS; return wall seconds, exit on failure."""
     cmd = [cxx] + GATE_FLAGS + list(defines) + [str(src), "-o", str(exe)]
     start = time.perf_counter()
     got = subprocess.run(cmd, capture_output=True, text=True)
@@ -182,17 +167,14 @@ def time_runs(exe, reps):
 def callgrind_ir(exe, workdir, main_only):
     """Instructions executed, deterministically. None when valgrind is absent.
 
-    TWO NUMBERS, AND THE SECOND IS THE ONE TO READ. `main_only` passes
-    `--collect-atstart=no --toggle-collect=main`, so the count is the
-    instructions executed INSIDE `main` and its callees and nothing else.
+    With `main_only`, passes `--collect-atstart=no --toggle-collect=main`, so
+    the count is the instructions executed inside `main` and its callees only;
+    that is the number to read.
 
-    THE FIRST MEASUREMENT OF THIS SCRIPT NEEDED THAT FIX. Subtracting an empty
-    binary's total from a program's total looks like it isolates the program,
-    and it does not: `g++` drops libstdc++ from an empty translation unit under
-    --as-needed and keeps it for one that says `std::vector`, so the `arrays`
-    fixture's "body" came out at 1.73 M instructions against 16 K for
-    `structs` - a number about dynamic linking wearing a program's name. The
-    toggle needs no baseline at all and is comparable across both toolchains.
+    Do not subtract an empty binary's total instead: g++ links libstdc++ only
+    when the program uses it (--as-needed), so the difference measures dynamic
+    linking, not the program. The toggle needs no baseline and is comparable
+    across both toolchains.
     """
     if shutil.which("valgrind") is None:
         return None
@@ -212,6 +194,7 @@ def callgrind_ir(exe, workdir, main_only):
 
 
 def spread(samples):
+    """(min, median, max) of `samples`."""
     return (min(samples), statistics.median(samples), max(samples))
 
 
@@ -226,6 +209,7 @@ def fmt_ms(s):
 
 
 def find_translate(build):
+    """The shortest-path executable named ctjs-translate under `build`."""
     found = [f for f in build.rglob("ctjs-translate") if f.is_file() and os.access(f, os.X_OK)]
     if not found:
         sys.exit("native-ab: no ctjs-translate under %s" % build)
@@ -234,6 +218,8 @@ def find_translate(build):
 
 
 def measure(rows, floor, name, label, src, defines, bytes_, cxx, workdir, args):
+    """Compile, strip, time and callgrind one (program, spelling, compiler) cell;
+    append it to `rows` and print it."""
     tag = re.sub(r"[^A-Za-z0-9]+", "_", "%s.%s.%s" % (name, label, cxx))
     exe = Path(workdir) / tag
     compiles = time_compiles(cxx, src, exe, defines, args.reps)
@@ -276,11 +262,8 @@ def render(rows, floor, versions, args, provenance):
     w = out.append
     w("<!-- generated by tools/check/native-ab.py - do not hand-edit the tables -->")
     w("")
-    # WHOSE MEASUREMENT IS THIS. Several agents build on the shared devbox at
-    # once, and one of them has already read another's test output out of a
-    # fixed /tmp path. A timing table with no provenance line is a table that
-    # could be about somebody else's tree, so the host, the build directory
-    # and the tool that emitted the C++ are printed INSIDE the artefact.
+    # Print host, build tree and emitter inside the report: the devbox is shared,
+    # and a timing table without provenance could describe someone else's tree.
     w(
         "**Provenance.** host `%s`, build tree `%s`, emitter `%s`, %s UTC."
         % (provenance["host"], provenance["build"], provenance["translate"], provenance["when"])
@@ -373,9 +356,9 @@ def main():
 
     workdir = Path(tempfile.mkdtemp(prefix="native-ab-"))
 
-    # THE NOISE FLOOR, per compiler: an empty program through the same flags.
-    # Everything the wall clock says about a fixture has to be read against
-    # this, and the callgrind counts are differences from it.
+    # The noise floor, per compiler: an empty program built with the same flags.
+    # Wall-clock numbers for a fixture must be read against it. Callgrind counts
+    # are reported raw, not as differences (see callgrind_ir for why).
     floor = {}
     empty = workdir / "empty.cpp"
     empty.write_text("int main() { return 0; }\n")
@@ -427,12 +410,11 @@ def main():
             src.write_text(text[key])
             sources[key] = src
 
-        # THE THREE SPELLINGS THAT GET COMPILED. `deduced` and
-        # `deduced -DCTCOMPILE_NO_TYPE_PINS` are the SAME FILE: the define is
-        # what the plan asks to be separated from the `auto` saving, because a
-        # static_assert is compile time and (possibly) object code that `auto`
-        # alone does not buy. Its emitted-byte column is the synthetic count -
-        # what the file would be if the pins were not printed at all.
+        # The three variants compiled. `deduced` and `deduced
+        # -DCTCOMPILE_NO_TYPE_PINS` are the same file; the define separates the
+        # cost of the static_assert pins from the saving of `auto`. Its
+        # emitted-byte column is the synthetic count (the file as if the pins
+        # were never printed).
         cells = [
             ("plain", sources["plain"], [], len(text["plain"].encode())),
             ("deduced", sources["deduced"], [], len(text["deduced"].encode())),

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Check source-derived Bootstrap Data after CommonJS/browser/AMD publication.
+"""Extract Bootstrap's `Data` element registry from a vendored bootstrap.js and
+check it when the bundle is loaded as CommonJS, a browser global, or AMD.
 
-The upstream UMD wrapper and Data declaration remain verbatim. Only the rest
+The upstream UMD wrapper and Data declaration are kept verbatim. Only the rest
 of the factory is replaced with `return e`, exposing Data rather than the full
-component exports. Reference observations and native compile coverage are
-separate: a passing probe does not mean Bootstrap has a native executable.
-Generated sources, provenance, observations and native censuses stay in --work.
+component exports. The script runs the program in the reference VM, checks its
+observations, then counts how many of its functions native-claims.py compiles.
+A passing probe does not mean Bootstrap has a native executable. Generated
+sources, provenance, observations and function counts are written to --work.
 """
 
 from __future__ import annotations
@@ -18,8 +20,12 @@ import re
 import subprocess
 import sys
 
+# Exact byte markers in the minified bootstrap.js: where the UMD factory (and
+# Data, bound to `e`) begins, and where Data ends before `transitionend`.
 FACTORY = '}(this, function() {\n    "use strict";\n    const t = new Map,\n        e = {\n'
 BOUNDARY = '\n        },\n        i = "transitionend",'
+# Per --mode: (prelude defining the module system, expression naming Data
+# after the bundle publishes itself).
 ENVIRONMENTS = {
     "commonjs": ("var module = {exports: {}}; var exports = module.exports;\n", "module.exports"),
     "browser": ("var globalThis = {};\n", "globalThis.bootstrap"),
@@ -28,6 +34,8 @@ ENVIRONMENTS = {
         "published",
     ),
 }
+# Values the generated program's trace* globals must hold in the reference VM;
+# "1" marks a boolean check that passed.
 EXPECTED = {
     "traceAbsentGet": "1",
     "traceAbsentRemove": "1",
@@ -60,6 +68,7 @@ def sha256(data: str) -> str:
 
 
 def unique_position(source: str, marker: str, label: str) -> int:
+    """Index of `marker`, which must occur exactly once in `source`."""
     count = source.count(marker)
     if count != 1:
         raise ProbeError(f"source structure changed: expected one {label}, found {count}")
@@ -67,7 +76,10 @@ def unique_position(source: str, marker: str, label: str) -> int:
 
 
 def extract(source: str) -> tuple[str, dict]:
-    """Slice the actual vendor bytes, refusing a bundle with unfamiliar structure."""
+    """Slice the Data program out of the vendor bytes; return it and its provenance.
+
+    Raises ProbeError when the bundle's structure is not the one expected.
+    """
     version = re.match(r"/\*!\n \* Bootstrap v([^ ]+) \(https://getbootstrap.com/\)\n", source)
     if not version:
         raise ProbeError("source structure changed: Bootstrap license/version header missing")
@@ -99,6 +111,7 @@ def extract(source: str) -> tuple[str, dict]:
 
 
 def generate(fragment: str, mode: str) -> str:
+    """Wrap `fragment` for `mode` and append the Data calls that set trace*."""
     prelude, api = ENVIRONMENTS[mode]
     delayed = (
         'var traceDelayed = typeof pending === "function" ? 1 : 0; var published = pending();\n'
@@ -164,8 +177,8 @@ def check(args: argparse.Namespace) -> None:
     fragment, provenance = extract(source)
     generated = generate(fragment, args.mode)
     if args.negative_control == "trace":
-        # Change an actual executed observation; the reference must report it
-        # and the gate must reject it by name, before native census begins.
+        # Negative control: change one observed value. This script must fail on
+        # that named observation before it runs native-claims.py.
         generated += "traceReplacement = traceReplacement + 1;\n"
     args.work.mkdir(parents=True, exist_ok=True)
     stem = args.work / f"bootstrap-data-{args.mode}"
@@ -233,9 +246,9 @@ def check(args: argparse.Namespace) -> None:
             f"source functions lost: expected {expected_total} imported, "
             f"got {census['total']} total with {census['skipped']} skipped"
         )
-    # native-claims already requires a diagnostic for every refusal. Increasing
-    # native coverage is allowed; this checks source semantics and compile
-    # coverage, not native execution of an entire Bootstrap factory.
+    # native-claims.py already requires a diagnostic for every function it
+    # refuses, and compiling more functions is allowed. This checks behaviour
+    # and compile coverage, not native execution of a whole Bootstrap factory.
     report = {**provenance, "reference_observations": observed, "native_census": census}
     stem.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
     print(f"bootstrap-data ({args.mode}): post-factory observations {observed}")

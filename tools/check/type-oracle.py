@@ -1,40 +1,42 @@
 #!/usr/bin/env python3
 """Check a static type claim against what the interpreter actually saw.
 
-ctcompile Phase 54B, the checking half.  `--record-types` on the interpreter
-writes a recording: per (program, function, register), the SET of types that
+This is the checker for ctcompile's static type inference
+(ctcompile/include/ctcompile/CTNative/Analysis/TypeInference.h).
+`--record-types` on the interpreter writes a recording: per (program,
+function, register), the set of types that
 register actually held while a corpus ran.  This reads one of those and one
 set of static claims and answers two questions that must never be conflated:
 
-  SOUNDNESS   did the inference ever claim a type NARROWER than what was
-              observed?  `i32` where the interpreter saw 0.5 is a DEFECT.  The
+  SOUNDNESS   did the inference ever claim a type narrower than what was
+              observed?  `i32` where the interpreter saw 0.5 is a defect.  The
               tool names the program, the function and the register.
   PRECISION   how often did the claim beat "boxed"?  Low precision is a
               backlog item; it is not a bug and it is not reported as one.
 
 And a third number that is neither, kept apart from both:
 
-  UNOBSERVED  a register no execution ever reached has NO observation.
-              "Unobserved" is NOT "any type".  Counting it as sound inflates
+  UNOBSERVED  a register no execution ever reached has no observation.
+              "Unobserved" is not "any type".  Counting it as sound inflates
               the soundness number; counting it as imprecise deflates the
               precision one.  Neither is done: it gets its own line.
 
-There is no static inference yet - Phase 54A is not written - so this carries
-two stubs, and running them is what proves the checker measures anything:
+Two built-in stub inferences prove the checker can both catch and not invent
+a violation:
 
-  --infer all-i32     deliberately WRONG: "every register is an i32".  It must
+  --infer all-i32     deliberately wrong: "every register is an i32".  It must
                       produce violations, and name them.  A checker that has
                       never caught anything is not known to work.
   --infer all-boxed   deliberately trivial: "every register is boxed".  It must
-                      produce ZERO violations and near-zero precision.
+                      produce zero violations and near-zero precision.
 
 A real inference passes its claims in a file instead:
 
   claim <program-hash> <function-index> <register> <atom>[,<atom>...]
 
 with the atoms below.  `boxed` is the top of the lattice and an empty claim is
-the bottom - claiming bottom for a register the interpreter reached is a
-violation like any other, which is the point.
+the bottom; claiming bottom for a register the interpreter reached is a
+violation like any other.
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 
-# --- the observation encoding, which MUST match type_record.hpp --------------
+# --- the observation encoding, which must match type_record.hpp --------------
 #
 # Duplicated on purpose and asserted on, not shared: this is the checker, and a
 # checker that reads its own definitions out of the thing it is checking cannot
@@ -56,7 +58,7 @@ OBS_BOOLEAN = 1 << 2
 OBS_NUMBER = 1 << 3
 OBS_HEAP_SHIFT = 4
 
-# `heap_kind`, in enum order - value.hpp.
+# `heap_kind`, in enum order (ctbrowser/include/ctbrowser/script/value/base.hpp).
 HEAP_KINDS = [
     "str",
     "obj",
@@ -79,8 +81,7 @@ NUM_INFINITE = 1 << 5
 NUM_NOT_I32 = NUM_FRACTIONAL | NUM_WIDE | NUM_NEGATIVE_ZERO | NUM_NAN | NUM_INFINITE
 
 # Every atom a claim may name.  `i32` and `f64` both denote numbers; they differ
-# in what they can HOLD, which is exactly the distinction the oracle exists to
-# police.
+# in what they can hold, which is exactly the distinction the oracle checks.
 ATOMS = ["undefined", "null", "bool", "i32", "f64"] + HEAP_KINDS
 BOXED = frozenset(a for a in ATOMS if a != "i32")  # i32 is subsumed by f64
 
@@ -101,7 +102,7 @@ class Register:
     numbers: int
 
     def observed_atoms(self) -> frozenset[str]:
-        """The SMALLEST set of atoms that covers everything this register held.
+        """The smallest set of atoms that covers everything this register held.
 
         This is the whole comparison.  A number is `i32` only when every number
         observed in it was integral, inside int32, and never -0, NaN or an
@@ -160,6 +161,7 @@ class Recording:
 
 
 def read_recording(path: str) -> Recording:
+    """Parse a version 1 or 2 type recording (the format type_record.hpp writes)."""
     rec = Recording()
     program = None
     function = None
@@ -167,10 +169,9 @@ def read_recording(path: str) -> Recording:
         header = handle.readline().split()
         if header[:1] != ["ctbrowser-type-recording"]:
             raise SystemExit(f"{path}: not a type recording")
-        # VERSION 2 IS VERSION 1 PLUS THE ESCAPE HALF (ctcompile Phase 55O):
-        # an `escape` header line, `alloc` and `site` lines under each `fn`.
-        # This checker is about registers and reads past them; the escape
-        # lines have their own checker in escape-oracle.py.
+        # Version 2 adds escape-analysis records to version 1: an `escape`
+        # header line and `alloc`/`site` lines under each `fn`. This checker is
+        # about registers and skips them; escape-oracle.py checks those lines.
         if header[1] not in ("1", "2"):
             raise SystemExit(f"{path}: recording version {header[1]}, this reads 1 and 2")
         for line in handle:
@@ -206,9 +207,9 @@ def read_recording(path: str) -> Recording:
                 function.regs[reg.reg] = reg
             else:
                 raise SystemExit(f"{path}: unknown line `{tag}`")
-    # THE FILE MUST ACCOUNT FOR ITSELF.  A truncated recording reads as a
-    # program that simply ran less, and every number below would be a smaller
-    # true-looking fraction of a smaller true-looking total.
+    # Every declared function must be present: a truncated recording would
+    # otherwise read as a program that simply ran less, and every number below
+    # would look plausible while being wrong.
     for prog in rec.programs.values():
         if len(prog.functions) != prog.nfunctions:
             raise SystemExit(
@@ -221,17 +222,16 @@ def read_recording(path: str) -> Recording:
 # --- the stub inferences -----------------------------------------------------
 #
 # Neither is a real analysis and neither pretends to be.  They exist so that the
-# checker can be shown to catch something and shown not to invent something,
-# which are the only two ways a measuring instrument can be wrong.
+# checker can be shown to catch something and shown not to invent something.
 
 
 def stub_all_i32(_program, _function, _reg) -> frozenset[str]:
-    """Deliberately WRONG.  Every register is an i32."""
+    """Deliberately wrong.  Every register is an i32."""
     return frozenset({"i32"})
 
 
 def stub_all_boxed(_program, _function, _reg) -> frozenset[str]:
-    """Deliberately trivial, and SOUND by construction.  Everything is boxed."""
+    """Deliberately trivial, and sound by construction.  Everything is boxed."""
     return BOXED
 
 
@@ -239,6 +239,7 @@ STUBS = {"all-i32": stub_all_i32, "all-boxed": stub_all_boxed}
 
 
 def read_claims(path: str) -> dict[tuple[str, int, int], frozenset[str]]:
+    """Parse a claims file into {(program hash, function, register): atoms}."""
     claims: dict[tuple[str, int, int], frozenset[str]] = {}
     with open(path, "r", encoding="utf-8") as handle:
         for number, line in enumerate(handle, 1):

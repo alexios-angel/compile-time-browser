@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Regenerate ctbrowser/examples/assets: a sprite sheet (32bpp BMP with alpha)
-and a blip sound (16-bit mono WAV). Everything is generated
-deterministically by this script - no binary blobs of unknown origin
-in the repository.
+"""Regenerate ctbrowser/examples/assets: a sprite sheet (32bpp BMP with alpha),
+a blip sound (16-bit mono WAV) and a badge image (24-bit PNG). Everything is
+generated deterministically by this script, so the repository holds no binary
+blobs of unknown origin.
 
 Usage:  python3 tools/gen/gen-assets.py
 """
@@ -44,7 +44,7 @@ SHIP = [
     "##.##.##",
     "#......#",
 ]
-COLORS = {  # per-sprite fill color (ARGB)
+COLORS = {  # per-sprite fill color (R, G, B); alpha is added in sheet()
     0: (0x66, 0xFF, 0x66),  # alien A: green
     1: (0x66, 0xFF, 0x66),  # alien B: green
     2: (0xFF, 0xAA, 0x33),  # ship: orange
@@ -52,24 +52,24 @@ COLORS = {  # per-sprite fill color (ARGB)
 
 
 def write_bmp(path: Path, w: int, h: int, pixels):
-    """pixels: list of rows (top-down) of (a, r, g, b)."""
+    """Write a 32bpp top-down BMP; pixels: list of rows (top-down) of (a, r, g, b)."""
     row_size = w * 4
     data_size = row_size * h
     header = struct.pack("<2sIHHI", b"BM", 14 + 108 + data_size, 0, 0, 14 + 108)
     # BITMAPV4HEADER for a well-defined 32bpp BGRA layout
     dib = struct.pack(
         "<IiiHHIIiiII4II36x3I",
-        108,
+        108,  # header size
         w,
-        -h,
-        1,
-        32,  # negative height = top-down
+        -h,  # negative height = top-down
+        1,  # planes
+        32,  # bits per pixel
         3,  # BI_BITFIELDS
         data_size,
-        2835,
-        2835,
-        0,
-        0,
+        2835,  # 72 DPI in pixels per metre (horizontal)
+        2835,  # 72 DPI in pixels per metre (vertical)
+        0,  # palette colours used
+        0,  # important colours
         0x00FF0000,
         0x0000FF00,
         0x000000FF,
@@ -87,6 +87,7 @@ def write_bmp(path: Path, w: int, h: int, pixels):
 
 
 def sheet():
+    """Write sprites.bmp: ALIEN_A, ALIEN_B and SHIP side by side, 24x8."""
     rows = []
     sprites = [ALIEN_A, ALIEN_B, SHIP]
     for y in range(8):
@@ -100,6 +101,7 @@ def sheet():
 
 
 def blip():
+    """Write blip.wav: a 90 ms 880 Hz square wave at 8 kHz with a linear decay."""
     rate, dur, freq = 8000, 0.09, 880
     n = int(rate * dur)
     samples = bytearray()
@@ -127,17 +129,15 @@ def blip():
     (ASSETS / "blip.wav").write_bytes(hdr + samples)
 
 
-# --- a PNG, so something in the tree exercises the real image decoder.
+# --- a PNG, so the tree exercises the libpng decode path.
 #
-# BMP is what the engine decodes on its own; PNG and JPEG come from SDL3_image,
-# and until this existed nothing in the repository proved that path worked. A
-# PNG is LOSSLESS, so a page that draws it can have a byte-exact golden on both
-# platforms - which a JPEG could not, because two libjpeg builds may differ in
-# the last bit and the golden would become platform-dependent.
+# PNG is lossless, so a page that draws it can have a byte-exact golden on both
+# platforms; a JPEG could not, because two libjpeg builds may differ in the last
+# bit.
 #
 # Written by hand rather than through a library: zlib is in the standard
 # library, and the rest of PNG for a truecolour image is a header, one IDAT and
-# a CRC. That keeps this script dependency-free, which is the reason it exists.
+# a CRC. That keeps this script dependency-free.
 def png(path, w, h, rows):
     import struct
     import zlib

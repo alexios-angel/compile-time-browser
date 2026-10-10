@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Report checked host-root/slot evidence for the unchanged exact Data probes.
+"""Run the host-contract analysis on Bootstrap's Data helper and report its
+publication slot.
 
-This does not compile a native Bootstrap executable. Native census/reference
-observations remain the separate bootstrap-data-probe.py gate.
+Extracts the Data fragment with bootstrap-data-probe.py, wraps it for one module
+system (--mode), lowers it to ctjs IR, writes a host-contract manifest naming the
+binding Bootstrap publishes itself through, and checks the analysis report for
+that slot. It does not build or run a native executable; bootstrap-data-probe.py
+checks reference observations and native compile coverage.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ import subprocess
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess:
+    """Run `command`, raising RuntimeError with its output when it fails."""
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise RuntimeError(f"command failed: {command}\n{result.stdout}{result.stderr}")
@@ -47,6 +52,9 @@ def main() -> None:
     run([args.opt, str(raw), "--ctjs-resolve-globals", "--ctjs-lift-to-scf", "-o", str(prepared)])
     ir = prepared.read_text()
     functions = len(re.findall(r"\bctjs\.func\s+(?:private\s+)?@", ir))
+    # Script entry, UMD wrapper, factory, Data's three methods and the console
+    # recorder; AMD adds the prelude's `define` function. Any other count means
+    # the extraction changed.
     expected_functions = 8 if args.mode == "amd" else 7
     if functions != expected_functions or "ctjs.skipped" in ir:
         raise RuntimeError(
@@ -76,8 +84,8 @@ def main() -> None:
         "entry": "_script_$0",
         "roots": roots,
         "observations": observations,
-        # Bare contexts now supply the realm's globalThis view. It remains
-        # unmodeled unless this driver replaces it with its own source object.
+        # The realm's globalThis is supplied by the context and is not
+        # modelled unless the mode binds its own object to it.
         "absent_bindings": sorted({"module", "exports", "define", "self"} - present),
         "undefined_bindings": ["undefined"],
         "initial_intrinsics": ["Map", "Array"],
@@ -104,6 +112,10 @@ def main() -> None:
     if (slot["binding"], slot["property"]) != (binding, key):
         raise RuntimeError("host report changed the driver-declared root")
     if args.mode != "amd":
+        # CommonJS writes module.exports twice (the prelude's object literal and
+        # the UMD assignment); the browser build writes globalThis.bootstrap once.
+        # The probe program reads the slot for each of its Data calls, so 10
+        # reads is a conservative floor.
         minimum_writes = 2 if args.mode == "commonjs" else 1
         if (
             not slot["fresh_source_root"]

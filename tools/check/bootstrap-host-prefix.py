@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Generate an exact Data prefix proof and a boxed differential wrapper.
+"""Check ctcompile's host-prefix specialization on Bootstrap's Data module.
 
-The checked UMD wrapper and optionally the publication-following script are
-installed in the differential executable. Provider methods remain runtime.
-This tests the semantic transformation, not native Bootstrap admission.
+Extracts the Data module from a Bootstrap bundle with bootstrap-data-probe.py,
+wraps it in a test program chosen by --mode, and optionally runs it in Node to
+confirm the expected observations. It then translates the program to MLIR, runs
+--ctnative-specialize-host-prefix with a generated host contract, and checks the
+pass's JSON report against the exact calls, Map operations and results
+hard-coded below. Finally it lowers the result to C++ and writes wrapper.cpp and
+expected.inc, which a differential test executable compiles. Data's own methods
+still run in the boxed runtime; this checks the transformation, not that
+Bootstrap compiles natively.
 """
 
 import argparse
@@ -16,12 +22,14 @@ import subprocess
 
 
 def run(command):
+    """Run `command`, raising RuntimeError with its output when it fails."""
     result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     if result.returncode:
         raise RuntimeError(f"failed: {command}\n{result.stdout}{result.stderr}")
     return result
 
 
+# Extra observations of --mode browser_this_fallback (see fallback_program).
 REALM_OBSERVATIONS = {
     "traceRealmPublished": "1",
     "traceRealmStable": "1",
@@ -30,14 +38,20 @@ REALM_OBSERVATIONS = {
     "traceAliasUndefined": "1",
 }
 
-# These are the unchanged provider-read programs measured before enabling
-# mutation summaries. The new option changes analysis, never JavaScript.
+# SHA-256 of the generated JavaScript per --mode. --follow-provider-mutations
+# only changes what the compiler analyses, so the program it runs on must be
+# byte-identical to the one --follow-provider-reads uses.
 PROVIDER_PROGRAM_SHA256 = {
     "commonjs": "cc6c3960099f201b3e6c17f556c4cc5e08a7a47190e08cfba5628be40ea0a181",
     "browser": "80a6fd87cbfdaafa6b2a3c6aab05bfc66ca36bf23f3827c29b4fe79b93ab3722",
     "browser_this_fallback": "a8dd4151142665d7aebd72bb7b099c4956ab9def0a8d304b134e057151293a00",
 }
 
+# The expected sequence of Data-method calls the specializer follows, as ctjs
+# function symbols: fn$N is the Nth function of the generated program in
+# source order (fn$1 is the console recorder, fn$3 the Data factory and
+# fn$4/fn$5/fn$6 are Data's set/get/remove). The lists below extend one
+# another as each --follow-provider-* flag lets the pass go further.
 PROVIDER_MUTATION_TARGETS = [
     "fn$5",
     "fn$6",
@@ -54,10 +68,15 @@ PROVIDER_MUTATION_TARGETS = [
 
 
 def number_attribute(value):
-    # CTJS NumberAttr prints the uint64 bit pattern, including signed zero.
+    """Spell `value` as a CTJS number attribute.
+
+    NumberAttr prints the IEEE-754 double's uint64 bit pattern, so -0.0 and
+    0.0 stay distinct.
+    """
     return f"#ctjs.number<{struct.unpack('<Q', struct.pack('<d', value))[0]}>"
 
 
+# The value each call in PROVIDER_MUTATION_TARGETS returns.
 PROVIDER_MUTATION_RESULTS = [
     "#ctjs.null",
     "#ctjs.undefined",
@@ -89,6 +108,11 @@ PROVIDER_OBJECT_TARGETS = [*PROVIDER_CALLBACK_TARGETS, "fn$4", "fn$5", "fn$5", "
 def check_provider_mutations(
     report, boundary="unsupported provider path at `ctjs.load_global` (console)"
 ):
+    """Check the report for --follow-provider-mutations: 11 Data calls, 6 Map
+    mutations and 2 nested Map allocations, matching PROVIDER_MUTATION_*.
+
+    The pass must stop at `boundary`, the first operation it cannot follow.
+    """
     summaries = report["provider_calls"]
     if (
         report["summarized_provider_calls"],
@@ -113,6 +137,8 @@ def check_provider_mutations(
     calls = [entry["call_operation"] for entry in summaries]
     if any(type(call) is not int or call < 0 for call in calls) or len(set(calls)) != 11:
         raise RuntimeError("provider mutation summaries lost their actual entry-call identities")
+    # The first two set calls (third and fourth Data calls) each create the
+    # per-element inner Map.
     if [len(entry["allocations"]) for entry in summaries] != [0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0]:
         raise RuntimeError(
             "nested Maps were not allocated by the two first successful set invocations"
@@ -152,6 +178,8 @@ def check_provider_mutations(
     reads = [operation for operation in operations if operation["member"] in {"has", "get", "size"}]
     sets = [operation for operation in operations if operation["member"] == "set"]
     deletes = [operation for operation in operations if operation["member"] == "delete"]
+    # Map reads (has/get/size) counted both in total and per call, then Map.set
+    # and Map.delete calls, as the pass measured them on the generated program.
     if (report["runtime_provider_reads"], len(reads), len(sets), len(deletes)) != (31, 31, 5, 1):
         raise RuntimeError("provider operation counts disagree with their per-invocation reports")
     if any(
@@ -166,9 +194,16 @@ def check_provider_mutations(
 
 
 def check_provider_callbacks(report, object_payloads=False):
-    # These initial expectations follow the source's complete primitive prefix.
-    # The compiler must measure them; source hashes and runtime observations are
-    # independent gates, not evidence supplied by this forecast.
+    """Check the report for --follow-provider-callbacks: the first 18 Data calls,
+    including the duplicate-instance set whose console.error callback (fn$1)
+    writes two trace globals.
+
+    With `object_payloads`, the report also covers --follow-provider-objects
+    and only its first 18 calls are checked here.
+    """
+    # The expected values are hand-derived from the Data calls in the generated
+    # program up to its first object payload. The compiler must reproduce them
+    # from the source; the hash and Node checks validate the inputs separately.
     summaries = report["provider_calls"][:18] if object_payloads else report["provider_calls"]
     expected_results = [
         *PROVIDER_MUTATION_RESULTS,
@@ -180,6 +215,8 @@ def check_provider_callbacks(report, object_payloads=False):
         number_attribute(21),
         "#ctjs.undefined",
     ]
+    # (Data calls, Map reads, Map mutations, nested Map allocations, callbacks,
+    # global writes), in the order of the report fields compared below.
     expected_counts = (23, 68, 10, 3, 1, 2) if object_payloads else (18, 52, 8, 2, 1, 2)
     if (
         report["summarized_provider_calls"],
@@ -307,6 +344,8 @@ def check_provider_callbacks(report, object_payloads=False):
 
 
 def check_provider_objects(report, entry_boundary=""):
+    """Check the report for --follow-provider-objects: all 23 Data calls, where
+    the last five store and read back an object (`instance`) by identity."""
     check_provider_callbacks(report, object_payloads=True)
     summaries = report["provider_calls"]
     if (
@@ -402,8 +441,12 @@ def check_provider_objects(report, entry_boundary=""):
 
 
 def fallback_program(probe, fragment):
-    # Reuse the unchanged Data observations while keeping the exact vendor
-    # fragment outside all host-prelude/API substitutions.
+    """Build the browser program with `globalThis` undefined, so Bootstrap
+    publishes itself on the script's `this` instead.
+
+    Reuses the browser program's Data observations, rewriting only the code
+    around the vendor fragment, and appends the REALM_OBSERVATIONS checks.
+    """
     browser = probe.generate(fragment, "browser")
     before, found, after = browser.partition(fragment)
     prelude, api = probe.ENVIRONMENTS["browser"]
@@ -423,6 +466,8 @@ def fallback_program(probe, fragment):
 
 
 def replace_publication(program, fragment, api, replacement):
+    """Insert code after `fragment` that replaces the published Data.get
+    ("method") or the whole published object ("table") with a wrapper."""
     before, found, after = program.partition(fragment)
     if not found:
         raise RuntimeError("publication replacement lost the exact vendor fragment")
@@ -435,6 +480,8 @@ def replace_publication(program, fragment, api, replacement):
     return "var originalGet; var originalApi;\n" + before + fragment + setup + after
 
 
+# Runs the program in a fresh Node vm realm and prints the numeric value of
+# each requested observation.
 NODE_DRIVER = r"""const fs = require('node:fs');
 const vm = require('node:vm');
 const specification = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -455,6 +502,7 @@ process.stdout.write(JSON.stringify({node: process.version, observations}, null,
 
 
 def node_oracle(node, work, js, expected, realm_properties):
+    """Run `js` in Node and fail unless every observation matches `expected`."""
     driver = work / "node-driver.cjs"
     specification = work / "node-input.json"
     driver.write_text(NODE_DRIVER)
@@ -593,6 +641,9 @@ var traceDistinct = first !== host.slot ? 1 : 0;
             else "globalThis.bootstrap"
         )
         program = replace_publication(program, fragment, api, args.replace)
+    # Source functions per program: the Data programs have the script, the
+    # console recorder, the UMD wrapper, the factory and set/get/remove, and
+    # --replace adds the replacement function.
     function_count = 2 if adversarial else 5 if instances else 8 if args.replace else 7
     js = args.work / "program.js"
     raw = args.work / "raw.mlir"
@@ -627,8 +678,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
             args.node, args.work, js, expected, realm_properties
         )
         if realm_fallback:
-            # The oracle must reject an executed receiver-identity mutation,
-            # not merely compare a self-authored expected-output file.
+            # Negative control: Node must reject a program that really changes
+            # an observation, which proves the comparison is live.
             control = args.work / "node-negative-control"
             control.mkdir(exist_ok=True)
             changed = control / "program.js"
@@ -701,6 +752,7 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     )
     (args.work / "prefix.log").write_text(result.stderr)
     report = json.loads(report_file.read_text())
+    # Number of UMD `typeof` branches the pass resolves per mode.
     expected_branches = {
         "commonjs": 2,
         "browser": 5,
@@ -775,8 +827,8 @@ var traceDistinct = first !== host.slot ? 1 : 0;
             raise RuntimeError("published target was not resolved in the script entry")
     if args.follow_provider_reads:
         if args.follow_provider_objects:
-            # The fallback appends realm-identity observers after every Data
-            # call. Their comparison remains outside the ordinary-object proof.
+            # The fallback appends realm-identity checks after every Data call.
+            # The pass does not follow their comparisons, so it stops there.
             boundary = "unproved comparison behavior at `ctjs.compare`" if realm_fallback else ""
             check_provider_objects(report, boundary)
         elif args.follow_provider_callbacks:
@@ -828,8 +880,10 @@ var traceDistinct = first !== host.slot ? 1 : 0;
     ):
         raise RuntimeError("provider diagnostic traversal became implicit")
 
-    # Native accounting remains an independent four-bucket census. Keep the
-    # imported denominator even if ordinary default pruning becomes applicable.
+    # Every source function must be counted exactly once as claimed (lowered to
+    # emitc), refused (left as ctjs with a reason) or pruned (unreachable). The
+    # total is the function count of the imported source, even if pruning later
+    # starts removing some.
     native_file = args.work / "native.mlir"
     native = run(
         [

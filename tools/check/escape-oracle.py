@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Check a static escape claim against what the interpreter actually saw.
 
-ctcompile Phase 55O, the checking half.  The recorder (`type-oracle --script`,
-header `ctbrowser-type-recording 2`) writes, per (program, function, pc, kind)
-allocation SITE, what happened to every object born there by the time the
-frame that made it ended: confined (unreachable from every GC root), escaped
-(reachable - and through which root category first), unresolved (swept before
+This is the checker for ctcompile's escape analysis
+(ctcompile/include/ctcompile/CTNative/Analysis/EscapeAnalysis.h).  The recorder
+(`type-oracle --script`, writing a `ctbrowser-type-recording 2` file) records,
+per (program, function, pc, kind) allocation site, what happened to every
+object born there by the time the frame that made it ended: confined (unreachable from every GC root), escaped
+(reachable, and through which root category first), unresolved (swept before
 the frame ended) or unchecked (the frame ended through a path with no hook, or
 the per-function budget was spent).  This reads one recording and one set of
 static claims and answers, per site, one line of the verdict table:
 
-  VIOLATION      claimed confined, observed escaped.  A DEFECT - the analysis
+  VIOLATION      claimed confined, observed escaped.  A defect: the analysis
                  would have given an RAII lifetime to an object that outlived
                  its frame.  Named by program, function, pc and kind.
   SOUND          claimed confined, every observation confined.
@@ -28,22 +29,22 @@ static claims and answers, per site, one line of the verdict table:
                  native's allocation on the call's pc, a refused function.
                  Never sound.
   KIND MISMATCH  a claim at a (fn, pc) where the interpreter observed a
-                 DIFFERENT kind and not this one.  A hard error: the
+                 different kind and not this one.  A hard error: the
                  coordinate is wrong and the comparison meaningless.
   UNCHECKABLE    a claim of `owned` or `shared`.  A hard error until a
                  recording version carries reference counts.
 
 PRECISION = SOUND / (SOUND + IMPRECISE), and the IMPRECISE histogram by reason
-is the roadmap.
+lists what to improve next in the analysis.
 
-WHAT THE ORACLE CANNOT SEE, said plainly: it observes RETENTION at frame exit,
-not transit.  An object handed to a callee that dropped it before the caller
-returned reads confined here.  So it can MISS an escape and can never invent
-one; a violation is always real, and "zero violations" is a floor, not a proof.
+What the oracle cannot see: it observes retention at frame exit, not transit.
+An object handed to a callee that dropped it before the caller returned reads
+confined here.  So it can miss an escape and can never invent one; a violation
+is always real, and "zero violations" is a floor, not a proof.
 
-Two stubs prove the instrument, over every static site the recording lists:
+Two stubs prove the checker works, over every static site the recording lists:
 
-  --infer all-confined   deliberately WRONG.  Must produce violations and
+  --infer all-confined   deliberately wrong.  Must produce violations and
                          name them.
   --infer all-escapes    deliberately trivial and sound.  Zero violations,
                          zero precision.
@@ -60,7 +61,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 
-# --- the vocabulary, which MUST match type_record.hpp ------------------------
+# --- the vocabulary, which must match type_record.hpp ------------------------
 #
 # Duplicated on purpose and asserted on, not shared: a checker that reads its
 # definitions out of the thing it is checking cannot fail for the one reason
@@ -94,7 +95,8 @@ ROOT_LABELS = [
     "external",
 ]
 
-# CTNative_EscapeReason, in enum order (plan part 25 §1.3).
+# CTNative_EscapeReason (ctcompile/include/ctcompile/CTNative/IR/CTNativeEnums.td)
+# in enum order, without `confined`. Must be kept in sync by hand.
 REASONS = [
     "returned",
     "thrown",
@@ -107,7 +109,7 @@ REASONS = [
     "accessor_defined",
     "arguments",
     "runtime_array",
-    "phase59",
+    "phase59",  # a closure or cell: not a kind this escape analysis tracks
     "not_tracked",
     "suspended",
     "arguments_late",
@@ -118,6 +120,7 @@ REASONS = [
 
 UNCHECKABLE_CLAIMS = {"owned", "shared"}
 
+# The pc of a site in a function's prologue (written `prologue` in recordings).
 PROLOGUE = -1
 
 
@@ -180,6 +183,7 @@ def parse_pc(text: str) -> int:
 
 
 def read_recording(path: str) -> Recording:
+    """Parse a version-2 type recording, checking that every count adds up."""
     rec = Recording()
     program = None
     function = None
@@ -271,7 +275,8 @@ def read_recording(path: str) -> Recording:
                         if label in site.routes or not count.isdigit():
                             raise SystemExit(f"{path}: malformed or duplicate root route `{item}`")
                         site.routes[label] = int(count)
-                # THE LINE MUST ACCOUNT FOR ITSELF.
+                # A site line's counts must add up: made = confined + escaped +
+                # unresolved + unchecked, and the routes sum to escaped.
                 if site.made != site.confined + site.escaped + site.unresolved + site.unchecked:
                     raise SystemExit(
                         f"{path}: site {site.pc} {site.kind} of {function.name}: made != sum"
@@ -289,8 +294,8 @@ def read_recording(path: str) -> Recording:
                 function.sites[(site.pc, site.kind)] = site
             else:
                 raise SystemExit(f"{path}: unknown line `{tag}`")
-    # THE HEADER MUST MATCH WHAT THIS FILE KNOWS.  Different numbers mean the
-    # interpreter's tables moved and this checker has not been told.
+    # The header's opcode and writer counts must match OPCODES/WRITERS; a
+    # difference means the interpreter's tables changed and this file is stale.
     if not saw_escape_header:
         raise SystemExit(f"{path}: no `escape` header line - not a version-2 recording")
     if rec.opcodes != OPCODES or rec.writers != WRITERS:
@@ -318,12 +323,12 @@ def read_recording(path: str) -> Recording:
 
 
 def stub_all_confined(_program, _function, _pc, _kind) -> str:
-    """Deliberately WRONG.  Every site is confined."""
+    """Deliberately wrong.  Every site is confined."""
     return "confined"
 
 
 def stub_all_escapes(_program, _function, _pc, _kind) -> str:
-    """Deliberately trivial, and SOUND by construction.  Everything escapes."""
+    """Deliberately trivial, and sound by construction.  Everything escapes."""
     return "escapes:not_tracked"
 
 
@@ -331,6 +336,7 @@ STUBS = {"all-confined": stub_all_confined, "all-escapes": stub_all_escapes}
 
 
 def read_claims(path: str):
+    """Parse a claims file into (escape claims by site, function flags, uncheckable count)."""
     claims: dict[tuple[str, int, int, str], str] = {}
     flags: dict[tuple[str, int], str] = {}
     uncheckable = 0

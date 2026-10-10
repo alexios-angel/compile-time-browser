@@ -2,15 +2,14 @@
 # Install the engine into a temporary prefix and build the package consumer
 # against it.
 #
-# The only proof that `find_package(ctbrowser)` actually works. Everything
-# else in the tree consumes the engine through add_subdirectory, which cannot fail the
-# way an install can.
+# This is the only check that `find_package(ctbrowser)` works. Everything else
+# in the tree consumes the engine through add_subdirectory, which cannot fail
+# the way an install can.
 #
-# `$root` is the REPOSITORY root and `$engine` is the ctbrowser PROJECT inside
-# it - the configure root since the monorepo split. The distinction is the
-# whole point of this script: an installed engine is consumed by path-free
-# find_package, and a consumer that accidentally reaches back into the source
-# tree is exactly the bug it exists to catch.
+# `$root` is the repository root and `$engine` is the ctbrowser project inside
+# it, which is the CMake configure root. An installed engine is consumed by
+# path-free find_package, and a consumer that accidentally reaches back into
+# the source tree is exactly the bug this script exists to catch.
 set -e
 root=$(cd "$(dirname "$0")/../.." && pwd)
 engine="$root/ctbrowser"

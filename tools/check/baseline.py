@@ -4,19 +4,18 @@
     flock /tmp/ctbrowser-devbox-build.lock tools/check/baseline.py
     flock /tmp/ctbrowser-devbox-build.lock tools/check/baseline.py --record
 
-Phase 0's performance baseline. ctcompile's whole claim is that the parsing and
-compiling below moves from startup to BUILD time, so this is the number that
-claim will be measured against - and a claim with no before is not a claim.
+The startup-cost baseline for ctcompile. ctcompile moves parsing and compiling
+from startup to build time, so this records what that work costs today, for
+later comparison.
 
-A BASELINE WITHOUT ITS CONFIGURATION IS UNUSABLE SIX MONTHS LATER, which is why
-this script exists at all rather than a note saying "run ctbaseline": it records
+A baseline without its configuration is unusable months later, which is why
+this script exists rather than a note saying "run ctbaseline": it records
 the machine, configured commands and hashes of the measured artifact and corpora.
 Git metadata is supplementary: artifact hashes do not prove source provenance.
 The numbers are not comparable across machines and are not meant to be.
 
-MEASURED ON THE DEVBOX, like every other build here. The small WSL box has 7.5
-GiB and a different CPU, so a number from it would be a different baseline
-wearing this one's name.
+Measured on the shared remote build machine (--host, default `devbox`), never
+locally: numbers from a different machine are a different baseline.
 """
 
 import argparse
@@ -36,8 +35,8 @@ OUT = ROOT / "ctcompile" / "docs" / "baseline" / "startup.json"
 TARGET = "ctcompile-tool-ctbaseline"
 BINARY = Path("build/ctcompile/tools/ctbaseline/ctbaseline")
 
-# name=path, relative to the repository root. The four corpora plus the
-# Bootstrap fixture: one stylesheet, one document, three bundles.
+# (name, path relative to the repository root), passed to ctbaseline as
+# name=path: one stylesheet, one document and three script bundles.
 CORPORA = [
     ("bootstrap-css", "ctbrowser/vendor/bootstrap/bootstrap.css"),
     ("bootstrap-kitchen", "ctbrowser/examples/pages/bootstrap-kitchen.html"),
@@ -59,7 +58,11 @@ def sha256(path: Path) -> str:
 
 
 def source_metadata(root: Path) -> dict:
-    """A synced worktree's .git file may point to an unavailable local path."""
+    """Return the git revision and dirty flag of `root`.
+
+    Both are None when `root` is not its own git checkout: an rsynced
+    worktree's .git file can point to a path that does not exist on this machine.
+    """
     try:
         top = run_command(["git", "-C", str(root), "rev-parse", "--show-toplevel"]).strip()
         if Path(top).resolve() != root:
@@ -141,7 +144,8 @@ def collect(root: Path) -> dict:
 
 
 def on_box(host: str, remote_dir: str) -> dict:
-    # Ship this collector over stdin; a stale remote copy must not label the run.
+    # Run this script on the build box by sending it over stdin, so a stale
+    # copy in the remote checkout can never produce the recorded numbers.
     command = shlex.join(["python3", "-", "--collect", remote_dir])
     done = subprocess.run(
         ["ssh", host, command],
@@ -175,8 +179,8 @@ def main() -> int:
     report = {
         "what": "startup cost per stage, before any of it is compiled ahead of time",
         "measured_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        # SAID OUT LOUD, because a baseline that quietly omits half the pipeline
-        # invites someone to compare against it as though it were the whole.
+        # Stated explicitly, because a baseline that quietly omits half the
+        # pipeline invites comparison against it as though it were the whole.
         "not_measured": [
             "style resolution, layout, paint, raster and first frame - these stay "
             "runtime work by Principle 6 and a compiler must not freeze them; "

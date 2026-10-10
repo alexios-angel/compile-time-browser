@@ -2,21 +2,17 @@
 # Format the sources, or check that they are already formatted.
 #
 #   tools/format.sh          rewrite every file in place
-#   tools/format.sh --check  exit non-zero and print the diff
+#   tools/format.sh --check  exit non-zero and list what is not formatted
 #
-# The file list is `git ls-files`, tracked AND untracked-but-not-ignored, so a
-# build directory still cannot be picked up by accident - build/ is gitignored,
+# The file list is `git ls-files`, tracked and untracked-but-not-ignored, so a
+# build directory still cannot be picked up by accident: build/ is gitignored,
 # and --exclude-standard honours that.
 #
-# TRACKED-ONLY WAS A HOLE, and it was found the way these things are: an agent
-# added two new files, ran --check, was told the tree was clean, and committed
-# both unformatted. A gate that cannot see a file nobody has `git add`ed yet is
-# a gate that passes precisely when a new file is at its least reviewed. It covers
-# the WHOLE monorepo - ctbrowser/ and ctcompile/ both - because there is one
-# .clang-format and one house style, and a second formatter invocation is a
-# second chance to forget one. What NOT to
-# format is in .clang-format-ignore rather than here: one list, and clang-format
-# honours it whether it is invoked through this script or by an editor.
+# Untracked files are included on purpose: a new file not yet `git add`ed is
+# the one most likely to be unformatted. The script covers the whole monorepo
+# (ctbrowser/ and ctcompile/) because there is one .clang-format. Files to
+# skip are listed in .clang-format-ignore, which clang-format honours whether
+# it runs from here or from an editor.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -39,13 +35,10 @@ mapfile -t files < <({ git ls-files '*.cpp' '*.cppm' '*.hpp' '*.h'
                                     '*.cpp' '*.cppm' '*.hpp' '*.h'; } \
                      | grep -v '^third-party/' | grep -v '^build')
 if [[ ${#files[@]} -eq 0 ]]; then
-    # WHICH KIND OF NOTHING, because the two have different fixes and the old
-    # message covered both. `git ls-files` failing is the common one for an
-    # agent working in a worktree synced to another machine: the .git there is a
-    # POINTER FILE whose target does not exist on that box, so git errors, the
-    # list comes back empty, and the script exits 1 having formatted nothing.
-    # Chained as `format.sh && remote-build.sh` that reads as the build
-    # mysteriously not running.
+    # Tell the two kinds of empty list apart, because they have different
+    # fixes. `git ls-files` fails in a worktree synced to another machine: the
+    # .git there is a pointer file whose target does not exist on that machine,
+    # so git errors and the list comes back empty.
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
         echo "format.sh: this is not a usable git repository - git ls-files cannot" >&2
         echo "  run, so NOTHING was formatted. In a worktree synced to another" >&2
@@ -56,12 +49,9 @@ if [[ ${#files[@]} -eq 0 ]]; then
     exit 1
 fi
 
-# THE PYTHON HALF: `ruff format` (tools/Brewfile pins it, pyproject.toml
-# configures it; black until 2026-10-10) over the same tracked-or-untracked
-# list, for the same reason there is one script - a second gate is a second one
-# to forget. Missing ruff is an error rather than a skip: a formatter that
-# silently does nothing when it is not installed is the tracked-only hole above
-# in a different coat.
+# Python: `ruff format` (pinned in tools/Brewfile, configured in
+# pyproject.toml) over the same tracked-or-untracked list. A missing ruff is an
+# error, not a skip, so a check never passes by formatting nothing.
 ruff=$(command -v ruff || true)
 if [[ -z $ruff ]]; then
     echo "format.sh: no ruff found - brew install ruff (tools/Brewfile)" >&2
@@ -70,13 +60,13 @@ fi
 mapfile -t pyfiles < <({ git ls-files '*.py'
                          git ls-files --others --exclude-standard '*.py'; }                        | grep -v '^third-party/' | grep -v '^build')
 
-# THE WEB HALF: js-beautify (the npm package - `npm install -g js-beautify`;
+# Web files: js-beautify (the npm package, `npm install -g js-beautify`;
 # brew's is the Python port, which has no html-beautify) over the hand-written
-# JavaScript, HTML and CSS, .jsbeautifyrc at the root being its configuration.
-# Sources only: vendor/ is someone else's. Test fixtures and pages ARE
-# formatted, ctbrowser/test/ and ctcompile/test/ included: the drivers hash
-# inline sources, not these files, and block-level indentation is whitespace
-# the engine collapses, which the golden gate proves.
+# JavaScript, HTML and CSS, configured by .jsbeautifyrc at the root. vendor/ is
+# third-party code and is skipped. Test fixtures and pages are formatted,
+# ctbrowser/test/ and ctcompile/test/ included: the drivers hash inline
+# sources, not these files, and block-level indentation is whitespace the
+# engine collapses (the golden-image render tests confirm this).
 html_beautify=$(command -v html-beautify || true)
 if [[ -z $html_beautify ]]; then
     echo "format.sh: no html-beautify found - npm install -g js-beautify" >&2

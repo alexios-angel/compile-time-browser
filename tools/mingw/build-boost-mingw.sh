@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-# Build the COMPILED Boost libraries for the llvm-mingw target: Boost.URL, which
-# the engine LINKS, and Boost.ProgramOptions, which the tools in ctbrowser/tools
+# Build the compiled Boost libraries for the llvm-mingw target: Boost.URL, which
+# the engine links, and Boost.ProgramOptions, which the tools in ctbrowser/tools
 # and the test programs that take arguments link.
 #
-# WHY THIS EXISTS AT ALL. Boost was header-only here until 2026-07-31, precisely
-# so there would be nothing to cross-compile. Boost.URL ended that: it has been
-# compiled-only since 1.87 - `boost/url/src.hpp` hard-errors, "src.hpp is
-# discontinued" - so there is no header-only way to have it, and RFC 3986 is not
-# something to keep hand-rolling. Boost.ProgramOptions followed on 2026-10-09,
-# for the tools' and tests' command lines (ctbrowser/tools/support/options.hpp).
-# See NOTICE and ctbrowser/docs/build.md.
+# Everything else from Boost is header-only, but Boost.URL has been
+# compiled-only since 1.87 (`boost/url/src.hpp` hard-errors with "src.hpp is
+# discontinued"), and Boost.ProgramOptions parses the tools' and tests' command
+# lines (ctbrowser/tools/support/options.hpp). See NOTICE and
+# ctbrowser/docs/build.md.
 #
-# NOT b2, AND THAT IS THE POINT. Boost's own build system would want a toolset
-# definition for llvm-mingw and a Boost source tree to run from. Both libraries
-# are self-contained .cpp files whose only dependencies are header-only Boost (66
-# for Boost.URL at 1.90, 19 at 1.92 once upstream folded most of it into headers;
-# 11 for Boost.ProgramOptions), so compiling them directly with the cross
-# compiler is both smaller and far easier to see. Nothing here knows what a
-# Jamfile is.
+# This does not use b2, Boost's build system, which would need a toolset
+# definition for llvm-mingw and a full Boost source tree. Both libraries are
+# plain .cpp files (66 for Boost.URL at 1.90, 19 at 1.92 once upstream folded
+# most of it into headers; 11 for Boost.ProgramOptions) whose only dependencies
+# are header-only Boost, so compiling them directly with the cross compiler is
+# smaller and easier to follow.
 #
 # The result lands in the mingw sysroot beside the static SDL3, SDL3_ttf and
-# plutosvg that are already there - that sysroot is gitignored and populated
-# out-of-band, which is the established pattern this follows rather than invents.
+# plutosvg already there; that sysroot is gitignored and populated out-of-band.
 #
 #   tools/mingw/build-boost-mingw.sh [--clean]
 #
@@ -30,7 +26,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-w64-mingw32"
 
-# --- the cross compiler, looked for where the toolchain file looks ----------
+# --- The cross compiler, looked for where the toolchain file looks. ---------
 for root in "${LLVM_MINGW:-}" "$HOME/projects/llvm-mingw/install/llvm-mingw-native" \
             "$here/tools/llvm-mingw"; do
     if [ -n "$root" ] && [ -x "$root/bin/$target-clang++" ]; then
@@ -43,17 +39,11 @@ if [ -z "${mingw:-}" ]; then
     exit 1
 fi
 
-# --- header-only Boost, which the sources need to compile against ----------
-# BREW'S FIRST when it has one. This tree moved its compiled dependencies onto
-# brew on 2026-08-01 because apt's versions are the distribution's - noble
-# packages `boost_url` separately from libboost-dev, so a box could have Boost
-# installed and still fail to configure. Taking the headers from the same place
-# the host library comes from also stops the cross build compiling one release
-# against another's headers, which the tag check below exists to prevent.
-# NOT `command -v brew`: on the devbox this runs over a non-interactive ssh,
-# where brew is not on PATH and that test silently answers no - which is exactly
-# how this script reported "no Boost include tree" on a box that had one.
-# tools/remote-build.sh hardcodes the same path for the same reason.
+# --- Header-only Boost, which the sources compile against. ----------------
+# Prefer Homebrew's headers: the native build takes its Boost from brew, and
+# using the same headers keeps the cross build on one release. The fixed brew
+# paths are probed as well as PATH because a non-interactive ssh session does
+# not have brew on PATH (tools/remote-build.sh does the same).
 brew_inc=""
 for brew in "$(command -v brew 2>/dev/null || true)" /home/linuxbrew/.linuxbrew/bin/brew \
             /opt/homebrew/bin/brew; do
@@ -73,11 +63,10 @@ if [ -z "${boost_inc:-}" ]; then
     exit 1
 fi
 
-# --- the sources, PINNED TO THE VERSION THE HEADERS ARE ---------------------
-# A library built from one release against another release's headers is a
-# silent-mismatch bug of exactly the kind this repository keeps finding, so the
-# tag is read out of version.hpp rather than assumed, and every library below is
-# cloned at that one tag.
+# --- The sources, pinned to the version of the headers. --------------------
+# A library built from one release against another release's headers fails in
+# silent ways, so the tag is read out of version.hpp (BOOST_LIB_VERSION "1_90"
+# becomes boost-1.90.0) and every library below is cloned at that one tag.
 version="$(sed -n 's/^#define BOOST_LIB_VERSION "\(.*\)"/\1/p' "$boost_inc/boost/version.hpp")"
 tag="boost-${version//_/.}.0"
 clean="${1:-}"
@@ -104,21 +93,20 @@ build_library() {
     mkdir -p "$objects"
 
     echo "build-boost-mingw: compiling boostorg/$lib $tag for $target"
-    # C++17, above both libraries' own floor (C++11). The ENGINE and its tests are
-    # C++23 and link these happily - they meet at the ABI, and building third-party
-    # code at our language level buys nothing and risks deprecation noise.
+    # C++17, above both libraries' own floor (C++11). The engine and its tests are
+    # C++23 and link these fine: they meet at the ABI, and building third-party
+    # code at the engine's language level gains nothing and risks deprecation
+    # warnings.
     #
     # BOOST_ALL_NO_LIB stops the auto-linker naming a library MSVC would look for.
     #
-    # RECURSIVE, and that is not a detail. Boost.URL's `src/*.cpp` finds 27 files;
-    # the library is 66, with the rest under src/detail, src/grammar and src/rfc.
-    # Building only the top level produced an archive that LOOKED fine - 27
-    # objects, ar was happy - and failed at link with undefined url_impl symbols.
-    # `llvm-nm` showed them undefined inside the archive itself, which is the tell.
+    # The source search is recursive: Boost.URL keeps most of its sources under
+    # src/detail, src/grammar and src/rfc, and a top-level-only build archives
+    # cleanly but fails to link.
     #
-    # OBJECT NAMES COME FROM THE PATH, not the basename: src/error.cpp and
-    # src/rfc/detail/error.cpp would otherwise be the same .o, and the second would
-    # silently replace the first.
+    # Object names come from the path, not the basename: src/error.cpp and
+    # src/rfc/detail/error.cpp would otherwise both be error.o, and the second
+    # would silently replace the first.
     local sources source object pid failed=0 pids=()
     mapfile -t sources < <(find "$src/src" -name '*.cpp' | sort)
     echo "  ${#sources[@]} sources"
@@ -130,9 +118,8 @@ build_library() {
             -c "$source" -o "$objects/$object" &
         pids+=("$!")
     done
-    # EVERY exit code checked. The first version of this loop was `... & done; wait`,
-    # which discards them - a failed compile would have been archived around in
-    # silence and shown up as a link error somewhere else entirely.
+    # Wait on each pid so a failed compile stops the script instead of being
+    # archived around.
     for pid in "${pids[@]}"; do
         wait "$pid" || failed=1
     done

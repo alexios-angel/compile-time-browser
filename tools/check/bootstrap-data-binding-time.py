@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Report binding-time boundaries in the actual Bootstrap Data initializer.
+"""Check binding-time analysis on Bootstrap's real `Data` module.
 
-Reuse the publication probe's exact vendor extraction and browser harness.
-Reference observations, binding-time facts and PE eligibility are separate evidence;
-this check does not compile or execute a native Bootstrap program.
+Extracts the Data initializer from the vendored Bootstrap with the same code
+as bootstrap-data-probe.py, runs it in the reference VM, imports it to CTJS
+IR and runs --ctnative-binding-time-analysis and partial evaluation. Asserts
+that host reads (`console`), global stores and unknown calls stay dynamic,
+that forged metadata is recomputed, and that partial evaluation specializes
+nothing. Does not compile or run a native program.
 """
 
 from __future__ import annotations
@@ -28,6 +31,8 @@ FUNCTION = re.compile(r"^\s*ctjs\.func\s+(?:private\s+)?@([^\s(]+)")
 BINDING = re.compile(r'ctnative\.binding_time = "(static|dynamic)"')
 REASON = re.compile(r'ctnative\.binding_time_reason = "((?:[^"\\]|\\.)*)"')
 PE_REASON = re.compile(r'ctnative\.partial_eval_reason = "((?:[^"\\]|\\.)*)"')
+# Role of each imported function, indexed by the `$N` suffix the importer
+# gives it (so `...$3` is the Data factory).
 ROLES = (
     "script",
     "console recorder",
@@ -40,6 +45,7 @@ ROLES = (
 
 
 def functions(ir: str) -> dict[str, dict]:
+    """Split CTJS IR into {symbol: {"header": func line, "lines": body lines}}."""
     result = {}
     current = None
     for line in ir.splitlines():
@@ -55,6 +61,7 @@ def functions(ir: str) -> dict[str, dict]:
 
 
 def require_dynamic(line: str, boundary: str) -> dict:
+    """Fail unless `line` is labelled dynamic with a reason; return both."""
     binding = BINDING.search(line)
     reason = REASON.search(line)
     if not binding or binding.group(1) != "dynamic":
@@ -65,6 +72,7 @@ def require_dynamic(line: str, boundary: str) -> dict:
 
 
 def inspect(ir: str) -> dict:
+    """Check every operation carries binding-time facts and summarise them."""
     found = functions(ir)
     reports = []
     console = []
@@ -117,6 +125,8 @@ def inspect(ir: str) -> dict:
 
 
 def forge_console(ir: str) -> str:
+    """Return `ir` with the console read relabelled static, as a negative control
+    and to check that re-running the analysis ignores existing labels."""
     lines = ir.splitlines(keepends=True)
     for i, line in enumerate(lines):
         if 'ctjs.load_global "console"' in line:
@@ -205,9 +215,9 @@ def check(args: argparse.Namespace) -> None:
         or 'ctjs.load_global "console"' not in partial.stdout
     ):
         raise ProbeError("Data effect boundary was specialized or lacks an intact host read")
-    # The imported UMD functions remain public and indirect, outside the closed
-    # private factory candidate set. Zero attempts must not be reported as seven
-    # failed evaluations: record non-candidates separately from actual refusals.
+    # The imported UMD functions are public and called indirectly, so partial
+    # evaluation never considers them. Record them separately from real
+    # refusals, so zero attempts are not reported as seven failures.
     outside_candidates = [
         name
         for name, function in functions(partial.stdout).items()

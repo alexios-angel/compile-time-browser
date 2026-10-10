@@ -2,25 +2,24 @@
 """Does ctdrive return a large reply intact? Two cases, because only one bites.
 
 ctdrive's peer socket is non-blocking (`set_non_blocking(peer_)` at accept in
-ctbrowser/tools/ctdrive/ctdrive.cpp), so `send()` is entitled to accept a PREFIX. `reply()`
-loops until every byte is written; this measures whether it needs to.
+ctbrowser/tools/ctdrive/ctdrive.cpp), so `send()` may accept only a prefix. `reply()`
+loops until every byte is written; this checks that the loop works.
 
     tools/check/ctdrive-reply.py                 # both cases
     tools/check/ctdrive-reply.py --case drain    # just the one that passes anyway
 
-THE POINT OF HAVING TWO. A client that reads continuously keeps the kernel
-buffer draining as fast as it fills, so a single unlooped `send()` gets a 262 KB
-reply out in one call and looks correct. Only a client that does NOT read
-promptly fills the buffer mid-reply. Measured on the devbox, GCC 13, loopback:
+Why two cases: a client that reads continuously keeps the kernel buffer
+draining as fast as it fills, so a single unlooped `send()` gets a 262 KB reply
+out in one call and looks correct. Only a client that does not read promptly
+fills the buffer mid-reply. Measured on the devbox, GCC 13, loopback:
 
     case    payload   looped reply()   single send()
     drain     262 KB   intact           intact          <- proves nothing
     stall       4 MB   intact           2,588,672 bytes, no newline
 
-So "the reply got big" is not the trigger, and the parity dump - which chunks
-and reads promptly - would probably never have found this. It is a latent bug
-fixed on its own terms. Keep both cases: deleting `stall` would leave a test
-that cannot fail, and deleting `drain` would lose the reason the bug hid.
+So a large reply alone is not the trigger, and css-parity.py, which chunks and
+reads promptly, would not detect a regression. Keep both cases: without `stall`
+the test cannot fail, and without `drain` the reason the bug can hide is lost.
 """
 
 import argparse
@@ -32,13 +31,13 @@ import sys
 import time
 from pathlib import Path
 
-# Doubling (`s += s`), never `while (s.length < N) s += 'x'`: the latter is
-# quadratic in a VM whose string concat may copy, and an early draft of this
-# script asking for 900 KB that way was reckless on a 7.5 GiB box.
+# Build the string by doubling (`s += s`), not one character at a time:
+# per-character appends are quadratic when string concat copies.
 BUILD_STRING = "var s = 'x'; while (s.length < {n}) {{ s += s; }} console.log(s.slice(0, {n}));"
 
 
 def start(repo: Path, page: Path):
+    """Launch ctdrive on `page`; return (process, port, auth token) once it listens."""
     exe = repo / "build/tools/ctdrive"
     if not exe.exists():
         sys.exit(f"ctdrive-reply: {exe} not built - cmake --build build --target ctdrive")
@@ -63,6 +62,8 @@ def start(repo: Path, page: Path):
 
 
 def run_case(port: int, token: str, want: int, read_delay: float, rcvbuf: int | None):
+    """Ask ctdrive to log a `want`-character string, wait `read_delay` seconds
+    before reading, and return (ok, detail) for whether the reply arrived whole."""
     s = socket.create_connection(("127.0.0.1", port), timeout=20)
     s.sendall((token + "\n").encode())  # the first line ctdrive accepts
     if rcvbuf:

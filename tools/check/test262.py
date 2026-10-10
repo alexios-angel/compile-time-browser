@@ -6,25 +6,24 @@
     tools/check/test262.py --gate                        # the ctest subset
     tools/check/test262.py --dir test/language --json /tmp/language.json
 
-ONE DIRECTORY AT A TIME IS THE POINT. A conformance run that only ever prints
-one number cannot be acted on: the answer to "is `for-of` implemented" is a
-table for `test/language/statements/for-of`, not 43,000 tests and a percentage.
-Every invocation takes a `--dir` under the corpus root and prints a per-
-subdirectory table, the top failure CAUSES with counts, and optionally the
+One directory at a time: a conformance run that only prints one number cannot
+be acted on. The answer to "is `for-of` implemented" is a table for
+`test/language/statements/for-of`, not the whole corpus and a percentage.
+Every invocation takes a `--dir` under the corpus root and prints a
+per-subdirectory table, the top failure causes with counts, and optionally the
 machine-readable rows.
 
-WHAT IT DOES NOT DO is decide anything about JavaScript. The host decisions -
-`$262`, `print`, the strict transformation, modules, what a thrown error is
-called - all live in `ctbrowser/tools/ct262/ct262.cpp`, which this spawns once
-per test per mode. This file is process management, YAML frontmatter, and
-arithmetic.
+It decides nothing about JavaScript. The host decisions (`$262`, `print`, the
+strict transformation, modules, what a thrown error is called) all live in
+`ctbrowser/tools/ct262/ct262.cpp`, which this spawns once per test per mode.
+This file is process management, YAML frontmatter, and arithmetic.
 
-THE SKIP LIST IS SHORT ON PURPOSE. A test is skipped only when THIS HOST cannot
-present the test's preconditions at all - no second realm, no SharedArrayBuffer,
-no detach - or when the suite itself says to skip (intl402 without ECMA-402,
-`_FIXTURE` files, which are data). A language feature the engine has not
-implemented is a FAILURE, not a skip: skipping those is how a conformance
-number becomes a decoration. `--list-skips` prints the list and its reasons.
+The skip list is short on purpose. A test is skipped only when this host cannot
+present the test's preconditions at all (no second realm, no SharedArrayBuffer,
+no [[IsHTMLDDA]] object) or when the suite itself says to skip (intl402 without
+ECMA-402, `_FIXTURE` files, which are data). A language feature the engine has
+not implemented is a failure, not a skip, so the pass rate stays honest.
+`--list-skips` prints the list and its reasons.
 """
 
 import argparse
@@ -42,14 +41,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_CORPUS = Path(os.environ.get("TEST262_DIR", Path.home() / ".cache/ctbrowser/test262"))
+# Default ct262 location. CMake builds the target `ctbrowser-tool-ct262`;
+# pass --binary when the build tree puts it elsewhere (ctest always does).
 DEFAULT_BINARY = ROOT / "build" / "tools" / "ct262"
 EXPECTATIONS = ROOT / "ctbrowser" / "test" / "test262" / "expectations.txt"
 
-# The ctest gate's fixed subset. Chosen to be FAST (a couple of hundred tests),
-# BROAD (the type system, operators, statements, and the four built-ins the
-# engine leans on hardest) and STABLE - no directory here is one the engine is
-# expected to churn in. The full corpus is a documented command, not a gate:
-# 66,000 process spawns is not something anybody should get by typing `ctest`.
+# The ctest gate's fixed subset. Chosen to be fast (a couple of hundred tests),
+# broad (the type system, operators, statements, and the four built-ins the
+# engine leans on hardest) and stable: no directory here is one the engine is
+# expected to churn in. The full corpus is a documented command
+# (ctbrowser/docs/test262.md), not a gate: tens of thousands of process spawns
+# (one per test per mode) should not run from a plain `ctest`.
 GATE_DIRS = [
     "test/language/types/boolean",
     "test/language/types/null",
@@ -67,8 +69,8 @@ GATE_DIRS = [
 
 # --- what this host cannot present, by name ------------------------------
 #
-# Each entry is a test262 FEATURE (the `features:` frontmatter key) that the
-# host - not the language - cannot supply, with the reason. These are the only
+# Each entry is a test262 feature (the `features:` frontmatter key) that the
+# host, not the language, cannot supply, with the reason. These are the only
 # feature-based skips; everything else runs and is counted.
 SKIP_FEATURES = {
     "cross-realm": "$262.createRealm: a script::context owns its heap, so no value can cross realms",
@@ -78,11 +80,10 @@ SKIP_FEATURES = {
     "Atomics.waitAsync": "$262.agent: one agent, one thread, no SharedArrayBuffer",
     "IsHTMLDDA": "$262.IsHTMLDDA: no [[IsHTMLDDA]] object exists to hand out",
 }
-# Harness includes the host cannot make work: none since $262.detachArrayBuffer
-# became ArrayBuffer.prototype.transfer (2026-09-16); the table stays for the
-# next one.
+# Harness include files the host cannot support, with the reason. Empty today;
+# kept so a future one can be listed here.
 SKIP_INCLUDES: dict[str, str] = {}
-# Flags the host cannot honour. This agent CAN block (it is one synchronous
+# Flags the host cannot honour. This agent can block (it is one synchronous
 # thread), so a test that requires [[CanBlock]] false is not for it.
 SKIP_FLAGS = {
     "CanBlockIsFalse": "this agent blocks: it is one synchronous thread",
@@ -100,12 +101,12 @@ FRONTMATTER = re.compile(r"/\*---(.*?)---\*/", re.S)
 def frontmatter(source):
     """The test's YAML metadata, as much of it as the suite actually uses.
 
-    A REAL YAML PARSER IS NOT AVAILABLE and would not help: PyYAML is not a
-    dependency of this repository and the subset here is fixed by the suite's
-    own linter. What this must get right is the `info: |` block scalar, whose
-    body is arbitrary prose containing lines that look exactly like keys - so
-    the rule is INDENTATION, not pattern matching: a top-level key starts at
-    column zero and everything indented under it belongs to it.
+    No real YAML parser: PyYAML is not a dependency of this repository, and
+    the subset here is fixed by the suite's own linter. What this must get
+    right is the `info: |` block scalar, whose body is arbitrary prose
+    containing lines that look exactly like keys, so the rule is indentation,
+    not pattern matching: a top-level key starts at column zero and everything
+    indented under it belongs to it.
     """
     found = FRONTMATTER.search(source)
     if not found:
@@ -146,6 +147,7 @@ def as_list(block):
 
 
 def as_map(block):
+    """`key: value` lines under a key, as a dict (used for `negative:`)."""
     out = {}
     for line in block:
         head, _, tail = line.strip().partition(":")
@@ -155,13 +157,12 @@ def as_map(block):
 
 
 class Test:
-    # __slots__ AND NO `meta`. One Test per file times 24,000 files is a real
-    # number: the frontmatter of a generated test carries an `info:` block that
-    # quotes the specification, and keeping the parsed metadata alive for the
-    # whole run was ~240 MB of dictionaries nothing reads twice. It got the
-    # runner OOM-KILLED part-way through test/language on a box three other
-    # agents were building on - "Killed", no traceback, no numbers. Five fields
-    # are extracted here and the rest is dropped on the floor.
+    """One test262 file: its path, the frontmatter fields the runner uses, and
+    why it is skipped (None when it runs)."""
+
+    # __slots__ and no stored `meta`: the parsed frontmatter (including long
+    # `info:` blocks) for every file of a large run is hundreds of MB and is read
+    # once, so only the five fields below are kept.
     __slots__ = ("path", "rel", "flags", "features", "includes", "negative", "skip")
 
     def __init__(self, path, corpus):
@@ -202,6 +203,7 @@ class Test:
         return ["sloppy", "strict"]
 
     def prelude(self, corpus):
+        """The harness files ct262 loads before the test, in order."""
         if "raw" in self.flags:
             return []
         harness = corpus / "harness"
@@ -213,11 +215,11 @@ class Test:
 
 
 def cap_address_space(megabytes):
-    """The memory cap, set ONCE on this process so every child inherits it.
+    """The memory cap, set once on this process so every child inherits it.
 
-    NOT a `preexec_fn`: that runs between fork and exec in a process with four
+    Not a `preexec_fn`: that runs between fork and exec in a process with four
     worker threads, where the child may deadlock on a lock another thread held
-    at the moment of the fork - Python's own documentation says so. RLIMIT_AS is
+    at the moment of the fork (Python's own documentation says so). RLIMIT_AS is
     per-process and inherited, so setting it here gives each `ct262` its own cap
     with no fork-time code at all. The runner lives under the same cap, which it
     has no trouble with: the largest thing it holds is one Test per file.
@@ -240,13 +242,11 @@ def run_mode(test, mode, args):
         command.append("--module")
     command.append(str(test.path))
     try:
-        # errors="replace", NOT the default. The engine's messages carry the
+        # errors="replace", not the default. The engine's messages carry the
         # offending source in them, and a test whose source is a lone surrogate
-        # or a truncated multi-byte sequence - test262 has plenty, that is what
-        # several of them TEST - comes back as bytes that are not UTF-8. The
-        # default strict decode raises inside subprocess, the worker dies, and
-        # the whole run ends part-way through with a decode error and no
-        # numbers. Measured, on test/language.
+        # or a truncated multi-byte sequence (several test262 tests are about
+        # exactly that) comes back as bytes that are not UTF-8. The default
+        # strict decode would raise inside subprocess and end the whole run.
         done = subprocess.run(
             command, capture_output=True, text=True, errors="replace", timeout=args.timeout
         )
@@ -273,12 +273,12 @@ def run_mode(test, mode, args):
         want_type = test.negative.get("type", "")
         if error is None:
             return FAIL, f"negative {want_phase}/{want_type}: nothing was thrown"
-        # THE CONSTRUCTOR OR THE NAME. They differ in this engine - every error
-        # `context::throw_error` builds sits on the one Error prototype, so an
-        # engine-raised TypeError has constructor Error and name TypeError - and
-        # accepting either is a documented leniency, not an oversight. It is
-        # named in docs/test262.md; the alternative is failing 40 runtime
-        # negatives for a prototype-wiring detail unrelated to what they test.
+        # Accept the constructor or the name. They differ in this engine: every
+        # error `context::throw_error` builds sits on the one Error prototype, so
+        # an engine-raised TypeError has constructor Error and name TypeError.
+        # Accepting either is a documented leniency (ctbrowser/docs/test262.md),
+        # so runtime negatives do not fail on a prototype-wiring detail
+        # unrelated to what they test.
         if error["phase"] != want_phase:
             return (
                 FAIL,
@@ -299,7 +299,7 @@ def run_mode(test, mode, args):
 
     if "async" in test.flags:
         # The suite's own protocol: the test is not complete until $DONE has
-        # printed. Silence is a failure, not a pass - an engine whose promises
+        # printed. Silence is a failure, not a pass: an engine whose promises
         # never settle exits 0 having done nothing.
         out = done.stdout
         if "Test262:AsyncTestComplete" in out:
@@ -314,19 +314,20 @@ def run_mode(test, mode, args):
 def run_test(test, args):
     """One test, every mode its metadata asks for, worst answer wins.
 
-    NOTHING IS THROWN OUT OF HERE. A run of 24,000 tests that dies on one
-    unexpected exception has measured nothing, and such an exception is more
-    likely to be the runner's than the engine's - so a failure to CLASSIFY is
-    reported as a HOST row carrying it, which lands in the table and in the
-    causes instead of ending the run with no numbers at all.
+    Never raises. A large run that dies on one unexpected exception has
+    measured nothing, and such an exception is more likely to be the runner's
+    than the engine's, so a failure to classify is reported as a HOST row
+    carrying it, which lands in the table and in the causes instead of ending
+    the run.
     """
     try:
         return classify(test, args)
-    except Exception as problem:  # deliberately broad - see the docstring
+    except Exception as problem:  # deliberately broad; see the docstring
         return {"test": test.rel, "status": HOST, "cause": f"runner: {problem!r}", "mode": None}
 
 
 def classify(test, args):
+    """Run every mode of `test`; the worst status wins (TIMEOUT > CRASH > HOST > FAIL)."""
     if test.skip:
         return {"test": test.rel, "status": SKIP, "cause": test.skip, "mode": None}
     worst = (PASS, None, None)
@@ -339,6 +340,7 @@ def classify(test, args):
 
 
 def collect(corpus, where):
+    """Every test under `where` (a file or directory relative to the corpus)."""
     root = (corpus / where).resolve()
     if not root.exists():
         sys.exit(f"test262.py: no such directory in the corpus: {where}")
@@ -346,7 +348,7 @@ def collect(corpus, where):
         return [Test(root, corpus)]
     found = []
     for path in sorted(root.rglob("*.js")):
-        # _FIXTURE files are module DEPENDENCIES, not tests. INTERPRETING.md:
+        # _FIXTURE files are module dependencies, not tests. INTERPRETING.md:
         # they "MUST NOT be interpreted as standalone tests".
         if "_FIXTURE" in path.name:
             continue
@@ -359,7 +361,7 @@ def normalise_cause(cause):
 
     Two failures reading "parse error: expected `)` - at 12:7" and "... at 40:3"
     are one cause. Line numbers, quoted names and offsets are what differ
-    between instances of the SAME gap, and leaving them in produces a histogram
+    between instances of the same gap, and leaving them in produces a histogram
     with a count of 1 in every row, which is not a diagnosis.
     """
     if cause is None:
@@ -370,9 +372,10 @@ def normalise_cause(cause):
 
 
 def report(rows, args):
+    """Print the per-directory status table, the top failure causes and the skips."""
     counts = Counter(row["status"] for row in rows)
     by_dir = defaultdict(Counter)
-    # ONE ROW PER SUBDIRECTORY OF WHAT WAS ASKED FOR, whatever was asked for.
+    # One row per subdirectory of what was asked for, whatever was asked for.
     # A fixed depth answers the wrong question at both ends: `--dir test/language`
     # wants its six areas and `--dir test/language/types/boolean` wants one row,
     # not five files. The key is the test's own directory, truncated to one level
@@ -417,11 +420,10 @@ def report(rows, args):
 def gate(rows, args):
     """No regressions and no unexpected passes.
 
-    AN UNEXPECTED PASS FAILS THE GATE TOO, which is the whole reason the file is
-    worth keeping: an expectations list that only ratchets one way rots into a
-    list of things nobody has re-measured, and the day a fix makes forty of them
-    pass, nothing says so. Both directions are a diff to look at and one command
-    to record.
+    An unexpected pass fails the gate too: an expectations list that only
+    ratchets one way rots into a list of things nobody has re-measured, and
+    when a fix makes some of them pass, nothing says so. Both directions are a
+    diff to look at and one command to record.
     """
     expected = {}
     if EXPECTATIONS.exists():
@@ -458,6 +460,7 @@ def gate(rows, args):
 
 
 def write_expectations(rows):
+    """Rewrite expectations.txt with every row that does not pass."""
     EXPECTATIONS.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# test262 expectations - the gate's fixed subset, and what it does today.",
@@ -479,17 +482,15 @@ def write_expectations(rows):
 
 # --- the harness's own test ----------------------------------------------
 #
-# EVERY LINE HERE IS A WAY THIS RUNNER COULD LIE, written down as a test it has
-# to fail. A conformance harness that reports PASS for everything is not
-# distinguishable from a conforming engine by looking at its output, and reading
-# a table is not evidence - so each fixture below is a planted answer with the
-# classification it MUST get, and `--self-test` asserts the counts.
+# Each entry is a way this runner could misreport, written down as a test it
+# must classify correctly. A harness that reports PASS for everything looks like
+# a conforming engine from its output alone, so each fixture below is a planted
+# answer with the classification it must get, and `--self-test` asserts them.
 #
-# The two that matter most are `must-fail` (an assertion that is false has to be
-# reported failing - it was reported CRASH until ct262 was made to own its
-# harness programs, and PASS would have been possible just as easily) and the
-# three `negative-*` ones, which are the only proof that `negative:` is scored
-# on the phase AND the constructor rather than on "something went wrong".
+# The ones that matter most are `must-fail` (a false assertion must be reported
+# as FAIL, not CRASH or PASS) and the `negative-*` fixtures, the only proof that
+# `negative:` is scored on both the phase and the error type rather than on
+# "something was thrown".
 SELF_TEST = [
     ("must-pass", PASS, "", "assert.sameValue(1, 1);\n"),
     ("must-fail", FAIL, "", "assert.sameValue(1, 2);\n"),
@@ -531,6 +532,7 @@ SELF_TEST = [
 
 
 def self_test(args):
+    """Run the planted SELF_TEST fixtures; return 1 if any is misclassified."""
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="ct262-selftest-") as scratch:
@@ -540,8 +542,9 @@ def self_test(args):
             path = root / f"{name}.js"
             path.write_text(f"/*---\ndescription: planted\n{meta}---*/\n{body}")
             planted.append((Test(path, root), want))
-        # A SHORT TIMEOUT, because one fixture is an infinite loop and the point
-        # is to prove the cap fires - ten seconds of proving it is ten seconds.
+        # A 3-second cap: one fixture is an infinite loop, and the point is only
+        # to prove that the timeout fires. Waiting the default 10 seconds would
+        # waste time.
         args.timeout = min(args.timeout, 3.0)
         wrong = 0
         for test, want in planted:
@@ -645,7 +648,7 @@ def main():
         )
 
     if args.update_expectations:
-        # ONLY FROM THE GATE'S OWN SUBSET. `--dir test/built-ins/Array
+        # Only from the gate's own subset. `--dir test/built-ins/Array
         # --update-expectations` would replace the gate's expectations with one
         # directory's, and the gate would then pass over a file that describes
         # something it does not run.
