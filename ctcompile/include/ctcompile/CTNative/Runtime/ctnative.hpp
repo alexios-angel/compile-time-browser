@@ -791,6 +791,36 @@ inline std::string object_typeof(const object_value & value) {
     return value.object ? "object" : scalar_typeof(value.scalar);
 }
 
+// --- the Boolean object --------------------------------------------------------
+
+/// The Boolean constructor's members native code calls: generated code reads
+/// `ctnative::Boolean(x)`. `Boolean(value)` (ECMA-262 20.3.1.1) is ToBoolean
+/// (7.1.2), so each call operator forwards to the carrier's existing
+/// truthiness: the explicit `bool` of js_num, js_string, js_boolean_t and
+/// js_symbol_t, scalar_truthy, string_truthy, detail::variant_truthy for the
+/// String unions, and object_truthy. It sits here, after those helpers,
+/// rather than beside js_boolean_t. No prototype method is lowered yet.
+struct boolean_constructor {
+    template <class T>
+    requires requires(const T & value) { static_cast<bool>(value); }
+    constexpr js_boolean_t operator()(const T & value) const {
+        return js_boolean_t{static_cast<bool>(value)};
+    }
+    js_boolean_t operator()(nullable_scalar value) const {
+        return js_boolean_t{scalar_truthy(value)};
+    }
+    js_boolean_t operator()(const nullable_string & value) const {
+        return js_boolean_t{string_truthy(value)};
+    }
+    template <class... T> js_boolean_t operator()(const std::variant<T...> & value) const {
+        return js_boolean_t{detail::variant_truthy(value)};
+    }
+    js_boolean_t operator()(const object_value & value) const {
+        return js_boolean_t{object_truthy(value)};
+    }
+};
+inline constexpr boolean_constructor Boolean{};
+
 // --- Map storage -------------------------------------------------------------
 //
 // Two representations behind one alias, map_storage. A module with any Map

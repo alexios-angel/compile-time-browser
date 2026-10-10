@@ -952,13 +952,16 @@ int main() {
         std::is_empty_v<ctnative::split_method> && std::is_empty_v<ctnative::push_method> &&
         std::is_empty_v<ctnative::join_method> && std::is_empty_v<ctnative::sort_method> &&
         std::is_empty_v<ctnative::min_method> && std::is_empty_v<ctnative::stringify_method> &&
-        std::is_empty_v<ctnative::number_constructor>);
+        std::is_empty_v<ctnative::number_constructor> &&
+        std::is_empty_v<ctnative::boolean_constructor>);
     {
         constexpr ctnative::string_constructor string = ctnative::String;
         constexpr ctnative::array_constructor array = ctnative::Array;
         constexpr ctnative::math_object math = ctnative::Math;
         constexpr ctnative::json_object json = ctnative::JSON;
         constexpr ctnative::number_constructor number = ctnative::Number;
+        constexpr ctnative::boolean_constructor boolean = ctnative::Boolean;
+        (void)boolean;
         (void)number;
         (void)string;
         (void)array;
@@ -977,6 +980,20 @@ int main() {
     CHECK(std::isnan(ctnative::Number(nullable_scalar{}).value()));
     CHECK(ctnative::Number(nullable_scalar{js_null_t{}}) == ctnative::js_num{0.0});
     CHECK(ctnative::Number(ctnative::js_num{2.5}) == ctnative::js_num{2.5});
+
+    // Boolean(value) is ToBoolean for each carrier: NaN, 0 and -0, the empty
+    // String, undefined and null are false; a String union follows its
+    // alternative.
+    static_assert(ctnative::Boolean(ctnative::js_num{2.0}) == js_boolean_t{true});
+    CHECK(ctnative::Boolean(ctnative::js_num{js_nan_t{}}) == js_boolean_t{false});
+    CHECK(ctnative::Boolean(ctnative::js_num{-0.0}) == js_boolean_t{false});
+    CHECK(ctnative::Boolean(js_string{}) == js_boolean_t{false});
+    CHECK(ctnative::Boolean(js_string{"0"}) == js_boolean_t{true});
+    CHECK(ctnative::Boolean(nullable_scalar{}) == js_boolean_t{false});
+    CHECK(ctnative::Boolean(nullable_scalar{js_null_t{}}) == js_boolean_t{false});
+    CHECK(ctnative::Boolean(to_nullable_string(js_string{"x"})) == js_boolean_t{true});
+    CHECK(ctnative::Boolean(number_string{js_string{}}) == js_boolean_t{false});
+    CHECK(ctnative::Boolean(number_string{ctnative::js_num{1.0}}) == js_boolean_t{true});
 
     // String.prototype.toLowerCase: ASCII, Latin-1, the U+0130 expansion, a
     // final sigma against a lone capital one, ß unchanged, a lone surrogate
