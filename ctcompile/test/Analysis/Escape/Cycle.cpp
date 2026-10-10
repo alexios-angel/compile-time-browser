@@ -358,9 +358,11 @@ int main() {
     const std::size_t baseline = settled_live(cx, scrub);
     std::printf("    live objects: %zu with the ring, %zu without\n", with_ring, baseline);
     // THREE, and not "three plus something": the nodes are the only heap
-    // objects `ring(3)` makes. Property names come from the constant pool,
-    // numbers and null are immediates, and the frame's registers are resized
-    // away on return. A hidden allocation would show up here as a fourth.
+    // objects `ring(3)` leaves to a settled count. Its literal keys are heap
+    // strings (LITERAL KEYS, below), but the cache that holds them is emptied
+    // by the scrub's program run; numbers and null are immediates, and the
+    // frame's registers are resized away on return. A hidden allocation would
+    // show up here as a fourth.
     report("(b) a reachable ring is baseline + 3", with_ring == baseline + 3);
 
     // REBUILT FROM C++, held through the global, and the same count again - so
@@ -407,10 +409,22 @@ int main() {
     // ct_aot_call IS a safepoint (aot_helpers.def), and the driver's `churnVia`
     // below reproduces that cadence through `Function.prototype.call`, where
     // the bound is one dead ring.
+    //
+    // LITERAL KEYS: every unsettled count below also holds `ringLocal`'s three
+    // keys, "v", "next" and "prev", and they are LIVE. Since 7c32df8e9 a
+    // literal defines its members (13.2.5.5 CreateDataPropertyOrThrow, by
+    // op::define_data since 80c455fa4) with the key in a register that
+    // op::load_string fills: one heap string per key per function, interned
+    // in string_cache_, which is a GC root until the next top-level program
+    // empties it. The first `ringLocal` after a scrub allocates the three,
+    // every collection churnVia makes keeps them, and settled_live's scrub
+    // run is what lets them go.
+    constexpr std::size_t literal_keys = 3;
     const std::string churn_unstressed = cx.to_string(call1(cx, "churn", 1000));
     const std::size_t after_calm_churn = cx.live_objects();
-    report("churn(1000) unstressed: 4000 dead nodes, none swept yet",
-           after_calm_churn == baseline + 4000);
+    report("churn(1000) unstressed: 4000 dead nodes + 3 keys, none swept yet",
+           after_calm_churn == baseline + 4000 + literal_keys, std::to_string(after_calm_churn),
+           std::to_string(baseline + 4000 + literal_keys));
     report("(b) one collection frees all 1000 dead rings", settled_live(cx, scrub) == baseline);
 
     const std::size_t churn_before = cx.collections();
@@ -428,14 +442,15 @@ int main() {
            churn_unstressed);
     report("(b) churn(1000) under stress collects once - the interpreter's one safepoint",
            churn_collections == 1);
-    report("(b) ... so live is baseline + 4000 until the next collection",
-           after_churn == baseline + 4000);
+    report("(b) ... so live is baseline + 4000 + 3 keys until the next collection",
+           after_churn == baseline + 4000 + literal_keys);
     report("(b) and back to baseline after one collection", settled_live(cx, scrub) == baseline);
 
     // THE SAME CHURN AT THE AOT TIER'S CADENCE: a collection at every
     // `ringLocal` entry. The previous ring is dead and swept before the next
     // is built, so the bound is the LAST ring - dead at churnVia's return but
-    // not yet swept - and exactly baseline after one more collection.
+    // not yet swept - beside the three live keys, and exactly baseline once
+    // settled.
     const std::size_t via_before = cx.collections();
     cx.set_gc_stress(true);
     const std::string churn_via = cx.to_string(call1(cx, "churnVia", 1000));
@@ -447,8 +462,8 @@ int main() {
     report("churnVia(1000) collected once per ringLocal entry (>= 1001)", via_collections >= 1001);
     report("churnVia(1000) == churn(1000)", churn_via == churn_unstressed, churn_via,
            churn_unstressed);
-    report("(b) churnVia(1000) under stress: live is exactly one dead ring",
-           after_via == baseline + 4);
+    report("(b) churnVia(1000) under stress: live is exactly one dead ring + 3 keys",
+           after_via == baseline + 4 + literal_keys);
     report("(b) and back to baseline after one collection", settled_live(cx, scrub) == baseline);
 
     // =======================================================================

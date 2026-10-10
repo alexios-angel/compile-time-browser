@@ -168,8 +168,9 @@ The same executable:
   asserted to have grown, and asserts `walk(keep, 9).v` and
   `keep.prev.next === keep` answer what the unstressed VM answered — the
   reachable cycle survives a tracing collection (gate 4(a));
-* pins `live_objects()`: a reachable 3-ring is exactly baseline + 3 (property
-  names are constant-pool strings, numbers and null are immediates), a ring
+* pins `live_objects()`: a reachable 3-ring is exactly baseline + 3 once
+  settled (numbers and null are immediates, and the literal keys are interned
+  strings that the next top-level program releases), a ring
   reachable only through a middle member keeps all three, an unrooted ring is
   freed whole, and `keep = null; collect()` returns to baseline (gate 4(b));
 * pins what "under stress" means in this interpreter, which the design's
@@ -180,7 +181,10 @@ The same executable:
   driver's `churnVia`, which enters `ringLocal` through
   `Function.prototype.call` (a C++ re-entry, hence a safepoint - the boxed AOT
   tier's cadence, since `ct_aot_call` is one), collects 1,001 times and is
-  bounded by exactly one dead ring;
+  bounded by exactly one dead ring. Both counts also hold `ringLocal`'s three
+  literal keys, live: since 7c32df8e9 a literal member is defined with its
+  key loaded by `op::load_string`, which interns one string per key in the
+  string cache, a root until the next top-level program;
 * models the two failure modes of the weak-link proposal with destructor
   counters: a `std::shared_ptr` ring with every handle dropped destroys **0**
   nodes, and a `std::weak_ptr` back-edge destroys the head while the node
