@@ -37,6 +37,8 @@
 #include <sstream>
 #include <string>
 
+#include "options.hpp"
+
 namespace {
 
 using namespace ctcompile::ctnative;
@@ -59,24 +61,15 @@ const char * kindOf(mlir::Operation * op) {
 } // namespace
 
 int main(int argc, char ** argv) {
+    namespace po = boost::program_options;
     std::string script;
     std::string out;
-    for (int i = 1; i < argc; ++i) {
-        const std::string flag = argv[i];
-        const auto next = [&]() -> std::string { return ++i < argc ? argv[i] : std::string{}; };
-        if (flag == "--script") {
-            script = next();
-        } else if (flag == "--out") {
-            out = next();
-        } else {
-            std::fprintf(stderr, "usage: escape-claims --script BUNDLE.js --out CLAIMS\n");
-            return 2;
-        }
-    }
-    if (script.empty() || out.empty()) {
-        std::fprintf(stderr, "escape-claims: --script and --out are both required\n");
-        return 2;
-    }
+    po::options_description options{
+        "usage: ctcompile-test-escape-claims --script BUNDLE.js --out CLAIMS"};
+    auto add = options.add_options();
+    add("script", po::value(&script)->required(), "the corpus to import and analyse");
+    add("out", po::value(&out)->required(), "where to write one claim per allocation site");
+    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
 
     std::ifstream in{script, std::ios::binary};
     if (!in) {

@@ -9,11 +9,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 
 #include "check.hpp"
+#include "options.hpp"
 
 namespace aot = ctbrowser::aot;
 using namespace ctbrowser::script;
@@ -157,7 +159,12 @@ void expect_compiled(const type_recorder & recorder, std::string_view name, std:
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--out") != 0)) { return 2; }
+    namespace po = boost::program_options;
+    std::optional<std::string> out;
+    po::options_description options{
+        "usage: ctcompile-test-escape-oracle-aot-return [--out RECORDING]"};
+    options.add_options()("out", po::value(&out), "also write the recording to RECORDING");
+    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
     const counts baseline = run(nullptr);
     type_recorder recorder;
     const counts recorded = run(&recorder);
@@ -190,7 +197,7 @@ int main(int argc, char ** argv) {
         check(made == 3 && escaped == 2 && confined == 1 && unchecked == 0,
               "the later interpreted call retains ordinary source-site observations");
     }
-    if (argc == 3) { check(recorder.write(argv[2]), "the compiled return recording was written"); }
+    if (out) { check(recorder.write(*out), "the compiled return recording was written"); }
     if (ctbrowser_test_failures == 0) { std::printf("ok escape_oracle_aot_return\n"); }
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

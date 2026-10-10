@@ -10,10 +10,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
+#include <optional>
+#include <string>
 #include <string_view>
 
 #include "check.hpp"
+#include "options.hpp"
 
 namespace {
 namespace aot = ctbrowser::aot;
@@ -205,7 +207,11 @@ void check_interpreted(const type_recorder & recorder, std::string_view name, bo
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 1 && (argc != 3 || std::strcmp(argv[1], "--out") != 0)) { return 2; }
+    namespace po = boost::program_options;
+    std::optional<std::string> out;
+    po::options_description options{"usage: ctcompile-test-escape-oracle-aot [--out RECORDING]"};
+    options.add_options()("out", po::value(&out), "also write the recording to RECORDING");
+    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
     const run_counts baseline = run(nullptr);
     type_recorder recorder;
     const run_counts recorded = run(&recorder);
@@ -220,7 +226,7 @@ int main(int argc, char ** argv) {
     check(recorder.pending_records() == 2, "only the two unhooked AOT returns remain pending");
     check(recorder.unwinds() > 0 && recorder.checks() > 0,
           "the test exercised the shared unwinder and real interpreter checks");
-    if (argc == 3) { check(recorder.write(argv[2]), "the AOT recording was written"); }
+    if (out) { check(recorder.write(*out), "the AOT recording was written"); }
     if (ctbrowser_test_failures == 0) { std::printf("ok escape_oracle_aot\n"); }
     return ctbrowser_test_failures == 0 ? 0 : 1;
 }

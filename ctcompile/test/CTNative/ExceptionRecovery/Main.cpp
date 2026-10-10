@@ -1,15 +1,21 @@
 #include "Tests.h"
 
 #include "check.hpp"
+#include "options.hpp"
 
 using namespace ctcompile::test::exception_recovery;
 
 int main(int argc, char ** argv) {
-    if (argc != 2) {
-        std::fputs("usage: ctcompile-test-exception-recovery invocation-state.mlir\n", stderr);
-        return 1;
-    }
-    auto file = llvm::MemoryBuffer::getFile(argv[1]);
+    namespace po = boost::program_options;
+    std::string fixture;
+    po::options_description options{
+        "usage: ctcompile-test-exception-recovery invocation-state.mlir"};
+    options.add_options()("fixture", po::value(&fixture)->required(),
+                          "the lit file whose //--- NAME.js sections are the sources");
+    po::positional_options_description positional;
+    positional.add("fixture", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 1; }
+    auto file = llvm::MemoryBuffer::getFile(fixture);
     if (!file) { return 1; }
     mlir::MLIRContext context;
     context.loadDialect<ctjs::CTJSDialect, mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,

@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "options.hpp"
 
 using ctbrowser::shell::app_bundle;
 using ctbrowser::shell::append_bundle_to;
@@ -70,6 +71,15 @@ constexpr std::string_view page_html = "<!doctype html><title>t</title>\n"
 } // namespace
 
 int main(int argc, char ** argv) {
+    namespace po = boost::program_options;
+    std::string out_dir;
+    po::options_description options{"usage: ctcompile-test-app_bundle [OUT_DIR]"};
+    options.add_options()("out-dir", po::value(&out_dir),
+                          "also write the two bundles the launcher must refuse into OUT_DIR");
+    po::positional_options_description positional;
+    positional.add("out-dir", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+
     // ---- the round trip -------------------------------------------------
     app_bundle made;
     made.entries.push_back({bundle_kind::meta, "title", raw("A Packaged Page")});
@@ -350,11 +360,10 @@ int main(int argc, char ** argv) {
     // Written out rather than run here, because the guard they exercise lives
     // in run_app, which needs a window. roundtrip.cmake feeds them to the
     // real launcher; without an output directory this does nothing.
-    if (argc > 1) {
-        const std::filesystem::path out_dir{argv[1]};
+    if (!out_dir.empty()) {
         const auto emit = [&out_dir](const std::string & file, const app_bundle & what) {
             const std::vector<std::byte> raw_bytes = write_bundle(what);
-            std::ofstream out{out_dir / file, std::ios::binary};
+            std::ofstream out{std::filesystem::path{out_dir} / file, std::ios::binary};
             out.write(reinterpret_cast<const char *>(raw_bytes.data()),
                       static_cast<std::streamsize>(raw_bytes.size()));
         };

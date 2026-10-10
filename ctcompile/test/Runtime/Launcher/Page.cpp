@@ -47,14 +47,15 @@ extern const ctcompile::aot::entry_table CTCOMPILE_LAUNCHER_TABLE;
 #include <string>
 #include <string_view>
 
+#include "options.hpp"
+
 using ctbrowser::script::transition;
 
 namespace {
 
-// The first element with this id, in document order. Six lines rather than a
-// dependency on ctbrowser's own test-support header: that shelf is the engine
-// suite's, and a sibling project reaching into it would make the two trees'
-// tests one tree's.
+// The first element with this id, in document order. Six lines, kept here:
+// options.hpp is the only header this file takes from ctbrowser/test/support,
+// though every ctcompile test has shared that shelf's check.hpp since 2026-09-15.
 [[nodiscard]] ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {
     const auto txn = page.doc().read();
     const ctbrowser::atom key = page.atoms().intern("id");
@@ -77,14 +78,19 @@ void report_transitions() {
 
 } // namespace
 
-// argv[1] is where the canvas is written. Everything else is a build parameter:
-// CTCOMPILE_LAUNCHER_PAGE is the .html and CTCOMPILE_LAUNCHER_ASSET_ROOT the
-// directory its `examples/assets/sprites.bmp` resolves against.
+// The one option is <canvas-output>, a required bare argument: where the canvas
+// is written. Everything else is a build parameter: CTCOMPILE_LAUNCHER_PAGE is
+// the .html and CTCOMPILE_LAUNCHER_ASSET_ROOT the directory its
+// `examples/assets/sprites.bmp` resolves against.
 int main(int argc, char ** argv) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: launcher-page <canvas-output>\n");
-        return 2;
-    }
+    namespace po = boost::program_options;
+    std::string canvas_output;
+    po::options_description options{"usage: launcher-page <canvas-output>"};
+    options.add_options()("canvas-output", po::value(&canvas_output)->required(),
+                          "where the canvas is written, as a PPM");
+    po::positional_options_description positional;
+    positional.add("canvas-output", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
 
     const std::filesystem::path page_path{CTCOMPILE_LAUNCHER_PAGE};
     std::string html;
@@ -185,7 +191,7 @@ int main(int argc, char ** argv) {
     // A PPM, because it is the format this repository already byte-compares and
     // because a person can look at a failure rather than only diff it.
     {
-        std::ofstream out{argv[1], std::ios::binary};
+        std::ofstream out{canvas_output, std::ios::binary};
         out << "P6\n" << pixels->width << ' ' << pixels->height << "\n255\n";
         for (int y = 0; y < pixels->height; ++y) {
             for (int x = 0; x < pixels->width; ++x) {

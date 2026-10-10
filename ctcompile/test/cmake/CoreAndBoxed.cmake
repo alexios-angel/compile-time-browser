@@ -94,8 +94,9 @@ ctcompile_unit_test(manifest LIBS ctcompile::support)
 # THE BINARY DIRECTORY IS AN ARGUMENT because two of its cases cannot be run
 # here: they are bundles the LAUNCHER has to refuse, and the guard that refuses
 # them lives behind a window. It writes them out and Packaging/roundtrip.test
-# feeds them to the real ctrun.
-ctcompile_unit_test(app_bundle LIBS ctbrowser::ctbrowser ARGS ${CMAKE_CURRENT_BINARY_DIR})
+# feeds them to the real ctrun. ctbrowser/test/support/options.hpp parses it.
+ctcompile_unit_test(app_bundle LIBS ctbrowser::ctbrowser Boost::program_options
+  ARGS ${CMAKE_CURRENT_BINARY_DIR})
 
 # The whole thing, directory in and executable out: Packaging/roundtrip.test.
 

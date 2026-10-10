@@ -13,7 +13,9 @@
 # not depend on the compiler side existing, and a lowering author wants it on a
 # box with no LLVM too.
 add_executable(ctcompile-test-native-reference)
-target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser)
+# PROGRAM.js or --page PAGE.html, parsed by ctbrowser/test/support/options.hpp.
+target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser
+  Boost::program_options)
 ctcompile_target(ctcompile-test-native-reference)
 
 # THE RUNTIME HEADER, COMPILED BY THE BUILD. include/ctcompile/CTNative/Runtime/

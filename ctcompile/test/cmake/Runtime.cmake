@@ -108,15 +108,18 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
     CTCOMPILE_LAUNCHER_PAGE="${_page_html}"
     CTCOMPILE_LAUNCHER_ASSET_ROOT="${CTBROWSER_MONOREPO_ROOT}/ctbrowser")
 
+  # Both arms take <canvas-output> through ctbrowser/test/support/options.hpp.
   add_executable(ctcompile-test-launcher-page-vm)
   target_compile_definitions(ctcompile-test-launcher-page-vm PRIVATE ${_page_defs})
-  target_link_libraries(ctcompile-test-launcher-page-vm PRIVATE ctbrowser::ctbrowser)
+  target_link_libraries(ctcompile-test-launcher-page-vm PRIVATE ctbrowser::ctbrowser
+    Boost::program_options)
   ctcompile_target(ctcompile-test-launcher-page-vm)
 
   add_executable(ctcompile-test-launcher-page-aot "${_page_cpp}" "${_page_table}")
   target_compile_definitions(ctcompile-test-launcher-page-aot PRIVATE ${_page_defs}
     CTCOMPILE_LAUNCHER_AOT=1 CTCOMPILE_LAUNCHER_TABLE=ctc_invaders_entries)
-  target_link_libraries(ctcompile-test-launcher-page-aot PRIVATE ctbrowser::ctbrowser)
+  target_link_libraries(ctcompile-test-launcher-page-aot PRIVATE ctbrowser::ctbrowser
+    Boost::program_options)
   ctcompile_target(ctcompile-test-launcher-page-aot)
 
   # Both arms run, the canvases compared, counters asserted: Runtime/Launcher/page.test.

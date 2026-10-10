@@ -57,7 +57,6 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -67,6 +66,7 @@
 #include <vector>
 
 #include "check.hpp"
+#include "options.hpp"
 
 using ctbrowser::script::function_observation;
 using ctbrowser::script::heap_kind;
@@ -884,6 +884,7 @@ int record_script(const std::string & js_path, const std::string & out_path) {
 } // namespace
 
 int main(int argc, char ** argv) {
+    namespace po = boost::program_options;
     std::string page;
     std::string script;
     std::string assets;
@@ -891,43 +892,27 @@ int main(int argc, char ** argv) {
     std::vector<std::string> extra_js;
     int frames = 20;
     bool escape = false;
-    for (int i = 1; i < argc; ++i) {
-        const std::string_view flag{argv[i]};
-        const auto next = [&]() -> std::string {
-            return i + 1 < argc ? std::string{argv[++i]} : std::string{};
-        };
-        if (flag == "--page") {
-            page = next();
-        } else if (flag == "--script") {
-            script = next();
-        } else if (flag == "--assets") {
-            assets = next();
-        } else if (flag == "--js") {
-            extra_js.push_back(next());
-        } else if (flag == "--out") {
-            out = next();
-        } else if (flag == "--frames") {
-            frames = std::atoi(next().c_str());
-        } else if (flag == "--escape") {
-            escape = true;
-        } else if (flag == "--escape-budget") {
-            g_escape_budget = static_cast<std::uint64_t>(std::atoll(next().c_str()));
-        } else if (flag == "--unbounded") {
-            g_unbounded = true;
-        } else {
-            std::fprintf(stderr,
-                         "usage: type-oracle [--out FILE]                the type self-test\n"
-                         "       type-oracle --escape [--out FILE]       the escape self-test\n"
-                         "       type-oracle --page PAGE.html [--assets DIR] [--frames N] "
-                         "[--js EXTRA.js ...] --out FILE\n"
-                         "       type-oracle --script BUNDLE.js --out FILE\n"
-                         "  recording options: --escape-budget K  (frame ends adjudicated per "
-                         "function, 0 = unlimited)\n"
-                         "                     --unbounded         (walk the dead register window "
-                         "too; a superset of escapes)\n");
-            return 2;
-        }
-    }
+    po::options_description options{
+        "usage: ctcompile-test-type-oracle [--out FILE]                the type self-test\n"
+        "       ctcompile-test-type-oracle --escape [--out FILE]       the escape self-test\n"
+        "       ctcompile-test-type-oracle --page PAGE.html [--assets DIR] [--frames N] "
+        "[--js EXTRA.js ...] --out FILE\n"
+        "       ctcompile-test-type-oracle --script BUNDLE.js --out FILE"};
+    auto add = options.add_options();
+    add("out", po::value(&out), "write the recording to FILE; --page and --script need it");
+    add("escape", po::bool_switch(&escape), "run the escape self-test instead of the type one");
+    add("page", po::value(&page), "record PAGE.html run through the whole engine");
+    add("assets", po::value(&assets), "resolve the page's assets against DIR");
+    add("frames", po::value(&frames)->default_value(frames),
+        "frames to run after the page loads, 16 ms apart");
+    add("js", po::value(&extra_js), "run EXTRA.js in the page after it loads; repeatable");
+    add("script", po::value(&script), "record BUNDLE.js run against builtins and no DOM");
+    add("escape-budget", po::value(&g_escape_budget),
+        "recording option: frame ends adjudicated per function, 0 = unlimited");
+    add("unbounded", po::bool_switch(&g_unbounded),
+        "recording option: walk the dead register window too; a superset of escapes");
+    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
+
     if (!page.empty() || !script.empty()) {
         if (out.empty()) {
             std::fprintf(stderr, "type-oracle: --page and --script need --out\n");

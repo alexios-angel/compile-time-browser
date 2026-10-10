@@ -88,12 +88,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "options.hpp"
 
 namespace {
 
@@ -139,16 +142,26 @@ void write_percent_encoded(const std::string & s) {
 } // namespace
 
 int main(int argc, char ** argv) {
-    const bool page = argc == 3 && std::string_view{argv[1]} == "--page";
-    if (argc != 2 && !page) {
-        std::fprintf(stderr,
-                     "usage: ctcompile-test-native-reference [--page PAGE.html | PROGRAM.js]\n");
+    namespace po = boost::program_options;
+    std::string path;
+    po::options_description options{
+        "usage: ctcompile-test-native-reference [--page PAGE.html | PROGRAM.js]"};
+    auto add = options.add_options();
+    // Either one fills `path`. Which one did is the mode, and it must be exactly one.
+    add("page", po::value(&path), "load PAGE.html into a live document, print its console.log");
+    add("program", po::value(&path), "run PROGRAM.js, print the globals it created or changed");
+    po::positional_options_description positional;
+    positional.add("program", 1);
+    const auto args = ctbrowser_test::parse_options(argc, argv, options, positional);
+    if (!args) { return 2; }
+    const bool page = args->count("page") != 0;
+    if (page == (args->count("program") != 0)) {
+        std::cerr << "give exactly one of --page PAGE.html and PROGRAM.js\n" << options;
         return 2;
     }
-    const char * path = argv[argc - 1];
     std::ifstream in{path, std::ios::binary};
     if (!in) {
-        std::fprintf(stderr, "native reference: cannot read %s\n", path);
+        std::fprintf(stderr, "native reference: cannot read %s\n", path.c_str());
         return 1;
     }
     const std::string source{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
@@ -160,7 +173,7 @@ int main(int argc, char ** argv) {
         ctbrowser::shell::browser live{ctbrowser::shell::browser_options{400, 300}};
         live.load_html(source);
         if (!live.script_error().empty()) {
-            std::fprintf(stderr, "native reference: %s threw: %s\n", path,
+            std::fprintf(stderr, "native reference: %s threw: %s\n", path.c_str(),
                          live.script_error().c_str());
             return 1;
         }
@@ -175,7 +188,7 @@ int main(int argc, char ** argv) {
     // first, and the context below is destroyed before it.
     const ctbrowser::script::program prog = ctbrowser::script::compiler::compile(source);
     if (!prog.ok) {
-        std::fprintf(stderr, "native reference: %s does not compile: %s\n", argv[1],
+        std::fprintf(stderr, "native reference: %s does not compile: %s\n", path.c_str(),
                      prog.error.c_str());
         return 1;
     }
@@ -187,7 +200,8 @@ int main(int argc, char ** argv) {
 
     const ctbrowser::script::run_result result = cx.run(prog);
     if (!result.ok) {
-        std::fprintf(stderr, "native reference: %s threw: %s\n", argv[1], result.error.c_str());
+        std::fprintf(stderr, "native reference: %s threw: %s\n", path.c_str(),
+                     result.error.c_str());
         return 1;
     }
 

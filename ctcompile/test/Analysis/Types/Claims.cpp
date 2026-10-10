@@ -42,12 +42,13 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdio>
-#include <cstdlib>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#include "options.hpp"
 
 namespace {
 
@@ -106,27 +107,18 @@ std::string atomsOf(mlir::Type type) {
 } // namespace
 
 int main(int argc, char ** argv) {
+    namespace po = boost::program_options;
     std::string script;
     std::string out;
-    std::uint32_t dump = ~0U; // --dump N: print function N's slot map to stderr
-    for (int i = 1; i < argc; ++i) {
-        const std::string flag = argv[i];
-        const auto next = [&]() -> std::string { return ++i < argc ? argv[i] : std::string{}; };
-        if (flag == "--script") {
-            script = next();
-        } else if (flag == "--out") {
-            out = next();
-        } else if (flag == "--dump") {
-            dump = static_cast<std::uint32_t>(std::atoi(next().c_str()));
-        } else {
-            std::fprintf(stderr, "usage: type-claims --script BUNDLE.js --out CLAIMS\n");
-            return 2;
-        }
-    }
-    if (script.empty() || out.empty()) {
-        std::fprintf(stderr, "type-claims: --script and --out are both required\n");
-        return 2;
-    }
+    std::uint32_t dump = ~0U; // no function has this index, so without --dump nothing is printed
+    po::options_description options{
+        "usage: ctcompile-test-type-claims --script BUNDLE.js --out CLAIMS [--dump N]"};
+    auto add = options.add_options();
+    add("script", po::value(&script)->required(),
+        "the corpus to import and run the inference over");
+    add("out", po::value(&out)->required(), "where to write one claim per register");
+    add("dump", po::value(&dump), "print function N's slot map to stderr");
+    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
 
     std::ifstream in{script, std::ios::binary};
     if (!in) {

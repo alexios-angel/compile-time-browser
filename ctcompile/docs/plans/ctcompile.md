@@ -119,6 +119,19 @@ and off until Phase 7, and a compiler that needed a 2 GB dependency to parse
 `--version` would make every developer's first build the slowest one. Compiled
 Boost libraries have been allowed here since 2026-07-31.
 
+> **Corrected 2026-10-09: superseded on 2026-09-20 by `a21ee995e`.** The
+> paragraph above is the reasoning of its day and is kept as history. ctcompile's
+> tools now parse their command lines with LLVM: `ctcompile` through a generated
+> `llvm::opt::GenericOptTable`, `ctbaseline` and `ctpageload` through `llvm::cl`,
+> and `ctcompile/CMakeLists.txt` dropped its `find_package` for
+> Boost.ProgramOptions. The cost the paragraph avoided was accepted: LLVM 23 is
+> required even with `CTCOMPILE_ENABLE_MLIR=OFF`, and only MLIR stays optional.
+> `docs/HANDOFF.md`, "LLVM command lines and lookup tables, 2026-09-20 UTC", has
+> the change. Boost.ProgramOptions came back on 2026-10-09 for a different job:
+> it parses the command lines of the TEST programs that take arguments, here and
+> in ctbrowser (`ctbrowser/test/support/options.hpp`), and the tools still use
+> LLVM's parsing.
+
 ### LLVM is pinned at 22, not the plan's 20
 
 Neither the build box nor anything else here can install 20: apt ships MLIR 18

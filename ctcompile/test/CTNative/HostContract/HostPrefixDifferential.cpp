@@ -5,6 +5,8 @@
 #include <ctbrowser/script/dispatch.hpp>
 #include <ctbrowser/script/vm.hpp>
 
+#include "options.hpp"
+
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -82,8 +84,15 @@ std::vector<double> run(const std::string & source, bool compiled, bool stress) 
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 2) { return 2; }
-    std::ifstream input(argv[1], std::ios::binary);
+    namespace po = boost::program_options;
+    std::string path;
+    po::options_description options{"usage: ctcompile-test-host-prefix-MODE program.js"};
+    options.add_options()("program", po::value(&path)->required(),
+                          "the source bootstrap-host-prefix.py wrote beside this wrapper");
+    po::positional_options_description positional;
+    positional.add("program", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    std::ifstream input(path, std::ios::binary);
     const std::string source{std::istreambuf_iterator<char>(input),
                              std::istreambuf_iterator<char>()};
     if (source.empty()) { return 1; }

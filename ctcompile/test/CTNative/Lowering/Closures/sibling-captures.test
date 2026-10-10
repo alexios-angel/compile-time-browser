@@ -125,6 +125,7 @@ assignedAgain();
 
 import argparse
 from pathlib import Path
+import re
 import sys
 
 from CTNative.Browser.native_dom import link_options
@@ -175,6 +176,7 @@ client.write_text(r"""
 #include "rollback-generated.cpp"
 #pragma clang diagnostic pop
 #include "rollback-table.cpp"
+#include "options.hpp"
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/vm.hpp>
@@ -183,8 +185,14 @@ client.write_text(r"""
 #include <iterator>
 #include <string>
 int main(int argc, char ** argv) {
-    assert(argc == 2);
-    std::ifstream input(argv[1]);
+    namespace po = boost::program_options;
+    std::string path;
+    po::options_description options{"usage: rollback rollback.js"};
+    options.add_options()("source", po::value(&path)->required(), "the script the table came from");
+    po::positional_options_description positional;
+    positional.add("source", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
     auto program = ctbrowser::script::compiler::compile(source);
     assert(program.ok);
@@ -199,15 +207,26 @@ int main(int argc, char ** argv) {
 """)
 include = build.parent / "ctbrowser/include"
 includes, libraries = link_options(argparse.Namespace(build=build, include=include), core_only=True)
+# ponytail: Boost's own CMake layout - Boost_DIR is <libdir>/cmake/Boost-X and the
+# headers are <libdir>/../include - with the static library beside the shared one,
+# as brew's Boost on the devbox has. A Boost without that layout needs lit to be
+# handed Boost::program_options' include directory and location instead.
+boost_libdir = Path(
+    re.search(r"^Boost_DIR:[^=\n]+=(.*)$", (build / "CMakeCache.txt").read_text(), re.M).group(1)
+).parents[1]
 binary = work / "rollback"
 run(
     [
         cxx,
         *FLAGS,
         "-I" + str(build.parent / "ctcompile/include"),
+        "-I" + str(build.parent / "ctbrowser/test/support"),
         *includes,
+        "-isystem",
+        str(boost_libdir.parent / "include"),
         str(client),
         str(build / "lib/Script/libctbrowser-script.a"),
+        str(boost_libdir / "libboost_program_options.a"),
         *libraries,
         "-o",
         str(binary),
