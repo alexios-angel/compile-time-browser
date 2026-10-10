@@ -256,6 +256,9 @@ public:
     /// splitsAString says whether there is one.
     static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
         llvm::ArrayRef<mlir::Value> members);
+    /// Whether the array `members` names is a function's parameter: a
+    /// read-only borrow of the caller's array, lowered as std::span.
+    static bool elementVectorParameter(llvm::ArrayRef<mlir::Value> members);
     /// Whether one owner in `members` is a split result.
     static bool splitsAString(llvm::ArrayRef<mlir::Value> members);
 

@@ -234,6 +234,9 @@ bool isElementArray(mlir::Value v, mlir::Type type);
 std::string elementSpelling(mlir::Type type);
 /// `std::vector<elementSpelling(element)>` for an element array's VecType.
 std::string elementArraySpelling(mlir::Type type);
+/// `std::span<const elementSpelling(element)>`: how a function borrows an
+/// element array its caller owns.
+std::string elementSpanSpelling(mlir::Type type);
 /// Whether `o` lowers to nothing because it only names a vector call: the
 /// method read that is its callee, or the RegExp literal (its factory load,
 /// the factory call) that is `split(/\s+/)`'s separator.

@@ -187,6 +187,12 @@ std::string elementArraySpelling(mlir::Type type) {
     return vector ? "std::vector<" + elementSpelling(vector.getElementType()) + ">" : std::string{};
 }
 
+std::string elementSpanSpelling(mlir::Type type) {
+    auto vector = llvm::dyn_cast_or_null<VecType>(type);
+    return vector ? "std::span<const " + elementSpelling(vector.getElementType()) + ">"
+                  : std::string{};
+}
+
 bool isVectorCallPlumbing(mlir::Operation * o) {
     using VectorCall = TypeInference::VectorCall;
     const auto onlyUse = [](mlir::Value value) -> mlir::OpOperand * {

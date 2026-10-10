@@ -102,6 +102,18 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     }
     auto call = llvm::dyn_cast<CallOp>(o);
     if (!call) { return std::nullopt; }
+    // A method of a vector of Strings or tuples whose uses the element-vector
+    // proof refuses: give the proof's reason rather than "not native yet".
+    if (const auto kind = TypeInference::vectorCallOf(call);
+        (kind == VectorCall::push || kind == VectorCall::join || kind == VectorCall::sort) &&
+        !array(call.getReceiver())) {
+        const carrier receiver = carrierOf(self.typeOf(call.getReceiver()));
+        std::string why;
+        if ((receiver == carrier::stringVector || receiver == carrier::tupleVector) &&
+            TypeInference::elementVectorAliases(call.getReceiver(), &why).empty()) {
+            return self.refuse("an element array: " + why);
+        }
+    }
     switch (TypeInference::vectorCallOf(call)) {
     case VectorCall::push:
         if (!array(call.getReceiver())) { return std::nullopt; }
@@ -887,6 +899,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
+            // An element array is lent to the callee as a std::span.
+            !isElementArray(operands[i], typeOf(operands[i])) &&
             !numeric(operands[i], "argument")) {
             return false;
         }

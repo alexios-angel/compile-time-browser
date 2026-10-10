@@ -178,6 +178,21 @@ void lowering::retype(ctjs::FuncOp fn) {
         // where it is made and borrowed by address through SCF, like the
         // dense arrays below.
         if (stringArrays.contains(v)) {
+            // ponytail: one alias query per value; cache the groups per
+            // function if large functions make this slow.
+            const auto members = TypeInference::elementVectorAliases(v);
+            // A parameter is a read-only borrow of the caller's array, held
+            // by value as a span, so scf carries the span itself.
+            if (TypeInference::elementVectorParameter(members)) {
+                v.setType(ec::OpaqueType::get(context, elementSpanSpelling(typeOf(v))));
+                return;
+            }
+            // A direct call returns its array by value; the fix-up after this
+            // walk moves it into a local, which is the owner.
+            if (v.getDefiningOp<ctjs::CallDirectOp>()) {
+                v.setType(ec::OpaqueType::get(context, elementArraySpelling(typeOf(v))));
+                return;
+            }
             const auto owner = ec::OpaqueType::get(context, elementArraySpelling(typeOf(v)));
             const bool borrowed =
                 llvm::isa<mlir::BlockArgument>(v) ||
@@ -234,6 +249,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         for (mlir::BlockArgument a : block.getArguments()) { retypeValue(a); }
     }
     forEachNestedValue(fn.getBody(), retypeValue);
+    passElementArrays(*this, fn, stringArrays);
     // SCF carries an address to the proved entry-scope owner. Do this
     // before scalar boundary conversion, which would otherwise load/copy it.
     fn.getBody().walk([&](mlir::Operation * op) {
