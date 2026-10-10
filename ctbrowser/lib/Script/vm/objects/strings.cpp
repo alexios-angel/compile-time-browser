@@ -1,5 +1,10 @@
-// string_object's UTF-16 view - its marks, and the two walks that use them.
-// value/base.hpp says what the marks are; script/utf16.hpp is the walk.
+//===- ctbrowser/lib/Script/vm/objects/strings.cpp - UTF-16 index marks ---===//
+//
+// string_object's UTF-16 view of its UTF-8 text: the lazily built marks
+// (checkpoints every utf16_stride code units), and the two walks that use
+// them. value/base.hpp says what the marks are; script/utf16.hpp is the walk.
+//
+//===----------------------------------------------------------------------===//
 
 #include <algorithm>
 
@@ -7,9 +12,11 @@
 
 namespace ctbrowser::script {
 
+/// Returns the string's UTF-16 marks, building them on first use, or null for
+/// a string longer than 0xFFFFFFFF bytes (4 GiB).
 const utf16_mark * string_object::marks() const {
-    // A string past 4 GiB has none, and every walk starts from the front: the
-    // marks are 32-bit, and a string that size is not one a page indexes.
+    // A string past 4 GiB has no marks, and every walk starts from the front:
+    // the marks are 32-bit, and a page does not index a string that size.
     if (marks_ || text.size() > 0xFFFFFFFFu) { return marks_.get(); }
     const std::size_t count = length() / utf16_stride + 1;
     auto made = std::make_unique<utf16_mark[]>(count);
@@ -31,6 +38,8 @@ const utf16_mark * string_object::marks() const {
     return marks_.get();
 }
 
+/// Finds the byte position of UTF-16 code unit `i`, starting from the nearest
+/// mark at or before it.
 utf16::position string_object::locate(std::size_t i) const {
     if (bytewise()) { return {std::min(i, text.size()), false}; }
     if (const utf16_mark * m = marks()) {
@@ -40,6 +49,7 @@ utf16::position string_object::locate(std::size_t i) const {
     return utf16::locate(text, i);
 }
 
+/// Returns the UTF-16 code unit index of byte offset `byte`.
 std::size_t string_object::unit_index(std::size_t byte) const {
     if (bytewise()) { return std::min(byte, text.size()); }
     if (const utf16_mark * m = marks()) {

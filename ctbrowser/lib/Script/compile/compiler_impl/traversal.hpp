@@ -1,17 +1,23 @@
+//===- traversal.hpp - AST walk templates -----------------------*- C++ -*-===//
+//
+// Template members of compiler_impl that walk the AST: template-literal
+// holes, `var` hoisting and Annex B block-function discovery.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include "../compiler_impl.hpp"
 
 namespace ctbrowser::script::detail {
 
-// The `${...}` HOLES of a template literal, as raw text.
-//
-// A template is ONE node carrying its whole source, holes included - the
-// parser does not break the substitutions out into child nodes. So every
-// walk over the tree is blind to them, and the two walks that decide
-// whether a local is BOXED and whether `arguments` is materialised must
-// look inside. Nesting is counted so an object literal or a nested
-// template inside a hole does not end it early.
+/// Calls `fn` with the raw text of each `${...}` hole of a template literal.
+///
+/// A template is one node carrying its whole source, holes included: the
+/// parser does not break the substitutions out into child nodes. So every
+/// walk over the tree is blind to them, and the two walks that decide
+/// whether a local is boxed and whether `arguments` is materialised must
+/// look inside. Braces are counted so an object literal or a nested
+/// template inside a hole does not end it early.
 template <typename Fn> void compiler_impl::for_each_template_hole(std::string_view raw, Fn && fn) {
     for (std::size_t i = 0; i + 1 < raw.size(); ++i) {
         if (raw[i] != '$' || raw[i + 1] != '{') { continue; }
@@ -29,13 +35,13 @@ template <typename Fn> void compiler_impl::for_each_template_hole(std::string_vi
     }
 }
 
-// Every identifier-shaped token in a hole.
-//
-// Lexical rather than parsed, and deliberately OVER-approximate: it counts
-// property names and reserved words as well as variables. Naming something
-// that is not really captured only boxes a local that did not need boxing,
-// which is correct and slightly slower; MISSING one reads undefined at run
-// time with nothing to say so.
+/// Calls `add` with every identifier-shaped token in the template's holes.
+///
+/// Lexical rather than parsed, and deliberately over-approximate: it counts
+/// property names and reserved words as well as variables. Naming something
+/// that is not really captured only boxes a local that did not need boxing,
+/// which is correct and slightly slower; missing one would read undefined at
+/// run time with nothing to say so.
 template <typename Fn> void compiler_impl::each_name_in_template(std::string_view raw, Fn && add) {
     for_each_template_hole(raw, [&](std::string_view hole) {
         for (std::size_t i = 0; i < hole.size();) {
@@ -54,12 +60,13 @@ template <typename Fn> void compiler_impl::each_name_in_template(std::string_vie
     });
 }
 
-// `var` IS FUNCTION-SCOPED: `if (c) { var x = 1; }` declares `x` in the
-// function, not the block, and webpack emits exactly that shape.
-//
-// Hoisting stops at a nested function, because that function's vars are
-// ITS scope's, and does not descend into a declarator's initialiser, which
-// is an expression and cannot contain a declaration statement.
+/// Calls `hoist` with every `var` name declared under `index`, at any block
+/// depth. `var` is function-scoped: `if (c) { var x = 1; }` declares `x` in
+/// the function, not the block, and webpack emits exactly that shape.
+///
+/// Hoisting stops at a nested function, because that function's vars belong
+/// to its own scope, and does not descend into a declarator's initialiser,
+/// which is an expression and cannot contain a declaration statement.
 template <typename Hoist>
 void compiler_impl::hoist_nested_vars(std::int32_t index, const Hoist & hoist) {
     if (index < 0) { return; }
@@ -81,26 +88,28 @@ void compiler_impl::hoist_nested_vars(std::int32_t index, const Hoist & hoist) {
     for (const std::int32_t k : kids(n)) { hoist_nested_vars(k, hoist); }
 }
 
-// ANNEX B.3.3: in sloppy code a function declared in a nested block is
-// ALSO a `var` of the enclosing function (or a global of the script),
-// written when the declaration is evaluated. This walk names every
-// function declaration below a body, at any block depth, stopping at
-// function boundaries as hoist_nested_vars does; the caller decides
-// which of them may take a var binding (none that a parameter or a
-// lexical declaration already names).
-// ...unless a binding of the same name is declared BETWEEN the body and
-// the declaration (B.3.3.1 step ii, "would not produce any Early Errors":
-// `{ let f; { function f() {} } }` gets no var binding), which is what
-// `lexical` carries. Every construct that binds lexically counts, not
-// only a block's `let`: the head of a `for`, a destructuring catch
-// parameter (a SIMPLE one does not - B.3.5 lets a `var` shadow it), a
-// `switch` body, and a block's own function declarations, which are
-// lexical bindings of that block (14.2.1) and shadow anything nested
-// deeper - `{ function f(){} { function f(){} } }` gives the inner one
-// no var binding.
-// `body_level` says this list is a function body's or a script's own top
-// level rather than a Block: its function declarations are vars there,
-// so they are neither reported nor shadowing.
+/// Annex B.3.3: in sloppy code a function declared in a nested block is
+/// also a `var` of the enclosing function (or a global of the script),
+/// written when the declaration is evaluated. This walk calls `each` with
+/// every function declaration below a body, at any block depth, stopping at
+/// function boundaries as hoist_nested_vars does; the caller decides which
+/// of them may take a var binding (none that a parameter or a lexical
+/// declaration already names).
+///
+/// A declaration is skipped when a binding of the same name is declared
+/// between the body and the declaration (B.3.3.1 step ii, "would not produce
+/// any Early Errors": `{ let f; { function f() {} } }` gets no var binding);
+/// `lexical` carries those names. Every construct that binds lexically
+/// counts, not only a block's `let`: the head of a `for`, a destructuring
+/// catch parameter (a simple one does not; B.3.5 lets a `var` shadow it), a
+/// `switch` body, and a block's own function declarations, which are
+/// lexical bindings of that block (14.2.1) and shadow anything nested
+/// deeper: `{ function f(){} { function f(){} } }` gives the inner one no
+/// var binding.
+///
+/// `body_level` says this list is a function body's or a script's own top
+/// level rather than a Block: its function declarations are vars there,
+/// so they are neither reported nor shadowing.
 template <typename Each>
 void compiler_impl::each_block_function(std::int32_t index, const Each & each,
                                         std::vector<std::string> & lexical, bool body_level) {
@@ -120,7 +129,7 @@ void compiler_impl::each_block_function(std::int32_t index, const Each & each,
         return;
     }
     if (n.kind == vp::nk::switch_stmt) {
-        // THE WHOLE SWITCH BODY IS ONE SCOPE (14.12.4 - one declarative
+        // The whole switch body is one scope (14.12.4: one declarative
         // record for every CaseClause), so a `let` in one clause shadows
         // a function declared in another.
         std::vector<std::int32_t> stmts;
@@ -132,8 +141,8 @@ void compiler_impl::each_block_function(std::int32_t index, const Each & each,
         lexical.resize(mark);
         return;
     }
-    // A DESTRUCTURING catch parameter only: B.3.5 relaxes the early error
-    // for `catch (e) { var e; }`, so a simple name lets the extension
+    // Only a destructuring catch parameter shadows: B.3.5 relaxes the early
+    // error for `catch (e) { var e; }`, so a simple name lets the extension
     // through and a pattern does not.
     if (n.kind == vp::nk::catch_clause && n.b >= 0) { pattern_names(n.b, lexical); }
     // The head of a `for` binds for the body below it, lexically when it
@@ -157,6 +166,10 @@ void compiler_impl::each_block_function(std::int32_t index, const Each & each,
     lexical.resize(mark);
 }
 
+/// Runs each_block_function over the statement list of one scope: the
+/// scope's own lexical names (and, below body level, its function
+/// declarations) are added to `lexical` before the nested statements are
+/// visited.
 template <typename Each>
 void compiler_impl::each_block_function_scope(std::span<const std::int32_t> stmts,
                                               const Each & each, std::vector<std::string> & lexical,

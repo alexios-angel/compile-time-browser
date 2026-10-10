@@ -1,11 +1,10 @@
-// ctbrowser.script context - the mark-sweep collector: the edge table, the
-// precise roots, and the sweep.
+//===- ctbrowser/lib/Script/vm/objects/gc.cpp - Mark-sweep collector ------===//
 //
-// One of six files carved out of a 1,396-line vm/objects.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// The script engine's mark-sweep garbage collector: the per-kind edge table
+// (trace_object), the precise roots, and the sweep. These are members of
+// `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cstddef>
 
@@ -13,16 +12,13 @@
 
 namespace ctbrowser::script {
 
-// ===================== gc ================================================
-
-// THE MARK PHASE, AS A LOOP. `push_mark` greys and `trace_object` blackens;
-// neither can call the other, so the C++ stack is O(1) in the shape of the
-// object graph rather than O(its longest chain). See mark_worklist_ in vm.hpp
-// for what that cost was.
-//
-// The drain is here rather than in the header because trace_object is: one
-// copy of the per-kind edge table, and nothing else in the engine may have an
-// opinion about what an object points at.
+/// Marks `o` and everything reachable from it. The mark phase is a loop, not a
+/// recursion: `push_mark` greys and `trace_object` blackens, and neither calls
+/// the other, so C++ stack use does not grow with the longest chain in the
+/// object graph (see mark_worklist_ in vm.hpp).
+///
+/// The drain lives here, next to trace_object, so the engine has exactly one
+/// copy of the per-kind edge table.
 void context::mark_object(heap_object * o) {
     push_mark(o);
     while (!mark_worklist_.empty()) {
@@ -32,10 +28,10 @@ void context::mark_object(heap_object * o) {
     }
 }
 
+/// Pushes every value `o` references onto the mark worklist.
 void context::trace_object(heap_object * o) {
-    // EVERY EDGE GOES THROUGH push_mark, NOT THROUGH mark_object. mark_object
-    // drains, so calling it from here would put the whole recursion back one
-    // level down and the fix would measure as working while doing nothing.
+    // Every edge goes through push_mark, never mark_object: mark_object drains
+    // the worklist, so calling it here would bring back the recursion.
     const auto edge = [this](value v) {
         if (v.is_heap()) { push_mark(v.as_heap()); }
     };
@@ -43,9 +39,8 @@ void context::trace_object(heap_object * o) {
     case heap_kind::array: {
         auto * arr = static_cast<array_object *>(o);
         for (const value & v : arr->items) { edge(v); }
-        // AND THE SPARSE HALF. An element that is only reachable through
-        // `sparse` is reachable, and a collector that walked `items` alone
-        // would free it under a page that can still read it by index.
+        // The sparse elements too: one reachable only through `sparse` can
+        // still be read by index.
         for (const auto & [index, v] : arr->sparse) { edge(v); }
         edge(arr->viewed);
         edge(arr->prototype);
@@ -77,8 +72,8 @@ void context::trace_object(heap_object * o) {
     case heap_kind::cell: edge(static_cast<cell_object *>(o)->slot); break;
     case heap_kind::function: {
         auto * closure = static_cast<closure_object *>(o);
-        // A closure OWNS its upvalue cells. Missing this frees a captured
-        // variable while the closure that captured it is still reachable.
+        // A closure owns its upvalue cells; missing them would free a
+        // captured variable while the closure is still reachable.
         for (const value & up : closure->upvalues) { edge(up); }
         // ...and its own properties, which is where a class keeps its statics
         // and its prototype.
@@ -99,15 +94,12 @@ void context::trace_object(heap_object * o) {
             edge(entry.getter);
             edge(entry.setter);
         }
-        // ...AND WHAT ITS C++ LAMBDA CAPTURED. A capture is invisible to a
-        // precise collector - it lives inside a std::function's erased
-        // storage, which no root walk can reach - so a native that closed over
-        // a value held a pointer the sweep was free to free. See
-        // native_object::retained.
+        // ...and the values its C++ lambda captured. A capture lives inside a
+        // std::function's erased storage, which the collector cannot walk, so
+        // natives list those values in native_object::retained.
         for (const value & v : fn->retained) { edge(v); }
-        // ...AND ITS OWN [[Prototype]]. `TypeError.__proto__` is `Error`, and a
-        // constructor reachable only through another one would otherwise be
-        // swept out from under it.
+        // ...and its own [[Prototype]]: `TypeError.__proto__` is `Error`, and
+        // a constructor reachable only through another must stay alive.
         edge(fn->proto_link);
         break;
     }
@@ -119,10 +111,9 @@ void context::trace_object(heap_object * o) {
         break;
     }
     case heap_kind::coroutine: {
-        // A SUSPENDED FRAME IS A ROOT LIKE ANY OTHER. Its registers are the
-        // only reference to everything the function had in hand, and they are
-        // out of the register stack the collector normally walks - so without
-        // this every local of every waiting function is freed.
+        // A suspended frame is a root like any other. Its saved registers live
+        // outside the register file the collector walks, and they are the
+        // only reference to the waiting function's locals.
         auto * saved = static_cast<coroutine_object *>(o);
         for (const value & v : saved->window) { edge(v); }
         edge(saved->receiver);
@@ -138,41 +129,33 @@ void context::trace_object(heap_object * o) {
         }
         break;
     }
-    default: break; // strings and symbols own no values
+    default: break; // Strings and symbols own no values.
     }
 }
 
+/// Marks `v` and everything reachable from it, if `v` is a heap value.
 void context::mark(value v) {
     if (v.is_heap()) { mark_object(v.as_heap()); }
 }
 
+/// Runs a full mark-sweep collection and returns the number of objects freed.
 std::size_t context::collect() {
-    // COUNTED, because a stress mode that silently stops collecting looks
-    // exactly like one that works: every answer is the same either way. A test
-    // that forces GC asserts this number, not the answer.
+    // Counted because a stress mode that silently stopped collecting would
+    // give the same answers as one that works; tests that force GC assert
+    // this number.
     ++collections_;
     string_bytes_ = 0;
-    // THE ALLOCATION CEILING IS PER COLLECTION, not per lifetime: it exists to
-    // refuse a loop that allocates without ever reaching a safepoint, and a
-    // page that collects on schedule - a game making a few thousand objects
-    // a frame, a WPT file reading a NodeList 250 million times - must not be
-    // refused at its 40,000,000th allocation an hour in.
+    // The allocation ceiling counts allocations since the last collection, not
+    // over the whole lifetime. It exists to stop a loop that allocates without
+    // reaching a safepoint; a page that collects normally must never hit it.
     allocations_ = 0;
 
-    // AND THE FRAME CHAIN CHECKED, under stress only, which is where the master
-    // plan puts it: "have the GC validate the whole frame chain on every
-    // collection - reachable, terminated, and with plausible slot counts".
-    //
-    // A compiled frame's slots live in `registers_` and are addressed as
-    // `registers_.data() + base`, so a base past the end of that vector is a
-    // body about to read and write somewhere else entirely - the kind of
-    // corruption that surfaces a long way from its cause.
-    //
-    // SAID PLAINLY: no test exercises this. Reaching it needs a corrupted
-    // frame stack, which nothing can produce from outside the class, and
-    // writing a test that reaches in to corrupt it would be testing the
-    // corruption rather than the guard. It is here because it costs one
-    // comparison per frame in a mode that already collects the whole heap.
+    // Under GC stress only, check every call frame before marking: a frame whose
+    // register base lies past the end of `registers_` would read and write
+    // outside the register file, and that corruption surfaces far from its cause.
+    // No test reaches this (nothing outside the class can corrupt the frame
+    // stack); it costs one comparison per frame in a mode that already collects
+    // the whole heap.
     if (gc_stress_) {
         for (const call_frame & f : frames_) {
             if (f.proto == nullptr || f.base > registers_.size()) {
@@ -182,18 +165,16 @@ std::size_t context::collect() {
         }
     }
 
-    // Precise roots: everything reachable is reachable from exactly these -
-    // and "these" is ONE inventory, `each_root` in vm.hpp, which the escape
-    // oracle walks too. The whole register file and every frame: a
-    // collection has no dead window.
+    // Precise roots. The single root inventory is `each_root` in vm.hpp, which
+    // the type recorder's escape analysis (context::adjudicate) walks too. It
+    // covers the whole register file and every frame.
     mark_roots(registers_.size());
-    // AND WHATEVER A NATIVE IN PROGRESS ALLOCATED, AND WHAT ITS SCRIPT
-    // CALLEES RETURNED TO IT - see context::native_scope and callout_scope.
-    // Each range runs newest first down to but NOT including its bottom: that
-    // one was live before the range opened and is the collector's to judge
-    // (ctcompile's Cycle.cpp pins that `churnVia` keeps exactly one dead
-    // ring, and a bottom can be a node of the previous one). sweep() moves a
-    // bottom along if it frees it.
+    // Also mark what a running native function has allocated and what its script
+    // callees returned to it (see context::native_scope and callout_scope). Each
+    // pin range runs from its newest object down to, but not including, its
+    // bottom: the bottom was already live before the range opened, so the normal
+    // mark decides whether it survives. sweep() moves a bottom along if it frees
+    // it. ctcompile/test/Analysis/Escape/Cycle.cpp depends on this exclusion.
     for (const pin_range & range : pins_) {
         for (heap_object * o = range.top != nullptr ? range.top : heap_;
              o != nullptr && o != range.bottom; o = o->next) {
@@ -209,10 +190,13 @@ std::size_t context::collect() {
     return sweep();
 }
 
+/// Marks every precise root (see each_root) below `register_limit`.
 void context::mark_roots(std::size_t register_limit) {
     each_root(register_limit, frames_.size(), [this](root_label, value v) { mark(v); });
 }
 
+/// Frees every unmarked object, clears the mark on every survivor, and returns
+/// the number freed.
 std::size_t context::sweep() {
     std::size_t freed = 0;
     std::size_t live_string_bytes = 0;
@@ -224,7 +208,7 @@ std::size_t context::sweep() {
     while (*link != nullptr) {
         heap_object * o = *link;
         if (o->marked) {
-            o->marked = false; // clear for the next cycle
+            o->marked = false; // Clear for the next cycle.
             if (o->kind == heap_kind::string) {
                 live_string_bytes += static_cast<const string_object *>(o)->text.size();
             }
@@ -238,29 +222,30 @@ std::size_t context::sweep() {
             for (std::size_t k = pending; k > 0 && pins_[k - 1].bottom == o; --k) {
                 pins_[k - 1].bottom = o->next;
             }
-            // THE ESCAPE ORACLE HEARS ABOUT EVERY FREE, so a record can never
-            // be read through a stale pointer: the recorder flags it dead and
-            // forgets the address before `delete` reuses it.
+            // The type recorder hears about every free, so it flags the record
+            // dead and forgets the address before `delete` lets it be reused;
+            // no record is ever read through a stale pointer.
             if (recorder_ != nullptr) [[unlikely]] { note_freed(o); }
             delete o;
             ++freed;
             --live_objects_;
         }
     }
-    // The next budget is what survived: the heap's strings peak at about
-    // twice their live size, as its objects do.
+    // Trigger the next collection once new string bytes equal the bytes that
+    // survived, so string memory peaks at about twice its live size (the same
+    // policy as for object counts).
     string_budget_ = std::max(minimum_string_budget, live_string_bytes);
     return freed;
 }
 
-// THE ESCAPE ORACLE'S EXIT. Everything a bounded mark set, cleared again, and
-// nothing freed: the oracle observes and does not collect. collect() itself
-// treats the mark bit as transient (sweep clears it on every survivor), so
-// this leaves the heap exactly as a collection that freed nothing would.
+/// Clears every mark bit without freeing anything. The escape analysis marks a
+/// bounded set to observe reachability and then calls this, leaving the heap
+/// exactly as a collection that freed nothing would.
 void context::unmark_all() {
     for (heap_object * o = heap_; o != nullptr; o = o->next) { o->marked = false; }
 }
 
+/// Frees every object on the heap, marked or not (context teardown).
 void context::sweep_all() {
     while (heap_ != nullptr) {
         heap_object * next = heap_->next;

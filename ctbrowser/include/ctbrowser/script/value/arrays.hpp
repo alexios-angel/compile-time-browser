@@ -1,3 +1,11 @@
+//===- value/arrays.hpp - Arrays and typed arrays ---------------*- C++ -*-===//
+//
+// array_object, the heap object behind both JavaScript arrays and typed
+// arrays, with its sparse storage, holes, per-element attributes and the
+// typed-array element conversions (element_kind, view_get/view_set).
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "objects.hpp"
@@ -7,13 +15,14 @@
 
 namespace ctbrowser::script {
 
-// WHICH TYPED ARRAY THIS IS, or `none` for an ordinary one.
-//
-// A typed array is stored as an ordinary array of values rather than as packed
-// bytes, which costs memory and buys the whole existing array machinery -
-// indexing, length, iteration, the prototype methods. What it must NOT cost is
-// correctness on write: `pixels[i] = 300` in a Uint8ClampedArray is 255, and
-// silently storing 300 would be exactly the kind of wrong answer that hides
+/// Which typed array this is, or `none` for an ordinary array.
+///
+/// A typed array is stored as an ordinary array of values rather than as packed
+/// bytes, which costs memory and buys the whole existing array machinery
+/// (indexing, length, iteration, the prototype methods). What it must not cost
+/// is correctness on write: `pixels[i] = 300` in a Uint8ClampedArray is 255,
+/// and silently storing 300 would be the kind of wrong answer that hides until
+/// an image looks strange.
 // until an image looks strange.
 enum class element_kind : std::uint8_t {
     none,
@@ -26,25 +35,25 @@ enum class element_kind : std::uint8_t {
     u32,
     f32,
     f64,
-    // The three that are not a double: binary16, and the two 64-bit kinds
-    // whose element VALUE is a bigint (Table 71). A BigInt kind's owning
-    // `items` hold bigint_objects and a view of one holds 8 little-endian
-    // bytes; view_get/view_set are the Number kinds' and never see them -
-    // view_get_raw/view_set_raw are theirs.
+    /// The three that are not a double: binary16, and the two 64-bit kinds
+    /// whose element value is a bigint (ECMA-262 table 71). A BigInt kind's
+    /// owning `items` hold bigint_objects and a view of one holds 8
+    /// little-endian bytes; view_get/view_set handle only the Number kinds, and
+    /// view_get_raw/view_set_raw handle these.
     f16,
     big_i64,
     big_u64
 };
 
-// The [[ContentType]] of 23.2.4: a BigInt array and a Number array never
-// exchange elements without a TypeError.
+/// The [[ContentType]] of ECMA-262 23.2.4: a BigInt array and a Number array
+/// never exchange elements without a TypeError.
 [[nodiscard]] constexpr bool is_bigint_kind(element_kind k) noexcept {
     return k == element_kind::big_i64 || k == element_kind::big_u64;
 }
 
-// THE GLOBAL THAT CONSTRUCTS THIS KIND - `Uint8Array` for u8 - and therefore
-// where its own `prototype` object lives, which lookup and [[GetPrototypeOf]]
-// reach through the global rather than through a table of their own.
+/// The global that constructs this kind (`Uint8Array` for u8), and therefore
+/// where its own `prototype` object lives, which lookup and [[GetPrototypeOf]]
+/// reach through the global rather than through a table of their own.
 [[nodiscard]] constexpr const char * typed_array_global_name(element_kind k) noexcept {
     switch (k) {
     case element_kind::i8: return "Int8Array";
@@ -64,10 +73,10 @@ enum class element_kind : std::uint8_t {
     return nullptr;
 }
 
-// IEEE 754 binary16 through the compiler's `_Float16`: the conversion from a
-// double is correctly rounded (ties to even) in one step, which a detour
-// through `float` would not be. The bits rather than the type cross the
-// engine, so a NaN's payload survives a store and canonicalises on the read.
+/// IEEE 754 binary16 through the compiler's `_Float16`: the conversion from a
+/// double is correctly rounded (ties to even) in one step, which a detour
+/// through `float` would not be. The bits rather than the type cross the
+/// engine, so a NaN's payload survives a store and canonicalises on the read.
 [[nodiscard]] inline std::uint16_t double_to_half(double v) noexcept {
     return std::bit_cast<std::uint16_t>(static_cast<_Float16>(v));
 }
@@ -76,12 +85,12 @@ enum class element_kind : std::uint8_t {
     return std::isnan(d) ? canonical_nan() : d;
 }
 
-// A double as a float the way a Float32Array store rounds one (Math.fround):
-// nearest, and past the largest float, Infinity. The plain cast is undefined
-// behaviour for a finite double out of float's range ([conv.double]), and a
-// page's `f32[0] = 1e300` is exactly that. At or beyond FLT_MAX plus half an
-// ulp (0x1.ffffffp127) the nearest float IS infinity; below it the cast is in
-// range. NaN converts as a NaN.
+/// A double as a float the way a Float32Array store rounds one (Math.fround):
+/// nearest, and past the largest float, Infinity. The plain cast is undefined
+/// behaviour for a finite double out of float's range ([conv.double]), and a
+/// page's `f32[0] = 1e300` is exactly that. At or beyond FLT_MAX plus half an
+/// ulp (0x1.ffffffp127) the nearest float is infinity; below it the cast is in
+/// range. NaN converts as a NaN.
 [[nodiscard]] inline float to_float(double d) noexcept {
     if (std::abs(d) >= 0x1.ffffffp127) {
         return d > 0 ? std::numeric_limits<float>::infinity()
@@ -90,14 +99,14 @@ enum class element_kind : std::uint8_t {
     return static_cast<float>(d);
 }
 
-// Coerce a number the way a store into that element type does. A BigInt kind
-// has no number to coerce: its store is ToBigInt's, in bigint.hpp.
+/// Coerces a number the way a store into that element type does. A BigInt
+/// kind has no number to coerce: its store is ToBigInt's, in bigint.hpp.
 [[nodiscard]] inline double coerce_element(element_kind kind, double v) {
     const auto wrap = [](double x, double modulus) {
         if (!std::isfinite(x)) { return 0.0; }
         double r = std::fmod(std::trunc(x), modulus);
         if (r < 0) { r += modulus; }
-        // AN INTEGER KIND HAS NO -0: fmod keeps the sign of -0, and ToInt8(-0)
+        // An integer kind has no -0: fmod keeps the sign of -0, and ToInt8(-0)
         // is 0. The `+ 0.0` is what turns -0 into +0 under round-to-nearest.
         return r + 0.0;
     };
@@ -109,8 +118,8 @@ enum class element_kind : std::uint8_t {
     case element_kind::f32: return static_cast<double>(to_float(v));
     case element_kind::f64: return v;
     case element_kind::u8_clamped:
-        // The ONE that clamps rather than wrapping, which is why it exists:
-        // it is the pixel type, and 300 must be 255 rather than 44.
+        // The only kind that clamps rather than wrapping, which is why it
+        // exists: it is the pixel type, and 300 must be 255 rather than 44.
         if (std::isnan(v)) { return 0; }
         return v <= 0 ? 0 : (v >= 255 ? 255 : std::nearbyint(v));
     case element_kind::u8: return wrap(v, 256.0);
@@ -132,7 +141,7 @@ enum class element_kind : std::uint8_t {
     return v;
 }
 
-// How many bytes one element of a typed array occupies.
+/// How many bytes one element of a typed array occupies.
 [[nodiscard]] constexpr std::size_t bytes_per_element(element_kind k) noexcept {
     switch (k) {
     case element_kind::i8:
@@ -148,65 +157,66 @@ enum class element_kind : std::uint8_t {
     }
 }
 
+/// A JavaScript Array or typed array (owning, or a view over an ArrayBuffer).
 struct array_object final : heap_object {
     std::vector<value> items;
-    // `none` for an ordinary array. A typed one coerces on every write and
-    // cannot grow past its length.
+    /// `none` for an ordinary array. A typed one coerces on every write and
+    /// cannot grow past its length.
     element_kind elements = element_kind::none;
 
-    // --- a VIEW over somebody else's bytes ---------------------------------
+    // --- A view over another array's bytes ------------------------------===//
     //
     // `viewed` is the ArrayBuffer's byte array, one value per byte, and this
-    // object carries its own kind, offset and length over it - Phaser makes
-    // four views of different kinds over one buffer. `items` stays EMPTY for a
-    // view - deliberately, so that any path which reads it directly rather
+    // object carries its own kind, offset and length over it (Phaser makes
+    // four views of different kinds over one buffer). `items` stays empty for a
+    // view, deliberately, so that any path which reads it directly rather
     // than going through length()/view_get is obviously empty rather than
     // subtly stale.
     value viewed;
     std::uint32_t byte_offset = 0;
-    std::uint32_t view_length = 0; // in ELEMENTS, not bytes
+    std::uint32_t view_length = 0; // in elements, not bytes
 
     [[nodiscard]] bool is_view() const noexcept { return viewed.is_array(); }
     [[nodiscard]] std::size_t length() const noexcept {
         return is_view() ? view_length : items.size();
     }
-    // AN EXPLICIT [[Prototype]], for a SUBCLASS INSTANCE - `class A extends
-    // Array` (ArrayCreate with proto from NewTarget, 10.4.2.2) and `class M
-    // extends Uint8Array` (23.2.5.1's AllocateTypedArray) - and for
-    // Object.setPrototypeOf on an array. null means the implicit one: the kind's
-    // own prototype for a typed array, else Array.prototype - which is what
-    // every array made by a literal or by Array itself has, and what lookup
-    // falls back to without walking anything. undefined is an explicit null
-    // [[Prototype]], as object_object::prototype spells it.
+    /// An explicit [[Prototype]], for a subclass instance (`class A extends
+    /// Array`: ArrayCreate with proto from NewTarget, 10.4.2.2; `class M extends
+    /// Uint8Array`: 23.2.5.1's AllocateTypedArray) and for Object.setPrototypeOf
+    /// on an array. null means the implicit one: the kind's own prototype for a
+    /// typed array, else Array.prototype, which is what every array made by a
+    /// literal or by Array itself has, and what lookup falls back to without
+    /// walking anything. undefined is an explicit null [[Prototype]], as
+    /// object_object::prototype spells it.
     value prototype = value::null();
 
-    // --- SPARSE STORAGE, and why an array needs any -------------------------
+    // --- Sparse storage --------------------------------------------------===//
     //
     // `a[4294967295] = "x"` must not ask for 4,294,967,296 `value` slots. An
-    // array materialises at most `dense_limit` NEW slots per operation; past
-    // that the write is RECORDED instead: `sparse` holds the index and the
+    // array materialises at most `dense_limit` new slots per operation; past
+    // that the write is recorded instead: `sparse` holds the index and the
     // value, and `sparse_length` holds what `length` must read back as. The
-    // rule is on the SIZE OF THE JUMP rather than on the index, deliberately -
+    // rule is on the size of the jump rather than on the index, deliberately:
     // a sequential fill grows by one slot at a time and stays dense.
     //
     // The array built-ins (join, forEach, map, indexOf, ...) walk `items` and
     // do not consult `sparse`, so an element out there is reachable by index
     // and by `length` and is invisible to iteration. That is a known deviation.
     //
-    // A SORTED VECTOR RATHER THAN A MAP because a sparse array holds a handful
-    // of entries in practice and `value.hpp` reaches every translation unit
-    // that touches the engine - `<map>` is a header this one should not grow.
+    // A sorted vector rather than a map because a sparse array holds a handful
+    // of entries in practice and value.hpp reaches every translation unit
+    // that touches the engine; `<map>` is a header this one should not grow.
     static constexpr std::size_t dense_limit = 1u << 24; // 16,777,216 values = 128 MiB
-    // 6.1.7: an array index is 0 .. 2^32-2. 2^32-1 is an ORDINARY PROPERTY, so
-    // writing it must not touch `length` - which is what 15.4.5.1-5-2 asserts.
+    /// ECMA-262 6.1.7: an array index is 0 .. 2^32-2. 2^32-1 is an ordinary
+    /// property, so writing it must not touch `length` (test262 15.4.5.1-5-2).
     static constexpr std::uint32_t max_index = 4294967294u;
     static constexpr double max_length = 4294967295.0; // 2^32 - 1
     std::vector<std::pair<std::uint32_t, value>> sparse;
     std::uint32_t sparse_length = 0;
 
-    // The `length` PROPERTY, which is not always `items.size()`. Only the
-    // `length` read and the `length` write use it; everything else keeps
-    // `items.size()` and therefore keeps its bounds.
+    /// The `length` property, which is not always `items.size()`. Only the
+    /// `length` read and the `length` write use it; everything else keeps
+    /// `items.size()` and therefore keeps its bounds.
     [[nodiscard]] std::size_t js_length() const noexcept {
         return is_view() ? view_length : std::max<std::size_t>(items.size(), sparse_length);
     }
@@ -225,20 +235,20 @@ struct array_object final : heap_object {
             return;
         }
         sparse.insert(it, {i, v});
-        // An INDEX raises the length; 2^32-1 and beyond are not indices.
+        // An index raises the length; 2^32-1 and beyond are not indices.
         if (i <= max_index && static_cast<std::size_t>(i) + 1 > js_length()) {
             sparse_length = i + 1;
         }
     }
-    // `a.length = n`, WITHOUT MATERIALISING WHAT IT DOES NOT HAVE TO. False
-    // means `n` is not a valid array length, the specification's RangeError
-    // (10.4.2.4).
+    /// `a.length = n`, without materialising what it does not have to. False
+    /// means `n` is not a valid array length, the specification's RangeError
+    /// (10.4.2.4).
     [[nodiscard]] bool set_js_length(double n) {
         if (!(n >= 0) || n > max_length || n != std::trunc(n)) { return false; }
         const auto wanted = static_cast<std::uint64_t>(n);
-        // Shrinking DISCARDS, in both halves - "every property whose name is an
+        // Shrinking discards, in both halves: "every property whose name is an
         // array index whose value is not smaller than the new length is
-        // automatically deleted" (S15.4.5.2_A3).
+        // automatically deleted" (test262 S15.4.5.2_A3).
         if (wanted < items.size()) { items.resize(static_cast<std::size_t>(wanted)); }
         std::erase_if(sparse, [wanted](const std::pair<std::uint32_t, value> & e) {
             return e.first >= wanted;
@@ -249,8 +259,8 @@ struct array_object final : heap_object {
         if (holes_end > wanted) { holes_end = static_cast<std::uint32_t>(wanted); }
         if (holes_begin >= holes_end) { holes_begin = holes_end = 0; }
         if (wanted <= dense_limit) {
-            // Growing pads with undefined, exactly as before - an ArrayCreate
-            // whose caller fills every index. See set_js_length_with_holes.
+            // Growing pads with undefined, for an ArrayCreate whose caller fills
+            // every index. set_js_length_with_holes makes holes instead.
             items.resize(static_cast<std::size_t>(wanted), value::undefined());
             sparse_length = 0;
         } else {
@@ -258,120 +268,114 @@ struct array_object final : heap_object {
         }
         return true;
     }
-    // THE LENGTH A PAGE SET - `new Array(n)`, `a.length = n` (10.4.2.4) - where
-    // growing makes no elements: every new index is a hole, which [[Get]]
-    // reads through to the prototypes and HasProperty answers false for. A
-    // length past dense_limit already leaves its indices absent.
+    /// The length a page set (`new Array(n)`, `a.length = n`, 10.4.2.4), where
+    /// growing makes no elements: every new index is a hole, which [[Get]]
+    /// reads through to the prototypes and HasProperty answers false for. A
+    /// length past dense_limit already leaves its indices absent.
     [[nodiscard]] bool set_js_length_with_holes(double n) {
         const std::size_t before = items.size();
         if (!set_js_length(n)) { return false; }
         add_holes(before, items.size());
         return true;
     }
-    // What `RegExp.prototype.exec` hangs off its result. The spec puts these on
-    // the array as ordinary properties; an array here has no property table, so
-    // they live in named slots and property lookup checks them first.
+    /// What `RegExp.prototype.exec` hangs off its result (`index`, `input`,
+    /// `groups`). The spec puts these on the array as ordinary properties; here
+    /// they live in dedicated slots, which property lookup checks first.
     bool is_match = false;
     value index;
     value input;
     value groups;
 
-    // --- INTEGRITY, as much of it as a std::vector can carry ---------------
+    // --- Integrity --------------------------------------------------------===//
     //
-    // An array has no property table, so its elements cannot each hold three
-    // attribute bits the way an object's do. What Object.freeze and
-    // Object.seal actually need of one is coarser than that and fits in two
-    // bools: nothing may be ADDED (extensible), nothing may be OVERWRITTEN
-    // (elements_writable) and nothing may be REMOVED or reshaped
-    // (elements_configurable) - which is exactly the difference between seal
-    // and freeze. Element-by-element attributes are not modelled, so
-    // `Object.defineProperty(a, 0, {writable: false})` is ignored.
+    // What Object.freeze and Object.seal need of an array fits in these bools:
+    // nothing may be added (extensible), nothing may be overwritten
+    // (elements_writable) and nothing may be removed or reshaped
+    // (elements_configurable), which is exactly the difference between seal
+    // and freeze. Per-element attributes are kept separately in element_attrs
+    // (below); these bools are masks over them.
     bool extensible = true;
     bool elements_writable = true;
     bool elements_configurable = true;
-    // NAMED OWN PROPERTIES - `a.foo = 1`, `a.getClass = Object.prototype.toString`
-    // - which an array here had nowhere to put until 2026-09-12: the write was
-    // dropped and the read went to the prototype. An ordinary property table,
-    // owned by the array rather than by the heap (it is not a heap object of
-    // its own; the collector traces it through the array), and made on the
-    // first write so the common array pays a null pointer. `length` and the
-    // indices stay where they are and never land here.
+    /// Named own properties (`a.foo = 1`): an ordinary property table owned by
+    /// the array (traced through it, not a heap object of its own), created on
+    /// first write so most arrays pay only a null pointer. `length` and indices
+    /// never go here.
     std::unique_ptr<object_object> named;
     [[nodiscard]] object_object & named_table();
 
-    // --- PER-ELEMENT ATTRIBUTES, HOLES AND ACCESSOR ELEMENTS ---------------
+    // --- Per-element attributes, holes and accessor elements -------------===//
     //
-    // `items` stays a dense std::vector of VALUES; what an element cannot
-    // carry there - three attribute bits, "this index is a hole", "this index
-    // is an accessor" - lives here, indexed and sorted like `sparse`, and is
-    // EMPTY for every array a page builds by literal, push or assignment.
-    // That emptiness is the fast path: lookup_index and store_index test it
-    // once and touch nothing else. An entry's low three bits are the attr_*
-    // bits (absent entry = attr_default, still subject to the integrity
-    // bools above); `elem_hole` marks an index whose `items` slot is a
-    // placeholder and not a property (`delete a[i]`, 10.4.2.1); `elem_accessor`
-    // marks one whose getter/setter live in `named` under the index's
-    // canonical string. `length` has its own writable bit, separate from the
-    // elements': `Object.defineProperty(a, "length", {writable: false})` stops
-    // push and leaves `a[0] = x` alone.
+    // `items` stays a dense std::vector of values; what an element cannot
+    // carry there (three attribute bits, "this index is a hole", "this index
+    // is an accessor") lives in element_attrs, indexed and sorted like
+    // `sparse`, and empty for every array a page builds by literal, push or
+    // assignment. That emptiness is the fast path: lookup_index and
+    // store_index test it once and touch nothing else. An entry's low three
+    // bits are the attr_* bits (absent entry = attr_default, still subject to
+    // the integrity bools above); `elem_hole` marks an index whose `items` slot
+    // is a placeholder and not a property (`delete a[i]`, 10.4.2.1);
+    // `elem_accessor` marks one whose getter/setter live in `named` under the
+    // index's canonical string. `length` has its own writable bit, separate
+    // from the elements': `Object.defineProperty(a, "length", {writable:
+    // false})` stops push and leaves `a[0] = x` alone.
     static constexpr std::uint8_t elem_hole = 8;
     static constexpr std::uint8_t elem_accessor = 16;
     std::vector<std::pair<std::uint32_t, std::uint8_t>> element_attrs;
     bool length_writable = true;
     [[nodiscard]] std::uint8_t * find_element_attrs(std::uint32_t i);
     void set_element_attrs(std::uint32_t i, std::uint8_t a);
-    // The attributes an element at `i` has: the entry's, or the default, each
-    // masked by the integrity bools freeze and seal set.
+    /// The attributes an element at `i` has: the entry's, or the default, each
+    /// masked by the integrity bools freeze and seal set.
     [[nodiscard]] std::uint8_t element_attrs_at(std::uint32_t i);
     [[nodiscard]] bool is_hole(std::uint32_t i);
 
-    // --- A RUN OF HOLES, which a length made rather than a `delete` --------
+    // --- A run of holes, which a length made rather than a `delete` -----===//
     //
     // `new Array(n)`, a `length` grown and a write past the end all leave
-    // indices that are not properties (10.4.2) - forEach skips them and
+    // indices that are not properties (10.4.2): forEach skips them and
     // [[Get]] reads through to Array.prototype. One element_attrs entry per
-    // hole would say so, and then filling `new Array(100000)` front to back -
-    // the ordinary thing to do with one - would erase from the front of a
-    // sorted vector a hundred thousand times. So ONE contiguous run is two
+    // hole would say so, but then filling `new Array(100000)` front to back
+    // (the ordinary thing to do with one) would erase from the front of a
+    // sorted vector a hundred thousand times. So one contiguous run is two
     // numbers: `items` [holes_begin, holes_end) are holes, element_attrs has
     // no entry inside it, and a write at either end just moves that end. A
     // write inside it (fill_hole, and set_element_attrs through it) splits
     // it: what lies below becomes entries, and the run keeps what is above.
     //
-    // Only what those three make is holey here: an ArrayCreate whose caller
-    // fills every index (set_js_length) pads with undefined as it did. A
-    // fast path that tests element_attrs alone therefore sees a hole as an
-    // undefined element, which is what it saw before - the element walks in
-    // builtins/internal.hpp (has_element, dense_array_this) ask for both.
+    // Only those three make holes: set_js_length (an ArrayCreate whose caller
+    // fills every index) pads with undefined. So a fast path that checks only
+    // element_attrs sees a hole as an undefined element; has_element and
+    // dense_array_this in builtins/internal.hpp check both.
     std::uint32_t holes_begin = 0;
     std::uint32_t holes_end = 0;
     [[nodiscard]] bool has_hole_run() const noexcept { return holes_begin < holes_end; }
     [[nodiscard]] bool in_hole_run(std::size_t i) const noexcept {
         return i >= holes_begin && i < holes_end;
     }
-    // `items` [from, to), slots just added, become holes.
+    /// `items` [from, to), slots just added, become holes.
     void add_holes(std::size_t from, std::size_t to);
-    // The run as element_attrs entries, and no run.
+    /// Converts the run to element_attrs entries, leaving no run.
     void settle_hole_run();
-    // A write fills the hole at `i`, which is in the run.
+    /// A write fills the hole at `i`, which is in the run.
     void fill_hole(std::uint32_t i);
 
-    // Both out of line, after object_object: the unique_ptr needs the
-    // complete type to destroy, and an inline constructor instantiates that.
+    /// Both out of line, after object_object: the unique_ptr needs the
+    /// complete type to destroy, and an inline constructor instantiates that.
     array_object();
     ~array_object();
 };
 
-// --- reading and writing one element of a view -----------------------------
+// --- Reading and writing one element of a view ----------------------===//
 //
-// The bytes live in the ArrayBuffer's array, one `value` per byte, LITTLE
-// ENDIAN - which is what every platform this engine targets uses and what a
+// The bytes live in the ArrayBuffer's array, one `value` per byte, little
+// endian, which is what every platform this engine targets uses and what a
 // page assembling a colour out of four bytes assumes. Assembling through a
 // uint64 rather than memcpy keeps it independent of the host's own order, so
 // the goldens stay byte-identical wherever they are produced. A DataView picks
 // its byte order per call, so the store's own reads take `little`; a byte past
 // the store reads 0 and is not written.
-// ToUint8: modulo 2^8, NaN and the infinities are 0 (a bare cast is UB).
+/// ToUint8: modulo 2^8, NaN and the infinities are 0 (a bare cast is UB).
 [[nodiscard]] inline std::uint8_t to_uint8(double d) noexcept {
     return std::isfinite(d)
                ? static_cast<std::uint8_t>(static_cast<std::int64_t>(std::fmod(d, 256.0)))
@@ -397,12 +401,12 @@ inline void store_set_raw(array_object & bytes, std::size_t at, std::size_t widt
     }
 }
 
-// A Number kind's element from its bytes, and its bytes from a number.
+/// A Number kind's element from its bytes, and its bytes from a number.
 [[nodiscard]] inline double element_from_raw(element_kind kind, std::uint64_t raw) noexcept {
     switch (kind) {
-    // THE NaN BOUNDARY - see canonical_nan_bits. A payload read out of a typed
+    // The NaN boundary; see canonical_nan_bits. A payload read out of a typed
     // array must not reach a register, because arithmetic quiets bit 51 and a
-    // payload with bit 50 set then IS a boxed tag.
+    // payload with bit 50 set then is a boxed tag.
     case element_kind::f32: {
         const double d = std::bit_cast<float>(static_cast<std::uint32_t>(raw));
         return std::isnan(d) ? canonical_nan() : d;
@@ -424,16 +428,16 @@ inline void store_set_raw(array_object & bytes, std::size_t at, std::size_t widt
     case element_kind::f32: return std::bit_cast<std::uint32_t>(to_float(v));
     case element_kind::f64: return std::bit_cast<std::uint64_t>(v);
     default:
-        // THE SAME COERCION AN OWNING TYPED ARRAY DOES - wrap for the integer
-        // kinds, clamp for u8_clamped - so a view and a plain typed array agree
+        // The same coercion an owning typed array does (wrap for the integer
+        // kinds, clamp for u8_clamped), so a view and a plain typed array agree
         // about what `a[i] = 300` means.
         return static_cast<std::uint64_t>(static_cast<std::int64_t>(coerce_element(kind, v)));
     }
 }
 
-// The element's bytes as one little-endian word, and the write of one: what
-// a BigInt kind reads and stores (the boxing to a bigint is the caller's,
-// through bigint.hpp), and what every Number kind goes through below.
+/// The element's bytes as one little-endian word, and the write of one: what
+/// a BigInt kind reads and stores (the boxing to a bigint is the caller's,
+/// through bigint.hpp), and what every Number kind goes through below.
 [[nodiscard]] inline std::uint64_t view_get_raw(const array_object & view, std::size_t i) noexcept {
     const std::size_t width = bytes_per_element(view.elements);
     return store_raw(*static_cast<const array_object *>(view.viewed.as_heap()),
@@ -452,14 +456,14 @@ inline void view_set(array_object & view, std::size_t i, double v) noexcept {
     view_set_raw(view, i, element_to_raw(view.elements, v));
 }
 
-// ONE TYPED ELEMENT AS A `value`, either storage shape, any kind: the number,
-// or for a BigInt kind the bigint (fresh off a view). Undefined past the
-// length. The write is TypedArraySetElement (10.4.5.16): ToNumber - ToBigInt
-// for a BigInt kind - of `v` FIRST, because it can run script, then the
-// store against the length as it is after that, dropped past it. False with
-// the throw in flight. Defined in builtins/collections/typed_arrays/, which
-// owns the storage model; the VM's index paths call them for the kinds
-// view_get/view_set cannot answer.
+/// Reads or writes one typed element as a `value`, either storage shape, any
+/// kind: the number, or for a BigInt kind the bigint (fresh off a view).
+/// Undefined past the length. The write is TypedArraySetElement (10.4.5.16):
+/// ToNumber (ToBigInt for a BigInt kind) of `v` first, because it can run
+/// script, then the store against the length as it is after that, dropped
+/// past it. Returns false with the exception pending. Defined in
+/// builtins/collections/typed_arrays/, which owns the storage model; the VM's
+/// index paths call them for the kinds view_get/view_set cannot answer.
 class context;
 [[nodiscard]] value typed_element_get(context & cx, const array_object & arr, std::size_t i);
 [[nodiscard]] bool typed_element_set(context & cx, array_object & arr, std::size_t i, value v);
@@ -530,7 +534,7 @@ inline void array_object::fill_hole(std::uint32_t i) {
         --holes_end;
     } else {
         // From the middle: what lies below stays holes as entries, and the
-        // run keeps what lies above - so a fill that started anywhere is
+        // run keeps what lies above, so a fill that started anywhere is
         // still one step per element from there on.
         const std::uint32_t end = holes_end;
         holes_end = i;

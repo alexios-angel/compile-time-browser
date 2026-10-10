@@ -1,37 +1,34 @@
-// ctbrowser.script builtins - the error types.
+//===- errors.cpp - Error and its subclasses --------------------*- C++ -*-===//
 //
-// One of five files carved out of a 1,429-line builtins/objects.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp; what only this
-// directory shares is in internal.hpp beside this.
+// The Error constructor, its six NativeError subclasses, Error.prototype
+// (toString and the `stack` accessor) and Error.isError. Bare section numbers
+// refer to ECMA-262. Shared helpers and declarations are in ../internal.hpp;
+// what only this directory shares is in internal.hpp beside this file.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
 namespace {
-// [[ErrorData]], and the trace with it: a private key, invisible to every
-// property walk (value.hpp, private_key_prefix).
+/// [[ErrorData]], holding the stack trace: a private key, invisible to every
+/// property walk (value.hpp, private_key_prefix).
 constexpr std::string_view error_stack_slot = CTBROWSER_PRIVATE_KEY("ErrorData");
 } // namespace
 
-// `Error` and the standard subclasses. 239 `throw new` in p5.js, and every one
-// of them used to construct undefined - which raised "attempted to construct a
-// non-function" and killed the run outright, uncatchably, from inside a `try`
-// that was there to handle exactly that.
-//
-// An error is an ordinary object with `name`, `message` and `stack`, and each
-// constructor's `prototype` chains to Error's so `e instanceof Error` holds for
-// a TypeError and for a page's own `class MyError extends Error`.
+/// Installs `Error` and the standard subclasses. An error is an ordinary object
+/// with `name`, `message` and `stack`, and each constructor's `prototype` chains
+/// to Error's so `e instanceof Error` holds for a TypeError and for a page's own
+/// `class MyError extends Error`.
 void install_errors(context & cx) {
     using detail::method;
     using detail::new_table;
 
     object_object * error_proto = new_table(cx);
-    // 20.5.3: `message` is "" and `name` is "Error" on the PROTOTYPE, both
-    // { writable: true, enumerable: false, configurable: true }. Enumerable is
-    // what put them in `Object.keys(e)` and in `JSON.stringify(e)`.
+    // 20.5.3: `message` is "" and `name` is "Error" on the prototype, both
+    // { writable: true, enumerable: false, configurable: true }, so neither
+    // shows up in `Object.keys(e)` or `JSON.stringify(e)`.
     error_proto->define("name", cx.string("Error"), attr_builtin);
     error_proto->define("message", cx.string(""), attr_builtin);
     // 20.5.3.4: an object receiver or a TypeError; an undefined `name` is
@@ -52,14 +49,15 @@ void install_errors(context & cx) {
         if (name.empty()) { return c.string(message); }
         return c.string(message.empty() ? name : name + ": " + message);
     });
-    // `Error.prototype.stack` IS AN ACCESSOR (the error-stacks proposal, which
+    // `Error.prototype.stack` is an accessor (the error-stacks proposal, which
     // test262 carries as `error-stack-accessor`): an instance has no own
     // `stack`, the getter answers the trace the constructor recorded in a
     // private slot - the [[ErrorData]] marker here - or undefined for anything
     // without one, and the setter writes an own data property
-    // (SetterThatIgnoresPrototypeProperties). Errors the ENGINE raises still
+    // (SetterThatIgnoresPrototypeProperties). Errors the engine raises still
     // carry an own `stack` from context::make_error, which shadows this.
-    // Each a built-in function with its own `length` (0 and 1).
+    // The getter and setter are built-in functions with their own `length` (0
+    // and 1).
     auto * get_stack = detail::method_native(cx, "get stack", [](context & c, std::span<value>) {
         const value self = c.current_this();
         if (!self.is_object_like()) {
@@ -78,7 +76,7 @@ void install_errors(context & cx) {
                 c.throw_error("TypeError", "Error.prototype.stack setter called on non-object");
                 return value::undefined();
             }
-            // SetterThatIgnoresPrototypeProperties step 2: the HOME
+            // SetterThatIgnoresPrototypeProperties step 2: the home
             // object itself refuses - its own `stack` is this accessor,
             // and writing through it would call this setter again.
             if (self.as_heap() == error_proto) {
@@ -112,18 +110,15 @@ void install_errors(context & cx) {
     // One constructor shape, seven names. `parent` is Error's prototype for the
     // subclasses, so the chain a page walks is the one it expects.
     //
-    // AND `cx.register_error_prototype` IS THE HALF THAT WAS MISSING. The
-    // constructors and the prototypes were both here already; what was not was
-    // any way for `context::make_error` to find the RIGHT one, so every error
-    // the engine itself raised was put on Error.prototype and answered `Error`
-    // to `thrown.constructor`. test262 measured 336 tests failing on that shape
-    // alone (docs/test262.md, 2026-09-02).
+    // `cx.register_error_prototype` lets context::make_error give an
+    // engine-raised error the right prototype (TypeError.prototype, not
+    // Error.prototype), so `thrown.constructor` names the right class.
     native_object * error_ctor = nullptr;
     const auto define = [&](const char * name, object_object * parent) {
         object_object * proto = parent == nullptr ? error_proto : new_table(cx);
         if (parent != nullptr) {
             proto->prototype = value::object(parent);
-            // 20.5.6.3: each NativeError.prototype carries its OWN `name` and
+            // 20.5.6.3: each NativeError.prototype carries its own `name` and
             // its own `message`, rather than inheriting Error's.
             proto->define("name", cx.string(name), attr_builtin);
             proto->define("message", cx.string(""), attr_builtin);
@@ -136,7 +131,7 @@ void install_errors(context & cx) {
             auto * made = static_cast<object_object *>(self.as_heap());
             if (!made->prototype.is_object()) { made->prototype = value::object(proto); }
             // 20.5.1.1 step 3: an instance's `message` is { true, false, true },
-            // ToString'd (a Symbol refuses), and an ABSENT argument installs no
+            // ToString'd (a Symbol refuses), and an absent argument installs no
             // own property at all - which is why
             // `new TypeError().hasOwnProperty('message')` is false.
             // ToString is ToPrimitive first: an object whose @@toPrimitive
@@ -150,7 +145,7 @@ void install_errors(context & cx) {
             }
             // Step 4, InstallErrorCause: `cause` comes off the options object
             // when HasProperty says it is there, as { true, false, true },
-            // and AFTER `message` (20.5.8.1's order).
+            // and after `message` (20.5.8.1's order).
             if (const value options = arg_at(a, 1); options.is_object_like()) {
                 const bool has_cause = c.has_property(options, c.string("cause"));
                 if (c.throw_pending()) { return value::undefined(); }
@@ -160,21 +155,11 @@ void install_errors(context & cx) {
                     made->define("cause", cause, attr_builtin);
                 }
             }
-            // `stack` CARRIES THE FRAMES, not just the message.
-            //
-            // It said "TypeError: whatever" and stopped there, which reads as a
-            // stack to code that only prints it and is useless to code that
-            // wants to know WHERE - and a library that reports the site of an
-            // error is the normal reason to look at one. p5's Friendly Error
-            // System is exactly that.
-            //
-            // No frame is skipped: a native pushes none of its own, so the top
-            // of the stack is already the JS function that wrote `new Error`,
-            // which is the line a reader wants named first.
-            //
-            // IN THE PRIVATE SLOT, not as an own property: Error.prototype's
-            // `stack` accessor answers it, and the slot is the [[ErrorData]]
-            // Error.isError and the accessor test for.
+            // `stack` is "Name: message" followed by the call frames. No frame
+            // is skipped: a native pushes none, so the top frame is the JS
+            // function that wrote `new Error`. It is stored in the private
+            // [[ErrorData]] slot, which Error.prototype's `stack` accessor and
+            // Error.isError read.
             made->define(error_stack_slot,
                          c.string(c.to_string(c.lookup_property(self, "name")) +
                                   (a.empty() ? std::string{} : ": " + text) + c.current_stack()),

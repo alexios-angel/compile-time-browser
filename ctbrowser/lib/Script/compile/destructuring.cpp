@@ -1,10 +1,10 @@
-// compiler_impl - destructuring.
+//===- destructuring.cpp - Destructuring patterns ---------------*- C++ -*-===//
 //
-// Array and object patterns, in bindings and in assignments.
-// `declaring` is what distinguishes `const {a} = o` from `({a} = o)`.
+// compiler_impl members for array and object patterns, in bindings and in
+// assignments. `declaring` is what distinguishes `const {a} = o` from
+// `({a} = o)`. The class is declared in compiler_impl.hpp.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -28,23 +28,19 @@ void compiler_impl::pattern_names(std::int32_t pat, std::vector<std::string> & o
 
 void compiler_impl::declare_pattern_names(std::int32_t pat, bool block_scoped,
                                           immutability readonly, bool lexical) {
-    // A DECLARATION AT A SCRIPT'S TOP LEVEL IS A GLOBAL - unless it is
-    // BLOCK-scoped, which a catch parameter always is and a `let`/`const`
-    // inside a block of a script is too. Withholding the local there bound
-    // `catch ({ f })` and `{ let { a } = o; }` to globals that outlived the
-    // scope they were written in: annexB's global-code `skip-early-err-try`
-    // reads exactly that, a catch parameter still resolving after the try.
+    // A declaration at a script's top level is a global, unless it is
+    // block-scoped (a catch parameter, or `let`/`const` inside a block):
+    // those get a local so `catch ({ f })` does not leak `f` as a global
+    // after the try (test262 annexB/language/global-code/skip-early-err-try).
     if (frames_.size() <= 1 && !block_scoped) { return; }
     std::vector<std::string> names;
     pattern_names(pat, names);
     for (const std::string & name : names) {
-        // ONLY the current scope decides this. was_predeclared is
-        // function-scoped - it is how `var` and function declarations
-        // hoist - and asking it here made a `const {x}` inside a block
-        // reuse a slot hoisted at the top of the function, writing
-        // through to it instead of shadowing it. A hoisted name IS a
-        // local of the function's top scope, so when we are in that
-        // scope this finds it anyway.
+        // Only the current scope is checked. was_predeclared is
+        // function-scoped (it tracks hoisted `var`s and functions), so using
+        // it would make `const {x}` in a block reuse the function's hoisted
+        // `x` instead of shadowing it. Hoisted names are locals of the top
+        // scope, so this still finds them there.
         if (find_local_in_current_scope(name) != nullptr) { continue; }
         const std::uint16_t reg = declare_local(name);
         fn().locals.back().readonly = readonly;
@@ -58,7 +54,7 @@ void compiler_impl::compile_pattern_binding(std::int32_t pat, std::uint16_t src,
                                             bool block_scoped, immutability readonly) {
     if (declaring) { declare_pattern_names(pat, block_scoped, readonly); }
     // A declaration's names at a script's top level are globals written
-    // through emit_write - a declaration's own write, see declaring_.
+    // through emit_write as the declaration's own write; see declaring_.
     const bool outer_declaring = declaring_;
     declaring_ = declaring_ || declaring;
     compile_pattern(pat, src);
@@ -73,15 +69,15 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
 
     case vp::nk::member:
     case vp::nk::index: {
-        // `[o.a, o.b] = pair` - a target that is not a name at all.
+        // `[o.a, o.b] = pair`: a target that is not a name at all.
         const not_declaring expression{*this};
         const reference ref = prepare_reference(n);
         emit_store(ref, src);
         return;
     }
 
-    // `for (f() in o)` in sloppy code - the one place a call reaches here
-    // (early_errors' web_compat_call): the call, then the ReferenceError.
+    // `for (f() in o)` in sloppy code is the one place a call reaches here
+    // (early_errors' web_compat_call): the call runs, then the ReferenceError.
     case vp::nk::call: {
         const not_declaring expression{*this};
         const std::uint32_t mark = reg_mark();
@@ -90,23 +86,23 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
         return;
     }
 
-    // AN ARRAY OR OBJECT LITERAL IS A PATTERN TOO. The parser met the left
-    // side of `[a, b] = pair` in expression position and read a LITERAL,
-    // which is the only thing it could have been at the time; re-reading it
-    // here is what the grammar itself does. The literal kinds spell the same
-    // shapes with different node kinds - `spread` for `rest_element`,
-    // `assign` for `assign_pattern`, a `prop` whose computed-key bit is
-    // `d & 1` rather than `d & 2` and whose shorthand `{a}` has no target node
-    // (c == 2) - and the early-error pass has already refused every target
-    // that is not one.
+    // An array or object literal is a pattern too. The parser met the left
+    // side of `[a, b] = pair` in expression position and read a literal,
+    // the only thing it could have been at the time; reinterpreting it here
+    // is what the grammar itself does (the assignment-pattern cover grammar).
+    // The literal kinds spell the same shapes with different node kinds:
+    // `spread` for `rest_element`, `assign` for `assign_pattern`, and a
+    // `prop` whose computed-key bit is `d & 1` rather than `d & 2` and whose
+    // shorthand `{a}` has no target node (c == 2). The early-error pass has
+    // already refused every target that is not a valid pattern.
     case vp::nk::assign:
     case vp::nk::assign_pattern: {
-        // The default applies when the value is UNDEFINED, so it is written
+        // The default applies when the value is undefined, so it is written
         // into the source register before the target ever sees it.
         const std::size_t skip = proto().emit(instruction{op::jump_if_defined, src});
         const std::uint32_t mark = reg_mark();
         {
-            // THE DEFAULT IS AN EXPRESSION, not the declaration's write:
+            // The default is an expression, not the declaration's write:
             // `const {a = (b = 1)} = o` in strict code still refuses `b`.
             const not_declaring expression{*this};
             compile_named_expr(n.b, src, at(n.a).kind == vp::nk::ident ? at(n.a).text : "");
@@ -141,7 +137,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
             release_to(mark);
         }
         // The keys already taken, so an object rest knows what to leave out:
-        // the names, and the COMPUTED keys, which stay in registers of their
+        // the names, and the computed keys, which stay in registers of their
         // own for the rest to delete (14.3.3.3: excludedNames holds every
         // property key evaluated so far, `{[a]: b, ...rest}` included).
         std::vector<std::string> taken;
@@ -151,7 +147,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
             const bool computed = (e.d & computed_bit) != 0 && e.a >= 0 && e.kind != rest_kind;
             std::uint16_t key = 0;
             if (computed) {
-                key = alloc_reg(); // outlives this entry, for the rest
+                key = alloc_reg(); // Outlives this entry, for the rest.
                 taken_keys.push_back(key);
                 const not_declaring expression{*this};
                 compile_expr(e.a, key);
@@ -169,7 +165,7 @@ void compiler_impl::compile_pattern(std::int32_t pat, std::uint16_t src) {
                     instruction{op::get_prop, item, src, name_operand(std::string{e.text})});
                 taken.emplace_back(e.text);
                 if (literal && e.c == 2 && e.b < 0) {
-                    emit_write(e.text, item); // shorthand `{a}` binds its own name
+                    emit_write(e.text, item); // Shorthand `{a}` binds its own name.
                 } else {
                     compile_pattern(e.b, item);
                 }
@@ -204,18 +200,17 @@ void compiler_impl::emit_iterator_native(std::string_view name, std::uint16_t ds
     release_to(mark);
 }
 
-// 8.6.2 IteratorBindingInitialization and 13.15.5.5, which are the same
-// walk: GetIterator once, IteratorStep per element (a hole steps and drops),
-// every remaining step into a rest array, and IteratorClose at the end when
-// the iterator is not done. A `next()` that threw or answered a non-object
-// marks the record done, so no close follows it.
-//
-// NOT CLOSED ON A THROW out of an element's default or a nested pattern
-// (7.4.10's throw completion path), deliberately: that needs a handler round
-// the pattern, and a protected region is what ctcompile's importer refuses a
-// function for - `const [a, b] = pair` is in every modern bundle, so the
-// handler cost every such function its native body. The normal-path close
-// is the observable half.
+/// ECMA-262 8.6.2 IteratorBindingInitialization and 13.15.5.5, which are the
+/// same walk: GetIterator once, IteratorStep per element (a hole steps and drops),
+/// every remaining step into a rest array, and IteratorClose at the end when
+/// the iterator is not done. A `next()` that threw or answered a non-object
+/// marks the record done, so no close follows it.
+///
+/// Deliberately not closed when an element's default or a nested pattern
+/// throws (7.4.10, throw completion). Closing would need an exception handler
+/// around the pattern, and the ctcompile importer refuses to compile any
+/// function containing a handler natively; `const [a, b] = pair` is too
+/// common to give that up. Only the normal-path close is done.
 void compiler_impl::compile_array_pattern(
     std::span<const std::int32_t> elements, std::uint16_t src, vp::nk rest_kind,
     const std::function<void(std::int32_t, std::uint16_t)> & bind) {
@@ -239,7 +234,7 @@ void compiler_impl::compile_array_pattern(
             bind(at(element).a, item);
         } else {
             emit_iterator_native(iterator_next_name, item, record);
-            if (element >= 0) { bind(element, item); } // a hole steps and binds nothing
+            if (element >= 0) { bind(element, item); } // A hole steps and binds nothing.
         }
         release_to(inner);
     }

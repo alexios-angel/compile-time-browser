@@ -1,20 +1,23 @@
-// ctbrowser.script builtins - %TypedArray%.prototype (ECMA-262 23.2.3): the
-// accessors, the iteration methods, and the ones that build a new array
-// through TypedArraySpeciesCreate. internal.hpp in this directory says how a
-// typed array is laid out and where the VM answers a view's own properties
-// before any getter here is asked.
+//===- typed_arrays/prototype.cpp - %TypedArray%.prototype ------*- C++ -*-===//
 //
-// EVERY METHOD STARTS WITH ValidateTypedArray - `this` must be a typed array
-// whose buffer is neither detached nor shrunk out from under it - and reads
-// its elements through typed_element_get, which answers undefined past the
-// length AS IT IS NOW: a callback may have shrunk or detached the buffer,
-// and 23.2.3 specifies exactly that Get(O, Pk) answers undefined then. The
-// elements are `value`s throughout - a number, or a bigint for a BigInt kind
-// - and the kind decides the coercion on the way in (internal.hpp).
+// %TypedArray%.prototype (ECMA-262 23.2.3): the accessors, the iteration
+// methods, and the ones that build a new array through
+// TypedArraySpeciesCreate. internal.hpp in this directory describes how a
+// typed array is laid out.
 //
-// NOT HERE: `toString`, which 23.2.3.32 says IS Array.prototype.toString.
-// install_array runs after this installer, so the function does not exist yet;
-// install_array puts it on %TypedArray%.prototype (array_iteration.cpp).
+// Most methods start with ValidateTypedArray (`this` must be a typed array
+// whose buffer is neither detached nor shrunk out from under it) and read
+// their elements through typed_element_get, which answers undefined past the
+// length as it is now: a callback may have shrunk or detached the buffer,
+// and 23.2.3 specifies that Get(O, Pk) answers undefined then. The elements
+// are `value`s throughout (a number, or a bigint for a BigInt kind), and the
+// kind decides the coercion on the way in (internal.hpp).
+//
+// `toString` is not here: 23.2.3.32 says it is Array.prototype.toString, which
+// does not exist yet when this installer runs, so install_array puts it on
+// %TypedArray%.prototype (array_iteration.cpp).
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -22,12 +25,13 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
-// The kind's element count now, as a double for the index arithmetic below.
+/// The element count now, as a double for the index arithmetic below.
 [[nodiscard]] double len_of(array_object * arr) {
     return static_cast<double>(typed_array_length(arr));
 }
 
-// IsCallable on the callback, and its message.
+/// Checks that the first argument is callable; otherwise throws a TypeError
+/// naming `method`.
 [[nodiscard]] bool callback_arg(context & cx, std::span<value> a, const char * method) {
     if (arg_at(a, 0).is_callable()) { return true; }
     cx.throw_error("TypeError",
@@ -35,8 +39,8 @@ namespace {
     return false;
 }
 
-// The (kValue, k, O) call every iteration method makes. False with the throw
-// in flight.
+/// The (kValue, k, O) call every iteration method makes. False with the throw
+/// in flight.
 [[nodiscard]] bool call_back(context & cx, value fn, value this_arg, value item, double k,
                              value self, value & out) {
     const value args[3] = {item, value::number(k), self};
@@ -44,17 +48,17 @@ namespace {
     return !cx.throw_pending();
 }
 
-// TypedArrayCreateSameType (23.2.4.3): the receiver's own constructor,
-// species ignored.
+/// TypedArrayCreateSameType (23.2.4.3): the receiver's own constructor,
+/// species ignored.
 [[nodiscard]] value create_same_type(context & cx, array_object * exemplar, double len) {
     const value args[1] = {value::number(len)};
     return typed_array_create_from_constructor(cx, typed_array_constructor(cx, exemplar->elements),
                                                args);
 }
 
-// A relative index argument the way 23.2.3.x spells them: ToIntegerOrInfinity,
-// negative from the end, clamped into [0, len]. `fallback` is what an absent
-// argument means. False with a throw in flight.
+/// A relative index argument the way 23.2.3.x spells them: ToIntegerOrInfinity,
+/// negative from the end, clamped into [0, len]. `fallback` is what an absent
+/// argument means. False with a throw in flight.
 [[nodiscard]] bool relative_arg(context & cx, std::span<value> a, std::size_t i, double len,
                                 double fallback, double & out) {
     double rel = fallback;
@@ -67,7 +71,8 @@ namespace {
     return true;
 }
 
-// A byte-for-byte copy between two stores, clamped to what both hold.
+/// A byte-for-byte copy between two stores, clamped to what both hold. Safe
+/// for overlapping ranges within one store (memmove semantics).
 void copy_bytes(array_object * from, std::size_t from_at, array_object * to, std::size_t to_at,
                 std::size_t count) {
     if (from_at >= from->items.size() || to_at >= to->items.size()) { return; }
@@ -82,7 +87,8 @@ void copy_bytes(array_object * from, std::size_t from_at, array_object * to, std
                 to->items.begin() + static_cast<std::ptrdiff_t>(to_at));
 }
 
-// SetTypedArrayFromTypedArray (23.2.3.26.1) and ...FromArrayLike (23.2.3.26.2).
+/// %TypedArray%.prototype.set: SetTypedArrayFromTypedArray (23.2.3.26.1) and
+/// SetTypedArrayFromArrayLike (23.2.3.26.2).
 value typed_array_set_method(context & c, std::span<value> a) {
     const value self = c.current_this();
     if (!is_typed_array(self)) {
@@ -117,13 +123,13 @@ value typed_array_set_method(context & c, std::span<value> a) {
         array_object * from = typed_array_store(src);
         array_object * to = typed_array_store(target);
         if (from != nullptr && to != nullptr && src->elements == target->elements) {
-            // The same kind copies bytes - through copy_bytes, whose backward
-            // copy is what makes an overlapping same-buffer copy safe.
+            // The same kind copies bytes through copy_bytes, whose backward
+            // copy makes an overlapping same-buffer copy safe.
             const std::size_t width = bytes_per_element(src->elements);
             copy_bytes(from, src->byte_offset, to, target->byte_offset + at * width, n * width);
             return value::undefined();
         }
-        // Different kinds over the SAME buffer read every source element
+        // Different kinds over the same buffer read every source element
         // before writing any (step 12: "let srcByteIndex ... clone").
         std::vector<value> held(n);
         for (std::size_t i = 0; i < n; ++i) { held[i] = typed_element_get(c, *src, i); }
@@ -157,8 +163,8 @@ bool sort_elements(context & cx, std::vector<value> & work, value comparator) {
     const std::size_t n = work.size();
     if (n <= 1) { return true; }
     // SortCompare (23.2.4.7) without a comparator: numeric, -0 before +0, NaN
-    // last - a total order, so the standard library's stable sort is safe. A
-    // BigInt kind's elements are all bigints and compare exactly.
+    // last. That is a total order, so the standard library's stable sort is
+    // safe. A BigInt kind's elements are all bigints and compare exactly.
     if (!comparator.is_callable()) {
         std::stable_sort(work.begin(), work.end(), [](value a, value b) {
             if (a.is_kind(heap_kind::bigint) && b.is_kind(heap_kind::bigint)) {
@@ -204,7 +210,7 @@ bool sort_elements(context & cx, std::vector<value> & work, value comparator) {
 void install_typed_array_prototype(context & cx, object_object * proto) {
     using detail::method;
 
-    // --- the accessors, 23.2.3.1-4 and 23.2.3.38 -----------------------------
+    // --- The accessors, 23.2.3.1-4 and 23.2.3.38 -----------------------------
     const auto getter = [&](const char * name, native_fn fn) {
         // 10.2.9 SetFunctionName: a symbol-keyed getter is named by the
         // symbol's description in brackets.
@@ -290,7 +296,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             const auto to_byte = static_cast<std::size_t>(to) * width + arr->byte_offset;
             const auto from_byte = static_cast<std::size_t>(from) * width + arr->byte_offset;
             auto count_bytes = static_cast<std::size_t>(count) * width;
-            // Clamped to the array's CURRENT bytes (step 18: the buffer may
+            // Clamped to the array's current bytes (step 18: the buffer may
             // have shrunk while the arguments were coerced).
             if (to_byte >= limit || from_byte >= limit) { return self; }
             count_bytes = std::min({count_bytes, limit - to_byte, limit - from_byte});
@@ -305,8 +311,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         return self;
     });
     // --- 23.2.3.7 / 23.2.3.19 / 23.2.3.35 entries, keys, values, @@iterator ---
-    // ValidateTypedArray, then CreateArrayIterator - the one live
-    // %ArrayIteratorPrototype% an Array's iterators share (detail::array_iterator).
+    // ValidateTypedArray, then CreateArrayIterator: the same live
+    // %ArrayIteratorPrototype% iterators an Array uses (detail::array_iterator).
     const auto iterator_method = [&](const char * name, double kind) {
         method(cx, proto, name, 0, [kind, name](context & c, std::span<value>) {
             array_object * arr =
@@ -323,7 +329,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
     }
     // --- 23.2.3.8 every, 23.2.3.29 some, 23.2.3.15 forEach ---------------------
     const auto walk = [&](const char * name, int mode) {
-        // mode: 0 forEach, 1 every, 2 some
+        // `mode` is 0 for forEach, 1 for every and 2 for some.
         method(cx, proto, name, 1, [name, mode](context & c, std::span<value> a) {
             const std::string method_name = std::string{"TypedArray.prototype."} + name;
             array_object * arr = this_typed_array(c, method_name.c_str());
@@ -449,7 +455,7 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         if (n == std::numeric_limits<double>::infinity()) { return value::number(-1); }
         double k = n >= 0 ? n : std::max(len + n, 0.0);
         const value wanted = arg_at(a, 0);
-        // HasProperty(O, k) is false past the CURRENT length (step 10.a).
+        // HasProperty(O, k) is false past the current length (step 10.a).
         const double now = std::min(len, len_of(arr));
         for (; k < now; k += 1) {
             if (typed_element_get(c, *arr, static_cast<std::size_t>(k)).strict_equals(wanted)) {
@@ -630,10 +636,9 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         array_object * from = typed_array_store(arr);
         array_object * to = typed_array_store(made);
         if (from != nullptr && to != nullptr && made->elements == arr->elements) {
-            // ONE BYTE AT A TIME, FORWARD (step 14.e.iii): a species result
-            // over the same buffer at a later offset sees its own writes,
-            // which is what the specification says and what memmove would
-            // not do.
+            // One byte at a time, forward (step 14.e.iii): a species result
+            // over the same buffer at a later offset sees its own writes, as
+            // the specification says and memmove would not do.
             const std::size_t width = bytes_per_element(arr->elements);
             std::size_t src = arr->byte_offset + static_cast<std::size_t>(k) * width;
             std::size_t dst = made->byte_offset;
@@ -669,9 +674,10 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
                 if (target.is_undefined()) { return target; }
             }
             const context::rooted keep{c, target};
-            // The elements ROOTED while the comparator runs: a BigInt kind's
-            // are fresh heap objects off a view, and a C++ vector is not a
-            // root (docs/script.md) - an array the collector can see is.
+            // The elements are kept in a rooted array while the comparator
+            // runs: a BigInt kind's are fresh heap objects off a view, and a
+            // C++ vector is not a root (docs/script.md), whereas an array the
+            // collector can see is.
             const value scratch = c.make_array();
             const context::rooted keep_work{c, scratch};
             std::vector<value> & work = static_cast<array_object *>(scratch.as_heap())->items;
@@ -693,8 +699,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
             return value::undefined();
         }
         auto * arr = static_cast<array_object *>(self.as_heap());
-        // NOT ValidateTypedArray: a detached or out-of-bounds receiver has
-        // length 0 here and the species constructor is what refuses it.
+        // Not ValidateTypedArray: a detached or out-of-bounds receiver has
+        // length 0 here, and the species constructor is what refuses it.
         const double len = typed_array_out_of_bounds(arr) ? 0 : len_of(arr);
         double begin = 0;
         if (!relative_arg(c, a, 0, len, 0, begin)) { return value::undefined(); }
@@ -712,8 +718,10 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         const double count = std::max(final - begin, 0.0);
         const value args[3] = {buffer, value::number(begin_byte), value::number(count)};
         const value out = typed_array_species_create(c, arr, args);
-        // The constructor registered the view with the buffer; a subarray of
-        // a fixed-length buffer does not need that (internal.hpp says why).
+        // The constructor registered the view with the buffer. A view over a
+        // fixed-length buffer never needs re-bounding on resize, so take it
+        // back off the registry, which is a strong list (see internal.hpp's
+        // ponytail note) and would otherwise grow with every subarray.
         if (!out.is_undefined() && !store_resizable(store)) {
             if (auto * made = static_cast<array_object *>(out.as_heap());
                 typed_array_store(made) == store) {
@@ -739,7 +747,8 @@ void install_typed_array_prototype(context & cx, object_object * proto) {
         value v = value::undefined();
         if (!coerce_for_kind(c, arr->elements, arg_at(a, 1), v)) { return value::undefined(); }
         const context::rooted keep{c, v};
-        // IsValidIntegerIndex against the length NOW - the coercions ran script.
+        // IsValidIntegerIndex against the current length: the coercions ran
+        // script.
         if (!(actual >= 0) || actual >= len_of(arr) || typed_array_out_of_bounds(arr)) {
             c.throw_error("RangeError", "Invalid typed array index");
             return value::undefined();

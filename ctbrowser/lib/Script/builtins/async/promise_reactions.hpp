@@ -1,3 +1,12 @@
+//===- promise_reactions.hpp - Promise slots and jobs -----------*- C++ -*-===//
+//
+// The promise machinery shared by the Promise builtins (async.cpp), disposable
+// stacks and the VM: the slot layout of a promise object, the resolving
+// functions, the two reaction jobs, PerformPromiseThen and
+// NewPromiseCapability. Section numbers are ECMA-262.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../collections/iterator_internal.hpp"
@@ -6,6 +15,10 @@
 
 namespace ctbrowser::script::detail::promise {
 
+/// The four private-key slots every promise object carries (the promise_*_key
+/// constants in value/objects.hpp). The VM reads the same keys, so they are
+/// fixed: [[PromiseState]] is split into `settled` and `rejected`, `value` is
+/// [[PromiseResult]], and `handlers` is the PromiseReaction list.
 inline constexpr std::string_view settled_slot = promise_settled_key;
 
 inline constexpr std::string_view value_slot = promise_result_key;
@@ -14,6 +27,10 @@ inline constexpr std::string_view rejected_slot = promise_rejected_key;
 
 inline constexpr std::string_view handlers_slot = promise_reactions_key;
 
+/// Private keys on Promise.prototype (no script can spell one, and
+/// OwnPropertyKeys never lists one): the %Promise% intrinsic, the two job
+/// natives and the `then` reader. Kept on the prototype so the collector
+/// traces them like any property.
 inline constexpr std::string_view intrinsic_key = CTBROWSER_PRIVATE_KEY("Promise");
 
 inline constexpr std::string_view reaction_job_key = CTBROWSER_PRIVATE_KEY("PromiseReactionJob");
@@ -23,9 +40,13 @@ inline constexpr std::string_view thenable_job_key =
 
 inline constexpr std::string_view get_then_key = CTBROWSER_PRIVATE_KEY("GetThen");
 
+/// Private key caching %AsyncFromSyncIteratorPrototype%.
 inline constexpr std::string_view async_from_sync_key =
     CTBROWSER_PRIVATE_KEY("AsyncFromSyncIteratorPrototype");
 
+/// A PromiseCapability record (27.2.1.1). For %Promise% itself `resolve`
+/// and `reject` stay undefined and the promise is settled directly; the
+/// functions are made only when script needs them (see materialise).
 struct capability {
     value promise = value::undefined();
     value resolve = value::undefined();

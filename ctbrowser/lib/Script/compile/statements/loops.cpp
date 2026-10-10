@@ -1,10 +1,11 @@
-// compiler_impl - statements: the loops, `switch`, labels, `break` and
-// `continue`, and the loop_context bookkeeping they share.
+//===- loops.cpp - Loops, switch, labels, break and continue ----*- C++ -*-===//
 //
-// One of four files carved out of a 1,017-line compile/statements.cpp on
-// 2026-09-08 - which was itself one of the files carved out of a 3,845-line
-// compile.cpp on 2026-08-09. All are members of compiler_impl, declared whole
-// in compiler_impl.hpp beside the directory; nothing about that header changed.
+// compiler_impl members that compile the loops (while, do-while, for, for-in,
+// for-of, for-await), `switch`, labelled statements, `break` and `continue`,
+// and the loop_context bookkeeping they share. Members are declared in
+// ../compiler_impl.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../compiler_impl.hpp"
 #include <algorithm>
@@ -36,10 +37,9 @@ void compiler_impl::compile_break(const vp::node & n) {
         fail(n.text.empty() ? "break outside a loop" : "break to unknown label");
         return;
     }
-    // AN OPEN `finally` GETS IT FIRST, because breaking out of a try block is
-    // one of the ways out that has to run it - and this used to jump straight
-    // past. The finally's dispatch re-emits the break, so the handler popping
-    // below happens there, at the right depth.
+    // An open `finally` gets the break first, because breaking out of a try
+    // block must run it. The finally's dispatch re-emits the break, so the
+    // handler popping below happens there, at the right depth.
     if (route_exit_through_finally(static_cast<std::size_t>(loop - loops_.data()), false)) {
         return;
     }
@@ -53,12 +53,12 @@ void compiler_impl::compile_break(const vp::node & n) {
     loops_[target].breaks.push_back(proto().emit(instruction{op::jump}));
 }
 
-// A `break` or `continue` that leaves a for-of for an OUTER loop closes it
-// (14.7.5.7 ForIn/OfBodyEvaluation step 6.l: IteratorClose on the abrupt
-// completion) - its own break does, at patch_breaks, and one aimed further
-// out jumped straight past. Innermost first, each at its own handler depth,
-// so a catch between two loops sees the inner one's close error. Answers the
-// handler depth it popped down to.
+/// Closes the iterator of every for-of loop in loops_[first, end) that a
+/// `break` or `continue` aimed at an outer loop leaves (14.7.5.7
+/// ForIn/OfBodyEvaluation step 6.l: IteratorClose on the abrupt completion).
+/// A for-of's own break closes at patch_breaks instead. Closes innermost
+/// first, each at its own handler depth, so a catch between two loops sees
+/// the inner one's close error. Returns the handler depth it popped down to.
 std::size_t compiler_impl::close_crossed_iterators(std::size_t first) {
     std::size_t depth = handler_depth_;
     const std::uint32_t mark = reg_mark();
@@ -92,15 +92,10 @@ void compiler_impl::compile_continue(const vp::node & n) {
 }
 
 void compiler_impl::compile_labeled(const vp::node & n) {
-    // A label on a LOOP or a switch is picked up by that statement, which
-    // owns the break and continue targets. A label on anything else - most
-    // often a bare block - has no loop to hand it to, and `break lbl` out
-    // of one is legal JavaScript that used to be refused outright.
-    //
-    // The mechanism is already there: a loop_context is a label plus a list
-    // of jumps to patch. This pushes one with nothing to continue TO, so
-    // `continue lbl` still fails (correctly - there is no iteration), and
-    // `break lbl` lands after the block.
+    // Loops and switches take their own labels, since they own the break
+    // and continue targets. Any other labelled statement (usually a bare
+    // block) gets a loop_context with no continue target, so `break lbl`
+    // lands after it and `continue lbl` is an error.
     const vp::nk labelled = n.a >= 0 ? at(n.a).kind : vp::nk::empty;
     const bool owns_its_label = labelled == vp::nk::while_stmt || labelled == vp::nk::do_stmt ||
                                 labelled == vp::nk::for_stmt || labelled == vp::nk::forof_stmt ||
@@ -129,7 +124,7 @@ void compiler_impl::compile_while(const vp::node & n) {
     const std::size_t exit = proto().emit(instruction{op::jump_if_false, cond});
     release_to(mark);
     compile_stmt(n.b);
-    patch_continues(loops_.back(), top); // continue re-tests the condition
+    patch_continues(loops_.back(), top); // Continue re-tests the condition.
     patch_jump(proto().emit(instruction{op::jump}), top);
     patch_here(exit);
     patch_breaks(loops_.back());
@@ -155,9 +150,8 @@ void compiler_impl::compile_do_while(const vp::node & n) {
 
 void compiler_impl::compile_for(const vp::node & n) {
     // `for (using x = r; ;)` (14.7.4.2): the resources live for the whole
-    // statement and are disposed as it completes, however it completes - one
-    // using region round the loop, where emit_using_add found no stack and
-    // refused the script.
+    // statement and are disposed as it completes, however it completes, so
+    // the whole loop is one using region.
     if (n.a >= 0 && is_using_decl(at(n.a))) {
         compile_using_region(at(n.a).text == "await using", [&] { compile_for_loop(n); });
         return;
@@ -170,19 +164,15 @@ void compiler_impl::compile_for_loop(const vp::node & n) {
     const std::vector<std::string> label = take_labels();
     const std::size_t init_mark = fn().scope_marks.back();
     if (n.a >= 0) { compile_stmt(n.a); }
-    // THE PER-ITERATION BINDINGS. `for (let i = 0; ...)` gives every
-    // iteration its OWN `i`, so closures made in the body capture 0, 1, 2 -
-    // where `for (var i = ...)` shares one binding and they all capture 3.
-    // This engine had only the `var` behaviour, silently, and modern
-    // minified output leans on the difference constantly.
+    // Per-iteration bindings: `for (let i = 0; ...)` gives each iteration its
+    // own `i`, so closures made in the body capture 0, 1, 2, while
+    // `for (var i = ...)` shares one binding and they all capture 3.
     //
-    // Only a BOXED local can tell: an unboxed one lives in a register that
-    // nothing outside the frame can reach, so copying it would be work with
-    // no observer. `var` is hoisted to the function scope and so never
-    // appears among the locals this scope opened - which is what keeps the
-    // two loops apart without the compiler having to track declaration
-    // kinds. unittests/js/obfuscated.cpp pins BOTH shapes, so getting that
-    // backwards fails immediately.
+    // Only boxed locals need copying: an unboxed one lives in a register
+    // nothing outside the frame can reach, so the copy would be unobservable.
+    // `var` is hoisted to the function scope and never appears among the
+    // locals this scope opened, which keeps the two loop kinds apart without
+    // tracking declaration kinds. unittests/js/obfuscated.cpp covers both.
     std::vector<std::uint16_t> per_iteration;
     for (std::size_t k = init_mark; k < fn().locals.size(); ++k) {
         if (fn().locals[k].boxed) { per_iteration.push_back(fn().locals[k].reg); }
@@ -200,18 +190,16 @@ void compiler_impl::compile_for_loop(const vp::node & n) {
         release_to(mark);
     }
     compile_stmt(n.d);
-    // `continue` in a for-loop runs the UPDATE and then re-tests - it does
+    // `continue` in a for-loop runs the update and then re-tests; it does
     // not skip back to the condition. Getting this wrong turns every
     // `for (...; i++) { ... continue; }` into an infinite loop.
     patch_continues(loops_.back(), proto().code.size());
-    // BETWEEN THE BODY AND THE UPDATE, which is where the specification puts
-    // it (ForBodyEvaluation step 3.e): the fresh binding takes the value the
-    // body left, and the increment then applies to the NEW one. Doing it
-    // after the update instead would shift every captured value by one.
-    //
-    // `continue` lands on the instruction above, so it flows through here
-    // too - which is correct, and is why this sits after patch_continues
-    // rather than before it.
+    // The per-iteration copy goes between the body and the update, where the
+    // specification puts it (ForBodyEvaluation step 3.e): the fresh binding
+    // takes the value the body left, and the increment then applies to the
+    // new one. Doing it after the update would shift every captured value by
+    // one. `continue` lands just above, so it flows through here too, which
+    // is why this sits after patch_continues.
     if (!per_iteration.empty()) {
         const std::uint32_t mark = reg_mark();
         const std::uint16_t scratch = alloc_reg();
@@ -236,10 +224,12 @@ void compiler_impl::compile_for_loop(const vp::node & n) {
 }
 
 void compiler_impl::compile_for_head_source(const vp::node & n, std::uint16_t dst) {
-    // d: bit0 const, bit3 let, bit4 using, bit5 await using - the lexical
-    // heads. Only reads in this frame are decided (compile_ident); a closure
-    // made here that reads the name later is the runtime check this engine
-    // does not make.
+    // n.d bits: bit 0 const, bit 1 no declaration, bit 3 let, bit 4 using,
+    // bit 5 await using (mask 57 = the lexical heads). For a lexical head the
+    // head's names are in their temporal dead zone while the source
+    // expression runs. Only reads in this frame are checked (compile_ident);
+    // a closure made here that reads the name later would need a runtime
+    // check this engine does not make.
     if ((n.d & 2) != 0 || (n.d & 57) == 0) {
         compile_expr(n.b, dst);
         return;
@@ -261,19 +251,16 @@ void compiler_impl::compile_for_head_source(const vp::node & n, std::uint16_t ds
     tdz_frame_ = saved_frame;
 }
 
-// `for await (x of y)`, 14.7.5.6 with iteratorKind async. Unlike the sync
-// loop below, which MATERIALISES its source through op::iterable, this one
-// runs the real protocol: GetIterator(async) through the builtin's hidden
-// native, then `next()` -> await -> `done`/`value` per iteration, so an async
-// generator is pulled lazily and a promise in a sync iterator's `value` is
-// awaited. Only the statement form - in an async function, or at a MODULE'S
-// top level, which is [+Await] (16.2.1) and awaits exactly as a top-level
-// `await` expression does.
-// AsyncIteratorClose (7.4.13) runs on `break` and on a throw out of the body:
-// the iterator's `return()`, if it has one, is called and awaited. A `return`
-// statement inside the body and a throw from `next()` itself do not close
-// (the first is a known gap; the second is the specification). The sync
-// for-of below closes on `break` only.
+/// Compiles `for await (x of y)` (14.7.5.6, iteratorKind async):
+/// GetIterator(async) through the builtin's hidden native, then per iteration
+/// `next()`, await, `done` and `value`, so an async generator is pulled lazily
+/// and a promise in a sync iterator's `value` is awaited. Allowed in an async
+/// function or at a module's top level, which is [+Await] (16.2.1).
+///
+/// AsyncIteratorClose (7.4.13) runs on `break` and on a throw out of the body:
+/// the iterator's `return()`, if it has one, is called and awaited. A `return`
+/// statement inside the body does not close the iterator (a known gap); a
+/// throw from `next()` itself must not (per spec).
 void compiler_impl::compile_for_await(const vp::node & n) {
     if (!fn().is_async && !(module_scope_ && frames_.size() == 1)) {
         fail("`for await` outside an async function");
@@ -293,10 +280,9 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const vp::node & target = at(n.a);
     const bool declares = (n.d & 2) == 0;
     const bool is_shape = target.b >= 0;
-    // `for (var x in o)` AT A SCRIPT'S TOP LEVEL binds the GLOBAL x, as a
-    // top-level `var x` does - a local scoped to the loop left `x` unbound
-    // after it, so the next `for (x in o)` in strict code was an assignment
-    // to an unresolvable name. Written as a declaration (declaring_).
+    // `for (var x of o)` at a classic script's top level binds the global x,
+    // as a top-level `var x` does, so `x` stays bound after the loop. It is
+    // written as a declaration (declaring_).
     const bool var_global =
         declares && (n.d & 57) == 0 && frames_.size() == 1 && !top_level_is_scope_;
     const std::uint16_t item = (declares && !is_shape && !var_global)
@@ -322,7 +308,7 @@ void compiler_impl::compile_for_await(const vp::node & n) {
     const std::uint16_t caught = alloc_reg();
     const std::size_t guard = proto().emit(instruction{op::push_handler, caught});
     ++handler_depth_;
-    const bool using_head = (n.d & 48) != 0; // see compile_for_of
+    const bool using_head = (n.d & 48) != 0; // See compile_for_of.
     const auto bind_and_body = [&] {
         if (using_head) { emit_using_add(item, (n.d & 32) != 0); }
         if (var_global) {
@@ -392,16 +378,17 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     const std::uint16_t source = alloc_reg();
     compile_for_head_source(n, source);
     const bool of = n.text != "in";
-    // `for (x of ...)` RUNS THE ITERATOR PROTOCOL for a generator or a page's
-    // own iterable - one `next()` per iteration, `return()` on `break` - and
-    // stays the index loop for everything op::iterable materialises exactly:
-    // see for_of_open_name, which answers undefined for those. The choice is
-    // one register tested at the top of every iteration, so the two paths
-    // share one body and one set of locals, and `for (x in ...)` never has a
-    // record at all. Explicit returns and throws close exited records through
+    // `for (x of ...)` runs the iterator protocol for a generator or a page's
+    // own iterable (one `next()` per iteration, `return()` on `break`), and
+    // stays an index loop for everything op::iterable materialises exactly;
+    // for_of_open_name returns undefined for those. The choice is one
+    // register tested at the top of every iteration, so both paths share one
+    // body and one set of locals; `for (x in ...)` never has a record.
+    // Explicit `return` and `throw` statements close exited records through
     // the same completion routing as finally.
-    // ponytail: implicit body exceptions need protected loop regions and native
-    // exception recovery; explicit completions keep the existing loop shape.
+    // ponytail: an exception thrown implicitly inside the body (not by a
+    // `throw` statement) does not close the iterator. Closing on it needs a
+    // handler around the body.
     const std::uint16_t record = of ? alloc_reg() : 0;
     std::size_t lazy = 0;
     if (of) {
@@ -421,20 +408,19 @@ void compiler_impl::compile_for_of(const vp::node & n) {
     emit_const(one, value::number(1));
 
     // The loop variable is a real local, so a closure made inside the body
-    // captures THIS iteration's value - which is the whole reason `let` in
-    // a loop behaves differently from `var`.
+    // captures this iteration's value, which is why `let` in a loop behaves
+    // differently from `var`.
     //
-    // Two shapes are not a plain local: `for (const [k, v] of pairs)` binds
-    // a SHAPE, and `for (prop in obj)` with no declaration keyword assigns
-    // to a binding that already exists (d bit1). Both still need a register
+    // Two shapes are not a plain local: `for (const [k, v] of pairs)` binds a
+    // pattern, and `for (prop in obj)` with no declaration keyword assigns to
+    // a binding that already exists (n.d bit 1). Both still need a register
     // to read the element into.
     const vp::node & target = at(n.a);
     const bool declares = (n.d & 2) == 0;
     const bool is_shape = target.b >= 0;
-    // `for (var x in o)` AT A SCRIPT'S TOP LEVEL binds the GLOBAL x, as a
-    // top-level `var x` does - a local scoped to the loop left `x` unbound
-    // after it, so the next `for (x in o)` in strict code was an assignment
-    // to an unresolvable name. Written as a declaration (declaring_).
+    // `for (var x in o)` at a classic script's top level binds the global x,
+    // as a top-level `var x` does, so `x` stays bound after the loop. It is
+    // written as a declaration (declaring_).
     const bool var_global =
         declares && (n.d & 57) == 0 && frames_.size() == 1 && !top_level_is_scope_;
     const std::uint16_t item = (declares && !is_shape && !var_global)
@@ -464,7 +450,7 @@ void compiler_impl::compile_for_of(const vp::node & n) {
         finished = proto().emit(instruction{op::jump_if_true, test});
         patch_here(body);
     }
-    // `for (using x of xs)` (d bit4, bit5 for `await using`): each iteration
+    // `for (using x of xs)` (n.d bit 4, bit 5 for `await using`): each iteration
     // is a region of its own, disposed before the next element is read.
     const bool using_head = (n.d & 48) != 0;
     const auto bind_and_body = [&] {
@@ -527,16 +513,14 @@ void compiler_impl::compile_switch(const vp::node & n) {
     const std::uint16_t matched = alloc_reg();
     for (std::size_t i = 0; i < clauses.size(); ++i) {
         const vp::node & clause = at(clauses[i]);
-        // `default` is `d == 1`. Testing `d != 0` treated EVERY case as the
-        // default - node.d starts at -1, which is ctjs's documented gotcha -
-        // so no comparison was emitted at all and each clause ran
-        // unconditionally.
+        // `default` is `d == 1`. ctjs initialises node.d to -1, so `d != 0`
+        // would treat every case as the default.
         if (clause.d == 1 || clause.a < 0) {
             default_clause = i;
             continue;
         }
         compile_expr(clause.a, candidate);
-        // STRICT equality, per spec - `switch (1)` does not match `case "1"`.
+        // Strict equality, per spec: `switch (1)` does not match `case "1"`.
         proto().emit(instruction{op::equal, matched, subject, candidate});
         entries[i] = proto().emit(instruction{op::jump_if_true, matched});
     }

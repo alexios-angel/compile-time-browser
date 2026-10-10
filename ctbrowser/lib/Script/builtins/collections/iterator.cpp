@@ -1,12 +1,13 @@
-// ctbrowser.script builtins - Iterator and the iterator helpers (ES2025 27.1.3
-// and 27.1.4), plus the ES2026 additions the corpus carries: Iterator.concat,
-// chunks, windows, includes, join and @@dispose.
+//===- iterator.cpp - Iterator and the iterator helpers ---------*- C++ -*-===//
 //
-// New on 2026-09-12. Before it there was no `Iterator` global at all and no
-// %IteratorPrototype%: a generator object's prototype chain ended at the
-// generator table, so `gen().map(f)` found nothing. The table built here is
-// spliced under %GeneratorPrototype% (install_generator's, objects/function.cpp)
-// so a generator is an Iterator, which is what 27.5.1 says.
+// The Iterator global and %Iterator.prototype% with the iterator helpers
+// (ES2025 27.1.3 and 27.1.4), plus the newer proposals test262 covers:
+// Iterator.concat, Iterator.zip/zipKeyed, chunks, windows, includes, join and
+// @@dispose. %GeneratorPrototype% (install_generator, objects/function.cpp) is
+// re-parented onto %Iterator.prototype%, so every generator is an Iterator
+// (27.5.1). The helper objects' state machine is in iterator/helpers.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../objects/internal.hpp" // key_value, for zipKeyed
 #include "iterator_internal.hpp"
@@ -19,12 +20,14 @@ using namespace iterator_helper;
 
 using detail::iterator_record;
 
+/// Installs Iterator, %Iterator.prototype% and the helper prototypes. Runs
+/// after install_generator, whose %GeneratorPrototype% it re-parents.
 void install_iterator(context & cx) {
     using detail::method;
     using detail::new_table;
 
-    // %Iterator.prototype%, 27.1.3.2 - and %GeneratorPrototype% is re-parented
-    // onto it, so a generator object IS an Iterator.
+    // %Iterator.prototype%, 27.1.3.2. %GeneratorPrototype% is re-parented onto
+    // it, so a generator object is an Iterator.
     object_object * proto = new_table(cx);
     if (object_object * generators = cx.prototype(context::proto_kind::generator)) {
         generators->prototype = value::object(proto);
@@ -40,7 +43,7 @@ void install_iterator(context & cx) {
                          attr_configurable);
     const value helper_proto_value = value::object(helper_proto);
     // %WrapForValidIteratorPrototype%, 27.1.3.2.1.2: what Iterator.from hands
-    // back for an iterator that is not already an Iterator - `next` and
+    // back for an iterator that is not already an Iterator, with `next` and
     // `return` forwarded to the wrapped record.
     object_object * wrap_proto = new_table(cx);
     wrap_proto->prototype = value::object(proto);
@@ -76,7 +79,7 @@ void install_iterator(context & cx) {
     });
     const value wrap_proto_value = value::object(wrap_proto);
 
-    // 27.1.3.1 Iterator(): abstract - `new Iterator()` itself is a TypeError,
+    // 27.1.3.1 Iterator() is abstract: `new Iterator()` itself is a TypeError;
     // only a subclass's `super()` reaches here with an instance to accept.
     auto * ctor = cx.allocate<native_object>("Iterator", [proto](context & c, std::span<value>) {
         const value self = c.current_this();
@@ -120,8 +123,8 @@ void install_iterator(context & cx) {
         made->define(wrapped_slot, value::object(record), attr_none);
         return value::object(made);
     });
-    // Iterator.concat (ES2026): every argument is validated - an object with
-    // a callable @@iterator - BEFORE anything is opened.
+    // Iterator.concat (ES2026): every argument is validated (an object with a
+    // callable @@iterator) before anything is opened.
     method(cx, ctor, "concat", 0, [helper_proto](context & c, std::span<value> a) {
         const value list = c.make_array();
         const context::rooted keep{c, list};
@@ -153,8 +156,9 @@ void install_iterator(context & cx) {
     });
 
     // Iterator.zip / Iterator.zipKeyed (joint iteration): the options are
-    // read first, then every iterable is opened - an abrupt step closing
-    // what is already open - then the padding, and the helper does the rest.
+    // read first, then every iterable is opened (an abrupt step closes what is
+    // already open), then the padding, and the helper does the rest. Mode is
+    // 0 for "shortest", 1 for "longest" and 2 for "strict".
     const auto zip = [&](const char * name, bool keyed) {
         method(cx, ctor, name, 1, [helper_proto, keyed](context & c, std::span<value> a) {
             const value iterables = arg_at(a, 0);
@@ -207,8 +211,8 @@ void install_iterator(context & cx) {
             auto * held = static_cast<array_object *>(rows.as_heap());
             const value keys = c.make_array();
             if (keyed) { state->set("keys", keys); }
-            // A row for one opened iterable; false with the throw in flight
-            // and everything so far closed.
+            // Adds a row for one opened iterable: [iterator, next, open].
+            // Returns false with the throw pending.
             const auto add = [&](context & cc, value item) {
                 iterator_record rec;
                 if (!detail::iterator_flattenable(cc, item, false, rec)) { return false; }
@@ -241,7 +245,7 @@ void install_iterator(context & cx) {
                             cc, [&](context & c3) { return value::boolean(add(c3, item)); });
                         if (row.threw) {
                             // IteratorCloseAll over « inputIter » + iters is in
-                            // REVERSE: the opened rows first, the source last.
+                            // reverse: the opened rows first, the source last.
                             const context::rooted keep_thrown{cc, row.result};
                             (void)close_open(cc, state, true, value::undefined());
                             detail::iterator_close_quietly(cc, input);
@@ -251,7 +255,7 @@ void install_iterator(context & cx) {
                     }
                     return value::undefined();
                 }
-                // zipKeyed: every own ENUMERABLE key, read in OwnPropertyKeys
+                // zipKeyed: every own enumerable key, read in OwnPropertyKeys
                 // order, its enumerability re-checked at each step.
                 for (const std::string & key :
                      detail::own_property_names(cc, iterables, detail::key_filter::all)) {
@@ -325,7 +329,7 @@ void install_iterator(context & cx) {
     zip("zipKeyed", true);
 
     // --- the prototype ---------------------------------------------------
-    // 27.1.3.2.1 / 27.1.3.2.14: `constructor` and @@toStringTag are ACCESSORS
+    // 27.1.3.2.1 / 27.1.3.2.14: `constructor` and @@toStringTag are accessors
     // whose setter defines an own property on the receiver.
     const auto accessor_pair = [&](const char * key, value got) {
         const std::string name = key;
@@ -346,7 +350,8 @@ void install_iterator(context & cx) {
     method(cx, proto, CTBROWSER_SYMBOL_KEY("iterator"), 0,
            [](context & c, std::span<value>) { return c.current_this(); });
 
-    // The receiver as an object, or the TypeError of step 2.
+    // The receiver as an object, or a TypeError when `this` is not an object
+    // (step 2 of every Iterator.prototype method).
     const auto object_this = [](context & c, const char * name, value & self) {
         self = c.current_this();
         if (self.is_object_like()) { return true; }
@@ -416,9 +421,9 @@ void install_iterator(context & cx) {
     lazy_limit("chunks", helper_kind::chunks, true);
     lazy_limit("windows", helper_kind::windows, true);
 
-    // --- the eager ones: 27.1.3.2.4 every, .7 find, .8 forEach, .10 reduce,
-    // .11 some, .13 toArray - one walk each, the callback's throw closing the
-    // iterator, an early answer closing it too.
+    // --- the eager ones: every, find, forEach, some, toArray and includes
+    // (reduce is separate, below) - one walk each, the callback's throw closing
+    // the iterator, an early answer closing it too.
     enum class eager : std::uint8_t {
         every,
         find,
@@ -524,8 +529,8 @@ void install_iterator(context & cx) {
             if (!call_or_close(c, fn, args, self, accumulator)) { return value::undefined(); }
         }
     });
-    // Iterator.prototype.join (ES2026): ToString of each value - undefined
-    // and null as "" - between copies of the separator, "," by default.
+    // Iterator.prototype.join (ES2026): ToString of each value (undefined and
+    // null as "") between copies of the separator, "," by default.
     method(cx, proto, "join", 1, [object_this](context & c, std::span<value> a) {
         value self = value::undefined();
         if (!object_this(c, "join", self)) { return value::undefined(); }

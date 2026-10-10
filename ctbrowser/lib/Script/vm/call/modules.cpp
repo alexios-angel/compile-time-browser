@@ -1,11 +1,10 @@
-// ctbrowser.script context - ES modules: instantiation, the namespace object,
-// the four module opcode bodies, and running a module.
+//===- ctbrowser/lib/Script/vm/call/modules.cpp - ES modules ----*- C++ -*-===//
 //
-// One of five files carved out of a 1,171-line vm/call.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// ES modules: instantiation, the namespace objects, the four module opcode
+// bodies, dynamic import(), and running a module. All functions here are
+// members of `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <algorithm>
 #include <span>
@@ -16,16 +15,18 @@
 
 namespace ctbrowser::script {
 
-// CREATE THE BINDINGS WITHOUT RUNNING ANYTHING. This is the instantiate half of
-// the specification's two-phase module loading, and a cycle is the reason it
-// exists: A imports B imports A, so B evaluates first and asks A for a binding
-// A has not reached the declaration of. With every cell in the graph created up
-// front, B gets a real box that is merely EMPTY, and the write A makes later is
-// a write B reads - which is a cycle resolving rather than a missing export.
-//
-// It also has to happen before evaluation for a reason unrelated to cycles: the
-// cell an importer takes and the cell the exporter writes must be the SAME
-// object, and the only way to guarantee that is for one of them not to make it.
+/// Creates the export bindings of \p prog in \p into without running anything.
+/// This is the instantiate half of the specification's two-phase module
+/// loading, and cycles are the reason it exists: A imports B imports A, so B
+/// evaluates first and asks A for a binding A has not reached the declaration
+/// of. With every cell in the graph created up front, B gets a real box that is
+/// merely empty, and the write A makes later is a write B reads, so the cycle
+/// resolves rather than reporting a missing export.
+///
+/// It also has to happen before evaluation for a reason unrelated to cycles:
+/// the cell an importer takes and the cell the exporter writes must be the same
+/// object, and the only way to guarantee that is for one of them not to make
+/// it.
 void context::instantiate_module(const program & prog, module_record & into) {
     into.compiled = &prog;
     for (const std::string & name : prog.exports) {
@@ -36,31 +37,32 @@ void context::instantiate_module(const program & prog, module_record & into) {
     }
 }
 
-// THE NAMESPACE OBJECT, and its properties are ACCESSORS rather than values.
-//
-// A namespace is live exactly as a named import is - `ns.count` after the
-// exporter reassigns `count` must read the new value - so copying the cells'
-// contents into an ordinary object here would be the same shortcut in a
-// different shape. Each property is a getter over the cell instead, which is
-// what the cell was for.
-//
-// ONE OBJECT PER MODULE, cached in the record: `import * as a` and `import * as
-// b` of the same module are required to be the SAME object, and code compares
-// namespaces by identity.
-//
-// AND AS MUCH OF 10.4.6's EXOTIC OBJECT AS AN ORDINARY ONE CAN BE: a null
-// [[Prototype]], not extensible, `@@toStringTag` "Module" (non-writable,
-// non-enumerable, non-configurable), the exports in code-unit order, each
-// enumerable and NOT configurable - so a write, a `delete` and a new property
-// are refused as the specification refuses them. Still getters rather than
-// its data properties: a namespace read is a get_prop and an accessor
-// re-entry, which is what the AOT bridge's lowering of one is written against
-// (aot/helpers/calls-and-modules.def, ct_aot_module_namespace).
+/// Returns the module namespace object (`import * as ns`) for \p of. Its
+/// properties are accessors rather than values.
+///
+/// A namespace is live exactly as a named import is (`ns.count` after the
+/// exporter reassigns `count` must read the new value), so copying the cells'
+/// contents into an ordinary object would be wrong. Each property is a getter
+/// over the export's cell instead.
+///
+/// There is one object per module, cached in the record: `import * as a` and
+/// `import * as b` of the same module must be the same object, and code
+/// compares namespaces by identity.
+///
+/// It implements as much of 10.4.6's exotic object as an ordinary object can
+/// be: a null [[Prototype]], not extensible, `@@toStringTag` "Module"
+/// (non-writable, non-enumerable, non-configurable), the exports in code-unit
+/// order, each enumerable and not configurable, so a write, a `delete` and a
+/// new property are refused as the specification refuses them. They are still
+/// getters rather than the spec's data properties: a namespace read is a
+/// get_prop and an accessor re-entry, which is what the AOT bridge's lowering
+/// is written against (aot/helpers/calls-and-modules.def,
+/// ct_aot_module_namespace).
 value context::module_namespace(module_record & of) {
     if (of.namespace_object.is_kind(heap_kind::object)) { return of.namespace_object; }
     object_object * const ns = allocate<object_object>();
     of.namespace_object = value::object(ns);
-    ns->prototype = value::undefined(); // an explicit null (object_object::prototype)
+    ns->prototype = value::undefined(); // An explicit null (object_object::prototype).
     std::vector<std::string> names;
     names.reserve(of.exports.size());
     for (const auto & [name, cell] : of.exports) { names.push_back(name); }
@@ -83,16 +85,16 @@ value context::module_namespace(module_record & of) {
     return of.namespace_object;
 }
 
-// THE DEFERRED FORM (`import defer * as ns`, 16.2.2), and this one IS exotic:
-// a proxy over the specification's namespace object. Every operation on a
-// string key but `then` - [[Get]], [[GetOwnProperty]], [[DefineOwnProperty]],
-// [[HasProperty]], [[Delete]] and [[OwnPropertyKeys]] - evaluates the module
-// first (EnsureDeferredNamespaceEvaluation); a symbol key, `then`, [[Set]]
-// and the prototype and extensibility questions do not
-// (language/import/import-defer/evaluation-triggers). The target is what the
-// traps must answer consistently with: no prototype, not extensible, each
-// export a writable, enumerable, non-configurable property, and
-// @@toStringTag "Deferred Module". Values come from the cells.
+/// Returns the deferred namespace (`import defer * as ns`, 16.2.2) for \p of.
+/// This one is exotic: a proxy over the specification's namespace object.
+/// Every operation on a string key but `then` ([[Get]], [[GetOwnProperty]],
+/// [[DefineOwnProperty]], [[HasProperty]], [[Delete]] and [[OwnPropertyKeys]])
+/// evaluates the module first (EnsureDeferredNamespaceEvaluation); a symbol
+/// key, `then`, [[Set]] and the prototype and extensibility questions do not
+/// (test262 language/import/import-defer/evaluation-triggers). The target is
+/// what the traps must answer consistently with: no prototype, not
+/// extensible, each export a writable, enumerable, non-configurable property,
+/// and @@toStringTag "Deferred Module". Values come from the cells.
 value context::deferred_module_namespace(module_record & of) {
     if (!of.deferred_namespace_object.is_undefined()) { return of.deferred_namespace_object; }
     const std::string key = of.specifier;
@@ -103,7 +105,7 @@ value context::deferred_module_namespace(module_record & of) {
 
     object_object * const target = allocate<object_object>();
     const rooted keep_target{*this, value::object(target)};
-    target->prototype = value::undefined(); // an explicit null
+    target->prototype = value::undefined(); // An explicit null.
     for (const std::string & name : names) {
         target->define(name, value::undefined(), attr_writable | attr_enumerable);
     }
@@ -217,14 +219,15 @@ value context::deferred_module_namespace(module_record & of) {
 
 namespace {
 
-// AS WRITTEN IS NOT AS KEYED: `./dep.js` in one module and in another are two
-// different files. The loader left the translation in the record - see
-// module_record::resolved - and the bytecode can only carry what was written,
-// so every lookup by specifier goes through here first.
-//
-// A REFERENCE INTO `written` when there is no translation, which is why the
-// caller must keep the string alive across the lookup. Both callers below hold
-// it in a parameter.
+/// Maps a specifier as written to the key it is loaded under. `./dep.js` in one
+/// module and in another are two different files. The loader left the
+/// translation in the record (module_record::resolved), and the bytecode can
+/// only carry what was written, so every lookup by specifier goes through here
+/// first.
+///
+/// Returns a reference into \p written when there is no translation, so the
+/// caller must keep the string alive across the lookup. The callers below hold
+/// it in a parameter.
 [[nodiscard]] const std::string & keyed_by(const module_record * current,
                                            const std::string & written) {
     if (current == nullptr) { return written; }
@@ -234,14 +237,15 @@ namespace {
 
 } // namespace
 
-// THE FOUR MODULE OPCODE BODIES. See the declarations in vm.hpp for why they
-// are members rather than four blocks inside run_loop: a compiled module and an
-// interpreted one must not be able to disagree, and one copy is the only way to
-// guarantee it.
+// The four module opcode bodies. They are members rather than four blocks
+// inside run_loop (see the declarations in vm.hpp) because a compiled module
+// and an interpreted one must not be able to disagree, and one copy is the
+// only way to guarantee it.
 
+/// Returns the export cell \p export_name of module \p specifier.
 value context::module_import_cell(const std::string & specifier, const std::string & export_name) {
-    // The exporter has been evaluated already - the loader walks the graph
-    // depth-first - so its cell is there to be taken.
+    // The exporter has been evaluated already (the loader walks the graph
+    // depth-first), so its cell is there to be taken.
     const std::string & from = keyed_by(current_module_, specifier);
     const auto found = modules_.find(from);
     if (found == modules_.end()) {
@@ -256,22 +260,23 @@ value context::module_import_cell(const std::string & specifier, const std::stri
     return cell->second;
 }
 
+/// Returns the running module's export cell \p name, creating it if needed.
 value context::module_export_cell(const std::string & name, value current) {
-    // NOT IN A MODULE IS NOT AN ERROR, and it must not write. The register
-    // holds the local being exported, so answering undefined here would destroy
-    // it - the interpreter simply skips the store, and answering `current` is
-    // the same thing in a form both tiers can express.
+    // Outside a module this is not an error and must not write. The register
+    // holds the local being exported, so returning undefined would destroy it;
+    // the interpreter skips the store, and returning `current` gives
+    // AOT-compiled code the same effect.
     if (current_module_ == nullptr) { return current; }
-    // ADOPT THE RECORD'S CELL, do not publish this register's. The cell is
-    // created before ANY module in the graph runs - see instantiate_module - so
+    // Adopt the record's cell; do not publish this register's. The cell is
+    // created before any module in the graph runs (see instantiate_module), so
     // by the time this executes it already exists and something in a cycle may
     // already be holding it. Overwriting the record here would hand that
     // importer a box nobody ever writes to again.
     //
-    // THE CREATING ARM IS LIVE, not a belt: instantiate_module is called by
-    // browser::instantiate_module and by nothing else, so a host that runs a
-    // module through run_module without instantiating it first arrives here
-    // with an empty `exports` map.
+    // The create branch is reachable, not defensive: only
+    // browser::instantiate_module calls instantiate_module, so a host that
+    // calls run_module without instantiating first arrives here with an empty
+    // `exports` map.
     value & slot = current_module_->exports[name];
     if (!slot.is_kind(heap_kind::cell)) {
         slot = value::object(allocate<cell_object>(value::undefined()));
@@ -279,6 +284,7 @@ value context::module_export_cell(const std::string & name, value current) {
     return slot;
 }
 
+/// Returns the namespace object of module \p specifier.
 value context::module_namespace_for(const std::string & specifier) {
     const std::string & from = keyed_by(current_module_, specifier);
     const auto found = modules_.find(from);
@@ -289,6 +295,7 @@ value context::module_namespace_for(const std::string & specifier) {
     return module_namespace(found->second);
 }
 
+/// Returns the deferred namespace object of module \p specifier.
 value context::deferred_module_namespace_for(const std::string & specifier) {
     const std::string & from = keyed_by(current_module_, specifier);
     const auto found = modules_.find(from);
@@ -299,21 +306,21 @@ value context::deferred_module_namespace_for(const std::string & specifier) {
     return deferred_module_namespace(found->second);
 }
 
+/// `import(specifier)` from the module or script \p referrer. Returns a promise.
 value context::dynamic_import(value specifier, const std::string & referrer) {
     if (!module_loader_) {
         raise("dynamic import() has no loader installed");
         return value::undefined();
     }
-    // to_string BEFORE the loader and INSIDE this member. For an object it runs
-    // the page's own toString, which can throw and can re-enter - so a tier that
-    // converted at its call site instead would be a second conversion with a
-    // second set of effects.
+    // ToString runs here, before the loader and inside the fenced call, not at
+    // the interpreter or AOT call site: for an object it runs the page's own
+    // toString, which can throw and re-enter, so converting in two places
+    // would duplicate its effects.
     //
-    // BOTH BEHIND A FENCE (13.3.10.1 EvaluateImportCall): a ToString that
-    // throws, and a module whose evaluation throws, REJECT the promise the
-    // import answers (IfAbruptRejectPromise; a rejected evaluation promise).
-    // Called bare, the throw landed on the IMPORTER's handler, synchronously -
-    // `import(x).catch(...)` never saw it and a script with no try died.
+    // Per ECMA-262 13.3.10.1 EvaluateImportCall, a throwing ToString or a
+    // failed module evaluation rejects the returned promise
+    // (IfAbruptRejectPromise) instead of throwing synchronously at the
+    // importer, so `import(x).catch(...)` sees it.
     auto * step =
         allocate<native_object>("import()", [referrer](context & c, std::span<value> args) {
             const std::string text = c.to_string(args.empty() ? value::undefined() : args[0]);
@@ -329,9 +336,9 @@ value context::dynamic_import(value specifier, const std::string & referrer) {
     return threw ? make_promise(thrown, true) : promise;
 }
 
-// A MODULE IS RUN LIKE ANY OTHER PROGRAM, with two differences: it knows which
-// record it is filling in, so `bind_export` knows which cells to adopt, and its
-// exports outlive the call.
+/// Runs module \p prog like any other program, with two differences: it knows
+/// which record it is filling in, so `bind_export` knows which cells to adopt,
+/// and its exports outlive the call.
 run_result context::run_module(const program & prog, module_record & into) {
     module_record * const outer = current_module_;
     current_module_ = &into;

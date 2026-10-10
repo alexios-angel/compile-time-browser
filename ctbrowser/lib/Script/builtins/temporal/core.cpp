@@ -1,6 +1,12 @@
-// ctbrowser.script builtins - Temporal's abstract operations: the ISO
-// calendar, time arithmetic, rounding, the two kinds of time zone, durations
-// and their relative rounding, and the string forms. See core.hpp.
+//===- temporal/core.cpp - Temporal date and time arithmetic ----*- C++ -*-===//
+//
+// Temporal's abstract operations: the ISO calendar, time arithmetic,
+// rounding, the two kinds of time zone (UTC and fixed offsets), durations and
+// their relative rounding, and the string forms. CamelCase names in comments
+// are abstract operations from the TC39 Temporal proposal's specification,
+// called "the Temporal spec" below. See core.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "core.hpp"
 
@@ -27,7 +33,7 @@ template <class T> [[nodiscard]] constexpr T abs_of(T v) noexcept {
     return v < 0 ? -v : v;
 }
 
-// A double that is an integer, to i128 - the caller has bounded it.
+/// An integral double to i128; the caller has bounded it.
 [[nodiscard]] i128 to_i128(double v) noexcept {
     return static_cast<i128>(v);
 }
@@ -60,9 +66,10 @@ enum class unsigned_mode : std::uint8_t {
     return unsigned_mode::zero;
 }
 
-// ApplyUnsignedRoundingMode for x = r1 + d1/(d1 + d2) between r1 and r1 + 1,
-// told apart by the two distances rather than by a fraction: d1 is how far x
-// is above r1 and d2 how far below r1 + 1, both in the same (exact) unit.
+/// ApplyUnsignedRoundingMode for x = r1 + d1/(d1 + d2) between r1 and r1 + 1,
+/// told apart by the two distances rather than by a fraction: d1 is how far x
+/// is above r1 and d2 how far below r1 + 1, both in the same (exact) unit.
+/// True when x rounds to r1 + 1.
 [[nodiscard]] bool rounds_up(unsigned_mode mode, i128 d1, i128 d2, i128 r1) noexcept {
     if (d1 == 0) { return false; }
     switch (mode) {
@@ -357,7 +364,7 @@ std::optional<iso_date> calendar_date_add(const iso_date & date, const date_dura
 
 namespace {
 
-// CompareSurpasses for the ISO calendar, where a month code orders as its month.
+/// CompareSurpasses for the ISO calendar, where a month code orders as its month.
 [[nodiscard]] bool surpasses(int sign, std::int64_t year, int month, int day,
                              const iso_date & target) noexcept {
     if (year != target.year) { return sign * (year - target.year) > 0; }
@@ -370,11 +377,12 @@ namespace {
 
 // CalendarDateUntil for "iso8601". The specification finds each unit by
 // counting up from one while ISODateSurpasses says the candidate has not
-// passed `two` - which is the largest count that does not pass it, and that
-// is computed here directly: the count that lands in the target's year (or
-// year and month), less one if the base's month or day then overshoots. (The
-// draft's ISODateSurpasses returns false outright when `months` is 0, so its
-// day loop, read literally, never ends; this is the intended arithmetic.)
+// passed `two`, which is the largest count that does not pass it; that is
+// computed here directly: the count that lands in the target's year (or year
+// and month), less one if the base's month or day then overshoots. (In the
+// Temporal spec, ISODateSurpasses returns false outright when `months` is 0,
+// so its day loop, read literally, never ends; this computes what that loop is
+// meant to compute.)
 date_duration calendar_date_until(const iso_date & one, const iso_date & two,
                                   unit largest) noexcept {
     const int compared = compare_iso_date(one, two);
@@ -647,7 +655,8 @@ std::optional<double> difference_plain_datetime_with_total(const iso_datetime & 
 
 namespace {
 
-// The zone's fixed offset in minutes; every zone here has one ("UTC" is 0).
+/// The zone's fixed offset in minutes. Only UTC and fixed-offset zones are
+/// supported (no IANA database), so every zone has one; UTC is 0.
 [[nodiscard]] std::int64_t offset_minutes_of(std::string_view zone) {
     const auto parsed = parse_time_zone_identifier(zone);
     return parsed && parsed->offset_minutes ? *parsed->offset_minutes : 0;
@@ -969,12 +978,16 @@ std::optional<double> date_duration_days(const date_duration & d,
 
 namespace {
 
+/// A Duration Nudge Result Record: the rounded duration, the epoch
+/// nanoseconds it reaches, and whether rounding crossed into the next unit.
 struct nudge_result {
     internal_duration duration;
     i128 nudged_epoch_ns = 0;
     bool did_expand_calendar_unit = false;
 };
 
+/// The rounding window of NudgeToCalendarUnit: the two candidate counts
+/// r1 and r2 of the rounding unit, and the instants and durations at each.
 struct nudge_window {
     double r1 = 0;
     double r2 = 0;
@@ -984,8 +997,9 @@ struct nudge_window {
     internal_duration end_duration;
 };
 
-// The epoch nanoseconds of a date and wall-clock time: in UTC when there is
-// no zone ("unset"), else through the zone with compatible disambiguation.
+/// The epoch nanoseconds of a date and wall-clock time: in UTC when `zone` is
+/// empty (a plain relativeTo), else through the zone with compatible
+/// disambiguation.
 [[nodiscard]] std::optional<i128> epoch_ns_at(std::string_view zone, const iso_date & date,
                                               const time_record & time) {
     const iso_datetime dt{date, time};
@@ -1041,10 +1055,11 @@ std::optional<nudge_window> compute_nudge_window(int sign, const internal_durati
         end = create_date_duration(d.date.years, d.date.months, d.date.weeks, w.r2);
     }
     if (!start || !end) { return std::nullopt; }
-    // The draft takes the origin whenever r1 is 0, which holds only when the
-    // whole start duration is 0: rounding weeks under a month (r1 = 0 weeks
-    // after -1 month) would measure the window from the wrong date, and
-    // test262's exact-multiple-of-larger-unit tests expect the true one.
+    // The Temporal spec uses the origin whenever r1 is 0. This code uses it
+    // only when the whole start duration is 0: rounding weeks under a month
+    // (r1 = 0 weeks after -1 month) would otherwise measure the window from
+    // the wrong date, and test262's exact-multiple-of-larger-unit tests expect
+    // the true start.
     if (tc_zero_date(*start)) {
         w.start_epoch_ns = origin_ns;
     } else {

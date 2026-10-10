@@ -1,16 +1,21 @@
-// ctbrowser.script builtins - DataView (ECMA-262 25.3): every element type at
-// any byte offset in either byte order, over the same store a typed array
-// views. internal.hpp in this directory says how the store is laid out.
+//===- typed_arrays/data_view.cpp - DataView --------------------*- C++ -*-===//
+//
+// DataView (ECMA-262 25.3): every element type at any byte offset in either
+// byte order, over the same store a typed array views. internal.hpp in this
+// directory describes the store's layout.
 //
 // A DataView is an ordinary object on DataView.prototype with four private
-// slots (value.hpp says a `@#` key is exactly as invisible as an internal
-// slot): the store, the ArrayBuffer it belongs to, [[ByteOffset]], and
-// [[ByteLength]] - a number, or undefined for a length-tracking view over a
-// resizable buffer. The bytes are the store's, so a Uint8Array over the same
-// buffer sees every setInt32 at once.
+// slots (script/value/base.hpp: a CTBROWSER_PRIVATE_KEY key is as invisible
+// to script as an internal slot): the store, the ArrayBuffer it belongs to,
+// [[ByteOffset]], and [[ByteLength]], which is a number, or undefined for a
+// length-tracking view over a resizable buffer. The bytes are the store's,
+// so a Uint8Array over the same buffer sees every setInt32 at once.
 //
-// The binary16 and 64-bit BigInt encodings are value.hpp's and bigint.hpp's,
-// shared with Float16Array, BigInt64Array and BigUint64Array.
+// The raw element encodings (binary16 included) are script/value/arrays.hpp's
+// and the 64-bit BigInt ones script/bigint.hpp's, shared with Float16Array,
+// BigInt64Array and BigUint64Array.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -18,7 +23,7 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
-// Each getX/setX pair, by the element kind it reads and writes.
+/// One getX/setX pair: the name suffix and the element kind it reads and writes.
 struct type_spec {
     const char * name;
     element_kind kind;
@@ -32,17 +37,18 @@ constexpr type_spec types[] = {
     {"BigUint64", element_kind::big_u64},
 };
 
-// --- the slots -----------------------------------------------------------------
+// --- The slots --------------------------------------------------------------
 
+/// A DataView's slots, read off the receiver by this_data_view.
 struct view_state {
     object_object * self = nullptr;
     array_object * store = nullptr;
     std::size_t offset = 0;
-    std::optional<std::size_t> length; // empty: length-tracking
+    std::optional<std::size_t> length; // Empty for a length-tracking view.
 };
 
-// RequireInternalSlot(O, [[DataView]]): the receiver's slots, or null with
-// the TypeError in flight.
+/// RequireInternalSlot(O, [[DataView]]): fills `out` with the receiver's slots
+/// and returns true, or returns false with the TypeError in flight.
 [[nodiscard]] bool this_data_view(context & cx, const char * method, view_state & out) {
     const value self = cx.current_this();
     object_object * obj = self.is_object() ? static_cast<object_object *>(self.as_heap()) : nullptr;
@@ -65,7 +71,7 @@ struct view_state {
     return true;
 }
 
-// IsViewOutOfBounds (25.3.1.3), detached included.
+/// IsViewOutOfBounds (25.3.1.3), detached included.
 [[nodiscard]] bool view_out_of_bounds(const view_state & v) {
     if (store_detached(v.store)) { return true; }
     const std::size_t bytes = v.store->items.size();
@@ -73,12 +79,12 @@ struct view_state {
     return v.length && *v.length > bytes - v.offset;
 }
 
-// GetViewByteLength (25.3.1.4), for a view known to be in bounds.
+/// GetViewByteLength (25.3.1.4), for a view known to be in bounds.
 [[nodiscard]] std::size_t view_byte_length(const view_state & v) {
     return v.length ? *v.length : v.store->items.size() - v.offset;
 }
 
-// GetViewValue (25.3.1.5).
+/// GetViewValue (25.3.1.5).
 [[nodiscard]] value get_view_value(context & c, std::span<value> a, const type_spec & t) {
     view_state v;
     if (!this_data_view(c, (std::string{"get"} + t.name).c_str(), v)) { return value::undefined(); }
@@ -105,8 +111,8 @@ struct view_state {
     }
 }
 
-// SetViewValue (25.3.1.6): the index, THEN the value's conversion, THEN the
-// byte order - each can run script and the order is observable.
+/// SetViewValue (25.3.1.6): the index, then the value's conversion, then the
+/// byte order. Each can run script, so the order is observable.
 [[nodiscard]] value set_view_value(context & c, std::span<value> a, const type_spec & t) {
     view_state v;
     if (!this_data_view(c, (std::string{"set"} + t.name).c_str(), v)) { return value::undefined(); }

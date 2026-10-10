@@ -1,7 +1,12 @@
-// ctbrowser.script builtins - Temporal.PlainYearMonth (9) and
-// Temporal.PlainMonthDay (10): a date with its day, or its year, left out.
-// Each keeps a full ISO date - the reference day or year - as the
-// specification's [[ISODate]] does.
+//===- year_month_day.cpp - PlainYearMonth, PlainMonthDay -------*- C++ -*-===//
+//
+// Temporal.PlainYearMonth (Temporal proposal section 9) and
+// Temporal.PlainMonthDay (section 10): a date with its day, or its year, left
+// out. Each keeps a full ISO date, filling the gap with a reference day or
+// year, as the specification's [[ISODate]] does. Section numbers below refer
+// to the same specification.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -9,8 +14,8 @@ namespace ctbrowser::script::builtins_detail::temporal_js {
 
 namespace {
 
-// The calendar argument of a constructor: absent is "iso8601", a non-string
-// a TypeError, an unknown one a RangeError.
+/// The calendar argument of a constructor: absent is "iso8601", a non-string
+/// a TypeError, an unknown one a RangeError.
 [[nodiscard]] bool constructor_calendar(context & cx, value v, std::string & out) {
     out = "iso8601";
     if (v.is_undefined()) { return true; }
@@ -21,15 +26,15 @@ namespace {
     return true;
 }
 
-// The first of the year-month, as DifferenceTemporalPlainYearMonth and
-// AddDurationToYearMonth start from it.
+/// The first day of the year-month, where DifferenceTemporalPlainYearMonth and
+/// AddDurationToYearMonth start.
 [[nodiscard]] bool first_of_month(context & cx, const tc::iso_date & date, tc::iso_date & out) {
     calendar_fields fields = iso_date_to_fields(date, date_type::year_month);
     fields.day = 1;
     return calendar_date_from_fields(cx, fields, tc::overflow::constrain, out);
 }
 
-// DifferenceTemporalPlainYearMonth (9.5.7).
+/// DifferenceTemporalPlainYearMonth (9.5.7): until() and, with \p since, since().
 value difference(context & cx, bool since, const plain_date & self, std::span<value> a) {
     plain_date other;
     if (!to_temporal_year_month(cx, arg_at(a, 0), value::undefined(), other)) {
@@ -78,7 +83,7 @@ value difference(context & cx, bool since, const plain_date & self, std::span<va
     return make_duration(cx, since ? tc::negate(*result) : *result);
 }
 
-// AddDurationToYearMonth (9.5.8).
+/// AddDurationToYearMonth (9.5.8): add() and, with \p subtract, subtract().
 value add_duration(context & cx, bool subtract, const plain_date & self, std::span<value> a) {
     tc::duration_record d;
     if (!to_temporal_duration(cx, arg_at(a, 0), d)) { return value::undefined(); }
@@ -163,7 +168,8 @@ value month_day_with(context & cx, std::span<value> a) {
     return make_month_day(cx, plain_date{result, self->calendar});
 }
 
-// toPlainDate of either: the object's missing field merged in, constrained.
+/// toPlainDate of either class: the field the object lacks (day or year) is
+/// read from \p item, merged in and constrained.
 value to_plain_date(context & cx, const plain_date & self, value item, date_type type,
                     std::uint32_t input) {
     if (!item.is_object_like()) {

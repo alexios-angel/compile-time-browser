@@ -1,25 +1,30 @@
-// early errors - regular expression literals.
+//===- regexp.cpp - RegExp literal early errors -----------------*- C++ -*-===//
 //
-// 13.2.7.1: a RegularExpressionLiteral is an early error when its body is not
-// a Pattern, or its flags are not a legal set of flags. The whole of the
-// regular expression grammar is that rule, and the whole grammar is NOT what
-// runs here: `regex.hpp` compiles a pattern when the literal is evaluated,
-// and running that compiler over every literal at compile time would turn
-// each of its gaps into a page that does not load (p5.js has one at `/ /`,
-// which the rx engine could not take when this was first tried).
+// Early errors for regular expression literals, and rx::rx_pattern_error,
+// the same check for a pattern and flags given as strings.
 //
-// So this is a SCAN, not a parse. It reads the literal the way the lexer did
-// - escapes, character classes, groups - and refuses only what is provably
+// ECMA-262 13.2.7.1: a RegularExpressionLiteral is an early error when its
+// body is not a Pattern, or its flags are not a legal set of flags. The whole
+// regular expression grammar is behind that rule, and the whole grammar is
+// not what runs here: `regex.hpp` compiles a pattern when the literal is
+// evaluated, and running that compiler over every literal at compile time
+// would turn each of its gaps into a page that does not load (p5.js has a
+// literal, `/ /`, that the rx engine once could not compile).
+//
+// So this is a scan, not a parse. It reads the literal the way the lexer did
+// (escapes, character classes, groups) and refuses only what is provably
 // not a Pattern by inspection: a flag that does not exist or repeats, a group
 // that never closes, `(?` followed by nothing the grammar names, a quantifier
 // with nothing to repeat or with its bounds reversed, a quantified lookbehind,
 // a named group that is not a name or is bound twice on one path, `\k<name>`
-// naming no group, and - under the `u` flag, which turns Annex B off - the
+// naming no group, and, under the `u` flag (which turns Annex B off), the
 // identity escapes and lone brackets Annex B otherwise forgives. Anything it
 // does not understand it lets through: a miss here is a runtime SyntaxError
 // at the literal, a false positive is a script that never runs.
 //
 // The lexer keeps the delimiters, so the lexeme is `/body/flags`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "checker.hpp"
 
@@ -32,25 +37,28 @@ namespace ctbrowser::script::detail::early {
 
 namespace {
 
-// The SyntaxCharacters, which are the identity escapes `u` mode still allows.
+// The SyntaxCharacters plus `/`: the identity escapes the `u` flag still
+// allows (ECMA-262 22.2.1, IdentityEscape[+U]).
 [[nodiscard]] bool syntax_char(char c) {
     return std::string_view{"^$\\.*+?()[]{}|/"}.find(c) != std::string_view::npos;
 }
 
-// ONE OPEN GROUP, and the names bound along the current path through it.
+// One open group, and the names bound along the current path through it.
 // 22.2.1.1 lets one name be bound twice only in different alternatives of
 // some disjunction: `(?<a>x)|(?<a>y)` is legal, `(?<a>x)(?<a>y)` is not.
 // Each alternative's names are kept apart until `|`, and a closing group
 // hands the union of its alternatives up as part of the parent's current
 // alternative.
 struct group {
-    std::vector<std::string> current; // names bound in the alternative being read
-    std::vector<std::string> earlier; // names bound in the alternatives before it
+    std::vector<std::string> current; // Names bound in the alternative being read.
+    std::vector<std::string> earlier; // Names bound in the alternatives before it.
     bool lookbehind = false;
     bool lookahead = false;
     bool capturing = false;
 };
 
+// The scan over one pattern body: call run() once for the first error, if
+// any.
 class scan {
 public:
     scan(std::string_view body, bool unicode) : s_(body), unicode_(unicode) {}
@@ -91,9 +99,11 @@ private:
         return i_ + ahead < s_.size() ? s_[i_ + ahead] : '\0';
     }
 
-    // A raw line terminator is a LITERAL's problem (12.9.5, judged by
-    // regexp_literal_error on the lexeme); `new RegExp('a\nb')` is a
-    // pattern like any other - p5.js parses CSV with one.
+    // Scans one atom, operator or escape outside a character class, or one
+    // class step inside one. A raw line terminator is not refused here: it
+    // is an error only inside a literal (12.9.5, checked by
+    // regexp_literal_error), and `new RegExp('a\nb')` is a valid pattern
+    // (p5.js parses CSV with one).
     void step() {
         const char c = s_[i_];
         if (in_class_) {
@@ -109,7 +119,7 @@ private:
             in_class_ = true;
             ++i_;
             if (peek() == '^') { ++i_; }
-            if (peek() == ']') { // `[]` and `[^]` are classes with no ranges
+            if (peek() == ']') { // `[]` and `[^]` are classes with no ranges.
                 in_class_ = false;
                 ++i_;
             }
@@ -146,8 +156,8 @@ private:
         }
     }
 
-    // ONE STEP INSIDE A CLASS: the closing bracket, a `-` that opens a range,
-    // or an atom - which is read for its code point first, then consumed
+    // One step inside a class: the closing bracket, a `-` that opens a range,
+    // or an atom, which is read for its code point first, then consumed
     // the way the lexer did (escape() judges the escapes). 22.2.1.1's rule
     // for NonemptyClassRanges: a range's start may not exceed its end, and
     // under `u` neither end may be a CharacterClassEscape (Annex B lets
@@ -227,11 +237,11 @@ private:
             return;
         }
         i_ += width;
-        if (peek() == '?') { ++i_; } // lazy
+        if (peek() == '?') { ++i_; } // Lazy.
         quantifiable_ = false;
     }
 
-    // `{n}`, `{n,}`, `{n,m}` - or, outside `u` mode, a literal brace when it
+    // `{n}`, `{n,}`, `{n,m}`, or, outside `u` mode, a literal brace when it
     // is not one of those (B.1.2 ExtendedPatternCharacter).
     void brace() {
         std::size_t j = i_ + 1;
@@ -284,13 +294,13 @@ private:
         ++i_;
         quantifiable_ = true;
         if (c == 'b' || c == 'B') {
-            // In a class `\b` is BACKSPACE (a ClassEscape); `\B` is none, and
+            // In a class `\b` is backspace (a ClassEscape); `\B` is none, and
             // with `u` no identity escape either (22.2.1: ClassEscape[+U]).
             if (in_class_ && c == 'B' && unicode_) {
                 fail("`\\B` is not a class escape with the u flag");
                 return;
             }
-            if (!in_class_) { quantifiable_ = false; } // an assertion
+            if (!in_class_) { quantifiable_ = false; } // An assertion.
             return;
         }
         if (c == 'k' && !in_class_) {
@@ -324,7 +334,7 @@ private:
                         return;
                     }
                     std::uint64_t code = 0;
-                    for (const char d : digits) { // saturating: leading zeros are legal
+                    for (const char d : digits) { // Saturating: leading zeros are legal.
                         code = std::min<std::uint64_t>(
                             code * 16 + static_cast<std::uint64_t>(hex_value(d)), 0x110000);
                     }
@@ -334,13 +344,13 @@ private:
                     }
                     i_ = end + 1;
                 }
-                return; // without `u`, `\u{` is the letter u and a brace
+                return; // Without `u`, `\u{` is the letter u and a brace.
             }
             const bool four = hex_value(peek()) >= 0 && hex_value(peek(1)) >= 0 &&
                               hex_value(peek(2)) >= 0 && hex_value(peek(3)) >= 0;
             if (four) {
                 // Under `u` a lead surrogate's escape takes the trail's after
-                // it - one code point, as the matcher reads it
+                // it: one code point, as the matcher reads it
                 // (rx_code_point_escape) and class_atom_value names it.
                 std::uint32_t cp = 0;
                 (void)rx::rx_code_point_escape(s_, i_, 'u', cp, unicode_);
@@ -401,7 +411,7 @@ private:
         }
         if (std::string_view{"dDsSwWfnrtv"}.find(c) != std::string_view::npos) { return; }
         if (syntax_char(c)) { return; }
-        if (c == '-' && in_class_) { return; } // ClassEscape :: `-` under u
+        if (c == '-' && in_class_) { return; } // ClassEscape :: `-` under u.
         if (unicode_ && (static_cast<unsigned char>(c) < 0x80)) {
             fail(std::string{"`\\"} + c + "` is not an escape the u flag allows");
         }
@@ -424,9 +434,9 @@ private:
     }
 
     // `(?<name>`: the name is a RegExpIdentifierName, read up to `>` and
-    // judged by rx_group_name - ID_Start then ID_Continue over the decoded
-    // code points, so `(?<❤>a)`, `(?<a\uD801>.)` and `(?<𝟚the>)` are refused.
-    // What is recorded is the DECODED name: `(?<a>)(?<\u0061>)` binds one
+    // judged by rx_group_name (ID_Start then ID_Continue over the decoded
+    // code points), so `(?<❤>a)`, `(?<a\uD801>.)` and `(?<𝟚the>)` are
+    // refused. What is recorded is the decoded name: `(?<a>)(?<\u0061>)` binds one
     // name twice, and `\k<\u0061>` refers to `(?<a>)`.
     [[nodiscard]] bool group_name(std::string & out) {
         const std::size_t end = s_.find('>', i_);
@@ -525,8 +535,8 @@ private:
         group done = std::move(groups_.back());
         groups_.pop_back();
         group & parent = groups_.back();
-        // The union of the closed group's alternatives - one name in two of
-        // them is one name - joins the parent's current alternative.
+        // The union of the closed group's alternatives (one name in two of
+        // them is one name) joins the parent's current alternative.
         std::vector<std::string> bound = std::move(done.current);
         for (const std::string & name : done.earlier) {
             if (std::find(bound.begin(), bound.end(), name) == bound.end()) {
@@ -550,8 +560,8 @@ private:
     bool unicode_;
     std::size_t i_ = 0;
     bool in_class_ = false;
-    bool have_atom_ = false;  // a class atom precedes, so a `-` may open a range
-    bool range_dash_ = false; // ...and one did: the next atom is the range's end
+    bool have_atom_ = false;  // A class atom precedes, so a `-` may open a range.
+    bool range_dash_ = false; // A `-` did open one: the next atom ends the range.
     std::int64_t last_atom_ = -1;
     bool quantifiable_ = false;
     std::uint32_t captures_ = 0;
@@ -568,7 +578,7 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
     if (lexeme.size() < 2 || lexeme.front() != '/') { return std::nullopt; }
     // The closing `/`: the first one outside a class that is not escaped.
     // The lexer stopped at a line feed when there was none, so the token can
-    // end without one - `/a\/` is exactly that.
+    // end without one; `/a\/` is exactly that.
     std::size_t close = std::string_view::npos;
     bool in_class = false;
     for (std::size_t i = 1; i < lexeme.size(); ++i) {
@@ -588,8 +598,9 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
         return "the regular expression literal is never closed";
     }
     const std::string_view body = lexeme.substr(1, close - 1);
-    // 12.9.5: no LineTerminator in the body, escaped or not - the lexer
-    // stops at a bare one but a backslash before one takes it along.
+    // 12.9.5: no LineTerminator in the body, escaped or not; the lexer
+    // stops at a bare one but a backslash before one takes it along. The
+    // UTF-8 bytes E2 80 A8 / E2 80 A9 are U+2028 / U+2029.
     for (std::size_t i = 0; i < body.size(); ++i) {
         const unsigned char c = static_cast<unsigned char>(body[i]);
         if (c == '\n' || c == '\r' ||
@@ -601,7 +612,7 @@ std::optional<std::string> regexp_literal_error(std::string_view lexeme) {
     }
     std::string_view flags = lexeme.substr(close + 1);
     // The lexer reads any non-ASCII byte as part of the flags, a Unicode
-    // space after the literal included - not judged here.
+    // space after the literal included; those bytes are not judged here.
     for (std::size_t i = 0; i < flags.size(); ++i) {
         if (static_cast<unsigned char>(flags[i]) >= 0x80) {
             flags = flags.substr(0, i);
@@ -630,7 +641,7 @@ std::optional<std::string> rx_pattern_error(std::string_view body, std::string_v
         return "the flags `u` and `v` may not be combined";
     }
     // `v` changes what a character class is, and 22.2.1's ClassSetExpression
-    // is implemented in full by the matcher's own reader - so under `v` the
+    // is implemented in full by the matcher's own reader, so under `v` the
     // matcher judges the body, and what it refuses is the early error.
     if (seen.find('v') != std::string::npos) {
         if (rx_compile(body, seen).ok) { return std::nullopt; }

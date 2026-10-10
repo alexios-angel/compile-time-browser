@@ -1,13 +1,15 @@
-// ctbrowser.script builtins - Uint8Array.fromBase64 / fromHex and
-// Uint8Array.prototype.toBase64 / toHex / setFromBase64 / setFromHex
-// (ES2025, 23.2.6.1-2 and 23.2.7.x). internal.hpp says how a typed array is
-// laid out.
+//===- typed_arrays/codecs.cpp - Uint8Array base64 and hex ------*- C++ -*-===//
 //
-// NOT core/algorithms.hpp's base64_decode: that one is `atob`'s, LENIENT by
-// specification (padding optional, unknown characters ignored), and this one
-// is STRICT by specification - an unknown character is a SyntaxError, the
-// base64url alphabet is an option, and how a partial last chunk is treated is
-// another. One decoder cannot answer both.
+// Uint8Array.fromBase64 / fromHex and Uint8Array.prototype.toBase64 / toHex /
+// setFromBase64 / setFromHex (ES2025, 23.2.6.1-2 and 23.2.7.x). internal.hpp
+// describes how a typed array is laid out.
+//
+// This does not use core/algorithms.hpp's base64_decode, which is atob's
+// lenient decoder (padding optional, unknown characters ignored). These
+// methods are strict: an unknown character is a SyntaxError, base64url is an
+// option, and partial-last-chunk handling is configurable.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -18,18 +20,22 @@ namespace {
 constexpr std::string_view base64_alphabet =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/// The `lastChunkHandling` option, in the order of `handlings` below.
 enum class chunk_handling : std::uint8_t {
     loose,
     strict,
     stop_before_partial
 };
 
+/// What a decode produced: the characters consumed (`read`), the bytes, and
+/// whether it stopped on invalid input.
 struct decode_result {
     std::size_t read = 0;
     std::vector<std::uint8_t> bytes;
     bool error = false;
 };
 
+/// The ASCII whitespace FromBase64 skips: space, tab, LF, FF and CR.
 [[nodiscard]] bool ascii_whitespace(char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
 }
@@ -39,7 +45,8 @@ struct decode_result {
     return at == std::string_view::npos ? -1 : static_cast<int>(at);
 }
 
-// DecodeBase64Chunk: 2, 3 or 4 characters into 1, 2 or 3 bytes.
+/// DecodeBase64Chunk: 2, 3 or 4 characters into 1, 2 or 3 bytes. With
+/// `throw_on_extra_bits`, returns false when the padding bits are non-zero.
 [[nodiscard]] bool decode_chunk(std::string chunk, bool throw_on_extra_bits,
                                 std::vector<std::uint8_t> & out) {
     const std::size_t n = chunk.size();
@@ -68,7 +75,7 @@ struct decode_result {
     return true;
 }
 
-// FromBase64 (the proposal's 10.2.1 / spec 23.2.6.1.x), maxLength included.
+/// FromBase64 (ECMA-262 23.2.6.1.x), maxLength included.
 [[nodiscard]] decode_result from_base64(std::string_view text, bool url, chunk_handling handling,
                                         std::size_t max_length) {
     decode_result result;
@@ -121,6 +128,8 @@ struct decode_result {
             if (c == '_') { c = '/'; }
         }
         if (base64_value(c) < 0) { return fail(); }
+        // Stop before a chunk that would decode more bytes than maxLength has
+        // room for; `read` stays at the last full chunk.
         const std::size_t remaining = max_length - result.bytes.size();
         if ((remaining == 1 && chunk.size() == 2) || (remaining == 2 && chunk.size() == 3)) {
             return result;
@@ -135,6 +144,7 @@ struct decode_result {
     }
 }
 
+/// FromHex: pairs of hex digits into bytes, at most `max_length` of them.
 [[nodiscard]] decode_result from_hex(std::string_view text, std::size_t max_length) {
     decode_result result;
     if (text.size() % 2 != 0) {
@@ -163,8 +173,8 @@ struct decode_result {
         omit_padding);
 }
 
-// GetOptionsObject: undefined is no options, an object is the options, and
-// anything else is a TypeError. False with the throw in flight.
+/// GetOptionsObject: undefined is no options, an object is the options, and
+/// anything else is a TypeError. False with the throw in flight.
 [[nodiscard]] bool options_arg(context & cx, value v, value & out) {
     if (v.is_undefined()) {
         out = value::undefined();
@@ -178,8 +188,8 @@ struct decode_result {
     return false;
 }
 
-// One option of `name`, which must be undefined (then `fallback`) or one of
-// `allowed`. `out` is the index into allowed; false with the throw in flight.
+/// Reads option `name`, which must be undefined (giving `fallback`) or one of
+/// `allowed`. `out` is the index into `allowed`; false with the throw in flight.
 [[nodiscard]] bool string_option(context & cx, value options, const char * name,
                                  std::span<const std::string_view> allowed, std::size_t fallback,
                                  std::size_t & out) {
@@ -210,10 +220,10 @@ constexpr std::string_view handlings[] = {"loose", "strict", "stop-before-partia
     return false;
 }
 
-// ValidateUint8Array: a Uint8Array specifically, whatever its buffer's state
-// - except that one the caller means to `write` refuses an immutable buffer
-// HERE, before any option is read (the detached check stays where the
-// specification puts it, after them).
+/// ValidateUint8Array: a Uint8Array specifically, whatever its buffer's
+/// state. The one exception: when the caller means to `write`, an immutable
+/// buffer is refused here, before any option is read (the detached check
+/// stays where the specification puts it, after them).
 [[nodiscard]] array_object * this_uint8_array(context & cx, const char * method,
                                               bool write = false) {
     const value self = cx.current_this();
@@ -234,6 +244,7 @@ constexpr std::string_view handlings[] = {"loose", "strict", "stop-before-partia
     return nullptr;
 }
 
+/// A copy of a Uint8Array's bytes.
 [[nodiscard]] std::vector<std::uint8_t> bytes_of(array_object * arr) {
     std::vector<std::uint8_t> out(arr->length());
     for (std::size_t i = 0; i < out.size(); ++i) {
@@ -252,6 +263,7 @@ constexpr std::string_view handlings[] = {"loose", "strict", "stop-before-partia
     return out;
 }
 
+/// The `{read, written}` result of setFromBase64 and setFromHex.
 [[nodiscard]] value read_written(context & cx, std::size_t read, std::size_t written) {
     const value out = cx.make_object();
     auto * obj = static_cast<object_object *>(out.as_heap());
@@ -350,8 +362,8 @@ void install_uint8array_codecs(context & cx, native_object * ctor, object_object
         const decode_result result =
             from_base64(static_cast<string_object *>(text.as_heap())->text, alphabet == 1,
                         static_cast<chunk_handling>(handling), arr->length());
-        // The bytes decoded before the error land FIRST (SetUint8ArrayBytes
-        // precedes the throw).
+        // The bytes decoded before an error are written first
+        // (SetUint8ArrayBytes precedes the throw).
         for (std::size_t i = 0; i < result.bytes.size(); ++i) {
             typed_array_set(arr, i, result.bytes[i]);
         }

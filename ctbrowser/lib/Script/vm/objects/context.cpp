@@ -1,11 +1,10 @@
-// ctbrowser.script context - construction: the global object proxy a bare VM
-// starts with, and the per-site literal caches.
+//===- ctbrowser/lib/Script/vm/objects/context.cpp - Context construction -===//
 //
-// One of six files carved out of a 1,396-line vm/objects.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// Construction of a context: realms, the global object proxy a bare VM starts
+// with, and the per-site literal caches. All functions here are members of
+// `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cstdint>
 #include <limits>
@@ -28,20 +27,23 @@ context::context() {
     set_global_this(make_global_object(*scope_realm_));
 }
 
+/// Creates a new realm whose globals start as a copy of the realm template and
+/// whose intrinsics are shared with the main realm.
 realm_record & context::create_realm() {
     realms_.push_back(std::make_unique<realm_record>());
     realm_record & made = *realms_.back();
     made.globals = realm_template_;
     made.builtin = realm_template_builtin_;
     made.platform_prototypes = realm_template_platform_prototypes_;
-    // The page's intrinsics, SHARED - the ones its template's bindings are
-    // (see realm_record).
+    // The page's intrinsics, shared: they are the ones the template's bindings
+    // refer to (see realm_record).
     made.intrinsics = main_realm().intrinsics;
     return made;
 }
 
-// ponytail: a realm lives as long as its context - closures point at their
-// realm by address - so a page making ShadowRealms in a loop grows realms_.
+// ponytail: a realm lives as long as its context (closures point at their
+// realm by address), so a page making ShadowRealms in a loop grows realms_.
+/// Creates a realm with no globals except the two compiler primitives.
 realm_record & context::create_empty_realm() {
     realms_.push_back(std::make_unique<realm_record>());
     realm_record & made = *realms_.back();
@@ -66,6 +68,7 @@ realm_record & context::create_empty_realm() {
     return made;
 }
 
+/// Returns the realm whose global object is \p global, or null.
 realm_record * context::realm_of(value global) const noexcept {
     for (const auto & realm : realms_) {
         if (global.is_heap() && realm->global_this.bits() == global.bits()) { return realm.get(); }
@@ -79,18 +82,20 @@ void context::set_realm_template(const string_flat_map<value> & globals) {
     realm_template_platform_prototypes_ = current_realm().platform_prototypes;
 }
 
-// A bare VM has a global object too. Like Shell's Window view, this proxy
-// shares the realm's global binding table instead of copying it. The table
-// remains the own-data environment used by the VM and AOT helpers; this does
-// not introduce accessor calls into pure global_get. THE TRAPS HOLD THEIR
-// REALM, not the current one: `other.x` read from this realm's code asks the
-// other realm's table.
+/// Defines `NaN`, `Infinity` and `undefined` on \p global as non-writable,
+/// non-enumerable, non-configurable properties (19.1).
 void context::define_immutable_globals(object_object & global) {
     global.define("NaN", value::number(std::numeric_limits<double>::quiet_NaN()), attr_none);
     global.define("Infinity", value::number(std::numeric_limits<double>::infinity()), attr_none);
     global.define("undefined", value::undefined(), attr_none);
 }
 
+/// Makes the global object of realm \p r. A bare VM has a global object too.
+/// Like Shell's Window view, this proxy shares the realm's global binding table
+/// instead of copying it. The table remains the own-data environment used by
+/// the VM and AOT helpers; this does not introduce accessor calls into pure
+/// global_get. The traps hold their own realm, not the current one: `other.x`
+/// read from this realm's code asks the other realm's table.
 value context::make_global_object(realm_record & r) {
     realm_record * const realm = &r;
     const value target = make_object();
@@ -99,7 +104,7 @@ value context::make_global_object(realm_record & r) {
     const auto trap = [&](const char * name, native_fn fn) {
         handler->set(name, value::object(allocate<native_object>(name, std::move(fn))));
     };
-    // A DECLARED name's own property on the target is a placeholder
+    // A declared name's own property on the target is a placeholder
     // (declare_global_var): the table answers it, in every trap below.
     trap("get", [realm](context & cx, std::span<value> args) {
         auto * object = static_cast<object_object *>(args[0].as_heap());
@@ -118,7 +123,7 @@ value context::make_global_object(realm_record & r) {
         auto * object = static_cast<object_object *>(args[0].as_heap());
         const std::string name = cx.to_string(args[1]);
         if (immutable_global(name)) {
-            return value::boolean(false); // 19.1: read-only - a TypeError in strict code
+            return value::boolean(false); // 19.1: read-only; a TypeError in strict code.
         }
         if (realm->declared.contains(name)) {
             realm->globals[name] = args[2];
@@ -129,7 +134,7 @@ value context::make_global_object(realm_record & r) {
         }
         return value::boolean(true);
     });
-    // THE WHOLE CHAIN, not the own table: `'toString' in globalThis` is true
+    // The whole chain, not the own table: `'toString' in globalThis` is true
     // in every engine, and global_or_named asks this before it decides a
     // bare identifier is unresolvable.
     trap("has", [realm](context & cx, std::span<value> args) {
@@ -137,7 +142,7 @@ value context::make_global_object(realm_record & r) {
         return value::boolean(cx.has_property(args[0], args[1]) ||
                               (realm->globals.contains(name) && !realm->lexical.contains(name)));
     });
-    // [[GetOwnProperty]] SEES THE BINDINGS TOO: `Object.getOwnPropertyDescriptor
+    // [[GetOwnProperty]] sees the bindings too: `Object.getOwnPropertyDescriptor
     // (this, "Array")` is how test262 verifies every global's attributes. An
     // intrinsic is clause 19's { writable: true, enumerable: false,
     // configurable: true } (realm_record::builtin); a script's `var` is
@@ -175,13 +180,14 @@ value context::make_global_object(realm_record & r) {
     return value::object(allocate<proxy_object>(target, value::object(handler)));
 }
 
-// VM_CASE(load_string)'s memo, extracted so a compiled body shares it.
+/// The per-site cache behind VM_CASE(load_bigint), shared with compiled bodies
+/// so both paths return the same BigInt object for one literal.
 value context::interned_bigint_literal(const void * site, std::uint32_t slot,
                                        std::string_view text) {
     const auto parse = [&] {
-        // A LITERAL THE LEXER ACCEPTED BUT THAT IS NOT AN INTEGER - `1.5n` -
+        // A literal the lexer accepted but that is not an integer (`1.5n`)
         // has no value to load, and 0n is the honest answer for a program that
-        // should have been refused at compile time. It does NOT throw.
+        // should have been refused at compile time. It does not throw.
         const std::optional<bigint> parsed = bigint_from_literal(std::string{text});
         return value::object(allocate<bigint_object>(parsed.value_or(bigint{0})));
     };
@@ -194,9 +200,10 @@ value context::interned_bigint_literal(const void * site, std::uint32_t slot,
     return made;
 }
 
-// A compiled constant is the compiler's text: a page's own literals were
-// decoded with its source (compile.cpp), and a private name's key is the
-// compiler's to spell (compiler_impl::member_key).
+/// The per-site string cache behind VM_CASE(load_string), shared with compiled
+/// bodies. \p text is already the final string: a page's literals were decoded
+/// when its source was compiled (compile.cpp), and a private name's key is
+/// spelled by compiler_impl::member_key.
 value context::interned_string(const void * site, std::uint32_t slot, std::string_view text) {
     if (site == nullptr) { return minted_string(std::string{text}); }
     auto & cache = string_cache_[site];

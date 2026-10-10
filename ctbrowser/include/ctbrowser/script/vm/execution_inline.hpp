@@ -1,4 +1,11 @@
 #pragma once
+//===- execution_inline.hpp - Inline execution members ----------*- C++ -*-===//
+//
+// Inline definitions of `context`'s execution plumbing: allocation, strings,
+// globals and realms, the module hooks, errors and throws, the microtask
+// queue, stack traces and the failure state.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../vm.hpp"
 
@@ -25,18 +32,18 @@ template <typename T, typename... Args>
 }
 
 [[nodiscard]] inline auto context::string(std::string s) -> value {
-    // NO JS STRING HOLDS AN INTERNAL KEY'S LEAD BYTE (core/symbol.hpp): one
+    // No JS string holds an internal key's lead byte (core/symbol.hpp): one
     // arriving here is a producer's undecoded bytes, and becomes the U+FFFD
-    // decoding would have made it - so no page ever holds a string that
+    // that decoding would have made it, so no page ever holds a string that
     // spells a symbol's key or a slot's.
     ctbrowser::replace_internal_key_lead(s);
     return minted_string(std::move(s));
 }
 
 [[nodiscard]] inline auto context::minted_string(std::string s) -> value {
-    // Two halves of a surrogate pair that met here - `'\uD800' +
-    // '\uDC00'`, String.fromCharCode(0xD800, 0xDC00) - are one code
-    // point, as they would be in UTF-16 (core's join_surrogates).
+    // Two halves of a surrogate pair that meet here (`'\uD800' + '\uDC00'`,
+    // String.fromCharCode(0xD800, 0xDC00)) are one code point, as they would
+    // be in UTF-16 (core's join_surrogates).
     ctbrowser::join_surrogates(s);
     string_bytes_ += s.size();
     return value::object(allocate<string_object>(std::move(s)));
@@ -50,7 +57,7 @@ template <typename T, typename... Args>
     return value::object(allocate<array_object>());
 }
 
-// CreateIterResultObject (7.4.14): `{value, done}`, in that order.
+/// CreateIterResultObject (7.4.14): `{value, done}`, in that order.
 [[nodiscard]] inline auto context::iter_result(value v, bool done) -> value {
     const value out = make_object();
     auto * obj = static_cast<object_object *>(out.as_heap());
@@ -85,11 +92,11 @@ inline auto context::mark_globals_builtin() -> void {
 inline auto context::declare_global_var(std::string name, bool configurable) -> void {
     realm_record & realm = current_realm();
     if (realm.globals.find(name) != realm.globals.end()) { return; }
-    // The global object is a proxy over the table; what `Object.defineProperty
-    // (globalThis, ...)` defines lands on its TARGET, and that is an own
-    // property of the global object too. Asked of the target directly, so a
-    // page's named elements - which the window's traps also report - do not
-    // pass for declared variables.
+    // The global object is a proxy over the table; what
+    // `Object.defineProperty(globalThis, ...)` defines lands on its target,
+    // and that is an own property of the global object too. Ask the target
+    // directly, so a page's named elements, which the window's traps also
+    // report, do not pass for declared variables.
     value holder = realm.global_this;
     if (holder.is_kind(heap_kind::proxy)) {
         holder = static_cast<proxy_object *>(holder.as_heap())->target;
@@ -98,11 +105,11 @@ inline auto context::declare_global_var(std::string name, bool configurable) -> 
     if (holder.is_object() && own_property(holder, name, own)) { return; }
     if (!configurable) {
         realm.declared[name] = true;
-        // AND A PROPERTY THE PROXY'S TARGET REALLY HAS: a trap may report a
+        // And a property the proxy's target really has: a trap may report a
         // non-configurable property only if the target owns one (10.5.5's
-        // invariants - `getOwnPropertyDescriptor` is a TypeError otherwise).
-        // A placeholder; the table stays the storage the VM and compiled
-        // code read, and the traps answer a declared name from it.
+        // invariants; `getOwnPropertyDescriptor` is a TypeError otherwise).
+        // This is a placeholder; the table stays the storage the VM and
+        // compiled code read, and the traps answer a declared name from it.
         if (holder.is_object()) {
             static_cast<object_object *>(holder.as_heap())
                 ->define(name, value::undefined(), attr_writable | attr_enumerable);
@@ -111,19 +118,17 @@ inline auto context::declare_global_var(std::string name, bool configurable) -> 
     realm.globals[std::move(name)] = value::undefined();
 }
 
-// A GLOBAL ASSIGNMENT. NaN, Infinity and undefined refuse it; a binding the
-// table has takes it; otherwise a DATA property of the global object's own
-// (9.1.1.4.5 SetMutableBinding: the object record's Set) - one that
-// `Object.defineProperty(globalThis, ...)` made lives on the proxy's target,
-// and writing the binding table instead left the two disagreeing: the
-// descriptor kept the old value, and a bare read found the new one. An
-// accessor keeps the table's shadow as before, and the table is where every
-// other global is created.
-//
-// BOTH TIERS STORE HERE - VM_CASE(set_global) and ct_aot_global_set - because
-// the native backend checks itself against the interpreter: a compiled store
-// that wrote the table while the interpreter wrote the property was the same
-// program giving two answers.
+/// A global assignment. NaN, Infinity and undefined refuse it; a binding the
+/// table has takes it; otherwise it goes to a data property the global object
+/// owns (9.1.1.4.5 SetMutableBinding: the object record's Set). A property
+/// that `Object.defineProperty(globalThis, ...)` made lives on the proxy's
+/// target, and it is written there so its descriptor and a bare read agree.
+/// An accessor keeps the table's shadow, and the table is where every other
+/// global is created.
+///
+/// Both the interpreter (VM_CASE(set_global)) and AOT-compiled code
+/// (ct_aot_global_set) store through this function, so a compiled program and
+/// its interpreted run cannot disagree about where a global assignment lands.
 inline auto context::assign_global(realm_record & realm, const std::string & name, value v,
                                    bool strict) -> void {
     if (immutable_global(name)) [[unlikely]] {
@@ -177,8 +182,8 @@ inline auto context::declare_global_function(std::string name, bool configurable
         return;
     }
     if (!holder.is_object() || own_property(holder, name, own)) { return; }
-    // A configurable table binding - a page's assignment, an intrinsic - is
-    // redefined, which here is the declared mark and its placeholder (see
+    // A configurable table binding (a page's assignment, an intrinsic) is
+    // redefined, which here means the declared mark and its placeholder (see
     // declare_global_var); the value is the one the script's hoisted
     // declaration writes before its first statement.
     realm.declared[name] = true;
@@ -187,8 +192,8 @@ inline auto context::declare_global_function(std::string name, bool configurable
     if (!realm.globals.contains(name)) { realm.globals[std::move(name)] = value::undefined(); }
 }
 
-// `delete globalThis.x`: the binding is a table entry, and every global
-// is { configurable: true } (clause 17), so the delete succeeds.
+/// `delete globalThis.x`: the binding is a table entry, and every global is
+/// { configurable: true } (clause 17), so the delete succeeds.
 inline auto context::erase_global(std::string_view name) -> bool {
     return current_realm().globals.erase(name) != 0;
 }
@@ -204,47 +209,47 @@ inline auto context::define_native(std::string name, native_fn fn) -> void {
     return it == globals.end() ? value::undefined() : it->second;
 }
 
-// Whether the name is DEFINED, which is not whether it is truthy or even
-// defined-and-undefined: `window.foo` on a global explicitly set to
-// undefined must still report the global as present, or `'foo' in window`
-// and a window that proxies to the globals disagree with `typeof foo`.
+/// Whether the name is defined, which is not whether it is truthy: a global
+/// explicitly set to undefined must still report as present, or `'foo' in
+/// window` and a window that proxies to the globals disagree with
+/// `typeof foo`.
 [[nodiscard]] inline auto context::has_global(std::string_view name) const -> bool {
     const auto & globals = current_realm().globals;
     return globals.find(name) != globals.end();
 }
 
-// Every global, for a window that enumerates itself.
+/// Every global, for a window that enumerates itself.
 [[nodiscard]] inline auto context::globals() const noexcept -> const string_flat_map<value> & {
     return current_realm().globals;
 }
 
-// WHETHER SCRIPT IS RUNNING RIGHT NOW - a native called from the
-// interpreter is on the C++ stack. `frames_` cannot answer this: a
-// VM-level raise (the call-stack ceiling) returns out of the loop without
-// unwinding, so the frames of a script that is OVER stay behind until the
-// next top-level `run` clears them.
+/// Whether script is running right now, that is, a native called from the
+/// interpreter is on the C++ stack. `frames_` cannot answer this: a VM-level
+/// raise (the call-stack ceiling) returns out of the loop without unwinding,
+/// so the frames of a script that is over stay behind until the next
+/// top-level `run` clears them.
 [[nodiscard]] inline auto context::in_native() const noexcept -> bool {
     return native_depth_ > 0;
 }
 
-// WHAT AN UNDECLARED NAME MEANS, when the embedder has an answer. HTML
-// 7.3.3: an element with an `id` is reachable as a bare identifier, and
-// web-platform-tests leans on it constantly. The shell installs a
-// function that answers named elements; it is consulted ONLY when the
-// name is not a global, so the declared path is one map lookup.
+/// Installs what an undeclared name means, when the embedder has an answer.
+/// HTML 7.3.3: an element with an `id` is reachable as a bare identifier, and
+/// web-platform-tests rely on it constantly. The shell installs a function
+/// that answers named elements; it is consulted only when the name is not a
+/// global, so the declared path is one map lookup.
 inline auto context::set_undeclared_name_hook(std::function<value(std::string_view)> hook) -> void {
     current_realm().undeclared_name = std::move(hook);
 }
 
-// GetValue OF AN IDENTIFIER REFERENCE (6.2.5.5, 9.1.1.4.6). The global
-// environment's object record IS the global object, so a name that is
-// not in the binding table is read off `globalThis` - own, inherited
-// (`toString` resolves to Object.prototype's) or what the embedder's hook
-// answers - and a name that is nowhere is an unresolvable reference:
-// ReferenceError, catchable, exactly what feature detection written as
-// `try { x } catch (e) {}` expects - unless the read is the operand of
-// `typeof` (13.5.3 step 2), which is the one silent one: `silent` is how
-// the run loop and the AOT bridge ask for it.
+/// GetValue of an identifier reference (6.2.5.5, 9.1.1.4.6). The global
+/// environment's object record is the global object, so a name that is not in
+/// the binding table is read off `globalThis`: own, inherited (`toString`
+/// resolves to Object.prototype's) or what the embedder's hook answers. A
+/// name that is nowhere is an unresolvable reference and throws a catchable
+/// ReferenceError, exactly what feature detection written as
+/// `try { x } catch (e) {}` expects, unless the read is the operand of
+/// `typeof` (13.5.3 step 2), the one silent case: `silent` is how the run loop
+/// and the AOT bridge ask for it.
 [[nodiscard]] inline auto context::global_or_named(std::string_view name, bool silent) -> value {
     realm_record & realm = current_realm();
     const auto it = realm.globals.find(name);
@@ -253,9 +258,9 @@ inline auto context::set_undeclared_name_hook(std::function<value(std::string_vi
         const value named = realm.undeclared_name(name);
         if (!named.is_undefined()) { return named; }
     }
-    // The global object is a PROXY in both embeddings, and a proxy is not
-    // is_object() - it is a heap value of its own kind. Held in a local: the
-    // hook above may have run script, and `has_property` may run a trap.
+    // The global object is a proxy in both embeddings, and a proxy is not
+    // is_object(): it is a heap value of its own kind. Held in a local because
+    // the hook above may have run script, and `has_property` may run a trap.
     const value global_object = realm.global_this;
     if (global_object.is_heap() && has_property(global_object, string(std::string{name}))) {
         return lookup_property(global_object, std::string{name});
@@ -264,9 +269,9 @@ inline auto context::set_undeclared_name_hook(std::function<value(std::string_vi
     return value::undefined();
 }
 
-// The realm's script receiver is independent of the writable globalThis
-// binding. An embedder selects its host object before running scripts;
-// assigning globalThis in JavaScript never changes this identity.
+/// The realm's script receiver, independent of the writable globalThis
+/// binding. An embedder selects its host object before running scripts;
+/// assigning globalThis in JavaScript never changes this identity.
 [[nodiscard]] inline auto context::global_this() const noexcept -> value {
     return current_realm().global_this;
 }
@@ -294,55 +299,58 @@ inline auto context::set_global_this(value receiver) -> void {
     return *realms_.front();
 }
 
-// A closure made by the embedder without a realm runs in the caller's.
+/// The realm a call to `callee` runs in. A closure made by the embedder without
+/// a realm runs in the caller's.
 [[nodiscard]] inline auto context::realm_for(const closure_object * callee) const noexcept
     -> realm_record * {
     return callee != nullptr && callee->realm != nullptr ? callee->realm : &current_realm();
 }
 
-// WHAT `import(specifier)` CALLS. The VM knows nothing about paths, URLs or
-// fetching, so a dynamic import hands the specifier and the module that
-// wrote it to the embedder and expects a promise back.
+/// Installs what `import(specifier)` calls. The VM knows nothing about paths,
+/// URLs or fetching, so a dynamic import hands the specifier and the module
+/// that wrote it to the embedder and expects a promise back.
 inline auto context::set_module_loader(
     std::function<value(context &, const std::string &, const std::string &)> loader) -> void {
     module_loader_ = std::move(loader);
 }
 
-// Where a module is found by specifier. The loader owns the graph; the VM
-// only needs to look a name up when `load_import` runs.
+/// Modules by specifier. The loader owns the graph; the VM only needs to look
+/// a name up when `load_import` runs.
 [[nodiscard]] inline auto context::modules() noexcept
     -> std::unordered_map<std::string, module_record> & {
     return modules_;
 }
 
-// WHAT A DEFERRED NAMESPACE CALLS TO RUN ITS MODULE: the loader's own
-// post-order evaluation, so the module's not-yet-run dependencies run
-// first. Answers false when the evaluation threw (last_thrown says what).
+/// Installs what a deferred namespace calls to run its module: the loader's
+/// own post-order evaluation, so the module's not-yet-run dependencies run
+/// first. The evaluator answers false when the evaluation threw (last_thrown
+/// says what).
 inline auto context::set_module_evaluator(std::function<bool(context &, module_record &)> evaluator)
     -> void {
     module_evaluator_ = std::move(evaluator);
 }
 
-// The receiver of the method call currently running, for natives. JS
-// methods get `this` from the call site; a native has no frame to read it
-// from, so the VM hands it over here. It is how one native object's methods
-// tell which object they were called on - `el.setText(...)` and
-// `other.setText(...)` are the same native.
+/// The receiver of the method call currently running, for natives. JS methods
+/// get `this` from the call site; a native has no frame to read it from, so
+/// the VM hands it over here. It is how one native object's methods tell which
+/// object they were called on: `el.setText(...)` and `other.setText(...)` are
+/// the same native.
 [[nodiscard]] inline auto context::current_this() const noexcept -> value {
     return current_this_;
 }
 
-// Run a program NESTED inside another - `new Function(...)` evaluating its
-// own body while a script is halfway through a statement.
-//
-// Not `run()`, which clears the failure flag and drains the microtask
-// queue - both belong to the TURN rather than to the program. And not
-// `execute()`, which is the TOP-LEVEL entry: it clears `frames_` and
-// `registers_` and points `program_` at its argument, which called nested
-// throws away the stack of whoever was running.
-//
-// A closure over the program's entry function, called normally. Its `owner`
-// is what makes every `op::closure` inside it index the right table.
+/// Runs a program nested inside another, such as `new Function(...)`
+/// evaluating its own body while a script is halfway through a statement.
+///
+/// Not `run()`, which clears the failure flag and drains the microtask queue;
+/// both belong to the turn rather than to the program. And not `execute()`,
+/// which is the top-level entry: it clears `frames_` and `registers_` and
+/// points `program_` at its argument, which, called nested, would throw away
+/// the stack of whoever was running.
+///
+/// It calls a closure over the program's entry function normally. The
+/// closure's `owner` is what makes every `op::closure` inside it index the
+/// right function table.
 [[nodiscard]] inline auto context::run_nested(const program & prog) -> value {
     if (!prog.ok || prog.functions.empty()) { return value::undefined(); }
     if (!global_declaration_instantiation(prog)) { return value::undefined(); }
@@ -360,62 +368,64 @@ inline auto context::set_module_evaluator(std::function<bool(context &, module_r
     return call(value::object(entry), std::span<const value>{});
 }
 
-// KEEP a compiled program for the life of the context. The compiler is
-// the caller's because the VM does not depend on it - `compile.hpp`
-// includes `vm.hpp`, not the other way round.
+/// Keeps a compiled program alive for the life of the context. Compiling is
+/// the caller's job because the VM does not depend on the compiler:
+/// `compile.hpp` includes `vm.hpp`, not the other way round.
 inline auto context::own_program(program compiled) -> const program & {
     owned_programs_.push_back(std::make_unique<program>(std::move(compiled)));
     return *owned_programs_.back();
 }
 
-// A NATIVE REFUSING. Ends the run with a named message, the way any other
-// fault does. Not catchable from script; a native that needs to be caught
-// wants throw_error.
+/// Ends the run with a named message because a native refuses, the way any
+/// other fault does. Not catchable from script; a native that needs to be
+/// caught wants throw_error.
 inline auto context::refuse(std::string_view what, std::string why) -> void {
     raise(std::string{what} + ": " + std::move(why));
 }
 
-// AN ERROR OBJECT WITHOUT THROWING IT. A rejected promise carries one and
-// is not a throw, so building and throwing are separate.
+/// Builds an error object without throwing it. A rejected promise carries one
+/// and is not a throw, so building and throwing are separate.
 [[nodiscard]] inline auto context::make_error(std::string_view kind, std::string message) -> value {
     value made = make_object();
     auto * o = static_cast<object_object *>(made.as_heap());
-    // ON THE PROTOTYPE THE KIND NAMES, not on Error's: `assert.throws
-    // (TypeError, ...)` compares the CONSTRUCTOR. `name` is NOT an own
-    // property - 20.5.6.5 puts it on the prototype, and an own one would
+    // Use the prototype the kind names, not Error's, because
+    // `assert.throws(TypeError, ...)` compares the constructor. `name` is not
+    // an own property: 20.5.6.5 puts it on the prototype, and an own one would
     // show in `Object.keys(e)` and `e.hasOwnProperty('name')`.
     object_object * table = error_prototype(kind);
     if (table == nullptr) {
-        // A KIND WITH NO CONSTRUCTOR - "DataCloneError" is a DOMException
-        // name rather than an ECMAScript one, and this engine has no
-        // DOMException. Error.prototype plus an own `name` is the honest
-        // fallback: the name is still right and `e instanceof Error` holds.
+        // A kind with no constructor: "DataCloneError" is a DOMException name
+        // rather than an ECMAScript one, and this engine has no DOMException.
+        // Error.prototype plus an own `name` is the honest fallback: the name
+        // is still right and `e instanceof Error` holds.
         table = prototype(proto_kind::error);
         o->define("name", string(std::string{kind}), attr_builtin);
     }
     // { true, false, true }, as 20.5.1.1 step 3 installs it.
     o->define("message", string(message), attr_builtin);
-    // The frames it happened on, exactly as a constructed Error gets them -
-    // a page catching a TypeError the VM raised should be able to report
-    // where as easily as one it threw itself. IN THE [[ErrorData]] SLOT
-    // the Error constructor uses (builtins/objects/errors.cpp's
-    // error_stack_slot): Error.prototype's `stack` accessor answers it,
-    // and Error.isError tests for it.
+    // The frames it happened on, exactly as a constructed Error gets them: a
+    // page catching a TypeError the VM raised should be able to report where
+    // as easily as one it threw itself. Stored in the [[ErrorData]] slot the
+    // Error constructor uses (builtins/objects/errors.cpp's error_stack_slot):
+    // Error.prototype's `stack` accessor answers it, and Error.isError tests
+    // for it.
     o->define(CTBROWSER_PRIVATE_KEY("ErrorData"),
               string(std::string{kind} + ": " + message + current_stack()), attr_none);
     if (table != nullptr) { o->prototype = value::object(table); }
     return made;
 }
 
-// --- ONE PROTOTYPE PER ERROR KIND ------------------------------------
+// --- One prototype per error kind -----------------------------------------
 //
-// `proto_kind` is a fixed enum over the value KINDS property lookup falls
-// back to, and the error types are not that: they are seven ordinary
-// objects chained to one another, and the runtime only ever looks one up by
-// the name a throw site wrote. A small keyed list rather than seven more
-// enumerators keeps the fallback array - which every property read on a
-// primitive indexes - exactly the size it was.
-// The current realm's, like the prototypes.
+// `proto_kind` is a fixed enum over the value kinds property lookup falls
+// back to, and the error types are not that: they are seven ordinary objects
+// chained to one another, and the runtime only ever looks one up by the name
+// a throw site wrote. A small keyed list rather than seven more enumerators
+// keeps the fallback array, which every property read on a primitive
+// indexes, exactly the size it was.
+
+/// Registers the current realm's prototype for error kind `kind`, like the
+/// other prototypes.
 inline auto context::register_error_prototype(std::string kind, object_object * table) -> void {
     current_realm().intrinsics->error_prototypes.emplace_back(std::move(kind), table);
 }
@@ -427,10 +437,10 @@ inline auto context::register_error_prototype(std::string kind, object_object * 
     return nullptr;
 }
 
-// THROW A CATCHABLE ERROR, and only end the run if nothing catches it.
-// Different from raise(), which ends the run outright: calling a
-// non-function is a TypeError in JavaScript and pages CATCH it - feature
-// detection is written as `try { thing() } catch (e) {}`.
+/// Throws a catchable error, ending the run only if nothing catches it. This
+/// differs from raise(), which ends the run outright: calling a non-function
+/// is a TypeError in JavaScript and pages catch it, since feature detection is
+/// written as `try { thing() } catch (e) {}`.
 inline auto context::throw_error(std::string_view kind, std::string message) -> void {
     // A throw is already crossing this native (see `call`): the first
     // one propagates, this one is the native carrying on after it.
@@ -439,16 +449,16 @@ inline auto context::throw_error(std::string_view kind, std::string message) -> 
     if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
 }
 
-// BindThisValue for the frame a native was called from (see
-// bind_this_name): a native pushes no frame, so frames_.back() is its
-// caller's - the derived constructor whose `super()` just returned. An
-// arrow shares its enclosing constructor's binding through a cell.
-// A NATIVE PARENT TOO: Error, Map, Date fill the instance and
-// answer it, and Array and the typed arrays answer an array of their own
-// carrying the instance's prototype (adopt_subclass_prototype) - either
-// way the answer is the [[Construct]] result and is `this` from here.
-// Until 2026-09-17 a native parent was skipped, so `class A extends
-// Array` built a plain object that was never an array.
+/// BindThisValue for the frame a native was called from (see
+/// bind_this_name): a native pushes no frame, so frames_.back() is its
+/// caller's, the derived constructor whose `super()` just returned. An arrow
+/// shares its enclosing constructor's binding through a cell.
+///
+/// This also applies when the parent is native: Error, Map and Date fill the
+/// instance and return it, and Array and the typed arrays return their own
+/// array carrying the instance's prototype (adopt_subclass_prototype). Either
+/// way the [[Construct]] result becomes `this` from here on, so
+/// `class A extends Array` builds a real array.
 inline auto context::rebind_receiver(value v) -> void {
     if (frames_.empty() || frames_.back().closure == nullptr) { return; }
     call_frame & frame = frames_.back();
@@ -459,10 +469,10 @@ inline auto context::rebind_receiver(value v) -> void {
     frame.receiver = v;
 }
 
-// THE PARKED THROW, TAKEN AS A VALUE rather than rethrown: for a native
-// that has to CONVERT a throw crossing one of its `call`s - into a rejected
-// promise, as EvaluateImportCall does with a specifier whose toString
-// threw. Undefined when nothing is parked.
+/// Takes the parked throw as a value rather than rethrowing it, for a native
+/// that has to convert a throw crossing one of its `call`s, for example into a
+/// rejected promise, as EvaluateImportCall does with a specifier whose
+/// toString threw. Undefined when nothing is parked.
 [[nodiscard]] inline auto context::take_pending_throw() -> value {
     if (!has_pending_throw_) { return value::undefined(); }
     has_pending_throw_ = false;
@@ -471,9 +481,9 @@ inline auto context::rebind_receiver(value v) -> void {
     return taken;
 }
 
-// The throw `call` parked, thrown again from the native's call site.
-// Answers whether there was one; the caller then continues as after any
-// other unwind.
+/// Throws again, from the native's call site, the throw `call` parked.
+/// Returns whether there was one; the caller then continues as after any other
+/// unwind.
 inline auto context::rethrow_pending() -> bool {
     if (!has_pending_throw_) { return false; }
     has_pending_throw_ = false;
@@ -487,26 +497,26 @@ inline auto context::rethrow_pending() -> bool {
     return true;
 }
 
-// THROW SOMETHING THAT IS NOT AN ECMAScript Error - a DOM method must throw
-// a DOMException, and `assert_throws_dom` checks `code`, `name` AND
-// `e.constructor === DOMException`. The unwinding is `throw_error`'s
-// exactly, with the object supplied rather than made.
+/// Throws something that is not an ECMAScript Error. A DOM method must throw a
+/// DOMException, and `assert_throws_dom` checks `code`, `name` and
+/// `e.constructor === DOMException`. The unwinding is exactly `throw_error`'s,
+/// with the object supplied rather than made.
 inline auto context::throw_value(value thrown) -> void {
     if (has_pending_throw_) { return; }
     thrown_ = thrown;
     if (!unwind_to_handler()) { raise("uncaught " + describe_thrown(thrown_)); }
 }
 
-// Queue a job for the end of the turn. FIFO, and a job queued BY a job runs
-// in the same drain - that is what makes a promise chain complete before
-// the turn ends rather than one link per turn.
+/// Queues a job for the end of the turn. FIFO, and a job queued by a job runs
+/// in the same drain, which is what makes a promise chain complete before the
+/// turn ends rather than one link per turn.
 inline auto context::queue_microtask(value fn, std::vector<value> args) -> void {
     if (fn.is_callable()) { microtasks_.push_back(microtask{fn, std::move(args)}); }
 }
 
-// Run the queue to exhaustion. Called after the top-level script and from
-// the event loop - after timers, before animation frames, and again after
-// each event dispatch, which is where a browser puts its checkpoints.
+/// Runs the queue to exhaustion. Called after the top-level script and from
+/// the event loop: after timers, before animation frames, and again after each
+/// event dispatch, which is where a browser puts its checkpoints.
 inline auto context::drain_microtasks() -> void {
     // Bounded: a job that queues a job that queues a job forever is a
     // runaway page, and the alternative to a cap is a hang with no message.
@@ -522,10 +532,10 @@ inline auto context::drain_microtasks() -> void {
     if (!failed_ && checkpoint_hook_) { checkpoint_hook_(); }
 }
 
-// THE STACK AS IT IS RIGHT NOW - for raise() and for a constructed
-// Error's `stack`. The function's INDEX as well as its name: most of a
-// bundle's functions are anonymous, and the index is what points the
-// corpus ratchet (tools/corpus/ratchet.py) straight at the failing code.
+/// The stack as it is right now, for raise() and for a constructed Error's
+/// `stack`. It prints each function's index as well as its name: most of a
+/// bundle's functions are anonymous, and the index is what points the corpus
+/// ratchet (tools/corpus/ratchet.py) straight at the failing code.
 [[nodiscard]] inline auto context::current_stack(std::size_t skip) const -> std::string {
     std::string trace;
     int shown = 0;
@@ -546,11 +556,11 @@ inline auto context::drain_microtasks() -> void {
                 }
             }
         }
-        // A COMPILED FRAME HAS NO BYTECODE OFFSET, so it does not get one:
-        // `ip` on a compiled frame is where the unwinder puts the LANDING
-        // PAD, with CT_AOT_PAD_BIT set, so a trace captured between a catch
-        // firing and ct_aot_catch_land reading it would print
-        // 9223372036854775815 as an offset.
+        // A compiled frame has no bytecode offset, so none is printed. `ip` on
+        // a compiled frame is where the unwinder puts the landing pad, with
+        // CT_AOT_PAD_BIT set, so a trace captured between a catch firing and
+        // ct_aot_catch_land reading it would print 9223372036854775815
+        // (2^63 + 7) as an offset.
         const bool compiled = fp->aot_entry != nullptr;
         trace +=
             "\n        at " + (fp->name.empty() ? std::string{"<anonymous>"} : fp->name) + " (fn#" +
@@ -561,9 +571,9 @@ inline auto context::drain_microtasks() -> void {
     return trace;
 }
 
-// Whether a fault is outstanding, and the message. `run` clears these on
-// entry and reports them in its result; `call` has no result to report
-// through, so a host that drives callbacks must ask.
+/// Whether a fault is outstanding; error() is the message. `run` clears these
+/// on entry and reports them in its result; `call` has no result to report
+/// through, so a host that drives callbacks must ask.
 [[nodiscard]] inline auto context::failed() const noexcept -> bool {
     return failed_;
 }
@@ -572,17 +582,19 @@ inline auto context::drain_microtasks() -> void {
     return error_;
 }
 
-// See store_rejected_: a store from strict code asks this afterwards.
+/// Resets store_rejected_; a store from strict code checks it afterwards.
 inline auto context::clear_store_rejected() noexcept -> void {
     store_rejected_ = false;
 }
 
-// Was the last store refused (a non-writable property, a `set` trap
-// answering false, a non-extensible receiver)? Reflect.set's answer.
+/// Whether the last store was refused (a non-writable property, a `set` trap
+/// answering false, a non-extensible receiver). This is Reflect.set's answer.
 [[nodiscard]] inline auto context::store_rejected() const noexcept -> bool {
     return store_rejected_;
 }
 
+/// Throws the strict-mode TypeError for an assignment to `name` if the last
+/// store was rejected, and clears the flag.
 inline auto context::strict_store_check(std::string_view name) -> void {
     if (!store_rejected_) { return; }
     store_rejected_ = false;
@@ -590,32 +602,33 @@ inline auto context::strict_store_check(std::string_view name) -> void {
                 "Cannot assign to read only property '" + std::string{name} + "' of object");
 }
 
-// WHETHER A NATIVE SHOULD STOP: a throw crossed one of its `call`s, reached
-// its enclosing C++ fence, or the run has failed outright. A fence leaves
-// the interpreted caller's stack unchanged until call_fenced consumes it.
+/// Whether a native should stop: a throw crossed one of its `call`s, reached
+/// its enclosing C++ fence, or the run has failed outright. A fence leaves the
+/// interpreted caller's stack unchanged until call_fenced consumes it.
 [[nodiscard]] inline auto context::throw_pending() const noexcept -> bool {
     return has_pending_throw_ || fence_hit_ || failed_;
 }
 
-// HOW MANY THROWS HAVE UNWOUND, EVER. A throw a native raised itself
-// through throw_error is not parked - it has already landed on a handler
-// by the time the native's next line runs, and throw_pending cannot see
-// it - so a native that keeps going compares this before and after.
+/// How many throws have unwound, ever. A throw a native raised itself through
+/// throw_error is not parked: it has already landed on a handler by the time
+/// the native's next line runs, and throw_pending cannot see it, so a native
+/// that keeps going compares this before and after.
 [[nodiscard]] inline auto context::unwinds() const noexcept -> std::size_t {
     return unwinds_;
 }
 
-// THE VALUE AN UNCAUGHT THROW LEFT BEHIND, for a host that has to NAME its
-// constructor rather than print it (`tools/ct262` on a `negative:` test).
-// Undefined when a run failed WITHOUT a throw (the allocation ceiling, the
-// call-stack ceiling); stale after a run that succeeded, so read it only
-// when `run_result::ok` is false.
+/// The value an uncaught throw left behind, for a host that has to name its
+/// constructor rather than print it (`tools/ct262` on a `negative:` test).
+/// Undefined when a run failed without a throw (the allocation ceiling, the
+/// call-stack ceiling); stale after a run that succeeded, so read it only when
+/// `run_result::ok` is false.
 [[nodiscard]] inline auto context::last_thrown() const noexcept -> value {
     return thrown_;
 }
 
-// Report it and carry on, which is what a browser does: an exception in one
-// callback does not cancel the next one or end the page.
+/// Takes the outstanding failure message and clears the failure, which is what
+/// a browser does: an exception in one callback does not cancel the next one
+/// or end the page.
 [[nodiscard]] inline auto context::take_error() -> std::string {
     std::string out = std::move(error_);
     error_.clear();

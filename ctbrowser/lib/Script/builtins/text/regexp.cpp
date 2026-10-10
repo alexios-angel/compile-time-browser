@@ -1,26 +1,18 @@
-// ctbrowser.script builtins - RegExp.
+//===- ctbrowser/lib/Script/builtins/text/regexp.cpp - RegExp builtins ----===//
 //
-// One of four files carved out of a 1,333-line builtins/text.cpp on 2026-09-08
-// - which was itself one of five carved out of builtins.cpp on 2026-08-09.
-// Everything shared - the argument helpers, namespace detail, and these
-// functions' declarations - is in ../internal.hpp; what RegExp and String
-// share between them is in internal.hpp beside this.
+// The RegExp constructor and prototype, following ECMA-262 22.2, plus the
+// helpers String shares with it (is_regexp, get_substitution, regexp_create).
+// Shared helpers and these functions' declarations are in ../internal.hpp;
+// helpers shared only by RegExp and String are in ./internal.hpp, and the
+// matching machinery is in regexp/execution.cpp.
 //
-// REWRITTEN TO 22.2 ON 2026-09-12. Before, a RegExp was an ordinary object
-// with `source`, `flags` and the four mode booleans as OWN data properties,
-// `exec`, `test` and `toString` on a prototype, and nothing else: no
-// @@replace/@@split/@@match/@@matchAll/@@search, so every String method
-// carried its own regex loop, and no accessors, so `Object.keys(/x/)` was
-// six names and a subclass could not override anything. test262's
-// built-ins/String rows named the cost - `"x".split(/^/)`, `$<name>` in a
-// replacement, `matchAll` on a pattern whose prototype lost its @@matchAll -
-// and every one of them is one algorithm that the specification writes ONCE,
-// on RegExp.prototype, and has String.prototype invoke.
+// An instance holds two internal slots ([[OriginalSource]] and
+// [[OriginalFlags]], stored as private-keyed properties) plus `lastIndex`.
+// Everything else is an accessor or method on RegExp.prototype, including
+// @@match/@@matchAll/@@replace/@@search/@@split. The String methods in
+// string.cpp call these through `Invoke(rx, @@method)`, as 22.1.3 specifies.
 //
-// So: an instance carries two internal slots ([[OriginalSource]] and
-// [[OriginalFlags]], as private-keyed properties) and `lastIndex`; everything
-// else is an accessor or a method on the prototype, and the string methods in
-// string.cpp end in `Invoke(rx, @@method)` exactly as 22.1.3 does.
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -32,6 +24,9 @@ namespace ctbrowser::script::builtins_detail {
 
 using namespace regexp_detail;
 
+/// IsRegExp (7.2.8): sets `out` to whether `v` is a RegExp, judged by its
+/// @@match property, or by its internal slots when @@match is undefined.
+/// Returns false only when reading @@match threw.
 bool is_regexp(context & cx, value v, bool & out) {
     out = false;
     if (!v.is_object_like()) { return true; }
@@ -46,10 +41,10 @@ bool get_substitution(context & cx, const std::string & matched, const std::stri
                       std::size_t position, std::span<const value> captures, value named_captures,
                       const std::string & tpl, std::string & out) {
     out.clear();
-    // `position` is a UNIT index, as the specification's is (22.1.3.19.1
+    // `position` is a unit index, as the specification's is (22.1.3.19.1
     // steps 2-5): `$\`` is the subject's first `position` units and `$'` what
-    // follows the match, both cut as UTF-16 would cut them - converted only
-    // when the template names one, which is rarely.
+    // follows the match, both cut as UTF-16 would cut them, and converted only
+    // when the template names one, which is rare.
     const auto before_match = [&] {
         return utf16::slice(subject, {0, false}, utf16::locate(subject, position));
     };
@@ -161,7 +156,7 @@ void install_regexp(context & cx) {
     object_object * regexp_proto = new_table(cx);
     cx.set_prototype(context::proto_kind::regexp, regexp_proto);
 
-    // RegExpInitialize, 22.2.3.3, onto an object that already has the shape
+    // RegExpInitialize (22.2.3.3), onto an object that already has the shape
     // RegExpAlloc gave it: ToString the pattern and flags (undefined is the
     // empty string for both), refuse bad flags and a bad pattern with a
     // SyntaxError, set the two slots, and Set lastIndex to 0 with Throw=true.
@@ -172,8 +167,8 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const std::string f = flags.is_undefined() ? std::string{} : c.to_string(flags);
         if (watch.threw()) { return value::undefined(); }
-        // 22.2.3.4 step 4-6: a pattern that is not a Pattern, or flags that
-        // are not flags, is a SyntaxError - judged by the same early-error
+        // 22.2.3.4 steps 4-6: a pattern that is not a Pattern, or flags that
+        // are not flags, is a SyntaxError, judged by the same early-error
         // scan a literal gets at parse time (the matcher's own reader is
         // lenient where Annex B is, and only refuses what it cannot read).
         if (const auto wrong = rx::rx_pattern_error(p, f)) {
@@ -199,7 +194,7 @@ void install_regexp(context & cx) {
 
     // RegExpAlloc for a caller that is not `new`: a fresh object on
     // RegExp.prototype with lastIndex { writable: true, enumerable: false,
-    // configurable: false } (22.2.3.2 step 2), defined BEFORE the pattern is
+    // configurable: false } (22.2.3.2 step 2), defined before the pattern is
     // parsed so that a SyntaxError leaves the shape RegExpAlloc made.
     const auto alloc = [](context & c) {
         value obj = c.make_object();
@@ -208,12 +203,12 @@ void install_regexp(context & cx) {
             o->prototype = value::object(table);
         }
         o->define("lastIndex", value::number(0), attr_writable);
-        o->define(slot_legacy, value::boolean(true), attr_none); // new.target is %RegExp%
+        o->define(slot_legacy, value::boolean(true), attr_none); // new.target is %RegExp%.
         return obj;
     };
 
-    // RegExpCreate, 22.2.3.1 - RegExpAlloc then RegExpInitialize, with NONE of
-    // the constructor's IsRegExp reading. It is what a regex LITERAL compiles
+    // RegExpCreate (22.2.3.1): RegExpAlloc then RegExpInitialize, with none of
+    // the constructor's IsRegExp reading. It is what a regex literal compiles
     // to (the reserved factory name, so a page that shadows RegExp cannot
     // change what its own literals mean) and what match, matchAll and search
     // build over a non-RegExp argument.
@@ -235,7 +230,7 @@ void install_regexp(context & cx) {
         if (!is_regexp(c, pattern, pattern_is_regexp)) { return value::undefined(); }
         const detail::unwind_watch watch{c};
         // Step 4: `RegExp(re)` with no flags answers `re` itself when its
-        // constructor is RegExp - the one case that does not allocate.
+        // constructor is RegExp: the one case that does not allocate.
         if (!constructing && pattern_is_regexp && flags.is_undefined()) {
             const value ctor = c.lookup_property(pattern, "constructor");
             if (watch.threw()) { return value::undefined(); }
@@ -250,7 +245,7 @@ void install_regexp(context & cx) {
             p = c.string(source);
             if (flags.is_undefined()) { f = c.string(source_flags); }
         } else if (pattern_is_regexp) {
-            // Step 6: something that CLAIMS to be one is read through [[Get]].
+            // Step 6: something that claims to be one is read through [[Get]].
             p = c.lookup_property(pattern, "source");
             if (watch.threw()) { return value::undefined(); }
             if (flags.is_undefined()) {
@@ -260,19 +255,18 @@ void install_regexp(context & cx) {
         }
         const context::rooted keep_p{c, p};
         const context::rooted keep_f{c, f};
-        // RegExpAlloc: the instance `new` made - whose prototype came from
-        // new.target, so a subclass instance is already on its own prototype
-        // - or a fresh one on RegExp.prototype for a plain call.
+        // RegExpAlloc: the instance `new` made (whose prototype came from
+        // new.target, so a subclass instance is already on its own prototype),
+        // or a fresh one on RegExp.prototype for a plain call.
         const value obj = constructing ? self : alloc(c);
         const context::rooted keep_obj{c, obj};
         if (constructing) {
-            // context::make_instance leaves a NATIVE constructor's instance
-            // with no prototype (a subclass instance arrives with its own):
-            // RegExp.prototype unless something already chose otherwise.
+            // context::make_instance gives a native constructor's instance no
+            // prototype, so no prototype means `new RegExp` itself: give it
+            // RegExp.prototype and the legacy features. An instance that
+            // already has a prototype came from a subclass or a foreign
+            // new.target and gets no legacy features (RegExpAlloc steps 2-3).
             auto * o = static_cast<object_object *>(obj.as_heap());
-            // An instance that arrives with no prototype is %RegExp%'s own;
-            // one that brings its own came from a subclass or a foreign
-            // new.target, and has no legacy features (RegExpAlloc steps 2-3).
             if (!o->prototype.is_object()) {
                 if (object_object * table = c.prototype(context::proto_kind::regexp)) {
                     o->prototype = value::object(table);
@@ -299,12 +293,12 @@ void install_regexp(context & cx) {
         regexp_ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
                                      value::undefined(), attr_configurable);
     }
-    // THE LEGACY STATIC PROPERTIES (Annex B, the legacy RegExp features):
+    // The legacy static properties (Annex B, the legacy RegExp features):
     // RegExp.input/$_, lastMatch/$&, lastParen/$+, leftContext/$`,
     // rightContext/$' and $1-$9, each an accessor { enumerable: false,
     // configurable: true } over the record RegExpBuiltinExec keeps (see
     // set_legacy_statics). GetLegacyRegExpStaticProperty refuses a receiver
-    // that is not %RegExp% itself - a subclass constructor included - and an
+    // that is not %RegExp% itself (a subclass constructor included) and an
     // emptied record; only `input` has a setter, storing ToString of its value.
     regexp_proto->define(slot_intrinsic, value::object(regexp_ctor), attr_none);
     {
@@ -317,7 +311,8 @@ void install_regexp(context & cx) {
         fields->items[legacy_end] = value::number(0);
         regexp_proto->define(slot_legacy_record, record, attr_none);
     }
-    // The record, or null with the TypeError in flight.
+    // Returns the legacy statics record, or null with the TypeError in flight
+    // (wrong receiver, or the record was emptied by a subclass's match).
     const auto legacy_record = [](context & c, const std::string & name) -> array_object * {
         object_object * home = c.prototype(context::proto_kind::regexp);
         const value * intrinsic = home == nullptr ? nullptr : home->find(slot_intrinsic);
@@ -388,8 +383,8 @@ void install_regexp(context & cx) {
     // result never continues a preceding `\1` or `\u`), a syntax character
     // and `/` are backslashed, the five control letters use their letter, and
     // the other punctuators, white space, line terminators and lone surrogates
-    // become \xHH or \uHHHH. Everything else - including every non-ASCII code
-    // point - passes through as itself; the subject is UTF-8 here so a code
+    // become \xHH or \uHHHH. Everything else, including every non-ASCII code
+    // point, passes through as itself; the subject is UTF-8 here so a code
     // point is its byte run.
     method(cx, regexp_ctor, "escape", 1, [](context & c, std::span<value> a) -> value {
         const value arg = arg_at(a, 0);
@@ -451,13 +446,13 @@ void install_regexp(context & cx) {
         return c.string(out);
     });
 
-    // --- the accessors, 22.2.6.3-6.19 ---------------------------------------
+    // The accessors (22.2.6.3-22.2.6.19).
     //
     // Each of the flag getters reads its slot; a receiver without the slots is
-    // a TypeError UNLESS it is RegExp.prototype itself, which answers undefined
+    // a TypeError unless it is RegExp.prototype itself, which answers undefined
     // (the prototype is not a RegExp, and the specification says so twice per
     // accessor). `source` answers "(?:)" for the prototype and `flags` is
-    // GENERIC: it reads the eight booleans through [[Get]], so a subclass that
+    // generic: it reads the eight booleans through [[Get]], so a subclass that
     // overrides `global` changes what `flags` says.
     const auto flag_getter = [&](const char * name, char letter) {
         auto * getter = detail::method_native(
@@ -533,14 +528,14 @@ void install_regexp(context & cx) {
                                       attr_configurable);
     }
 
-    // --- exec, test, toString, compile --------------------------------------
+    // exec, test, toString and compile.
     method(cx, regexp_proto, "exec", 1, [cache](context & c, std::span<value> a) -> value {
         if (this_regexp(c, "RegExp.prototype.exec") == nullptr) { return value::undefined(); }
         const value arg = arg_at(a, 0);
         if (!stringable_arg(c, arg)) { return value::undefined(); }
         const value self = c.current_this();
         const detail::unwind_watch watch{c};
-        // The subject AS A STRING VALUE: the result's `input` is it, and the
+        // The subject as a string value: the result's `input` is it, and the
         // units it has measured stay on it for the next exec over it.
         const value subject = arg.is_string() ? arg : c.string(c.to_string(arg));
         if (watch.threw()) { return value::undefined(); }
@@ -566,7 +561,7 @@ void install_regexp(context & cx) {
         if (result.is_undefined()) { return value::undefined(); }
         return value::boolean(!result.is_null());
     });
-    // 22.2.6.17: GENERIC - "/" + ToString(source) + "/" + ToString(flags)
+    // 22.2.6.17 toString is generic: "/" + ToString(source) + "/" + ToString(flags)
     // through [[Get]], so `RegExp.prototype.toString.call({source: "a",
     // flags: "g"})` is "/a/g".
     method(cx, regexp_proto, "toString", 0, [](context & c, std::span<value>) -> value {
@@ -612,7 +607,7 @@ void install_regexp(context & cx) {
         return initialize(c, self, p, f);
     });
 
-    // --- the Symbol methods -------------------------------------------------
+    // The Symbol methods.
     //
     // Named "[Symbol.match]" and so on (their `name` properties), installed
     // under the well-known symbol's key (core/symbol.hpp).
@@ -663,8 +658,8 @@ void install_regexp(context & cx) {
         }
     });
 
-    // 22.2.6.9 [@@matchAll](string): a %RegExpStringIterator% over a SPECIES
-    // COPY of the receiver, so the caller's lastIndex is untouched.
+    // 22.2.6.9 [@@matchAll](string): a %RegExpStringIterator% over a species
+    // copy of the receiver, so the caller's lastIndex is untouched.
     object_object * iterator_proto = new_table(cx);
     if (object_object * iterator_base = cx.prototype(context::proto_kind::generator);
         iterator_base != nullptr && iterator_base->prototype.is_object()) {
@@ -696,7 +691,7 @@ void install_regexp(context & cx) {
             return value::undefined();
         }
         // %RegExpStringIteratorPrototype%.[[Prototype]] is
-        // %IteratorPrototype% (22.2.9.2) - found now, at first
+        // %IteratorPrototype% (22.2.9.2), found now, at first
         // use, because Iterator installs after RegExp does.
         if (!iterator_proto->prototype.is_object()) {
             if (const value iterator = c.global("Iterator"); iterator.is_object_like()) {
@@ -731,8 +726,8 @@ void install_regexp(context & cx) {
         if (watch.threw()) { return value::undefined(); }
         const value subject = c.string(s);
         const context::rooted keep{c, subject};
-        // Every position below is in UNITS - `index`, the replacer's argument,
-        // lastIndex - and the pieces between matches are cut through the
+        // Every position below (`index`, the replacer's argument, lastIndex) is
+        // in units, and the pieces between matches are cut through the
         // subject's own marks.
         const auto & str = *static_cast<const string_object *>(subject.as_heap());
         const std::size_t length = str.length();
@@ -750,7 +745,7 @@ void install_regexp(context & cx) {
         const bool full_unicode =
             flags.find('u') != std::string::npos || flags.find('v') != std::string::npos;
         if (global && !set_last_index(c, rx, 0)) { return value::undefined(); }
-        // Every match is collected FIRST (steps 11-12), then the replacements
+        // Every match is collected first (steps 11-12), then the replacements
         // are built (step 14): a replacer function runs after the matching
         // is over and cannot change what matched.
         const value results = c.make_array();
@@ -890,7 +885,7 @@ void install_regexp(context & cx) {
         return watch.threw() ? value::undefined() : index;
     });
 
-    // 22.2.6.14 [@@split](string, limit): a STICKY species copy walks the
+    // 22.2.6.14 [@@split](string, limit): a sticky species copy walks the
     // subject one position at a time, which is what makes an empty match and
     // a lookahead at a boundary come out the way they do.
     symbol_method("split", 2, [](context & c, std::span<value> a) -> value {
@@ -921,14 +916,14 @@ void install_regexp(context & cx) {
         auto * parts = static_cast<array_object *>(out.as_heap());
         const value limit = arg_at(a, 1);
         if (!numeric_arg(c, limit)) { return value::undefined(); }
-        // ToUint32(limit), 22.2.6.14 step 13: undefined is 2^32 - 1.
+        // ToUint32(limit) (22.2.6.14 step 13): undefined is 2^32 - 1.
         double lim = 4294967295.0;
         if (!limit.is_undefined()) {
             lim = static_cast<double>(number_to_uint32(c.to_number_value(limit)));
         }
         if (watch.threw()) { return value::undefined(); }
         if (lim == 0) { return out; }
-        // p, q and e are UNIT positions (22.2.6.14 steps 19-25).
+        // p, q and e are unit positions (22.2.6.14 steps 19-25).
         const std::size_t size = str.length();
         if (size == 0) {
             const value z = regexp_exec(c, splitter, subject);

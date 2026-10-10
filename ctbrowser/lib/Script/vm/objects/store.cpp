@@ -1,11 +1,11 @@
-// ctbrowser.script context - property writes: `store_index`, `store_property`
-// and the accessor path an assignment can take.
+//===- ctbrowser/lib/Script/vm/objects/store.cpp - Property writes --------===//
 //
-// One of six files carved out of a 1,396-line vm/objects.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// Property writes on script values: `store_index`, `store_property` and the
+// accessor path an assignment can take. These are members of `context`,
+// declared in include/ctbrowser/script/vm.hpp, plus two free helpers shared
+// with the built-ins (set_for_receiver, array_chain_holds_indices).
+//
+//===----------------------------------------------------------------------===//
 
 #include <cmath>
 #include <cstddef>
@@ -16,18 +16,18 @@
 
 namespace ctbrowser::script {
 
-// ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in descriptors.cpp.
+/// ArraySetLength's shrink, defined beside [[DefineOwnProperty]] in
+/// descriptors.cpp.
 bool array_set_length(array_object & arr, double n);
 
-// OrdinarySet(O, P, V, Receiver), 10.1.9.2, for a Receiver that is NOT O: a
-// write that reaches a PROXY on an object's prototype chain, or an array's
-// fresh named property asking its prototypes. A setter found on the way runs
-// with the receiver as `this`, a proxy on the way is asked with it, and a data
-// property lands through the receiver's own [[GetOwnProperty]] and
-// [[DefineOwnProperty]]. store_property's own walk carries no receiver; this
-// one does. False is a refusal, for strict code to throw; a throw answers
-// true, so that it is not a second one. External linkage: `super.x = v` is
-// this with the home object's prototype as O (builtins/internal.hpp).
+/// OrdinarySet(O, P, V, Receiver) (ECMA-262 10.1.9.2) for a Receiver that is
+/// not O: used when a write reaches a proxy on a prototype chain, when an
+/// array's new named property consults its prototypes, and for `super.x = v`.
+/// Setters found on the chain run with `receiver` as `this`; a proxy is asked
+/// with it; a data property lands on the receiver through its own
+/// [[GetOwnProperty]] and [[DefineOwnProperty]]. Returns false when the write
+/// is rejected (strict code then throws). Returns true if script threw, so the
+/// caller does not raise a second error. Declared in script/vm.hpp.
 bool set_for_receiver(context & cx, value o, const std::string & name, value v, value receiver) {
     const std::size_t before = cx.unwinds();
     const auto threw = [&] { return cx.throw_pending() || cx.unwinds() != before; };
@@ -54,7 +54,7 @@ bool set_for_receiver(context & cx, value o, const std::string & name, value v, 
         if (found) { break; }
         const value up = cx.get_prototype(walk);
         if (up.is_null()) {
-            // The implicit chain - Object.prototype and the like - which no
+            // The implicit chain (Object.prototype and the like), which no
             // explicit link names.
             for (object_object * table : cx.implicit_prototypes(walk)) {
                 if (table != nullptr && cx.own_property(value::object(table), name, own)) {
@@ -89,14 +89,14 @@ bool set_for_receiver(context & cx, value o, const std::string & name, value v, 
     return cx.define_own_property(receiver, name, wanted);
 }
 
-// COULD ANYTHING ON AN ORDINARY ARRAY'S CHAIN ANSWER AN INDEX? A write to an
-// index the array does not have - a hole, or past the end, which is every
-// push - is OrdinarySet's step 2, the prototype's [[Set]]: a setter
-// `Object.defineProperty(Array.prototype, "0", ...)` put there runs, a
-// read-only one refuses, a proxy there is asked. Nothing is there on every
-// page that does not do that, and object_object::indexed says so in a bool
-// per table, so the append stays what it was. External linkage: the array
-// built-ins' own fast paths ask it too (builtins/internal.hpp).
+/// Returns whether anything on an ordinary array's prototype chain could
+/// answer an index. A write to an index the array does not have (a hole, or
+/// past the end, as every push is) is OrdinarySet's step 2, the prototype's
+/// [[Set]]: a setter `Object.defineProperty(Array.prototype, "0", ...)` put
+/// there runs, a read-only one refuses, a proxy is asked. Most pages have none,
+/// and object_object::indexed records that in one bool per table, so the
+/// append fast path stays cheap. The array built-ins' fast paths call this too
+/// (declared in builtins/internal.hpp).
 bool array_chain_holds_indices(context & cx, const array_object & arr) {
     value up = arr.prototype;
     if (up.is_null()) {
@@ -106,12 +106,13 @@ bool array_chain_holds_indices(context & cx, const array_object & arr) {
         up = table->prototype;
     }
     for (int depth = 0; depth < 64; ++depth) {
-        if (up.is_null()) { // the implicit Object.prototype ends it
+        if (up.is_null()) { // The implicit Object.prototype ends the chain.
             object_object * table = cx.prototype(context::proto_kind::object);
             return table != nullptr && table->indexed;
         }
-        if (up.is_undefined()) { return false; }      // an explicit null
-        if (!up.is_object()) { return up.is_heap(); } // a proxy, an array: it may
+        if (up.is_undefined()) { return false; } // An explicit null.
+        // A proxy or array prototype might answer an index, so assume it does.
+        if (!up.is_object()) { return up.is_heap(); }
         auto * table = static_cast<object_object *>(up.as_heap());
         if (table->indexed) { return true; }
         up = table->prototype;
@@ -119,14 +120,13 @@ bool array_chain_holds_indices(context & cx, const array_object & arr) {
     return true;
 }
 
-// op::set_index's body, extracted verbatim so the interpreter and a compiled
-// body run one implementation rather than two - ct_aot_set_index is the other
-// caller.
-// VM_CASE(append) verbatim.
+/// Body of the `append` opcode, shared with the AOT helper ct_aot_append.
 void context::array_append(value target, value v) {
     if (target.is_array()) { static_cast<array_object *>(target.as_heap())->items.push_back(v); }
 }
 
+/// Body of the `set_index` opcode (`target[key] = v`), shared by the
+/// interpreter and the AOT helper ct_aot_set_index.
 void context::store_index(value target, value key, value v) {
     if (target.is_array() && key.is_number()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
@@ -142,19 +142,18 @@ void context::store_index(value target, value key, value v) {
             return;
         }
         const auto i = static_cast<std::ptrdiff_t>(key.as_number());
-        // A TYPED ARRAY COERCES ON WRITE AND DOES NOT GROW. Both are what makes
-        // it typed: `pixels[i] = 300` is 255 in a clamped byte array, and a
-        // write past the end is DROPPED rather than extending it.
+        // A typed array coerces on write and does not grow: `pixels[i] = 300`
+        // is 255 in a clamped byte array, and a write past the end is dropped.
         //
-        // TypedArraySetElement (10.4.5.16): the coercion FIRST - ToNumber, or
-        // ToBigInt for a BigInt kind, where a Number is a TypeError - then the
-        // index against the length as it is after that. Anything but a
-        // number goes through typed_element_set for that order, because an
-        // object's valueOf can run script; a number, which is what every
-        // pixel and matrix write is, stays on this path.
+        // TypedArraySetElement (10.4.5.16) coerces first (ToNumber, or
+        // ToBigInt for a BigInt kind, where a Number is a TypeError), then
+        // checks the index against the length as it is after that. Anything
+        // but a number goes through typed_element_set for that order, because
+        // an object's valueOf can run script; a number, which is what every
+        // pixel and matrix write is, stays on this fast path.
         if (arr->elements != element_kind::none) {
-            // A BIGINT KIND TAKES NO NUMBER AT ALL - ToBigInt(1) is the
-            // TypeError - so it goes the long way whatever the value is.
+            // A BigInt kind accepts no Number at all (ToBigInt(1) is a
+            // TypeError), so it always takes the slow path.
             if (!v.is_number() || is_bigint_kind(arr->elements)) {
                 (void)typed_element_set(*this, *arr, static_cast<std::size_t>(i), v);
                 return;
@@ -170,8 +169,8 @@ void context::store_index(value target, value key, value v) {
         }
         if (i >= 0) {
             const auto index = static_cast<std::uint64_t>(i);
-            // AN INDEX THE ARRAY DOES NOT HAVE asks its chain first, when
-            // anything there could answer (array_chain_holds_indices): the
+            // An index the array does not have asks its chain first, when
+            // anything there could answer (array_chain_holds_indices); the
             // receiver is this array, as OrdinarySet passes it on.
             const auto inherited_write = [&] {
                 object_object * table = prototype(proto_kind::array);
@@ -190,15 +189,15 @@ void context::store_index(value target, value key, value v) {
                     inherited_write();
                     return;
                 }
-                // FROZEN MEANS FROZEN. Silently in sloppy mode - a TypeError
-                // under "use strict", which strict_store_check raises off
-                // store_rejected_.
+                // A frozen array rejects the write: silently in sloppy mode, a
+                // TypeError under "use strict" (strict_store_check raises it
+                // from store_rejected_).
                 if (!arr->elements_writable) {
                     store_rejected_ = true;
                     return;
                 }
                 // A hole a length left (array_object::holes_begin) becomes an
-                // element - unless the array takes no new properties.
+                // element, unless the array takes no new properties.
                 if (arr->in_hole_run(index)) [[unlikely]] {
                     if (!arr->extensible) {
                         store_rejected_ = true;
@@ -207,7 +206,7 @@ void context::store_index(value target, value key, value v) {
                     arr->fill_hole(static_cast<std::uint32_t>(index));
                 } else if (!arr->element_attrs.empty()) [[unlikely]] {
                     // An element with attributes of its own, an accessor
-                    // element, or a hole - see array_object::element_attrs.
+                    // element, or a hole (see array_object::element_attrs).
                     const auto at = static_cast<std::uint32_t>(index);
                     if (const std::uint8_t * e = arr->find_element_attrs(at)) {
                         if ((*e & array_object::elem_accessor) != 0) {
@@ -244,16 +243,17 @@ void context::store_index(value target, value key, value v) {
                 inherited_write();
                 return;
             }
-            // A SEALED OR FROZEN ARRAY GAINS NO ELEMENTS, and neither does one
+            // A sealed or frozen array gains no elements, and neither does one
             // whose `length` is not writable (10.4.2.1 step 2.d).
             if (!arr->extensible || (!arr->length_writable && index >= arr->js_length())) {
                 store_rejected_ = true;
                 return;
             }
-            // HOW MANY SLOTS THIS ONE WRITE WOULD MATERIALISE. `a[4294967295]
-            // = "x"` asked for 34 GB and std::bad_alloc ended the process; the
-            // test is on the SIZE OF THE JUMP so that a sequential fill, whose
-            // jump is always one, is untouched. See array_object::dense_limit.
+            // A write that would add more than dense_limit slots at once goes
+            // sparse instead (`a[4294967295] = x` must not allocate 34 GB).
+            // Testing the jump size leaves sequential fills, which jump by
+            // one, on the dense path. 4294967295 is 2^32-1, the largest
+            // uint32 key.
             if (index <= 4294967295ull &&
                 index + 1 - arr->items.size() > array_object::dense_limit) {
                 arr->set_sparse(static_cast<std::uint32_t>(index), v);
@@ -286,6 +286,9 @@ void context::store_index(value target, value key, value v) {
     store_property(target, name, v);
 }
 
+/// Body of `op::pass_new_target`: records the new.target the next frame push
+/// (a super() call) should receive. When the current closure carries a
+/// captured new.target (its private NewTarget slot), that one wins over `from`.
 void context::pass_new_target(value from) {
     if (!frames_.empty() && frames_.back().closure != nullptr) {
         if (const value * held = frames_.back().closure->find(CTBROWSER_PRIVATE_KEY("NewTarget"))) {
@@ -295,8 +298,10 @@ void context::pass_new_target(value from) {
     pending_new_target_ = from;
 }
 
+/// `target.name = v`: the property write for every kind of value. A rejected
+/// write sets store_rejected_ so strict code can throw.
 void context::store_property(value target, const std::string & name, value v) {
-    // `null.x = v` is a TypeError (7.3.4 PutValue step 5.a) - see the read
+    // `null.x = v` is a TypeError (7.3.4 PutValue step 5.a); see the read
     // side in lookup_property.
     if (target.is_nullish()) [[unlikely]] {
         throw_error("TypeError", "Cannot set properties of " +
@@ -304,12 +309,12 @@ void context::store_property(value target, const std::string & name, value v) {
                                      " (setting '" + name + "')");
         return;
     }
-    // A PRIVATE NAME IS A BRAND CHECK ON THE WRITE TOO (7.3.32 PrivateSet):
-    // an object whose class did not add the element is the TypeError, as
-    // lookup_property's read is - and a private METHOD is not writable at
-    // all; a private accessor invokes its setter on the original receiver.
-    // A field is DEFINED by the class's initialiser, not written, so it never
-    // comes through here before it exists.
+    // A private name is a brand check on the write too (7.3.32 PrivateSet):
+    // an object whose class did not add the element throws TypeError, as
+    // lookup_property's read does. A private method is not writable at all; a
+    // private accessor invokes its setter on the original receiver. A field
+    // is defined by the class's initialiser, not written, so it never comes
+    // through here before it exists.
     if (is_private_key(name)) [[unlikely]] {
         const std::size_t colon = name.find(':');
         const std::string shown =
@@ -339,8 +344,8 @@ void context::store_property(value target, const std::string & name, value v) {
         }
         return;
     }
-    // A proxy's `set` trap first: it is the only thing that can decide the
-    // write does not land on the target at all, which is the point of it.
+    // A proxy's `set` trap first: it alone can decide the write does not land
+    // on the target at all.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
         bool failed = false;
@@ -348,8 +353,8 @@ void context::store_property(value target, const std::string & name, value v) {
         if (failed || throw_pending()) { return; }
         if (trap.is_callable()) {
             const value args[4] = {p->target, key_value(name), v, target};
-            // 10.5.9 step 9: a trap answering false is a REJECTED write -
-            // silent here, the TypeError in strict code (strict_store_check).
+            // 10.5.9 step 9: a trap answering false is a rejected write,
+            // silent here and a TypeError in strict code (strict_store_check).
             // An HTMLCollection's index is the everyday case.
             const std::size_t before = unwinds();
             const bool answered = truthy(call(trap, args, p->handler));
@@ -360,7 +365,7 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             // Steps 10-12, the invariants: a true answer over a target property
             // that is non-configurable and either non-writable data holding a
-            // different value, or an accessor with no setter, is the TypeError.
+            // different value, or an accessor with no setter, is a TypeError.
             property_descriptor held;
             if (own_property(p->target, name, held) && held.has_configurable &&
                 !held.configurable) {
@@ -381,19 +386,19 @@ void context::store_property(value target, const std::string & name, value v) {
             }
             return;
         }
-        // NO `set` TRAP: the target's own [[Set]] - with the TARGET as the
-        // receiver, where 10.5.9 step 6 passes the proxy. Deliberately: the
+        // No `set` trap: the target's own [[Set]], deliberately with the
+        // target as the receiver where 10.5.9 step 6 passes the proxy. The
         // document is a proxy with no `set` trap (shell/bindings/document/
         // named_access.cpp), and Document.prototype's native event-handler
         // setters take `this` to be the document object itself, so handing
-        // them the proxy loses `document.onreadystatechange = f`. A proxy on
-        // a CHAIN does pass the receiver (assign_through_accessor).
+        // them the proxy would lose `document.onreadystatechange = f`. A proxy
+        // on a chain does pass the receiver (assign_through_accessor).
         store_property(p->target, name, v);
         return;
     }
     if (target.is_object()) {
-        // A METHOD BEING INSTALLED on a class that is being defined - see
-        // object_object::defining_class - is an own definition, whatever the
+        // A method being installed on a class that is being defined (see
+        // object_object::defining_class) is an own definition, whatever the
         // chain holds.
         if (static_cast<object_object *>(target.as_heap())->defining_class) [[unlikely]] {
             static_cast<object_object *>(target.as_heap())
@@ -402,19 +407,18 @@ void context::store_property(value target, const std::string & name, value v) {
         }
         if (assign_through_accessor(target, name, v)) { return; }
         auto * obj = static_cast<object_object *>(target.as_heap());
-        // --- [[Set]], 10.1.9, AND THE THREE BITS IT CONSULTS ---------------
+        // [[Set]] (10.1.9) and the three things it checks. An assignment is
+        // not a definition: an own data property that is not writable rejects
+        // the write; so does an inherited one (`Object.freeze(proto)` stops a
+        // write through every instance); and a new property needs the receiver
+        // to be extensible.
         //
-        // An assignment is not a definition. An own data property that is not
-        // writable rejects the write; so does an INHERITED one, which is the
-        // half that surprises people - `Object.freeze(proto)` stops a write
-        // through every instance. And a fresh property needs the receiver to be
-        // extensible.
+        // Each rejection below sets store_rejected_: sloppy code discards the
+        // write, and strict code throws the TypeError from strict_store_check
+        // in the run loop.
         //
-        // Each of the three `return`s below sets store_rejected_: sloppy code
-        // discards the write, and strict code throws the TypeError from
-        // strict_store_check in the run loop, off that flag.
-        // ONE HASH LOOKUP ON THE HIT PATH, not two: `find` then `set` would
-        // hash the name twice, and this is the hottest write in the engine.
+        // The hit path does one hash lookup, not `find` then `set`: this is the
+        // hottest write in the engine.
         obj->normalise();
         if (const auto it = obj->index.find(name); it != obj->index.end()) {
             if ((obj->attrs_at(it->second) & attr_writable) == 0) {
@@ -425,7 +429,7 @@ void context::store_property(value target, const std::string & name, value v) {
             return;
         }
         for (value up = obj->prototype; up.is_heap();) {
-            // A TYPED ARRAY up the chain answers a numeric key's [[Set]] for
+            // A typed array up the chain answers a numeric key's [[Set]] for
             // this receiver (10.4.5.5 step 1.b.ii): an index it does not have
             // is a quiet success that creates nothing; one it has is a
             // writable element, so the receiver gets its own property below.
@@ -453,7 +457,7 @@ void context::store_property(value target, const std::string & name, value v) {
             store_rejected_ = true;
             return;
         }
-        // A STRING WRAPPER'S `length` AND INDICES are own, non-writable
+        // A String wrapper's `length` and indices are own and non-writable
         // (10.4.3.1): the write is refused, not shadowed.
         if (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9')) {
             property_descriptor slot_owned;
@@ -465,16 +469,9 @@ void context::store_property(value target, const std::string & name, value v) {
         obj->set(name, v);
         return;
     }
-    // `a.length = n` RESIZES THE ARRAY, and dropping the write silently is not
-    // a small gap: `a.length = 0` is how a great deal of code empties one -
-    // Phaser's scene manager ends its boot with `this._pending.length = 0`, and
-    // with the write ignored the queue it had just drained was still full, so
-    // the next frame added the same scene a second time and threw "Cannot add
-    // Scene with duplicate key". An engine that reads `length` but will not
-    // write it looks like it supports arrays right up until it does not.
-    //
-    // Growing pads with undefined, which is what the spec says and what
-    // `a.length = 10` is occasionally used for.
+    // Array writes: `a.length = n` resizes the array (growing pads with holes;
+    // `a.length = 0` is the common way to empty one), index-like names go to
+    // store_index, and other names land in the array's named-property table.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         // `a["0"] = v` is the element, not a named property - see lookup_property.
@@ -488,8 +485,8 @@ void context::store_property(value target, const std::string & name, value v) {
             (void)typed_element_set(*this, *arr, static_cast<std::size_t>(-1), v);
             return;
         }
-        // A TYPED ARRAY'S `length` is %TypedArray%.prototype's getter, so an
-        // OWN one a page defined is a named property like any other, and
+        // A typed array's `length` is %TypedArray%.prototype's getter, so an
+        // own one a page defined is a named property like any other, and
         // without one the write finds no setter: a no-op (10.4.5 / OrdinarySet).
         const bool typed_length = name == "length" && arr->elements != element_kind::none;
         if (typed_length && (!arr->named || (arr->named->find(name) == nullptr &&
@@ -497,10 +494,10 @@ void context::store_property(value target, const std::string & name, value v) {
             return;
         }
         if (name != "length" || typed_length) {
-            // A NAMED PROPERTY, in the array's own table - see
-            // array_object::named. The same checks as an object's: an own
+            // A named property, in the array's own table (see
+            // array_object::named). The same checks as an object's: an own
             // accessor's setter, a non-writable own data property, then the
-            // chain, and extensibility for a fresh one.
+            // chain, and extensibility for a new one.
             if (arr->named) {
                 if (accessor_entry * entry = arr->named->find_accessor(name)) {
                     if (entry->setter.is_callable()) {
@@ -518,7 +515,7 @@ void context::store_property(value target, const std::string & name, value v) {
                     return;
                 }
             }
-            // A FRESH ONE ASKS THE CHAIN FIRST (10.1.9.2 step 2): a setter on
+            // A new one asks the chain first (10.1.9.2 step 2): a setter on
             // Array.prototype or a subclass's prototype takes the write, and
             // an inherited read-only property refuses it; otherwise the
             // property is defined on the array.
@@ -541,26 +538,22 @@ void context::store_property(value target, const std::string & name, value v) {
             arr->named_table().set(name, v);
             return;
         }
-        // A TYPED array's length is fixed - it is a view over bytes that were
+        // A typed array's length is fixed: it is a view over bytes that were
         // sized once, and resizing it here would leave the view and its buffer
         // disagreeing. The spec makes the write a no-op, not an error.
         if (arr->elements != element_kind::none) { return; }
-        // `Object.defineProperty(a, "length", {writable: false})`, or a freeze
-        // - asked BEFORE the coercions (OrdinarySet step 2.a) and again after
-        // them (ArraySetLength step 12), since a valueOf may pin it between.
+        // A non-writable length (`Object.defineProperty(a, "length",
+        // {writable: false})`, or a freeze) is checked before the coercions
+        // (OrdinarySet step 2.a) and again after them (ArraySetLength step 12),
+        // since a valueOf may make it non-writable in between.
         if (!arr->length_writable) {
             store_rejected_ = true;
             return;
         }
-        // A RangeError, WHICH IT USED TO SWALLOW. 10.4.2.4 step 3 makes any
-        // length that is not a uint32 a RangeError, and dropping the write
-        // instead was leniency bought at the cost of a test that checks for the
-        // throw (S15.4.5.2_A3_T3) - and, for a length in range, of a resize
-        // that asked for 34 GB. set_js_length records what it will not
-        // materialise; see array_object::dense_limit.
-        // ToUint32 and then ToNumber (10.4.2.4 steps 3-4), each running a
-        // valueOf: `a.length = new Number(6)` is 6, and an object's hint is
-        // asked twice.
+        // ArraySetLength (10.4.2.4 steps 3-4): ToUint32 then ToNumber, each of
+        // which may run valueOf (`a.length = new Number(6)` is 6). A length
+        // that is not a uint32 is a RangeError. set_js_length does not
+        // materialise huge lengths; see array_object::dense_limit.
         const std::size_t before = unwinds();
         const double first = to_number_value(v);
         if (throw_pending() || unwinds() != before) { return; }
@@ -578,16 +571,16 @@ void context::store_property(value target, const std::string & name, value v) {
         if (!array_set_length(*arr, n)) { store_rejected_ = true; }
         return;
     }
-    // A FUNCTION'S WRITE TO A NAME IT DOES NOT OWN: OrdinarySet asks the
-    // CHAIN from `up` (10.1.9.2 step 2.a) - an inherited setter takes the
-    // write, an inherited read-only data property refuses it. TRUE when the
+    // A function's write to a name it does not own: OrdinarySet asks the chain
+    // from `up` (10.1.9.2 step 2.a). An inherited setter takes the write and
+    // an inherited read-only data property refuses it. Returns true when the
     // chain decided; false means create an own property. Function.prototype's
     // `caller` and `arguments` are %ThrowTypeError% accessors, which is how
     // assigning either on a strict or bound function throws, and
     // `class D extends B` inherits B's static setters.
     const auto inherited_set = [&](value up) {
         for (int depth = 0; depth < 64; ++depth) {
-            if (up.is_null()) { // the implicit Object.prototype ends a chain
+            if (up.is_null()) { // The implicit Object.prototype ends a chain.
                 object_object * table = prototype(proto_kind::object);
                 up = table != nullptr ? value::object(table) : value::undefined();
                 depth = 63;
@@ -630,12 +623,12 @@ void context::store_property(value target, const std::string & name, value v) {
                 const value args[1] = {v};
                 (void)call(entry->setter, args, target);
             } else {
-                store_rejected_ = true; // an accessor with no setter refuses
+                store_rejected_ = true; // An accessor with no setter refuses.
             }
             return;
         }
-        // The same three checks as an object's - see above, store_rejected_
-        // and all. `Array.prototype = x` is the one every page tries by accident.
+        // The same three checks as an object's (see above, store_rejected_
+        // and all). `Array.prototype = x` is the common accidental case.
         if (fn->find(name) != nullptr) {
             if ((fn->attrs_of(name) & attr_writable) == 0) {
                 store_rejected_ = true;
@@ -663,13 +656,12 @@ void context::store_property(value target, const std::string & name, value v) {
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
-        // A constructor's `prototype` IS OWN from the moment the function
-        // exists (10.2.5 MakeConstructor) - it is only MADE lazily here. The
-        // chain walk below is for names the function does not own, and
-        // letting `prototype` reach it asked the parent instead: `F.prototype
-        // = x` for a function whose [[Prototype]] is a class or a native
-        // constructor found that one's read-only `prototype` and was refused -
-        // Babel's `_inherits`, every `class A extends Array`.
+        // A constructor's `prototype` is own from the moment the function
+        // exists (10.2.5 MakeConstructor); it is only created lazily, so make
+        // it now. Otherwise the chain walk below would find the parent's
+        // read-only `prototype` and refuse `F.prototype = x` for a function
+        // whose [[Prototype]] is a class or native constructor (Babel's
+        // `_inherits`, `class A extends Array`).
         if (name == "prototype" && !method_without_prototype(*closure)) {
             (void)ensure_prototype(target);
         }
@@ -695,22 +687,22 @@ void context::store_property(value target, const std::string & name, value v) {
         if (closure->proto != nullptr &&
             (((name == "length" && !closure->length_erased) ||
               (name == "name" && !closure->name_erased)) ||
-             // A SLOPPY function's `caller` and `arguments` read null
+             // A sloppy function's `caller` and `arguments` read null
              // (lookup_property's closure arm), as every browser's own
-             // non-writable pair does - and refuse a write the same way.
+             // non-writable pair does, and refuse a write the same way.
              (!closure->proto->is_strict && !closure->proto->is_arrow &&
               !closure->proto->is_generator && (name == "caller" || name == "arguments")))) {
-            // The SYNTHESISED `length` and `name` (own_property answers them
-            // off the compiled function, { false, false, true }) are not
-            // writable: the write is refused, not shadowed by a new own
-            // entry. defineProperty still redefines them.
+            // The synthesised `length` and `name` (own_property answers them
+            // from the compiled function as non-writable, non-enumerable,
+            // configurable) refuse the write rather than being shadowed by a
+            // new own entry. defineProperty still redefines them.
             store_rejected_ = true;
             return;
         }
         // A static method of a class being defined is defined, not handed
         // to the parent class's setter (closure_object::defining_class).
         if (!closure->defining_class && inherited_set(get_prototype(target))) {
-            return; // see inherited_set
+            return; // See inherited_set.
         }
         if (!closure->extensible) {
             store_rejected_ = true;
@@ -719,17 +711,21 @@ void context::store_property(value target, const std::string & name, value v) {
         closure->set(name, v);
         return;
     }
-    // A write to a number, a string or undefined is silently dropped, which is
-    // what non-strict JavaScript does - and a TypeError in strict code.
+    // A write to a primitive (a number, a string) is silently dropped in
+    // sloppy code and a TypeError in strict code.
     store_rejected_ = true;
 }
 
+/// Handles an assignment to a plain object that a prototype decides: an
+/// inherited setter, an inherited accessor with no setter, or a proxy on the
+/// chain. Returns true when the write was handled (or rejected), false when
+/// the caller should store an own data property.
 bool context::assign_through_accessor(value target, const std::string & name, value v) {
     if (!target.is_object()) { return false; }
     auto * obj = static_cast<object_object *>(target.as_heap());
     for (int depth = 0; obj != nullptr && depth < 64; ++depth) {
-        // An own DATA property wins outright: it is the same property, and it
-        // is not an accessor, so nothing on the prototype gets a say.
+        // An own data property wins outright: nothing on the prototype gets a
+        // say.
         if (obj->find(name) != nullptr) { return false; }
         if (accessor_entry * entry = obj->find_accessor(name)) {
             if (entry->setter.is_callable()) {
@@ -737,14 +733,14 @@ bool context::assign_through_accessor(value target, const std::string & name, va
                 (void)call(entry->setter, args, target);
                 return true;
             }
-            // Getter with no setter: the write is DISCARDED (a TypeError in
-            // strict code). Silently defining a data property over it would
-            // shadow the getter forever.
+            // Getter with no setter: the write is discarded (a TypeError in
+            // strict code). Defining a data property over it would shadow the
+            // getter forever.
             store_rejected_ = true;
             return true;
         }
-        if (obj->prototype.is_undefined()) { return false; } // an explicit null [[Prototype]]
-        // A PROXY on the chain decides the write (10.1.9.2 step 2.b,
+        if (obj->prototype.is_undefined()) { return false; } // An explicit null [[Prototype]].
+        // A proxy on the chain decides the write (10.1.9.2 step 2.b,
         // parent.[[Set]](P, V, Receiver)): its `set` trap sees `target` as the
         // receiver, or its target's chain carries on with it.
         if (obj->prototype.is_kind(heap_kind::proxy)) {
@@ -756,7 +752,7 @@ bool context::assign_through_accessor(value target, const std::string & name, va
         obj = obj->prototype.is_object() ? static_cast<object_object *>(obj->prototype.as_heap())
                                          : nullptr;
     }
-    // ...AND THE IMPLICIT Object.prototype the chain fell through to, which is
+    // ...and the implicit Object.prototype the chain fell through to, which is
     // where `o.__proto__ = p` and an object literal's `__proto__: p` land: both
     // are a [[Set]] that B.2.2.1's setter turns into [[SetPrototypeOf]].
     object_object * table = prototype(proto_kind::object);

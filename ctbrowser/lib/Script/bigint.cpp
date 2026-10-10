@@ -1,3 +1,13 @@
+//===- ctbrowser/lib/Script/bigint.cpp - BigInt arithmetic ------*- C++ -*-===//
+//
+// BigInt parsing, arithmetic, comparison and conversion over Boost's cpp_int.
+// The header says what each function is for. This file says how, and notes
+// where cpp_int and JavaScript disagree about an operation (division by zero,
+// negative exponents and shift counts, shifts past the value's width), and
+// where a result is refused because it would exceed max_bigint_bits.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/script/bigint.hpp>
 
 #include <algorithm>
@@ -8,22 +18,20 @@
 #include <ctbrowser/core/number_format.hpp>
 #include <ctbrowser/script/vm.hpp>
 
-// The header says what each of these is for. This says how, and records the two
-// places where cpp_int and JavaScript disagree about what an operation means.
-
 namespace ctbrowser::script {
 
 namespace {
 
-// Digits of a literal, with the radix prefix and any `_` separators taken off.
-// Returns the radix and the bare digits, or 0 when the text is not an integer
-// literal at all.
+/// Digits of a literal, with the sign, the radix prefix and any `_` separators
+/// taken off. `radix` is 0 when the text is not an integer literal at all.
 struct scanned {
     unsigned radix = 0;
     std::string digits;
     bool negative = false;
 };
 
+/// Splits an optionally signed integer literal (decimal, 0x, 0o or 0b) into
+/// a `scanned`; see there for the failure value.
 [[nodiscard]] scanned scan_literal(std::string_view text) {
     scanned out;
     std::string_view rest = text;
@@ -60,6 +68,7 @@ struct scanned {
     return out;
 }
 
+/// Converts scanned digits to a value.
 [[nodiscard]] bigint from_digits(const scanned & s) {
     // cpp_int parses 0x/0b prefixes itself for 16 and 2, and nothing for 8, so
     // the digits are accumulated rather than handed over as text. It is linear
@@ -72,7 +81,7 @@ struct scanned {
     return s.negative ? -out : out;
 }
 
-// Significant bits of |a|, 0 for zero.
+/// Significant bits of |a|, 0 for zero.
 [[nodiscard]] std::uint64_t bit_width(const bigint & a) {
     return a == 0 ? 0 : static_cast<std::uint64_t>(boost::multiprecision::msb(abs(a))) + 1;
 }
@@ -86,9 +95,9 @@ std::optional<bigint> bigint_from_literal(std::string_view text) {
 }
 
 std::optional<bigint> bigint_from_double(double v) {
-    // ONLY AN INTEGER CONVERTS. `BigInt(1.5)` is a RangeError rather than a
-    // truncation, which is the type refusing to lose the thing it exists to
-    // keep - and `BigInt(NaN)` and `BigInt(Infinity)` are the same refusal.
+    // Only an integer converts. `BigInt(1.5)` is a RangeError rather than a
+    // truncation, and `BigInt(NaN)` and `BigInt(Infinity)` are refused the
+    // same way.
     if (!std::isfinite(v) || v != std::trunc(v)) { return std::nullopt; }
     return bigint{v};
 }
@@ -121,14 +130,14 @@ std::optional<bigint> bigint_rem(const bigint & a, const bigint & b) {
 }
 
 std::optional<bigint> bigint_pow(const bigint & a, const bigint & b) {
-    // A NEGATIVE EXPONENT IS A RangeError. There are no fractions here, so
-    // `2n ** -1n` has no value to give rather than 0.5.
+    // A negative exponent is a RangeError: there are no fractions here, so
+    // `2n ** -1n` has no value to give (it is not 0.5).
     if (b < 0) { return std::nullopt; }
-    // The exponent is arbitrary precision but the result must fit in memory, so
-    // an absurd one is refused rather than attempted. 2**32 bits is already a
-    // 512 MB number; nothing legitimate reaches it.
+    // An exponent above 2^32 - 1 is refused outright so the cast to unsigned
+    // below is exact; the result-size check that follows refuses anything
+    // that large anyway (except for the bases 0, 1 and -1).
     if (b > 0xFFFFFFFFu) { return std::nullopt; }
-    // AND SO MUST THE RESULT: a**b has floor(b * log2|a|) + 1 bits, which is 1
+    // The result must fit too: a**b has floor(b * log2|a|) + 1 bits, which is 1
     // for the three bases (0, 1, -1) whose powers stay small. log2 is exact
     // enough in a double for a base that fits one; a wider base uses bits - 1,
     // under 2% short of the truth.
@@ -142,9 +151,11 @@ std::optional<bigint> bigint_pow(const bigint & a, const bigint & b) {
 }
 
 std::optional<bigint> bigint_shl(const bigint & a, const bigint & b) {
-    // A NEGATIVE SHIFT COUNT SHIFTS THE OTHER WAY - `1n << -1n` is `1n >> 1n` -
-    // which is the specification, and not what C++ `<<` does with a negative.
+    // A negative shift count shifts the other way (`1n << -1n` is `1n >> 1n`),
+    // as the specification says; C++ `<<` does not do that with a negative.
     if (b < 0) { return bigint_shr(a, -b); }
+    // Counts above 2^28 are refused before the cast to unsigned. This bound is
+    // tighter than max_bigint_bits (2^30), which the next check applies.
     if (b > 0x10000000u) { return std::nullopt; }
     const auto count = static_cast<unsigned>(b);
     if (a != 0 && bit_width(a) + count > max_bigint_bits) { return std::nullopt; }
@@ -154,10 +165,12 @@ std::optional<bigint> bigint_shl(const bigint & a, const bigint & b) {
 std::optional<bigint> bigint_shr(const bigint & a, const bigint & b) {
     if (b < 0) { return bigint_shl(a, -b); }
     if (b > 0x10000000u) {
-        // Shifting further than the value is wide leaves 0 for a positive
-        // number and -1 for a negative one: an ARITHMETIC shift, which is what
-        // JavaScript specifies and what an unbounded two's-complement value
-        // means. Returning 0 for both would lose the sign.
+        // A count above 2^28 is treated as shifting past the value's width,
+        // which leaves 0 for a positive number and -1 for a negative one: an
+        // arithmetic shift, which is what JavaScript specifies and what an
+        // unbounded two's-complement value means. Returning 0 for both would
+        // lose the sign. (A value wider than 2^28 bits, which max_bigint_bits
+        // allows, would keep high bits under a true shift.)
         return a < 0 ? bigint{-1} : bigint{0};
     }
     return a >> static_cast<unsigned>(b);
@@ -166,11 +179,11 @@ std::optional<bigint> bigint_shr(const bigint & a, const bigint & b) {
 std::optional<int> bigint_compare_double(const bigint & a, double b) {
     if (std::isnan(b)) { return std::nullopt; }
     if (std::isinf(b)) { return b > 0 ? -1 : 1; } // every bigint is between the infinities
-    // EXACTLY, which is the whole point. Converting the bigint to a double
-    // would round it, and two values that differ by one past 2^53 would compare
-    // equal - precisely the loss BigInt exists to avoid. So the DOUBLE is split
-    // into its integer part and a fraction instead, and the fraction breaks the
-    // tie when the integer parts agree.
+    // Compared exactly. Converting the bigint to a double would round it, and
+    // two values that differ by one past 2^53 would compare equal, the loss
+    // BigInt exists to avoid. So the double is split into its integer part and
+    // a fraction instead, and the fraction breaks the tie when the integer
+    // parts agree.
     const double whole = std::trunc(b);
     const bigint rounded{whole};
     if (a < rounded) { return -1; }

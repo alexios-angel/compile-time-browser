@@ -1,3 +1,29 @@
+//===- bytecode.hpp - Register bytecode and programs ------------*- C++ -*-===//
+//
+// The script VM's register-based instruction set (`op`, `instruction`) and the
+// compiled forms built from it (`function_proto`, `program`).
+//
+// Register-based rather than stack-based because of inline caches:
+// `GET_PROP dst, obj, name` names its operands, so a cache keyed on that
+// instruction's address sees the same object shape every time it executes. A
+// stack machine's `getprop` has no stable identity for what it is operating
+// on, which is why the engines that care about property-access speed are all
+// register machines.
+//
+// Registers are frame slots, allocated by a high-water mark as the compiler
+// walks expressions (Lua's design). It is not graph-colouring register
+// allocation and does not try to be: it costs one integer per expression
+// node, produces no spills because the frame is as large as it needs to be,
+// and removes every push/pop from the dispatch loop.
+//
+// An instruction is 8 bytes: an opcode and three 16-bit operands, the odd byte
+// going to alignment padding. Ops that need a wider operand (constant indices,
+// jump offsets) read b and c as one 32-bit field, which is why `bx()` exists.
+// Byte operands are not enough: real bundles (p5.js) have functions with more
+// than 256 distinct property names and more than 256 registers.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -8,36 +34,17 @@
 #include <ctbrowser/aot/aot_entry.h>
 #include <ctbrowser/script/value.hpp>
 
-// A register-based instruction set.
-//
-// Register-based rather than stack-based, and the reason is inline caches:
-// `GET_PROP dst, obj, name` names its operands, so a cache keyed on that
-// instruction's address sees the same object shape every time it executes. A
-// stack machine's `getprop` has no stable identity for what it is operating
-// on, which is why the engines that care about property-access speed are all
-// register machines.
-//
-// Registers are frame slots, allocated by a high-water mark as the compiler
-// walks expressions - Lua's design. It is not graph-colouring register
-// allocation and does not try to be: it costs one integer per expression
-// node, produces no spills because the frame is as large as it needs to be,
-// and removes every push/pop from the dispatch loop.
-//
-// An instruction is 8 bytes: an opcode and three 16-bit operands, the odd byte
-// going to alignment padding. Ops that need a wider operand (constant indices,
-// jump offsets) read b and c as one 32-bit field, which is why `bx()` exists.
-// Byte operands were not enough: p5.js has functions with more than 256
-// distinct property names and more than 256 registers.
-
 namespace ctbrowser::script {
 
+/// The opcodes. The comment beside each gives its operands: a, b and c are
+/// the 16-bit fields, bx and sbx the unsigned and signed 32-bit b:c pair.
 enum class op : std::uint8_t {
-    // --- moves and constants
+    // --- Moves and constants.
     load_const,  // a = k[bx]          (number/bool - an immediate, no heap)
     load_string, // a = intern(strings[bx])
-    // a = the BigInt whose LITERAL TEXT is strings[bx] (without the trailing
+    // a = the BigInt whose literal text is strings[bx] (without the trailing
     // `n`). The text rather than a parsed constant, because a bigint has no
-    // fixed width to put in the constant pool - and the VM caches the parse per
+    // fixed width to put in the constant pool; the VM caches the parse per
     // slot, so the digits are read once however hot the site is.
     load_bigint,
     load_undef, // a = undefined
@@ -46,13 +53,13 @@ enum class op : std::uint8_t {
     load_false, // a = false
     move,       // a = b
 
-    // --- globals and locals
+    // --- Globals and locals.
     get_global,        // a = globals[k[bx]], unresolved names throw
     get_global_typeof, // same lookup, unresolved names yield undefined
     set_global,        // globals[k[bx]] = a
 
-    // --- captured variables. A local that some nested function refers to is
-    // stored in a heap CELL rather than directly in its register, and every
+    // --- Captured variables. A local that some nested function refers to is
+    // stored in a heap cell rather than directly in its register, and every
     // access goes through the cell. That is what makes mutation through a
     // closure visible to the enclosing scope.
     new_cell,    // a = cell(a)          (box the value already in a)
@@ -61,7 +68,7 @@ enum class op : std::uint8_t {
     get_upvalue, // a = *upvalues[b]     (upvalues are always cells)
     set_upvalue, // *upvalues[a] = b
 
-    // --- arithmetic. JS `+` is add_or_concat: it is the one operator whose
+    // --- Arithmetic. JS `+` is add_or_concat: it is the one operator whose
     // meaning depends on its operand types, so it gets its own opcode rather
     // than a runtime branch inside a generic `add`.
     add,         // a = b + c   (numeric)
@@ -73,10 +80,10 @@ enum class op : std::uint8_t {
     mod,
     pow,
     negate,      // a = -b
-    to_number,   // a = +b  - a CONVERSION, not a copy; see compile_unary
+    to_number,   // a = +b, a conversion, not a copy; see compile_unary
     logical_not, // a = !b
 
-    // --- comparison
+    // --- Comparison.
     equal,           // a = b === c
     not_equal,       // a = b !== c
     loose_equal,     // a = b == c
@@ -88,7 +95,7 @@ enum class op : std::uint8_t {
     instance_of,  // a = b instanceof c   (walks b's prototype chain)
     has_property, // a = b in c
 
-    // --- bitwise. JavaScript's operate on ToInt32/ToUint32 of a double, so
+    // --- Bitwise. JavaScript's operators work on ToInt32/ToUint32 of a double, so
     // they are not just the C operators on the stored number.
     bit_and,
     bit_or,
@@ -98,17 +105,16 @@ enum class op : std::uint8_t {
     ushr,
     bit_not, // a = ~b
 
-    // --- control flow
+    // --- Control flow.
     jump,          // ip += sbx
     jump_if_false, // if (!truthy(a)) ip += sbx
     jump_if_true,  // if (truthy(a)) ip += sbx
-    // `??` and `??=` ask whether a is null or undefined - NOT whether it is
-    // falsy. They are different questions and the difference is the entire
-    // point of the operator: `0 ?? 5` is 0, and `"" ?? "x"` is "". Compiling
-    // them as `||` gets both wrong, silently.
+    // `??` and `??=` ask whether a is null or undefined, not whether it is
+    // falsy. The difference is the point of the operator: `0 ?? 5` is 0, and
+    // `"" ?? "x"` is "". Compiling them as `||` gets both wrong, silently.
     jump_if_not_nullish, // if (!nullish(a)) ip += sbx
-    // A default parameter applies when the argument is UNDEFINED and only
-    // then - `f(null)` against `function f(a = 1)` leaves a null. So this is
+    // A default parameter applies when the argument is undefined and only
+    // then: `f(null)` against `function f(a = 1)` leaves a null. So this is
     // not the nullish test, and it is not the truthy one either.
     jump_if_defined, // if (a is not undefined) ip += sbx
     // b..argc, as an array: the tail a rest parameter binds. The frame knows
@@ -117,21 +123,21 @@ enum class op : std::uint8_t {
     gather_rest, // a = [...arguments].slice(b)
 
     // `f(...args)`. Every other call form passes its arguments in consecutive
-    // registers and puts the COUNT in an operand, which cannot work when the
+    // registers and puts the count in an operand, which cannot work when the
     // count is not known until the spread is evaluated. These take the
     // arguments as an array instead, so one form covers plain calls, method
-    // calls and computed calls - the receiver is simply a register.
+    // calls and computed calls: the receiver is simply a register.
     apply,           // a = a.call(c, ...b)
     construct_apply, // a = new a(...b)
 
     // `get x()` / `set x(v)`.
     define_getter, // a.<b> gets the getter in c
     define_setter, // a.<b> gets the setter in c
-    // `{k: v}`: a[b] DEFINED as c (CreateDataPropertyOrThrow), not [[Set]] -
+    // `{k: v}`: a[b] defined as c (CreateDataPropertyOrThrow), not [[Set]], so
     // a setter or read-only `k` up the chain does not intercept a literal.
     define_data,
 
-    // --- objects and arrays
+    // --- Objects and arrays.
     new_object, // a = {}
     new_array,  // a = []
     get_prop,   // a = b[k[c]]        (named; the inline-cache site)
@@ -140,7 +146,7 @@ enum class op : std::uint8_t {
     set_index,  // a[b] = c
     append,     // a.push(b)          (array literals)
 
-    // --- calls
+    // --- Calls.
     closure,       // a = new closure of functions[bx]
     call,          // a = call(a, args a+1 .. a+b)
     call_method,   // a = call(a[k[c]], this=a, args a+1 .. a+b)
@@ -151,8 +157,11 @@ enum class op : std::uint8_t {
     delete_prop,   // a[k[b]] = gone
     delete_index,  // a[b] = gone
     own_keys,      // a = the own property names of b, as an array (for..in)
-    // a = b as an ARRAY OF VALUES, for anything a page can iterate: for-of is
-    // an index loop over `length`. See context::iterable_values.
+    // a = b as an array of values (context::iterable_values): what spread uses,
+    // and what for-of falls back to as an index loop when the source is an
+    // array, string or other built-in iterable. A generator or a page's own
+    // iterable is stepped with next() instead (see for_of_open_name in
+    // builtins.hpp).
     iterable,
     set_proto,   // a.__proto__ = b, for `class X extends Y`
     get_proto,   // a = b's prototype, for `super`
@@ -160,70 +169,67 @@ enum class op : std::uint8_t {
                  // prototype); `super` starts its lookup at the home's proto
     await_value, // a = the settled value of b (a promise, or b itself)
     // `yield b`. Suspends the frame into its generator and hands b out to
-    // whoever called `.next()`; a is where the value passed to the NEXT
+    // whoever called `.next()`; a is where the value passed to the next
     // `.next(v)` lands, which is what makes `var x = yield y` work.
     //
-    // It is the same machinery `await` uses - the frame is lifted into a
-    // coroutine_object and put back later - and deliberately so. The difference
-    // is only WHO resumes it: a settling promise for await, an explicit
-    // `.next()` for a generator.
+    // It deliberately uses the same machinery as `await`: the frame is lifted
+    // into a coroutine_object and put back later. The only difference is who
+    // resumes it: a settling promise for await, an explicit `.next()` for a
+    // generator.
     yield_value,
-    wrap_promise, // a = a as a SETTLED promise (what an `async` function returns)
+    wrap_promise, // a = a as a settled promise (what an `async` function returns)
     ret,          // return a
     ret_undef,    // return undefined
 
-    // --- misc
+    // --- Miscellaneous.
     type_of,   // a = typeof b
     load_this, // a = the receiver of the call that entered this frame
     // a = `new.target`: the constructor this frame was invoked with, or
-    // undefined when it was an ordinary call. The frame already knows - it
-    // carries `constructing` so that `new C()` can evaluate to the new object -
-    // so this reads state that was there rather than adding any.
+    // undefined when it was an ordinary call. The frame already carries
+    // `constructing` so that `new C()` can evaluate to the new object, so this
+    // reads existing state rather than adding any.
     load_new_target,
-    // `super(...)` PASSES new.target ALONG. The spec propagates it down the
+    // `super(...)` passes new.target along. The spec propagates it down the
     // constructor chain: inside a base constructor reached through super(),
     // `new.target` is the class `new` was written against, not the base. That
-    // cannot be inferred at run time - a super() call and an ordinary method
-    // call look identical by then - so the compiler marks the call and the VM
+    // cannot be inferred at run time (a super() call and an ordinary method
+    // call look identical by then), so the compiler marks the call and the VM
     // hands the value to the next frame it pushes.
     pass_new_target,
-    // --- ES modules ------------------------------------------------------
+    // --- ES modules.
     // `a = the cell exported as names[b] by the module at specifier
-    // names[c]`. A cell, NOT a value: an imported binding is LIVE, so the
+    // names[c]`. A cell, not a value: an imported binding is live, so the
     // importer must hold the very box the exporter writes through. Copying the
-    // value here is the CommonJS behaviour and is observably wrong - it is the
-    // shortcut docs/plans/modules.md names in advance.
+    // value here would be the CommonJS behaviour, which is observably wrong
+    // (ctbrowser/docs/plans/modules.md).
     load_import,
     // Publish the cell in register a as this module's export named names[bx].
     bind_export,
-    // `a = import(b)` - a PROMISE for the namespace object of the module whose
+    // `a = import(b)`: a promise for the namespace object of the module whose
     // specifier is the string in register b. The specifier is a runtime value,
     // so unlike a static import there is nothing the loader could have resolved
     // in advance: the VM hands it and the calling function's own module to the
     // embedder's loader and gets back a settled promise.
     dyn_import,
     // `a = the namespace object of the module at names[b]`, for `import * as
-    // ns`. LIVE, like every other imported binding: each property is an
+    // ns`. Live, like every other imported binding: each property is an
     // accessor reading the exporter's cell, not a value copied at link time.
     load_namespace,
 
-    // a = the CLOSURE running this frame. `var f = function me() { ... me() }`
+    // a = the closure running this frame. `var f = function me() { ... me() }`
     // binds `me` inside its own body and nowhere else, and there is no other
     // way to reach it: the enclosing scope has no such name, and the closure
     // does not exist yet when the body is compiled.
     load_callee,
-    // a = `arguments`: every value this call actually received, as an array.
-    //
-    // It is a real Array rather than the spec's array-LIKE object, which is a
-    // deliberate and visible deviation: `Array.isArray(arguments)` is true here
-    // and false in a browser. The alternative - a plain object with numeric
-    // keys - loses `Array.prototype.slice.call(arguments)`, which is the single
-    // commonest thing done with it, so this is the more useful of two wrong
-    // answers. `length` and indexing, which is what dispatch code reads, are
-    // right either way.
+    // a = `arguments`: every value this call actually received. Built by
+    // context::make_arguments_object as an array_object on Object.prototype
+    // with a private marker, so `Array.isArray(arguments)` is false and
+    // Object.prototype.toString returns "[object Arguments]" (10.4.4). The
+    // parameter map is not made: writing `arguments[0]` does not change the
+    // parameter.
     make_arguments,
 
-    // --- exceptions. `try` pushes a handler with the address to jump to;
+    // --- Exceptions. `try` pushes a handler with the address to jump to;
     // `throw` unwinds call frames until it finds one. Unwinding is what makes
     // this a VM change rather than a compiler one: a handler in a caller has to
     // be reachable from a throw several frames deep.
@@ -233,17 +239,17 @@ enum class op : std::uint8_t {
     halt,
 };
 
-// THE TABLE THAT DESCRIBES THEM, and the assert that keeps it honest.
-//
-// bytecode_opcodes.def carries one CT_OPCODE line per enumerator above, with
-// the operand encoding and the behaviour an ahead-of-time compiler needs -
-// whether an operation allocates, throws, can run user JavaScript in the
-// middle of itself, or can suspend the frame. The VM builds its own dispatch
-// table from it, and ctcompile reads the same file, so there is ONE list.
-//
-// Counting the ENTRIES rather than sizing an array: a table built with array
-// designators has no gap check, and a hole is a jump to address zero in the
-// computed-goto build. Here it is a build failure.
+/// The number of opcodes, counted from bytecode_opcodes.def.
+///
+/// bytecode_opcodes.def carries one CT_OPCODE line per enumerator of `op`, with
+/// the operand encoding and the behaviour an ahead-of-time compiler needs:
+/// whether an operation allocates, throws, can run user JavaScript in the
+/// middle of itself, or can suspend the frame. The VM builds its own dispatch
+/// table from it, and ctcompile reads the same file, so there is one list.
+///
+/// The entries are counted rather than an array sized: a table built with
+/// array designators has no gap check, and a hole is a jump to address zero in
+/// the computed-goto build. Here it is a build failure.
 #define CT_OPCODE(name, ...) +1
 inline constexpr std::size_t opcode_count = 0
 #include <ctbrowser/script/bytecode_opcodes.def>
@@ -252,11 +258,12 @@ inline constexpr std::size_t opcode_count = 0
 static_assert(opcode_count == static_cast<std::size_t>(op::halt) + 1,
               "bytecode_opcodes.def must list every opcode in `enum class op` exactly once");
 
-// AND IN THE SAME ORDER, which the count above cannot see: `shapes[]` in
-// program_image/read.cpp is built from the .def and INDEXED BY THE ENUM, so a
-// table whose rows had drifted would bounds-check every operand against some
-// other opcode's pool. The enum is not generated from the .def because the
-// enumerators carry the per-opcode commentary.
+/// The opcodes in .def order, checked below against the enum's order, which
+/// the count above cannot see: `shapes[]` in program_image/read.cpp is built
+/// from the .def and indexed by the enum, so a
+/// table whose rows had drifted would bounds-check every operand against some
+/// other opcode's pool. The enum is not generated from the .def because the
+/// enumerators carry the per-opcode commentary.
 #define CT_OPCODE(name_, ...) op::name_,
 inline constexpr op opcode_order[] = {
 #include <ctbrowser/script/bytecode_opcodes.def>
@@ -271,19 +278,19 @@ static_assert(
     }(),
     "bytecode_opcodes.def lists the opcodes in a different ORDER than `enum class op`");
 
-// THE IDENTITY OF THE INSTRUCTION SET, as a number. Every opcode's spelling, in
-// order, folded together - so renaming one, reordering two or adding one to the
-// middle produces a different value. `image_fingerprint()` mixes this, because
-// an image stores opcodes as bare bytes: if byte 45 means `sub` when the image
-// is written and `add` when it is read, the program loads clean and computes
-// the wrong answer.
+/// The identity of the instruction set, as a number: an FNV-1a hash of every
+/// opcode's spelling, in order, so renaming one, reordering two or adding one
+/// to the middle produces a different value. `image_fingerprint()` mixes this,
+/// because an image stores opcodes as bare bytes: if byte 45 means `sub` when
+/// the image is written and `add` when it is read, the program loads cleanly
+/// and computes the wrong answer.
 #define CT_OPCODE(name_, ...) #name_ ";"
 inline constexpr std::string_view opcode_names_joined =
 #include <ctbrowser/script/bytecode_opcodes.def>
     ;
 #undef CT_OPCODE
 inline constexpr std::uint64_t opcode_set_identity = [] {
-    std::uint64_t h = 14695981039346656037ull; // FNV-1a, and only a name here
+    std::uint64_t h = 14695981039346656037ull; // FNV-1a offset basis; a name hash only
     for (const char c : opcode_names_joined) {
         h ^= static_cast<std::uint8_t>(c);
         h *= 1099511628211ull;
@@ -291,16 +298,20 @@ inline constexpr std::uint64_t opcode_set_identity = [] {
     return h;
 }();
 
+/// One 8-byte instruction: an opcode and three 16-bit operands.
 struct instruction {
     op code = op::halt;
     std::uint16_t a = 0, b = 0, c = 0;
 
+    /// Operands b and c read as one unsigned 32-bit field (b is the high half).
     [[nodiscard]] constexpr std::uint32_t bx() const noexcept {
         return (static_cast<std::uint32_t>(b) << 16) | c;
     }
+    /// bx() reinterpreted as signed, for jump offsets.
     [[nodiscard]] constexpr std::int32_t sbx() const noexcept {
         return static_cast<std::int32_t>(bx());
     }
+    /// Builds an instruction whose b:c pair holds the 32-bit operand `wide`.
     static constexpr instruction with_bx(op o, std::uint16_t reg, std::uint32_t wide) noexcept {
         return instruction{o, reg, static_cast<std::uint16_t>(wide >> 16),
                            static_cast<std::uint16_t>(wide & 0xFFFF)};
@@ -309,33 +320,33 @@ struct instruction {
 
 static_assert(sizeof(instruction) == 8, "an instruction is one 64-bit word");
 
-// Where one of a function's upvalues comes from, resolved at compile time.
-// A closure is built by walking this list: each entry either grabs a cell out
-// of the ENCLOSING FRAME's register, or re-shares a cell the enclosing
-// closure already holds. The second case is what makes capture work through
-// more than one level of nesting.
+/// Where one of a function's upvalues comes from, resolved at compile time.
+/// A closure is built by walking this list: each entry either grabs a cell out
+/// of the enclosing frame's register (`from_parent_local`), or re-shares a cell
+/// the enclosing closure already holds. The second case is what makes capture
+/// work through more than one level of nesting.
 struct upvalue_desc {
     bool from_parent_local = true;
     std::uint16_t index = 0;
 };
 
-// A LOCAL VARIABLE'S NAME, AND THE WINDOW OF CODE IT WAS ALIVE FOR.
-//
-// The register machine has no notion of a variable: `r4` is a frame slot, and
-// the same slot holds a `let` in one block and a temporary in the next. The
-// table is what lets a stack trace name a variable and the AOT backend emit
-// `this._isEnabled = ...` rather than `v18[4] = v17`.
-//
-// `first_pc` and `last_pc` are a HALF-OPEN range of indices into `code`, taken
-// when the local is declared and when its scope is popped. They are the
-// compiler's scopes, not a liveness analysis: a slot reused by a temporary
-// after `last_pc` is genuinely a different variable, and one still named here
-// at `last_pc` genuinely was that variable for the whole window.
-//
-// `boxed` is the state at the END of the scope, not at the declaration. A
-// local becomes a cell when something nested captures it, and that is
-// discovered after the fact - `mark_captured`, `bind_export` and `bind_imports`
-// all set it on a local that was already declared.
+/// A local variable's name, and the window of code it was alive for.
+///
+/// The register machine has no notion of a variable: `r4` is a frame slot, and
+/// the same slot holds a `let` in one block and a temporary in the next. The
+/// table is what lets a stack trace name a variable and the AOT backend emit
+/// `this._isEnabled = ...` rather than `v18[4] = v17`.
+///
+/// `first_pc` and `last_pc` are a half-open range of indices into `code`, taken
+/// when the local is declared and when its scope is popped. They are the
+/// compiler's scopes, not a liveness analysis: a slot reused by a temporary
+/// after `last_pc` is genuinely a different variable, and one still named here
+/// at `last_pc` genuinely was that variable for the whole window.
+///
+/// `boxed` is the state at the end of the scope, not at the declaration. A
+/// local becomes a cell when something nested captures it, and that is
+/// discovered after the fact: the capture analysis (compile/capture.cpp),
+/// `bind_export` and `bind_imports` all set it on a local already declared.
 struct local_desc {
     std::string name;
     std::uint16_t reg = 0;
@@ -344,133 +355,136 @@ struct local_desc {
     bool boxed = false;
 };
 
-// One compiled function. `constants` holds every literal and every property
-// name the body mentions, so the dispatch loop never touches a std::string
-// except through an index.
+/// One compiled function. `constants`, `strings` and `names` hold every literal
+/// and every property name the body mentions, so the dispatch loop never
+/// touches a std::string except through an index.
 struct function_proto {
-    // THE MODULE THIS FUNCTION WAS COMPILED IN, empty for a classic script. The
-    // compiler cannot know it - a specifier is the LOADER's name for a file -
-    // so the loader stamps every proto in a program after compiling it.
-    //
-    // It is here rather than on `program` because that is where it can be
-    // reached: a running frame holds a `function_proto *` and nothing else, and
-    // `import('./x.js')` called from a callback long after evaluation still has
-    // to resolve `./x.js` against the module that WROTE it.
+    /// The module this function was compiled in, empty for a classic script.
+    /// The compiler cannot know it (a specifier is the loader's name for a
+    /// file), so the loader stamps every proto in a program after compiling it.
+    ///
+    /// It is here rather than on `program` because a running frame holds a
+    /// `function_proto *` and nothing else, and `import('./x.js')` called from
+    /// a callback long after evaluation still has to resolve `./x.js` against
+    /// the module that wrote it.
     std::string module;
     std::string name;
-    // NamedEvaluation (8.4.5): the name an ANONYMOUS function or class took
-    // from the binding, property or default it initialised - `var f =
-    // function () {}` reads f.name as "f". Kept apart from `name`, which
-    // stays what the source wrote, because every consumer of the bytecode
-    // derives a symbol from `name` and "" is what an anonymous function is
-    // there. display_name() is what `.name` and a stack trace read.
+    /// NamedEvaluation (8.4.5): the name an anonymous function or class took
+    /// from the binding, property or default it initialised (`var f =
+    /// function () {}` reads f.name as "f"). Kept apart from `name`, which
+    /// stays what the source wrote, because every consumer of the bytecode
+    /// derives a symbol from `name` and an anonymous function's is "" there.
+    /// display_name() is what `.name` and a stack trace read.
     std::string inferred_name;
     [[nodiscard]] const std::string & display_name() const noexcept {
         return name.empty() ? inferred_name : name;
     }
     std::uint16_t param_count = 0;
-    // `f.length` - ExpectedArgumentCount (15.1.5): the parameters before the
-    // first one with a default or the rest - which is NOT param_count, the
-    // calling convention's register count: `function f(a, b = 1) {}` has a
-    // length of 1 and takes two registers.
+    /// `f.length`, ExpectedArgumentCount (15.1.5): the parameters before the
+    /// first one with a default or the rest. This is not param_count, the
+    /// calling convention's register count: `function f(a, b = 1) {}` has a
+    /// length of 1 and takes two registers.
     std::uint16_t length = 0;
     std::uint16_t frame_size = 1; // registers this body needs
-    // An arrow does not get its own `this`; it sees the one where it was
-    // WRITTEN, and the VM cannot tell an arrow from a function at run time.
+    /// An arrow does not get its own `this`; it sees the one where it was
+    /// written, and the VM cannot otherwise tell an arrow from a function.
     bool is_arrow = false;
-    // STRICT MODE CODE (11.2.2): a "use strict" directive in this body or an
-    // enclosing one, a module, or a class body. What it changes here: an
-    // assignment [[Set]] rejected - non-writable, non-extensible, getter with
-    // no setter, a primitive receiver - is a TypeError instead of a silent
-    // drop, and an assignment to an unresolvable name is a ReferenceError.
+    /// Strict mode code (11.2.2): a "use strict" directive in this body or an
+    /// enclosing one, a module, or a class body. What it changes here: a
+    /// rejected assignment [[Set]] (non-writable, non-extensible, getter with
+    /// no setter, a primitive receiver) is a TypeError instead of a silent
+    /// drop, and an assignment to an unresolvable name is a ReferenceError.
     bool is_strict = false;
-    // `function*`. Calling one does NOT run the body: it builds a generator
-    // object over a suspended frame and hands that back, so the first
-    // instruction runs on the first `.next()` - unless eager_prologue.
+    /// `function*`. Calling one does not run the body: it builds a generator
+    /// object over a suspended frame and hands that back, so the first
+    /// instruction runs on the first `.next()`, unless eager_prologue.
     bool is_generator = false;
-    // A generator whose parameters have defaults or patterns: the compiler
-    // ends that prologue with a yield_value of its own, and make_generator
-    // runs the frame up to it, because FunctionDeclarationInstantiation is
-    // part of [[Call]] (10.2.1 step 8) - `g(null)` with a pattern parameter
-    // is a TypeError at the call, not at the first `.next()`.
+    /// A generator whose parameters have defaults or patterns: the compiler
+    /// ends that prologue with a yield_value of its own, and make_generator
+    /// runs the frame up to it, because FunctionDeclarationInstantiation is
+    /// part of [[Call]] (10.2.1 step 8): `g(null)` with a pattern parameter
+    /// is a TypeError at the call, not at the first `.next()`.
     bool eager_prologue = false;
-    // `async`. The VM needs it only together with is_generator - an async
-    // generator's call builds a different object - and the image carries it
-    // only in that case; a plain async function's promise wrapping and its
-    // rejection fence are entirely the compiler's.
+    /// `async`. The VM needs it only together with is_generator (an async
+    /// generator's call builds a different object), and the image carries it
+    /// only in that case; a plain async function's promise wrapping and its
+    /// rejection fence are entirely the compiler's.
     bool is_async = false;
-    // WHERE IT WAS WRITTEN, as byte offsets into the program's source, for
-    // `f.toString()`.
+    /// Where the function was written, as byte offsets into the program's
+    /// source, for `f.toString()`.
     std::uint32_t source_begin = 0, source_end = 0;
     std::vector<instruction> code;
-    // Immediates only. A string literal cannot live here: `value` for a string
-    // is a pointer into a VM heap that does not exist at compile time, so the
-    // TEXT is kept instead and the VM materializes it. That also keeps a
-    // compiled program independent of any one VM instance, which matters once
-    // there is an agent per thread.
+    /// Immediates only. A string literal cannot live here: `value` for a string
+    /// is a pointer into a VM heap that does not exist at compile time, so the
+    /// text is kept in `strings` instead and the VM materializes it. That also
+    /// keeps a compiled program independent of any one VM instance, which
+    /// matters because there is an agent per thread.
     std::vector<value> constants;
     std::vector<std::string> strings;
     std::vector<std::string> names; // for get_global/get_prop operands
     std::vector<upvalue_desc> upvalues;
 
-    // --- the debug side tables, and they are OPTIONAL ------------------------
+    // --- Debug side tables (optional) ------------------------------------===//
     //
-    // Both are empty when the compiler was built with
+    // `locals` and `code_offsets` are empty when the compiler was built with
     // CTBROWSER_SCRIPT_DEBUG_NAMES=OFF, and every reader must cope with that
-    // rather than index them blind. They are not part of what a program MEANS:
+    // rather than index them blind. They are not part of what a program means:
     // `image_fingerprint` does not mix them and two programs differing only in
     // these are the same program.
     //
     // Kept as separate vectors rather than fields on `instruction` because the
-    // dispatch loop reads `code` and nothing else - widening an instruction
+    // dispatch loop reads `code` and nothing else; widening an instruction
     // from 8 bytes to 12 to carry a line number would be paid by every
     // execution of every program, to serve a reader who is not there.
     std::vector<local_desc> locals;
-    // PARALLEL TO `code`, one byte offset into `program::source` per
-    // instruction - or empty. `emit` maintains the two together precisely so
-    // that they cannot drift: there is no other way to append an instruction.
+    /// Parallel to `code`: one byte offset into `program::source` per
+    /// instruction, or empty. `emit` maintains the two together so that they
+    /// cannot drift: there is no other way to append an instruction.
     std::vector<std::uint32_t> code_offsets;
-    // THE OFFSET THE NEXT `emit` WILL STAMP, and it is COMPILE-TIME STATE on a
-    // structure that is otherwise a compiled artefact - the same bargain
-    // `aot_entry` below makes in the other direction. A cursor the compiler
-    // moves at statement and expression boundaries, rather than an argument
-    // threaded through every `emit` call.
-    //
-    // `no_offset` means "this node cannot say where it was written" - a
-    // template literal's interpolation is parsed from a different buffer, so a
-    // lexeme in it is not an offset into this program at all. It is a value the
-    // CURSOR takes, never one that reaches the table: the cursor starts at the
-    // function's own first byte and a node that cannot answer leaves it where
-    // it was.
+    /// The offset the next `emit` will stamp. This is compile-time state on a
+    /// structure that is otherwise a compiled artefact (`aot_entry` below is
+    /// the converse: runtime-only state). It is a cursor the compiler moves at
+    /// statement and expression boundaries, rather than an argument threaded
+    /// through every `emit` call.
+    ///
+    /// `no_offset` means "this node cannot say where it was written": a
+    /// template literal's interpolation is parsed from a different buffer, so a
+    /// lexeme in it is not an offset into this program at all. It is a value
+    /// the cursor takes, never one that reaches the table: the cursor starts at
+    /// the function's own first byte and a node that cannot answer leaves it
+    /// where it was.
     static constexpr std::uint32_t no_offset = 0xFFFFFFFFu;
     std::uint32_t emit_offset = no_offset;
-    // WHETHER THIS PROTO KEEPS A SOURCE-OFFSET TABLE AT ALL, set by the
-    // compiler when it creates the proto and false everywhere else. EMPTY AND
-    // PARALLEL ARE THE ONLY TWO STATES THE TABLE MAY BE IN, and the choice
-    // between them is made once per FUNCTION: the prologue and the implicit
-    // return are emitted with no statement in hand.
+    /// Whether this proto keeps a source-offset table at all, set by the
+    /// compiler when it creates the proto and false everywhere else. Empty and
+    /// parallel are the only two states `code_offsets` may be in, and the
+    /// choice is made once per function, because the prologue and the implicit
+    /// return are emitted with no statement in hand.
     bool debug_offsets = false;
-    // THE COMPILER'S OWN RETHROWS: the index of each op::throw_value that
-    // throws again a value a handler caught - a finally's, an iterator close's
-    // - rather than a `throw` the source wrote. In emission order, so sorted.
-    // Kept beside code_offsets and only when it is, for the one reader that
-    // needs it: context::note_throw_site, where such a throw keeps the site of
-    // the throw it caught.
+    /// The compiler's own rethrows: the index of each op::throw_value that
+    /// rethrows a value a handler caught (a finally's, an iterator close's)
+    /// rather than a `throw` the source wrote. In emission order, so sorted.
+    /// Kept only when code_offsets is, for the one reader that needs it:
+    /// context::note_throw_site, where such a throw keeps the site of the
+    /// throw it caught.
     std::vector<std::uint32_t> rethrows;
 
-    // THE COMPILED BODY, or null, which is almost always. Runtime-only: the
-    // compiler never sets it, no image ever carries it, and `image_fingerprint`
-    // cannot see it - an entry point is a property of THIS PROCESS, not of the
-    // program. It lives on the proto rather than on `closure_object` because it
-    // belongs to the CODE: every closure built from this proto inherits it,
-    // where on the closure it would have to be copied by op::closure, by
-    // run_nested, by make_generator and by ct_aot_make_closure.
+    /// The compiled (AOT) body, or null, which is almost always. Runtime-only:
+    /// the script compiler never sets it, no image carries it, and
+    /// `image_fingerprint` cannot see it; an entry point is a property of this
+    /// process, not of the program. It lives on the proto rather than on
+    /// `closure_object` because it belongs to the code: every closure built
+    /// from this proto inherits it, where on the closure it would have to be
+    /// copied by op::closure, run_nested, make_generator and
+    /// ct_aot_make_closure.
     aot::ct_aot_entry_fn aot_entry = nullptr;
 
+    /// Appends `v` to `constants` and returns its index.
     [[nodiscard]] std::uint32_t add_constant(value v) {
         constants.push_back(v);
         return static_cast<std::uint32_t>(constants.size() - 1);
     }
+    /// Returns the index of `s` in `strings`, appending it if absent.
     [[nodiscard]] std::uint32_t add_string(std::string s) {
         for (std::size_t i = 0; i < strings.size(); ++i) {
             if (strings[i] == s) { return static_cast<std::uint32_t>(i); }
@@ -478,6 +492,7 @@ struct function_proto {
         strings.push_back(std::move(s));
         return static_cast<std::uint32_t>(strings.size() - 1);
     }
+    /// Returns the index of `n` in `names`, appending it if absent.
     [[nodiscard]] std::uint32_t add_name(std::string n) {
         for (std::size_t i = 0; i < names.size(); ++i) {
             if (names[i] == n) { return static_cast<std::uint32_t>(i); } // names repeat constantly
@@ -485,8 +500,9 @@ struct function_proto {
         names.push_back(std::move(n));
         return static_cast<std::uint32_t>(names.size() - 1);
     }
-    // THE ONLY PLACE AN INSTRUCTION IS APPENDED, which is what makes
-    // `code_offsets` parallel to `code` an invariant rather than a convention.
+    /// Appends `i` and returns its index. This is the only place an
+    /// instruction is appended, which is what makes `code_offsets` parallel to
+    /// `code` an invariant rather than a convention.
     std::size_t emit(instruction i) {
         code.push_back(i);
         if (debug_offsets) { code_offsets.push_back(emit_offset); }
@@ -494,100 +510,108 @@ struct function_proto {
     }
 };
 
-// WHICH KIND OF SCRIPT A PROGRAM IS, and it lives here rather than in
-// compile.hpp because it is a property of the compiled thing rather than of the
-// compiler. A classic script's top level IS the global scope; a module's is a
-// scope of its own. See compile.hpp for what that means for a declaration.
-// It is on `program` because the same TEXT compiles to two different programs,
-// and an image must record which one it holds.
+/// Which kind of script a program is, which decides where its top-level
+/// declarations go. A classic script's top level is the global scope: a `var`
+/// or function declaration there becomes a property of the global object, and
+/// a `let`/`const` is a global lexical binding. A module's top level is a scope
+/// of its own: its declarations are module-local and reach other code only by
+/// being exported.
+///
+/// It is declared here rather than in compile.hpp because it is a property of
+/// the compiled program rather than of the compiler: the same text compiles to
+/// two different programs, and an image must record which one it holds.
 enum class script_kind : std::uint8_t {
     classic,
     module_
 };
 
+/// A compiled script or module: its functions, its source, and the static
+/// facts a loader needs before running it.
 struct program {
-    // WHAT THIS MODULE IMPORTS, in source order, so a loader can fetch the
-    // graph without re-parsing. Empty for a classic script. The specifiers are
-    // exactly as written - resolving them against the importing module's URL is
-    // the loader's job, not the compiler's.
+    /// What this module imports, in source order, so a loader can fetch the
+    /// graph without re-parsing. Empty for a classic script. The specifiers are
+    /// exactly as written; resolving them against the importing module's URL is
+    /// the loader's job, not the compiler's.
     std::vector<std::string> imports;
-    // THE SPECIFIERS THIS MODULE IMPORTS ONLY DEFERRED (`import defer * as
-    // ns`, 16.2.2): the loader links them with the graph and leaves them
-    // unevaluated until the namespace is first read (see
-    // context::deferred_module_namespace). A subset of `imports`. NOT in the
-    // program image - a module loaded from an image evaluates them eagerly,
-    // which is the specification's behaviour for a module that another,
-    // non-deferred import already forced.
+    /// The specifiers this module imports only deferred (`import defer * as
+    /// ns`, 16.2.2): the loader links them with the graph and leaves them
+    /// unevaluated until the namespace is first read (see
+    /// context::deferred_module_namespace). A subset of `imports`. Not in the
+    /// program image: a module loaded from an image evaluates them eagerly,
+    /// which is the specification's behaviour for a module that another,
+    /// non-deferred import already forced.
     std::vector<std::string> deferred_imports;
-    // AND WHAT IT EXPORTS, likewise statically known. The loader needs these
-    // BEFORE the module runs: every binding in a cyclic graph has to exist
-    // before any of the graph is evaluated, or the module that imports first
-    // asks for a name whose exporter has not reached its own first statement.
-    // That is the specification's instantiate-then-evaluate split, and this
-    // vector is the half of it the compiler can answer.
+    /// What this module exports, likewise statically known. The loader needs
+    /// these before the module runs: every binding in a cyclic graph has to
+    /// exist before any of the graph is evaluated, or the module that imports
+    /// first asks for a name whose exporter has not reached its own first
+    /// statement. That is the specification's instantiate-then-evaluate split,
+    /// and this vector is the half of it the compiler can answer.
     std::vector<std::string> exports;
-    // AND WHAT IT RE-EXPORTS: `export { a } from './m.js'` and `export * from
-    // './m.js'`, which every ES library's index file is made of and which bind
-    // NO local name at all. They are edges in the graph rather than
-    // instructions, and they are resolved where the graph is known - the loader,
-    // at instantiate time, before anything evaluates. Doing it at run time
-    // instead would hand a cyclic importer a cell that gets replaced later.
-    //
-    // `source` empty means `export *`: every name the other module exports,
-    // except ones this module declares itself.
+    /// What this module re-exports: `export { a } from './m.js'` and
+    /// `export * from './m.js'`, which every ES library's index file is made of
+    /// and which bind no local name at all. They are edges in the graph rather
+    /// than instructions, and they are resolved where the graph is known (the
+    /// loader, at instantiate time, before anything evaluates). Doing it at run
+    /// time instead would hand a cyclic importer a cell that gets replaced
+    /// later.
+    ///
+    /// `source` empty means `export *`: every name the other module exports,
+    /// except ones this module declares itself.
     struct reexport {
         std::string exported;
         std::string source;
         std::string from;
     };
     std::vector<reexport> reexports;
-    // A CLASSIC SCRIPT'S HOISTED `var` NAMES (16.1.7 GlobalDeclarationInstantiation
-    // step 12): context::run binds each one that is not already a global to
-    // undefined before the first instruction, so `use(x); var x = 1` reads
-    // undefined rather than throwing. Data on the program, not bytecode, so
-    // nothing that reads the instructions sees it. Empty for a module.
+    /// A classic script's hoisted `var` names (16.1.7
+    /// GlobalDeclarationInstantiation step 12): context::run binds each one
+    /// that is not already a global to undefined before the first
+    /// instruction, so `use(x); var x = 1` reads undefined rather than
+    /// throwing. Data on the program, not bytecode, so
+    /// nothing that reads the instructions sees it. Empty for a module.
     std::vector<std::string> hoisted_vars;
-    // COMPILED FOR eval: its `var`s are bindings a `delete` may remove
-    // (19.2.1.3 step 17: CreateGlobalVarBinding(vn, true)), where a script's
-    // are not (16.1.7 step 17, `false`) - see context::declare_global_var.
+    /// Compiled for eval: its `var`s are bindings a `delete` may remove
+    /// (19.2.1.3 step 17: CreateGlobalVarBinding(vn, true)), where a script's
+    /// are not (16.1.7 step 17, `false`); see context::declare_global_var.
     bool eval_code = false;
-    // AN EVAL WHOSE VARIABLE ENVIRONMENT IS THE GLOBAL ONE - indirect, or
-    // direct from global code, and sloppy (19.2.1.1 steps 16-17): its `var`s
-    // and top-level functions are globals, checked and made by
-    // EvalDeclarationInstantiation (context::global_declaration_instantiation,
-    // context::eval_declaration_instantiation).
+    /// An eval whose variable environment is the global one (indirect, or
+    /// direct from sloppy global code; 19.2.1.1 steps 16-17): its `var`s and
+    /// top-level functions are globals, checked and made by
+    /// EvalDeclarationInstantiation (context::global_declaration_instantiation,
+    /// context::eval_declaration_instantiation).
     bool eval_global = false;
-    // A SLOPPY DIRECT EVAL WHOSE CALLER'S FUNCTION KEEPS ITS VARIABLE
-    // ENVIRONMENT ON AN OBJECT (the compiler's with_scope::eval_vars): its
-    // hoisted_vars and functions are made there by its own first
-    // instructions (19.2.1.3 steps 16-17), so whoever runs it declares none
-    // of them as a global.
+    /// A sloppy direct eval whose caller's function keeps its variable
+    /// environment on an object (the compiler's with_scope::eval_vars): its
+    /// hoisted_vars and functions are made there by its own first
+    /// instructions (19.2.1.3 steps 16-17), so whoever runs it declares none
+    /// of them as a global.
     bool eval_vars_env = false;
-    // A CLASSIC SCRIPT'S TOP-LEVEL LEXICAL NAMES - `let`, `const`, `class` -
-    // and its top-level FUNCTION declarations: with hoisted_vars, what
-    // 16.1.7 GlobalDeclarationInstantiation checks against the bindings
-    // earlier scripts made before this one may run (context::run). Data, like
-    // hoisted_vars. Empty for a module; an eval_global eval lists its
-    // functions (and no lexical names - those are the eval's own).
+    /// A classic script's top-level lexical names (`let`, `const`, `class`)
+    /// and its top-level function declarations: with hoisted_vars, what
+    /// 16.1.7 GlobalDeclarationInstantiation checks against the bindings
+    /// earlier scripts made before this one may run (context::run). Data, like
+    /// hoisted_vars. Empty for a module; an eval_global eval lists its
+    /// functions (and no lexical names, which are the eval's own).
     std::vector<std::string> lexical_names;
     std::vector<std::string> function_names;
-    // THE NAMES IN hoisted_vars THAT ONLY A BLOCK'S FUNCTION DECLARATION PUT
-    // THERE - no `var` and no top-level function declares them (B.3.2.2,
-    // B.3.2.3: a sloppy script's or eval's block function is also a var).
-    // Sorted. Such a name is never a refusal: one the global environment has
-    // as a lexical binding, or cannot take as a var (CanDeclareGlobalVar), is
-    // simply not created - context::annex_b_skipped - where a real `var` of
-    // it is the SyntaxError or TypeError. Data, like hoisted_vars.
+    /// The names in hoisted_vars that only a block's function declaration put
+    /// there; no `var` and no top-level function declares them (B.3.2.2,
+    /// B.3.2.3: a sloppy script's or eval's block function is also a var).
+    /// Sorted. Such a name is never an error: one the global environment has
+    /// as a lexical binding, or cannot take as a var (CanDeclareGlobalVar), is
+    /// simply not created (context::annex_b_skipped), where a real `var` of
+    /// it is a SyntaxError or TypeError. Data, like hoisted_vars.
     std::vector<std::string> annex_b_names;
-    // THE SOURCE THIS WAS COMPILED FROM, kept so a function can be printed.
-    // A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
+    /// The source this was compiled from, kept so a function can be printed.
+    /// A 4.5 MB bundle costs 4.5 MB, which it already cost to compile.
     std::string source;
     std::vector<function_proto> functions; // [0] is the top-level script
     script_kind kind = script_kind::classic;
-    bool ok = true;
-    std::string error;
-    // WHERE THE SOURCE FAILED TO PARSE, 1-based as `error`'s " - at L:C"
-    // spells it; 0 when the failure has no position.
+    bool ok = true;    // false when compilation failed
+    std::string error; // the message when !ok
+    /// Where the source failed to parse, 1-based as `error`'s " - at L:C"
+    /// spells it; 0 when the failure has no position.
     std::uint32_t error_line = 0;
     std::uint32_t error_column = 0;
 };

@@ -1,12 +1,12 @@
-// early errors - the entry: build a checker over the tree, walk it, report the
-// first error in source order.
+//===- entry.cpp - Early-error entry point ----------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,476-line compile/early_errors.cpp on
-// 2026-09-08 - the checker was one class with every member inline, as
-// compile.cpp was before it became compile/. The class is declared in
-// checker.hpp beside this, in ctbrowser::script::detail::early; the bodies are
-// where they were, in the file that owns the concern. early_errors.hpp, the
-// public face of the pass, did not change.
+// The entry point of the early-error pass: build a checker over the tree,
+// walk it, and report the first error in source order. The checker class is
+// declared in checker.hpp (namespace ctbrowser::script::detail::early); its
+// member bodies live in the sibling file for each concern. early_errors.hpp
+// is the pass's public interface.
+//
+//===----------------------------------------------------------------------===//
 
 #include "checker.hpp"
 
@@ -19,10 +19,11 @@ void checker::run() {
     const vp::node & root = at(ast_.root);
     if (root.kind != nk::program) { return; }
     frames_.back().strict = strict_root_ || has_use_strict_directive(ast_.root);
-    // AN EVAL'S TOP LEVEL is where the eval was (19.2.1.1 steps 4-7): strict
-    // when its caller is (step 12's strictCaller), and a method's, a field
-    // initialiser's or a function's for `super`, `arguments` and
-    // `new.target` - which run() then answers as it would there.
+    // An eval's top level behaves as the place the eval was (19.2.1.1 steps
+    // 4-7): strict when its caller is (step 12's strictCaller), and a
+    // method's, a field initialiser's or a function's for `super`,
+    // `arguments` and `new.target`, which run() then answers as it would
+    // there.
     if (eval_ != nullptr) {
         frames_.back().strict = frames_.back().strict || eval_->strict;
         frames_.back().what = eval_->in_class_field_initializer ? frame_kind::field_init
@@ -30,7 +31,7 @@ void checker::run() {
                               : eval_->in_function              ? frame_kind::function
                                                                 : frame_kind::script;
         frames_.back().super_call_ok = eval_->in_derived_constructor;
-        // ...and the private names of the classes around it are in scope.
+        // The private names of the classes around the eval are in scope too.
         if (!eval_->private_names.empty()) {
             private_names_.emplace_back();
             for (const auto & [name, key] : eval_->private_names) {
@@ -40,7 +41,7 @@ void checker::run() {
     }
     // A module's top level is [+Await] (16.2.1): `await` is not a name there.
     frames_.back().is_async = strict_root_;
-    // A `using` declaration at the top level of a classic SCRIPT is not in
+    // A `using` declaration at the top level of a classic script is not in
     // the grammar (14.3.2: a module's top level, a block, a body).
     if (!strict_root_) {
         for (const std::int32_t s : kids(root)) {

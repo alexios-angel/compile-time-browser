@@ -1,12 +1,12 @@
-// early errors - statements: the walk over every statement form, the
-// declaration-as-body rules, loops, switch, try, labels, break and continue.
+//===- statements.cpp - Statement early errors ----------------------------===//
 //
-// One of six files carved out of a 1,476-line compile/early_errors.cpp on
-// 2026-09-08 - the checker was one class with every member inline, as
-// compile.cpp was before it became compile/. The class is declared in
-// checker.hpp beside this, in ctbrowser::script::detail::early; the bodies are
-// where they were, in the file that owns the concern. early_errors.hpp, the
-// public face of the pass, did not change.
+// Early errors for statements: the walk over every statement form, the rule
+// that a declaration cannot be a statement body, loops, switch, try, labels,
+// break and continue. The `checker` class is declared in checker.hpp; the
+// pass's public entry point is early_errors.hpp. Section numbers are
+// ECMA-262's.
+//
+//===----------------------------------------------------------------------===//
 
 #include "checker.hpp"
 
@@ -19,9 +19,9 @@ namespace {
            kind == nk::do_stmt;
 }
 
-// The first character of the next token at or after `from`: white space, line
-// terminators and comments skipped. '\0' at the end of the source or inside
-// an unterminated comment.
+/// The first character of the next token at or after `from`: white space, line
+/// terminators and comments skipped. '\0' at the end of the source or inside
+/// an unterminated comment.
 [[nodiscard]] char next_token_char(std::string_view source, std::size_t from) {
     for (std::size_t i = from; i < source.size();) {
         const char c = source[i];
@@ -47,8 +47,6 @@ namespace {
 
 } // namespace
 
-// --- statements ------------------------------------------------------------
-
 void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<binding> & vars) {
     if (idx < 0 || depth_ >= max_depth) { return; }
     const deeper nesting{depth_};
@@ -61,9 +59,8 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         // 16.2.1: an ImportDeclaration and an ExportDeclaration are
         // ModuleItems. They are not Statements, so neither is in the grammar
         // inside a block, a clause or a function body, and a classic Script's
-        // grammar has neither at any depth - `{ export default null; }` and
-        // `() => { import v from "./m.js"; }` are SyntaxErrors, which is 91
-        // of test262's module-code files. The parser reads them wherever a
+        // grammar has neither at any depth: `{ export default null; }` and
+        // `() => { import v from "./m.js"; }` are SyntaxErrors. The parser reads them wherever a
         // statement may stand, so the position is this pass's to refuse.
         // `list_kind::script` is only ever the program's own statement list
         // (see run()), so anything else is nested in something.
@@ -74,16 +71,16 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
                    idx);
         }
         // `export default function () {}()` (16.2.3): after `default` a
-        // `function` or `class` is a DECLARATION, which ends at its `}` - so
+        // `function` or `class` is a declaration, which ends at its `}`, so
         // a call, member or operator after it is the SyntaxError, where the
         // parser read one expression. Found as the leftmost operand being a
         // function or class that no `(` stands in front of.
-        // ONLY A CONTINUATION THAT CANNOT START A STATEMENT is judged: `(x)`,
-        // `[a]`, a template, `+1`, `-1` and `/re/` after the `}` begin a new,
-        // valid statement, and refusing them refused a valid module whole.
+        // Only a continuation that cannot start a new statement is an error:
+        // `(x)`, `[a]`, a template, `+1`, `-1` and `/re/` after the `}` begin
+        // a valid next statement.
         if (n.kind == nk::export_decl && n.c == 1 && n.a >= 0) {
             std::int32_t left = n.a;
-            std::int32_t after = -1; // the first continuation past the declaration
+            std::int32_t after = -1; // The first continuation past the declaration.
             while (at(left).a >= 0 && (at(left).kind == nk::call || at(left).kind == nk::member ||
                                        at(left).kind == nk::index || at(left).kind == nk::binary ||
                                        at(left).kind == nk::tagged || at(left).kind == nk::seq)) {
@@ -119,8 +116,8 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     }
 
     case nk::expr_stmt:
-        // A STATEMENT THAT IS ONE RESERVED WORD - a `catch` or a `finally`
-        // with no `try` before it - is the parser's leniency in expression
+        // A statement that is one reserved word (a `catch` or a `finally`
+        // with no `try` before it) is the parser's leniency in expression
         // position reaching the top of a statement, where no valid program
         // puts a keyword the statement parser did not take.
         if (n.a >= 0 && at(n.a).kind == nk::ident && reserved_word(at(n.a).text)) {
@@ -131,16 +128,16 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         return;
     case nk::throw_stmt:
         // 14.14: `throw [no LineTerminator here] Expression`. ASI cannot end
-        // a throw early, so `throw` then a line break is the SyntaxError -
+        // a throw early, so `throw` then a line break is the SyntaxError,
         // which the parser read as `throw` of the next line's expression.
-        // Judged only when the operand is a single token, whose lexeme IS
+        // Judged only when the operand is a single token, whose lexeme is
         // where the expression starts (a binary node's is its operator).
         if (const vp::node & operand = at(n.a);
             operand.kind == nk::num || operand.kind == nk::str || operand.kind == nk::ident ||
             operand.kind == nk::true_lit || operand.kind == nk::false_lit ||
             operand.kind == nk::null_lit || operand.kind == nk::this_lit) {
             if (const std::size_t where = offset_of(n.a); where != early_error::nowhere) {
-                // Back over the white space to the token before - which must be
+                // Back over the white space to the token before, which must be
                 // the `throw` itself, or nothing is concluded (`throw (\n x)`).
                 std::size_t i = where;
                 bool line_break = false;
@@ -162,30 +159,19 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         return;
 
     case nk::return_stmt:
-        // NOT CHECKED, AND THIS IS THE ONE DELIBERATE DEVIATION IN THIS
-        // FILE. A Script's StatementList is parsed with [~Return], so
-        // 16.1.1 makes a top-level `return` a SyntaxError - and it is worth
-        // about fifteen tests in test262.
+        // A top-level `return` is allowed by default, which deliberately
+        // deviates from 16.1.1: it is how an embedded program hands back its
+        // result (`run_result::returned`), and the unit tests rely on it. A
+        // caller whose source really is a Script compiles it with
+        // compiler::compile_script (`script_goal_`), and then it is refused.
         //
-        // It is also this engine's EMBEDDING CONTRACT. `run_result::returned`
-        // is the value a compiled program hands back, and the way a program
-        // hands one back is `return` at its top level: `unittests/js`
-        // compiles `return (expr);` for every expression it checks,
-        // `unittests/unit/script/gc` has fourteen of them and
-        // `test/corpus/babylon` another. Refusing it would refuse the
-        // engine's own API to buy fifteen tests.
-        //
-        // So it is the other way round: a caller whose source IS a Script
-        // says so (compiler::compile_script, script_goal_) - ct262 for every
-        // test - and the contract stays the default.
-        //
-        // A STATIC BLOCK is [~Return] (15.7.1) and is not the top level.
+        // A static block is [~Return] (15.7.1) and is not the top level.
         if (frames_.back().what == frame_kind::static_block) {
             report("`return` is not allowed in a class static block", idx);
         }
-        // Nor is an EVAL'S top level: its source is a Script from script,
-        // not an embedder's program, so the contract above does not reach it
-        // - nor a MODULE'S (16.2.1: a ModuleItemList is [~Return]).
+        // Nor is an eval's top level: its source is a Script from script,
+        // not an embedder's program, so the default above does not apply.
+        // Nor is a module's (16.2.1: a ModuleItemList is [~Return]).
         if ((eval_ != nullptr || module_() || script_goal_) && frames_.size() == 1) {
             report("`return` outside a function", idx);
         }
@@ -193,13 +179,12 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         return;
 
     case nk::if_stmt:
-        // NESTED, so `nested` rather than `kind` - and that is Annex B,
-        // not tidiness. `let f = 1; if (true) function f() {}` is legal
-        // sloppy JavaScript: B.3.3.2 says a FunctionDeclaration that is the
-        // whole body of an `if` is hoisted only when doing so "would not
-        // produce any Early Errors", so it must not MAKE one. Passing the
-        // nested kind is what stops its name being var-declared here, and
-        // five annexB tests are exactly this shape.
+        // The branches are walked with `nested` rather than `kind`, for
+        // Annex B: `let f = 1; if (true) function f() {}` is legal sloppy
+        // JavaScript. B.3.3.2 hoists a FunctionDeclaration that is the whole
+        // body of an `if` only when doing so "would not produce any Early
+        // Errors", so it must not make one. Passing the nested kind stops its
+        // name being var-declared here.
         walk_expression(n.a);
         check_nested_declaration(n.b, true);
         check_nested_declaration(n.c, true);
@@ -238,7 +223,7 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     case nk::continue_stmt: check_continue(idx); return;
 
     case nk::func_decl:
-        // Its NAME is this scope's business - lexical in a block, var at the
+        // Its name is this scope's business: lexical in a block, var at the
         // top of a script or a function body (8.2.6).
         if (!n.text.empty() && kind != list_kind::block &&
             !(kind == list_kind::script && module_())) {
@@ -253,21 +238,10 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
     }
 }
 
-// A DECLARATION IS NOT A STATEMENT, and the grammar is where that is
-// written rather than any early-error clause: the body of an `if`, a loop
-// or a labelled statement is a Statement, and `let`, `const`, `class`, a
-// generator and an async function are Declarations. `if (true) let x = 1;`
-// does not parse in a conforming implementation.
-//
-// The exception is Annex B and it is narrow: B.3.3 admits a plain
-// FunctionDeclaration as the body of an `if` clause, and B.3.2 as a
-// LabelledItem, in sloppy code - which is all the code there is here. It
-// does NOT admit one as the body of a loop, and it does not admit a
-// generator or an async function anywhere.
-// IS THERE A LINE TERMINATOR after this node's lexeme, before the next
-// thing that is neither whitespace nor a comment? The one question this
-// pass has to ask the SOURCE rather than the tree, because automatic
-// semicolon insertion is not in the tree at all.
+/// Whether a line terminator follows this node's lexeme, before the next
+/// thing that is neither white space nor a comment. This pass asks the source
+/// rather than the tree here, because automatic semicolon insertion is not
+/// in the tree at all.
 [[nodiscard]] bool checker::newline_follows(std::int32_t idx, std::size_t lexeme) const {
     const std::size_t where = offset_of(idx);
     if (where == early_error::nowhere) { return false; }
@@ -279,12 +253,12 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
             continue;
         }
         if (c == '/' && i + 1 < source_.size() && source_[i + 1] == '/') {
-            return true; // a line comment runs to a line terminator
+            return true; // A line comment runs to a line terminator.
         }
         if (c == '/' && i + 1 < source_.size() && source_[i + 1] == '*') {
             const std::size_t end = source_.find("*/", i + 2);
             if (end == std::string_view::npos) { return false; }
-            // A block comment CONTAINING a line terminator is one for the
+            // A block comment containing a line terminator is one for the
             // purposes of ASI, which is the rule people forget.
             if (source_.substr(i, end - i).find('\n') != std::string_view::npos) { return true; }
             i = end + 2;
@@ -292,15 +266,22 @@ void checker::walk_statement(std::int32_t idx, list_kind kind, std::vector<bindi
         }
         return false;
     }
-    return true; // end of input ends the line too
+    return true; // End of input ends the line too.
 }
 
+/// A declaration is not a statement: the body of an `if`, a loop or a
+/// labelled statement is a Statement, and `let`, `const`, `class`, generators
+/// and async functions are Declarations, so `if (true) let x = 1;` is a
+/// SyntaxError. Annex B is the narrow exception: in sloppy code only, B.3.3
+/// allows a plain function declaration as an `if` body and B.3.2 as a
+/// labelled item, never as a loop body, and never a generator or async
+/// function.
 void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function,
                                        bool labelled_item) {
     if (idx < 0) { return; }
     // 14.6.1 / 14.7.1: IsLabelledFunction(Statement) - a function declaration
     // behind one or more labels is never the body of an `if` or a loop, and
-    // B.3.3 does not reach it. A LABEL'S item is not such a body: `a: b:
+    // B.3.3 does not reach it. A label's item is not such a body: `a: b:
     // function f() {}` is B.3.1's labelled function, which the inner label's
     // own check judges.
     std::int32_t item = idx;
@@ -315,23 +296,22 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function,
         return;
     }
     if (n.kind == nk::var_decl && n.text != "var") {
-        // `let` IS AN IDENTIFIER HERE WHEN A NEWLINE FOLLOWS IT.
+        // `let` is an identifier here when a newline follows it.
         //
         // A Statement cannot be a Declaration, so in this position `let` is
-        // not a keyword at all - it is an IdentifierReference, and
+        // not a keyword at all but an IdentifierReference, and
         // `if (false) let \n x = 1;` is two statements with a semicolon
-        // inserted between them. Legal sloppy JavaScript, and twelve
-        // test262 files (`let-identifier-with-newline`,
-        // `let-block-with-newline`, in six directories) are exactly it.
+        // inserted between them: legal sloppy JavaScript (test262's
+        // `let-identifier-with-newline` and `let-block-with-newline`).
         //
         // ctjs's parser has no ASI here and reads the declaration, so the
         // source is what has to be asked. `const` and `class` are reserved
         // words and get no such reading.
         //
-        // EXCEPT BEFORE `[`: an ExpressionStatement may not begin with the
+        // Except before `[`: an ExpressionStatement may not begin with the
         // two tokens `let [` (14.5, its lookahead restriction), so
         // `if (false) let \n [a] = 0;` is neither a declaration nor an
-        // expression here - it is the SyntaxError, newline or not.
+        // expression here; it is the SyntaxError, newline or not.
         if (n.text == "let" && newline_follows(idx, n.text.size())) {
             if (next_token_char(source_, offset_of(idx) + n.text.size()) == '[') {
                 report("a statement cannot begin with `let [`", idx);
@@ -348,6 +328,8 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function,
         return;
     }
     if (n.kind == nk::func_decl) {
+        // n.c holds the function's flags from the parser: bit 0 async,
+        // bit 1 generator.
         const std::int32_t bits = n.c > 0 ? n.c : 0;
         if ((bits & 3) != 0) {
             report("a generator or async function declaration cannot be the body of a "
@@ -365,15 +347,15 @@ void checker::check_nested_declaration(std::int32_t idx, bool annex_b_function,
     }
 }
 
-// A loop's body, with the loop counted so `break` and `continue` inside it
-// have somewhere to go.
+/// A loop's body, with the loop counted so `break` and `continue` inside it
+/// have somewhere to go.
 void checker::walk_loop_body(std::int32_t body, std::vector<binding> & vars) {
     ++frames_.back().loops;
     walk_statement(body, nested, vars);
     --frames_.back().loops;
 }
 
-// `var` / `let` / `const`.
+/// `var`, `let`, `const`, `using` and `await using` declarations.
 void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     const bool is_var = n.text == "var";
@@ -381,7 +363,7 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
     // `using` / `await using` (14.3.2.1 / 14.3.3.1): a name, never a pattern,
     // always with an initialiser, never named `let` (which the lexical
     // rule below already refuses); `await using` only where `await` is the
-    // keyword - an async body, a module's top level, a static block.
+    // keyword: an async body, a module's top level, a static block.
     const bool is_using = n.text == "using" || n.text == "await using";
     if (n.text == "await using" && !(frames_.empty() || frames_.back().is_async)) {
         report("`await using` is only allowed in an async function or a module", idx);
@@ -410,7 +392,7 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
                    names.empty() ? d : names.front().node);
         }
         if (is_var) { bound_names(d, binding_kind::var, vars); }
-        // 14.3.1.1: `let` is not a name a lexical declaration may bind - in
+        // 14.3.1.1: `let` is not a name a lexical declaration may bind, in
         // sloppy code too, where `let let = 1` would otherwise parse.
         if (!is_var) {
             std::vector<binding> names;
@@ -426,7 +408,7 @@ void checker::check_declaration(std::int32_t idx, std::vector<binding> & vars) {
     }
 }
 
-// `for (;;)`.
+/// `for (;;)`.
 void checker::check_for(std::int32_t idx, list_kind kind, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     std::vector<binding> head;
@@ -471,19 +453,20 @@ void checker::check_for(std::int32_t idx, list_kind kind, std::vector<binding> &
     vars.insert(vars.end(), body_vars.begin(), body_vars.end());
 }
 
-// `for (x in o)` and `for (x of xs)`.
-//
-// The parser does NOT keep which keyword declared the head - `let` and
-// `var` both arrive as d == 0 - so the head-against-body rule that
-// check_for applies cannot be applied here without guessing, and guessing
-// would refuse `for (var x of xs) { var x; }`, which is legal. The head's
-// own shape is still walked.
+/// `for (x in o)` and `for (x of xs)`.
+///
+/// `n.d` carries the head's flags from the ctjs parser: bit 0 `const`,
+/// bit 1 no declaration (an assignment target), bit 2 `for await`, bit 3
+/// `let`, bit 4 `using`, bit 5 `await using`. A lexical head (bits 0, 3, 4
+/// or 5, mask 57) gets 14.7.5.1's checks: distinct names, none named `let`,
+/// and none also var-declared in the body. A `var` head gets none of them,
+/// so `for (var x of xs) { var x; }` stays legal.
 void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     const vp::node & target = at(n.a);
-    // 14.7.5.1: a head with nothing to declare (d bit1) is a
+    // 14.7.5.1: a head with nothing to declare (d bit 1) is a
     // LeftHandSideExpression whose AssignmentTargetType must be simple, or
-    // an array/object literal re-read as a pattern - `for (f() of xs)` and
+    // an array/object literal re-read as a pattern; `for (f() of xs)` and
     // `for ((a, b) in o)` are errors.
     if ((n.d & 2) != 0 && target.b >= 0) {
         switch (at(target.b).kind) {
@@ -495,8 +478,8 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
         case nk::array_pattern:
         case nk::object_pattern: break;
         default:
-            // ...or a call in sloppy code, ~web-compat~ as an assignment's
-            // is: each iteration evaluates it and throws the ReferenceError.
+            // ...or a call in sloppy code, allowed for web compatibility as an
+            // assignment's is: each iteration evaluates it and throws the ReferenceError.
             if (web_compat_call(target.b)) { break; }
             report("the head of this `for` loop is not something a value can be assigned to",
                    target.b);
@@ -508,12 +491,12 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
     } else {
         check_strict_binding(target.text, n.a);
     }
-    // A DECLARED HEAD: its names are bindings (13.1.1 in strict code), and
-    // for `let`/`const` (d bit3 / bit0) 14.7.5.1 adds that they are
+    // A declared head: its names are bindings (13.1.1 in strict code), and
+    // for a lexical head 14.7.5.1 adds that they are
     // distinct, that none is `let`, and that none is also var-declared in
     // the body.
     std::vector<binding> head;
-    // `for (using x of xs)` (d bit4) / `for (await using x of xs)` (bit5):
+    // `for (using x of xs)` (d bit 4) / `for (await using x of xs)` (bit 5):
     // `of` only, a plain name, and the async form only where `await` is the
     // keyword (14.7.5.1).
     if ((n.d & 48) != 0) {
@@ -560,17 +543,17 @@ void checker::check_for_in_of(std::int32_t idx, std::vector<binding> & vars) {
     vars.insert(vars.end(), body_vars.begin(), body_vars.end());
 }
 
-// A switch's CaseBlock is ONE lexical scope spanning every clause
-// (14.12.1), which is why `case 1: let x; case 2: let x;` is an error.
+/// A switch's CaseBlock is one lexical scope spanning every clause
+/// (14.12.1), which is why `case 1: let x; case 2: let x;` is an error.
 void checker::check_switch(std::int32_t idx, std::vector<binding> & vars) {
     const vp::node & n = at(idx);
     walk_expression(n.a);
     std::vector<std::int32_t> body;
     bool has_default = false;
     for (const std::int32_t clause : kids(n)) {
-        // 14.12.1: CaseBlock's grammar admits ONE DefaultClause, between the
+        // 14.12.1: CaseBlock's grammar admits one DefaultClause, between the
         // two runs of CaseClauses. `default` is `d == 1` (ctjs starts `d` at
-        // -1), or a clause with no test - as compile_switch reads it.
+        // -1), or a clause with no test, as compile_switch reads it.
         if (at(clause).d == 1 || at(clause).a < 0) {
             if (has_default) { report("a `switch` may have only one `default` clause", clause); }
             has_default = true;
@@ -609,7 +592,7 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
             }
             parameter.push_back(binding{clause.text, binding_kind::let_, n.b});
             check_strict_binding(clause.text, n.b);
-        } else if (clause.b >= 0) { // `catch ({message})`: a pattern's names
+        } else if (clause.b >= 0) { // `catch ({message})`: a pattern's names.
             bound_names(clause.b, binding_kind::let_, parameter);
             check_strict_bindings(parameter);
             walk_pattern(clause.b);
@@ -624,8 +607,8 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
             }
         }
         // 14.15.1: the catch parameter may not be redeclared lexically in
-        // the block. A `var` of the same name IS allowed in sloppy mode
-        // (B.3.4), so only the lexical half is checked - which is what
+        // the block. A `var` of the same name is allowed in sloppy mode
+        // (B.3.4), so only the lexical half is checked, which is what
         // passing it as `outer` does.
         std::vector<binding> caught =
             check_list(kids(at(clause.a)), list_kind::block, &parameter, "catch parameter");
@@ -638,9 +621,9 @@ void checker::check_try(std::int32_t idx, std::vector<binding> & vars) {
     }
 }
 
-// A label ends in an iteration statement if, after unwrapping any labels of
-// its own, that is what it names. `a: b: for (;;) continue a;` is legal
-// precisely because of the unwrapping.
+/// A label ends in an iteration statement if, after unwrapping any labels of
+/// its own, that is what it names. `a: b: for (;;) continue a;` is legal
+/// precisely because of the unwrapping.
 [[nodiscard]] bool checker::labels_iteration(std::int32_t idx) const {
     while (at(idx).kind == nk::labeled) { idx = at(idx).a; }
     return is_iteration(at(idx).kind);
@@ -697,7 +680,7 @@ void checker::check_continue(std::int32_t idx) {
         if (f.loops == 0) { report("`continue` with no enclosing loop", idx); }
         return;
     }
-    // 13.8.1: the label of a `continue` must be on an ITERATION statement,
+    // 13.8.1: the label of a `continue` must be on an iteration statement,
     // which is the difference between it and `break`.
     for (const std::string_view label : f.loop_labels) {
         if (label == n.text) { return; }

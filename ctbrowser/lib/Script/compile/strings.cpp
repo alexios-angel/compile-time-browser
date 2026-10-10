@@ -1,16 +1,19 @@
-// compiler_impl - literal decoding.
+//===- strings.cpp - String and number literal decoding ---------*- C++ -*-===//
 //
-// String escapes and numeric literals: \u{...}, surrogate pairs,
-// the radix prefixes. Nothing here touches a register; it was filed under
-// `frames and registers` because that banner had become a junk drawer.
+// compiler_impl members that decode literals: string escapes (\u{...},
+// surrogate pairs, legacy octal, line continuations) and numeric literals
+// (separators, radix prefixes, overflow to Infinity). The class is declared
+// in compiler_impl.hpp beside this file.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
 namespace ctbrowser::script::detail {
 
+/// Reads up to \p count hex digits starting at s[at + 1] and returns their
+/// value. On return \p at indexes the last digit consumed (it is unchanged
+/// when none is), matching callers whose loop index sits on the escape letter.
 std::uint32_t compiler_impl::read_hex(std::string_view s, std::size_t & at, std::size_t count) {
     std::uint32_t value = 0;
     for (std::size_t n = 0; n < count && at + 1 < s.size(); ++n) {
@@ -30,8 +33,8 @@ std::string compiler_impl::decode_string_literal(std::string_view lexeme) {
     return decode_string_body(lexeme);
 }
 
-// The escapes of a string's BODY - the text between the quotes, or a
-// template's chunk, which has no quotes to strip and may begin with one.
+/// Decodes the escapes of a string's body: the text between the quotes, or a
+/// template's chunk, which has no quotes to strip and may begin with one.
 std::string compiler_impl::decode_string_body(std::string_view lexeme) {
     std::string out;
     out.reserve(lexeme.size());
@@ -41,7 +44,7 @@ std::string compiler_impl::decode_string_body(std::string_view lexeme) {
                (lexeme[at + 2] == '\xA8' || lexeme[at + 2] == '\xA9');
     };
     for (std::size_t i = 0; i < lexeme.size(); ++i) {
-        // A TEMPLATE'S RAW <CR><LF> OR <CR> IS <LF> (12.9.6 TV of a
+        // A template's raw <CR><LF> or <CR> is <LF> (12.9.6 TV of a
         // LineTerminatorSequence), as its raw string already reads it. A
         // string literal cannot hold one, so this is the template's alone.
         if (lexeme[i] == '\r') {
@@ -86,23 +89,21 @@ std::string compiler_impl::decode_string_body(std::string_view lexeme) {
         case 'b': out.push_back('\b'); break;
         case 'f': out.push_back('\f'); break;
         case 'v': out.push_back('\v'); break;
-        // \xHH, \uHHHH, \u{H..} - the escapes that carry a code point.
-        // Missing them was not a missing feature but a WRONG ANSWER:
-        // '\x41' came out as the three characters x41, so btoa('\x00')
-        // encoded the letter x. Strings here are bytes, so a code point
-        // becomes its UTF-8 - the same choice String.fromCharCode makes,
-        // which is what keeps a round trip through String.prototype honest.
+        // \xHH, \uHHHH, \u{H..}: the escapes that carry a code point.
+        // Strings here are bytes, so the code point is appended as UTF-8,
+        // the same choice String.fromCharCode makes, so the two round-trip
+        // consistently.
         case 'x': append_utf8(out, read_hex(lexeme, i, 2)); break;
         case 'u': {
             std::uint32_t code = 0;
             if (i + 1 < lexeme.size() && lexeme[i + 1] == '{') {
-                i += 2; // past the u and the {
+                i += 2; // Past the u and the {.
                 for (; i < lexeme.size() && lexeme[i] != '}'; ++i) {
                     code = code * 16 + static_cast<std::uint32_t>(hex_value(lexeme[i]));
                 }
             } else {
                 code = read_hex(lexeme, i, 4);
-                // A high surrogate followed by a low one is ONE code point.
+                // A high surrogate followed by a low one is one code point.
                 // Encoding the halves separately would give WTF-8, and an
                 // emoji written as an escape would not equal the same emoji
                 // written literally in the source.
@@ -120,22 +121,22 @@ std::string compiler_impl::decode_string_body(std::string_view lexeme) {
             break;
         }
         // A backslash before a real newline is a line continuation and
-        // contributes nothing - not even the newline.
+        // contributes nothing, not even the newline.
         case '\n': break;
         case '\r':
             if (i + 1 < lexeme.size() && lexeme[i + 1] == '\n') { ++i; }
             break;
-        default: out.push_back(lexeme[i]); break; // \\ \' \" and anything else
+        default: out.push_back(lexeme[i]); break; // \\, \', \" and anything else.
         }
     }
     return out;
 }
 
 double compiler_impl::number_literal(std::string_view text) {
-    // NUMERIC SEPARATORS COME OFF FIRST. `1_000_000` is one token from the
-    // lexer, and `std::from_chars` accepts no underscore in either overload
-    // - it would stop at the first one and read 1. Removing them here keeps
-    // that knowledge in one place rather than in both parse paths below.
+    // Numeric separators come off first. `1_000_000` is one token from the
+    // lexer, and `std::from_chars` accepts no underscore (it would stop at the
+    // first one and read 1). Removing them here serves both parse paths
+    // below.
     std::string lex{text};
     std::erase(lex, '_');
     const auto radix_of = [](char c) -> int {
@@ -156,11 +157,9 @@ double compiler_impl::number_literal(std::string_view text) {
         }
     }
     double d = 0;
-    // A LITERAL TOO BIG FOR A DOUBLE IS Infinity, NOT ZERO. from_chars
-    // reports result_out_of_range and leaves `d` UNTOUCHED, so ignoring the
-    // error made `1e400` compile to 0 - silently, and at the opposite end of
-    // the number line from the truth. Runtime overflow was always right
-    // (`1e308 * 10` is Infinity); only the lexer disagreed.
+    // A literal too big for a double is Infinity, not zero: from_chars
+    // reports result_out_of_range and leaves `d` untouched, so the overflow
+    // must be handled explicitly.
     const auto failed = std::from_chars(lex.data(), lex.data() + lex.size(), d).ec;
     if (failed == std::errc::result_out_of_range) { return out_of_range_value(lex); }
     return d;

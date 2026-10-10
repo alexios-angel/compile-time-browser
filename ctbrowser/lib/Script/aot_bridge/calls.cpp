@@ -1,8 +1,11 @@
-// The AOT ABI - calls beyond ct_aot_call: construct, closures, the spread
-// forms, promise wrapping, and the four module rows.
+//===- calls.cpp - AOT helpers for calls, closures and modules ------------===//
 //
-// One of four files carved out of a 1,586-line aot_bridge.cpp on 2026-09-08;
-// each row holds its own body, and internal.hpp says why that is allowed.
+// The AOT runtime helpers for calls beyond ct_aot_call: construct, closures,
+// the spread forms, promise wrapping, and the four module helpers. Each
+// extern "C" function implements one row of aot_helpers.def; shared
+// declarations are in internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -10,23 +13,23 @@ namespace ctbrowser::aot {
 
 extern "C" {
 
-// ct_aot_construct. op::construct's own dispatch through the shared
-// context::construct_new.
-//
-// This preserves the plain opcode's pending-new-target handling and diagnostic.
-// Both construction paths reject non-constructors with a catchable TypeError.
-//
-// `site` IS THIS FRAME'S OWN function_proto, which is what names the
-// function in that TypeError. There is no origin scan to go with it -
-// callee_origin walks emitted bytecode from an ip and a register index, and
-// an AOT frame has neither - so describe_callee renders the callee as "the
-// value".
+/// ct_aot_construct: `new callee(...args)`, through the same
+/// context::construct_new that op::construct dispatches to.
+///
+/// This preserves the plain opcode's pending-new-target handling and
+/// diagnostic. Both construction paths reject non-constructors with a
+/// catchable TypeError.
+///
+/// `site` is this frame's own function_proto, which names the function in that
+/// TypeError. There is no origin scan to go with it (callee_origin walks
+/// emitted bytecode from an ip and a register index, and an AOT frame has
+/// neither), so describe_callee renders the callee as "the value".
 std::int32_t ct_aot_construct(ct_aot_frame * f, std::uint64_t callee, const std::uint64_t * argv,
                               std::uint32_t argc, const ct_aot_site * site, std::uint64_t * out) {
     const aot_frame_storage & held = aot_bridge::frame_of(f);
     context & cx = *held.ctx;
-    // COPIED OUT BEFORE THE CALL, for ct_aot_call's reason: argv points
-    // into registers_ for a compiled body, and the call resizes it.
+    // Copied out before the call, for ct_aot_call's reason: argv points into
+    // registers_ for a compiled body, and the call may resize it.
     std::vector<value> args;
     args.reserve(argc);
     for (std::uint32_t i = 0; i < argc; ++i) { args.push_back(value::from_bits(argv[i])); }
@@ -38,18 +41,19 @@ std::int32_t ct_aot_construct(ct_aot_frame * f, std::uint64_t callee, const std:
     return status;
 }
 
-// ct_aot_make_closure. The shared context::make_closure, with the ABI's
-// parallel array.
-//
-// A NON-CLOSURE ENCLOSING VALUE BECOMES nullptr, not a cast: the top level
-// has no enclosing closure and passes undefined, and make_closure reads
-// `enclosing->owner` to choose the program.
-//
-// RAISE TIER ONLY, from three sources rather than one - the allocation
-// ceiling, no program with no enclosing closure, and a function index or
-// upvalue count that does not match. make_closure raises for all three and
-// the caller polls ct_aot_failed; there is no status to return, because the
-// row answers with a value.
+/// ct_aot_make_closure. The shared context::make_closure, with the ABI's
+/// parallel upvalue array.
+///
+/// An enclosing value that is not a closure becomes nullptr rather than being
+/// cast: the top level has no enclosing closure and passes undefined, and
+/// make_closure reads `enclosing->owner` to choose the program.
+///
+/// Failures are reported only by raising on the context, never by a status
+/// (the "raise tier" of calls-and-modules.def), from three sources: the
+/// allocation ceiling, no program when there is no enclosing closure, or a
+/// function index or upvalue count that does not match. The caller polls
+/// ct_aot_failed; there is no status to return because the row answers with a
+/// value.
 std::uint64_t ct_aot_make_closure(ct_aot_frame * f, std::uint64_t enclosing_closure,
                                   std::uint32_t function_index,
                                   const std::uint64_t * local_upvalues, std::uint32_t upvalue_count,
@@ -66,40 +70,38 @@ std::uint64_t ct_aot_make_closure(ct_aot_frame * f, std::uint64_t enclosing_clos
         .bits();
 }
 
-// ct_aot_wrap_promise. An async function's `return`, and the ONE half of
-// async that does not suspend - which is what makes it implementable
-// ahead of Phase 14's suspension work rather than with it. An async
-// function containing no `await` compiles to a body carrying this opcode
-// and no await_value at all.
-//
-// RAISE TIER: the row is may_throw only through the allocation ceiling,
-// uncatchable and unwinding nothing, so this returns a value plainly and
-// never a status - allocate() raises past the ceiling and STILL returns a
-// well-formed object, so the operation completes and its result is
-// written. Returning a bare 0 on failure would hand back
-// value::from_bits(0), which is not undefined, and the lowering parks the
-// result as a GC root and traces it.
-//
-// may_reenter is 0 and that was verified against the INSTALLED factory
-// rather than the VM stub: detail::make_promise is new_table, a
-// prototype, four sets and a make_array, with no call() anywhere.
+/// ct_aot_wrap_promise. Wraps an async function's return value in a promise.
+/// This is the one part of async that never suspends, so it works without any
+/// suspension support: an async function with no `await` compiles to a body
+/// using this helper and no await_value.
+///
+/// Fails only by raising (the "raise tier"): the row's may_throw comes only
+/// from the allocation ceiling, which is uncatchable and unwinds nothing. So
+/// this returns a value plainly, never a status. allocate() raises past the
+/// ceiling and still returns a well-formed object, so the result is always
+/// written. Returning a bare 0 on failure would hand back value::from_bits(0),
+/// which is not undefined, and the lowering parks the result as a GC root and
+/// traces it.
+///
+/// may_reenter is 0, verified against the installed factory rather than the VM
+/// stub: detail::make_promise is new_table, a prototype, four sets and a
+/// make_array, with no call() anywhere.
 std::uint64_t ct_aot_wrap_promise(ct_aot_frame * f, std::uint64_t v) {
     context & cx = *aot_bridge::frame_of(f).ctx;
     return cx.wrap_in_promise(value::from_bits(v)).bits();
 }
 
-// ct_aot_call_spread and ct_aot_construct_spread - the two halves of
-// VM_CASE(apply), through the shared members.
-//
-// NO ARGUMENT WINDOW AND NO argc, which is the whole difference from
-// ct_aot_call. The arguments arrived as an ARRAY because their count was
-// not known until the spread ran, so the array is one already-rooted value
-// and there is nothing to copy out and nothing to park a run of.
-//
-// THE site IS IGNORED BY BOTH, exactly as ct_aot_call ignores its own: the
-// messages these paths raise are the interpreter's, and neither names the
-// enclosing function. It is taken so the ABI does not have to change if one
-// of them ever does.
+/// ct_aot_call_spread and ct_aot_construct_spread: the two halves of
+/// VM_CASE(apply), through the shared context members.
+///
+/// Unlike ct_aot_call there is no argument window and no argc. The arguments
+/// arrive as an array because their count was not known until the spread ran,
+/// so the array is one already-rooted value and there is nothing to copy out
+/// or park.
+///
+/// Both ignore `site`, as ct_aot_call ignores its own: the messages these paths
+/// raise are the interpreter's, and neither names the enclosing function. It is
+/// taken so the ABI need not change if one of them ever does.
 std::int32_t ct_aot_call_spread(ct_aot_frame * f, std::uint64_t callee, std::uint64_t arg_array,
                                 std::uint64_t receiver, const ct_aot_site * site,
                                 std::uint64_t * out) {
@@ -124,26 +126,26 @@ std::int32_t ct_aot_construct_spread(ct_aot_frame * f, std::uint64_t callee,
     return status;
 }
 
-// ---- THE FOUR MODULE ROWS -------------------------------------------
+// ---- Module helpers ----------------------------------------------------
 //
-// Each delegates to the context member VM_CASE(load_import),
-// VM_CASE(bind_export), VM_CASE(load_namespace) and VM_CASE(dyn_import)
-// now call, so the two tiers cannot resolve a specifier, raise a message
-// or adopt a cell differently.
+// Each delegates to the same context member that VM_CASE(load_import),
+// VM_CASE(bind_export), VM_CASE(load_namespace) and VM_CASE(dyn_import) call,
+// so the interpreter and compiled code cannot resolve a specifier, raise a
+// message or adopt a cell differently.
 //
-// A std::string PER CALL, and it is not a shortcut. modules_,
+// Building a std::string per call is deliberate. modules_,
 // module_record::resolved and module_record::exports are plain
-// flat_map<std::string, ...>, and core/containers.hpp says at length that
-// `flat_map<std::string, V>::find` takes the KEY TYPE - there is no
-// heterogeneous overload without string_hash, which these three maps do not
-// use. Building the key is what the interpreter does too; it simply has one
-// already, because its names came out of the constant pool. Every one of
-// these opcodes runs once per binding in a module prologue, never in a
-// loop, which is why the allocation is not worth a wider map.
+// flat_map<std::string, ...>, and as core/containers.hpp explains,
+// `flat_map<std::string, V>::find` takes the key type: there is no
+// heterogeneous overload without string_hash, which these maps do not use.
+// The interpreter builds the key too; it simply has one already, from the
+// constant pool. Each of these opcodes runs once per binding in a module
+// prologue, never in a loop, so the allocation is not worth a wider map.
 
-// ct_aot_module_import_cell. RAISE TIER: it answers the CELL rather than a
-// status, so on either miss the value is undefined and a caller polls
-// ct_aot_failed at a back edge. Not a safepoint - it allocates nothing.
+/// ct_aot_module_import_cell. Fails only by raising on the context (the
+/// "raise tier"): it answers the cell rather than a status, so on either miss
+/// the value is undefined and the caller polls ct_aot_failed at a back edge.
+/// Not a safepoint: it allocates nothing.
 std::uint64_t ct_aot_module_import_cell(ct_aot_frame * f, const char * specifier,
                                         std::uint32_t specifier_len, const char * export_name,
                                         std::uint32_t export_name_len) {
@@ -154,15 +156,12 @@ std::uint64_t ct_aot_module_import_cell(ct_aot_frame * f, const char * specifier
         .bits();
 }
 
-// ct_aot_module_export_cell. THE CALLER SEEDS *out, which is what makes the
-// conditional write expressible without a status the enum does not have.
-//
-// The row asked for CT_AOT_NO_WRITE when there is no module being
-// evaluated; ct_aot_status has four members and none of them is that. So
-// the lowering initialises the out-slot with the destination register's
-// current value and this hands the same value straight back on that arm -
-// the register ends up holding what it held, which is what the interpreter
-// leaving it alone means. See the row.
+/// ct_aot_module_export_cell. The caller seeds *out with the destination
+/// register's current value. When no module is being evaluated the helper hands
+/// that value straight back, which matches the interpreter leaving the register
+/// alone; ct_aot_status has no "no write" member (the row's CT_AOT_NO_WRITE),
+/// so this is how the conditional write is expressed. See the entry in
+/// ctbrowser/include/ctbrowser/aot/helpers/calls-and-modules.def.
 std::int32_t ct_aot_module_export_cell(ct_aot_frame * f, const char * name, std::uint32_t name_len,
                                        std::uint64_t * out) {
     context & cx = *aot_bridge::frame_of(f).ctx;
@@ -173,29 +172,30 @@ std::int32_t ct_aot_module_export_cell(ct_aot_frame * f, const char * name, std:
     return status;
 }
 
-// ct_aot_module_namespace. RAISE TIER like the import row, and a SAFEPOINT
-// unlike it: context::module_namespace allocates the namespace object and
-// one native getter per export. Safe under a real collector because the
-// half-built object is stored into module_record::namespace_object - a GC
-// root - before the accessor loop runs.
+/// ct_aot_module_namespace. Fails only by raising, like the import helper, but
+/// unlike it this is a safepoint: context::module_namespace allocates the
+/// namespace object and one native getter per export. That is safe because
+/// the half-built object is stored in module_record::namespace_object, a GC
+/// root, before the getters are made.
 std::uint64_t ct_aot_module_namespace(ct_aot_frame * f, const char * specifier,
                                       std::uint32_t specifier_len) {
     context & cx = *aot_bridge::frame_of(f).ctx;
     return cx.module_namespace_for(std::string{specifier, specifier_len}).bits();
 }
 
-// ct_aot_dynamic_import. The heaviest safepoint in the table: the
-// specifier's toString and then a whole module graph, both user JavaScript.
-//
-// THE REFERRER COMES OFF THE FRAME, exactly as the row says and as the
-// handler does. A literal could not be right: function_proto::module is
-// stamped by the LOADER after compilation, so the compiler would be baking
-// its guess at what the loader will call the file.
-//
-// THE REFERRER IS COPIED BEFORE THE CALL. frames_ is a vector and the
-// loader pushes frames, so a reference into frames_[i].proto->module taken
-// before it would dangle - and `module` is a std::string on a proto the
-// loader may also be assigning to.
+/// ct_aot_dynamic_import: `import(specifier)`. The heaviest safepoint in the
+/// table: the specifier's toString and then a whole module graph, both of which
+/// run user JavaScript.
+///
+/// The referrer comes off the frame, as the row says and as the interpreter's
+/// handler does. A literal could not be right: function_proto::module is
+/// stamped by the loader after compilation, so the compiler would be baking in
+/// a guess at what the loader will call the file.
+///
+/// The referrer is copied before the call. frames_ is a vector and the loader
+/// pushes frames, so a reference into frames_[i].proto->module taken before
+/// it would dangle, and `module` is a std::string on a proto the loader may
+/// also be assigning to.
 std::int32_t ct_aot_dynamic_import(ct_aot_frame * f, std::uint64_t specifier, std::uint64_t * out) {
     context & cx = *aot_bridge::frame_of(f).ctx;
     const context::call_frame * record = aot_bridge::frame_record(f);

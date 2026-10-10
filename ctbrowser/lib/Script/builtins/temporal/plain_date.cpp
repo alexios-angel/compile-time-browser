@@ -1,5 +1,10 @@
-// ctbrowser.script builtins - Temporal.PlainDate (3): a calendar date with no
-// time and no zone.
+//===- plain_date.cpp - Temporal.PlainDate ----------------------*- C++ -*-===//
+//
+// Temporal.PlainDate (Temporal proposal section 3): a calendar date with no
+// time and no time zone. Section numbers below refer to the same
+// specification.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -9,7 +14,7 @@ namespace {
 
 constexpr std::string_view prefix = "Temporal.PlainDate.prototype.";
 
-// DifferenceTemporalPlainDate (3.5.14).
+/// DifferenceTemporalPlainDate (3.5.14): until() and, with \p since, since().
 value difference(context & cx, bool since, const plain_date & date, std::span<value> a) {
     plain_date other;
     if (!to_temporal_date(cx, arg_at(a, 0), value::undefined(), other)) {
@@ -51,7 +56,7 @@ value difference(context & cx, bool since, const plain_date & date, std::span<va
     return make_duration(cx, since ? tc::negate(*result) : *result);
 }
 
-// AddDurationToDate (3.5.15).
+/// AddDurationToDate (3.5.15): add() and, with \p subtract, subtract().
 value add_duration(context & cx, bool subtract, const plain_date & date, std::span<value> a) {
     tc::duration_record d;
     if (!to_temporal_duration(cx, arg_at(a, 0), d)) { return value::undefined(); }
@@ -169,6 +174,8 @@ void install_plain_date(context & cx, object_object & ns) {
                 calendar = *canonical;
             }
             const auto date = tc::regulate_iso_date(y, m, d, tc::overflow::reject);
+            // Years beyond +/-1e9 are far outside the representable range
+            // (about +/-275760); reject them before the date is built.
             if (!date || std::fabs(y) > 1e9) {
                 (void)range_error(c, "invalid date");
                 return value::undefined();

@@ -1,5 +1,10 @@
-// ctbrowser.script builtins - Temporal.Duration (7). Each method is its
-// clause's steps in order; the arithmetic is core.cpp's.
+//===- temporal/duration.cpp - Temporal.Duration builtin --------*- C++ -*-===//
+//
+// Temporal.Duration (Temporal specification chapter 7). Each method follows
+// its specification clause's steps in order; the shared date and time
+// arithmetic is in core.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "objects.hpp"
 
@@ -7,7 +12,8 @@ namespace ctbrowser::script::builtins_detail::temporal_js {
 
 namespace {
 
-// The date-and-time target of a plain relativeTo, as round and total build it.
+/// The start and end date-times of `d` measured from a plain-date relativeTo,
+/// as round and total build them. False with a RangeError thrown.
 [[nodiscard]] bool plain_target(context & cx, const tc::duration_record & d,
                                 const plain_date & relative, tc::iso_datetime & origin,
                                 tc::iso_datetime & target) {
@@ -26,6 +32,8 @@ namespace {
     return true;
 }
 
+/// Converts an internal duration back to a Temporal.Duration balanced up to
+/// `largest`, throwing a RangeError when there is none.
 [[nodiscard]] value from_internal(context & cx, const std::optional<tc::internal_duration> & d,
                                   tc::unit largest) {
     if (!d) {
@@ -40,6 +48,7 @@ namespace {
     return make_duration(cx, *result);
 }
 
+/// AddDurations: `duration` plus (or minus) the duration-like `other_value`.
 value add_durations(context & cx, bool subtract, const tc::duration_record & duration,
                     value other_value) {
     tc::duration_record other;

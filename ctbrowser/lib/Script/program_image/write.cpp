@@ -1,9 +1,11 @@
-// ctbrowser.script - the program image WRITER: the fingerprint an image is
-// stamped with, the source hash, and write_image itself.
+//===- program_image/write.cpp - Program image writer -----------*- C++ -*-===//
 //
-// One of two files carved out of a 1,156-line program_image.cpp on 2026-09-08.
-// The format's constants and the one check both sides make are in internal.hpp
-// beside this, so the writer and the reader still cannot drift.
+// The program image writer: the engine fingerprint an image is stamped with,
+// the source hash, and write_image itself. The format's constants and the
+// check both reader and writer make are in internal.hpp beside this, so the
+// two cannot drift.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -15,27 +17,20 @@ using detail::why_not_a_constant;
 
 namespace {
 
-// FNV-1a's constants, used by `image_fingerprint()` and by nothing else in
-// this file - `image_source_hash` was the other consumer until it became
-// XXH64, which is why they are named here rather than written inline.
-//
-// The basis had a digit missing - 1469598103934665603 rather than
-// 14695981039346656037. It hashed perfectly well, any odd starting value does,
-// but it named a constant the code did not contain. Correcting it changes what
-// `image_fingerprint()` returns, which is the refusal an image written before
-// today was going to get regardless.
+// The 64-bit FNV-1a offset basis and prime, used by image_fingerprint() and
+// codegen_identity().
 constexpr std::uint64_t fnv_basis = 14695981039346656037ull;
 constexpr std::uint64_t fnv_prime = 1099511628211ull;
 
-// WHICH ALGORITHM `image_source_hash` IS, mixed into the fingerprint. See
-// image_fingerprint() for why it lives there and not in `format_version`.
+// Which algorithm `image_source_hash` uses, mixed into the fingerprint (see
+// image_fingerprint() for why it is not part of `format_version`).
 // 1 was byte-at-a-time FNV-1a; 2 is XXH64.
 constexpr std::uint32_t source_hash_algorithm = 2;
 
 thread_local std::string last_write_error;
 
-// --- writing -------------------------------------------------------------
-
+/// The output buffer. Every integer is written little-endian, byte by byte,
+/// so the image does not depend on the host's byte order.
 struct sink {
     std::vector<std::byte> bytes;
 
@@ -60,35 +55,21 @@ struct sink {
 
 } // namespace
 
-// WHAT THIS BUILD'S COMPILER EMITS, as a number, measured rather than declared.
-//
-// `opcode_set_identity` says what the opcodes ARE. It cannot say what the
-// compiler DOES with them, and a change there is just as fatal to a stored
-// image: on 2026-08-21 `finally` was rewritten from two copies of the block to
-// a completion record, which changed the bytecode for every `try/finally` in
-// every program and changed not one opcode. An image written that morning
-// contains the old, wrong `finally` and would have loaded into the fixed build
-// without a murmur.
-//
-// SO IT COMPILES A CANARY AND HASHES THE RESULT. A version constant would have
-// worked too and is what this file first reached for - and this function's own
-// comment argues against exactly that: "a version says what someone remembered
-// to bump, and this says what is actually true of the build reading the file."
-// A canary needs nobody to remember. Any codegen change that touches the
-// constructs below moves the number by itself.
-//
-// WHAT IT DOES NOT COVER is worth stating: a codegen change affecting only a
-// construct absent from this source is invisible to it. The canary is
-// deliberately broad rather than short for that reason, and adding to it is
-// free - the identity is allowed to change, that is the point.
-//
-// `image_fingerprint()` is `noexcept` and this allocates, so the compile is
-// wrapped: a throw here would terminate the process over a diagnostic. A
-// failure gets its own identity rather than a zero, so an engine that cannot
-// compile its own canary refuses every image instead of quietly agreeing with
-// one.
+/// Hash of the bytecode this build emits for a fixed canary program.
+///
+/// `opcode_set_identity` covers what the opcodes are, not what the compiler
+/// does with them: a codegen change (such as how `finally` is lowered) changes
+/// the bytecode without changing any opcode, and an old image would load
+/// silently. Compiling a canary catches that without anyone remembering to
+/// bump a version. Codegen changes that only affect constructs absent from the
+/// canary are not detected, so the canary is deliberately broad; adding to it
+/// is free.
+///
+/// image_fingerprint() is `noexcept` and this allocates, so the compile is
+/// wrapped in a try block. A failure yields its own value rather than zero, so
+/// an engine that cannot compile its own canary refuses every image.
 [[nodiscard]] std::uint64_t codegen_identity() noexcept {
-    // Compiled ONCE. This is on the path of every image load and write.
+    // Compiled once: this is on the path of every image load and write.
     static const std::uint64_t identity = []() noexcept -> std::uint64_t {
         try {
             constexpr std::string_view canary =
@@ -132,13 +113,13 @@ struct sink {
                 h ^= v;
                 h *= fnv_prime;
             };
-            // A COMPILE FAILURE IS AN IDENTITY OF ITS OWN rather than a crash or a
-            // silent zero: if this source ever stops compiling, every image this
-            // build reads should be refused until somebody looks.
+            // A compile failure is an identity of its own rather than a crash or
+            // a silent zero: if this source ever stops compiling, every image
+            // this build reads is refused until somebody looks.
             mix(built.ok ? 1u : 0u);
             mix(built.functions.size());
             for (const function_proto & fn : built.functions) {
-                // The SHAPE of the frame as well as the code: a change that moves a
+                // The shape of the frame as well as the code: a change that moves a
                 // value between registers without changing an opcode is still a
                 // change to what runs.
                 mix(fn.param_count);
@@ -166,104 +147,61 @@ struct sink {
 }
 
 std::uint64_t image_fingerprint() noexcept {
-    // The things whose MEANING an image depends on. Not a version number: a
-    // version says what someone remembered to bump, and this says what is
-    // actually true of the build reading the file.
+    // Mixes in everything whose meaning an image depends on. This is not a
+    // version number: a version says what someone remembered to bump, and
+    // this says what is actually true of the build reading the file.
     //
-    // `opcode_set_identity` is the load-bearing one, and it used to be
-    // `opcode_count`, which could not do the job this paragraph claimed for it.
-    // Phases 13 and 14 renumber `enum class op`, and an image written before
-    // that describes different instructions with the same bytes - which would
-    // run at full speed and be wrong, the worst failure available here. A
-    // renumbering that neither adds nor removes an opcode leaves the COUNT
-    // untouched, so the guard was blind to precisely the case it was written
-    // for. The identity folds every opcode's spelling in order; see
-    // bytecode.hpp.
+    // `opcode_set_identity` (bytecode.hpp) folds every opcode's spelling in
+    // order. An opcode count alone cannot see a renumbering of `enum class op`
+    // that adds or removes nothing, and an old image would then run different
+    // instructions from the same bytes.
     std::uint64_t h = fnv_basis;
     const auto mix = [&h](std::uint64_t v) {
         h ^= v;
         h *= fnv_prime;
     };
     mix(opcode_count);
-    // AND WHAT THE OPCODES ARE, not merely how many. A renumbering keeps the
-    // count at 93 and changes what every stored byte means - which is the exact
-    // failure the paragraph above names, and which `opcode_count` alone does not
-    // see. Proven before it was fixed: reordering the table left this function
-    // returning the identical 19b2766c29d904c0.
+    // And what the opcodes are, not only how many: renumbering `enum class op`
+    // keeps the count and changes what every stored byte means.
     mix(opcode_set_identity);
     mix(sizeof(instruction));
     mix(sizeof(value));
     mix(sizeof(upvalue_desc));
     mix(format_version);
-    // THE SOURCE HASH ALGORITHM, because an image records what its source
-    // hashed to and that number means nothing across a change in how it is
-    // computed. It belongs here rather than in `format_version` for a precise
-    // reason: the byte layout did not change, the MEANING of one field did -
-    // and the version check runs first, so bumping the version would refuse an
-    // old image with a message about a format that is in fact identical. With
-    // the tag here the refusal says what is true.
+    // The source hash algorithm, because an image records what its source
+    // hashed to, and that number means nothing across a change in how it is
+    // computed. It belongs here rather than in `format_version` because the
+    // byte layout is unchanged, only the meaning of one field; the version
+    // check runs first and would blame the format. (Without it, an old image
+    // would still be refused, by the source-hash comparison, but with a
+    // misleading "different source" message.)
     //
-    // Without it the old image is still refused, by the source-hash comparison
-    // one field later, and told "the image was built from different source"
-    // about source that never changed. This is a message, not a safety net.
-    //
-    // NOT COVERED BY A TEST, and it cannot be from inside one build: producing
-    // an image carrying the old hash needs the old build. ProgramImage.cpp
-    // pins the precondition instead - that the algorithm really did change -
-    // by checking a corpus against the byte-at-a-time hash this replaced.
+    // Not testable from inside one build, since producing an image with the
+    // old hash needs the old build. ProgramImage.cpp checks the precondition
+    // instead: that the algorithm differs from byte-at-a-time FNV-1a.
     mix(source_hash_algorithm);
-    // AND WHAT THE COMPILER EMITS, which nothing above can see. See
-    // codegen_identity: the opcodes can stay identical while the bytecode
+    // And what the compiler emits, which nothing above can see (see
+    // codegen_identity): the opcodes can stay identical while the bytecode
     // built from a given source changes completely.
     mix(codegen_identity());
     return h;
 }
 
 std::uint64_t image_source_hash(std::string_view source) noexcept {
-    // XXH64, FROM Boost.Hash2, because this runs on the page-load path and a
-    // byte at a time was 4.16 ms of it for p5 alone - measured, and bigger than
-    // anything left inside the loader it guards. 4.16 ms becomes 0.181 for p5,
-    // 8.17 becomes 0.346 for phaser, 10.31 becomes 0.454 for babylon.
+    // XXH64 via Boost.Hash2 (header-only, already linked): this runs on every
+    // page load, and byte-at-a-time FNV-1a cost 4.16 ms on p5.js against
+    // 0.18 ms for XXH64. FNV-1a widened to 64-bit words was tried and collides
+    // badly (a multiply only carries differences upward, so about one in five
+    // single-byte edits of p5.js collided), so a published, SMHasher-tested
+    // hash is used rather than a hand-rolled one. Boost.Hash2 is
+    // endian-independent, so the value is the same on any host.
     //
-    // WHAT WAS WRITTEN FIRST WAS FNV-1a WIDENED TO 64-BIT WORDS - four lanes of
-    // `h = (h ^ w) * prime` - and it was wrong in a way no round-trip test can
-    // see. A multiply only ever carries a difference UPWARD, so a change in a
-    // word's most significant bits leaves the accumulator differing in its top
-    // three bits and nowhere else, and it is the SAME three bits wherever in the
-    // lane the change happened. Two different edits reach the same accumulator.
-    // Over 262,145 single-byte edits of real p5.js, 50,678 of them - ONE IN
-    // FIVE - hashed identically to another edit. FNV-1a a byte at a time does
-    // not have that problem, because a byte enters at the bottom where the
-    // multiply can spread it; widening it to words is what broke it.
-    //
-    // Rotating inside the round removes the collisions and replaces them with a
-    // magic number: swept over all 63 rotate amounts, 51 collide with FNV's
-    // prime and 49 with a dense one, and the amounts that work do so by dodging
-    // a property of ASCII - bit 7 of a byte is never set. A constant that is
-    // good because of the corpus is not a fix, it is a coincidence with a test
-    // suite in front of it.
-    //
-    // SO THE ALGORITHM IS SOMEBODY ELSE'S AND SO IS THE CODE. XXH64 leaves no
-    // constant to choose and was tested against SMHasher rather than against
-    // p5.js. It was first written out here by hand, forty lines of it, and that
-    // is the version this comment replaced: a hand transcription of a published
-    // algorithm is exactly the code most likely to be quietly wrong, and today
-    // is the day that argument stopped being hypothetical. Boost.Hash2 is
-    // header-only, `ctbrowser-script` ALREADY links `Boost::headers`, the
-    // header costs 0.02 s in this translation unit, and it measured 0.181 ms
-    // against the hand-written 0.183. Three implementations agree on all three
-    // corpora - this one, the hand-written one, and Yann Collet's own `xxhsum`.
-    //
-    // The endianness guarantee comes with it: Boost.Hash2 is endian-independent
-    // by contract, so the number is the same on a host of either byte order,
-    // which is what the rest of this file spells out by hand for its integers.
-    //
-    // Still not a security property; see the header's note on trust. XXH64 is
-    // unkeyed and this is not the defence an image from elsewhere would need.
+    // Not a security property (see the header's note on trust): XXH64 is
+    // unkeyed.
     boost::hash2::xxhash_64 hash;
-    // A default-constructed string_view has a NULL data(), and `update` may not
-    // be handed one. Skipping it is also the right answer: the hash of nothing
-    // is what an untouched xxhash_64 already holds.
+    // A default-constructed string_view has a null data(), which `update` may
+    // not be handed. Skipping it is also correct: the hash of nothing is what
+    // an untouched xxhash_64 already holds.
     if (!source.empty()) { hash.update(source.data(), source.size()); }
     return hash.result();
 }
@@ -287,24 +225,16 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
                            "entry point and every caller assumes it exists";
         return {};
     }
-    // THE 65,535 REFUSAL THAT USED TO BE HERE IS GONE, because the reason for it
-    // is. Three of the four op::closure emitters narrowed the function index to
-    // uint16 before building a THIRTY-TWO BIT operand, so a program with more
-    // functions than that was one the compiler had already got wrong, and this
-    // refused to freeze the mistake into a file. The casts were deleted: a
-    // program of 140,001 functions now calls the one it means. The format's own
-    // limit is the u32 the count is written as.
+    // The image records the function count as a u32.
     if (from.functions.size() > 0xFFFFFFFFull) {
         last_write_error = "refusing to write a program with more than 4,294,967,295 functions - "
                            "the image records the count as a 32-bit number";
         return {};
     }
-    // AND THE READER'S CONSTANT RULE, ENFORCED HERE TOO. The reader refuses a
-    // pool entry that is not a value (see `why_not_a_constant`); a writer that
-    // will happily produce one is a writer whose output this build cannot load,
-    // and the place to find that out is the packager rather than the field. It
-    // is also the cheapest possible check that the compiler still cannot emit a
-    // NaN constant - which is the fact the reader's refusal rests on.
+    // The reader's constant rule (`why_not_a_constant`) is enforced here too,
+    // so an image this build cannot load is caught when it is written, not
+    // when it is loaded. It also checks that the compiler still never emits a
+    // NaN constant, which the reader's refusal relies on.
     for (std::uint32_t fi = 0; fi < from.functions.size(); ++fi) {
         const function_proto & fn = from.functions[fi];
         for (std::size_t ci = 0; ci < fn.constants.size(); ++ci) {
@@ -316,10 +246,9 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         }
     }
 
-    // ONE POOL FOR NAMES, ONE FOR STRINGS. Measured on the corpora: babylon's
-    // 166,396 name entries are 24,172 unique, so pooling turns 2686 KB into
-    // 495 KB. String literals do not duplicate that way - 2050 KB to 1840 -
-    // but they are pooled by the same mechanism because it costs nothing.
+    // One pool for names and one for strings, each entry stored once. Names
+    // repeat heavily (Babylon.js: 166,396 entries, 24,172 unique, 2686 KB to
+    // 495 KB); string literals much less, but pooling them costs nothing.
     std::vector<std::string> names;
     std::vector<std::string> strings;
     std::unordered_map<std::string, std::uint32_t> name_at;
@@ -337,7 +266,7 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     for (const function_proto & fn : from.functions) {
         for (const std::string & s : fn.names) { (void)intern(names, name_at, s); }
         for (const std::string & s : fn.strings) { (void)intern(strings, string_at, s); }
-        // A LOCAL'S NAME GOES IN THE SAME POOL. `n`, `i`, `this` and every
+        // A local's name goes in the same pool. `n`, `i`, `this` and every
         // method name a bundle uses are already there as property names, so a
         // separate pool would store most of them twice.
         for (const local_desc & d : fn.locals) { (void)intern(names, name_at, d.name); }
@@ -348,17 +277,12 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     out.u32(format_version);
     out.u64(image_fingerprint());
     out.u32(static_cast<std::uint32_t>(option));
-    // WHICH KIND OF SCRIPT THIS WAS COMPILED AS. The same text compiles two
-    // ways and the source hash cannot tell them apart - it is a hash of the
-    // TEXT - so without this a module image answers to a classic script's
-    // lookup. Measured before the field existed: `var out = 41 + 1;` compiled
-    // as a module recorded source hash d52677f505aae6c3, exactly as the classic
-    // one did, loaded against it with ok=1 and no error, ran, and published
-    // `undefined` where the page expected 42.
+    // Whether this was compiled as a classic script or a module. The same text
+    // compiles differently either way and the source hash covers only the
+    // text, so without this a module image would load for a classic script.
     out.u8(static_cast<std::uint8_t>(from.kind));
-    // FROM THE PROGRAM'S OWN SOURCE, before any decision about keeping it: an
-    // image that drops the text still has to be able to say what it was built
-    // from, and that is precisely the build where nothing else can.
+    // Hashed from the program's own source, before any decision about keeping
+    // it: an image that drops the text must still say what it was built from.
     out.u64(image_source_hash(from.source));
 
     out.u32(static_cast<std::uint32_t>(names.size()));
@@ -366,10 +290,11 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
     out.u32(static_cast<std::uint32_t>(strings.size()));
     for (const std::string & s : strings) { out.text(s); }
 
-    // ORDER IS PRESERVED FOR ALL THREE, and for two of them it is observable:
-    // imports fix depth-first instantiation and therefore the order of modules'
-    // top-level side effects, and the FIRST claim on a re-exported name wins,
-    // so swapping two reexports changes which cell a name resolves to.
+    // Order is preserved for all three lists, and for two of them it is
+    // observable: imports fix depth-first instantiation and therefore the order
+    // of modules' top-level side effects, and the first claim on a re-exported
+    // name wins, so swapping two re-exports changes which cell a name resolves
+    // to.
     out.u32(static_cast<std::uint32_t>(from.imports.size()));
     for (const std::string & s : from.imports) { out.text(s); }
     out.u32(static_cast<std::uint32_t>(from.exports.size()));
@@ -401,8 +326,9 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
         out.u16(fn.length);
         out.u16(fn.frame_size);
         out.u8((fn.is_arrow ? 1u : 0u) | (fn.is_strict ? 2u : 0u));
-        // 2 is an ASYNC generator: the one case the VM reads is_async. Bit 2
-        // is eager_prologue, a generator's alone.
+        // Bits 0-1: 0 not a generator, 1 generator, 2 async generator (the one
+        // case where the VM reads is_async). Bit 2 is eager_prologue, which
+        // only a generator has.
         out.u8((fn.is_generator ? (fn.is_async ? 2u : 1u) : 0u) |
                (fn.is_generator && fn.eager_prologue ? 4u : 0u));
         out.u32(fn.source_begin);
@@ -426,10 +352,9 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
             out.u8(up.from_parent_local ? 1u : 0u);
             out.u16(up.index);
         }
-        // THE DEBUG SIDE TABLES, and both may be empty - a compiler built
-        // without CTBROWSER_SCRIPT_DEBUG_NAMES produces exactly that, and so
-        // does any proto an image round-tripped through such a build. The
-        // counts are written unconditionally so the format has one shape.
+        // The debug side tables. Both may be empty (a compiler built without
+        // CTBROWSER_SCRIPT_DEBUG_NAMES produces none); the counts are written
+        // unconditionally so the format has one shape.
         out.u32(static_cast<std::uint32_t>(fn.locals.size()));
         for (const local_desc & d : fn.locals) {
             out.u32(intern(names, name_at, d.name));
@@ -438,14 +363,14 @@ std::vector<std::byte> write_image(const program & from, image_option option) {
             out.u32(d.last_pc);
             out.u8(d.boxed ? 1u : 0u);
         }
-        // AND THE OFFSETS GO WITH THE SOURCE. See image_option::drop_source:
-        // an offset into text that is not in the image is not information.
+        // Source offsets are kept only with the source (see
+        // image_option::drop_source): an offset into absent text is useless.
         const bool keep_offsets = option == image_option::keep_source;
         out.u32(keep_offsets ? static_cast<std::uint32_t>(fn.code_offsets.size()) : 0u);
         if (keep_offsets) {
             for (const std::uint32_t offset : fn.code_offsets) { out.u32(offset); }
         }
-        // And the table only the offsets give a meaning to.
+        // The rethrow table is meaningful only with the offsets.
         out.u32(keep_offsets ? static_cast<std::uint32_t>(fn.rethrows.size()) : 0u);
         if (keep_offsets) {
             for (const std::uint32_t at : fn.rethrows) { out.u32(at); }

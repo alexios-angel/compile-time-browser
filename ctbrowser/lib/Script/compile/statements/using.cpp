@@ -1,7 +1,9 @@
-// compiler_impl - statements: `using` and `await using` (ECMAScript explicit
+//===- using.cpp - using and await using declarations -----------*- C++ -*-===//
+//
+// compiler_impl members for `using` and `await using` (ECMAScript explicit
 // resource management, 14.3.2 / 9.13).
 //
-// A using declaration binds a name like `const` does and REGISTERS the value
+// A using declaration binds a name like `const` does and registers the value
 // as a resource of the enclosing scope; when the scope ends - by falling off
 // its end, a `return`, a `break`, a `continue` or a throw - every resource is
 // disposed in reverse order, and an error thrown while disposing is folded
@@ -13,8 +15,11 @@
 // DisposableStack-shaped object built by `__ctbrowser_using_stack` and fed by
 // `__ctbrowser_using_add`; the sync disposal is one native call, the async
 // one (`await using`) a loop that awaits each `[Symbol.asyncDispose]()` in
-// turn. See using_stack_name and its siblings in vm.hpp, and their bodies in
-// builtins/objects/function.cpp beside the destructuring natives.
+// turn. See using_stack_name and its siblings in
+// include/ctbrowser/script/vm/objects.hpp, and their natives in
+// builtins/objects/destructuring.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../compiler_impl.hpp"
 
@@ -24,9 +29,10 @@ bool compiler_impl::is_using_decl(const vp::node & n) {
     return n.kind == vp::nk::var_decl && (n.text == "using" || n.text == "await using");
 }
 
-// `reg = __ctbrowser_using_add(stack, reg, async)`: the value keeps its
-// identity (the native answers it back), and a null or undefined registers
-// nothing (9.13.1 AddDisposableResource step 1.a).
+/// Emits `reg = __ctbrowser_using_add(stack, reg, async)` on the innermost
+/// using stack: the value keeps its identity (the native returns it), and
+/// null or undefined registers nothing (9.13.1 AddDisposableResource step
+/// 1.a).
 void compiler_impl::emit_using_add(std::uint16_t reg, bool async) {
     if (using_stacks_.empty()) {
         fail("a `using` declaration outside a statement list");
@@ -52,7 +58,7 @@ void compiler_impl::compile_statement_list(std::span<const std::int32_t> stmts,
     for (std::size_t i = 0; i < stmts.size(); ++i) {
         const vp::node & s = at(stmts[i]);
         if (is_using_decl(s)) {
-            // FROM HERE TO THE END OF THE LIST is the resources' scope.
+            // From here to the end of the list is the resources' scope.
             // Every later using declaration in this list adds to the same
             // stack, so one region covers them all.
             const std::span<const std::int32_t> rest = stmts.subspan(i);
@@ -69,9 +75,10 @@ void compiler_impl::compile_statement_list(std::span<const std::int32_t> stmts,
     }
 }
 
-// The shape of compile_try_with_finally with the disposal as the finally.
-// `async` says the stack may hold `await using` resources, whose disposal
-// has to be awaited one by one; a sync stack is disposed by one call.
+/// Compiles \p body as a using region: the shape of compile_try_with_finally
+/// with the disposal as the finally. \p async says the stack may hold
+/// `await using` resources, whose disposal has to be awaited one by one; a
+/// sync stack is disposed by one call.
 void compiler_impl::compile_using_region(bool async, const std::function<void()> & body) {
     const std::uint16_t kind_reg = alloc_reg();
     const std::uint16_t value_reg = alloc_reg();
@@ -110,10 +117,10 @@ void compiler_impl::compile_using_region(bool async, const std::function<void()>
     using_stacks_.pop_back();
     for (const std::size_t arrival : open.arrivals) { patch_here(arrival); }
 
-    // THE DISPOSAL. The natives are handed the completion so they can fold a
-    // disposal error into it (9.13.4 DisposeResources); when what comes out
-    // is a throw, the native throws it - so a throw completion never reaches
-    // the dispatch below, and the return and loop-exit completions do.
+    // The disposal. The natives are handed the completion so they can fold a
+    // disposal error into it (9.13.4 DisposeResources). When the result is a
+    // throw, the native throws it, so a throw completion never reaches the
+    // dispatch below; return and loop-exit completions do.
     const std::uint32_t mark = reg_mark();
     if (!async) {
         const std::uint16_t callee = alloc_reg();
@@ -127,7 +134,7 @@ void compiler_impl::compile_using_region(bool async, const std::function<void()>
         proto().emit(instruction{op::move, v, value_reg});
         proto().emit(instruction{op::call, callee, 3});
     } else {
-        // loop: r = step(stack, kind, value); if (r === stack) break;
+        // Loop: r = step(stack, kind, value); if (r === stack) break;
         //       try { await r } catch (e) { failed(stack, e) }
         const std::uint16_t r = alloc_reg();
         const std::uint16_t test = alloc_reg();

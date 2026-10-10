@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Script/vm/run_loop/await.cpp - The await opcode ------===//
+//
+// The interpreter's `await` handler, context::execute_await, called from
+// run_loop.cpp's VM_CASE(await). It suspends the current frame into a
+// coroutine and resumes it when the awaited value settles.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/vm.hpp>
 
@@ -9,32 +17,38 @@
 
 namespace ctbrowser::script {
 
+/// Executes `await` (instruction `in`: register b holds the awaited value,
+/// register a receives the result). `vm_frame` and `base` are the run loop's
+/// cached frame and register base, and are re-derived here when the register
+/// file may have moved. Returns the async function's promise when the
+/// suspension leaves the frame stack at or below `stop_depth` (the run loop
+/// must then return it); otherwise returns nullopt and the loop continues.
 std::optional<value> context::execute_await(instruction in, call_frame *& vm_frame,
                                             std::size_t & base, std::size_t stop_depth) {
     const auto reg = [&](std::uint16_t r) -> value & { return registers_[base + r]; };
     do {
         {
-            // A settled promise carries its value in `__value`; anything else
-            // awaits to itself. A REJECTED promise throws, which is what makes
+            // A settled promise carries its value in its private PromiseResult
+            // slot (promise_result_key); anything else awaits to itself. A
+            // rejected promise throws, which is what makes
             // `try { await f() } catch` work.
             const value awaited_raw = reg(in.b);
-            // EVERY AWAIT SUSPENDS THE FRAME (27.7.5.3 Await: PerformPromiseThen
-            // on a promise resolved with the value, so the continuation is
-            // a job even when the value is already settled - `await 1`
-            // runs the rest of the body after the microtasks queued before
-            // it, which is what every ordering test and every
-            // MutationObserver callback relies on). There is one stack and
-            // the event loop is above it, so `await` cannot block: the frame
-            // is lifted out, the caller is handed a promise, and the frame
-            // comes back when the awaited one settles - from its handler
-            // list when it is pending, from a job queued now when it is
-            // not. A SCRIPT'S TOP LEVEL is the exception it always was:
-            // `return await x` in a classic script (no closure, no caller
-            // to hand a promise to) reads a settled value straight out -
-            // and when the value is a PENDING promise it runs the queue
-            // first, since the jobs that settle it are the ones an async
-            // callee just queued. Draining re-enters the VM, so the
-            // frame and its window are re-derived afterwards.
+            // Every await suspends the frame (27.7.5.3 Await: PerformPromiseThen
+            // on a promise resolved with the value), so the continuation is a
+            // job even when the value is already settled: `await 1` runs the
+            // rest of the body after the microtasks queued before it, which
+            // ordering tests and MutationObserver callbacks rely on. There is
+            // one stack with the event loop above it, so `await` cannot block:
+            // the frame is lifted out, the caller is handed a promise, and the
+            // frame comes back when the awaited value settles (from its
+            // handler list when pending, from a job queued now when not).
+            //
+            // A script's top level is the exception: `return await x` in a
+            // classic script (no closure, no caller to hand a promise to)
+            // reads a settled value straight out, and for a pending promise
+            // drains the microtask queue first, since the jobs that settle it
+            // are the ones an async callee just queued. Draining re-enters the
+            // VM, so the frame and its register window are re-derived after.
             const bool top_level = vm_frame->closure == nullptr;
             // PromiseResolve(%Promise%, value) reads a promise's constructor
             // before deciding whether to adopt it. The installed factory owns
@@ -65,8 +79,8 @@ std::optional<value> context::execute_await(instruction in, call_frame *& vm_fra
                     vm_frame->async_promise = pending_promise_factory_(*this);
                 }
                 const value promise = vm_frame->async_promise;
-                // AN ASYNC GENERATOR'S FRAME IS ALREADY A COROUTINE - the one
-                // its `.next()` resumes - so the await parks THAT object rather
+                // An async generator's frame is already a coroutine (the one
+                // its `.next()` resumes), so the await parks that object rather
                 // than making a second one the generator would never see.
                 // `awaiting` keeps the request queue from resuming it until
                 // the awaited promise does.
@@ -94,8 +108,8 @@ std::optional<value> context::execute_await(instruction in, call_frame *& vm_fra
                         }
                         if (value * settled = obj->find(promise_result_key)) {
                             with = *settled;
-                            // An await IS a PerformPromiseThen (27.7.5.3
-                            // step 3): a rejection awaited is a handled one.
+                            // An await is a PerformPromiseThen (27.7.5.3
+                            // step 3): an awaited rejection is a handled one.
                             mark_promise_handled(awaited);
                         }
                     }

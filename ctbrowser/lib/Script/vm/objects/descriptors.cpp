@@ -1,11 +1,10 @@
-// ctbrowser.script context - property descriptors: [[GetOwnProperty]],
-// [[Delete]] and [[DefineOwnProperty]], and extensibility.
+//===- descriptors.cpp - Property descriptors -------------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,396-line vm/objects.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// Property descriptors: [[GetOwnProperty]], [[Delete]], [[DefineOwnProperty]]
+// and extensibility, for every heap kind including proxies. The functions are
+// members of `context`, declared in include/ctbrowser/script/vm.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cctype>
 #include <cmath>
@@ -19,12 +18,12 @@
 
 namespace ctbrowser::script {
 
-// ArraySetLength's shrink (10.4.2.4 steps 12-19): the elements from the top
-// down are deleted one by one and a non-configurable one STOPS it - the
-// length lands one above that element and the answer is false, which
-// defineProperty turns into a TypeError and a sloppy `a.length = n` into a
-// silent refusal. Only an array with element attributes of its own or a seal
-// can have one; everything else truncates outright.
+/// ArraySetLength's shrink (10.4.2.4 steps 12-19): the elements from the top
+/// down are deleted one by one and a non-configurable one stops it. The
+/// length lands one above that element and the answer is false, which
+/// defineProperty turns into a TypeError and a sloppy `a.length = n` into a
+/// silent refusal. Only an array with element attributes of its own or a seal
+/// can have one; everything else truncates outright.
 bool array_set_length(array_object & arr, double n) {
     const double current = static_cast<double>(arr.js_length());
     if (n < current && !arr.items.empty()) {
@@ -59,27 +58,27 @@ bool array_set_length(array_object & arr, double n) {
 
 namespace {
 
-// 10.4.2.1 step 2 for a NEW element at `at`: a length that is not writable
-// refuses an index at or past it, and the slot is materialised the way
-// store_index would - dense up to array_object::dense_limit, sparse beyond.
+/// 10.4.2.1 step 2 for a new element at \p at: a length that is not writable
+/// refuses an index at or past it, and the slot is materialised the way
+/// store_index would: dense up to array_object::dense_limit, sparse beyond.
 [[nodiscard]] bool array_slot_for_define(array_object & arr, std::uint32_t at, bool exists) {
     if (exists) { return true; }
     if (!arr.length_writable && static_cast<std::size_t>(at) >= arr.js_length()) { return false; }
     if (at < arr.items.size()) { return true; }
     if (static_cast<std::size_t>(at) + 1 - arr.items.size() > array_object::dense_limit) {
-        return true; // the caller records it sparse
+        return true; // The caller records it sparse.
     }
     const std::size_t before = arr.items.size();
     arr.items.resize(static_cast<std::size_t>(at) + 1, value::undefined());
-    arr.add_holes(before, at); // what it jumps over is not elements
+    arr.add_holes(before, at); // What it jumps over is not elements.
     return true;
 }
 
-// IsCompatiblePropertyDescriptor (10.1.6.2): ValidateAndApplyPropertyDescriptor
-// with no object to apply to - may a property described by `current` (null
-// when absent) become `wanted`? [[DefineOwnProperty]] asks it of every
-// ordinary object, and a proxy's getOwnPropertyDescriptor and defineProperty
-// traps are held to the same answer about their target.
+/// IsCompatiblePropertyDescriptor (10.1.6.2): ValidateAndApplyPropertyDescriptor
+/// with no object to apply to. May a property described by \p current (null
+/// when absent) become \p wanted? [[DefineOwnProperty]] asks it of every
+/// ordinary object, and a proxy's getOwnPropertyDescriptor and defineProperty
+/// traps are held to the same answer about their target.
 [[nodiscard]] bool compatible_descriptor(bool extensible,
                                          const context::property_descriptor & wanted,
                                          const context::property_descriptor * current) {
@@ -102,6 +101,7 @@ namespace {
 
 } // namespace
 
+/// FromPropertyDescriptor (6.2.6.4): the descriptor as a plain object.
 value context::from_property_descriptor(const property_descriptor & from) {
     value made = make_object();
     auto * out = static_cast<object_object *>(made.as_heap());
@@ -114,6 +114,8 @@ value context::from_property_descriptor(const property_descriptor & from) {
     return made;
 }
 
+/// ToPropertyDescriptor (6.2.6.5) of object \p from. The caller checks for a
+/// pending throw and for invalid combinations.
 context::property_descriptor context::to_property_descriptor(value from) {
     property_descriptor out;
     const auto field = [&](const char * name, bool & has, value & into) {
@@ -131,7 +133,7 @@ context::property_descriptor context::to_property_descriptor(value from) {
             into = truthy(held);
         }
     };
-    // 6.2.6.5's ORDER, which a getter or a proxy on the descriptor observes.
+    // 6.2.6.5's order, which a getter or a proxy on the descriptor observes.
     flag("enumerable", out.has_enumerable, out.enumerable);
     flag("configurable", out.has_configurable, out.configurable);
     field("value", out.has_value, out.held);
@@ -141,25 +143,26 @@ context::property_descriptor context::to_property_descriptor(value from) {
     return out;
 }
 
+/// `delete target.name`, as the delete opcodes run it.
 void context::delete_named(value target, const std::string & name) {
-    // TODO(strict): a false answer here is a TypeError under "use strict",
-    // and strict `delete` does not throw yet - the answer is discarded and
-    // the compiler emits a constant `true` (see the note on
-    // delete_own_property).
+    // TODO(strict): a false answer is a TypeError under "use strict", but
+    // strict `delete` does not throw yet: the answer is discarded and the
+    // compiler emits a constant `true` (see delete_own_property in
+    // include/ctbrowser/script/vm.hpp).
     (void)delete_own_property(target, name);
 }
 
+/// `delete target[key]`; see delete_named.
 void context::delete_index(value target, value key) {
     (void)delete_own_property(target, to_string(key));
 }
 
 // --- [[GetOwnProperty]] ---------------------------------------------------
-//
-// FOUR TABLES AND A HANDFUL OF SYNTHESISED SLOTS, behind one answer. Before
-// this, `Object.getOwnPropertyDescriptor` handled object_object and nothing
-// else, so it answered undefined for `Array.prototype.indexOf.name`, for
-// `[1,2].length` and for every static on a built-in constructor - which is the
-// first thing test262's verifyProperty asks about any of them.
+
+/// [[GetOwnProperty]] for every heap kind: fills \p out and returns true when
+/// \p target has own property \p name. Covers the property tables plus the
+/// slots that are synthesised rather than stored (array and String `length`,
+/// indices, a function's `name`/`length`/`prototype`).
 bool context::own_property(value target, const std::string & name, property_descriptor & out) {
     out = property_descriptor{};
     if (is_private_key(name) && target.is_kind(heap_kind::proxy)) [[unlikely]] {
@@ -171,8 +174,8 @@ bool context::own_property(value target, const std::string & name, property_desc
     // trap, or the target when there is none. The answer is ToPropertyDescriptor
     // then CompletePropertyDescriptor (steps 12-13), so a trap that says
     // `{value: v}` describes a non-writable, non-enumerable, non-configurable
-    // property exactly as Object.defineProperty would read it - and then it is
-    // held to the TARGET (steps 9-11, 14-16): a trap may not hide a
+    // property exactly as Object.defineProperty would read it. Then it is
+    // held to the target (steps 9-11, 14-16): a trap may not hide a
     // non-configurable property or any property of a non-extensible target,
     // report one the target could not have, or call a property
     // non-configurable (or non-writable and non-configurable) that is not so.
@@ -245,7 +248,7 @@ bool context::own_property(value target, const std::string & name, property_desc
     }
 
     if (target.is_object()) {
-        // DATA FIRST, then the accessor table - the order lookup_property uses,
+        // Data first, then the accessor table: the order lookup_property uses,
         // so a descriptor can never describe a property `.` would not read.
         auto * obj = static_cast<object_object *>(target.as_heap());
         if (value * held = obj->find(name)) {
@@ -253,8 +256,8 @@ bool context::own_property(value target, const std::string & name, property_desc
             return true;
         }
         if (accessor_entry * entry = obj->find_accessor(name)) {
-            // A MODULE NAMESPACE'S EXPORT (10.4.6.5): { [[Value]]: the
-            // binding's, writable, enumerable, !configurable } - a data
+            // A module namespace's export (10.4.6.5): { [[Value]]: the
+            // binding's, writable, enumerable, !configurable }, a data
             // property whose storage here is a getter over the cell, so the
             // value is read through it (a native: no page code runs).
             if (entry->getter.is_callable() && obj->find(module_namespace_key) != nullptr) {
@@ -267,7 +270,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             out = property_descriptor::accessor(entry->getter, entry->setter, entry->attrs);
             return true;
         }
-        // A STRING WRAPPER'S OWN `length` AND INDICES (10.4.3.1), the same two
+        // A String wrapper's own `length` and indices (10.4.3.1), the same two
         // answers the String primitive arm below gives.
         if (name == "length" || (!name.empty() && name[0] >= '0' && name[0] <= '9')) {
             if (value * slot = primitive_slot(target); slot != nullptr && slot->is_string()) {
@@ -279,7 +282,7 @@ bool context::own_property(value target, const std::string & name, property_desc
 
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
-        // A TYPED ARRAY HAS NO OWN `length` (23.2.3.19 is a getter on
+        // A typed array has no own `length` (23.2.3.19 is a getter on
         // %TypedArray%.prototype), so one a page defines lands in `named`
         // like any other name: the three arms below say the same.
         if (name == "length" && arr->elements == element_kind::none) {
@@ -300,7 +303,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             if (arr->is_view()) {
                 if (at < arr->length()) {
                     // 10.4.5.1: { [[Writable]]: true, [[Enumerable]]: true,
-                    // [[Configurable]]: true } around the element - a bigint
+                    // [[Configurable]]: true } around the element: a bigint
                     // for a BigInt kind, which is why the read is not
                     // view_get's double.
                     out = property_descriptor::data(is_bigint_kind(arr->elements)
@@ -336,7 +339,7 @@ bool context::own_property(value target, const std::string & name, property_desc
             }
         } else if (arr->named) {
             // A named own property lives in the array's own table, which is
-            // an object_object - so the object arm answers for it.
+            // an object_object, so the object arm answers for it.
             return own_property(value::object(arr->named.get()), name, out);
         }
         return false;
@@ -372,16 +375,13 @@ bool context::own_property(value target, const std::string & name, property_desc
         }
         // A built-in function's `name` is { false, false, true } (10.2.5) and
         // lives on the C++ object rather than in the table, so it is
-        // synthesised here. `length` is NOT: a native_fn takes a span and its
+        // synthesised here. `length` is not: a native_fn takes a span and its
         // declared arity is not recorded anywhere, so this engine cannot answer
         // for it and says so by leaving the property absent.
         //
-        // ...AND NOT AFTER A `delete`. The synthesised slot has no memory, so
-        // deleting a native's own `name` uncovered it again and
-        // `hasOwnProperty("name")` stayed true - which is exactly the question
-        // test262's `verifyProperty` asks to decide the descriptor is
-        // configurable, so every `name.js` in the suite failed on a property
-        // that had just been removed.
+        // The synthesised slot has no storage, so a `delete` sets name_erased
+        // and the slot stays gone; otherwise hasOwnProperty("name") would stay
+        // true after the delete.
         if (name == "name" && !fn->name_erased) {
             out = property_descriptor::data(string(fn->name), attr_configurable);
             out.virtual_slot = true;
@@ -403,12 +403,12 @@ bool context::own_property(value target, const std::string & name, property_desc
         if (name == "prototype") {
             if (method_without_prototype(*closure)) { return false; }
             const value made = ensure_prototype(target);
-            if (made.is_undefined()) { return false; } // an arrow has none
+            if (made.is_undefined()) { return false; } // An arrow has none.
             out = property_descriptor::data(made, attr_writable);
             return true;
         }
         if (closure->proto != nullptr) {
-            // 10.2.5 again: both are { false, false, true } - until deleted.
+            // 10.2.5 again: both are { false, false, true }, until deleted.
             if (name == "name" && !closure->name_erased) {
                 out = property_descriptor::data(string(closure->proto->display_name()),
                                                 attr_configurable);
@@ -428,11 +428,13 @@ bool context::own_property(value target, const std::string & name, property_desc
     return false;
 }
 
+/// HasOwnProperty (7.3.12).
 bool context::has_own_property(value target, const std::string & name) {
     property_descriptor found;
     return own_property(target, name, found);
 }
 
+/// IsExtensible (7.2.5); a primitive answers false.
 bool context::is_extensible(value target) {
     if (target.is_object()) { return static_cast<object_object *>(target.as_heap())->extensible; }
     if (target.is_array()) { return static_cast<array_object *>(target.as_heap())->extensible; }
@@ -443,7 +445,7 @@ bool context::is_extensible(value target) {
         return static_cast<closure_object *>(target.as_heap())->extensible;
     }
     // 10.5.3 [[IsExtensible]] of a proxy: the `isExtensible` trap, whose
-    // answer must be the target's own (step 9) - a proxy cannot lie about
+    // answer must be the target's own (step 9): a proxy cannot lie about
     // extensibility, because every other invariant is judged against it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
@@ -465,10 +467,11 @@ bool context::is_extensible(value target) {
         return answered;
     }
     // A primitive is not extensible, and Object.isExtensible(1) is false rather
-    // than an error (19.1.2.13 returns false for a non-object).
+    // than an error (Object.isExtensible returns false for a non-object).
     return false;
 }
 
+/// [[PreventExtensions]]; a proxy forwards to its target.
 void context::prevent_extensions(value target) {
     if (target.is_object()) {
         static_cast<object_object *>(target.as_heap())->extensible = false;
@@ -484,14 +487,17 @@ void context::prevent_extensions(value target) {
 }
 
 // --- [[Delete]] -----------------------------------------------------------
+
+/// [[Delete]]: returns false when the property exists and is not
+/// configurable.
 bool context::delete_own_property(value target, const std::string & name) {
     // 10.5.10: the `deleteProperty` trap, or the target. `delete el.dataset.x`
-    // is the one a page reaches for - the DOMStringMap's handler removes the
+    // is the case a page reaches for: the DOMStringMap's handler removes the
     // attribute, which no delete on its target could do.
     if (target.is_kind(heap_kind::proxy)) {
-        // A THROW ANSWERS TRUE, as in define_own_property below: a strict
-        // `delete` turns false into a TypeError of its own, and one throw -
-        // a revoked handler, a trap that is not callable, a trap that threw -
+        // A throw answers true, as in define_own_property below: a strict
+        // `delete` turns false into a TypeError of its own, and one throw
+        // (a revoked handler, a trap that is not callable, a trap that threw)
         // must not become two over the handler the first one consumed.
         auto * p = static_cast<proxy_object *>(target.as_heap());
         bool failed = false;
@@ -527,7 +533,7 @@ bool context::delete_own_property(value target, const std::string & name) {
             return obj->erase_accessor(name);
         }
         if (obj->find(name) == nullptr) {
-            // absent: delete succeeds - unless it is a String wrapper's own
+            // Absent: delete succeeds, unless it is a String wrapper's own
             // `length` or index, which are non-configurable (10.4.3.1).
             property_descriptor slot_owned;
             return !own_property(target, name, slot_owned);
@@ -552,21 +558,20 @@ bool context::delete_own_property(value target, const std::string & name) {
     }
     if (target.is_kind(heap_kind::function)) {
         auto * closure = static_cast<closure_object *>(target.as_heap());
-        // AN ACCESSOR IS A PROPERTY TOO - a class's `static get x()` - and
+        // An accessor is a property too (a class's `static get x()`), and
         // deleting a configurable one removes it, as the object arm does.
-        // It answered true and stayed.
         if (accessor_entry * entry = closure->find_accessor(name)) {
             if ((entry->attrs & attr_configurable) == 0) { return false; }
             return closure->accessors.erase(name);
         }
         if (closure->find(name) == nullptr) {
-            // The synthesised `name` and `length` - see closure_object::name_erased.
+            // The synthesised `name` and `length`; see closure_object::name_erased.
             if (name == "name") { closure->name_erased = true; }
             if (name == "length") { closure->length_erased = true; }
             return true;
         }
         if ((closure->attrs_of(name) & attr_configurable) == 0) { return false; }
-        // A REDEFINED `length` or `name` lives in the table, and deleting it
+        // A redefined `length` or `name` lives in the table, and deleting it
         // must not uncover the synthesised one underneath.
         if (name == "name") { closure->name_erased = true; }
         if (name == "length") { closure->length_erased = true; }
@@ -575,20 +580,20 @@ bool context::delete_own_property(value target, const std::string & name) {
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         if (name == "length" && arr->elements == element_kind::none) {
-            return false; // non-configurable, 10.4.2
+            return false; // Non-configurable, 10.4.2.
         }
         std::uint32_t at = 0;
         const bool typed = arr->elements != element_kind::none;
         // 10.4.5.6: a typed array's numeric key is deleted exactly when it
-        // names no element - `true` for "-0" or an index past the end, `false`
-        // for a live element - and never reaches the named table.
+        // names no element (`true` for "-0" or an index past the end, `false`
+        // for a live element), and never reaches the named table.
         if (!object_object::array_index_key(name, at)) {
             if (typed && canonical_numeric_key(name)) { return true; }
             return arr->named ? delete_own_property(value::object(arr->named.get()), name) : true;
         }
         if (typed) { return at >= arr->length(); }
-        // AN ELEMENT LEAVES A HOLE (10.4.2.1 via 10.1.10): `items` cannot shift
-        // - `delete a[0]` must not change a.length - so the slot stays as a
+        // An element leaves a hole (10.4.2.1 via 10.1.10): `items` cannot shift
+        // (`delete a[0]` must not change a.length), so the slot stays as a
         // placeholder and array_object::element_attrs records that it is not
         // a property any more. A non-configurable element (a sealed array,
         // or one defineProperty pinned) refuses.
@@ -615,11 +620,10 @@ bool context::delete_own_property(value target, const std::string & name) {
 }
 
 // --- [[DefineOwnProperty]] ------------------------------------------------
-//
-// 10.1.6.3 ValidateAndApplyPropertyDescriptor, which is the whole reason
-// `Object.freeze` and `verifyProperty` can mean anything. False is REJECT; the
-// caller turns that into a TypeError (Object.defineProperty) or a false
-// (Reflect.defineProperty).
+
+/// [[DefineOwnProperty]], via 10.1.6.3 ValidateAndApplyPropertyDescriptor for
+/// ordinary objects. False means reject; the caller turns that into a
+/// TypeError (Object.defineProperty) or a false (Reflect.defineProperty).
 bool context::define_own_property(value target, const std::string & name,
                                   const property_descriptor & wanted) {
     if (is_private_key(name) && target.is_kind(heap_kind::proxy)) [[unlikely]] {
@@ -629,8 +633,8 @@ bool context::define_own_property(value target, const std::string & name,
         }
         return define_own_property(p->private_elements, name, wanted);
     }
-    // 10.4.6.6 [[DefineOwnProperty]] OF A MODULE NAMESPACE, for a string key:
-    // nothing is ever defined - a description the export already satisfies
+    // 10.4.6.6 [[DefineOwnProperty]] of a module namespace, for a string key:
+    // nothing is ever defined. A description the export already satisfies
     // answers true, any other false. A symbol key (@@toStringTag) is an
     // ordinary property's.
     if (target.is_object() && !name.starts_with(symbol_key_mark) &&
@@ -644,7 +648,7 @@ bool context::define_own_property(value target, const std::string & name,
         }
         return !wanted.has_value || wanted.held.same_value(current.held);
     }
-    // 10.5.6: the `defineProperty` trap sees the descriptor as an OBJECT
+    // 10.5.6: the `defineProperty` trap sees the descriptor as an object
     // (FromPropertyDescriptor, step 8), or the target defines it.
     if (target.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(target.as_heap());
@@ -657,7 +661,7 @@ bool context::define_own_property(value target, const std::string & name,
         const value args[3] = {p->target, key_value(name), from_property_descriptor(wanted)};
         const std::size_t before = unwinds();
         const bool answered = truthy(call(trap, args, p->handler));
-        // A throw answers TRUE: the caller turns false into a TypeError of its
+        // A throw answers true: the caller turns false into a TypeError of its
         // own, and one throw must not become two (see ArraySetLength below).
         if (throw_pending() || unwinds() != before) { return true; }
         if (!answered) { return false; }
@@ -692,11 +696,11 @@ bool context::define_own_property(value target, const std::string & name,
         return true;
     }
 
-    // 10.4.2.4 ArraySetLength, when the descriptor carries a value: IN ITS
-    // ORDER, which is observable. ToUint32 and then ToNumber of the value -
-    // two coercions, each of which may run a valueOf that redefines `length`
-    // - and the RangeError, all BEFORE any check against the property; only
-    // then is `length` as it stands NOW asked whether it may change. A throw
+    // 10.4.2.4 ArraySetLength, when the descriptor carries a value, in the
+    // spec's order, which is observable: ToUint32 and then ToNumber of the
+    // value (two coercions, each of which may run a valueOf that redefines
+    // `length`) and the RangeError, all before any check against the property.
+    // Only then is `length` as it stands now asked whether it may change. A throw
     // answers true: the caller's own answer to false is a TypeError.
     if (target.is_array() && name == "length" && wanted.has_value &&
         static_cast<array_object *>(target.as_heap())->elements == element_kind::none) {
@@ -727,11 +731,11 @@ bool context::define_own_property(value target, const std::string & name,
         return ok;
     }
 
-    // 10.4.5.3: A TYPED ARRAY'S INTEGER INDEX is its own algorithm, before
+    // 10.4.5.3: a typed array's integer index is its own algorithm, before
     // ValidateAndApplyPropertyDescriptor. The index must be valid now, the
     // descriptor may not make the element non-configurable, non-enumerable,
     // an accessor or read-only, and a value goes through the kind's coercion
-    // (TypedArraySetElement) - which may throw, and answers true past it.
+    // (TypedArraySetElement), which may throw; the answer is true either way.
     if (target.is_array()) {
         auto * arr = static_cast<array_object *>(target.as_heap());
         std::uint32_t at = 0;
@@ -756,8 +760,8 @@ bool context::define_own_property(value target, const std::string & name,
         return false;
     }
 
-    // WHAT THE PROPERTY ENDS UP AS. An absent field means "unchanged" on an
-    // existing property and "false" on a new one - which is the difference
+    // What the property ends up as. An absent field means "unchanged" on an
+    // existing property and "false" on a new one, which is the difference
     // between `defineProperty(o, 'x', {value: 1})` making a frozen-shaped
     // property (correct) and an ordinary one (what every engine that skips this
     // step produces).
@@ -786,8 +790,8 @@ bool context::define_own_property(value target, const std::string & name,
             wanted.has_set
                 ? wanted.setter
                 : (exists && current.is_accessor() ? current.setter : value::undefined());
-        // `getter` and `setter` are the RESULT - the wanted half or the current
-        // one - so an existing accessor takes both as they are: a table's
+        // `getter` and `setter` are the result (the wanted half or the current
+        // one), so an existing accessor takes both as they are: a table's
         // define_accessor keeps a half passed as undefined (an object
         // literal's `get x` and `set x` arrive one at a time), which would
         // make `defineProperty(o, "x", {set: undefined})` a no-op.
@@ -808,17 +812,14 @@ bool context::define_own_property(value target, const std::string & name,
         if (target.is_kind(heap_kind::native)) {
             return replace(static_cast<native_object *>(target.as_heap()));
         }
-        // AN ARRAY'S ELEMENTS HAVE NOWHERE TO PUT ONE, and answer true.
-        //
-        // An array's elements are a std::vector. Answering FALSE here would
-        // turn what has always been a
-        // silent no-op into a TypeError - `Object.defineProperty(arr, "0",
-        // {get() {...}})` is real test262 code and real library code - so this
-        // keeps the previous behaviour and names it. Measured: answering false
-        // cost 6 tests that had passed (built-ins/Array/prototype/indexOf,
-        // reduce, flatMap and Function/prototype/bind), which is how the gap
-        // was found rather than argued about. A NAMED accessor goes into the
-        // array's own table (array_object::named).
+        // An array element can be an accessor: the getter/setter pair goes in
+        // `named` under the index's canonical string and element_attrs marks
+        // the slot. An index beyond array_object::dense_limit is stored sparse,
+        // where an accessor has no storage, so that define is dropped and
+        // answers true. Answering false would make
+        // `Object.defineProperty(arr, "0", {get() {}})` throw a TypeError in
+        // test262 and library code that expects it to work. A named accessor
+        // goes into the array's own table (array_object::named).
         if (target.is_array()) {
             auto * arr = static_cast<array_object *>(target.as_heap());
             std::uint32_t at = 0;
@@ -827,11 +828,11 @@ bool context::define_own_property(value target, const std::string & name,
                 arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
                 return true;
             }
-            // AN ACCESSOR ELEMENT: the pair goes in `named` under the index's
+            // An accessor element: the pair goes in `named` under the index's
             // canonical string, the `items` slot is a placeholder, and
-            // element_attrs says which it is - see array_object.
+            // element_attrs says which it is; see array_object.
             if (!array_slot_for_define(*arr, at, exists)) { return false; }
-            if (at >= arr->items.size()) { return true; } // recorded sparse; attributes dropped
+            if (at >= arr->items.size()) { return true; } // Sparse: the accessor is dropped.
             arr->items[at] = value::undefined();
             arr->named_table().define_accessor(name, getter, setter, accessor_attrs);
             arr->set_element_attrs(
@@ -860,9 +861,9 @@ bool context::define_own_property(value target, const std::string & name,
         auto * arr = static_cast<array_object *>(target.as_heap());
         if (name == "length" && arr->elements == element_kind::none) {
             // ArraySetLength, 10.4.2.4. The value goes through ToNumber (a
-            // valueOf runs) and must be a uint32 - `{value: undefined}` is NaN
+            // valueOf runs) and must be a uint32: `{value: undefined}` is NaN
             // against 0 and a RangeError, not a refusal. The RangeError is
-            // thrown HERE and `true` answered, because the caller's own answer
+            // thrown here and `true` answered, because the caller's own answer
             // to `false` is a TypeError and one throw must not become two.
             if (wanted.has_value) {
                 const double n = to_number_value(held);
@@ -894,7 +895,7 @@ bool context::define_own_property(value target, const std::string & name,
             arr->set_element_attrs(at, attrs);
             return true;
         }
-        // A NAMED PROPERTY goes into the array's own table (see
+        // A named property goes into the array's own table (see
         // array_object::named), through the object arm so every attribute
         // rule is the one an object has.
         return define_own_property(value::object(&arr->named_table()), name, wanted);
@@ -902,8 +903,10 @@ bool context::define_own_property(value target, const std::string & name,
     return false;
 }
 
-// THE ONE BODY behind op::define_data, ct_aot_define_data and the
-// define_own_name native, so no tier can drift into a [[Set]].
+/// CreateDataPropertyOrThrow with a configurable, writable value. The single
+/// implementation behind op::define_data (interpreter), ct_aot_define_data
+/// (AOT code) and the define_own_name native, so none of them can drift into
+/// doing a [[Set]] instead of a define.
 void context::define_data_property(value target, value key, value v, bool enumerable) {
     if (!target.is_object_like()) { return; }
     property_descriptor wanted;

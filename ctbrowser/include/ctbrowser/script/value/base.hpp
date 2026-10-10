@@ -1,3 +1,26 @@
+//===- value/base.hpp - NaN-boxed values and heap basics --------*- C++ -*-===//
+//
+// The JS value, in one 64-bit word: NaN-boxed, so every value is a machine
+// word passed in a register, with no allocation to represent a number. Also
+// the heap object header and the string, symbol, bigint and proxy objects.
+//
+// IEEE-754 doubles waste an enormous amount of encoding space on NaN. Any bit
+// pattern with the exponent all ones and a non-zero mantissa is a NaN, and
+// there are 2^52 of them. So if the pattern is not one of those, it is simply
+// a double and needs no decoding at all, which matters because arithmetic is
+// the common case. Otherwise the spare mantissa bits carry a tag:
+//
+//   [double]                      anything not matching the QNAN mask
+//   [QNAN | 0..3]                 undefined, null, false, true
+//   [SIGN | QNAN | ptr48]         a heap object; its kind lives in the header
+//
+// Pointers get the sign bit as their marker and 48 bits of payload, which is
+// every address x86-64 and AArch64 actually produce. Discriminating the kind
+// of heap object in the object's own header rather than in the tag keeps the
+// tag space small and means adding a new heap type costs nothing here.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <algorithm>
 #include <bit>
@@ -16,58 +39,39 @@
 #include <ctbrowser/core/symbol.hpp>
 #include <ctbrowser/script/utf16.hpp>
 
-// The JS value, in one 64-bit word: NaN-boxed, so every value is a machine
-// word passed in a register, with no allocation to represent a number.
-//
-// The trick is that IEEE-754 doubles waste an enormous amount of encoding
-// space on NaN. Any bit pattern with the exponent all ones and a non-zero
-// mantissa is *a* NaN, and there are 2^52 of them. So: if the pattern is not
-// one of those, it is simply a double and needs no decoding at all - which
-// matters, because arithmetic is the common case. Otherwise the spare
-// mantissa bits carry a tag.
-//
-//   [double]                      anything not matching the QNAN mask
-//   [QNAN | 0..3]                 undefined, null, false, true
-//   [SIGN | QNAN | ptr48]         a heap object; its kind lives in the header
-//
-// Pointers get the sign bit as their marker and 48 bits of payload, which is
-// every address x86-64 and AArch64 actually produce. Discriminating the KIND
-// of heap object in the object's own header rather than in the tag keeps the
-// tag space small and means adding a new heap type costs nothing here.
-
 namespace ctbrowser::script {
 
-// Bit 50 is deliberately part of the mask: it keeps the boxed patterns clear
-// of the canonical quiet NaN a real computation can produce, so an actual
-// arithmetic NaN never aliases a tagged value.
+/// The bits that mark a boxed (non-number) value: exponent all ones plus the
+/// quiet bit 51 and bit 50. Bit 50 is deliberately part of the mask: it keeps
+/// the boxed patterns clear of the canonical quiet NaN a real computation can
+/// produce, so an actual arithmetic NaN never aliases a tagged value.
 inline constexpr std::uint64_t qnan_mask = 0x7FFC000000000000ull;
 inline constexpr std::uint64_t sign_bit = 0x8000000000000000ull;
 inline constexpr std::uint64_t payload_mask = 0x0000FFFFFFFFFFFFull;
 
+/// The boxed encodings of the four singleton values.
 inline constexpr std::uint64_t tag_undefined = qnan_mask | 0;
 inline constexpr std::uint64_t tag_null = qnan_mask | 1;
 inline constexpr std::uint64_t tag_false = qnan_mask | 2;
 inline constexpr std::uint64_t tag_true = qnan_mask | 3;
 
-// THE ONE NaN A NUMBER IS ALLOWED TO BE. No ARITHMETIC produces a NaN with
-// bit 50 set - hardware default NaNs are 0x7FF8... and 0xFFF8... - but a
-// Float64Array (or a Float32Array, whose bit 21 widens to bit 50) lets
-// JavaScript write any bit pattern and read it back as a double.
-// 0x7FF4000000000003 passes is_number(), and the first `- 1` on it quiets bit
-// 51 and yields 0x7FFC000000000003 - which is tag_true.
-//
-// So every NaN that crosses INTO the engine from raw bits is canonicalised to
-// this one at the boundary (view_get), the way JSC's purifyNaN and
-// SpiderMonkey's CanonicalizeNaN do - on the boundary and not in
-// value::number, because the latter is every arithmetic result and the former
-// is a typed-array read.
+/// The only NaN bit pattern a number value may hold (0x7FF8000000000000, the
+/// default quiet NaN). Arithmetic never sets bit 50, but a Float64Array (or a
+/// Float32Array, whose bit 21 widens to bit 50) lets JavaScript write any bit
+/// pattern and read it back as a double: 0x7FF4000000000003 passes
+/// is_number(), and `- 1` quiets it to 0x7FFC000000000003, which is tag_true.
+/// So every NaN read from raw bits is canonicalised to this one at that
+/// boundary (view_get), as JSC's purifyNaN and SpiderMonkey's CanonicalizeNaN
+/// do; not in value::number, which every arithmetic result goes through.
 inline constexpr std::uint64_t canonical_nan_bits = 0x7FF8000000000000ull;
 static_assert((canonical_nan_bits & qnan_mask) != qnan_mask,
               "the canonical NaN must itself be a number under the boxing scheme");
+/// canonical_nan_bits as a double.
 [[nodiscard]] inline double canonical_nan() noexcept {
     return std::bit_cast<double>(canonical_nan_bits);
 }
 
+/// The kind of a heap object, stored in its header rather than in the value.
 enum class heap_kind : std::uint8_t {
     string,
     object,
@@ -78,22 +82,22 @@ enum class heap_kind : std::uint8_t {
     symbol,
     proxy,
     bigint,
-    // A SUSPENDED FUNCTION BODY. `await` on a promise that has not settled has
-    // to put the frame somewhere and give the caller a promise back; this is
-    // where the frame goes. Its definition is in vm.hpp, with the frame and
-    // handler types it saves - value.hpp knows only that it is a heap kind the
-    // collector must trace.
+    /// A suspended function body: where `await` on an unsettled promise parks
+    /// the frame while the caller gets a promise back. coroutine_object is
+    /// defined in script/vm.hpp with the frame types it saves; this header knows
+    /// only that it is a heap kind the collector must trace.
     coroutine
 };
 
 struct heap_object; // every heap value starts with one
 struct object_object;
 
+/// A JavaScript value: one NaN-boxed 64-bit word (see the file comment).
 class value {
 public:
     constexpr value() noexcept : bits_(tag_undefined) {}
 
-    // --- construction ---------------------------------------------------
+    // --- Construction ---------------------------------------------------===//
     [[nodiscard]] static value undefined() noexcept { return from_bits(tag_undefined); }
     [[nodiscard]] static value null() noexcept { return from_bits(tag_null); }
     [[nodiscard]] static value boolean(bool b) noexcept {
@@ -113,8 +117,8 @@ public:
         return v;
     }
 
-    // --- inspection -------------------------------------------------------
-    // A double is anything that does NOT match the boxed pattern, so the
+    // --- Inspection -----------------------------------------------------===//
+    // A double is anything that does not match the boxed pattern, so the
     // arithmetic fast path is one mask and one compare.
     [[nodiscard]] constexpr bool is_number() const noexcept {
         return (bits_ & qnan_mask) != qnan_mask;
@@ -142,23 +146,24 @@ public:
     [[nodiscard]] bool is_string() const noexcept { return is_kind(heap_kind::string); }
     [[nodiscard]] bool is_object() const noexcept { return is_kind(heap_kind::object); }
     [[nodiscard]] bool is_array() const noexcept { return is_kind(heap_kind::array); }
-    // A PROXY IS CALLABLE WHEN ITS TARGET IS - `new Proxy(SomeClass, {...})`
-    // has to be constructible. Defined out of line, below proxy_object.
+    /// A proxy is callable when its target is: `new Proxy(SomeClass, {...})`
+    /// has to be constructible. Defined out of line, below proxy_object.
     [[nodiscard]] bool is_callable() const noexcept;
-    // "AN OBJECT" in the sense `new` means it: the spec says a constructor's
-    // return overrides the fresh instance when it is an object, and an array, a
-    // function and a proxy all are.
+    /// True for "an object" in the sense `new` means it: the spec says a
+    /// constructor's return overrides the fresh instance when it is an object,
+    /// and an array, a function and a proxy all are.
     [[nodiscard]] bool is_object_like() const noexcept {
         return is_object() || is_array() || is_callable() || is_kind(heap_kind::proxy);
     }
 
-    // `===`. Defined out of line below, because STRINGS compare by CONTENT and
-    // string_object is not declared yet here.
+    /// `===`. Defined out of line below, because strings compare by content and
+    /// string_object is not declared yet here.
     [[nodiscard]] bool strict_equals(value o) const noexcept;
-    // Map/Set key equality, also used by ctcompile's build-time evaluator.
+    /// SameValueZero: Map/Set key equality, also used by ctcompile's build-time
+    /// evaluator.
     [[nodiscard]] bool same_value_zero(value o) const noexcept;
-    // SameValue (7.2.11): `===` except that it separates the two zeros and
-    // calls NaN equal to itself - Object.is and descriptor comparison.
+    /// SameValue (ECMA-262 7.2.11): `===` except that it separates the two zeros
+    /// and calls NaN equal to itself, for Object.is and descriptor comparison.
     [[nodiscard]] bool same_value(value o) const noexcept;
     [[nodiscard]] friend constexpr bool operator==(value a, value b) noexcept {
         return a.bits_ == b.bits_;
@@ -170,9 +175,10 @@ private:
 
 static_assert(sizeof(value) == 8, "a JS value must be one machine word");
 
-// --- the heap -----------------------------------------------------------
-// Every heap value begins with this. `marked` is the GC bit; `next` chains
-// every allocation so a sweep can walk them without a separate registry.
+/// --- The heap -------------------------------------------------------===//
+///
+/// Every heap value begins with this. `marked` is the GC bit; `next` chains
+/// every allocation so a sweep can walk them without a separate registry.
 struct heap_object {
     heap_kind kind;
     bool marked = false;
@@ -188,31 +194,31 @@ inline bool value::is_kind(heap_kind k) const noexcept {
     return is_heap() && as_heap()->kind == k;
 }
 
-// A mark string_object keeps every `utf16_stride` code units: the code point
-// holding unit k * utf16_stride, by its first byte and its first unit (one
-// less than k * utf16_stride when that unit is a pair's low half).
+/// A mark string_object keeps every `utf16_stride` code units: the code point
+/// holding unit k * utf16_stride, by its first byte and its first unit (one
+/// less than k * utf16_stride when that unit is a pair's low half).
 struct utf16_mark {
     std::uint32_t byte;
     std::uint32_t unit;
 };
 inline constexpr std::size_t utf16_stride = 32;
 
-// A JS STRING: UTF-16 code units, stored as their WTF-8 in `text` (see
-// script/utf16.hpp for why the storage is not UTF-16).
-//
-// `text` never changes once the string exists, so what the members below
-// measure is measured ONCE and kept: the length in units on first use, and -
-// for a string that is not every-byte-one-unit - a mark every 32 units on the
-// first indexed read, so `s[i]` walks at most 32 code points from the nearest.
-// An ASCII string, which is nearly every string a page makes, pays one scan in
-// its life and answers every index from its bytes after that. The marks cost
-// eight bytes per 32 units, and only a non-ASCII string that is indexed has
-// them.
+/// A JS string: UTF-16 code units, stored as their WTF-8 in `text` (see
+/// script/utf16.hpp for why the storage is not UTF-16).
+///
+/// `text` never changes once the string exists, so what the members below
+/// measure is measured once and kept: the length in units on first use, and,
+/// for a string that is not every-byte-one-unit, a mark every 32 units on the
+/// first indexed read, so `s[i]` walks at most 32 code points from the nearest.
+/// An ASCII string, which is nearly every string a page makes, pays one scan in
+/// its life and answers every index from its bytes after that. The marks cost
+/// eight bytes per 32 units, and only a non-ASCII string that is indexed has
+/// them.
 struct string_object final : heap_object {
     std::string text;
     explicit string_object(std::string s) : heap_object(heap_kind::string), text(std::move(s)) {}
 
-    // The length in UTF-16 code units - what `length` answers.
+    /// The length in UTF-16 code units: what `length` returns.
     [[nodiscard]] std::size_t length() const {
         if (units_ == unmeasured) {
             units_ = utf16::length(text);
@@ -220,15 +226,16 @@ struct string_object final : heap_object {
         }
         return units_ & ~pair_bit;
     }
-    // Does the text hold a code point above U+FFFF - two units? Measured
-    // with the length and kept in its top bit, so a RegExp without `u`
-    // asks it per exec for nothing (regexp/execution.cpp builtin_exec).
+    /// Whether the text holds a code point above U+FFFF (two units). Measured
+    /// with the length and kept in its top bit, so a RegExp without `u`
+    /// asks it per exec for nothing (regexp/execution.cpp builtin_exec).
     [[nodiscard]] bool has_pair() const {
         (void)length();
         return (units_ & pair_bit) != 0;
     }
-    // RegExp without u/v walks code units. Keep its split view once per
-    // immutable string: a global scan must not copy the subject per match.
+    /// The text with pairs split into lone halves (utf16::split_pairs), for a
+    /// RegExp without u/v, which walks code units. Kept once per immutable
+    /// string, so a global scan does not copy the subject per match.
     [[nodiscard]] const string_object & code_units() const {
         if (!has_pair()) { return *this; }
         if (!code_units_) {
@@ -236,25 +243,25 @@ struct string_object final : heap_object {
         }
         return *code_units_;
     }
-    // Is every byte one unit? Then an index into `text` IS a unit index, and
-    // nothing below decodes.
+    /// Whether every byte is one unit. Then an index into `text` is a unit
+    /// index, and nothing below decodes.
     [[nodiscard]] bool bytewise() const { return length() == text.size(); }
-    // Where unit `i` (at most the length) lives in `text`.
+    /// Where unit `i` (at most the length) lives in `text`.
     [[nodiscard]] utf16::position locate(std::size_t i) const;
-    // The unit index of byte offset `byte`, which begins a code point.
+    /// The unit index of byte offset `byte`, which begins a code point.
     [[nodiscard]] std::size_t unit_index(std::size_t byte) const;
-    // Code unit `i`, which must be below the length.
+    /// Code unit `i`, which must be below the length.
     [[nodiscard]] char16_t unit(std::size_t i) const {
         if (bytewise()) { return static_cast<char16_t>(static_cast<unsigned char>(text[i])); }
         return utf16::unit_at(text, locate(i));
     }
-    // The one-unit string at `i` - what `s[i]` and charAt answer.
+    /// The one-unit string at `i`: what `s[i]` and charAt return.
     [[nodiscard]] std::string unit_text(std::size_t i) const {
         if (bytewise()) { return text.substr(i, 1); }
         return utf16::unit_text(unit(i));
     }
-    // Units [from, to) as WTF-8, a split pair leaving its lone half; empty
-    // unless from < to <= length().
+    /// Units [from, to) as WTF-8, a split pair leaving its lone half; empty
+    /// unless from < to <= length().
     [[nodiscard]] std::string slice(std::size_t from, std::size_t to) const {
         if (from >= to) { return {}; }
         if (bytewise()) { return text.substr(from, to - from); }
@@ -270,36 +277,36 @@ private:
     mutable std::unique_ptr<string_object> code_units_;
 };
 
-// The spellings that mark a property key as a SYMBOL rather than a string:
+// The spellings that mark a property key as a symbol rather than a string:
 // the enumeration walk, the JSON writer and the code that mints them all
 // recognise them (core/symbol.hpp).
 using ctbrowser::registered_symbol_key_prefix;
 using ctbrowser::symbol_key_mark;
 using ctbrowser::symbol_key_prefix;
-// A PRIVATE NAME'S KEY, and an INTERNAL SLOT'S. `#x` is a property of the
-// object here, not a slot in a per-class private environment - but its key is
-// the internal lead byte, `#` and `x` (core/symbol.hpp), which no JS string
+// The key of a private name, and of an internal slot. `#x` is a property of
+// the object here, not a slot in a per-class private environment, but its key
+// is the internal lead byte, `#` and `x` (core/symbol.hpp), which no JS string
 // can hold, so `o["#x"]`, `"#x" in o`, hasOwnProperty,
 // Object.keys/getOwnPropertyNames/getOwnPropertySymbols, for-in and
-// JSON.stringify never see it (7.3.28-ish: private elements are not
-// properties). A built-in's slot - [[ErrorData]], a RegExp String Iterator's
-// [[IteratedString]] - is the same kind of key, spelled
-// CTBROWSER_PRIVATE_KEY("ErrorData"), and exactly as out of a page's reach.
+// JSON.stringify never see it (ECMA-262 PrivateElement: private elements are
+// not properties). A built-in's slot ([[ErrorData]], a RegExp String
+// Iterator's [[IteratedString]]) is the same kind of key, spelled
+// CTBROWSER_PRIVATE_KEY("ErrorData"), and equally out of a page's reach.
 #define CTBROWSER_PRIVATE_KEY(text) CTBROWSER_INTERNAL_KEY_LEAD "#" text
 inline constexpr std::string_view private_key_prefix = CTBROWSER_PRIVATE_KEY("");
 [[nodiscard]] inline bool is_private_key(std::string_view key) noexcept {
     return key.starts_with(private_key_prefix);
 }
 
-// A SYMBOL IS A PROPERTY KEY NOBODY CAN WRITE BY ACCIDENT - OR ON PURPOSE.
-//
-// Its identity is `key`, a string no JS string can equal: the internal lead
-// byte, `@`, then the well-known name (`iterator`) or `sym:<n>:<description>`
-// or `for:<key>` (core/symbol.hpp). Property access already goes through
-// to_string() for a computed key, so a symbol-keyed property works through the
-// existing string-keyed machinery with no change to the object model at all.
-// `typeof` is "symbol", and ToPropertyKey hands the key back as the symbol
-// (context::key_value), never as a string a page could hold.
+/// A symbol: a property key nobody can write by accident, or on purpose.
+///
+/// Its identity is `key`, a string no JS string can equal: the internal lead
+/// byte, `@`, then the well-known name (`iterator`) or `sym:<n>:<description>`
+/// or `for:<key>` (core/symbol.hpp). Property access already goes through
+/// to_string() for a computed key, so a symbol-keyed property works through the
+/// existing string-keyed machinery with no change to the object model at all.
+/// `typeof` is "symbol", and ToPropertyKey hands the key back as the symbol
+/// (context::key_value), never as a string a page could hold.
 struct symbol_object final : heap_object, ctbrowser::symbol_value {
     symbol_object(std::string d, std::string k)
         : heap_object(heap_kind::symbol), symbol_value(std::move(d), std::move(k)) {}
@@ -307,14 +314,13 @@ struct symbol_object final : heap_object, ctbrowser::symbol_value {
         : heap_object(heap_kind::symbol), symbol_value(std::move(symbol)) {}
 };
 
-// AN ARBITRARY-PRECISION INTEGER. `boost::multiprecision::cpp_int` holds it,
-// and the value IS the integer - there is no text form to keep in step.
-//
-// THIS IS A DELIBERATE EXCEPTION to the rule against a third-party header in a
-// public one, taken on the owner's instruction; the measured compile-time
-// cost is in docs/build.md. cpp_int is header-only, signed and unbounded,
-// which is exactly the BigInt semantic.
-//
+/// An arbitrary-precision integer. `boost::multiprecision::cpp_int` holds it,
+/// and the value is the integer; there is no text form to keep in step.
+///
+/// This is a deliberate exception to the rule against third-party headers in
+/// public headers (see CLAUDE.md, "Invariants"): cpp_int is header-only,
+/// signed and unbounded, which is exactly BigInt's semantics. The measured
+/// compile-time cost is in ctbrowser/docs/build.md.
 using bigint = boost::multiprecision::cpp_int;
 
 struct bigint_object final : heap_object {
@@ -323,7 +329,7 @@ struct bigint_object final : heap_object {
 };
 
 // `===` in full. Comparing the raw bits is right for objects (identity), for
-// the singletons and for booleans - but WRONG for strings, which JavaScript
+// the singletons and for booleans, but wrong for strings, which JavaScript
 // compares by content. Numbers go through the double comparison so NaN !== NaN
 // and -0 === 0, both of which the bit comparison gets wrong.
 [[nodiscard]] inline bool value::strict_equals(value o) const noexcept {
@@ -333,15 +339,15 @@ struct bigint_object final : heap_object {
         return static_cast<const string_object *>(as_heap())->text ==
                static_cast<const string_object *>(o.as_heap())->text;
     }
-    // A BigInt IS ITS VALUE, like a string and unlike an object: `1n === 1n`
-    // is true even though the two are separate allocations. Note it is FALSE
-    // against the Number 1 - `===` never crosses types - which is the whole
-    // reason `1n == 1` and `1n === 1` differ.
+    // A BigInt is its value, like a string and unlike an object: `1n === 1n`
+    // is true even though the two are separate allocations. It is false
+    // against the Number 1 (`===` never crosses types), which is why
+    // `1n == 1` and `1n === 1` differ.
     if (is_kind(heap_kind::bigint) && o.is_kind(heap_kind::bigint)) {
         return static_cast<const bigint_object *>(as_heap())->digits ==
                static_cast<const bigint_object *>(o.as_heap())->digits;
     }
-    // A SYMBOL'S IDENTITY IS ITS KEY (see symbol_object): the one
+    // A symbol's identity is its key (see symbol_object): the one
     // Object.getOwnPropertySymbols rebuilds from a table key is the one the
     // property was defined with.
     if (is_kind(heap_kind::symbol) && o.is_kind(heap_kind::symbol)) {
@@ -368,21 +374,21 @@ struct bigint_object final : heap_object {
     return strict_equals(o);
 }
 
-// `new Proxy(target, handler)`. A trap that is not implemented is not silently
-// skipped; the operation falls through to the target, which is what an absent
-// trap means anyway.
+/// `new Proxy(target, handler)`. A trap that is not implemented is not silently
+/// skipped; the operation falls through to the target, which is what an absent
+/// trap means anyway.
 struct proxy_object final : heap_object {
     value target;
     value handler;
-    // Private elements belong to the Proxy itself, even after revocation.
-    // Allocated lazily; ordinary property operations only see the target.
+    /// Private elements belong to the Proxy itself, even after revocation.
+    /// Allocated lazily; ordinary property operations only see the target.
     value private_elements;
-    // [[Call]] and [[Construct]] are decided when the proxy is made, by its
-    // target (10.5.14 ProxyCreate steps 7.a and 7.b.i), and revoking it takes
-    // neither away: a revoked proxy over a function is still a function to
-    // `typeof`, and calling it is the TypeError. `constructor` is ProxyCreate's
-    // to set (builtins' proxy.cpp asks is_constructor); a proxy the VM makes
-    // for itself leaves it false, and is_constructor asks its target.
+    /// [[Call]] and [[Construct]] are decided when the proxy is made, by its
+    /// target (10.5.14 ProxyCreate steps 7.a and 7.b.i), and revoking it takes
+    /// neither away: a revoked proxy over a function is still a function to
+    /// `typeof`, and calling it is a TypeError. `constructor` is ProxyCreate's
+    /// to set (builtins' proxy.cpp asks is_constructor); a proxy the VM makes
+    /// for itself leaves it false, and is_constructor asks its target.
     bool callable;
     bool constructor = false;
     proxy_object(value t, value h)

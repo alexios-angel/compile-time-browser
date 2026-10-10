@@ -1,12 +1,11 @@
-// early errors - functions and classes: parameter lists, and the class body
-// rules over constructors, `prototype` and private names.
+//===- functions.cpp - Function and class errors ----------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,476-line compile/early_errors.cpp on
-// 2026-09-08 - the checker was one class with every member inline, as
-// compile.cpp was before it became compile/. The class is declared in
-// checker.hpp beside this, in ctbrowser::script::detail::early; the bodies are
-// where they were, in the file that owns the concern. early_errors.hpp, the
-// public face of the pass, did not change.
+// Early errors for functions and classes: parameter lists, and the class
+// body rules over constructors, `prototype` and private names. Members of
+// checker (declared in checker.hpp); the public entry point is
+// early_errors.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "checker.hpp"
 
@@ -17,11 +16,11 @@
 
 namespace ctbrowser::script::detail::early {
 
-// --- functions --------------------------------------------------------------
+// --- Functions. ---
 
-// Is this a simple parameter list - names only, no default, no rest, no
-// pattern? 15.1.3 IsSimpleParameterList, and the answer decides whether a
-// duplicate parameter name is an error at all.
+// Returns whether this is a simple parameter list: names only, no default,
+// no rest, no pattern (15.1.3 IsSimpleParameterList). The answer decides
+// whether a duplicate parameter name is an error in sloppy code.
 [[nodiscard]] bool checker::simple_parameters(std::span<const std::int32_t> params) const {
     for (const std::int32_t p : params) {
         const vp::node & n = at(p);
@@ -37,13 +36,11 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
     std::vector<binding> names;
     for (const std::int32_t p : params) { bound_names(p, binding_kind::let_, names); }
 
-    // 15.1.2, 15.2.1, 15.3.1: a duplicate parameter name is an error when
-    // the list is not simple, and always for an arrow or a method. A
-    // duplicate in a SIMPLE list is an error only in strict mode, which
-    // this engine does not have - so `function f(a, a) {}` is accepted, as
-    // sloppy JavaScript accepts it.
+    // 15.1.2, 15.2.1, 15.3.1: a duplicate parameter name is an error in an
+    // arrow, a method, strict code, or any non-simple parameter list. Only a
+    // sloppy function with a simple list accepts `function f(a, a) {}`.
     // Strictness is decided here, before the frame exists: the enclosing
-    // frame's, a class body's, or this body's own directive.
+    // frame's, a class body's, or this body's own "use strict" directive.
     const bool strict_body = strict() || class_depth_ > 0 ||
                              (at(n.a).kind == nk::block && has_use_strict_directive(n.a));
     const bool must_be_unique = what == frame_kind::arrow || what == frame_kind::method ||
@@ -60,7 +57,7 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
             }
         }
     }
-    // 15.1.1: a rest parameter must be last - and nothing follows it, a
+    // 15.1.1: a rest parameter must be last, and nothing follows it, a
     // comma included (`(...a,)` is not in the grammar; the parser keeps no
     // trace of the comma, so the source is asked, as for a rest element).
     for (std::size_t i = 0; i < params.size(); ++i) {
@@ -73,7 +70,7 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
         break;
     }
     // 15.2.1 (and every function form): a "use strict" directive needs a
-    // simple parameter list - a default, a rest or a pattern makes it an
+    // simple parameter list: a default, a rest or a pattern makes it an
     // error, because the directive would have to apply to code that already
     // ran under the other rules.
     if (at(n.a).kind == nk::block && has_use_strict_directive(n.a) && !simple_parameters(params)) {
@@ -82,20 +79,20 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
                idx);
     }
 
-    const std::int32_t bits = n.c > 0 ? n.c : 0; // see check_class: -1 is neither
+    const std::int32_t bits = n.c > 0 ? n.c : 0; // See check_class: -1 is neither.
     frames_.push_back(
         frame{what, {}, {}, 0, 0, super_call_ok, strict_body, (bits & 1) != 0, (bits & 2) != 0});
     check_strict_bindings(names);
     if (strict_body && n.kind == nk::func_expr) { check_strict_binding(n.text, idx); }
-    // A DECLARATION's name is the enclosing scope's binding and is checked
-    // there - but a "use strict" body makes it strict mode code too (11.2.2),
+    // A declaration's name is the enclosing scope's binding and is checked
+    // there, but a "use strict" body makes it strict mode code too (11.2.2),
     // so `function arguments() { 'use strict'; }` is refused (15.2.1). Not the
     // contextual rules: those read the enclosing frame, not this one.
     if (strict_body && n.kind == nk::func_decl && (n.text == "eval" || n.text == "arguments")) {
         report(quoted(n.text) + " may not be bound or assigned in strict mode code", idx);
     }
     // 15.5.1 / 15.8.1: `yield` in a generator's parameters and `await` in an
-    // async function's are errors - see in_parameters_.
+    // async function's are errors; see in_parameters_.
     const bool outer_parameters = in_parameters_;
     in_parameters_ = true;
     for (const std::int32_t p : params) {
@@ -115,7 +112,7 @@ void checker::check_function(std::int32_t idx, frame_kind what, bool super_call_
     frames_.pop_back();
 }
 
-// 15.4.1: a getter takes no parameter, a setter exactly one - a
+// 15.4.1: a getter takes no parameter, a setter exactly one: a
 // FormalParameter, so a default or a pattern but never a rest.
 void checker::check_accessor_arity(std::int32_t fn, bool setter) {
     const std::span<const std::int32_t> params = kids(at(fn));
@@ -127,12 +124,13 @@ void checker::check_accessor_arity(std::int32_t fn, bool setter) {
     }
 }
 
-// --- classes -----------------------------------------------------------------
+// --- Classes. ---
 
-// IS THE HERITAGE PARENTHESISED? The parser keeps no parentheses, so
-// `class C extends (a, b) {}` and `class C extends a, b {}` are one tree -
-// and only the second is the error. The source is asked: the first thing
-// after the `extends` keyword.
+// Returns whether the heritage is parenthesised. The parser keeps no
+// parentheses, so `class C extends (a, b) {}` and `class C extends a, b {}`
+// are one tree, and only the second is an error. The source is scanned for
+// the first character after the `extends` keyword. When it cannot tell, it
+// answers true so that nothing is refused.
 [[nodiscard]] bool checker::heritage_parenthesised(std::int32_t klass) const {
     const vp::node & n = at(klass);
     if (source_.empty() || n.end <= n.begin || n.end > source_.size()) { return true; }
@@ -140,7 +138,7 @@ void checker::check_accessor_arity(std::int32_t fn, bool setter) {
     std::size_t at_word = 0;
     for (;;) {
         at_word = text.find("extends", at_word);
-        if (at_word == std::string_view::npos) { return true; } // not found: do not judge
+        if (at_word == std::string_view::npos) { return true; } // Not found: do not judge.
         const bool starts =
             at_word == 0 || !(std::isalnum(static_cast<unsigned char>(text[at_word - 1])) ||
                               text[at_word - 1] == '_' || text[at_word - 1] == '$');
@@ -154,8 +152,8 @@ void checker::check_accessor_arity(std::int32_t fn, bool setter) {
     for (std::size_t i = at_word + 7; i < text.size(); ++i) {
         const char c = text[i];
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { continue; }
-        // A `(` that IS the heritage's own first token - an arrow's parameter
-        // list, `extends () => {}` - is not a parenthesis around it. A function
+        // A `(` that is the heritage's own first token (an arrow's parameter
+        // list, `extends () => {}`) is not a parenthesis around it. A function
         // or arrow node carries its span; nothing else that reaches here does.
         const vp::node & heritage = at(n.a);
         if (c == '(' && heritage.begin != 0 && heritage.begin == n.begin + i) { return false; }
@@ -168,7 +166,7 @@ void checker::check_class(std::int32_t idx) {
     const vp::node & n = at(idx);
     // ClassHeritage is `extends LeftHandSideExpression` (15.7): an arrow, an
     // assignment, a conditional or an operator there is not in the grammar,
-    // whatever the parser let through - unless it was parenthesised, which
+    // whatever the parser let through, unless it was parenthesised, which
     // the tree cannot show and the source can.
     switch (at(n.a).kind) {
     case nk::arrow:
@@ -186,14 +184,14 @@ void checker::check_class(std::int32_t idx) {
         break;
     default: break;
     }
-    // `extends <expr>` - strict code like the rest of the class (15.7.1),
+    // `extends <expr>` is strict code like the rest of the class (15.7.1),
     // which is why class_depth_ is raised around it, and outside the body's
     // private names, which is why that stack is pushed only below.
     ++class_depth_;
     walk_expression(n.a);
     --class_depth_;
     const bool derived = n.a >= 0;
-    // 15.7.1: all parts of a class are strict mode code - its NAME included
+    // 15.7.1: all parts of a class are strict mode code, its name included
     // (`class let {}`, `class yield {}`, `class eval {}` are all errors,
     // 13.1.1 under strict). strict() reads the frame, which a class body
     // does not push, so the strict rules are applied here by hand.
@@ -213,7 +211,7 @@ void checker::check_class(std::int32_t idx) {
     }
     ++class_depth_;
     // The body's private names, in scope for every member from here on and
-    // for nothing before - the heritage above was walked against the OUTER
+    // for nothing before: the heritage above was walked against the outer
     // environment (ClassDefinitionEvaluation evaluates it before the class's
     // PrivateEnvironment is entered).
     private_names_.emplace_back();
@@ -230,12 +228,14 @@ void checker::check_class(std::int32_t idx) {
 
     std::vector<private_name> privates;
     std::size_t constructors = 0;
+    // Class member node encoding: `c` is 0 field, 1 method, 2 accessor,
+    // 3 static block; `d` bits are 1 static, 2 computed key, 4 setter.
     for (const std::int32_t m : kids(n)) {
         const vp::node & member = at(m);
         if (member.c == 3) {
             // A static block: its statement list is checked as a function
             // body's is (duplicate lexical names, var against let, labels,
-            // break and continue), in a frame of its own.
+            // break and continue), in a frame of its own. It is marked
             // is_async, so that `await` as a name is refused as it is in an
             // async body (ClassStaticBlockStatementList is [+Await]).
             frames_.push_back(frame{frame_kind::static_block, {}, {}, 0, 0, false, true, true});
@@ -247,15 +247,15 @@ void checker::check_class(std::int32_t idx) {
         const bool is_method = member.c == 1;
         const bool is_accessor = member.c == 2;
         const bool is_field = member.c == 0;
-        // `c` ON A FUNCTION NODE IS -1 WHEN IT IS NEITHER async NOR a
-        // generator, not 0: the parser only writes the field when one of
-        // the bits is set. Masking -1 says both, which made every ordinary
-        // `constructor` look like a generator.
+        // A function node's `c` is -1 (not 0) when it is neither async nor a
+        // generator, because the parser writes it only when a bit is set, so
+        // clamp it before masking: 1 is async, 2 is generator. Masking -1
+        // directly would make every ordinary `constructor` a generator.
         const vp::node & body = at(member.b);
         const std::int32_t bits = body.c > 0 ? body.c : 0;
         const bool is_generator = is_method && (bits & 2) != 0;
         const bool is_async = is_method && (bits & 1) != 0;
-        // THE PROPERTY NAME AS WRITTEN. The parser files a string-literal
+        // The property name as written. The parser files a string-literal
         // key (`'constructor'`) as a computed key holding a str node but
         // keeps the quoted text, and 15.7.1's PropName rules are about the
         // literal, so it is read back here without its quotes. A bracketed
@@ -266,12 +266,12 @@ void checker::check_class(std::int32_t idx) {
         if (computed && !literal.empty() && literal.size() >= 2 &&
             (literal.front() == '\'' || literal.front() == '"')) {
             literal = literal.substr(1, literal.size() - 2);
-            computed = literal.find('\\') != std::string_view::npos; // an escape: not read
+            computed = literal.find('\\') != std::string_view::npos; // An escape: not read.
         }
 
         // 15.7.1. A class body may define at most one constructor, and
         // "constructor" may not be a getter, a setter, a generator, an
-        // async method or a field - a static field included.
+        // async method or a field, a static field included.
         if (!computed && !is_static && literal == "constructor") {
             if (is_method && !is_generator && !is_async) {
                 ++constructors;
@@ -293,7 +293,7 @@ void checker::check_class(std::int32_t idx) {
         }
         // 15.7.1: PrivateBoundIdentifiers may not contain a duplicate,
         // unless the pair is one getter and one setter of the same
-        // staticness - which is how a private accessor is written.
+        // staticness, which is how a private accessor is written.
         if (!computed && member.text.starts_with('#')) {
             private_name * seen = nullptr;
             for (private_name & held : privates) {
@@ -320,8 +320,8 @@ void checker::check_class(std::int32_t idx) {
 
         if (computed) { walk_expression(member.a); }
         if (is_method || is_accessor) {
-            // THE ONE PLACE `super(...)` IS ALLOWED: the constructor of a
-            // class that has a heritage.
+            // `super(...)` is allowed only in the constructor of a class that
+            // has a heritage.
             const bool is_constructor =
                 is_method && !is_static && !computed && literal == "constructor";
             if (is_accessor) { check_accessor_arity(member.b, (member.d & 4) != 0); }

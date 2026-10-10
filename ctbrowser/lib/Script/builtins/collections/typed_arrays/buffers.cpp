@@ -1,5 +1,9 @@
-// ctbrowser.script builtins - ArrayBuffer (ECMA-262 25.1) and the store every
-// view shares. internal.hpp in this directory says how a buffer is laid out.
+//===- typed_arrays/buffers.cpp - ArrayBuffer -------------------*- C++ -*-===//
+//
+// ArrayBuffer (ECMA-262 25.1) and the byte store that every view on it
+// shares. internal.hpp in this directory describes the store's layout.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -7,20 +11,23 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
+/// The store's `named` table, created on first use.
 [[nodiscard]] object_object & store_slots(array_object * store) {
     return store->named_table();
 }
 
+/// Reads private slot `key` off a store, or undefined.
 [[nodiscard]] value slot_of(array_object * store, std::string_view key) {
     if (!store->named) { return value::undefined(); }
     value * found = store->named->find(key);
     return found == nullptr ? value::undefined() : *found;
 }
 
-// Re-bound one registered view against the store's current length: the
-// TypedArray's own [[ByteOffset]] / [[ArrayLength]] never change, but what
-// the VM reads off `view_length` and `byte_offset` has to be what
-// IsTypedArrayOutOfBounds and TypedArrayLength would answer now.
+/// Re-bounds one registered view against the store's current length. The
+/// TypedArray's own [[ByteOffset]] and [[ArrayLength]] never change, but what
+/// the VM reads off `view_length` and `byte_offset` has to be what
+/// IsTypedArrayOutOfBounds and TypedArrayLength would answer now; an
+/// out-of-bounds or detached view reads as empty.
 void rebound_view(array_object * store, array_object * view) {
     const std::size_t width = bytes_per_element(view->elements);
     const std::size_t bytes = store->items.size();
@@ -47,6 +54,7 @@ void rebound_view(array_object * store, array_object * view) {
     view->view_length = out ? 0 : static_cast<std::uint32_t>((bytes - at) / width);
 }
 
+/// rebound_view over every view registered on the store.
 void rebound_views(array_object * store) {
     const value views = slot_of(store, store_views_key);
     if (!views.is_array()) { return; }
@@ -55,6 +63,7 @@ void rebound_views(array_object * store) {
     }
 }
 
+/// The current global ArrayBuffer's `prototype`, or null.
 [[nodiscard]] object_object * array_buffer_prototype(context & cx) {
     const value ctor = cx.global("ArrayBuffer");
     if (!ctor.is_kind(heap_kind::native)) { return nullptr; }
@@ -63,8 +72,8 @@ void rebound_views(array_object * store) {
                                                   : nullptr;
 }
 
-// The receiver of an ArrayBuffer.prototype method, or null with the
-// TypeError in flight (25.1.6.x step 2: RequireInternalSlot).
+/// The receiver of an ArrayBuffer.prototype method, or null with the
+/// TypeError in flight (25.1.6.x step 2: RequireInternalSlot).
 [[nodiscard]] array_object * this_buffer(context & cx, const char * method) {
     array_object * store = buffer_store(cx.current_this());
     if (store == nullptr) {
@@ -203,8 +212,9 @@ bool to_index(context & cx, value v, double & out) {
 }
 
 bool to_integer_or_infinity(context & cx, value v, double & out) {
-    // ToPrimitive FIRST, so a Symbol wrapper (`Object(Symbol())`) is refused
-    // the way a bare Symbol is: to_number_value cannot say it unboxed one.
+    // ToPrimitive first, so a Symbol wrapper (`Object(Symbol())`) is refused
+    // the way a bare Symbol is: to_number_value cannot report that it
+    // unboxed one.
     value prim = v;
     if (v.is_object_like() && !cx.to_primitive_hint(v, "number", prim)) { return false; }
     if (!numeric_arg(cx, prim)) { return false; }
@@ -215,7 +225,7 @@ bool to_integer_or_infinity(context & cx, value v, double & out) {
     const double n = cx.to_number_value(prim);
     if (cx.throw_pending()) { return false; }
     out = std::isnan(n) ? 0.0 : std::trunc(n);
-    if (out == 0) { out = 0; } // -0 is +0
+    if (out == 0) { out = 0; } // Normalises -0 to +0.
     return true;
 }
 
@@ -228,15 +238,16 @@ std::size_t relative_index(double rel, std::size_t len) {
     return rel > length ? len : static_cast<std::size_t>(rel);
 }
 
-// ArrayBufferCopyAndDetach (25.1.3.16), behind transfer,
-// transferToFixedLength and transferToImmutable.
 namespace {
+/// What the copy made by copy_and_detach becomes.
 enum class after_copy : std::uint8_t {
     preserve_resizability,
     fixed_length,
     immutable
 };
 
+/// ArrayBufferCopyAndDetach (25.1.3.16), behind transfer,
+/// transferToFixedLength and transferToImmutable.
 value copy_and_detach(context & c, std::span<value> a, const char * method, after_copy mode) {
     array_object * store = this_buffer(c, method);
     if (store == nullptr) { return value::undefined(); }
@@ -268,7 +279,8 @@ value copy_and_detach(context & c, std::span<value> a, const char * method, afte
     return out;
 }
 
-// ResolveBounds, as slice and sliceToImmutable spell it: -Infinity is 0.
+/// ResolveBounds, as slice and sliceToImmutable spell it: relative start and
+/// end clamped into [0, len], with -Infinity as 0.
 [[nodiscard]] bool resolve_bounds(context & c, std::span<value> a, std::size_t len,
                                   std::size_t & first, std::size_t & final) {
     double start = 0;
@@ -320,9 +332,9 @@ void install_array_buffer(context & cx) {
         ctor->define_accessor(CTBROWSER_SYMBOL_KEY("species"), value::object(species),
                               value::undefined(), attr_configurable);
     }
-    // 25.1.5.1 ArrayBuffer.isView: a typed array or a DataView, by what the
-    // object IS - an array_object with an element kind, or an object carrying
-    // the DataView slot - not by the shape of its properties.
+    // 25.1.5.1 ArrayBuffer.isView: a typed array or a DataView, judged by what
+    // the object is (an array_object with an element kind, or an object
+    // carrying the DataView slot), not by the shape of its properties.
     method(cx, ctor, "isView", 1, [](context &, std::span<value> a) {
         const value v = arg_at(a, 0);
         return value::boolean(is_typed_array(v) || is_data_view(v));
@@ -405,8 +417,8 @@ void install_array_buffer(context & cx) {
             c.throw_error("TypeError", "Cannot slice a detached ArrayBuffer");
             return value::undefined();
         }
-        // ...or shorter: copy what is still there (step 22-24, over the
-        // CURRENT length).
+        // ...or shorter: copy what is still there (steps 22-24, over the
+        // current length).
         const std::size_t now = store->items.size();
         const std::size_t from = std::min(first, now);
         const std::size_t count = std::min(new_len, now - from);

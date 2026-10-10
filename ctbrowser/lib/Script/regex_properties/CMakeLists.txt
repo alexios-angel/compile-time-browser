@@ -1,3 +1,5 @@
+# Chunks of the generated Unicode tables, written by
+# tools/gen/unicode_properties.py and #included by ../regex_properties.inc.
 target_sources(ctbrowser-script PRIVATE
   rx_binary-01.inc
   rx_folds-01.inc

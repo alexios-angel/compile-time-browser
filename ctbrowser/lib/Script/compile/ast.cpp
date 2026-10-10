@@ -1,10 +1,10 @@
-// compiler_impl - AST access.
+//===- ctbrowser/lib/Script/compile/ast.cpp - AST access --------*- C++ -*-===//
 //
-// Reading the node pool, and compiling an expression from a
-// FOREIGN ast - one parsed separately, whose nodes this compiler owns.
+// compiler_impl members that read the node pool, and that compile an
+// expression from a foreign AST: one parsed separately, whose nodes this
+// compiler owns. The class is declared in compiler_impl.hpp beside this file.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -18,7 +18,7 @@ void compiler_impl::compile_owned_expr(std::string source, std::uint16_t dst) {
 void compiler_impl::compile_foreign_expr(std::string_view source, std::uint16_t dst) {
     auto tree = std::make_unique<vp::ast>(vp::parse(source));
     if (!tree->ok || tree->root < 0) {
-        // A TEMPLATE HOLE THAT DOES NOT PARSE is a SyntaxError, not undefined.
+        // A template hole that does not parse is a SyntaxError, not undefined.
         // Thrown where it is evaluated rather than refusing the whole script:
         // the parse also fails on engine gaps (`${yield x}` parses alone).
         emit_throw("SyntaxError", "parse error: " + std::string{tree->error});

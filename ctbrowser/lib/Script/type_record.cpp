@@ -1,14 +1,16 @@
-// The type oracle's recording side. See include/ctbrowser/script/type_record.hpp
-// for what it is for; this is how it is done.
+//===- type_record.cpp - Type and escape recording --------------*- C++ -*-===//
 //
-// THE COST WHEN IT IS OFF IS NOTHING, and getting there took a measurement.
-// The hook started as `if (recorder_ != nullptr)` at the loop head, which cost
-// +0.53% on bench_script and +0.48% on phaser_invaders - a perfectly predicted
-// not-taken branch is still a branch when the loop runs it a hundred million
-// times. run_loop.cpp is now a template on one bool and the shipped
-// instantiation contains no trace of this file. Everything below - the deferred
-// flush, the interning, the parameter sweep - lives out of the loop's
-// translation unit and runs only when a recorder is installed.
+// The type oracle's recording side: per-register type observations and
+// per-allocation-site escape observations, written to a text recording that
+// tools/check/type-oracle.py and escape-oracle.py check ctcompile against.
+// See include/ctbrowser/script/type_record.hpp for what it is for.
+//
+// With no recorder installed this costs nothing: run_loop.cpp is a template
+// on a bool, and the shipped instantiation has no recording hook. (A plain
+// `if (recorder_ != nullptr)` at the loop head measured +0.5% on
+// bench_script.) Everything below runs only when a recorder is installed.
+//
+//===----------------------------------------------------------------------===//
 
 #include <algorithm>
 #include <cmath>
@@ -29,11 +31,9 @@ namespace ctbrowser::script {
 
 namespace {
 
-// One recorder per process. Not thread_local: a worker is its own agent with
-// its own context, and the whole point is that one recording covers the page.
-// Recording is a single-threaded developer mode - a page with workers must be
-// recorded one agent at a time or the merge is racy, and that is stated here
-// rather than pretended away.
+// One recorder per process, not thread_local, so one recording covers the
+// whole page. Recording is a single-threaded developer mode: a page with
+// workers must be recorded one agent at a time, or the merge is racy.
 type_recorder * g_active = nullptr;
 
 [[nodiscard]] std::string sanitised(std::string_view s) {
@@ -54,7 +54,8 @@ type_recorder * active_type_recorder() noexcept {
 }
 
 // Byte-wise FNV-1a 64 from the standard basis, which is what a default
-// fnv1a_64 is - checked on the published vector, since the value is recorded.
+// fnv1a_64 is. Checked against the published test vector for "a", since the
+// value is written into recordings.
 static_assert([] {
     boost::hash2::fnv1a_64 h;
     const unsigned char a[] = {'a'};
@@ -65,7 +66,7 @@ static_assert([] {
 std::uint64_t program_source_hash(const program & prog) noexcept {
     boost::hash2::fnv1a_64 h;
     h.update(prog.source.data(), prog.source.size());
-    // The KIND is part of the identity for the same reason program_image
+    // The kind is part of the identity for the same reason program_image
     // records it: the same text compiled as a module and as a classic script
     // are different programs with different top-level scoping.
     const auto kind = static_cast<std::uint8_t>(prog.kind);
@@ -75,11 +76,10 @@ std::uint64_t program_source_hash(const program & prog) noexcept {
 
 void register_observation::observe(value v) noexcept {
     ++defs;
-    // THE ORDER IS value.hpp's OWN. is_number() is "does not match the boxed
+    // Test in value.hpp's order. is_number() means "does not match the boxed
     // pattern", so it must be asked first: a heap pointer has the sign bit and
     // the quiet-NaN bits, and a negative NaN double has both too. Asking
-    // is_heap() first would read a NaN as a pointer, which is the one mistake
-    // NaN-boxing punishes with a segfault rather than a wrong answer.
+    // is_heap() first would read a NaN as a pointer and crash.
     if (v.is_number()) {
         kinds |= obs_number;
         const double d = v.as_number();
@@ -91,10 +91,9 @@ void register_observation::observe(value v) noexcept {
         } else if (d != std::trunc(d)) {
             f |= num_fractional;
         } else {
-            // -0 IS INTEGRAL AND FITS int32 AND IS STILL NOT AN i32. `1/-0` is
-            // -Infinity and `1/0` is Infinity, so a register that ever held -0
-            // cannot be lowered to an integer without changing an answer. It
-            // is the first row of the plan's own counterexample table.
+            // -0 is integral and in int32 range but cannot be lowered to an
+            // integer: `1/-0` is -Infinity while `1/0` is Infinity, so a
+            // register that ever held -0 must be flagged.
             if (d == 0.0 && std::signbit(d)) { f |= num_negative_zero; }
             if (d < -2147483648.0 || d > 2147483647.0) { f |= num_wide; }
         }
@@ -125,12 +124,10 @@ std::uint32_t type_recorder::intern(const program * owner) {
     rec.label = owner->functions.empty() ? std::string{} : owner->functions[0].module;
     rec.first = functions_.size();
     rec.count = owner->functions.size();
-    // EVERY function, not only the ones that ran. A register nothing reached
-    // has no observation, and the difference between "never executed" and "any
-    // type" is the whole reason this materialises the empty ones up front: a
-    // recording that simply omits them cannot tell the checker how many there
-    // were, and every precision number computed from it would be a fraction
-    // with the wrong denominator.
+    // Every function, not only the ones that ran. Materialising the empty
+    // ones up front lets the checker tell "never executed" from "any type" and
+    // know how many functions there were; otherwise every precision number
+    // computed from the recording would have the wrong denominator.
     for (std::size_t i = 0; i < owner->functions.size(); ++i) {
         const function_proto & fp = owner->functions[i];
         function_observation f;
@@ -140,10 +137,10 @@ std::uint32_t type_recorder::intern(const program * owner) {
         f.param_count = fp.param_count;
         f.frame_size = fp.frame_size;
         f.regs.resize(fp.frame_size);
-        // AND THE STATIC ALLOCATION SITES, for the same reason: a site
-        // nothing reached has no observation, and the checker can only say
-        // "unobserved" about a site it knows exists. Read out of the bytecode
-        // by opcode, so the inventory is the interpreter's and not a claim.
+        // The static allocation sites too, for the same reason: the checker
+        // can only say "unobserved" about a site it knows exists. They are
+        // read out of the bytecode by opcode, so the inventory is the
+        // interpreter's own.
         for (std::size_t pc = 0; pc < fp.code.size(); ++pc) {
             if (const std::optional<heap_kind> kind = opcode_site_kind(fp.code[pc].code)) {
                 f.allocs.push_back(static_site{static_cast<std::uint32_t>(pc), *kind});
@@ -162,7 +159,7 @@ function_observation * type_recorder::resolve(const program * owner, const funct
     const function_proto * first = owner->functions.data();
     if (proto < first || proto >= first + owner->functions.size()) {
         // The running body is not in the program its closure claims to own.
-        // Counted rather than assumed impossible - `new Function(body)` makes
+        // Counted rather than assumed impossible: `new Function(body)` makes
         // a program the context owns, and a devtools eval runs a function from
         // a different one.
         ++orphans_;
@@ -182,23 +179,20 @@ void type_recorder::step(std::size_t depth, const program * owner, const functio
     if (pend_.size() <= depth) { pend_.resize(depth + 1); }
     pending & p = pend_[depth];
 
-    // --- FLUSH the previous def in this frame --------------------------------
-    //
-    // FOUR THINGS MUST MATCH, and each of them is a real case rather than
-    // defensive noise:
+    // Flush the previous def in this frame. A def is recorded one step late,
+    // once its instruction has written the register, and only if four things
+    // match:
     //
     //   the depth      indexes this vector, so it matches by construction
     //   the proto      a frame at this depth returned and another was pushed
     //   the base       the same body called recursively, one window along
-    //   expect_pc      THE ONE THAT MATTERS. An instruction that threw did not
-    //                  write its destination, and the register still holds
-    //                  whatever was there before. Requiring that the very next
-    //                  instruction executed in this frame is the one after the
-    //                  def drops every unwind, because a handler's address is
-    //                  not pc+1. Without it the recorder observes stale values
-    //                  and the observed set gets WIDER than the truth - which
-    //                  would make the checker report soundness violations that
-    //                  are its own fault.
+    //   expect_pc      the important one. An instruction that threw did not
+    //                  write its destination, so the register still holds a
+    //                  stale value. Requiring that the next instruction
+    //                  executed in this frame is the one after the def drops
+    //                  every unwind, because a handler's address is not pc+1.
+    //                  Recording stale values would widen the observed set
+    //                  and make the checker report false soundness violations.
     if (p.live) {
         if (p.proto == proto && p.base == base && p.expect_pc == pc) {
             const std::size_t at = base + p.reg;
@@ -215,34 +209,22 @@ void type_recorder::step(std::size_t depth, const program * owner, const functio
         p.live = false;
     }
 
-    // --- FRAME ENTRY: the parameters, which no instruction defines -----------
-    //
-    // Arguments are written into r0.. by the CALLER, before the first
-    // instruction runs, so a def-based recorder never sees them. Left out,
-    // every parameter of every function would read as "never executed" - and
-    // parameters are exactly the registers a static inference is least sure
-    // about, so that is the half of the recording most worth having.
+    // Frame entry: record the parameters, which no instruction defines.
+    // Arguments are written into r0.. by the caller before the first
+    // instruction runs, so a def-based recorder never sees them. Without this,
+    // every parameter would read as "never executed", and parameters are the
+    // registers a static inference is least sure about.
     if (pc == 0) {
         if (function_observation * f = resolve(owner, proto); f != nullptr) {
             ++f->entries;
-            // THE DECLARED PARAMETERS, AND NOT THE ARRIVED ONES. This used to
-            // observe max(declared, argc) registers, and that was the
-            // recorder's own soundness bug in the direction its comment above
-            // warns about: context::call copies EVERY argument into the
-            // callee's window, so a callback declared `function (x)` that
-            // Array.prototype.map invokes with (value, index, array) has the
-            // index sitting in slot 1 and the array in slot 2 at entry - on
-            // top of its locals. Six one-parameter callbacks in p5 and phaser
-            // then read as "claimed {i32}, observed {arr,i32}".
-            //
-            // Those slots are not the register AS THE PROGRAM SEES IT. The
-            // compiler initialises every `var` explicitly before a read - so
-            // `function f(x) { var y; return y; }` called as f(1, 2) returns
-            // undefined, measured - and the surplus is reachable only through
-            // the raw window that make_arguments_object and
-            // gather_rest_values are handed. A dataflow analysis over the
-            // bytecode cannot know argc, and should not have to: the extra
-            // values are the frame layout's business, not the variable's.
+            // Only the declared parameters are observed, not every argument
+            // passed. context::call copies all arguments into the callee's
+            // window, so a `function (x)` called by Array.prototype.map also
+            // has index and array in slots 1 and 2 at entry. Those slots are
+            // not variables the program can read (the compiler initialises
+            // every `var` before its first read); they are reachable only
+            // through make_arguments_object and gather_rest_values, which a
+            // bytecode analysis does not model by argc.
             const std::size_t n = std::min<std::size_t>(proto->param_count, f->regs.size());
             (void)argc;
             for (std::size_t r = 0; r < n; ++r) {
@@ -252,7 +234,7 @@ void type_recorder::step(std::size_t depth, const program * owner, const functio
         }
     }
 
-    // --- ARM this instruction's def ------------------------------------------
+    // Arm this instruction's def, to be flushed on the next step.
     if (opcode_writes_a(in.code)) {
         p.proto = proto;
         p.base = base;
@@ -279,10 +261,10 @@ bool type_recorder::write(const std::string & path) const {
     });
 
     std::string text;
-    // VERSION 2: version 1 plus the escape half - one `escape` header line,
-    // an `alloc` line per static site and a `site` line per adjudicated one.
-    // tools/check/type-oracle.py reads both versions and skips the new lines;
-    // tools/check/escape-oracle.py reads only 2.
+    // Recording format version 2: version 1 plus the escape half (one
+    // `escape` header line, an `alloc` line per static site and a `site` line
+    // per adjudicated one). tools/check/type-oracle.py reads both versions and
+    // skips the new lines; tools/check/escape-oracle.py reads only 2.
     put(text, "ctbrowser-type-recording 2\n");
     put(text, "opcodes {} writers {}\n", opcode_count, opcode_writer_count);
     put(text, "defs recorded {} dropped {} orphan-frames {}\n", recorded_, dropped_, orphans_);
@@ -303,17 +285,16 @@ bool type_recorder::write(const std::string & path) const {
             const function_observation & fn = functions_[prog.first + i];
             put(text, "fn {} entries {} params {} frame {} name {}\n", fn.index, fn.entries,
                 fn.param_count, fn.frame_size, sanitised(fn.name));
-            // ONLY THE OBSERVED REGISTERS get a line. `frame` above is the
-            // denominator, so the ones missing here are exactly the ones
-            // nothing reached - which is the number the checker must not
-            // confuse with anything else.
+            // Only observed registers get a line. `frame` above is the
+            // denominator, so the missing ones are exactly those nothing
+            // reached.
             for (std::size_t r = 0; r < fn.regs.size(); ++r) {
                 const register_observation & obs = fn.regs[r];
                 if (!obs.observed()) { continue; }
                 put(text, "r {} defs {} kinds {:08x} num {:08x}\n", r, obs.defs, obs.kinds,
                     obs.numbers);
             }
-            // EVERY STATIC SITE, then ONLY THE ADJUDICATED ONES - the same
+            // Every static site, then only the adjudicated ones: the same
             // denominator discipline for the escape half. A site that made
             // nothing has no `site` line.
             for (const static_site & a : fn.allocs) {
@@ -345,22 +326,28 @@ bool type_recorder::write(const std::string & path) const {
     return static_cast<bool>(out);
 }
 
-// ===================== THE ESCAPE HALF - ctcompile Phase 55O ==================
+//===----------------------------------------------------------------------===//
+// Escape recording
+//===----------------------------------------------------------------------===//
 //
-// The recorder's side of the protocol is bookkeeping: a record per tracked
-// allocation, filed under the frame that made it, resolved when that frame
-// ends. The context's side, further down, is the part that needs the VM - the
-// bounded root walk that decides whether an object is still reachable.
+// Records, per allocation site, whether objects made there outlive the frame
+// that made them (escaped) or not (confined). ctcompile's escape analysis is
+// checked against these observations (tools/check/escape-oracle.py).
+//
+// The recorder's side is bookkeeping: a record per tracked allocation, filed
+// under the frame that made it, resolved when that frame ends. The context's
+// side, further down, needs the VM: the bounded root walk that decides
+// whether an object is still reachable.
 
 void type_recorder::allocated(heap_object * p, const program * owner, const function_proto * proto,
                               std::uint32_t pc, std::uint64_t serial) {
     function_observation * f = resolve(owner, proto);
-    if (f == nullptr) { return; } // an orphan frame, counted by resolve
+    if (f == nullptr) { return; } // An orphan frame, counted by resolve.
     const auto function = static_cast<std::size_t>(f - functions_.data());
-    // AN ADDRESS SEEN TWICE WITHOUT A FREE BETWEEN cannot happen - the only two
-    // `delete`s of a heap object are in sweep() and sweep_all(), both hooked -
-    // and is handled rather than assumed: the older record is flagged dead,
-    // which is UNRESOLVED, never confined.
+    // An address seen twice without a free in between should not happen (the
+    // only two `delete`s of a heap object are in sweep() and sweep_all(), both
+    // hooked), but it is handled rather than assumed: the older record is
+    // flagged dead, which counts as unresolved, never confined.
     if (const auto stale = alloc_.find(p); stale != alloc_.end()) {
         if (const auto list = by_serial_.find(stale->second.serial);
             list != by_serial_.end() && stale->second.slot < list->second.size()) {
@@ -433,9 +420,10 @@ void type_recorder::begin_check(std::uint64_t serial, std::vector<escape_record>
         if (!r.dead) { alloc_.erase(r.object); }
     }
     function_observation & f = functions_[records.front().function];
-    // The explicit return hook supplies the in-flight value. A mixed unwind
-    // or legacy exit does not opt in. The sentinel coordinate is retained,
-    // so even checked compiled observations never join a static source site.
+    // A compiled (AOT) frame is checked only when it ends through the
+    // explicit return hook, which supplies the in-flight return value; other
+    // compiled exits are folded as unchecked. Compiled records keep the
+    // `compiled_pc` sentinel, so they never merge with a bytecode site.
     const bool compiled = records.front().pc == compiled_pc;
     std::uint64_t & checks = compiled ? f.compiled_checks : f.checks;
     if ((compiled && !compiled_return) || (budget_ != 0 && checks >= budget_)) {
@@ -457,10 +445,10 @@ void type_recorder::finish_check(const std::vector<escape_record> & records) {
 std::vector<std::vector<site_observation>> type_recorder::all_sites() const {
     std::vector<std::vector<site_observation>> out(functions_.size());
     for (std::size_t i = 0; i < functions_.size(); ++i) { out[i] = functions_[i].sites; }
-    // EVERY RECORD STILL PENDING IS UNCHECKED: its frame ended through a path
+    // Every record still pending is unchecked: its frame ended through a path
     // FrameEnds.def lists as hooked=0, or has not ended. Folded into a copy,
-    // so that asking twice answers the same and the tallies stay what the
-    // hooks made them.
+    // so asking twice gives the same answer and the stored tallies stay what
+    // the hooks made them.
     for (const auto & [serial, list] : by_serial_) {
         for (const escape_record & r : list) {
             std::vector<site_observation> & sites = out[r.function];
@@ -488,10 +476,10 @@ std::vector<std::vector<site_observation>> type_recorder::all_sites() const {
     return out;
 }
 
-// --- the context's side: the hooks and the bounded mark ------------------------
+// The context's side: the hooks and the bounded mark.
 //
-// Every hook is a definition in every build, like record_step: `context` is
-// a public type and its shape cannot depend on a flag (see record_step).
+// Every hook is defined in every build, like record_step: `context` is a
+// public type and its shape cannot depend on a flag (see record_step).
 
 void context::note_allocation(heap_object * p) {
     if (!escape_tracked(p->kind)) { return; }
@@ -502,11 +490,11 @@ void context::note_allocation(heap_object * p) {
         return;
     }
     call_frame & frame = frames_.back();
-    // THE SITE, resolved exactly as record_step resolves a step: the closure's
-    // program, or the context's for a top level; `ip - 1` is the instruction
-    // being executed because `ip` was post-incremented at fetch. Whatever a
-    // native called from this instruction allocates lands here too, on the
-    // call's own pc - an UNCLAIMED site, by design.
+    // The site, resolved exactly as record_step resolves a step: the
+    // closure's program, or the context's for a top level; `ip - 1` is the
+    // instruction being executed because `ip` was post-incremented at fetch.
+    // Whatever a native called from this instruction allocates lands here
+    // too, on the call's own pc: an unclaimed site, by design.
     const program * owner = frame.closure != nullptr && frame.closure->owner != nullptr
                                 ? frame.closure->owner
                                 : program_;
@@ -524,15 +512,15 @@ void context::note_freed(heap_object * o) {
 }
 
 void context::record_frame_pop(const call_frame & popped, value carried, bool compiled_return) {
-    if (popped.serial == 0) { return; } // it allocated nothing
+    if (popped.serial == 0) { return; } // It allocated nothing.
     recorder_->note_pop();
     std::vector<type_recorder::escape_record> records;
     recorder_->begin_check(popped.serial, records, compiled_return);
     if (records.empty()) { return; }
-    // THE RETURN VALUE IS IN FLIGHT. At this moment it lives in a C++ local of
-    // the dispatch loop and is written to the caller's register only after
-    // this hook returns - so it is rooted here, through the same mechanism
-    // `construct` uses, and `return {}` reads `escaped via temporaries`.
+    // The return value is in flight: it lives in a C++ local of the dispatch
+    // loop and reaches the caller's register only after this hook returns. So
+    // it is rooted here, as `construct` roots its instance, and `return {}`
+    // reads as escaped via temporaries.
     const rooted keep{*this, carried};
     adjudicate(popped.base, frames_.size(), records);
 }
@@ -547,36 +535,37 @@ void context::record_frames_unwound(std::size_t first) {
     if (records.empty()) { return; }
     // Every frame from `first` up is ending; the lowest of their bases is the
     // start of the dead window, and their per-frame roots die with them.
-    // `thrown_` is still set - the unwinder clears it after this - so the
+    // `thrown_` is still set (the unwinder clears it after this), so the
     // value in flight is a root, as it should be.
     adjudicate(frames_[first].base, first, records);
 }
 
-// THE BOUNDED MARK. The collector's own root walk with the dead window
-// excluded, mark only, then every mark cleared - nothing freed.
-//
-// WHY THE EXCLUSION IS LOAD-BEARING. It is what turns "reachable in the VM"
-// into "reachable in the JavaScript program". An inline callee is placed at
-// `base + a + 1`, INSIDE its caller's register extent, and `ret` never
-// shrinks the register file; a C++-entered callee sits at the end of the
-// file and is resized away only after its call returns. So at the moment a
-// frame ends, every object it held in a register is still in a register - and
-// an unbounded walk would report every local of every function as escaped
-// `via registers`, which is the shape of a witness that can never say
-// "confined" and therefore checks nothing. What makes the bound SOUND is the
-// compiler's register allocator: it is a stack (compile/frames.cpp alloc_reg /
-// release_to), a call's arguments are the topmost allocations at the call, so
-// nothing the caller still needs lies at or above the callee's base, and the
-// call's result slot is below it. `--unbounded` runs the same walk without the
-// bound and must report a superset of escapes; the self-test asserts that,
-// and it is the number that goes red if the allocator ever changes shape.
+/// The bounded mark: the collector's own root walk with the dead window
+/// (registers from \p register_limit, frames from \p frame_limit) excluded,
+/// mark only, then every mark cleared. Nothing is freed.
+///
+/// The exclusion turns "reachable in the VM" into "reachable in the
+/// JavaScript program". An inline callee is placed at `base + a + 1`, inside
+/// its caller's register extent, and `ret` never shrinks the register file;
+/// a C++-entered callee sits at the end of the file and is resized away only
+/// after its call returns. So when a frame ends, every object it held in a
+/// register is still in a register, and an unbounded walk would report every
+/// local as escaped via registers, a witness that can never say "confined".
+///
+/// The bound is sound because the compiler's register allocator is a stack
+/// (compile/frames.cpp alloc_reg / release_to): a call's arguments are the
+/// topmost allocations at the call, so nothing the caller still needs lies at
+/// or above the callee's base, and the call's result slot is below it.
+/// `--unbounded` runs the same walk without the bound and must report a
+/// superset of escapes; the self-test asserts that, so it fails if the
+/// allocator ever changes shape.
 void context::adjudicate(std::size_t register_limit, std::size_t frame_limit,
                          std::vector<type_recorder::escape_record> & records) {
     if (recorder_->unbounded()) {
         register_limit = registers_.size();
         frame_limit = frames_.size();
     }
-    // THE ROUTE is the first root category that reached the object. The walk
+    // The route is the first root category that reached the object. The walk
     // visits labels contiguously, so a scan of the (small) record list at
     // every change of label attributes each newly marked object to the label
     // whose marks just finished.
@@ -600,26 +589,27 @@ void context::adjudicate(std::size_t register_limit, std::size_t frame_limit,
     });
     if (any) { attribute(current); }
     recorder_->finish_check(records);
-    // NO SWEEP. The oracle observes and does not collect; the one thing it
-    // touched is the mark bit, and it puts that back.
+    // No sweep: the oracle observes and does not collect. The only thing it
+    // touched is the mark bit, and it clears that again.
     unmark_all();
 }
 
-// UNCONDITIONAL, like the hooks above.
-//
-// `context` is declared in a PUBLIC header, so anything that changes its shape
-// with a build flag compiles this library against one layout and every consumer
-// against another - one ODR violation per translation unit, and the kind that
-// links cleanly. That is the bargain CTBROWSER_SCRIPT_DEBUG_NAMES already
-// struck for the debug side tables, and the reason `recorder_` is a member of
-// `context` in every build; whether the dispatch loop CALLS these is decided
-// at run time by whether a recorder is installed, and by nothing else.
+/// Records one executed instruction. Defined unconditionally, like the hooks
+/// above.
+///
+/// `context` is declared in a public header, so changing its shape with a
+/// build flag would compile this library against one layout and every
+/// consumer against another: an ODR violation that links cleanly. That is why
+/// `recorder_` is a member of `context` in every build (the same choice
+/// CTBROWSER_SCRIPT_DEBUG_NAMES makes for the debug side tables); whether the
+/// dispatch loop calls these is decided at run time by whether a recorder is
+/// installed.
 void context::record_step(instruction in) {
     const call_frame & frame = frames_.back();
-    // WHICH PROGRAM'S FUNCTION TABLE THIS BODY LIVES IN. The closure knows,
-    // and the top-level frame has no closure - the same fallback op::closure
-    // itself makes, and for the same reason: an index only means something in
-    // the program it was compiled against.
+    // Which program's function table this body lives in. The closure knows;
+    // the top-level frame has no closure, so it falls back to the context's
+    // program, as op::closure does, because a function index only means
+    // something in the program it was compiled against.
     const program * owner = frame.closure != nullptr && frame.closure->owner != nullptr
                                 ? frame.closure->owner
                                 : program_;

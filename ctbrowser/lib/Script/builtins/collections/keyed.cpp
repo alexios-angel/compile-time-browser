@@ -1,9 +1,10 @@
-// ctbrowser.script builtins - the keyed collections: Map, Set, WeakMap, WeakSet.
+//===- keyed.cpp - Map, Set, WeakMap and WeakSet ----------------*- C++ -*-===//
 //
-// One of four files carved out of a 1,824-line builtins/collections.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp.
+// The keyed collections of ECMA-262 24: Map, Set, WeakMap and WeakSet,
+// including their live iterators and the ES2025 set algebra. Shared argument
+// helpers and these functions' declarations are in ../internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../internal.hpp"
 #include "iterator_internal.hpp"
@@ -12,29 +13,25 @@ namespace ctbrowser::script::builtins_detail {
 
 using detail::list_iterator;
 
-// `Map`, `Set`, `WeakMap`, `WeakSet`. 20 and 59 uses in p5.js, and `new Map()`
-// is what stopped it once Array and Number were there.
+// All four classes are built on the object model rather than a new heap
+// kind: entries live in a plain array on the instance under the private
+// `entries_slot_key` (script/value/objects.hpp) - [key, value] pairs for a
+// Map, bare members for a Set. That is the shape for-of and spread want, and
+// context::iterable_values and the compiled for-of (vm/call/invoke.cpp) read
+// it by that key. A second private slot records which class made the
+// instance, and every method checks for its own, so
+// `Map.prototype.get.call(new Set)` is a TypeError (ECMA-262 24.1.3.6 step 2).
 //
-// Both are built on the object model rather than on a new heap kind: entries
-// live in a plain array on the instance under the PRIVATE `entries_slot_key`
-// (value/objects.hpp; it was the page-writable `__entries`) - a Map's as
-// [key, value] pairs, a Set's as bare members, which is exactly the shape
-// for-of and spread want, and which context::iterable_values and the compiled
-// for-of open read by that key (vm/call/invoke.cpp). Which of the four
-// classes made the instance is a PRIVATE-keyed slot beside it, and every
-// method checks for its own: `Map.prototype.get.call(new Set)` is a TypeError
-// (24.1.3.6 step 2), not undefined.
-//
-// ponytail: lookup is LINEAR - a hash keyed on a NaN-boxed value wants
-// SameValueZero over every value kind. Fine for the small string-keyed maps
-// p5 builds; a hash when something larger turns up.
-// TODO: WeakMap and WeakSet keep their keys alive. That is a leak, not a wrong
-// answer, and it needs weak references the collector understands. They ARE
-// their own classes now - a key that cannot be held weakly is the TypeError
-// 24.3.3.5 and 24.4.3.1 make it - but the storage is the strong one.
+// ponytail: lookup is linear, because a hash keyed on a NaN-boxed value needs
+// SameValueZero over every value kind. Fine for small maps; add a hash when a
+// workload needs large ones.
+// ponytail: WeakMap and WeakSet hold their keys strongly - a leak, not a
+// wrong answer. Fixing it needs weak references the collector understands.
+// Keys that cannot be held weakly are still rejected (24.3.3.5, 24.4.3.1).
 
 namespace {
 
+/// Which of the four collection classes a method belongs to.
 enum class kind : std::uint8_t {
     map,
     set,
@@ -42,6 +39,7 @@ enum class kind : std::uint8_t {
     weak_set
 };
 
+/// The private slot that marks an instance as made by class `k`.
 constexpr std::string_view slot_of(kind k) {
     switch (k) {
     case kind::map: return CTBROWSER_PRIVATE_KEY("MapData");
@@ -60,6 +58,7 @@ constexpr const char * name_of(kind k) {
     }
     return "Map";
 }
+/// True for Map and WeakMap, whose entries are [key, value] pairs.
 constexpr bool keyed(kind k) {
     return k == kind::map || k == kind::weak_map;
 }
@@ -67,8 +66,8 @@ constexpr bool weak(kind k) {
     return k == kind::weak_map || k == kind::weak_set;
 }
 
-// The entry list of the receiver, or null with a TypeError in flight when the
-// receiver was not made by this class (24.1.3.x step 2, RequireInternalSlot).
+/// The entry list of the receiver, or null with a TypeError in flight when the
+/// receiver was not made by this class (24.1.3.x step 2, RequireInternalSlot).
 [[nodiscard]] array_object * entries_of(context & c, value self, kind k, const char * method) {
     if (self.is_object()) {
         auto * o = static_cast<object_object *>(self.as_heap());
@@ -82,14 +81,15 @@ constexpr bool weak(kind k) {
     return nullptr;
 }
 
-// 24.1.3.9 step 6 / 24.2.3.1 step 5: -0 is stored as +0, so `has(-0)` and
-// `has(0)` are one question and a key read back is never negative zero.
+/// 24.1.3.9 step 6 / 24.2.3.1 step 5: -0 is stored as +0, so `has(-0)` and
+/// `has(0)` are one question and a key read back is never negative zero.
 [[nodiscard]] value normalise_key(value k) {
     return k.is_number() && k.as_number() == 0 ? value::number(0) : k;
 }
 
-// CanBeHeldWeakly, 9.13: an object, or a symbol that is not registered with
-// Symbol.for (whose key starts registered_symbol_key_prefix, text/symbol.cpp).
+/// CanBeHeldWeakly, ECMA-262 9.13: an object, or a symbol not registered with
+/// Symbol.for (a registered symbol's key starts with registered_symbol_key_prefix,
+/// core/symbol.hpp).
 [[nodiscard]] bool can_be_held_weakly(value v) {
     if (v.is_object_like()) { return true; }
     if (!v.is_kind(heap_kind::symbol)) { return false; }
@@ -97,6 +97,7 @@ constexpr bool weak(kind k) {
                 ->key.starts_with(registered_symbol_key_prefix);
 }
 
+/// The [key, value] pair under `key` (SameValueZero) in a Map's entries, or null.
 [[nodiscard]] value * find_pair(array_object & entries, value key) {
     for (value & entry : entries.items) {
         auto * pair = static_cast<array_object *>(entry.as_heap());
@@ -104,6 +105,7 @@ constexpr bool weak(kind k) {
     }
     return nullptr;
 }
+/// The index of `v` (SameValueZero) in a Set's members, or -1.
 [[nodiscard]] std::ptrdiff_t find_member(array_object & entries, value v) {
     for (std::size_t i = 0; i < entries.items.size(); ++i) {
         if (entries.items[i].same_value_zero(v)) { return static_cast<std::ptrdiff_t>(i); }
@@ -111,6 +113,7 @@ constexpr bool weak(kind k) {
     return -1;
 }
 
+/// Sets `key` to `held` in a Map's entries, replacing or appending a pair.
 void put_pair(context & c, array_object & entries, value key, value held) {
     if (value * entry = find_pair(entries, key)) {
         static_cast<array_object *>(entry->as_heap())->items[1] = held;
@@ -123,15 +126,17 @@ void put_pair(context & c, array_object & entries, value key, value held) {
     entries.items.push_back(pair);
 }
 
-// GetSetRecord, 24.2.1.2: what the seven set-algebra methods make of their
-// argument. `size` is read and coerced (NaN is a TypeError, a negative a
-// RangeError), and `has` and `keys` must be callable. FALSE with the throw.
+/// The Set Record of GetSetRecord (ECMA-262 24.2.1.2).
 struct set_record {
     value object;
     double size = 0;
     value has;
     value keys;
 };
+/// GetSetRecord, ECMA-262 24.2.1.2: what the seven set-algebra methods make of
+/// their argument. `size` is read and coerced (NaN is a TypeError, a negative
+/// a RangeError), and `has` and `keys` must be callable. Returns false with
+/// the throw in flight.
 [[nodiscard]] bool get_set_record(context & c, value other, set_record & out) {
     if (!other.is_object_like()) {
         c.throw_error("TypeError", "the argument must be a set-like object");
@@ -167,19 +172,19 @@ struct set_record {
     return true;
 }
 
-// Call(record.has, record.object, [v]), as a bool. FALSE with a throw in
-// flight is told apart by the watch the caller holds.
+/// Call(record.has, record.object, [v]), as a bool. The caller tells a false
+/// answer from a throw by the unwind_watch it holds.
 [[nodiscard]] bool record_has(context & c, const set_record & r, value v) {
     return context::truthy(c.call(r.has, std::span<const value>{&v, 1}, r.object));
 }
 
-// GetIteratorFromMethod(record.object, record.keys) then IteratorStepValue,
-// each key handed to `visit`, which answers false to stop (IteratorClose is
-// then run: the specification closes the iterator on every early exit). FALSE
-// with a throw in flight. `opened` runs once the iterator and its `next` are
-// in hand and before the first step - where union and symmetricDifference
-// copy the receiver (24.2.4.14 / 24.2.4.12 step 5: the `next` read is page
-// code, and may change it).
+/// GetIteratorFromMethod(record.object, record.keys), then IteratorStepValue
+/// with each key handed to `visit`, which answers false to stop (IteratorClose
+/// then runs: the specification closes the iterator on every early exit).
+/// Returns false with a throw in flight. `opened` runs once the iterator and
+/// its `next` are in hand and before the first step; union and
+/// symmetricDifference copy the receiver there, because the `next` read is
+/// page code and may change it.
 template <typename Fn, typename Opened>
 [[nodiscard]] bool each_key(context & c, const set_record & r, Fn && visit, Opened && opened) {
     const detail::unwind_watch watch{c};
@@ -210,9 +215,10 @@ template <typename Fn, typename Opened>
         if (context::truthy(done)) { return true; }
         const value item = c.lookup_property(step, "value");
         if (watch.threw()) { return false; }
-        // IteratorClose with a normal completion - asked of throw_pending, not
-        // the watch: a generator's return() unwinds its own frame through
-        // any `finally` without throwing at all (iterator_internal.hpp).
+        // IteratorClose with a normal completion. Its failure is judged by
+        // throw_pending, not the watch: a generator's return() unwinds its own
+        // frame through any `finally` without throwing at all
+        // (iterator_internal.hpp).
         if (!visit(item)) { return detail::iterator_close(c, iterator); }
         if (watch.threw()) { return false; }
     }
@@ -222,8 +228,8 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
     return each_key(c, r, std::forward<Fn>(visit), [] {});
 }
 
-// A fresh Set holding `items`, on Set.prototype - what the algebra methods
-// answer (24.2.4.x: OrdinaryObjectCreate(%Set.prototype%), never a species).
+/// A fresh Set holding `items`, on Set.prototype: what the algebra methods
+/// answer (24.2.4.x: OrdinaryObjectCreate(%Set.prototype%), never a species).
 [[nodiscard]] value make_set(context & c, std::vector<value> items) {
     value out = c.make_object();
     auto * o = static_cast<object_object *>(out.as_heap());
@@ -237,29 +243,31 @@ template <typename Fn> [[nodiscard]] bool each_key(context & c, const set_record
     return out;
 }
 
-// `this`'s entries for a method of class `k`, or null with the TypeError.
+/// `this`'s entries for a method of class `k`, or null with the TypeError.
 [[nodiscard]] array_object * self_entries(context & c, kind k, const char * method) {
     return entries_of(c, c.current_this(), k, method);
 }
 
-// A WALK IN PROGRESS over an entry list - forEach, and the set algebra that
-// calls a set-like's `has` between members - and the index it visits next.
-//
-// The specification's [[MapData]] and [[SetData]] never shrink: a delete
-// leaves an ~empty~ slot the walk steps over, so an entry deleted before its
-// turn is not visited and one deleted and re-added is visited again at the
-// end. This list COMPACTS, which moved every later entry one place left
-// under the walk and made it skip the next one. So a delete or a clear moves
-// each live walk's cursor with the entries it moved; the registry only ever
-// holds walks whose C++ frames are running.
+/// A walk in progress over an entry list (forEach, and the set-algebra
+/// methods that call a set-like's `has` between members) and the index it
+/// visits next.
+///
+/// The specification's [[MapData]] and [[SetData]] never shrink: a delete
+/// leaves an ~empty~ slot the walk steps over, so an entry deleted before its
+/// turn is not visited and one deleted and re-added is visited again at the
+/// end. This list compacts instead, so delete and clear move every live
+/// walk's cursor along with the entries they shift. The registry only holds
+/// walks whose C++ frames are still running.
 struct live_walk {
     const array_object * entries;
     std::size_t next;
 };
+/// The walks currently running on this thread.
 [[nodiscard]] std::vector<live_walk *> & live_walks() {
     static thread_local std::vector<live_walk *> walks;
     return walks;
 }
+/// Registers a live_walk for the lifetime of the scope.
 struct walk_scope {
     live_walk walk;
     explicit walk_scope(const array_object * entries) : walk{entries, 0} {
@@ -269,47 +277,54 @@ struct walk_scope {
     walk_scope(const walk_scope &) = delete;
     walk_scope & operator=(const walk_scope &) = delete;
 };
-// The entry at `at` is gone and everything after it moved down one.
+/// Adjusts live walks after the entry at `at` was erased and everything after
+/// it moved down one.
 void entry_removed(const array_object & entries, std::size_t at) {
     for (live_walk * w : live_walks()) {
         if (w->entries == &entries && at < w->next) { --w->next; }
     }
 }
-// Every entry is gone: a walk resumes with whatever is added next.
+/// Resets live walks after a clear: a walk resumes with whatever is added next.
 void entries_cleared(const array_object & entries) {
     for (live_walk * w : live_walks()) {
         if (w->entries == &entries) { w->next = 0; }
     }
 }
 
-// --- %MapIteratorPrototype% / %SetIteratorPrototype%, LIVE --------------------
+// --- %MapIteratorPrototype% / %SetIteratorPrototype%, live ------------------
 //
 // CreateMapIterator / CreateSetIterator (24.1.5.1, 24.2.5.1) are closures over
 // the collection and an index into [[MapData]]: an entry added during the
 // walk is visited, one deleted before its turn is not, and a finished
-// iterator stays finished. An iterator OUTLIVES the call that made it, so it
+// iterator stays finished. An iterator outlives the call that made it, so it
 // cannot be a live_walk; it registers on its collection instead, and delete
 // and clear move its index as they move the entries.
 //
 // ponytail: at most max_live_iterators registrations per collection, oldest
 // dropped - an iterator abandoned half-way (`m.keys().next().value`) is
 // otherwise held for the collection's life. One dropped past the cap walks on
-// unadjusted; a weak list is the upgrade if a page ever holds 32 at once.
+// unadjusted. A weak list is the upgrade if a page ever holds 32 at once.
+/// The private slot on a collection holding its registered iterators.
 inline constexpr std::string_view live_iterators_key = CTBROWSER_PRIVATE_KEY("LiveIterators");
+/// The iterator's index of the next entry to visit.
 inline constexpr std::string_view iter_index_key = CTBROWSER_PRIVATE_KEY("CollectionNextIndex");
+/// The iterator's kind: 0 keys, 1 values, 2 entries.
 inline constexpr std::string_view iter_kind_key = CTBROWSER_PRIVATE_KEY("CollectionIterationKind");
 inline constexpr std::size_t max_live_iterators = 32;
+/// The private slot holding the collection an iterator walks; undefined once
+/// the iterator has finished.
 constexpr std::string_view iterated_slot(bool map) {
     return map ? CTBROWSER_PRIVATE_KEY("IteratedMap") : CTBROWSER_PRIVATE_KEY("IteratedSet");
 }
 
+/// The collection's list of registered iterators, or null when it has none.
 [[nodiscard]] array_object * live_iterators(value collection) {
     if (!collection.is_object()) { return nullptr; }
     value * list = static_cast<object_object *>(collection.as_heap())->find(live_iterators_key);
     return list != nullptr && list->is_array() ? static_cast<array_object *>(list->as_heap())
                                                : nullptr;
 }
-// Each registered iterator's index, moved as `move` says.
+/// Rewrites each registered iterator's index to `move(index)`.
 template <typename Fn> void move_iterators(value collection, Fn && move) {
     array_object * list = live_iterators(collection);
     if (list == nullptr) { return; }
@@ -329,6 +344,7 @@ void iterators_cleared(value collection) {
     move_iterators(collection, [](double) { return 0.0; });
 }
 
+/// %MapIteratorPrototype%.next / %SetIteratorPrototype%.next.
 value collection_iterator_next(context & c, bool map) {
     const value self = c.current_this();
     auto * it = self.is_object() ? static_cast<object_object *>(self.as_heap()) : nullptr;
@@ -352,7 +368,7 @@ value collection_iterator_next(context & c, bool map) {
                          ? static_cast<array_object *>(held->as_heap())
                          : nullptr;
     if (entries == nullptr || at >= static_cast<double>(entries->items.size())) {
-        // Finished for good: unregistered, and the collection let go.
+        // Finished for good: unregister, and let go of the collection.
         if (array_object * list = live_iterators(collection)) {
             std::erase_if(list->items, [&](value v) { return v.bits() == self.bits(); });
         }
@@ -370,8 +386,8 @@ value collection_iterator_next(context & c, bool map) {
     }
     if (which == 0) { return c.iter_result(key, false); }
     if (which == 1) { return c.iter_result(held_value, false); }
-    // A FRESH [key, value] each time (CreateArrayFromList) - never the pair
-    // the map keeps, which a page could otherwise write through.
+    // A fresh [key, value] each time (CreateArrayFromList), never the pair the
+    // map keeps, which a page could otherwise write through.
     const context::rooted keep_key{c, key};
     const context::rooted keep_value{c, held_value};
     const value pair = c.make_array();
@@ -382,7 +398,8 @@ value collection_iterator_next(context & c, bool map) {
     return c.iter_result(pair, false);
 }
 
-// `which`: 0 keys, 1 values, 2 entries.
+/// A new live iterator over `collection`, registered on it. `which` is 0 for
+/// keys, 1 for values and 2 for entries.
 [[nodiscard]] value collection_iterator(context & c, value collection, bool map, int which) {
     const context::rooted keep{c, collection};
     const value proto = detail::iterator_kind_prototype(
@@ -418,13 +435,12 @@ void install_collections(context & cx) {
         object_object * proto = new_table(cx);
         auto * ctor =
             cx.allocate<native_object>(name_of(k), [k](context & c, std::span<value> a) -> value {
-                // 24.1.1.1 step 1: `Map()` without new is a TypeError. INITIALISE
-                // THE RECEIVER `new` made: `class MySet extends Set {}` reaches here
-                // through super() with the new instance as `this`; making a fresh
-                // object instead left the instance with none of Set's state. (A
-                // derived instance may already carry its fields - this engine runs
-                // initialisers before the body - so the test is "an object", not
-                // constructing_this's "an EMPTY object".)
+                // 24.1.1.1 step 1: `Map()` without `new` is a TypeError. Initialise
+                // the receiver `new` made rather than a fresh object, so a subclass
+                // instance reached through super() gets the collection state. The
+                // receiver may already carry fields (this engine runs initialisers
+                // before the body), so only "is an object" is checked, not
+                // constructing_this's "is an empty object".
                 const value self = c.current_this();
                 if (!self.is_object()) {
                     c.throw_error("TypeError",
@@ -442,7 +458,7 @@ void install_collections(context & cx) {
                     }
                 }
                 // Steps 5-9 / AddEntriesFromIterable: the seed goes through the
-                // receiver's OWN `set` or `add` (a subclass that overrides it sees
+                // receiver's own `set` or `add` (a subclass that overrides it sees
                 // every element), and a Map's entries must each be an object.
                 const value seed = arg_at(a, 0);
                 if (seed.is_nullish()) { return self; }
@@ -454,13 +470,12 @@ void install_collections(context & cx) {
                                   std::string{name_of(k)} + "'s adder is not a function");
                     return value::undefined();
                 }
-                // AddEntriesFromIterable (24.1.1.2) / the Set loop, ONE STEP
-                // AT A TIME: the iterator is stepped, the adder called, and
-                // an abrupt completion - a non-object entry, a throwing
-                // `set` - CLOSES the iterator (IteratorClose, `return()`
-                // called and the original throw kept). Draining the iterable
-                // first ran an endless iterator to the allocation ceiling
-                // and never closed anything.
+                // AddEntriesFromIterable (24.1.1.2) and the Set loop, one step
+                // at a time: step the iterator, call the adder, and on an
+                // abrupt completion (a non-object entry, a throwing `set`)
+                // close the iterator and rethrow the original error. Stepping
+                // rather than draining first also keeps an endless iterator
+                // from running to the allocation ceiling.
                 const value iterator = c.get_iterator(seed);
                 if (watch.threw()) { return value::undefined(); }
                 if (!iterator.is_object_like()) {
@@ -517,7 +532,7 @@ void install_collections(context & cx) {
                 return self;
             });
         // `class X extends Map` calls `super()`, which resolves through the
-        // parent prototype's `constructor` - absent, and the class could not be
+        // parent prototype's `constructor`; without it the class could not be
         // instantiated at all.
         proto->define("constructor", value::object(ctor), attr_builtin);
         detail::constant(ctor, "prototype", value::object(proto));
@@ -584,8 +599,8 @@ void install_collections(context & cx) {
             return value::boolean(false);
         });
         // Map.prototype.getOrInsert / getOrInsertComputed (the upsert
-        // proposal, in test262's corpus): the value under the key, or the
-        // one given / computed by the callback, which is stored first.
+        // proposal, covered by test262): the value under the key, or else the
+        // one given or computed by the callback, which is stored first.
         m("getOrInsert", 2, [k, prefix](context & c, std::span<value> a) -> value {
             array_object * entries = self_entries(c, k, (prefix + "getOrInsert").c_str());
             if (entries == nullptr) { return value::undefined(); }
@@ -637,17 +652,16 @@ void install_collections(context & cx) {
             if (!detail::callable_arg(c, arg_at(a, 0), "callback")) { return value::undefined(); }
             const value self = c.current_this();
             const detail::unwind_watch watch{c};
-            // BY INDEX over the live list, not a snapshot: 24.1.3.5 visits an
+            // By index over the live list, not a snapshot: 24.1.3.5 visits an
             // entry added during the walk and skips one deleted before its
-            // turn, which a callback that mutates the map can see - the
+            // turn, which a callback that mutates the map can observe. The
             // cursor is a live_walk, which delete and clear keep in step.
             walk_scope live{entries};
             while (live.walk.next < entries->items.size()) {
                 const value entry = entries->items[live.walk.next++];
                 const auto & pair = static_cast<array_object *>(entry.as_heap())->items;
                 const value args[3] = {pair[1], pair[0], self};
-                // 24.1.3.5 step 5: the callback's `this` is thisArg. Phaser's
-                // loader walks its file Sets with `list.forEach(fn, this)`.
+                // 24.1.3.5 step 5: the callback's `this` is thisArg.
                 (void)c.call(a[0], args, arg_at(a, 1));
                 if (watch.threw()) { return value::undefined(); }
                 entries = self_entries(c, k, "Map.prototype.forEach");
@@ -656,11 +670,9 @@ void install_collections(context & cx) {
             }
             return value::undefined();
         });
-        // LIVE ITERATORS (collection_iterator). They were arrays once, with a
-        // comment saying `map.keys().next()` does not work - and Babylon
-        // drives exactly that, by hand, for the Map of shadow generators a
-        // light owns - and then snapshots, which a map changed mid-walk
-        // could see through.
+        // keys/values/entries return live iterators (collection_iterator):
+        // entries added or deleted during the walk are seen, as 24.1.5.1
+        // requires.
         const auto column = [k](context & c, int which, const char * name) -> value {
             if (self_entries(c, k, name) == nullptr) { return value::undefined(); }
             return collection_iterator(c, c.current_this(), true, which);
@@ -672,9 +684,9 @@ void install_collections(context & cx) {
         m("entries", 0, [column](context & c, std::span<value>) {
             return column(c, 2, "Map.prototype.entries");
         });
-        // 24.1.3.12: Map.prototype[@@iterator] IS `entries`, the same function
-        // object - which is what Array.from and any hand-driven iteration reach
-        // for (for-of and spread take context::iterable_values' shortcut).
+        // 24.1.3.12: Map.prototype[@@iterator] is `entries`, the same function
+        // object. Array.from and any hand-driven iteration reach for it; for-of
+        // and spread take context::iterable_values' shortcut instead.
         if (value * entries = proto->find("entries")) {
             proto->define(CTBROWSER_SYMBOL_KEY("iterator"), *entries, attr_builtin);
         }
@@ -725,8 +737,9 @@ void install_collections(context & cx) {
             for (const value & item : snapshot) {
                 const value args[2] = {item, value::number(index++)};
                 const value key = normalise_key(c.call(a[1], args));
-                // Parked if it threw; the unwind count also moves for a
-                // callback that throws and catches inside itself.
+                // Checked with throw_pending, not the watch: the unwind count
+                // also moves for a callback that throws and catches inside
+                // itself.
                 if (c.throw_pending()) { return value::undefined(); }
                 value * entry = find_pair(*groups, key);
                 if (entry == nullptr) {
@@ -817,8 +830,8 @@ void install_collections(context & cx) {
             proto->define("keys", values_fn, attr_builtin);
             proto->define(CTBROWSER_SYMBOL_KEY("iterator"), values_fn, attr_builtin);
         }
-        // A Set's `entries` pairs each member WITH ITSELF, which looks odd and
-        // is the spec: it exists so a Set and a Map can be walked by one code.
+        // A Set's `entries` pairs each member with itself. That looks odd but
+        // is the specification: it lets one piece of code walk a Set or a Map.
         m("entries", 0, [k](context & c, std::span<value>) -> value {
             if (self_entries(c, k, "Set.prototype.entries") == nullptr) {
                 return value::undefined();
@@ -837,13 +850,15 @@ void install_collections(context & cx) {
                                    attr_configurable);
         }
 
-        // --- the set algebra, 24.2.4.5-4.11 (ES2025) --------------------------
+        // --- Set algebra, ECMA-262 24.2.4 (ES2025) ----------------------------
         //
-        // Each takes a SET-LIKE (GetSetRecord above), walks the smaller side
-        // where the specification says to, and answers a fresh Set on
-        // Set.prototype or a boolean. `this`'s members are read as a snapshot
-        // taken before any call out, because the other side's `has` and `keys`
-        // are page code that may mutate this set.
+        // Each method takes a set-like (see get_set_record), walks the smaller
+        // side where the specification says to, and returns either a fresh Set
+        // on Set.prototype or a boolean. The other side's `has` and `keys` are
+        // page code that may mutate this set, so intersection and difference
+        // copy this set's members first, union and symmetricDifference copy
+        // them once the iterator is open, and isSubsetOf and isDisjointFrom
+        // walk the live list (live_walk).
         const auto algebra = [&](const char * name,
                                  value (*body)(context &, array_object &, const set_record &)) {
             const std::string full = prefix + name;
@@ -953,9 +968,9 @@ void install_collections(context & cx) {
                     if (static_cast<double>(self.items.size()) > other.size) {
                         return value::boolean(false);
                     }
-                    // BY INDEX over the live list (the proposal's step 6 walks
-                    // O.[[SetData]] as it is at each step): `has` may mutate
-                    // the receiver, and an element it removes is not asked about.
+                    // By index over the live list (step 6 walks O.[[SetData]]
+                    // as it is at each step): `has` may mutate the receiver,
+                    // and an element it removes is not asked about.
                     const detail::unwind_watch watch{c};
                     walk_scope live{&self};
                     while (live.walk.next < self.items.size()) {

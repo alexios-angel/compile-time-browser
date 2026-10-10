@@ -1,3 +1,9 @@
+//===- emission.cpp - Completion and member keys ----------------*- C++ -*-===//
+//
+// Small compiler_impl members used while emitting bytecode: tracking a
+// script's completion value and turning a member name into its property key.
+//
+//===----------------------------------------------------------------------===//
 #include "../compiler_impl.hpp"
 
 namespace ctbrowser::script::detail {
@@ -16,6 +22,9 @@ std::uint16_t compiler_impl::member_operand(std::string_view text) {
     return name_operand(member_key(text));
 }
 
+// A private name (`#x`) is keyed by the private-key prefix plus the class
+// that declares it, so two classes' `#x` never collide. Inside a direct eval
+// the caller's classes arrive with their keys already made (scope.keys).
 std::string compiler_impl::member_key(std::string_view text) {
     if (!text.starts_with('#')) { return std::string{text}; }
     std::string key = std::string{private_key_prefix} + std::string{text};

@@ -1,19 +1,19 @@
-// ctbrowser.script builtins - Function.prototype, the dynamic Function
-// constructor, and the generator prototype.
+//===- function.cpp - Function and eval built-ins ---------------*- C++ -*-===//
 //
-// One of five files carved out of a 1,429-line builtins/objects.cpp on
-// 2026-09-08 - which was itself one of five carved out of builtins.cpp on
-// 2026-08-09. Everything shared - the argument helpers, namespace detail, and
-// these functions' declarations - is in ../internal.hpp; what only this
-// directory shares is in internal.hpp beside this.
+// Function.prototype, the Function constructor and its generator/async
+// variants, indirect and direct eval, the compiler's hidden helpers (delete,
+// class fields, class definition), and the generator prototypes. Bare section
+// numbers refer to ECMA-262. Helpers shared across builtins are in
+// ../internal.hpp; helpers shared within this directory are in internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
-// `Function.prototype`. 84 `.call(`, 78 `.apply(` and 26 `.bind(` in p5.js -
-// and it cannot install one event listener without bind:
-// `window.addEventListener(e, this['_on' + e].bind(this), {...})`.
+/// Builds Function.prototype: call, apply, bind, toString, @@hasInstance and
+/// the restricted `caller`/`arguments` accessors.
 void install_function(context & cx) {
     using detail::method;
     using detail::new_table;
@@ -25,10 +25,8 @@ void install_function(context & cx) {
     function_proto->define("length", value::number(0), attr_configurable);
     function_proto->define("name", cx.string(""), attr_configurable);
 
-    // IsCallable(this) IS STEP 1 of all three (20.2.3.1/20.2.3.3/20.2.3.2), and
-    // all three answered `undefined` instead - so `({}).call()` reached through
-    // Function.prototype was a silent no-op and a feature probe written as
-    // `try { f.bind(o) } catch (e)` saw nothing.
+    // call, apply and bind all start with IsCallable(this) (20.2.3.1-3): a
+    // non-callable receiver is a TypeError.
     const auto this_function = [](context & c, const char * method) {
         const value self = c.current_this();
         if (self.is_callable()) { return self; }
@@ -36,7 +34,7 @@ void install_function(context & cx) {
                                        " called on incompatible receiver");
         return value::undefined();
     };
-    // OrdinaryCallBindThis, 10.2.1.2: a SLOPPY function's `this` is the
+    // OrdinaryCallBindThis, 10.2.1.2: a sloppy function's `this` is the
     // global object for null or undefined and a wrapper for a primitive; a
     // strict function, an arrow and a built-in take the value as given. Done
     // here for the three explicit-receiver spellings; a plain `f()` is the
@@ -83,7 +81,7 @@ void install_function(context & cx) {
                // the target's, not Function.prototype's.
                const value proto = detail::prototype_of(c, self);
                if (watch.threw()) { return value::undefined(); }
-               // The arguments bound NOW are prepended to the ones supplied later,
+               // The arguments bound now are prepended to the ones supplied later,
                // which is what makes `f.bind(o, 1)` a partial application rather than
                // just a receiver change.
                const auto bound =
@@ -94,19 +92,13 @@ void install_function(context & cx) {
                        args.insert(args.end(), later.begin(), later.end());
                        return inner.call(self, args, receiver);
                    });
-               // THREE VALUES IN A C++ CAPTURE, AND THE COLLECTOR COULD SEE NONE.
-               //
-               // A bound function is often the ONLY reference to its target: the
-               // ordinary `return target.bind(null, arg)` out of a factory drops both
-               // the target and the argument on the way out. The capture is not a
-               // root, so a collection freed them and the next call ran `inner.call`
-               // on a freed closure_object - a heap-use-after-free reproduced under
-               // the asan preset, reading the target's kind byte out of poisoned
-               // memory.
-               //
-               // A SNAPSHOT IS EXACT HERE, unlike a registry that grows: `*bound` is
-               // fixed at bind time and neither it nor `self` and `receiver` can
-               // change afterwards.
+               // The lambda's captures are invisible to the collector, so every
+               // value they hold is also pushed onto `retained`, which is traced.
+               // A bound function is often the only reference to its target (as in
+               // `return target.bind(null, arg)` from a factory); without this a
+               // collection would free the target and the next call would use it
+               // after free. A one-time snapshot is exact: `*bound`, `self` and
+               // `receiver` never change after bind.
                fn->retained.push_back(self);
                fn->retained.push_back(receiver);
                // The [[Prototype]] taken above, which the collector does not
@@ -121,18 +113,12 @@ void install_function(context & cx) {
                // a constructor exactly when its target is (10.4.1.3 step 5).
                fn->define(CTBROWSER_PRIVATE_KEY("BoundTargetFunction"), self, attr_none);
                fn->is_constructor = is_constructor(self);
-               fn->proto_link = proto.is_null() ? value::undefined() : proto; // explicit
-               // 20.2.3.2: a bound function's `length` is the target's less the
-               // arguments already supplied, floored at zero, and its `name` is
-               // "bound " prefixed to the target's - both { false, false, true }. It
-               // had neither, so `f.bind(o).length` was undefined and `.name` was the
-               // synthesised "bound", which is a different string from the one every
-               // engine gives.
-               // ...and it is the target's OWN `length`, and only when that is a
-               // Number (20.2.3.2 step 7). It was read through the prototype chain, so
-               // a target with no own `length` inherited Function.prototype's and a
-               // `length` that was a string was coerced instead of ignored. An absent
-               // or non-numeric one means zero, which is what step 6 initialises L to.
+               // undefined, not null, marks an explicitly null [[Prototype]].
+               fn->proto_link = proto.is_null() ? value::undefined() : proto;
+               // 20.2.3.2: `length` is the target's own numeric `length` minus the
+               // bound argument count, floored at 0 (absent or non-numeric counts as
+               // 0); `name` is "bound " + the target's name. Both are
+               // { writable: false, enumerable: false, configurable: true }.
                double left = 0.0;
                if (c.has_own_property(self, "length")) {
                    const value target_length = c.lookup_property(self, "length");
@@ -158,14 +144,12 @@ void install_function(context & cx) {
                           attr_configurable);
                return value::object(fn);
            });
-    // The TODO that stood here - "return the REAL source" - is DONE, and the
-    // body below is what does it: `function_proto` carries the span and
-    // `program::source` keeps the bytes. `context::to_string` reaches this now
-    // too, so `String(f)` and `f.toString()` are one answer rather than two.
-    // What is still owed from the same two integers is `Error.stack`, which
-    // would get real line numbers out of them.
+    // Function.prototype.toString returns the exact source text from the
+    // function's span (function_proto::source_begin/end) in its program's
+    // `source`. context::to_string uses the same path, so String(f) and
+    // f.toString() agree.
     method(cx, function_proto, "toString", 0, [](context & c, std::span<value>) {
-        // THE REAL SOURCE, when there is any. A closure knows which program its
+        // The real source, when there is any. A closure knows which program its
         // protos came from, and the program kept the text - so this is a
         // substring, not a reconstruction, and what comes back is exactly what
         // was written.
@@ -205,16 +189,13 @@ void install_function(context & cx) {
         }
         return c.string("function " + name + "() { [native code] }");
     });
-    // 20.2.3.6 %Function.prototype[@@hasInstance]%, which did not exist: the
-    // key was absent, so `Symbol.hasInstance in Function.prototype` was false
-    // and the eleven files that ask about it could not begin.
-    //
-    // Its own descriptor is { false, false, false }, unlike every other method
-    // on this table, and its `name` is the bracketed form 10.2.9 gives a
-    // symbol-keyed method. What it DOES is OrdinaryHasInstance (7.3.22) - over
-    // the public operations, because `instanceof` (context::instance_of)
-    // dispatches to a constructor's OWN @@hasInstance first, and this method
-    // called on such a constructor must not.
+    // 20.2.3.6 Function.prototype[@@hasInstance]: OrdinaryHasInstance (7.3.22)
+    // over public operations. It must not go through context::instance_of,
+    // which dispatches to the constructor's own @@hasInstance the way
+    // `instanceof` does. Its descriptor is { false, false, false }, unlike every
+    // other method on this table, and its `name` is the bracketed form 10.2.9
+    // gives a symbol-keyed method. The prototype walk stops after 4096 steps, a
+    // guard against a proxy that fabricates an endless chain.
     auto * has_instance =
         cx.allocate<native_object>("[Symbol.hasInstance]", [](context & c, std::span<value> a) {
             const value ctor = c.current_this();
@@ -260,22 +241,15 @@ void install_function(context & cx) {
     cx.set_prototype(context::proto_kind::function, function_proto);
 }
 
-// `new Function(body)` - A COMPILER AT RUN TIME.
-//
-// It existed and refused, because a closure holds a `const function_proto *`
-// into the program it came from and nothing owned a program compiled here. Two
-// things closed that: `closure_object::owner` records which program a closure's
-// nested functions live in, so a frame from one program can call into another;
-// and the context now OWNS the programs it compiles, so they outlive the
-// closures that point into them.
-//
-// The body is wrapped in a function expression and returned, so the parameters
-// and the body go through exactly the path a written-out function does. p5.js
-// builds three of these for shader source; a bundle may build any number.
+// `new Function(...)` compiles source at run time. The context owns every
+// program it compiles (context::own_program), so closures that point into it
+// stay valid, and closure_object::owner records which program a closure came
+// from. The body is wrapped in a function expression and returned, so it
+// compiles through the same path as written-out code.
 namespace {
-// CreateDynamicFunction (20.2.1.1.1) for the four kinds: `Function`,
-// %GeneratorFunction%, %AsyncFunction% and %AsyncGeneratorFunction% differ
-// only in the keyword the source is wrapped in.
+/// CreateDynamicFunction (20.2.1.1.1) for the four kinds: `Function`,
+/// %GeneratorFunction%, %AsyncFunction% and %AsyncGeneratorFunction% differ
+/// only in the keyword the source is wrapped in.
 value dynamic_function(context & c, std::span<value> a, const char * keyword) {
     // `new Function(a, b, 'return a + b')` - every argument but the last
     // names a parameter, and the last is the body. `new Function()` is a
@@ -288,7 +262,7 @@ value dynamic_function(context & c, std::span<value> a, const char * keyword) {
     }
     const std::string body = a.empty() ? std::string{} : c.to_string(a[a.size() - 1]);
     if (c.throw_pending()) { return value::undefined(); }
-    // RETURNED, not left as an expression statement: the program's value is
+    // Returned, not left as an expression statement: the program's value is
     // what its top level returns, and a bare expression yields nothing.
     // The newlines are the spec's own formatting, and they matter - they
     // keep a `//` comment at the end of the body from swallowing the brace.
@@ -326,11 +300,14 @@ value dynamic_function(context & c, std::span<value> a, const char * keyword) {
 }
 } // namespace
 
+/// Installs the Function constructor, the global eval, the compiler's hidden
+/// helper natives that live in this file, and the generator/async function
+/// intrinsics.
 void install_dynamic_function(context & cx) {
     cx.define_native("Function", [](context & c, std::span<value> a) {
         return dynamic_function(c, a, "function");
     });
-    // `eval(x)`, 19.2.1 - THE INDIRECT EVAL: the source runs at the global
+    // `eval(x)`, 19.2.1 - the indirect eval: the source runs at the global
     // scope, through the same run_nested `new Function` uses, and its
     // completion value (a trailing expression) comes back. A direct `eval(x)`
     // in a function does not come here: the compiler routes it through
@@ -460,6 +437,15 @@ void install_dynamic_function(context & cx) {
                 std::size_t next = 6;
                 std::size_t at = 0;
                 bool first = true;
+                // The descriptor is newline-separated. Line 1 is the eval site
+                // ("strict|sloppy [function] [method] [field]"). Each later line
+                // is one of:
+                //   P <name> <id>   a private name in scope;
+                //   U <index> ...   the caller's upvalue at <index>;
+                //   L ...           a boxed local whose cell is the next argument;
+                //   V ...           an unboxed local; the eval gets a fresh cell
+                //                   holding the next argument's value.
+                // The "..." is "name [strict|sloppy] [lexical]" (see `bind`).
                 while (at <= descriptor.size()) {
                     const std::size_t end = std::min(descriptor.find('\n', at), descriptor.size());
                     const std::string_view line{descriptor.data() + at, end - at};
@@ -498,7 +484,8 @@ void install_dynamic_function(context & cx) {
                         const value given = next < a.size() ? a[next] : value::undefined();
                         ++next;
                         bind(line.substr(2));
-                        // "V": a local nothing boxed - the eval sees its value.
+                        // "L" passes the caller's own cell; "V" (or an "L" whose
+                        // argument is not a cell) gets a fresh cell with the value.
                         cells.push_back(line[0] == 'L' && given.is_kind(heap_kind::cell)
                                             ? given
                                             : value::object(c.allocate<cell_object>(given)));
@@ -511,7 +498,7 @@ void install_dynamic_function(context & cx) {
                     return value::undefined();
                 }
                 const program & kept = c.own_program(std::move(compiled));
-                // FROM GLOBAL CODE its declarations are globals, instantiated
+                // From global code its declarations are globals, instantiated
                 // as an indirect eval's are (program::eval_global).
                 if (kept.eval_global && !c.eval_declaration_instantiation(kept)) {
                     return value::undefined();
@@ -561,8 +548,7 @@ void install_dynamic_function(context & cx) {
                     return c.call(current, {&source, 1});
                 }
                 if (!source.is_string()) { return source; }
-                // In a function's parameters - so `new.target` is allowed, as
-                // it always was here.
+                // In a function's parameters, so `new.target` is allowed.
                 eval_site site;
                 site.in_function = true;
                 // The names of the parameter scope, then - from a sloppy
@@ -613,11 +599,8 @@ void install_dynamic_function(context & cx) {
         native->retained.push_back(intrinsic);
         cx.define_global(std::string{param_eval_name}, value::object(native));
     }
-    // `Function.prototype`, reachable from script rather than only consulted by
-    // lookup. `Function.prototype.call.bind(...)` and
-    // `Function.prototype.hasOwnProperty` are ordinary idioms, and this is the
-    // same table lookup already walks - so a page that adds to it is seen by
-    // every function, which is what a page doing that expects.
+    // Expose Function.prototype to script. It is the same table property lookup
+    // walks, so a page that adds to it is seen by every function.
     if (object_object * table = cx.prototype(context::proto_kind::function)) {
         // { false, false, false } (20.2.2.2), as every constructor's is.
         static_cast<native_object *>(cx.global("Function").as_heap())
@@ -697,7 +680,10 @@ void install_dynamic_function(context & cx) {
     }
 }
 
-// See class_defined_name: the class's own members, made non-enumerable.
+/// Installs the class_defined_name native, run when a class body finishes:
+/// it makes the class's own members and its prototype's members
+/// non-enumerable, makes `prototype` read-only, and ends the class's
+/// defining_class state.
 void install_class_defined(context & cx) {
     cx.define_native(std::string{class_defined_name}, [](context &, std::span<value> a) {
         if (a.empty() || !a[0].is_kind(heap_kind::function)) { return value::undefined(); }
@@ -731,14 +717,13 @@ void install_class_defined(context & cx) {
     });
 }
 
-// `.next(v)`, `.throw(e)`, `.return(v)` - the iterator protocol, for every
-// generator object at once. On a prototype for the same reason a promise's
-// then/catch/finally are: three natives for the whole program rather than
-// three per generator, and two generator objects then compare alike.
-//
-// Installed EAGERLY, unlike the promise table, because the object is built by
-// context::make_generator over in the VM - which cannot reach into builtins to
-// construct a table lazily.
+/// Installs %GeneratorPrototype% and %AsyncGeneratorPrototype%: `.next(v)`,
+/// `.throw(e)` and `.return(v)`, shared by every generator object, so there are
+/// three natives for the whole program rather than three per generator.
+///
+/// Installed eagerly, unlike the promise table, because the object is built by
+/// context::make_generator in the VM, which cannot reach into builtins to
+/// construct a table lazily.
 void install_generator(context & cx) {
     object_object * table = detail::new_table(cx);
     const auto driver = [](context::resume_mode how) {
@@ -760,7 +745,7 @@ void install_generator(context & cx) {
     detail::method(cx, table, "next", 1, driver(context::resume_mode::next));
     detail::method(cx, table, "throw", 1, driver(context::resume_mode::thrown));
     detail::method(cx, table, "return", 1, driver(context::resume_mode::returned));
-    // A GENERATOR IS ITS OWN ITERATOR, which is what `for (x of gen())` needs
+    // A generator is its own iterator, which is what `for (x of gen())` needs
     // and what makes `[...gen()]` work.
     detail::method(cx, table, CTBROWSER_SYMBOL_KEY("iterator"), 0,
                    [](context & c, std::span<value>) { return c.current_this(); });
@@ -769,7 +754,7 @@ void install_generator(context & cx) {
     cx.set_prototype(context::proto_kind::generator, table);
 
     // %AsyncGeneratorPrototype%, 27.6.1: the same three, each answering a
-    // PROMISE of the record and queued behind the body - see
+    // promise of the record and queued behind the body - see
     // context::async_generator_request. An async generator is its own async
     // iterator.
     object_object * async_table = detail::new_table(cx);

@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/Script/vm/run_loop/construct.cpp - The new opcode ----===//
+//
+// The interpreter's `new` handler, context::execute_construct, called from
+// run_loop.cpp's VM_CASE(construct). Proxies and natives go through
+// context::construct; an interpreted constructor gets a fresh instance and a
+// new frame pushed inline.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/vm.hpp>
 
@@ -9,15 +18,18 @@
 
 namespace ctbrowser::script {
 
+/// Executes `new`: register a holds the constructor and receives the result;
+/// the b arguments follow it. For an interpreted constructor this only pushes
+/// the frame; the run loop then continues in it.
 void context::execute_construct(instruction in, call_frame * vm_frame,
                                 const function_proto * vm_proto, std::size_t base) {
     const auto reg = [&](std::uint16_t r) -> value & { return registers_[base + r]; };
     do {
         {
             const value callee = reg(in.a);
-            // A PROXY GOES THE LONG WAY ROUND. The inline path exists to avoid
-            // a nested interpreter loop, and a construct trap needs one - so
-            // this hands over to the general form rather than duplicating it.
+            // A proxy goes through context::construct. The inline path exists to
+            // avoid a nested interpreter loop, and a construct trap needs one,
+            // so this hands over to the general form rather than duplicating it.
             if (callee.is_kind(heap_kind::proxy)) {
                 const std::size_t arg_base = base + in.a + 1;
                 std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
@@ -26,10 +38,9 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
                 reg(in.a) = construct(callee, args);
                 break;
             }
-            // A NATIVE GOES THE LONG WAY TOO, for the same reason as a proxy:
-            // the inline path exists to avoid a nested interpreter loop, which
-            // only a JavaScript body needs, and a second copy of the native
-            // case is a second chance to disagree about `new Number(5)`.
+            // A native goes through context::construct too: only a JavaScript
+            // body benefits from the inline path, and a second copy of the
+            // native case could disagree about `new Number(5)`.
             if (callee.is_kind(heap_kind::native)) {
                 const std::size_t arg_base = base + in.a + 1;
                 std::vector<value> args{registers_.begin() + static_cast<std::ptrdiff_t>(arg_base),
@@ -38,10 +49,9 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
                 reg(in.a) = construct(callee, args);
                 break;
             }
-            // AN ARROW, A GENERATOR OR AN ASYNC FUNCTION HAS NO [[Construct]]
-            // (10.2.3 / 15.5.4): `new` on one is the TypeError of 13.3.5.1.1
-            // step 7, before an instance exists - as construct_new and
-            // context::construct already said for the other two tiers.
+            // An arrow, generator or async function has no [[Construct]] (ECMA-262
+            // 10.2.3, 15.5.4): `new` on one throws TypeError before any instance is
+            // created (13.3.5.1.1 step 7), as construct_new and context::construct do.
             if (callee.is_kind(heap_kind::function) && !is_constructor(callee)) {
                 const function_proto * p =
                     static_cast<const closure_object *>(callee.as_heap())->proto;
@@ -63,20 +73,19 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
                 instance->prototype = ensure_prototype(callee);
             }
             const value self = value::object(instance);
-            // ROOTED FOR THE SAME REASON context::construct roots its own:
-            // the instance is in a C++ local while field initialisers run
-            // user JavaScript, and it stays in one until the frame that
-            // carries it as a receiver is pushed. reg(in.a) still holds the
-            // CALLEE at this point, so nothing else refers to it.
+            // Rooted, as in context::construct: the instance lives only in a C++
+            // local while field initialisers run user JavaScript, until the
+            // frame that carries it as a receiver is pushed. reg(in.a) still
+            // holds the callee at this point, so nothing else refers to it.
             const rooted keep_instance{*this, self};
             run_field_initialisers(callee, self);
             const std::size_t arg_base = base + in.a + 1;
 
             if (!callee.is_kind(heap_kind::function)) {
-                // THE MESSAGE IS SHARED, so a compiled `new` on a
-                // non-constructor cannot spell it differently. The origin
-                // is the backwards scan, which only an interpreted frame
-                // has an ip for.
+                // The message comes from new_callee_type_error, shared with
+                // AOT-compiled `new`, so both spell it the same. The origin
+                // comes from callee_origin's backwards scan, which needs an
+                // interpreted frame's ip.
                 new_callee_type_error((*vm_proto),
                                       callee_origin((*vm_proto), vm_frame->ip - 1, in.a), callee);
                 break;
@@ -84,27 +93,31 @@ void context::execute_construct(instruction in, call_frame * vm_frame,
             auto * fnobj = static_cast<closure_object *>(callee.as_heap());
             const function_proto & target = *fnobj->proto;
             const std::size_t new_base = arg_base;
+            // Grow the register file to hold the callee's frame plus 8 spare
+            // slots, the same headroom every call path reserves.
             const std::size_t needed = new_base + target.frame_size + 8u;
             if (registers_.size() < needed) { registers_.resize(needed, value::undefined()); }
             for (std::size_t i = in.b; i < target.param_count; ++i) {
                 registers_[new_base + i] = value::undefined();
             }
+            // Interpreter frame-depth limit, shared with op::call and
+            // context::invoke; past it, throw the usual stack-overflow RangeError.
             if (frames_.size() > 512) {
                 throw_error("RangeError", "Maximum call stack size exceeded");
                 break;
             }
-            // `new` ASKS FOR A COMPILED BODY TOO, and passes `constructing`,
-            // which is what makes a constructor returning a primitive
-            // evaluate to its receiver (ct_aot_return_value).
+            // `new` runs an AOT-compiled body too, passing `constructing`, which
+            // makes a constructor returning a primitive evaluate to its
+            // receiver (ct_aot_return_value).
             //
-            // IT MUST HAND OVER new.target: the interpreted path below sets
-            // fresh.new_target directly, but ct_aot_enter can only read it
-            // from pending_new_target_.
+            // It must hand over new.target: the interpreted path below sets
+            // fresh.new_target directly, but ct_aot_enter can only read it from
+            // pending_new_target_.
             //
-            // SET AND RESTORED rather than set and cleared: op::construct
-            // never consumes the flag on its own path, and ct_aot_enter
-            // clears it once the frame is pushed. Restoring keeps the
-            // interpreted path's behaviour identical either way.
+            // The flag is saved and restored rather than cleared: op::construct
+            // never consumes it on its own path, and ct_aot_enter clears it once
+            // the frame is pushed, so restoring keeps the interpreted path's
+            // behaviour identical either way.
             const value saved_new_target = pending_new_target_;
             pending_new_target_ = callee;
             if (value produced = value::undefined();

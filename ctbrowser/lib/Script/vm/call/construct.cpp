@@ -1,11 +1,12 @@
-// ctbrowser.script context - construction: `new` in its three spellings,
-// `prototype` on demand, and class field initialisers.
+//===- vm/call/construct.cpp - Object construction with new -----*- C++ -*-===//
 //
-// One of five files carved out of a 1,171-line vm/call.cpp on 2026-09-08 -
-// which was itself one of four carved out of a 3,232-line vm.cpp on
-// 2026-08-09. All members of `context`, declared in
-// include/ctbrowser/script/vm.hpp - so they split across translation units
-// with nothing to declare.
+// Construction: `new` through construct(), construct_spread() and
+// construct_new() (the entry for ahead-of-time compiled code), `prototype`
+// created on demand, and is_constructor. All functions here are members of
+// `context`, declared in include/ctbrowser/script/vm.hpp; the other call
+// paths live in the sibling files of vm/call/.
+//
+//===----------------------------------------------------------------------===//
 
 #include <cstddef>
 #include <span>
@@ -18,7 +19,8 @@
 namespace ctbrowser::script {
 
 namespace {
-// The callee's name for "X is not a constructor", or "the value" when it has none.
+/// The callee's name for "X is not a constructor", or "the value" when it has
+/// none.
 [[nodiscard]] std::string describe_new_target(value callee) {
     std::string name;
     if (callee.is_kind(heap_kind::native)) {
@@ -37,8 +39,9 @@ bool is_constructor(value v) {
     }
     if (v.is_kind(heap_kind::function)) {
         const function_proto * p = static_cast<const closure_object *>(v.as_heap())->proto;
-        // A method (`{ m() {} }`) is not one either, but the bytecode does not
-        // record that - the compiler's, not this file's.
+        // A method (`{ m() {} }`) is not a constructor either, but
+        // function_proto has no flag for methods, so they are accepted here;
+        // fixing that needs the compiler to record it.
         return p == nullptr || !(p->is_arrow || p->is_generator || p->is_async);
     }
     if (v.is_kind(heap_kind::proxy)) {
@@ -48,16 +51,12 @@ bool is_constructor(value v) {
     return false;
 }
 
-// EVERY FUNCTION HAS A `prototype`, and JavaScript relies on it far beyond
-// classes: `function F() {}; new F() instanceof F` is the constructor-function
-// pattern every transpiler emits, and Babel's own `_classCallCheck` guard is
-// exactly that test. A class got one from the compiler; a plain function got
-// nothing, so `new F()` produced an object with no prototype and `instanceof`
-// was false for it.
-//
-// Made on demand rather than at closure creation: a program allocates far more
-// functions than it constructs, and an object per closure is a real cost for
-// something most of them never use.
+/// Returns \p fn's `prototype` property, creating it on first use. Ordinary
+/// and generator functions need one (`new F() instanceof F` is the pattern
+/// transpilers such as Babel's `_classCallCheck` rely on); arrows and async
+/// functions get none, and undefined is returned for them and for
+/// non-closures. It is made lazily because most closures are never
+/// constructed and an object per closure is a real cost.
 value context::ensure_prototype(value fn) {
     if (!fn.is_kind(heap_kind::function)) { return value::undefined(); }
     auto * closure = static_cast<closure_object *>(fn.as_heap());
@@ -72,7 +71,7 @@ value context::ensure_prototype(value fn) {
     if (closure->proto != nullptr && closure->proto->is_generator) {
         // 27.3.1.1 / 27.4.1.1 step 7: a generator function's `prototype` is
         // an ordinary object inheriting %GeneratorPrototype% (or the async
-        // one), with NO `constructor` of its own - the instances made by
+        // one), with no `constructor` of its own; the instances made by
         // calling the function inherit from it (make_generator).
         if (object_object * table = prototype(closure->proto->is_async ? proto_kind::async_generator
                                                                        : proto_kind::generator)) {
@@ -81,10 +80,9 @@ value context::ensure_prototype(value fn) {
         closure->define("prototype", made, attr_writable);
         return made;
     }
-    // 10.2.5 / 15.7.14: `F.prototype` is { true, false, false } on an ordinary
-    // function and `F.prototype.constructor` is { true, false, true }. Both
-    // were enumerable, so `constructor` turned up in `Object.keys(C.prototype)`
-    // and in a `{...instance}` spread of anything that inherited it.
+    // 10.2.5 / 15.7.14: `F.prototype` is writable, non-enumerable and
+    // non-configurable; `F.prototype.constructor` is writable, non-enumerable
+    // and configurable, so it stays out of `Object.keys` and object spread.
     static_cast<object_object *>(made.as_heap())->define("constructor", fn, attr_builtin);
     closure->define("prototype", made, attr_writable);
     return made;
@@ -97,11 +95,10 @@ value context::make_instance(value callee) {
             instance->prototype = *proto;
         }
     } else if (callee.is_kind(heap_kind::native)) {
-        // A BUILT-IN CONSTRUCTOR'S `prototype` TOO (OrdinaryCreateFromConstructor,
-        // 10.1.13). Only a plain object's was read, so every native constructor
-        // received an instance with no prototype and had to pick one itself -
-        // and WeakMap's fallback picked Map's table, which made
-        // `new WeakMap()` a Map to every method that checks its receiver.
+        // A built-in constructor's `prototype` too (OrdinaryCreateFromConstructor,
+        // 10.1.13). Otherwise each native would have to pick a prototype
+        // itself, and a wrong pick (WeakMap choosing Map's) makes the instance
+        // pass the wrong receiver checks.
         if (value * proto = static_cast<native_object *>(callee.as_heap())->find("prototype")) {
             instance->prototype = *proto;
         }
@@ -113,7 +110,8 @@ value context::make_instance(value callee) {
 
 void context::new_callee_type_error(const function_proto & fn, std::string_view origin,
                                     value callee) {
-    // The origin-aware TypeError shared by the plain opcode and boxed AOT.
+    // The TypeError for `new` on a non-constructor, naming where the callee
+    // came from; shared by op::construct and construct_new.
     throw_error("TypeError", "`new` on " + describe_callee(fn, origin, callee));
 }
 
@@ -130,9 +128,7 @@ value context::construct(value callee, std::span<const value> args, value new_ta
     if (new_target.is_undefined()) { new_target = callee; }
     // 10.5.13 [[Construct]]: `new proxy(...)` runs the construct trap with
     // (target, argsArray, newTarget) and its answer must be an object; with no
-    // trap, Construct(target, args, newTarget). p5.js has exactly one of these
-    // and it runs at the bundle's top level: `p5.renderers['p2d-p3'] = new
-    // Proxy(Renderer2D, {construct(...) {...}})`.
+    // trap, Construct(target, args, newTarget).
     if (callee.is_kind(heap_kind::proxy)) {
         auto * p = static_cast<proxy_object *>(callee.as_heap());
         bool failed = false;
@@ -142,9 +138,9 @@ value context::construct(value callee, std::span<const value> args, value new_ta
             const value list = make_array();
             static_cast<array_object *>(list.as_heap())->items.assign(args.begin(), args.end());
             const value trap_args[3] = {p->target, list, new_target};
-            // A THROW OUT OF THE TRAP HAS LANDED by the time call returns when
-            // no native is above (context::unwinds says why throw_pending
-            // cannot see it), so both are asked.
+            // With no native frame above, a throw from the trap has already
+            // unwound by the time call() returns and throw_pending() cannot
+            // see it (see context::unwinds), so check both.
             const std::size_t before = unwinds();
             const value made = call(trap, trap_args, p->handler);
             if (throw_pending() || unwinds() != before) { return value::undefined(); }
@@ -171,14 +167,15 @@ value context::construct(value callee, std::span<const value> args, value new_ta
                              new_target.strict_equals(callee) ? value::undefined() : new_target);
         }
     }
-    // OrdinaryCreateFromConstructor off NEW.TARGET (10.1.13 / 10.1.14
+    // OrdinaryCreateFromConstructor from new.target (10.1.13 / 10.1.14
     // GetPrototypeFromConstructor): for a plain `new` that is the callee's own
-    // `prototype`; for another new.target - Reflect.construct's, a proxy's
-    // forwarding, a bound function's - its `prototype` is read through [[Get]]
+    // `prototype`; for another new.target (Reflect.construct's, a proxy's
+    // forwarding, a bound function's) its `prototype` is read through [[Get]]
     // (an accessor runs and may throw, a proxy answers for its target), and
     // one that is not an object falls back to the callee's intrinsic.
     value self = make_instance(callee);
-    // The prototype getter, field initialisers and body can all collect.
+    // The new.target `prototype` getter and the constructor body can both
+    // trigger a collection.
     const rooted keep_instance{*this, self};
     if (!new_target.strict_equals(callee)) {
         const std::size_t before = unwinds();
@@ -190,6 +187,9 @@ value context::construct(value callee, std::span<const value> args, value new_ta
                    !static_cast<closure_object *>(callee.as_heap())->derived_constructor) {
             // GetFunctionRealm (7.3.24) unwraps bound functions and proxies
             // without invoking traps; a revoked proxy throws at this step.
+            // There is only one realm, so the walk exists only to raise that
+            // TypeError; the instance keeps the prototype make_instance gave
+            // it, and `target` is otherwise unused.
             // ponytail: super() still calls its base on the existing receiver;
             // move derived prototype lookup there when it uses Construct.
             value target = new_target;
@@ -226,7 +226,7 @@ value context::construct(value callee, std::span<const value> args, value new_ta
             return nat->fn(*this, copy);
         }();
         current_this_ = saved;
-        if (rethrow_pending()) { return value::undefined(); } // see context::call
+        if (rethrow_pending()) { return value::undefined(); } // See context::call.
         // A native returning a primitive looks exactly like a constructor
         // that returned nothing: `new Number(5)` evaluates to the receiver,
         // which the three wrapper constructors fill through
@@ -234,14 +234,13 @@ value context::construct(value callee, std::span<const value> args, value new_ta
         return produced.is_object_like() ? produced : self;
     }
     // `new C()` evaluates to the new object unless the body returned one of its
-    // own - the single case the spec lets override it.
+    // own, the single case the spec lets override it.
     //
-    // `invoke` rather than `call`, so that a constructor with a COMPILED body
-    // is told it is constructing. The ABI hands that decision to
-    // ct_aot_return_value, and passing false would make `new C()` on a compiled
-    // constructor evaluate to whatever the body happened to return.
-    // AND new.target GOES WITH IT: invoke consumes pending_new_target_ into
-    // the frame, as op::construct sets fresh.new_target on its own path.
+    // `invoke` rather than `call`, so a constructor with a compiled body knows
+    // it is constructing: ct_aot_return_value picks the result from that
+    // flag, and without it `new C()` would evaluate to whatever the body
+    // returned. invoke also moves pending_new_target_ into the new frame, as
+    // op::construct does with fresh.new_target.
     pending_new_target_ = new_target;
     const value produced = invoke(callee, args, self, /*constructing*/ true);
     return produced.is_object_like() ? produced : self;
@@ -252,14 +251,14 @@ value context::construct_spread(value callee, value arg_array) {
     return construct(callee, spread_arguments(arg_array));
 }
 
-// A value-returning counterpart of op::construct for boxed AOT. Closures keep
-// the opcode's pending-new-target preservation and origin-aware diagnostic;
-// native and Proxy constructors use the shared generic dispatch.
+/// `new callee(args)` for ahead-of-time compiled code that uses the VM's boxed
+/// values: returns the result instead of writing a register. Closures follow
+/// op::construct (pending_new_target_ saved and restored, TypeErrors naming
+/// the call site in \p from); natives and proxies go through construct().
 value context::construct_new(value callee, std::span<const value> args,
                              const function_proto & from) {
-    // A PROXY AND A NATIVE GO THE LONG WAY ROUND, exactly as the opcode sends
-    // them: the construct trap and the conversion flag both live in construct(),
-    // and duplicating either is what let the two disagree.
+    // Send proxies and natives through construct(), as op::construct does, so
+    // the construct trap and the native constructing path exist in one place.
     if (callee.is_kind(heap_kind::proxy) || callee.is_kind(heap_kind::native)) {
         return construct(callee, args);
     }
@@ -268,8 +267,9 @@ value context::construct_new(value callee, std::span<const value> args,
         return value::undefined();
     }
     const value self = make_instance(callee);
-    // ROOTED FOR THE REASON BOTH OTHER SPELLINGS ROOT IT: the instance is in a
-    // C++ local while the field initialisers run user JavaScript.
+    // Rooted, as construct() roots it: the instance lives only in a C++ local
+    // while the constructor body runs JavaScript that can trigger a
+    // collection.
     const rooted keep{*this, self};
     run_field_initialisers(callee, self);
 
@@ -277,39 +277,35 @@ value context::construct_new(value callee, std::span<const value> args,
         new_callee_type_error(from, {}, callee);
         return value::undefined();
     }
-    // GUARDED ON program_ ALONE, and the conjunct a first draft had was wrong:
-    // invoke() bails on `program_ == nullptr` BEFORE it reaches
-    // enter_compiled, so a compiled body with an aot_entry and no program would
-    // have slipped past a test for both and returned a bare instance whose
+    // Check program_ alone: invoke() returns early when program_ is null,
+    // before it reaches enter_compiled, so even a compiled body with an
+    // aot_entry would not run and `new` would return an instance whose
     // constructor never ran.
     if (program_ == nullptr) {
         raise("no program to construct in");
         return value::undefined();
     }
-    // A DEVIATION IN THE SAFE DIRECTION, not a reproduction: op::construct's
-    // compiled arm calls enter_compiled with no failed_ test, so it DOES enter
-    // a constructor body after a raise in a field initialiser.
+    // Stop if an earlier step raised. op::construct's compiled path has no
+    // failed_ check here, so this deliberately differs from it, in the safer
+    // direction.
     if (failed_) { return value::undefined(); }
 
     const value saved = pending_new_target_;
     pending_new_target_ = callee;
     const value produced = invoke(callee, args, self, /*constructing*/ true);
     pending_new_target_ = saved;
-    // A CONSTRUCTOR RETURNING A PRIMITIVE EVALUATES TO ITS RECEIVER.
+    // A constructor returning a primitive evaluates to its receiver.
     return produced.is_object_like() ? produced : self;
 }
 
 void context::run_field_initialisers(value constructor, value self) {
-    // NOTHING, SINCE 2026-09-12 - kept for its callers. Instance fields are the
-    // COMPILER's: a base class constructor runs its own `__fields` first thing
-    // in its body (10.2.2 [[Construct]] step 6.b), which a subclass's
-    // `super()` reaches as well as `new` does, and a derived class runs them
-    // after its `super()` returns on the object that call bound as `this`
-    // (`__ctbrowser_init_fields`, emitted after every super call). Until
-    // then the whole chain ran here before the body, so a base constructor's
-    // `Object.preventExtensions(this)` or returned object never met the
-    // derived fields, and a parent reached through super() ran its fields
-    // on the wrong object or twice.
+    // Does nothing; kept because op::construct, construct() and
+    // construct_new() still call it. Instance fields are initialised by compiled code instead: a
+    // base-class constructor runs its own `__fields` at the start of its body
+    // (10.2.2 [[Construct]] step 6.b), and a derived class runs
+    // `__ctbrowser_init_fields` on `this` after each `super()` returns.
+    // Running them here, before the body, would hide derived fields from a
+    // base constructor's `Object.preventExtensions(this)` or returned object.
     (void)constructor;
     (void)self;
 }

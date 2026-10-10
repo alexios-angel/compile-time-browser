@@ -1,11 +1,11 @@
-// compiler_impl - the operand limits.
+//===- ctbrowser/lib/Script/compile/limits.cpp - Operand limits -----------===//
 //
-// Interning names and constants into a frame's pools, and the
-// diagnostics for running out of either. `operand_limit` and `jump_limit` are
-// static constexpr and stay in the header.
+// compiler_impl operand limits: interning names and constants into a frame's
+// pools, and the diagnostics for running out of either. `operand_limit` and
+// `jump_limit` are static constexpr in compiler_impl.hpp, where the class is
+// declared.
 //
-// One of the files carved out of a 3,845-line compile.cpp on 2026-08-09.
-// The class is declared whole in compiler_impl.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include "compiler_impl.hpp"
 
@@ -16,6 +16,8 @@ std::string compiler_impl::frame_name(std::size_t index) const {
     return "`" + (name.empty() ? std::string{"<anonymous>"} : name) + "`";
 }
 
+/// Interns `text` into `pool` and returns its index. Uses a linear scan while
+/// the pool has fewer than small_pool entries, then builds and uses `index`.
 std::uint32_t compiler_impl::intern_into(std::vector<std::string> & pool,
                                          flat_map<std::string, std::uint32_t> & index,
                                          std::string text) {
@@ -26,7 +28,7 @@ std::uint32_t compiler_impl::intern_into(std::vector<std::string> & pool,
         pool.push_back(std::move(text));
         return static_cast<std::uint32_t>(pool.size() - 1);
     }
-    if (index.empty()) { // crossing the threshold: catch the index up
+    if (index.empty()) { // Crossing the threshold: catch the index up.
         for (std::size_t i = 0; i < pool.size(); ++i) {
             index.emplace(pool[i], static_cast<std::uint32_t>(i));
         }
@@ -57,12 +59,11 @@ std::uint16_t compiler_impl::name_operand(std::string text) {
 }
 
 void compiler_impl::finish_frame(std::size_t index, std::size_t params) {
-    // EVERY LOCAL STILL IN SCOPE ENDS HERE. `pop_scope` closes the ones whose
-    // block ended; this closes the rest, and it is the one place guaranteed to
-    // run exactly once per function - all three callers spell
-    // `finish_frame(); pop_scope(); frames_.pop_back();`, and a body that
-    // returned early would otherwise leave its parameters with a live range of
-    // length zero. Closing twice writes the same numbers.
+    // Every local still in scope ends here. `pop_scope` closes the ones whose
+    // block ended; this closes the rest. It runs exactly once per function,
+    // script or class body, after the body is compiled, so a body that returned
+    // early does not leave its parameters with a live range of length zero.
+    // Closing twice writes the same numbers.
     for (const local & each : fn().locals) { close_local(fn(), each); }
 
     function_proto & fp = out_.functions[index];

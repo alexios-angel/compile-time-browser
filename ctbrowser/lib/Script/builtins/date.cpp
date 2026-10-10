@@ -1,4 +1,11 @@
-// Split from values.cpp: date.
+//===- ctbrowser/lib/Script/builtins/date.cpp - The Date built-in ---------===//
+//
+// The Date constructor, Date.prototype and Date.parse/UTC/now (ECMA-262 21.4):
+// civil-date arithmetic that turns a millisecond count into calendar fields and
+// back, plus the specified string forms. Bare section numbers in this file
+// refer to ECMA-262.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 #include "text/internal.hpp"
 #include <chrono>
@@ -7,46 +14,33 @@
 
 namespace ctbrowser::script::builtins_detail {
 
-// Date
-// `Date` - CONSTRUCTIBLE, and reading a calendar out of a millisecond count.
-//
-// It was a namespace with `now()` on it and nothing else, so `new Date()` was
-// "Date is not a function". p5 exposes day()/month()/year()/hour() and every
-// one of them builds a Date, so a sketch showing a clock - which is most
-// beginners' second sketch - failed on its first line.
-//
-// UTC only, and no parsing: `new Date(string)` is a calendar and a timezone
-// database, which is a different project. What is here is the civil date
-// arithmetic that turns a millisecond count into fields and back, which is what
-// a page reading the clock actually needs.
-// --- Date, 21.4 -------------------------------------------------------------
-//
-// NO TIME ZONE: this engine has none, so local time IS UTC and every local
-// method answers what its UTC twin does; getTimezoneOffset says 0 and the
-// string forms say "GMT+0000 (Coordinated Universal Time)". The time value is
-// the private date_value_key slot (value/objects.hpp), NaN for an invalid date.
+// There is no time zone: local time is UTC, every local method answers what its
+// UTC twin does, getTimezoneOffset is 0 and the string forms say
+// "GMT+0000 (Coordinated Universal Time)". The time value lives in the private
+// date_value_key slot (value/objects.hpp), NaN for an invalid date.
 
 namespace {
 
 constexpr double ms_per_day = 86400000.0;
 constexpr std::string_view invalid_date_slot = date_value_key;
 
-// 21.4.1.31 TimeClip.
+/// 21.4.1.31 TimeClip: NaN outside +-8.64e15 ms (+-100,000,000 days from the
+/// epoch), otherwise the integer part.
 [[nodiscard]] double time_clip(double t) {
     if (!std::isfinite(t) || std::fabs(t) > 8.64e15) { return std::nan(""); }
     return std::trunc(t) + 0.0; // -0 becomes +0
 }
 
-// 21.4.1.28 MakeDay / 21.4.1.29 MakeTime / 21.4.1.30 MakeDate, on doubles: an
-// out-of-range month or day normalises (`new Date(2024, 12, 1)` is 1 January
-// 2025), a non-finite part is NaN.
+/// 21.4.1.28 MakeDay / 21.4.1.29 MakeTime / 21.4.1.30 MakeDate, on doubles: an
+/// out-of-range month or day normalises (`new Date(2024, 12, 1)` is 1 January
+/// 2025), a non-finite part is NaN.
 [[nodiscard]] double make_date(double year, double month, double day, double h, double m, double s,
                                double ms) {
     for (const double v : {year, month, day, h, m, s, ms}) {
         if (!std::isfinite(v)) { return std::nan(""); }
     }
-    // MakeTime FIRST and in ITS order - ((h + m) + s) + milli, each product
-    // rounded as IEEE double - because test262's fp-evaluation-order.js
+    // MakeTime comes first and in its own order - ((h + m) + s) + milli, each
+    // product rounded as an IEEE double - because test262's fp-evaluation-order.js
     // asserts the exact rounding of `Date.UTC(1970, 0, 1, 80063993375, 29, 1,
     // -288230376151711740)`, and MakeDate is then day * msPerDay + time.
     const double time =
@@ -55,7 +49,7 @@ constexpr std::string_view invalid_date_slot = date_value_key;
     const double y = std::trunc(year), mo = std::trunc(month);
     const double ym = y + std::floor(mo / 12.0);
     const int mn = static_cast<int>(mo - std::floor(mo / 12.0) * 12.0);
-    // A year past 2^40 has no time value TimeClip could keep, however the
+    // A year past 2^40 (1099511627776) has no time value TimeClip could keep, however the
     // day count is offset; days_from_civil's arithmetic stays in range there.
     if (std::fabs(ym) > 1099511627776.0) { return std::nan(""); }
     const double days =
@@ -66,9 +60,11 @@ constexpr std::string_view invalid_date_slot = date_value_key;
     return std::isfinite(tv) ? tv : std::nan("");
 }
 
+/// A time value broken into calendar fields, all in UTC.
 struct fields {
     double year, month /* 0-11 */, day, hour, minute, second, ms, weekday /* 0 = Sunday */;
 };
+/// Splits a finite time value `t` (ms since the epoch) into calendar fields.
 [[nodiscard]] fields split(double t) {
     fields out{};
     const double days = std::floor(t / ms_per_day);
@@ -89,31 +85,34 @@ constexpr const char * day_names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", 
 constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-// 21.4.4.41.2 DateString / 21.4.4.43 step 8: a sign for a negative year and
-// AT LEAST four digits either way - "-0001", not the ISO form's "-000001".
+/// 21.4.4.41.2 DateString / 21.4.4.43 step 8: a sign for a negative year and
+/// at least four digits either way - "-0001", not the ISO form's "-000001".
 [[nodiscard]] std::string year_text(double year) {
     return year < 0 ? std::format("-{:04}", -static_cast<int>(year))
                     : std::format("{:04}", static_cast<int>(year));
 }
-// 21.4.4.41.2 DateString: "Fri Feb 13 2009".
+/// 21.4.4.41.2 DateString: "Fri Feb 13 2009".
 [[nodiscard]] std::string date_string(const fields & f) {
     return std::format("{} {} {:02} {}", day_names[static_cast<int>(f.weekday)],
                        month_names[static_cast<int>(f.month)], static_cast<int>(f.day),
                        year_text(f.year));
 }
-// 21.4.4.41.1 TimeString + 21.4.4.41.3 TimeZoneString.
+/// 21.4.4.41.1 TimeString + 21.4.4.41.3 TimeZoneString:
+/// "23:31:30 GMT+0000 (Coordinated Universal Time)".
 [[nodiscard]] std::string time_string(const fields & f) {
     return std::format("{:02}:{:02}:{:02} GMT+0000 (Coordinated Universal Time)",
                        static_cast<int>(f.hour), static_cast<int>(f.minute),
                        static_cast<int>(f.second));
 }
-// 21.4.4.43 toUTCString: "Fri, 13 Feb 2009 23:31:30 GMT".
+/// 21.4.4.43 toUTCString: "Fri, 13 Feb 2009 23:31:30 GMT".
 [[nodiscard]] std::string utc_string(const fields & f) {
     return std::format(
         "{}, {:02} {} {} {:02}:{:02}:{:02} GMT", day_names[static_cast<int>(f.weekday)],
         static_cast<int>(f.day), month_names[static_cast<int>(f.month)], year_text(f.year),
         static_cast<int>(f.hour), static_cast<int>(f.minute), static_cast<int>(f.second));
 }
+/// 21.4.4.36 toISOString: "2009-02-13T23:31:30.000Z", with a signed six-digit
+/// year outside 0000-9999.
 [[nodiscard]] std::string iso_string(const fields & f) {
     const int y = static_cast<int>(f.year);
     const std::string year = y >= 0 && y <= 9999 ? std::format("{:04}", y)
@@ -125,10 +124,10 @@ constexpr const char * month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun"
                        static_cast<int>(f.second), static_cast<int>(f.ms));
 }
 
-// 21.4.3.2 Date.parse: the Date Time String Format (21.4.1.32) - `YYYY`,
-// `YYYY-MM`, `YYYY-MM-DD`, each with an optional `THH:mm[:ss[.sss]]` and `Z`
-// or `+HH:mm` - and the two forms toString and toUTCString produce. Anything
-// else is NaN; a browser's tolerant fallbacks are not specified.
+/// 21.4.3.2 Date.parse: the Date Time String Format (21.4.1.32) - `YYYY`,
+/// `YYYY-MM`, `YYYY-MM-DD`, each with an optional `THH:mm[:ss[.sss]]` and `Z`
+/// or `+HH:mm` - and the two forms toString and toUTCString produce. Anything
+/// else is NaN; a browser's tolerant fallbacks are not specified.
 [[nodiscard]] double parse_date(std::string_view s) {
     std::size_t i = 0;
     const auto digits = [&](std::size_t n, double & out) {
@@ -323,8 +322,7 @@ void install_date(context & cx) {
         double t = 0;
         return this_time(c, "Date.prototype.valueOf", t) ? value::number(t) : value::undefined();
     });
-    // No timezone here, so the local getters ARE the UTC ones and say so rather
-    // than pretending to a zone this engine does not have.
+    // There is no time zone, so the offset of local time from UTC is always 0.
     method(cx, date_proto, "getTimezoneOffset", 0, [this_time](context & c, std::span<value>) {
         double t = 0;
         if (!this_time(c, "Date.prototype.getTimezoneOffset", t)) { return value::undefined(); }
@@ -334,7 +332,7 @@ void install_date(context & cx) {
     // The setters (21.4.4.20-21.4.4.34): the arguments replace `count` fields
     // from `first` on - only as many as were supplied - and the date is
     // rebuilt through MakeDate and TimeClip. Every argument is ToNumber'd
-    // BEFORE the time is examined (a valueOf that changes the date runs first).
+    // before the time is examined (a valueOf that changes the date runs first).
     const auto setter = [&](std::string name, int first, int count, double arity) {
         method(cx, date_proto, name, arity,
                [this_time, set_time, first, count, name](context & c, std::span<value> a) {
@@ -397,7 +395,7 @@ void install_date(context & cx) {
         return set_time(c, time_clip(wanted));
     });
 
-    // The string forms. toISOString is the one that REFUSES an invalid date
+    // The string forms. toISOString is the one that refuses an invalid date
     // (21.4.4.36 step 3); the rest say "Invalid Date".
     const auto stringer = [&](std::string name, std::string (*render)(const fields &)) {
         method(cx, date_proto, name, 0, [this_time, render, name](context & c, std::span<value>) {
@@ -411,7 +409,7 @@ void install_date(context & cx) {
     stringer("toDateString", date_string);
     stringer("toTimeString", time_string);
     stringer("toUTCString", utc_string);
-    // B.2.3.3 toGMTString IS toUTCString - the same function object.
+    // B.2.3.3: toGMTString is toUTCString, the same function object.
     if (const value * utc = date_proto->find("toUTCString")) {
         date_proto->define("toGMTString", *utc, attr_builtin);
     }
@@ -495,8 +493,7 @@ void install_date(context & cx) {
         if (!made->prototype.is_object()) { made->prototype = value::object(date_proto); }
         double ms = 0;
         if (a.empty()) {
-            // NOW, from the context's clock - see context::set_clock. It used
-            // to be the literal epoch, so every page here believed it was 1970.
+            // The current time, from the context's clock (context::set_clock).
             ms = c.clock_ms();
         } else if (a.size() == 1) {
             // Step 4: another Date's time value; else ToPrimitive - a string
@@ -534,10 +531,8 @@ void install_date(context & cx) {
             ms = time_clip(
                 make_date(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]));
         }
-        // NON-ENUMERABLE, like every other internal slot this engine spells as
-        // a property: a Date has no own enumerable property in the
-        // specification, and `Object.defineProperties(obj, new Date)` handed
-        // this Number over as a descriptor and threw.
+        // Non-enumerable, like every internal slot spelled as a property: a
+        // Date has no own enumerable properties.
         made->define(invalid_date_slot, value::number(ms), attr_none);
         return self;
     });

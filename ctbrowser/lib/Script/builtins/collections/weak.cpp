@@ -1,11 +1,13 @@
-// ctbrowser.script builtins - WeakRef and FinalizationRegistry (26.1, 26.2).
+//===- weak.cpp - WeakRef and FinalizationRegistry --------------*- C++ -*-===//
 //
-// New on 2026-09-12. Both exist for their SHAPE and their TypeErrors: this
-// engine's collector has no weak references and runs no finalisers, so a
-// WeakRef's target is held strongly (`deref` always answers it) and a
-// registry's cleanup callback never runs. That is the same deviation
-// WeakMap and WeakSet carry (keyed.cpp) - a leak, not a wrong answer - and it
-// is what a page can observe: nothing, short of measuring memory.
+// WeakRef and FinalizationRegistry (ECMA-262 26.1, 26.2). Both exist for
+// their shape and their TypeErrors: this engine's collector has no weak
+// references and runs no finalisers, so a WeakRef's target is held strongly
+// (`deref` always answers it) and a registry's cleanup callback never runs.
+// WeakMap and WeakSet carry the same deviation (keyed.cpp). It is a leak, not
+// a wrong answer, and a page cannot observe it short of measuring memory.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../internal.hpp"
 
@@ -13,12 +15,14 @@ namespace ctbrowser::script::builtins_detail {
 
 namespace {
 
+/// WeakRef's [[WeakRefTarget]], held strongly.
 constexpr std::string_view weak_ref_slot = CTBROWSER_PRIVATE_KEY("WeakRefTarget");
+/// FinalizationRegistry's [[Cells]]: an array of [target, held, token] arrays.
 constexpr std::string_view registry_slot = CTBROWSER_PRIVATE_KEY("FinalizationRegistryCells");
 
-// CanBeHeldWeakly, 9.13: an object, or a symbol that is not registered with
-// Symbol.for (whose key starts registered_symbol_key_prefix, text/symbol.cpp). The same
-// test keyed.cpp makes for WeakMap and WeakSet.
+/// CanBeHeldWeakly, ECMA-262 9.13: an object, or a symbol not registered with
+/// Symbol.for (a registered symbol's key starts with registered_symbol_key_prefix,
+/// core/symbol.hpp). keyed.cpp makes the same test for WeakMap and WeakSet.
 [[nodiscard]] bool can_be_held_weakly(value v) {
     if (v.is_object_like()) { return true; }
     if (!v.is_kind(heap_kind::symbol)) { return false; }
@@ -26,7 +30,7 @@ constexpr std::string_view registry_slot = CTBROWSER_PRIVATE_KEY("FinalizationRe
                 ->key.starts_with(registered_symbol_key_prefix);
 }
 
-// RequireInternalSlot: the receiver's slot, or null with the TypeError in flight.
+/// RequireInternalSlot: the receiver's slot, or null with the TypeError in flight.
 [[nodiscard]] value * slot_of(context & cx, std::string_view slot, const char * method) {
     const value self = cx.current_this();
     if (self.is_object()) {
@@ -44,7 +48,7 @@ void install_weak_refs(context & cx) {
     using detail::method;
     using detail::new_table;
 
-    // --- WeakRef, 26.1 ----------------------------------------------------------
+    // --- WeakRef, 26.1 ------------------------------------------------------
     object_object * ref_proto = new_table(cx);
     auto * ref_ctor = cx.allocate<native_object>("WeakRef", [](context & c, std::span<value> a) {
         const value self = c.current_this();

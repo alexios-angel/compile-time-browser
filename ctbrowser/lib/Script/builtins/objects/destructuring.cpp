@@ -1,14 +1,24 @@
-// Split from function.cpp: destructuring.
+//===- destructuring.cpp - Natives the compiler calls -----------*- C++ -*-===//
+//
+// Hidden global natives the bytecode compiler emits calls to: array
+// destructuring and `for...of` iteration, `using` disposal, class heritage,
+// `super` property access, private elements, template objects and `yield*`
+// delegation. Each is registered under a `*_name` constant whose doc comment
+// (script/builtins.hpp or script/vm/objects.hpp) gives its calling convention.
+// Bare section numbers refer to ECMA-262.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::script::builtins_detail {
 
-// See iterator_open_name: the three natives an array pattern is compiled
-// around. The record is an ordinary object so the collector sees it through
-// the register that holds it; `done` starts true and is cleared only by a
-// step that produced a value, which is exactly 7.4.8's rule that a throwing
-// or malformed `next()` marks the record done and forbids a close.
+// An iterator record (see iterator_open_name) is an ordinary object with
+// `iterator`, `next` and `done`, so the collector sees it through the register
+// that holds it. `done` is set before each step and cleared only by a step that
+// produced a value: that is 7.4.8's rule that a throwing or malformed `next()`
+// marks the record done and forbids a close.
 namespace {
+/// Property `name` of an internal record, or undefined when absent.
 [[nodiscard]] value slot(object_object * record, const char * name) {
     const value * found = record->find(name);
     return found != nullptr ? *found : value::undefined();
@@ -25,6 +35,8 @@ namespace {
 // the completion so far.
 namespace {
 
+/// A SuppressedError whose `error` is the new throw and whose `suppressed` is
+/// the completion so far.
 [[nodiscard]] value suppressed_error(context & c, value error, value suppressed) {
     const value made = c.make_error("SuppressedError", "An error was suppressed during disposal");
     auto * o = static_cast<object_object *>(made.as_heap());
@@ -33,13 +45,15 @@ namespace {
     return made;
 }
 
+/// Folds a disposal throw `error` into the stack's pending completion.
 void fold_disposal_error(context & c, object_object * stack, value error) {
     const bool threw = context::truthy(slot(stack, "__threw"));
     stack->set("__error", threw ? suppressed_error(c, error, slot(stack, "__error")) : error);
     stack->set("__threw", value::boolean(true));
 }
 
-// The completion in flight, read once: kind 1 is a throw of `thrown`.
+/// Records the completion in flight, once per stack: kind 1 is a throw of
+/// `thrown`.
 void seed_completion(object_object * stack, value kind, value thrown) {
     if (context::truthy(slot(stack, "__seeded"))) { return; }
     stack->set("__seeded", value::boolean(true));
@@ -49,9 +63,10 @@ void seed_completion(object_object * stack, value kind, value thrown) {
     }
 }
 
-// Pop the top resource and call its dispose method; answers what the
-// caller should await (the method's result for an async resource, undefined
-// for a sync one or after a throw), and whether there was a resource at all.
+/// Pops the top resource and calls its dispose method. Sets `awaited` to what
+/// the caller should await (the method's result for an async resource,
+/// undefined for a sync one or after a throw) and returns whether there was a
+/// resource at all.
 [[nodiscard]] bool dispose_top(context & c, object_object * stack, value & awaited) {
     awaited = value::undefined();
     const value list = slot(stack, "__resources");
@@ -77,6 +92,7 @@ void seed_completion(object_object * stack, value kind, value thrown) {
     return true;
 }
 
+/// Rethrows the folded completion, if it is a throw, and clears it.
 void throw_folded(context & c, object_object * stack) {
     if (!context::truthy(slot(stack, "__threw"))) { return; }
     const value error = slot(stack, "__error");
@@ -85,6 +101,8 @@ void throw_folded(context & c, object_object * stack) {
     c.throw_value(error);
 }
 
+/// Installs the `using` natives: stack creation, add, sync dispose, one async
+/// dispose step, and the fold of a failed await.
 void install_using(context & cx) {
     cx.define_native(std::string{using_stack_name}, [](context & c, std::span<value>) {
         auto * stack = detail::new_table(c);
@@ -97,7 +115,7 @@ void install_using(context & cx) {
     // AddDisposableResource (9.13.1) with CreateDisposableResource (9.13.2)
     // and GetDisposeMethod (9.13.3): null and undefined register nothing; a
     // non-object is a TypeError; an `await using` asks for @@asyncDispose
-    // first and falls back to @@dispose, whose result is then NOT awaited
+    // first and falls back to @@dispose, whose result is then not awaited
     // (the fallback closure of 9.13.3 step 1.b.ii returns undefined).
     cx.define_native(std::string{using_add_name}, [](context & c, std::span<value> a) {
         if (a.size() < 2 || !a[0].is_object()) { return value::undefined(); }
@@ -105,7 +123,7 @@ void install_using(context & cx) {
         const value v = a[1];
         const bool async = a.size() > 2 && context::truthy(a[2]);
         if (v.is_nullish()) { return v; }
-        // AN OBJECT IS ANY OBJECT - a function, an array, a proxy too (9.13.1
+        // Any object will do - a function, an array, a proxy too (9.13.1
         // step 1.b: "If V is not an Object"); `using f = function () {}` with
         // a [Symbol.dispose] on it is as good a resource as `{}`.
         if (!v.is_object_like()) {
@@ -180,6 +198,7 @@ void install_using(context & cx) {
 
 } // namespace
 
+/// Installs every native in this file (see the file comment).
 void install_destructuring_iteration(context & cx) {
     cx.define_native(std::string{iterator_open_name}, [](context & c, std::span<value> a) {
         const value iterator = c.get_iterator(a.empty() ? value::undefined() : a[0]);
@@ -192,10 +211,12 @@ void install_destructuring_iteration(context & cx) {
     });
     cx.define_native(std::string{for_of_open_name}, [](context & c, std::span<value> a) {
         const value v = a.empty() ? value::undefined() : a[0];
-        // See for_of_open_name: the fast set is what iterable_values walks
-        // without the protocol, plus the array-like leniency the index loop
-        // has always had (ctcompile's escape oracle pins an inherited `0`
-        // getter firing under `for (x of {length: 1})`).
+        // See for_of_open_name. Undefined means "take the fast path": the
+        // values iterable_values walks without the protocol, plus the
+        // array-like leniency of the index loop (an object with a numeric own
+        // `length` and no @@iterator). ctcompile's escape oracle depends on
+        // that leniency: it expects an inherited `0` getter to fire under
+        // `for (x of {length: 1})`.
         bool fast = v.is_array() || v.is_string() || v.is_kind(heap_kind::proxy);
         if (!fast && v.is_object()) {
             auto * obj = static_cast<object_object *>(v.as_heap());
@@ -280,9 +301,9 @@ void install_destructuring_iteration(context & cx) {
             return value::undefined();
         }
         if (!is_constructor(parent)) {
-            // NAMED WITHOUT RUNNING ANY OF ITS CODE: stringifying an object
+            // Named without running any of its code: stringifying an object
             // asks its @@toPrimitive and toString - a proxy's `get` trap -
-            // whose throw then replaced this TypeError.
+            // whose throw would replace this TypeError.
             const bool opaque = parent.is_object_like() || parent.is_kind(heap_kind::symbol);
             c.throw_error("TypeError", "Class extends value " +
                                            (opaque ? std::string{context::type_of(parent)}
@@ -300,7 +321,7 @@ void install_destructuring_iteration(context & cx) {
         }
         c.set_prototype(a[2], proto_parent.is_null() ? value::undefined() : proto_parent);
         ctor->proto_link = parent;
-        // UNTIL class_defined: the body's methods are DEFINED on these two,
+        // Until class_defined: the body's methods are defined on these two,
         // whatever the parent's chain holds (object_object::defining_class).
         ctor->defining_class = true;
         if (a[2].is_object()) {
@@ -333,13 +354,12 @@ void install_destructuring_iteration(context & cx) {
     // See super_get_name.
     cx.define_native(std::string{super_get_name}, [](context & c, std::span<value> a) {
         if (a.size() < 3) { return value::undefined(); }
-        // THE IMPLICIT Object.prototype: a plain object's [[Prototype]] field
-        // is null when it was never set and undefined when it was set to null
-        // (object_object::prototype). op::get_proto answers the implicit one
-        // itself since 2026-09-26 (context::super_base), so a null reaching
-        // here is a base computed some other way - and still means it. A home
-        // object is an object literal or a class's prototype or constructor,
-        // never an array, so null says nothing else.
+        // A plain object's [[Prototype]] field is null when never set (meaning
+        // the implicit Object.prototype) and undefined when explicitly set to
+        // null (object_object::prototype). op::get_proto already resolves the
+        // implicit case (context::super_base); a null that still arrives here
+        // means the same thing, since a home object is an object literal or a
+        // class's prototype or constructor, never an array.
         if (a[0].is_null()) {
             if (object_object * table = c.prototype(context::proto_kind::object)) {
                 a[0] = value::object(table);
@@ -399,7 +419,7 @@ void install_destructuring_iteration(context & cx) {
         c.throw_error("ReferenceError", name + " is not defined");
         return value::undefined();
     });
-    // See template_object_name. The cache is a plain object RETAINED by the
+    // See template_object_name. The cache is a plain object retained by the
     // native (native_object::retained is traced), so the collector sees every
     // array in it; the lambda holds the raw pointer that retention keeps alive.
     {
@@ -429,9 +449,9 @@ void install_destructuring_iteration(context & cx) {
         cx.define_global(std::string{template_object_name}, value::object(native));
     }
     cx.define_native(std::string{define_accessor_name}, [](context & c, std::span<value> a) {
-        // A CLASS IS A CLOSURE: `static get [k]()` defines on the constructor,
-        // which is_object() (heap_kind::object exactly) does not admit - so
-        // every static computed accessor was silently dropped.
+        // A class is a closure: `static get [k]()` defines on the constructor,
+        // which is_object() (heap_kind::object exactly) does not admit, so a
+        // function target is accepted explicitly.
         if (a.size() < 4 || !(a[0].is_object() || a[0].is_kind(heap_kind::function))) {
             return value::undefined();
         }
@@ -520,7 +540,7 @@ void install_destructuring_iteration(context & cx) {
             return value::undefined();
         }
         const value sent = a.size() > 1 ? a[1] : value::undefined();
-        // AN ASYNC GENERATOR'S `.throw(e)` / `.return(v)` ARRIVING AT THE
+        // An async generator's `.throw(e)` / `.return(v)` arriving at the
         // `yield*` (see resume_record_key): the inner iterator's own method
         // gets it (14.4.14 steps 7.b and 7.c). No `throw`: the inner
         // iterator is closed and the protocol violation is a TypeError at

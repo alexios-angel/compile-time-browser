@@ -1,12 +1,11 @@
-// early errors - expressions: assignment targets, `__proto__` duplicates,
-// numeric literals, `delete`, `super` and `new.target`, and the walk itself.
+//===- expressions.cpp - Expression early errors ----------------*- C++ -*-===//
 //
-// One of six files carved out of a 1,476-line compile/early_errors.cpp on
-// 2026-09-08 - the checker was one class with every member inline, as
-// compile.cpp was before it became compile/. The class is declared in
-// checker.hpp beside this, in ctbrowser::script::detail::early; the bodies are
-// where they were, in the file that owns the concern. early_errors.hpp, the
-// public face of the pass, did not change.
+// Early errors for expressions: assignment targets, duplicate `__proto__`,
+// numeric and string literals, `delete`, `super`, `new.target`, and the
+// expression walk itself. The `checker` class is declared in checker.hpp.
+// Bare section numbers (13.15.1, 12.9.3, ...) are ECMA-262 sections.
+//
+//===----------------------------------------------------------------------===//
 
 #include "checker.hpp"
 
@@ -18,7 +17,7 @@ namespace ctbrowser::script::detail::early {
 namespace {
 
 // The kinds walk_statement handles by name. Anything else in statement position
-// is an expression - and anything in EXPRESSION position that turns out to be
+// is an expression, and anything in expression position that turns out to be
 // one of these is a routing mistake, so walk_expression sends it back rather
 // than walking a block as if it were an operand.
 [[nodiscard]] bool is_statement(nk kind) {
@@ -47,11 +46,11 @@ namespace {
 
 } // namespace
 
-// --- expressions ---------------------------------------------------------------
+// --- Expressions. ---
 
-// A target a value may be assigned TO. 13.15.1 refuses everything else, and
-// "everything else" is most of the grammar: a literal, a call, a sequence,
-// an operator expression, an arrow, an optional chain.
+// Returns whether a value may be assigned to this node. 13.15.1 refuses
+// everything else, and "everything else" is most of the grammar: a literal,
+// a call, a sequence, an operator expression, an arrow, an optional chain.
 [[nodiscard]] bool checker::simple_target(std::int32_t idx) const {
     switch (at(idx).kind) {
     case nk::ident:
@@ -61,19 +60,21 @@ namespace {
     }
 }
 
+// Returns whether `kind` is a literal or pattern that `=` may destructure into.
 [[nodiscard]] bool checker::destructuring(nk kind) {
     return kind == nk::array || kind == nk::object || kind == nk::array_pattern ||
            kind == nk::object_pattern;
 }
 
-// A CALL TARGET: "Runtime Errors for Function Call Assignment Targets"
-// (a normative optional clause, which a web browser implements) makes the
-// AssignmentTargetType of `f()` - a CoverCallExpressionAndAsyncArrowHead or
-// CallExpression Arguments - ~web-compat~ in non-strict code rather than
+// Returns whether `idx` is a call that sloppy code may assign to. "Runtime
+// Errors for Function Call Assignment Targets" (a normative optional clause,
+// which a web browser implements) makes the AssignmentTargetType of `f()`
+// (a CoverCallExpressionAndAsyncArrowHead or CallExpression Arguments)
+// ~web-compat~ in non-strict code rather than
 // ~invalid~: `f() = 1`, `f() += 1` and `f()++` compile, and evaluate the call
 // and then throw the ReferenceError (compiler_impl::compile_assign). Not a
 // `super()` call, not one inside an optional chain, not in strict code, and
-// never for the logical assignments, which want a SIMPLE target.
+// never for the logical assignments, which want a simple target.
 [[nodiscard]] bool checker::web_compat_call(std::int32_t idx) const {
     if (strict() || idx < 0 || at(idx).kind != nk::call) { return false; }
     for (std::int32_t link = at(idx).a; link >= 0;) {
@@ -120,10 +121,11 @@ void checker::check_update(std::int32_t idx) {
 
 // 13.2.5.1 with B.3.1: an object literal may not carry two plain-data
 // `__proto__` properties, because each of them would set the prototype.
-// A shorthand, a method, an accessor and a computed key are all excluded -
+// A shorthand, a method, an accessor and a computed key are all excluded:
 // none of them is the prototype-setting form.
-// The parser marks unbracketed quoted names with bit 1. Cook them with the
-// same decoder as emission; computed names never set the prototype.
+// `prop.d` bit 0 marks a key that is not a plain identifier name; bit 1 marks
+// a quoted string key (`"__proto__": x`), which is decoded with the same
+// decoder emission uses. A bracketed computed key never sets the prototype.
 [[nodiscard]] bool checker::names_proto(const vp::node & prop) const {
     if ((prop.d & 1) == 0) { return prop.text == "__proto__"; }
     if ((prop.d & 2) == 0) { return false; }
@@ -145,44 +147,35 @@ void checker::check_proto_duplicates(std::int32_t idx) {
     if (seen > 1) { report("an object literal may not set `__proto__` twice", second); }
 }
 
-// A RESERVED WORD USED AS AN IDENTIFIER IS *NOT* CHECKED, and this is the
-// one rule that was written, measured, and then TAKEN OUT AGAIN. It is
-// recorded here so it is not attempted a second time from the same
-// reasoning.
+// A reserved word used as a plain identifier reference is deliberately not
+// refused; only an escaped spelling or a shorthand property is (see
+// checker::escaped and check_identifier_reference).
 //
 // 13.1.1 reserves `const`, `return`, `class` and twenty more in every
 // context, and ctjs's parser reads a keyword in expression position as a
-// plain name - which it HAS to, because `of`, `get`, `set`, `static`,
+// plain name, which it has to, because `of`, `get`, `set`, `static`,
 // `async`, `let`, `await` and `yield` are contextual and `const of = 1` is
-// valid JavaScript. Refusing the unconditionally-reserved ones scored +52
-// negative parse tests and refused NOTHING in the 41,163 valid test262
-// files.
-//
-// It refused p5.js. The bundle contains
+// valid JavaScript. Refusing every reserved word would also refuse p5.js,
+// which contains
 //
 //     if (strandsContext._builtinGlobalsAccessorsInstalled) return
 //     const getRuntimeP5Instance = () => ...
 //
-// and this parser has no automatic semicolon insertion after a bare
-// `return`, so it reads the `const` as that return's OPERAND - an
-// identifier named `const`. The rule is therefore not a rule about the
-// language here, it is a rule about a parser gap, and any statement
-// following an argument-less `return` at the end of a line can be caught by
-// it. That is a page that does not load, and the whole point of this file
-// is not to be that.
+// The parser has no automatic semicolon insertion after a bare `return`, so
+// it reads the `const` as that return's operand, an identifier named
+// `const`. Do not add the check until the parser handles ASI after `return`.
 
-// A NUMERIC LITERAL'S OWN GRAMMAR, 12.9.3, read back off the lexeme.
+// Checks a numeric literal against its own grammar (12.9.3), read back off
+// the lexeme.
 //
 // The lexer is deliberately total: it takes `0` followed by `x`, `o` or `b`
-// and then EVERY identifier character, and a decimal run of digits, dots
-// and underscores, without asking whether the result is a number. That is
-// the right shape for a lexer - `0o17` used to lex as `0` followed by the
-// identifier `o17` - and it leaves `0b2`, `0x`, `1__0` and `1.5n` as tokens
-// that parse and are not literals.
+// and then every identifier character, and a decimal run of digits, dots
+// and underscores, without asking whether the result is a number (so `0o17`
+// is one token, not `0` and `o17`). That leaves `0b2`, `0x`, `1__0` and
+// `1.5n` as tokens that parse and are not literals.
 //
-// WHAT IS NOT CHECKED: a legacy octal (`01`) and a non-octal decimal (`08`).
-// Both are legal sloppy JavaScript and only an error in strict mode, which
-// this engine does not have.
+// A legacy octal (`01`) or non-octal decimal (`08`) literal is legal in
+// sloppy code and refused only in strict code (checked first, below).
 void checker::check_number(std::int32_t idx) {
     const std::string_view text = at(idx).text;
     if (text.empty()) { return; }
@@ -214,7 +207,7 @@ void checker::check_number(std::int32_t idx) {
             return;
         }
         for (std::size_t i = 0; i < digits.size(); ++i) {
-            // 12.9.3: a separator goes BETWEEN two digits and nowhere else.
+            // 12.9.3: a separator goes between two digits and nowhere else.
             if (digits[i] == '_') {
                 if (i == 0 || i + 1 == digits.size() || !belongs(digits[i - 1]) ||
                     !belongs(digits[i + 1])) {
@@ -231,9 +224,8 @@ void checker::check_number(std::int32_t idx) {
         }
         return;
     }
-    // A BigInt IS AN INTEGER (12.9.3): no fraction and no exponent, and no
-    // leading zero - `01n` and `08n` are not legacy anything, they are
-    // errors even in sloppy code.
+    // A BigInt is an integer (12.9.3): no fraction and no exponent, and no
+    // leading zero; `01n` and `08n` are errors even in sloppy code.
     if (bigint) {
         if (body.find('.') != std::string_view::npos || body.find('e') != std::string_view::npos ||
             body.find('E') != std::string_view::npos) {
@@ -245,20 +237,17 @@ void checker::check_number(std::int32_t idx) {
             return;
         }
     }
-    // TWO DECIMAL POINTS ARE NOT CHECKED, and the reason is `0..toString(2)`
-    // - which is legal JavaScript, is how a page calls a method on a
-    // numeric literal, and arrives here as the single lexeme `0..` because
-    // the lexer takes every dot it can. Four test262 files are that shape.
-    // Refusing it would be refusing valid source to catch a case the parser
-    // already fails on.
-    // A LEGACY OCTAL OR NON-OCTAL DECIMAL TAKES NO SEPARATORS. `01` and `08`
-    // are legal sloppy and `0_1` is not: the separator is only in the
-    // modern productions.
-    // `body[1] == '_'` COUNTS AS ONE. After a leading `0` the only things
-    // the grammar admits are a radix prefix, a `.`, an exponent and a
-    // legacy octal digit run - so `0_1` is a legacy literal with a
-    // separator in it rather than a modern literal that happens to start
-    // with a zero.
+    // Two decimal points are not refused, because `0..toString(2)` is legal
+    // JavaScript (a method call on a numeric literal) and arrives here as the
+    // single lexeme `0..`, since the lexer takes every dot it can. Four
+    // test262 files have that shape.
+    //
+    // A legacy octal or non-octal decimal takes no separators: `01` and `08`
+    // are legal in sloppy code and `0_1` is not, because the separator exists
+    // only in the modern productions. `body[1] == '_'` counts as legacy too:
+    // after a leading `0` the grammar admits only a radix prefix, a `.`, an
+    // exponent and a legacy octal digit run, so `0_1` is a legacy literal
+    // with a separator in it.
     const bool legacy = body.size() > 1 && body[0] == '0' && (decimal(body[1]) || body[1] == '_') &&
                         body.find('.') == std::string_view::npos &&
                         body.find('e') == std::string_view::npos &&
@@ -274,11 +263,11 @@ void checker::check_number(std::int32_t idx) {
             return;
         }
     }
-    // THE WHOLE DECIMAL GRAMMAR (12.9.3): digits, one `.`, one exponent with
+    // The whole decimal grammar (12.9.3): digits, one `.`, one exponent with
     // an optional sign and at least one digit. The lexer keeps whatever
-    // identifier characters FOLLOW a number in the token (`3in`, `0b0` after
-    // `00`), because 12.9.3 forbids an IdentifierStart or digit right after
-    // a literal - so this is where they are refused.
+    // identifier characters follow a number in the token (`3in`, `0b0` after
+    // `00`), and 12.9.3 forbids an IdentifierStart or digit right after a
+    // literal, so this is where they are refused.
     std::size_t i = 0;
     const auto digits = [&](bool & any) {
         while (i < body.size() && (decimal(body[i]) || body[i] == '_')) {
@@ -313,15 +302,15 @@ void checker::check_number(std::int32_t idx) {
 // The lexeme keeps its quotes. `\u{...}` is at most 10FFFF; `\x` takes two
 // hex digits and `\u` four; `\0` not followed by a digit is NUL; any other
 // `\0`-`\7` run is a LegacyOctalEscapeSequence and `\8`/`\9` a
-// NonOctalDecimalEscapeSequence - both refused in strict code and in every
+// NonOctalDecimalEscapeSequence, both refused in strict code and in every
 // template. A template's `${ ... }` holes are code, not text, and are
 // skipped as the lexer skipped them.
 void checker::check_string(std::int32_t idx, bool is_template, bool tagged) {
     const std::string_view text = at(idx).text;
     if (text.empty()) { return; }
     const char quote = text.front();
-    // A str node the parser SYNTHESISED - an import's renamed binding holds
-    // the bare name - has no quotes and nothing to check.
+    // A str node the parser synthesised (an import's renamed binding holds
+    // the bare name) has no quotes and nothing to check.
     if (!is_template && quote != '"' && quote != '\'') { return; }
     if (!is_template && (text.size() < 2 || text.back() != quote)) {
         report("this string literal is not terminated", idx);
@@ -358,7 +347,7 @@ void checker::check_string(std::int32_t idx, bool is_template, bool tagged) {
         if (c != '\\') { continue; }
         const char e = text[i + 1];
         ++i;
-        if (e == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; } // a CRLF continuation
+        if (e == '\r' && i + 1 < text.size() && text[i + 1] == '\n') { ++i; } // CRLF continuation.
         if (e == 'x') {
             if (i + 2 >= text.size() || !hex(text[i + 1]) || !hex(text[i + 2])) {
                 bad("a `\\x` escape needs two hex digits");
@@ -404,13 +393,13 @@ void checker::check_string(std::int32_t idx, bool is_template, bool tagged) {
                 return;
             }
         }
-        // Anything else - a character escape, a line continuation, a
-        // non-escape character - is fine.
+        // Anything else (a character escape, a line continuation, a
+        // non-escape character) is fine.
     }
 }
 
-// 13.5.1.1: `delete` of a private member is an error wherever it appears -
-// no strict mode needed, unlike `delete` of a plain identifier.
+// 13.5.1.1: `delete` of a private member is an error wherever it appears,
+// strict or not; `delete` of a plain identifier only in strict code.
 void checker::check_delete(std::int32_t operand) {
     const vp::node & n = at(operand);
     if ((n.kind == nk::member || n.kind == nk::opt_member) && n.text.starts_with('#')) {
@@ -432,12 +421,15 @@ void checker::check_delete(std::int32_t operand) {
     return frames_.front();
 }
 
+// The kind of enclosing_non_arrow_frame().
 [[nodiscard]] frame_kind checker::enclosing_non_arrow() const {
     return enclosing_non_arrow_frame().what;
 }
 
-// Arrows and yield are AssignmentExpressions, not operator operands (15.3/15.5).
-// Yield keeps a grouping flag; an arrow's span excludes its wrapping parentheses.
+// Refuses an unparenthesised arrow or `yield` as an operator's operand: both
+// are AssignmentExpressions, not operands (15.3/15.5). A yield node keeps a
+// grouping flag (c == 1); an arrow's span excludes its wrapping parentheses,
+// so the source around it is lexed to find them.
 void checker::check_operand(std::int32_t op_node, std::int32_t operand) {
     const vp::node & n = at(operand);
     const vp::node & op = at(op_node);
@@ -465,6 +457,9 @@ void checker::check_operand(std::int32_t op_node, std::int32_t operand) {
            op_node);
 }
 
+// Walks one expression and everything under it, applying the expression
+// rules. A statement reached in expression position is sent to
+// walk_statement.
 void checker::walk_expression(std::int32_t idx) {
     if (idx < 0 || depth_ >= max_depth) { return; }
     const deeper nesting{depth_};
@@ -491,7 +486,7 @@ void checker::walk_expression(std::int32_t idx) {
         if (n.text == "await" && in_parameters_ && frames_.back().is_async) {
             report("`await` is not allowed in the parameters of an async function", idx);
         }
-        // 15.7.1: a static block may not Contain `await` - and Contains
+        // 15.7.1: a static block may not Contain `await`, and Contains
         // stops at a function boundary, arrows included, so only the
         // innermost frame is asked.
         if (n.text == "await" && frames_.back().what == frame_kind::static_block) {
@@ -508,7 +503,7 @@ void checker::walk_expression(std::int32_t idx) {
         return;
 
     case nk::arrow:
-        // AN ARROW INHERITS `super`, so the constructor's permission has to
+        // An arrow inherits `super`, so the constructor's permission has to
         // travel into it: `constructor() { const f = () => super(); }` is
         // legal and is how a derived class defers the call.
         check_function(idx, frame_kind::arrow, enclosing_non_arrow_frame().super_call_ok);
@@ -518,7 +513,7 @@ void checker::walk_expression(std::int32_t idx) {
     case nk::class_decl: check_class(idx); return;
 
     case nk::call:
-        // `super(...)` IS NOT A CALL OF THE VALUE `super`. It is its own
+        // `super(...)` is not a call of the value `super`. It is its own
         // production, and 15.7.1 admits it in exactly one place: the
         // constructor of a class with a heritage. Handled here rather than
         // in the `super_lit` arm below, which would otherwise report the
@@ -537,11 +532,11 @@ void checker::walk_expression(std::int32_t idx) {
         for (const std::int32_t p : kids(n)) { walk_property(p); }
         return;
 
-    // `o.#x` / `o?.#x`: 15.7.1 AllPrivateIdentifiersValid, and the grammar -
+    // `o.#x` / `o?.#x`: 15.7.1 AllPrivateIdentifiersValid, and the grammar:
     // SuperProperty is `super . IdentifierName`, never a private name.
     case nk::member:
     case nk::opt_member:
-        // 13.3: `.` is followed by an IdentifierName - `x."y"` is not one.
+        // 13.3: `.` is followed by an IdentifierName; `x."y"` is not one.
         if (!identifier_start(n.text)) {
             report("a property name after `.` must be an identifier", idx);
         }
@@ -580,7 +575,7 @@ void checker::walk_expression(std::int32_t idx) {
         return;
 
     // 13.1.1: in strict code `yield` and the future reserved words are not
-    // identifiers even as a reference (`eval`/`arguments` may be READ).
+    // identifiers even as a reference (`eval`/`arguments` may be read).
     case nk::ident:
         // A bare `#x` anywhere but the left of `in` is not an expression.
         if (n.text.starts_with('#')) {
@@ -588,7 +583,7 @@ void checker::walk_expression(std::int32_t idx) {
             return;
         }
         check_identifier_reference(n.text, idx, escaped(idx));
-        // 15.7.1: a field initialiser may not ContainsArguments - through
+        // 15.7.1: a field initialiser may not ContainsArguments: through
         // an arrow, which has no `arguments` of its own, but not through a
         // function, which does.
         if (n.text == "arguments" && enclosing_non_arrow() == frame_kind::field_init) {
@@ -599,44 +594,43 @@ void checker::walk_expression(std::int32_t idx) {
         }
         return;
 
-    // 13.3.12.1 (`import.meta` only in a module) is NOT checked here: the
-    // compiler refuses it as "not implemented" in every goal, and
-    // test/corpus/modules/module_ratchet.cpp reads that refusal as the
-    // feature being understood. A SyntaxError would read as a step back.
+    // 13.3.12.1 (`import.meta` only in a module) is not checked here. The
+    // compiler already refuses `import.meta` as "not implemented" everywhere,
+    // and test/corpus/modules/module_ratchet.cpp counts that refusal as
+    // "recognised"; reporting a SyntaxError instead would make that test
+    // count a regression.
     case nk::import_meta: return;
 
     case nk::new_target:
-        // NOT CHECKED, AND IT IS THE SAME DEVIATION AS TOP-LEVEL `return`
-        // ABOVE - the second half of one decision rather than a second one.
+        // Not checked at the top level of an ordinary embedder program, for
+        // the same reason a top-level `return` is accepted (see the
+        // `return_stmt` case in statements.cpp).
         //
         // 16.1.1 says a Script may not contain `new.target`: the grammar
         // admits it only inside a function, exactly as it admits `return`
         // only inside one. This engine's embedding contract is that the top
-        // level IS a function body - `run_result::returned` is what
-        // `return` at the top level hands back, and `unittests/js` compiles
-        // `return (expr);` for every expression it checks. Refusing
-        // `new.target` there while accepting `return` there refuses the
-        // engine's own calling convention halfway: `return String(new.target)`
-        // is a line in `unittests/js/vm/objects.cpp`, it is the shape a page's
-        // transpiled guard takes, and the VM answers it correctly with
-        // `undefined` - there is no constructor at the top level, which is
-        // what `undefined` means.
+        // level is a function body: `run_result::returned` is what `return`
+        // at the top level hands back, and `unittests/js` compiles
+        // `return (expr);` for every expression it checks. Accepting `return`
+        // there but refusing `new.target` would break that contract halfway:
+        // `return String(new.target)` is a line in
+        // `unittests/js/vm/objects.cpp`, it is the shape a page's transpiled
+        // guard takes, and the VM answers it correctly with `undefined`.
         //
-        // The honest fix is the one the `return` note names: a `script_kind`
-        // that says "this source is a function body", passed by every
-        // embedder. Until there is one, these two agree.
+        // The proper fix is a `script_kind` flag that says "this source is a
+        // function body", passed by every embedder. Until it exists, `return`
+        // and `new.target` are treated the same way.
         //
-        // `super` below is NOT this case and stays refused. It needs a home
-        // object, which no top level has under any reading of the contract,
-        // and nothing in this engine's API hands one back.
+        // `super` below is a different case and stays refused: it needs a
+        // home object, which no top level has.
         //
-        // AN EVAL'S SOURCE IS NOT THE EMBEDDER'S, so the contract does not
-        // reach it: outside a function - an indirect eval, or a direct one
-        // whose `this` is the global one - it is the SyntaxError of 19.2.1.1
-        // step 7.a (inFunction false, and the body Contains NewTarget).
-        // Nor does it reach a MODULE: no embedder hands one a function body
-        // (16.2.1.1: a ModuleItemList may not Contain NewTarget).
-        // A Script said to be one (script_goal_) is refused as `return` is.
+        // The contract does not cover an eval's source: outside a function
+        // (an indirect eval, or a direct one whose `this` is the global one)
+        // it is the SyntaxError of 19.2.1.1 step 7.a (inFunction false, and
+        // the body Contains NewTarget). Nor does it cover a module
+        // (16.2.1.1: a ModuleItemList may not Contain NewTarget). When the
+        // embedder declares the source an ordinary Script (script_goal_),
+        // top-level `new.target` is refused, as top-level `return` is.
         if ((eval_ != nullptr || module_() || script_goal_) &&
             enclosing_non_arrow() == frame_kind::script) {
             report("`new.target` outside a function", idx);
@@ -681,13 +675,13 @@ void checker::walk_property(std::int32_t idx) {
         walk_expression(idx);
         return;
     }
-    if ((n.d & 1) != 0) { walk_expression(n.a); } // a computed key
+    if ((n.d & 1) != 0) { walk_expression(n.a); } // A computed key.
     // `{ #x: 1 }`: a PropertyName is never a private name (13.2.5).
     if ((n.d & 1) == 0 && n.text.starts_with('#')) {
         report("the private name " + quoted(n.text) + " is not a property name", idx);
     }
     // `{ default }`: a shorthand is an IdentifierReference (13.2.5.1), where
-    // a keyword may not stand - unlike `{ default: 1 }`, whose key is a name.
+    // a keyword may not stand, unlike `{ default: 1 }`, whose key is a name.
     if (n.c == 2 && (n.d & 1) == 0) { check_identifier_reference(n.text, idx, true); }
     // `({ a = 1 })`: a CoverInitializedName is only a pattern (13.2.5.1). The
     // parser keeps it in case an `=` follows the literal; here none did.

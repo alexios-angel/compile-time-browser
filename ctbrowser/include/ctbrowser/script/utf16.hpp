@@ -1,26 +1,30 @@
-#pragma once
-// A JAVASCRIPT STRING IS A SEQUENCE OF UTF-16 CODE UNITS, AND THIS ENGINE
-// STORES IT AS WTF-8.
+//===- utf16.hpp - UTF-16 views of WTF-8 strings ----------------*- C++ -*-===//
 //
-// The storage stays UTF-8 because everything the engine hands a string to -
-// the DOM, the style engine, the asset registry, the native backend - speaks
+// A JavaScript string is a sequence of UTF-16 code units, and this engine
+// stores it as WTF-8.
+//
+// The storage stays UTF-8 because everything the engine hands a string to
+// (the DOM, the style engine, the asset registry, the native backend) speaks
 // UTF-8, and converting at every one of those boundaries would cost more than
-// it fixes. WTF-8 rather than UTF-8 because a JS string may hold a LONE
+// it fixes. WTF-8 rather than UTF-8 because a JS string may hold a lone
 // surrogate (`"\uD83D"`), which is written as its three-byte form ED A0..BF xx;
 // two halves that meet are joined into the one four-byte code point they are
 // (core's join_surrogates, which context::string runs on every string).
 //
-// What a script SEES is UTF-16: `length`, every index and every position is a
+// What a script sees is UTF-16: `length`, every index and every position is a
 // count of code units, a code point above U+FFFF is two of them, and a slice
-// that splits one leaves each half as its lone surrogate. These are the
-// helpers that give the bytes that meaning - over a bare string_view here, and
-// remembered per string on string_object (value/base.hpp), which is what the
-// VM and the String built-ins ask.
+// that splits one leaves each half as its lone surrogate. These helpers give
+// the bytes that meaning over a bare string_view; string_object
+// (value/base.hpp) remembers the results per string, which is what the VM and
+// the String built-ins ask.
 //
-// THE WALK IS core's decode_utf8, and its policy for a byte that begins no
-// sequence - it stands for itself, one unit - is what keeps every function
-// here total on any bytes at all, and in agreement with wtf8_to_utf16.
+// The walk is core's decode_utf8. Its policy for a byte that begins no
+// sequence (it stands for itself, one unit) keeps every function here total on
+// any bytes at all, and in agreement with wtf8_to_utf16.
+//
+//===----------------------------------------------------------------------===//
 
+#pragma once
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -32,21 +36,22 @@
 
 namespace ctbrowser::script::utf16 {
 
-// How many units one code point is.
+/// The number of UTF-16 code units in one code point: 2 above U+FFFF, else 1.
 [[nodiscard]] constexpr std::size_t units_of(char32_t cp) noexcept {
     return cp >= 0x10000 ? 2 : 1;
 }
 
-// Unit `half` (0 or 1) of a code point: the code point itself below U+10000,
-// otherwise its high or low surrogate.
+/// Unit `half` (0 or 1) of a code point: the code point itself below U+10000,
+/// otherwise its high or low surrogate.
 [[nodiscard]] constexpr char16_t code_unit(char32_t cp, std::size_t half) noexcept {
     if (cp < 0x10000) { return static_cast<char16_t>(cp); }
     const char32_t v = cp - 0x10000;
     return static_cast<char16_t>(half == 0 ? 0xD800 + (v >> 10) : 0xDC00 + (v & 0x3FF));
 }
 
-// Every byte below 0x80, so byte i IS unit i and nothing below has to decode.
-// Eight bytes at a time: this is the test every String method pays first.
+/// True when every byte is below 0x80, so byte i is unit i and nothing has to
+/// decode. Tests eight bytes at a time, since every String method pays this
+/// test first.
 [[nodiscard]] inline bool is_ascii(std::string_view s) noexcept {
     std::size_t i = 0;
     for (; i + 8 <= s.size(); i += 8) {
@@ -60,7 +65,7 @@ namespace ctbrowser::script::utf16 {
     return true;
 }
 
-// The length in code units.
+/// The length in code units.
 [[nodiscard]] inline std::size_t length(std::string_view s) noexcept {
     if (is_ascii(s)) { return s.size(); }
     std::size_t units = 0;
@@ -68,19 +73,19 @@ namespace ctbrowser::script::utf16 {
     return units;
 }
 
-// One code unit as WTF-8 - a surrogate is its lone three-byte form. What
-// `s[i]`, charAt and a split by "" hand back.
+/// One code unit as WTF-8 (a surrogate is its lone three-byte form): what
+/// `s[i]`, charAt and a split by "" return.
 [[nodiscard]] inline std::string unit_text(char16_t unit) {
     std::string out;
     append_utf8(out, unit);
     return out;
 }
 
-// WHERE UNIT `i` LIVES: the byte its code point starts at, and whether `i` is
-// that code point's SECOND unit - a pair's low half. Past the end is
-// {size, false}. The walk starts from (`byte`, `unit`), a code point known to
-// begin at or before `i`, so a caller holding a nearer one than the start
-// (string_object's marks) passes it.
+/// locate() returns where unit `i` lives: the byte its code point starts at,
+/// and whether `i` is that code point's second unit (a pair's low half). Past
+/// the end is {size, false}. The walk starts from (`byte`, `unit`), a code
+/// point known to begin at or before `i`, so a caller holding a nearer one
+/// than the start (string_object's marks) passes it.
 struct position {
     std::size_t byte;
     bool low_half;
@@ -97,24 +102,24 @@ struct position {
     return {s.size(), false};
 }
 
-// The units before byte offset `to`, which starts a code point (or is the
-// end) - a byte position turned back into the index a script sees. Walked
-// from (`byte`, `unit`) as locate is.
+/// The number of units before byte offset `to`, which starts a code point (or
+/// is the end): a byte position turned back into the index a script sees.
+/// Walked from (`byte`, `unit`) as locate is.
 [[nodiscard]] inline std::size_t units_before(std::string_view s, std::size_t to,
                                               std::size_t byte = 0, std::size_t unit = 0) noexcept {
     while (byte < to && byte < s.size()) { unit += units_of(decode_utf8(s, byte)); }
     return unit;
 }
 
-// The unit at a position locate found.
+/// The unit at a position locate found.
 [[nodiscard]] inline char16_t unit_at(std::string_view s, position at) noexcept {
     std::size_t next = at.byte;
     return code_unit(decode_utf8(s, next), at.low_half ? 1 : 0);
 }
 
-// Units [from, to) as WTF-8, `from` before `to`. A pair split by either edge
-// leaves its half behind as the lone surrogate, which is what `"\u{1F600}"
-// .slice(0, 1)` is in every engine.
+/// Units [from, to) as WTF-8, `from` before `to`. A pair split by either edge
+/// leaves its half behind as the lone surrogate, which is what
+/// `"\u{1F600}".slice(0, 1)` is in every engine.
 [[nodiscard]] inline std::string slice(std::string_view s, position from, position to) {
     std::string out;
     std::size_t begin = from.byte;
@@ -131,9 +136,9 @@ struct position {
     return out;
 }
 
-// Does the text hold a lone surrogate - ED A0..BF? The one case in which a
-// byte search cannot stand in for a unit search: `"\uD83D"` is half of the
-// four-byte `"\u{1F600}"` and no byte of it matches.
+/// Whether the text holds a lone surrogate (bytes ED A0..BF). This is the one
+/// case in which a byte search cannot stand in for a unit search: `"\uD83D"` is
+/// half of the four-byte `"\u{1F600}"` and no byte of it matches.
 [[nodiscard]] inline bool has_lone_surrogate(std::string_view s) noexcept {
     for (std::size_t at = s.find('\xED'); at != std::string_view::npos && at + 1 < s.size();
          at = s.find('\xED', at + 1)) {
@@ -142,19 +147,18 @@ struct position {
     return false;
 }
 
-// Does the text hold a code point above U+FFFF - a four-byte sequence, which
-// is two units?
+/// Whether the text holds a code point above U+FFFF (a four-byte sequence,
+/// which is two units).
 [[nodiscard]] inline bool has_pair(std::string_view s) noexcept {
     return std::any_of(s.begin(), s.end(),
                        [](char c) { return static_cast<unsigned char>(c) >= 0xF0; });
 }
 
-// THE SAME UNITS WITH EVERY PAIR WRITTEN AS ITS TWO LONE HALVES (CESU-8):
-// the text as a walk over code points meets it when the walk has to see CODE
-// UNITS - a RegExp without `u` or `v`, whose pattern and input are both
-// sequences of units (22.2.2), so `.` takes one half of "\u{1D306}". Nothing
-// keeps this form: context::string joins the halves of any string made from
-// it again.
+/// The same units with every pair written as its two lone halves (CESU-8).
+/// Used where the walk has to see code units rather than code points: a RegExp
+/// without `u` or `v`, whose pattern and input are both sequences of units
+/// (ECMA-262 22.2.2), so `.` takes one half of "\u{1D306}". Nothing keeps this
+/// form: context::string joins the halves of any string made from it again.
 [[nodiscard]] inline std::string split_pairs(std::string_view s) {
     if (!has_pair(s)) { return std::string{s}; }
     std::string out;
@@ -172,12 +176,12 @@ struct position {
     return out;
 }
 
-// IsLessThan's string arm (7.2.13 step 3) - and the default sort order, which
-// is the same comparison: CODE UNIT order, as a three-way answer. UTF-8's
-// byte order is CODE POINT order, and the two part only where a code point
-// above U+FFFF (a pair, whose first unit is D800-DBFF) meets one in
-// U+E000-U+FFFF, or a lone surrogate meets a pair. So the bytes decide up to
-// the first difference, and from the code point holding it the units do.
+/// Three-way comparison in UTF-16 code-unit order: ECMAScript IsLessThan for
+/// strings (ECMA-262 7.2.13 step 3) and the default Array.prototype.sort order.
+/// UTF-8 byte order is code-point order, which differs only where a
+/// supplementary code point (a pair, whose first unit is D800-DBFF) meets one
+/// in U+E000-U+FFFF, or a lone surrogate meets a pair, so the bytes decide up
+/// to the first difference and code units decide from there.
 [[nodiscard]] inline int compare(std::string_view a, std::string_view b) noexcept {
     const std::size_t shared = std::min(a.size(), b.size());
     std::size_t i = 0;
@@ -186,7 +190,7 @@ struct position {
     const auto x = static_cast<unsigned char>(a[i]);
     const auto y = static_cast<unsigned char>(b[i]);
     if (x < 0x80 && y < 0x80) { return x < y ? -1 : 1; }
-    // Back to the start of the code point the difference is in - the bytes
+    // Back to the start of the code point the difference is in; the bytes
     // before it are the same in both.
     const auto trail = [](char c) { return (static_cast<unsigned char>(c) & 0xC0u) == 0x80u; };
     while (i > 0 && (trail(a[i]) || trail(b[i]))) { --i; }
