@@ -376,7 +376,7 @@ void testTransitive(mlir::MLIRContext & context, llvm::StringRef source) {
     for (unsigned mutation = 0; mutation != 8; ++mutation) {
         const auto suffix =
             mutation == 2   ? "\nfunction unused(flag, payload) { return unused(flag, payload); }"
-            : mutation == 3 ? "\nleaf(false, this);"
+            : mutation == 3 ? "\nfunction sibling(payload) { return leaf(false, payload); }"
                             : "";
         auto current = import(context, nested + suffix);
         if (!current) { return; }
@@ -473,12 +473,15 @@ function guarded(flag, payload) {
 }
 var caught52 = guarded(true, 20);
 var normal20 = guarded(false, 20);
-leaf(false, this);
+function sibling(payload) { return leaf(false, payload); }
 )js";
-    // The final leaf caller has an unknown normal return. Its effects and
-    // constant payload remain proved, but its result is not the first
-    // protected call's saved state. Only that call's own actual chain may
-    // establish the catch arithmetic's primitive operand.
+    // The sibling leaf caller passes an uncalled formal, so its normal return
+    // is unknown. (Not the top level's `this`: since 5a35bf9a9 that is the
+    // global object to --ctjs-resolve-globals, and handing it to leaf leaves
+    // every name unresolved.) Its effects and constant payload remain proved,
+    // but its result is not the first protected call's saved state. Only that
+    // call's own actual chain may establish the catch arithmetic's primitive
+    // operand.
     testSource(context, "transitive selected actuals", source, 2, 20, 32,
                ExceptionRecoveryMode::EffectCheckedInvocations);
     auto module = import(context, source);

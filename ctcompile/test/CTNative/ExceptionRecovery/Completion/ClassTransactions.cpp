@@ -685,11 +685,13 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                                                    : control == 4 || control == 17      ? 1000
                                                    : control >= 47                      ? 1000000
                                                                                         : 100000);
+            // 57 and 67 call a capture-free helper nested in M synchronously,
+            // which the class proof admits since 7fa3a87b4.
             static const llvm::DenseSet<unsigned> admittedControls{
-                0,   2,   5,   8,   13,  19,  23,  25,  35,  38,  46,  47,  56,  58,
-                59,  60,  70,  71,  72,  73,  77,  82,  92,  93,  121, 100, 104, 105,
-                114, 116, 117, 122, 128, 129, 130, 140, 141, 148, 151, 157, 158, 165,
-                166, 167, 172, 173, 174, 181, 182, 183, 189, 190, 191};
+                0,   2,   5,   8,   13,  19,  23,  25,  35,  38,  46,  47,  56,  57,
+                58,  59,  60,  67,  70,  71,  72,  73,  77,  82,  92,  93,  121, 100,
+                104, 105, 114, 116, 117, 122, 128, 129, 130, 140, 141, 148, 151, 157,
+                158, 165, 166, 167, 172, 173, 174, 181, 182, 183, 189, 190, 191};
             if (!admittedControls.contains(control)) {
                 if (!error) {
                     llvm::errs() << "unexpected class/DOM admission: " << control << '\n';
@@ -727,7 +729,7 @@ bool testClassTransactions(mlir::MLIRContext & context) {
                              ? request.initialIntrinsics ==
                                    std::vector<std::string>{"Number", "decodeURIComponent", "JSON",
                                                             "__ctbrowser_regexp"}
-                         : control == 47 || control == 56 || control >= 58
+                         : control == 47 || control >= 56
                              ? request.initialIntrinsics ==
                                    std::vector<std::string>{"Number", "decodeURIComponent", "JSON"}
                          : control >= 35
