@@ -1,15 +1,22 @@
-// SVG: vector markup in, pixels out, AT THE SIZE THE BOX GOT.
+//===- ctbrowser/unittests/unit/svg_basics.cpp - SVG image tests ----------===//
 //
-// The interesting property here is not "does it draw a circle" - plutosvg's job
-// - but that the engine asks it for the RIGHT SIZE. A vector graphic decoded
-// once at its natural size and then scaled by paint's nearest-neighbour image
-// path looks worse than a PNG would, which defeats the entire reason to support
-// the format. Test 3 is the one that fails if anyone reverts that.
+// SVG: vector markup in, pixels out, at the size the box got.
+//
+// The interesting property here is not "does it draw a circle" (plutosvg's job)
+// but that the engine asks it for the right size. A vector graphic decoded once
+// at its natural size and then scaled by paint's nearest-neighbour image path
+// looks worse than a PNG would, which defeats the reason to support the format.
+// test_rasterises_at_the_size_asked_for fails if that regresses.
 //
 // Every pixel assertion is behind `raster::svg_available()`, so this file runs
-// and passes on a machine with no plutosvg - the devbox, for one. The last test
-// is the one that MEANS something there: with no rasteriser a page must lay out
-// exactly as it would with one, and simply not draw.
+// and passes on a build without plutosvg. There,
+// test_svg_image_lays_out_and_draws_at_its_box_size checks that a page lays out
+// exactly as it would with a rasteriser and simply draws nothing.
+//
+// The second half covers the HTML parser's side: an inline <svg> is captured
+// byte-for-byte for the rasteriser and also parsed into SVG-namespace elements.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -27,19 +34,19 @@ using ctbrowser::shell::svg_natural;
 
 namespace {
 
-// A solid red square filling its viewBox, so any pixel inside is the same
-// colour and the assertions do not depend on where they sample.
+/// A solid red square filling its viewBox, so any pixel inside is the same
+/// colour and the assertions do not depend on where they sample.
 constexpr std::string_view red_square =
     R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">)"
     R"(<rect x="0" y="0" width="10" height="10" fill="#ff0000"/></svg>)";
 
-// A circle, whose edge is the only thing that can distinguish a raster made at
-// 64px from an 8px one blown up.
+/// A circle, whose edge is the only thing that can distinguish a raster made at
+/// 64px from an 8px one blown up.
 constexpr std::string_view circle =
     R"(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10">)"
     R"(<circle cx="5" cy="5" r="4.5" fill="#000000"/></svg>)";
 
-// The laid-out box of the first element with this tag.
+/// The laid-out box of the first element with this tag, in page coordinates.
 [[nodiscard]] rect box_of_tag(shell::browser & page, std::string_view tag) {
     const atom want = page.atoms().intern_lower(tag);
     node_id id{};
@@ -62,8 +69,8 @@ constexpr std::string_view circle =
     return walk(walk, page.fragments(), 0, 0);
 }
 
-// The pixel width of the first recorded image command - the bitmap's own width,
-// not the box it is drawn into. Those two agreeing is the property under test.
+/// The pixel width of the first recorded image command: the bitmap's own width,
+/// not the box it is drawn into. Those two agreeing is the property under test.
 [[nodiscard]] int image_command_width(shell::browser & page) {
     for (const auto & layer : page.layers().layers) {
         if (!layer.contents) { continue; }
@@ -75,7 +82,7 @@ constexpr std::string_view circle =
 }
 
 void test_availability_is_a_build_fact() {
-    // Not an assertion about which way it goes - both are legitimate builds.
+    // Not an assertion about which way it goes: both are legitimate builds.
     // This exists so a run's log says which one was tested.
     std::printf("  plutosvg: %s\n", raster::svg_available() ? "yes" : "no");
 }
@@ -87,16 +94,16 @@ void test_a_red_rect_is_red() {
         return;
     }
     check(out.width == 10 && out.height == 10, "red rect: rendered at the size asked for");
-    // EXACTLY opaque red. An off-by-one in the channel order or a stray
+    // Exactly opaque red. An off-by-one in the channel order or a stray
     // premultiply would still be "reddish", so this is spelled as equality.
     check(out.at(5, 5) == 0xFFFF0000u, "red rect: centre is opaque #ff0000");
 }
 
-// THE ANTI-REGRESSION TEST. A nearest-neighbour upscale of an 8x8 raster cannot
-// produce a partially-transparent pixel that the 8x8 did not already contain,
-// and at 8x8 a circle's edge lands on whole pixels. Genuine rasterisation at
-// 64x64 antialiases the diagonal. So: find a pixel on the circle's edge in the
-// large render and require it to be PARTIAL - neither empty nor solid.
+/// The key regression test. A nearest-neighbour upscale of an 8x8 raster cannot
+/// produce a partially transparent pixel that the 8x8 did not already contain,
+/// and at 8x8 a circle's edge lands on whole pixels. Genuine rasterisation at
+/// 64x64 antialiases the diagonal. So: find a pixel on the circle's edge in the
+/// large render and require it to be partial, neither empty nor solid.
 void test_rasterises_at_the_size_asked_for() {
     if (!raster::svg_available()) { return; }
 
@@ -115,9 +122,9 @@ void test_rasterises_at_the_size_asked_for() {
     check(found_partial, "size: the 64px render is antialiased, so it is a real 64px raster");
 }
 
-// Premultiplied-drawn-as-straight is dark rather than broken, so it is asserted
-// on the CHANNEL rather than on the alpha. Half-transparent pure red is
-// (a=128, r=255) straight and (a=128, r=128) premultiplied.
+/// Premultiplied pixels drawn as straight look dark rather than broken, so this
+/// is asserted on the colour channel rather than on the alpha. Half-transparent
+/// pure red is (a=128, r=255) straight and (a=128, r=128) premultiplied.
 void test_alpha_is_straight_not_premultiplied() {
     if (!raster::svg_available()) { return; }
 
@@ -142,10 +149,10 @@ void test_bad_input_draws_nothing_rather_than_crashing() {
     (void)raster::render_svg("not markup at all", 10, 10);
 }
 
-// The natural-size scan, which is IN-ENGINE and must stay that way: it is what
-// lets a build with no plutosvg lay a page out identically and merely draw
-// nothing. If this ever started asking plutosvg, layout would change depending
-// on whether an optional dependency was installed.
+/// The natural-size scan is in-engine and must stay that way: it lets a build
+/// with no plutosvg lay a page out identically and merely draw nothing. If it
+/// asked plutosvg, layout would depend on whether an optional dependency was
+/// installed.
 void test_natural_size_comes_from_the_markup() {
     using shell::scan_svg_natural;
 
@@ -159,8 +166,8 @@ void test_natural_size_comes_from_the_markup() {
     const svg_natural bare = scan_svg_natural(R"(<svg><rect/></svg>)");
     check(!bare.known(), "natural: nothing to go on is reported as unknown");
 
-    // A percentage is NOT a natural size. Reading the 100 as pixels is how a
-    // full-width banner becomes a 100px stamp, so it falls through to the
+    // A percentage is not a natural size. Reading the 100 as pixels would turn
+    // a full-width banner into a 100px stamp, so it falls through to the
     // viewBox for the aspect.
     const svg_natural percent =
         scan_svg_natural(R"(<svg width="100%" height="100%" viewBox="0 0 30 10"><rect/></svg>)");
@@ -170,14 +177,14 @@ void test_natural_size_comes_from_the_markup() {
     const svg_natural half = scan_svg_natural(R"(<svg width="60" viewBox="0 0 30 10"/>)");
     check(half.width == 60 && half.height == 20, "natural: one axis scales the other by aspect");
 
-    // `stroke-width` must not be mistaken for the document's width - it is a
+    // `stroke-width` must not be mistaken for the document's width: it is a
     // substring match away, and the failure would be a graphic sized to a
     // line thickness.
     const svg_natural stroked = scan_svg_natural(R"(<svg stroke-width="7" viewBox="0 0 50 25"/>)");
     check(stroked.width == 50, "natural: stroke-width is not width");
 
-    // Capitals intact. This is the payoff of keeping the source VERBATIM: the
-    // DOM's copy of this attribute is `viewbox`, which no SVG parser reads.
+    // The scan is case-sensitive, as SVG is: a lowercase `viewbox` is not a
+    // viewBox, and no SVG parser would read it as one.
     check(scan_svg_natural(R"(<svg viewbox="0 0 9 9"/>)").known() == false,
           "natural: lowercased viewbox is correctly NOT a viewBox");
 }
@@ -192,7 +199,7 @@ void test_svg_image_lays_out_and_draws_at_its_box_size() {
     browser page{options};
     page.assets().add("chart.svg", bytes_of(std::string{circle}));
 
-    // width= alone, so the height has to come from the aspect ratio - which
+    // width= alone, so the height has to come from the aspect ratio, which
     // means the intrinsic size reached layout without any bitmap being decoded.
     page.load_html(R"(<img id="c" src="chart.svg" width="200">)");
     page.frame();
@@ -205,9 +212,9 @@ void test_svg_image_lays_out_and_draws_at_its_box_size() {
         check(image_command_width(page) == 0, "img svg: no plutosvg draws nothing");
         return;
     }
-    // THE POINT OF THE WHOLE PHASE. The recorded bitmap is 200px wide because
-    // it was rasterised for a 200px box - not 10px (the document's natural
-    // size) handed to a nearest-neighbour upscale.
+    // The key property: the recorded bitmap is 200px wide because it was
+    // rasterised for a 200px box, not at the document's natural 10px and then
+    // upscaled with nearest-neighbour.
     check(image_command_width(page) == 200,
           "img svg: the recorded bitmap is the size of the BOX, not of the document");
 }
@@ -227,9 +234,10 @@ void test_the_raster_cache_is_keyed_on_size() {
     check(other->width == 32, "cache: and it really was rendered at that size");
 }
 
-// DOS-023/044/053: a 40000x40000 box is 1.6 billion pixels. The store renders
-// within the decoders' 2^26-pixel budget at the box's aspect ratio, and the
-// rasteriser itself refuses anything larger rather than allocating it.
+/// Denial-of-service guard: a 40000x40000 box is 1.6 billion pixels. The store
+/// renders within the decoders' 2^26-pixel budget (shell::max_decode_pixels,
+/// about 67 million) at the box's aspect ratio, and the rasteriser refuses
+/// anything larger rather than allocating it.
 void test_a_huge_box_is_rendered_within_the_pixel_budget() {
     check(raster::render_svg(circle, 40000, 40000).empty(),
           "render_svg: past the pixel budget there is no surface at all");
@@ -246,10 +254,10 @@ void test_a_huge_box_is_rendered_within_the_pixel_budget() {
     check(big != nullptr && big->width == big->height, "huge: at the box's aspect ratio");
 }
 
-// The capture: an <svg> element in the tree, its children NOT in the tree, and
-// the source recovered byte-for-byte with its capitals intact. That last part
-// is the whole reason for the design - `viewBox` lowercased is a `viewbox` no
-// SVG parser reads.
+/// The capture: parse_html records each inline <svg>'s source byte-for-byte in
+/// parse_result::svg_sources, capitals intact, for the rasteriser (a lowercased
+/// `viewbox` is one no SVG parser reads), and also parses the subtree into
+/// SVG-namespace elements for script and CSS.
 void test_inline_svg_is_captured_verbatim() {
     atom_table atoms;
     document doc{atoms};
@@ -269,7 +277,7 @@ void test_inline_svg_is_captured_verbatim() {
     check(source.find("linearGradient") != std::string::npos,
           "capture: linearGradient keeps its capitals");
 
-    // The subtree is REALLY PARSED - the shapes are elements, in the SVG
+    // The subtree is really parsed: the shapes are elements, in the SVG
     // namespace, with their capitals intact. The capture above is what the
     // rasteriser reads; this is what script and CSS see.
     const auto txn = doc.read();
@@ -300,7 +308,7 @@ void test_inline_svg_is_captured_verbatim() {
     check(found_gradient, "capture: linearGradient is a node with its capitals");
     check(!found_lowercased_gradient, "capture: and was NOT folded to lineargradient");
 
-    // ATTRIBUTES TOO, and this is the assertion that catches the natural
+    // Attributes keep their case too. This catches the natural
     // half-implementation: preserving case for the element name and forgetting
     // it for the attributes leaves `linearGradient` looking right while every
     // `viewBox` and `gradientUnits` on it is quietly gone.
@@ -325,8 +333,9 @@ void test_inline_svg_is_captured_verbatim() {
     check(txn.element_ns(txn.root()) == node_ns::html, "capture: the root is still HTML");
 }
 
-// The three leaks the old behaviour had, each asserted separately so a
-// regression names itself.
+/// Three ways an inline SVG's contents could leak into the page (its <title> as
+/// the page title, its <style> restyling the document, and its text as page
+/// text), each asserted separately so a regression names itself.
 void test_an_svg_does_not_leak_into_the_page() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -335,9 +344,8 @@ void test_an_svg_does_not_leak_into_the_page() {
     options.width = 400;
     options.height = 300;
     browser page{options};
-    // NO page <title> on purpose. With one, extract_title finds it first and
-    // the assertion below passes whether or not the SVG's title leaked - which
-    // is exactly how this test passed before it tested anything.
+    // No page <title>, on purpose. With one, extract_title finds it first and
+    // the assertion below passes whether or not the SVG's title leaked.
     page.load_html(R"(<svg width="20" height="20">)"
                    R"(<title>Not the page title</title><style>p { color: red }</style>)"
                    R"(<text x="0" y="10">LEAKED</text></svg><p id="p">plain</p>)");
@@ -357,7 +365,7 @@ void test_an_svg_does_not_leak_into_the_page() {
     check(!drew_leaked_text, "leak: an SVG <text> is not drawn as page text");
 
     // The SVG's stylesheet must not restyle the document. Asserted on the
-    // PAINTED colour rather than the computed style, because that is what a
+    // painted colour rather than the computed style, because that is what a
     // reader would actually see go wrong.
     bool found_paragraph = false;
     bool paragraph_is_red = false;
@@ -395,8 +403,9 @@ void test_inline_svg_is_a_replaced_inline_box() {
           "inline: rasterised for its box and recorded as an image");
 }
 
-// No width, no height, no viewBox: CSS's default replaced-element box, the same
-// one a <canvas> gets. Zero would make the graphic invisible with no clue why.
+/// No width, no height, no viewBox: CSS's default replaced-element box, the
+/// same one a <canvas> gets. Zero would make the graphic invisible with no clue
+/// why.
 void test_an_unsized_svg_gets_the_default_box() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -412,9 +421,9 @@ void test_an_unsized_svg_gets_the_default_box() {
     check(box.width == 300.0f && box.height == 150.0f, "unsized: falls back to 300x150");
 }
 
-// A `>` inside a quoted attribute, a `</svg>` inside a comment, and a nested
-// <svg> - each of which ends the capture early under a naive scan, leaving the
-// rest of the graphic's markup to render as page text.
+/// A `>` inside a quoted attribute, a `</svg>` inside a comment, and a nested
+/// <svg>: each ends the capture early under a naive scan, leaving the rest of
+/// the graphic's markup to render as page text.
 void test_the_capture_is_not_fooled() {
     atom_table atoms;
     document doc{atoms};
@@ -441,9 +450,10 @@ void test_the_capture_is_not_fooled() {
     check(text.find("circle") == std::string::npos, "scanner: no markup escaped into the text");
 }
 
-// A little tree dump, so the foreign-content tests below can assert SHAPE
-// rather than poke at individual nodes. Namespaced names are marked, since the
-// whole point of several of these is which vocabulary an element landed in.
+/// A compact tree dump, so the foreign-content tests below can assert shape
+/// rather than poke at individual nodes: `tag(children)` per element, quoted
+/// text, and an `svg:` prefix on SVG-namespace elements, since several tests are
+/// about which vocabulary an element landed in.
 [[nodiscard]] std::string tree_of(document & doc, node_id at, atom_table & atoms) {
     const auto txn = doc.read();
     std::string out;
@@ -464,8 +474,8 @@ void test_the_capture_is_not_fooled() {
     return out;
 }
 
-// The rule that keeps a page readable when someone forgets </svg>. Without it
-// everything after the graphic becomes part of the graphic and never renders.
+/// The rule that keeps a page readable when someone forgets </svg>. Without it
+/// everything after the graphic becomes part of the graphic and never renders.
 void test_html_breaks_out_of_an_unclosed_svg() {
     atom_table atoms;
     document doc{atoms};
@@ -473,7 +483,7 @@ void test_html_breaks_out_of_an_unclosed_svg() {
 
     const std::string tree = tree_of(doc, doc.read().root(), atoms);
     check(tree.find("svg:circle") != std::string::npos, "breakout: the circle is SVG");
-    // The <p> must be OUTSIDE the svg and in HTML.
+    // The <p> must be outside the svg and in HTML.
     const std::size_t svg_close = tree.find("svg:svg(");
     const std::size_t paragraph = tree.find("p(");
     check(paragraph != std::string::npos, "breakout: the paragraph exists");
@@ -481,15 +491,15 @@ void test_html_breaks_out_of_an_unclosed_svg() {
     check(svg_close != std::string::npos, "breakout: the svg element is still there");
 }
 
-// <foreignObject> is why SVG has integration points at all: it exists to hold a
-// fragment of HTML, so its children go back to the HTML vocabulary and to the
-// HTML parsing rules.
+/// <foreignObject> is why SVG has integration points at all: it exists to hold
+/// a fragment of HTML, so its children go back to the HTML vocabulary and to
+/// the HTML parsing rules.
 void test_foreign_object_returns_to_html() {
     atom_table atoms;
     document doc{atoms};
-    // <section>, NOT <div>, and the difference matters: <div> is in the
+    // <section>, not <div>, and the difference matters: <div> is in the
     // breakout list, so it would end up HTML even with integration points
-    // completely broken - just as a SIBLING of the graphic rather than inside
+    // completely broken, just as a sibling of the graphic rather than inside
     // it. <section> is not in that list, so the only way it becomes HTML here
     // is the integration point doing its job.
     (void)parse_html(
@@ -500,13 +510,13 @@ void test_foreign_object_returns_to_html() {
     check(tree.find("svg:foreignObject") != std::string::npos,
           "integration: foreignObject keeps its capital O and its namespace");
     check(tree.find("svg:section") == std::string::npos, "integration: the section is HTML");
-    // And it is still INSIDE the foreignObject, not fostered out beside it.
+    // It is still inside the foreignObject, not fostered out beside it.
     check(tree.find("svg:foreignObject(section(") != std::string::npos,
           "integration: and it is nested inside the foreignObject");
 }
 
-// CDATA is legal in foreign content and is a bogus comment in HTML. Getting
-// this wrong turns `<![CDATA[<b>]]>` into a real <b> element.
+/// CDATA is legal in foreign content and is a bogus comment in HTML. Getting
+/// this wrong turns `<![CDATA[<b>]]>` into a real <b> element.
 void test_cdata_inside_an_svg_is_text() {
     atom_table atoms;
     document doc{atoms};
@@ -517,12 +527,10 @@ void test_cdata_inside_an_svg_is_text() {
     check(tree.find("b(") == std::string::npos, "cdata: and did not become a <b> element");
 }
 
-// AND INSIDE AN INTEGRATION POINT TOO. The tokenizer's rule (13.2.5.42) asks
-// only whether the adjusted current node is in the HTML namespace - <desc> is
-// SVG's - so `<![CDATA[` there is a CDATA section as well; the integration
-// point changes which INSERTION MODE the tokens go through, not how they are
-// tokenized. Until 2026-09-16 this engine made it a bogus comment and the
-// test said the spec agreed; the html5lib fixtures say otherwise.
+/// Inside an integration point too. The tokenizer's rule (HTML 13.2.5.42) asks
+/// only whether the adjusted current node is in the HTML namespace, and <desc>
+/// is SVG's, so `<![CDATA[` there is still a CDATA section; the integration
+/// point changes the insertion mode, not tokenization (html5lib agrees).
 void test_cdata_in_an_integration_point_is_still_cdata() {
     atom_table atoms;
     document doc{atoms};
@@ -532,7 +540,7 @@ void test_cdata_in_an_integration_point_is_still_cdata() {
           "cdata: inside <desc> the section is still TEXT");
 }
 
-// The same bytes outside an SVG must keep behaving as they always did.
+/// Outside foreign content, `<![CDATA[` is a bogus comment, not text.
 void test_cdata_outside_an_svg_is_unchanged() {
     atom_table atoms;
     document doc{atoms};
@@ -542,8 +550,8 @@ void test_cdata_outside_an_svg_is_unchanged() {
           "cdata: outside foreign content it is still a comment, not text");
 }
 
-// An HTML close tag that matches nothing inside a graphic must be ignored
-// rather than unwind out of it.
+/// An HTML close tag that matches nothing inside a graphic must be ignored
+/// rather than unwind out of it.
 void test_a_stray_close_tag_inside_an_svg_is_ignored() {
     atom_table atoms;
     document doc{atoms};
@@ -554,10 +562,10 @@ void test_a_stray_close_tag_inside_an_svg_is_ignored() {
     check(tree.find("p(") != std::string::npos, "stray: the page continues afterwards");
 }
 
-// An unclosed <svg> still draws. plutosvg parses strictly - measured, an
-// unterminated document renders NOTHING, not a partial graphic - so the capture
-// supplies the close tag the page forgot. Without that, a page missing one
-// `</svg>` shows a blank box and nothing says why.
+/// An unclosed <svg> still draws. plutosvg parses strictly (an unterminated
+/// document renders nothing, not a partial graphic), so the capture supplies
+/// the close tag the page forgot. Without that, a page missing one `</svg>`
+/// shows a blank box and nothing says why.
 void test_an_unclosed_svg_still_draws() {
     atom_table atoms;
     document doc{atoms};

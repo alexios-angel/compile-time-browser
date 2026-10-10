@@ -1,9 +1,14 @@
-// Images and the asset registry, end to end: decode, <img> sizing, painting,
-// drawImage from script, and what fetch does with each kind of miss.
+//===- ctbrowser/unittests/unit/image/basics.cpp - Image tests --*- C++ -*-===//
 //
-// The bitmaps here are BUILT, not read from disk - a test that depends on a
+// Images and the asset registry, end to end: decode, <img> sizing, painting,
+// drawImage from script, canvas export and downloads, and what fetch does with
+// each kind of miss.
+//
+// The bitmaps here are built, not read from disk: a test that depends on a
 // binary blob checked in beside it fails for reasons that have nothing to do
 // with the code.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -27,7 +32,8 @@ using ctbrowser_test::find_id;
 
 namespace {
 
-// The laid-out box of the first element with this tag.
+/// Returns the laid-out box, in page coordinates, of the first element with
+/// tag \p tag, or an empty rect if it has none.
 [[nodiscard]] rect box_of_tag(browser & page, std::string_view tag) {
     const atom want = page.atoms().intern_lower(tag);
     node_id id{};
@@ -50,7 +56,7 @@ namespace {
     return walk(walk, page.fragments(), 0, 0);
 }
 
-// Scripts report through console.log, the same way the other binding tests do.
+/// Returns everything the page logged through console.log, `|`-joined.
 [[nodiscard]] std::string logged(browser & page) {
     std::string out;
     for (const std::string & line : page.bindings().console_output()) {
@@ -60,8 +66,9 @@ namespace {
     return out;
 }
 
-// A BMP, assembled byte by byte. 24bpp bottom-up is what image tools write by
-// default, so that is the shape worth being sure about.
+/// Builds a 24bpp BMP filled with \p colour (0xAARRGGBB), byte by byte.
+/// Bottom-up is what image tools write by default, so that is the shape worth
+/// being sure about; \p top_down writes a negative height instead.
 [[nodiscard]] std::vector<std::byte> make_bmp(int width, int height,
                                               std::uint32_t colour = 0xFF3366CCU,
                                               bool top_down = false) {
@@ -83,7 +90,7 @@ namespace {
     put32(22, static_cast<std::uint32_t>(top_down ? -height : height));
     out[26] = 1;  // planes
     out[28] = 24; // bits per pixel
-    // Row by row, because a BMP row is PADDED to four bytes - writing pixels
+    // Row by row, because a BMP row is padded to four bytes - writing pixels
     // straight through the block runs off the end of the last row.
     for (int y = 0; y < height; ++y) {
         const std::size_t row = 54 + stride * static_cast<std::size_t>(y);
@@ -119,7 +126,7 @@ void test_decode() {
     const std::vector<std::byte> truncated{whole.begin(), whole.begin() + 30};
     CHECK(decode_bmp(truncated).empty());
     // A header that says 4x3 with only one row of pixels behind it is a
-    // TRUNCATED image, and half of one is worse than none.
+    // truncated image, and half of one is worse than none.
     const std::vector<std::byte> short_pixels{whole.begin(), whole.begin() + 60};
     CHECK(decode_bmp(short_pixels).empty());
 }
@@ -132,7 +139,7 @@ void test_registry() {
     CHECK(!assets.load("sprite.bmp").empty());
     CHECK(assets.load("nope.bmp").empty());
 
-    // A second add REPLACES, so an application can override a built-in.
+    // A second add replaces, so an application can override a built-in.
     assets.add("sprite.bmp", make_bmp(8, 8));
     CHECK(decode_bmp(assets.find("sprite.bmp")).width == 8);
 }
@@ -143,13 +150,13 @@ void test_img_element() {
     page.load_html("<body><img src='cat.bmp'></body>");
     page.frame();
 
-    // The <img> is as big as its bitmap: no width attribute, so the size comes
-    // from the decode. Before images existed this was zero.
+    // The <img> is as big as its bitmap: with no width attribute the size comes
+    // from the decode.
     const rect box = box_of_tag(page, "img");
     CHECK(box.width == 20.0f);
     CHECK(box.height == 10.0f);
 
-    // And it is actually PAINTED - the pixel in the middle of it is the
+    // And it is actually painted: the pixel in the middle of it is the
     // image's colour, not the page background.
     const int x = static_cast<int>(box.x + box.width / 2);
     const int y = static_cast<int>(box.y + box.height / 2);
@@ -204,7 +211,7 @@ void test_script_images() {
 }
 
 void test_img_in_canvas_from_element() {
-    // drawImage takes an <img> ELEMENT as well as a loadImage handle. Pages use
+    // drawImage takes an <img> element as well as a loadImage handle. Pages use
     // both, so both have to work.
     ctbrowser::browser page{{.width = 120, .height = 80}};
     page.assets().add("sprite.bmp", make_bmp(8, 8, 0xFFFF0000U));
@@ -222,13 +229,13 @@ void test_img_in_canvas_from_element() {
     if (pixels) { CHECK(pixels->at(4, 4) == 0xFFFF0000U); }
 }
 
-// THE EXACT SEQUENCE p5's loadImage RUNS, which is one piece of machinery with
+// The exact sequence p5's loadImage runs, which is one piece of machinery with
 // four parts and no value in testing them apart:
 //
 //   fetch the bytes -> new Blob([bytes]) -> URL.createObjectURL(blob)
 //   -> new Image() with onload -> revoke the URL -> drawImage
 //
-// The revoke is the trap. It happens INSIDE onload, before the image is ever
+// The revoke is the trap. It happens inside onload, before the image is ever
 // drawn, so an object URL that only names bytes in the registry has nothing left
 // to resolve by the time drawImage asks. It works because image_store caches the
 // decode by name - which is the browser's own rule, that revoking frees the
@@ -271,7 +278,7 @@ void test_blob_object_url_and_image() {
     }
 }
 
-// A LOAD THAT FAILS SAYS SO. Reporting success with a zero-sized image is the
+// A load that fails says so. Reporting success with a zero-sized image is the
 // failure mode that hides: p5 would size a canvas to 0x0 and draw nothing, with
 // no error anywhere.
 void test_image_load_failure_is_reported() {
@@ -289,7 +296,7 @@ void test_image_load_failure_is_reported() {
     CHECK(logged(page) == "error complete=false|rejected: could not decode ");
 }
 
-// `new Image()` IS an <img>: it can be appended and it lays out, which is what
+// `new Image()` is an <img>: it can be appended and it lays out, which is what
 // makes one implementation serve both. A parallel Image type would have needed
 // the layout, the painter and drawImage each taught about it.
 void test_a_constructed_image_is_an_element() {
@@ -333,15 +340,12 @@ void test_encode_png() {
     CHECK(ctbrowser::shell::encode_png(ctbrowser::paint::bitmap{}).empty());
 }
 
-// EXPORT, END TO END - the path p5's save() takes, and the one place this engine
-// invents a behaviour: an `<a download>` writes a file instead of raising a save
-// dialog nobody is there to see.
+// Export, end to end: the path p5's save() takes, and the one place this
+// engine invents a behaviour: an `<a download>` writes a file instead of raising
+// a save dialog nobody is there to see.
 //
 //   canvas.toBlob(cb) -> new Blob -> URL.createObjectURL -> <a href download>
 //   -> link.click() -> the bytes land on disk -> URL.revokeObjectURL
-//
-// Every link in that chain was missing at the start of this: click() did not
-// exist, so p5's entire export API was a silent no-op.
 void test_export_writes_a_file() {
     ctbrowser::browser page{{.width = 80, .height = 60}};
     page.set_download_directory("../build/downloads");
@@ -381,8 +385,8 @@ void test_export_writes_a_file() {
         CHECK(saved.name == "sketch.png");
         CHECK(saved.written);
         // A real PNG of a real 8x8 canvas: signature, IHDR, IDAT and IEND
-        // alone are 8 + 25 + 12 + 12 bytes before any pixel - and it is a
-        // real deflate stream now (libpng), so a flat canvas compresses.
+        // alone are 8 + 25 + 12 + 12 bytes before any pixel, and it is a
+        // real deflate stream (libpng), so a flat canvas compresses.
         CHECK(saved.bytes > 57);
         // And it is on the disk where it said it was, at the size it said.
         std::ifstream from_disk{saved.path, std::ios::binary | std::ios::ate};
@@ -391,7 +395,8 @@ void test_export_writes_a_file() {
     }
 }
 
-// One `<a download=name>` of `text`, behind a real key press when `gesture`.
+/// Downloads \p text through an `<a download=name>` click, behind a real key
+/// press when \p gesture is set.
 void download_text(browser & page, std::string_view name, std::string_view text,
                    bool gesture = true) {
     if (gesture) { (void)page.handle(ctbrowser::shell::input_event::key_press("a")); }
@@ -401,12 +406,13 @@ void download_text(browser & page, std::string_view name, std::string_view text,
                           "';link.click();");
 }
 
+/// Returns the whole contents of the file at \p path, or "" if it cannot be read.
 [[nodiscard]] std::string read_all(const std::string & path) {
     std::ifstream in{path, std::ios::binary};
     return {std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
 }
 
-// A DOWNLOAD NAME IS A NAME, NOT A PATH. `download="../../x"` is a page choosing
+// A download name is a name, not a path. `download="../../x"` is a page choosing
 // where to write on the host, and it does not get to.
 void test_a_download_cannot_escape_its_directory() {
     ctbrowser::browser page{{.width = 60, .height = 40}};
@@ -452,7 +458,7 @@ void test_download_names_are_sanitised() {
     CHECK(name("what?.txt") == "download");
 }
 
-// NO DIRECTORY, NO WRITE - the default, and what run_app ships unless the
+// No directory, no write: the default, and what run_app ships unless the
 // application names a folder. The export is still recorded.
 void test_download_without_a_directory_writes_nothing() {
     browser page{{.width = 60, .height = 40}};
@@ -514,10 +520,10 @@ void test_to_data_url() {
     CHECK(logged(page) == "data:image/png;base64,|len=true|sig=137,807871");
 }
 
-// FileReader - THE INPUT SIDE of the same machinery that does export.
+// FileReader: the input side of the same machinery that does export.
 //
 // Nothing here can open a file picker, and it does not pretend to: an <input
-// type=file> has an EMPTY FileList because there is no user to choose with. What
+// type=file> has an empty FileList because there is no user to choose with. What
 // works is everything a page does with a file it already has, which is what a
 // drag-and-drop shim and p5's own loaders need.
 void test_file_reader() {
@@ -555,9 +561,8 @@ void test_file_reader() {
 }
 
 // `new DOMParser().parseFromString(...)`, which is how p5's loadXML gets a
-// document. A real XML document since 2026-09-12 (dom_bindings::parse_from_string),
-// so the tag name keeps its case and everything a page walks afterwards is the
-// ordinary element surface.
+// document. It returns a real XML document (dom_bindings::parse_from_string),
+// so the tag name keeps its case and the page walks ordinary elements.
 void test_dom_parser() {
     ctbrowser::browser page{{.width = 100, .height = 60}};
     page.load_html(R"(<body><script>
@@ -582,7 +587,7 @@ void test_fetch_from_registry() {
     ctbrowser::browser page{{.width = 100, .height = 60}};
     page.assets().add("https://example.invalid/data.json",
                       bytes_of(R"({"n": 7, "who": "registry"})"));
-    // Network OFF, so this can only be the registry - which is the point: a
+    // Network off, so this can only be the registry - which is the point: a
     // page that bakes its resources in is reproducible and never blocks.
     page.allow_network(false);
     page.load_html(R"(<body><script>
@@ -596,11 +601,8 @@ void test_fetch_from_registry() {
       boot();
     </script></body>)");
     CHECK(page.script_error().empty());
-    // FETCH IS ASYNCHRONOUS, so the event loop has to run. It used to do the
-    // work inside the call and hand back a settled promise, which meant this
-    // read its result before load_html returned - and meant a page could not
-    // do anything while a request was outstanding. Each await costs a turn and
-    // there are four here.
+    // fetch is asynchronous, so the event loop has to run: each await costs a
+    // turn and there are four here.
     for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
     CHECK(logged(page) == "200:7:registry|length=27");
 }
@@ -621,7 +623,7 @@ void test_fetch_rejects() {
     </script></body>)");
     CHECK(page.script_error().empty());
     for (int frame = 0; frame < 20; ++frame) { page.tick(16); }
-    // A network failure REJECTS - that is what a page's catch branch is written
+    // A network failure rejects: that is what a page's catch branch is written
     // for, and it is how fetchboard reports a resource that was not baked in.
     const std::string outcome = logged(page);
     CHECK(outcome.rfind("rejected:", 0) == 0);

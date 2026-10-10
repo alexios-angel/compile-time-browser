@@ -1,17 +1,23 @@
-// The object model's exotic corners, each one a WPT subtest that stood on it:
-// `Object.prototype.__proto__` (B.2.2.1), and the Proxy traps beyond get/set/has
-// that a DOMStringMap's `delete` and `getOwnPropertyDescriptor` reach.
+//===- ctbrowser/unittests/js/object_model.cpp - Object model tests -------===//
 //
-// One case per behaviour, expected values checked against V8. Its own file
-// for the same reason property_attributes has one: every case is about the
-// SHAPE of a property rather than the value an expression computes.
+// The object model's exotic corners, each one a WPT subtest depends on:
+// `Object.prototype.__proto__` (ECMA-262 Annex B.2.2.1), and the Proxy traps
+// beyond get/set/has that a DOMStringMap's `delete` and
+// `getOwnPropertyDescriptor` reach.
+//
+// One case per behaviour, expected values checked against V8. It has its own
+// file for the same reason property_attributes.cpp does: every case is about
+// the shape of a property rather than the value an expression computes.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 int main() {
     // ================================================================
-    // 1. `__proto__` READS [[GetPrototypeOf]] - for every kind of receiver,
-    //    including the ones whose chain reaches Object.prototype implicitly
+    // 1. Reading `__proto__` is [[GetPrototypeOf]], for every kind of
+    //    receiver, including the ones whose chain reaches Object.prototype
+    //    implicitly.
     // ================================================================
     js_expect("({}).__proto__ === Object.prototype", "true");
     js_expect("[].__proto__ === Array.prototype", "true");
@@ -20,19 +26,20 @@ int main() {
     js_expect("'a'.__proto__ === String.prototype", "true");
     js_expect("Object.prototype.__proto__", "null");
     js_expect("(function(){class A{};return new A().__proto__ === A.prototype;})()", "true");
-    // THE WPT IDIOM: a prototype is asked whether it CARRIES a property.
+    // The WPT idiom: a prototype is asked whether it carries a property.
     js_expect("({}).__proto__.hasOwnProperty('toString')", "true");
 
     // ================================================================
-    // 2. ...AND WRITES [[SetPrototypeOf]] - assignment and the literal form
+    // 2. Writing `__proto__` is [[SetPrototypeOf]]: assignment and the
+    //    literal form.
     // ================================================================
     js_expect("(function(){var o={};o.__proto__={x:1};return o.x;})()", "1");
     js_expect("({__proto__:{y:2}}).y", "2");
-    // B.2.2.1.2 step 2: a non-object is ignored, not stored as an own property.
+    // Annex B.2.2.1.2 step 2: a non-object is ignored, not stored as an own property.
     js_expect("({__proto__:5}).hasOwnProperty('__proto__')", "false");
     js_expect("(function(){var o={};o.__proto__=5;return o.__proto__===Object.prototype;})()",
               "true");
-    // 10.1.2.1's three refusals, which the setter (B.2.2.1.2 step 5) and
+    // ECMA-262 10.1.2.1's three refusals, which the setter (B.2.2.1.2 step 5) and
     // Object.setPrototypeOf turn into a TypeError and Reflect answers false to:
     // a cycle, a non-extensible target, and Object.prototype's own immutable
     // [[Prototype]] (10.4.7). Setting the prototype an object already has is
@@ -49,7 +56,7 @@ int main() {
     js_expect("Reflect.setPrototypeOf(Object.prototype,{})", "false");
     js_expect("(function(){Object.prototype.__proto__={};})()", "THREW");
     js_expect("Reflect.setPrototypeOf(Object.prototype,null)", "true");
-    // A PROTOTYPE THAT IS NOT A PLAIN OBJECT carries the chain: an Array as
+    // A prototype that is not a plain object carries the chain: an Array as
     // `foo.prototype` (the ES5 subclassing idiom test262 is full of) hands its
     // methods, its elements, `in`, instanceof and getPrototypeOf to the instance.
     js_expect("(function(){function foo(){} foo.prototype=[1,2];var f=new foo();"
@@ -61,14 +68,15 @@ int main() {
               "1");
     js_expect("(function(){var o=Object.create(function g(){});return typeof o.call;})()",
               "function");
-    // An OWN `__proto__` shadows the accessor, as any own property shadows an
+    // An own `__proto__` shadows the accessor, as any own property shadows an
     // inherited one.
     js_expect("(function(){var o={};Object.defineProperty(o,'__proto__',{value:7});"
               "return o.__proto__;})()",
               "7");
 
     // ================================================================
-    // 3. THE ACCESSOR ITSELF: on Object.prototype, non-enumerable, configurable
+    // 3. The accessor itself: on Object.prototype, non-enumerable,
+    //    configurable.
     // ================================================================
     js_expect("typeof Object.getOwnPropertyDescriptor(Object.prototype,'__proto__').get",
               "function");
@@ -76,8 +84,8 @@ int main() {
     js_expect("Object.keys(Object.prototype).length", "0");
 
     // ================================================================
-    // 4. PROXY: deleteProperty - both delete forms reach the trap, and an
-    //    absent trap falls through to the target (10.5.10)
+    // 4. Proxy deleteProperty: both delete forms reach the trap, and an
+    //    absent trap falls through to the target (ECMA-262 10.5.10).
     // ================================================================
     js_expect("(function(){var log='';var p=new Proxy({x:1,y:2},{deleteProperty:function(t,k){"
               "log+=k;return true;}});delete p.x;delete p['y'];return log+p.x+p.y;})()",
@@ -88,15 +96,15 @@ int main() {
         "false");
 
     // ================================================================
-    // 5. PROXY: getOwnPropertyDescriptor - the trap's object is read as a
-    //    descriptor and COMPLETED (10.5.5 steps 13-14)
+    // 5. Proxy getOwnPropertyDescriptor: the trap's object is read as a
+    //    descriptor and completed (ECMA-262 10.5.5 steps 13-14).
     // ================================================================
     js_expect("(function(){var p=new Proxy({},{getOwnPropertyDescriptor:function(t,k){return "
               "{value:k+'!',writable:true,enumerable:true,configurable:true};}});"
               "var d=Object.getOwnPropertyDescriptor(p,'a');"
               "return d.value+','+d.writable+','+d.enumerable+','+d.configurable;})()",
               "a!,true,true,true");
-    // 20.1.3.2: hasOwnProperty is [[GetOwnProperty]] - the descriptor trap,
+    // ECMA-262 20.1.3.2: hasOwnProperty is [[GetOwnProperty]], the descriptor trap,
     // not `has`, which is `in`. An HTMLCollection's prototype members are the
     // case: `in` says yes, hasOwnProperty says no (Element-children).
     js_expect("(function(){var p=new Proxy({a:1},{has:function(){return true;},"
@@ -130,8 +138,8 @@ int main() {
     js_expect("Object.prototype.hasOwnProperty.call(new Proxy({},"
               "{getOwnPropertyDescriptor:function(){return {value:1};}}),'x')",
               "THREW");
-    // (Over a target that HAS such a property: 10.5.5 step 16 refuses a
-    // non-configurable answer for one the target lacks - see below.)
+    // (Over a target that has such a property: ECMA-262 10.5.5 step 16 refuses
+    // a non-configurable answer for one the target lacks; see below.)
     js_expect("(function(){var t={};Object.defineProperty(t,'a',{value:1});"
               "var p=new Proxy(t,{getOwnPropertyDescriptor:function(){return "
               "{value:1};}});var d=Object.getOwnPropertyDescriptor(p,'a');"
@@ -146,8 +154,8 @@ int main() {
     js_expect("Object.getOwnPropertyDescriptor(new Proxy({a:1},{}),'a').value", "1");
 
     // ================================================================
-    // 6. PROXY: defineProperty - the trap sees only the fields the
-    //    descriptor mentions (10.5.6 step 8, FromPropertyDescriptor)
+    // 6. Proxy defineProperty: the trap sees only the fields the
+    //    descriptor mentions (ECMA-262 10.5.6 step 8, FromPropertyDescriptor).
     // ================================================================
     js_expect("(function(){var seen='';var p=new Proxy({},{defineProperty:function(t,k,d){"
               "seen=k+':'+d.value+':'+d.enumerable+':'+('writable' in d);return true;}});"
@@ -158,8 +166,9 @@ int main() {
               "9");
 
     // ================================================================
-    // 9. Object.groupBy (20.1.2.9): first-seen key order, ToPropertyKey of
-    //    the callback's answer, every value visited with its index
+    // 7. Object.groupBy (ECMA-262 20.1.2.9): first-seen key order,
+    //    ToPropertyKey of the callback's answer, every value visited with its
+    //    index.
     // ================================================================
     js_expect("JSON.stringify(Object.groupBy([1,2,3,4],function(n){return n%2?'odd':'even';}))",
               "{\"odd\":[1,3],\"even\":[2,4]}");
@@ -175,12 +184,12 @@ int main() {
     js_expect("Object.keys(Object.groupBy([1],function(){return {toString(){return 'k';}};}))"
               ".join()",
               "k");
-    // Object.assign reads and writes key by key (20.1.2.1 step 4.c).
+    // Object.assign reads and writes key by key (ECMA-262 20.1.2.1 step 4.c).
     js_expect("(function(){var src={a:1,b:2};var t={set a(v){delete src.b;}};"
               "Object.assign(t,src);return 'b' in t;})()",
               "false");
 
-    // Object.fromEntries (20.1.2.7) runs the iterator protocol: a Map, an
+    // Object.fromEntries (ECMA-262 20.1.2.7) runs the iterator protocol: a Map, an
     // entry that is not an object closes the iterator with a TypeError, a
     // throwing `next` does not close it.
     js_expect("Object.fromEntries(new Map([['k', 3]])).k", "3");
@@ -194,17 +203,17 @@ int main() {
               "n,false");
     js_expect("Object.fromEntries(5)", "THREW");
 
-    // RegExp.prototype is reachable and links back (22.2.5.1, 22.2.6.2).
+    // RegExp.prototype is reachable and links back (ECMA-262 22.2.5.1, 22.2.6.2).
     js_expect("RegExp.prototype.constructor === RegExp", "true");
     js_expect("/a/ instanceof RegExp", "true");
     js_expect("Object.getPrototypeOf(/a/) === RegExp.prototype", "true");
     js_expect("typeof Object.getOwnPropertyDescriptor(RegExp.prototype, 'exec').value", "function");
     js_expect("RegExp.length", "2");
-    // isPrototypeOf checks its argument before its receiver (20.1.3.3 step 1).
+    // isPrototypeOf checks its argument before its receiver (ECMA-262 20.1.3.3 step 1).
     js_expect("Object.prototype.isPrototypeOf.call(null, 1)", "false");
     js_expect("Object.prototype.isPrototypeOf.call(null, {})", "THREW");
 
-    // 10.1.11.1: a key keeps its creation position when redefined between
+    // ECMA-262 10.1.11.1: a key keeps its creation position when redefined between
     // data and accessor, and an accessor keeps its place across a delete.
     js_expect("(function(){var o={};Object.defineProperty(o,'a',{get(){},enumerable:true,"
               "configurable:true});o.b=2;Object.defineProperty(o,'a',{value:1});"
@@ -217,13 +226,13 @@ int main() {
               "return Object.keys(o).join();})()",
               "b,c");
 
-    // An explicit `set: undefined` REPLACES the setter (10.1.6.3 step 6).
+    // An explicit `set: undefined` replaces the setter (ECMA-262 10.1.6.3 step 6).
     js_expect("(function(){var o={};Object.defineProperty(o,'x',{get(){return 1;},"
               "set(v){},configurable:true});Object.defineProperty(o,'x',{set:undefined});"
               "var d=Object.getOwnPropertyDescriptor(o,'x');return typeof d.get+','+d.set;})()",
               "function,undefined");
 
-    // 13.10.2 InstanceofOperator: @@hasInstance first, then a callable check.
+    // ECMA-262 13.10.2 InstanceofOperator: @@hasInstance first, then a callable check.
     js_expect("(function(){var C={[Symbol.hasInstance](v){return v===1;}};"
               "return (1 instanceof C)+','+(2 instanceof C);})()",
               "true,false");
@@ -262,7 +271,7 @@ int main() {
               "Object.getOwnPropertyDescriptor(f,'name').configurable;})()",
               "true,false,false");
 
-    // 10.5 proxy invariants: a trap is held to what its target can be.
+    // ECMA-262 10.5 proxy invariants: a trap is held to what its target can be.
     js_expect("(function(){var t={};Object.defineProperty(t,'x',{value:1});"
               "var p=new Proxy(t,{getOwnPropertyDescriptor(){return undefined;}});"
               "try{Object.getOwnPropertyDescriptor(p,'x');return 'no';}"

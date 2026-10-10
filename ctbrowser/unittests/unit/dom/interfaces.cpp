@@ -1,13 +1,13 @@
-// THE WINDOW AS THE GLOBAL OBJECT, THE REFLECTED ATTRIBUTES, AND THE INTERFACE
-// OBJECTS - the shape a wrapper has before any method on it is called: which
-// prototype it hangs off, what HTML 2.6 says a reflected `width` or `href`
-// answers, and that `window.foo` and a bare `foo` are one binding.
+//===- ctbrowser/unittests/unit/dom/interfaces.cpp - DOM interface tests --===//
 //
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
-
+// The shape a script wrapper has before any method on it is called: the window
+// as the global object (`window.foo` and a bare `foo` are one binding), what
+// HTML 2.6 says a reflected `width` or `href` answers, and which interface
+// prototype each wrapper hangs off.
+//
+// Shared helpers are in unittests/unit/chrome_probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -38,6 +38,8 @@ using ctbrowser_test::log_of;
 
 namespace {
 
+/// Globals, top-level declarations and window properties are one namespace,
+/// and a classic script's `this` is the window.
 void test_window_is_the_global_object() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><script>
@@ -74,13 +76,11 @@ void test_window_is_the_global_object() {
     check(log[7] == "stable=true,true", "replacing globalThis preserves script this: " + log[7]);
 }
 
-// The REFLECTED attributes: id, className, width, height.
-//
-// These are IDL attributes over content attributes - reading one reads the
-// attribute, writing one writes it. As data properties they only went one way:
-// a page's assignment changed the wrapper alone and the next refresh put the
-// old value back. p5.js names its canvas and sizes it exactly that way, so both
-// writes vanished and left a nameless 300x150 canvas.
+/// The reflected attributes id, className, width and height.
+///
+/// These are IDL attributes over content attributes: reading one reads the
+/// attribute and writing one writes it. p5.js names and sizes its canvas this
+/// way.
 void test_reflected_attributes() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=d></div><canvas id=c></canvas><script>
@@ -106,11 +106,9 @@ void test_reflected_attributes() {
           "a written size reaches the attribute: " + log[3]);
 }
 
-// REFLECTION AS A TABLE, one case per rule of HTML section 2.6.
-//
-// Every one of these was `undefined` before the table existed, and the reason
-// the file yield in web-platform-tests is low while the subtest yield is
-// enormous is visible right here: it is the same six rules applied ~270 times.
+/// Reflection as a table, one case per rule of HTML section 2.6.
+///
+/// WPT's reflection tests apply these same six rules about 270 times.
 void test_reflection_rules() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body>
@@ -186,10 +184,10 @@ void test_reflection_rules() {
     check(log[15] == "scoped=true,string", "reflection is per interface: " + log[15]);
 }
 
-// A REFLECTED URL IS RESOLVED, which is what makes `a.href` different from
-// `a.getAttribute('href')` - the first is absolute and the second is what the
-// author wrote. Resolution is against the document's own address; see the note
-// in element/reflection.cpp about there being no <base> support behind it.
+/// A reflected URL is resolved, which is what makes `a.href` different from
+/// `a.getAttribute('href')`: the first is absolute and the second is what the
+/// author wrote. Resolution is against the document's own address; see the note
+/// in lib/Shell/bindings/element/reflection.cpp about <base> not being read.
 void test_reflected_urls_resolve() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><a id=a href="sub/page.html"></a><script>
@@ -202,16 +200,16 @@ void test_reflected_urls_resolve() {
     check(log.size() > 1, "the URL cases logged");
     if (log.size() <= 1) { return; }
     check(log[0] == "raw=sub/page.html", "getAttribute is what the author wrote: " + log[0]);
-    // "" rather than undefined, and rather than "null" - the specification is
+    // "" rather than undefined, and rather than "null": the specification is
     // explicit that an absent URL attribute reflects as the empty string.
     check(log[1] == "absent=", "an absent URL attribute reflects as empty: " + log[1]);
 }
 
-// THE INTERFACE OBJECTS, and the chain a wrapper is linked into.
-//
-// `assert_class_string`, `e instanceof HTMLBodyElement` and
-// `eventTarget.constructor.name` are three ways of asking the same question, and
-// a wrapper that was a plain object could answer none of them.
+/// The interface objects, and the prototype chain a wrapper is linked into.
+///
+/// `assert_class_string`, `e instanceof HTMLBodyElement` and
+/// `eventTarget.constructor.name` are three ways of asking the same question;
+/// each needs the wrapper to be linked to its interface's prototype.
 void test_dom_interface_objects() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=d></div><script>

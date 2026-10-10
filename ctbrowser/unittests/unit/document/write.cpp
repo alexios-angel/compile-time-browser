@@ -1,10 +1,14 @@
-// THE PARSER-DRIVEN DOCUMENT: document.open / write / writeln / close, and the
+//===- write.cpp - document.write tests -------------------------*- C++ -*-===//
+//
+// The parser-driven document: document.open / write / writeln / close, and the
 // parser stopping at every `</script>` (HTML 8.4, 13.2.6.4.8).
 //
-// Each case is one page and one logged answer, the way unit/document_api_wpt
-// does it, and each is named for the html/webappapis/dynamic-markup-insertion
-// file whose assertion it carries. What they have in common: the script runs
-// while the tree is half built, and what it writes is parsed WHERE IT IS.
+// Each case is one page and one logged answer, as in unit/document/api_wpt.cpp,
+// and each is named for the html/webappapis/dynamic-markup-insertion WPT file
+// whose assertion it carries. In all of them the script runs while the tree is
+// half built, and what it writes is parsed at the current insertion point.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -18,8 +22,9 @@ namespace {
 using ctbrowser::browser;
 using ctbrowser::browser_options;
 
-// The page as written, run, and the last thing it logged. No script is
-// appended: every case here puts its own <script> where the test needs it.
+/// Loads \p html as written and returns the last console line it logged, or a
+/// "<nothing logged: ...>" marker with the script error. No script is
+/// appended: every case puts its own <script> where the test needs it.
 [[nodiscard]] std::string logged(const std::string & html) {
     browser page{browser_options{400, 300}};
     page.load_html(html);
@@ -28,6 +33,7 @@ using ctbrowser::browser_options;
     return out.back();
 }
 
+/// Checks that the last line \p html logs is \p expected.
 void is(const std::string & html, const std::string & expected) {
     const std::string got = logged(html);
     CHECK_EQ(got, expected);
@@ -36,8 +42,8 @@ void is(const std::string & html, const std::string & expected) {
 // --- the parser stops at </script> --------------------------------------------
 
 void test_a_script_sees_the_tree_built_so_far() {
-    // A script in the head runs before the body exists - `document.body` is
-    // null there in every browser, and was the whole body here.
+    // A script in the head runs before the body exists, so `document.body` is
+    // null there, as in every browser.
     is("<html><head><script>console.log(document.body)</script></head><body></body></html>",
        "null");
     // And one in the body sees what precedes it, not what follows.
@@ -53,9 +59,9 @@ void test_a_script_sees_the_tree_built_so_far() {
 
 void test_write_inserts_at_the_insertion_point() {
     // document-write/001.html: the script is head content, so what it writes
-    // is what makes the body - and is all the body holds.
+    // is what makes the body, and is all the body holds.
     is("<script>document.write('PASS'); console.log(document.body.textContent)</script>", "PASS");
-    // What is written goes BEFORE the markup that follows the script.
+    // What is written goes before the markup that follows the script.
     is("<body><script>document.write('<p id=w></p>')</script><p id=after></p>"
        "<script>console.log(document.getElementById('w').nextElementSibling.id)</script></body>",
        "after");
@@ -70,7 +76,7 @@ void test_write_inserts_at_the_insertion_point() {
        " console.log(i.localName + ':' + i.getAttribute('id') + ':' + i.textContent)"
        "</script></body>",
        "i:test:Filler Text");
-    // Two writes of text are ONE Text node, not two (13.2.6.1 "insert a
+    // Two writes of text are one Text node, not two (13.2.6.1 "insert a
     // character" appends to the Text node before the insertion point).
     is("<script>document.write('a'); document.write('b');"
        " console.log(document.body.childNodes.length + ':' + document.body.firstChild.data)"
@@ -91,7 +97,7 @@ void test_a_written_script_runs_synchronously_and_nests() {
        "<script>order.push(3); console.log(order.join(','))</script></body>",
        "1,2,3");
     // document-write/script_004.html: a written script writing a script, in
-    // order - each inner one runs before its writer continues.
+    // order: each inner one runs before its writer continues.
     is("<body><script>var order = []; order.push(1);"
        " document.write('<script>order.push(2); document.write(\\'<script>order.push(3);"
        "</script\\' + \\'>\\'); order.push(4);<' + '/script>'); order.push(5);</script>"
@@ -154,8 +160,8 @@ void test_a_frame_document_can_be_written() {
        "</script></body>",
        "CSS1Compat:2:<html><head></head><body><p>a</p><p>b</p></body></html>");
     // insert-into-nonempty-document.html: after open() a doctype write leaves
-    // the doctype the Document's ONLY child - the <html> element is "before
-    // html"'s to make, when something needs it.
+    // the doctype as the Document's only child; the "before html" insertion
+    // mode creates the <html> element later, when something needs it.
     is("<body><script>"
        " var f = document.createElement('iframe'); document.body.appendChild(f);"
        " var d = f.contentDocument; d.open(); d.write('<!DOCTYPE html>');"

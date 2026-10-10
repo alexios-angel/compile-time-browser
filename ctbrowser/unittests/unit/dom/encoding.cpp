@@ -1,8 +1,12 @@
-// THE DECLARED ENCODING'S NAME: the Encoding Standard's label table, HTML's
-// prescan over the first 1024 bytes, and what `document.characterSet` answers
-// for a page that declared one. dom/nodes/Document-characterSet-normalization
-// -{1,2}.html walk every label through an iframe; this walks the algorithm.
-
+//===- ctbrowser/unittests/unit/dom/encoding.cpp - charset tests ----------===//
+//
+// Tests for a document's declared encoding: the Encoding Standard's label
+// table, HTML's prescan over the first 1024 bytes, decoding the bytes by
+// encoding name, and what `document.characterSet` answers for a page that
+// declared one. WPT's dom/nodes/Document-characterSet-normalization-{1,2}.html
+// walk every label through an iframe; this file tests the algorithm directly.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/shell/shell.hpp>
@@ -17,6 +21,7 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
+/// The canonical encoding name for `text`, or "" when it is not a label.
 [[nodiscard]] std::string label(std::string_view text) {
     return std::string{encoding_from_label(text)};
 }
@@ -60,8 +65,8 @@ void test_the_prescan_reads_the_meta() {
     CHECK_EQ(prescan_encoding("<p>nothing declared</p>"), std::string{});
 }
 
-// "Get an XML encoding": the fallback when the prescan finds no meta, over
-// the whole stream, case-sensitive, bounded by the declaration's `>`.
+/// "Get an XML encoding": the fallback when the prescan finds no meta. It reads
+/// the whole stream, is case-sensitive, and stops at the declaration's `>`.
 void test_the_prescan_reads_an_xml_declaration() {
     CHECK_EQ(prescan_encoding("<?xml version=\"1.0\" encoding=\"windows-1251\"?><p>"),
              std::string{"windows-1251"});
@@ -93,9 +98,10 @@ void test_the_bytes_are_decoded_by_name() {
     CHECK_EQ(decode_document_bytes("a\xE6", "ISO-8859-7"), std::string{"a\xCE\xB6"});
     CHECK_EQ(decode_document_bytes("\xAA", "windows-1253"), std::string{"\xEF\xBF\xBD"});
     CHECK_EQ(decode_document_bytes("\xEF\xBB\xBF\xD0\xB6", "UTF-8"), std::string{"\xD0\xB6"});
-    // UTF-8 IS DECODED, not passed through (Encoding 4.2): each malformed
-    // sequence is one U+FFFD and the byte that broke it is read again - so a
-    // surrogate's three bytes are three, a cut-short sequence one.
+    // UTF-8 is decoded, not passed through (Encoding 4.2): each malformed
+    // sequence is one U+FFFD and the byte that broke it is read again, so an
+    // encoded surrogate's three bytes give three U+FFFD and a truncated
+    // sequence gives one.
     CHECK_EQ(decode_document_bytes("a\xFF"
                                    "b",
                                    "UTF-8"),
@@ -118,8 +124,9 @@ void test_the_bytes_are_decoded_by_name() {
              std::string{"\xD0\xB6\xEF\xBF\xBD"});
     CHECK_EQ(decode_document_bytes("\x80", "x-user-defined"), std::string{"\xEF\x9E\x80"});
     CHECK_EQ(decode_document_bytes("anything", "replacement"), std::string{"\xEF\xBF\xBD"});
+    // An encoding without a decoder here (Big5) passes its bytes through.
     CHECK_EQ(decode_document_bytes("\xE6", "Big5"), std::string{"\xE6"});
-    // And the page: a windows-1251 document shows its Cyrillic.
+    // End to end: a windows-1251 page shows its Cyrillic.
     browser page{browser_options{300, 200}};
     page.load_html("<?xml version=\"1.0\" encoding=\"windows-1251\"?><p id=p>\xE6</p><script>"
                    "console.log(document.characterSet + ',' + "
@@ -128,6 +135,8 @@ void test_the_bytes_are_decoded_by_name() {
     CHECK_EQ(page.bindings().console_output().back(), std::string{"windows-1251,true"});
 }
 
+/// characterSet, charset and inputEncoding all report the declared encoding;
+/// a created or DOMParser-parsed document is always UTF-8.
 void test_the_document_reports_the_name() {
     browser page{browser_options{300, 200}};
     page.load_html("<!DOCTYPE html><meta charset=\"cskoi8r\"><body><script>"

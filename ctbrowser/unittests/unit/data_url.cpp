@@ -1,21 +1,16 @@
-// `data:` URLs - a resource that carries its own bytes.
+//===- ctbrowser/unittests/unit/data_url.cpp - data: URL tests ------------===//
 //
-// THE ENGINE COULD WRITE THESE LONG BEFORE IT COULD READ THEM. `toDataURL` and
-// FileReader both produce one, and nothing noticed the asymmetry, because a
-// hand-written page that makes a data URL hands it straight back to the same
-// page. A LIBRARY ships its own images inside itself: Phaser's texture manager
-// loads three base64 PNGs during boot and waits for all three before it will
-// start, so every one of them failing left it waiting forever - `isBooted` true,
-// `isRunning` false, and no error any page could see, because the throw that
-// followed happened four callbacks deep inside an image handler.
+// `data:` URLs: a resource that carries its own bytes. Libraries ship their
+// own images as data: URLs (Phaser's texture manager loads three base64 PNGs
+// at boot and never starts if one fails), and a failed load can be invisible
+// to the page, so these tests assert the decoded bytes, not just that nothing
+// threw.
 //
-// Which is why the assertions here are on the DECODED BYTES and not on "it did
-// not throw". A data URL that resolves to nothing fails exactly the way one that
-// is never looked at does.
+// The main image is a BMP because `decode_bmp` is built into the engine, so
+// the tests cover the whole path (registry miss, data URL, decode, onload) in
+// a headless build with no SDL3_image.
 //
-// The image is a BMP, deliberately: `decode_bmp` is built into the engine, so
-// this test proves the whole path - registry miss, data URL, decode, onload -
-// in a headless build with no SDL3_image anywhere near it.
+//===----------------------------------------------------------------------===//
 
 #include <cstdio>
 #include <string>
@@ -33,23 +28,17 @@ using ctbrowser::shell::data_url;
 using ctbrowser::shell::is_data_url;
 using ctbrowser::shell::parse_data_url;
 
-// A 2x2 24-bit BMP: red, green / blue, white, TOP row first as displayed.
-// Generated rather than pasted, and the row order is the trap - a BMP with a
-// positive height is stored BOTTOM-UP, so the file's first row is the image's
-// last. The generator got that backwards at first and the PNG comparison below
-// is what caught it, which is the argument for comparing two decoders rather
-// than checking each one's size.
-// The same 2x2 image as a PNG, so the two decoders can be compared against each
-// other rather than each against itself. Generated with zlib, not pasted.
+/// The 2x2 image of `bmp_2x2` as a PNG, so the two decoders can be compared
+/// against each other rather than each against itself. Generated with zlib.
 constexpr const char * png_2x2 =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR42mP4z8DwHwyB"
     "NBgAAEnICfcD2WTxAAAAAElFTkSuQmCC";
 
-// An 8x8 JPEG: four quadrants, red, green / blue, white - one full MCU, so the
-// decoder has a real block to do rather than a degenerate one. Compressed at
-// quality 95 with NO chroma subsampling, because the assertions below are on
-// the corner pixels and 4:2:0 would blur the quadrant edges into them.
-// Generated with libjpeg-turbo itself, not pasted.
+/// An 8x8 JPEG with four quadrants (red, green / blue, white): one full MCU, so
+/// the decoder has a real block to decode rather than a degenerate one.
+/// Compressed at quality 95 with no chroma subsampling, because the assertions
+/// below sample quadrant pixels and 4:2:0 would blur the quadrant edges into
+/// them. Generated with libjpeg-turbo.
 constexpr const char * jpeg_8x8 =
     "data:image/jpeg;base64,"
     "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJ"
@@ -65,6 +54,10 @@ constexpr const char * jpeg_8x8 =
     "AG4dm37P/tZ39scn0mPoM/8AEOP7K/4yD2/t/b/8wnJy8nsf+omd78/la3W+i+mDxL/xOj/Yn7r+yv7K+s/a+te1"
     "+tfV/LD8nJ9X/v8ANz/Z5fe//9k=";
 
+/// A 2x2 24-bit BMP: red, green / blue, white, top row first as displayed.
+/// Note the row order: a BMP with a positive height is stored bottom-up, so
+/// the file's first row is the image's last. Comparing against `png_2x2`
+/// catches a decoder (or generator) that gets this wrong.
 constexpr const char * bmp_2x2 =
     "data:image/bmp;base64,Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAATCwAAEwsAAAAAAAAA"
     "AAAA/wAA////AAAAAP8A/wAAAA==";
@@ -77,7 +70,8 @@ void test_the_parser() {
     CHECK(!is_data_url("dat"));
 
     data_url parsed;
-    // NO COMMA IS NOT A DATA URL: there is no payload to be lenient about.
+    // Without a comma it is not a data URL: there is no payload to be lenient
+    // about.
     CHECK(!parse_data_url("data:text/plain", parsed));
 
     CHECK(parse_data_url("data:text/plain;base64,aGVsbG8=", parsed));
@@ -93,16 +87,16 @@ void test_the_parser() {
     CHECK_EQ(parsed.mime, std::string{"text/plain"});
 
     // A media type parameter is dropped, and `;base64` is only the encoding
-    // marker when it is LAST - a type merely containing the word is not one.
+    // marker when it is last; a type merely containing the word is not one.
     CHECK(parse_data_url("data:text/html;charset=utf-8,hi", parsed));
     CHECK_EQ(parsed.mime, std::string{"text/html"});
     CHECK_EQ(std::string(reinterpret_cast<const char *>(parsed.bytes.data()), parsed.bytes.size()),
              std::string{"hi"});
 }
 
-// LENIENCY IS THE POINT of wrapping Beast's decoder rather than calling it: it
-// stops at the first character outside the alphabet, and every MIME encoder in
-// the world inserts a newline every 76 characters.
+/// base64_decode is lenient like `atob`: it skips characters outside the
+/// alphabet, including the newline MIME encoders insert every 76 characters,
+/// and accepts missing padding.
 void test_the_decoder() {
     CHECK_EQ(base64_decode("aGVsbG8="), std::string{"hello"});
     CHECK_EQ(base64_decode("aGVsbG8"), std::string{"hello"});    // padding optional
@@ -118,15 +112,15 @@ void test_the_decoder() {
                                                     "?>"});
 }
 
-// THROUGH THE ASSET REGISTRY, which is where this had to land for one change to
-// serve an <img>, a fetch, a CSS url() and a <script src> at once.
+/// Data URLs resolve through the asset registry, so one code path serves an
+/// <img>, a fetch, a CSS url() and a <script src>.
 void test_the_registry() {
     ctbrowser::shell::asset_registry assets;
     const std::vector<std::byte> bytes = assets.load("data:text/plain;base64,aGVsbG8=");
     CHECK_EQ(std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size()),
              std::string{"hello"});
 
-    // The registry is still consulted FIRST, so a page may override one by name.
+    // The registry is still consulted first, so a page may override one by name.
     const std::string override_text = "seeded";
     assets.add(
         "data:text/plain;base64,aGVsbG8=",
@@ -141,8 +135,8 @@ void test_the_registry() {
     CHECK(assets.load("data:,").empty());
 }
 
-// AND THROUGH A PAGE, which is the only assertion that would have caught the
-// original bug: everything above can pass while an <img> still fires `error`.
+/// Through a page: everything above can pass while an <img> still fires
+/// `error`, so this checks the decoded image on a real element.
 void test_an_image_element() {
     browser page{browser_options{200, 200}};
     page.load_html(std::string{R"(<html><body><img id="a" src=")"} + bmp_2x2 +
@@ -160,15 +154,15 @@ void test_an_image_element() {
         return std::string{"<no answer>"};
     };
 
-    // naturalWidth is the DECODED size, so it is zero for a load that failed
-    // and 2 for the bitmap that is actually in there. That distinction is the
-    // whole test: "the element exists" was always true.
+    // naturalWidth is the decoded size, so it is zero for a load that failed
+    // and 2 for the bitmap that is actually in there; "the element exists"
+    // would be true either way.
     CHECK_EQ(ask("document.getElementById('a').naturalWidth"), std::string{"2"});
     CHECK_EQ(ask("document.getElementById('a').naturalHeight"), std::string{"2"});
 }
 
-// A SCRIPT-CREATED Image, which is the form a library uses - Phaser, p5 and
-// every texture loader build one and assign `src` rather than writing markup.
+/// A script-created Image, which is the form libraries use: Phaser, p5 and
+/// other texture loaders build one and assign `src` rather than writing markup.
 void test_a_scripted_image() {
     browser page{browser_options{200, 200}};
     page.load_html("<html><body></body></html>");
@@ -194,15 +188,11 @@ void test_a_scripted_image() {
     CHECK_EQ(answer, std::string{"load:2x2"});
 }
 
-// PNG, THROUGH LIBPNG, IN A BUILD WITH NO SDL. This is the gap Phaser found:
-// the engine decoded BMP itself and got PNG from a hook only the application
-// layer fills in, so `test/` and `unittests/` - which are SDL-free by an invariant
-// `test/lint/api_surface` lints for - saw every PNG as a zero-sized image and
-// nothing in the suite said so, because the pages in this tree load BMPs.
-//
-// ASSERTED AGAINST THE BMP, pixel for pixel, rather than against itself: two
-// decoders that agree on the same four pixels is evidence, and "it returned
-// something" is not.
+/// PNG decodes through libpng in a build with no SDL. `test/` and `unittests/`
+/// are SDL-free (`test/lint/api_surface` enforces it), so if PNG decoding came
+/// only from an application-layer hook, every PNG here would be a zero-sized
+/// image. The result is compared with the BMP pixel for pixel: two decoders
+/// agreeing on the same four pixels is evidence, "it returned something" is not.
 void test_a_png_decodes_without_sdl() {
     browser page{browser_options{200, 200}};
     page.load_html(std::string{R"(<html><body><img id="p" src=")"} + png_2x2 +
@@ -244,15 +234,14 @@ void test_a_png_decodes_without_sdl() {
     CHECK_EQ(ask(read), std::string{"same: 255,0,0,255 0,255,0,255 0,0,255,255 255,255,255,255"});
 }
 
-// JPEG, THROUGH LIBJPEG-TURBO, IN A BUILD WITH NO SDL - the same gap as PNG
-// above and closed the same way, because the argument was never about PNG.
-//
-// LOSSY, so the assertions have a tolerance, and the tolerance is the point of
-// the test rather than a weakness in it: what would break here is not a few
-// counts of ringing but a channel swap, a row flip, or an alpha byte left
-// undefined - and every one of those moves a channel by a hundred or more.
-// TurboJPEG's RGBA formats do NOT write the fourth byte, so an alpha of 0
-// rather than 255 is the specific bug this guards.
+/// JPEG decodes through libjpeg-turbo in a build with no SDL, for the same
+/// reason as the PNG test above.
+///
+/// JPEG is lossy, so colour assertions have a tolerance. The bugs this guards
+/// against are a channel swap, a row flip, or an alpha byte left undefined,
+/// each of which moves a channel by a hundred or more, not a few counts of
+/// ringing. TurboJPEG's RGBA formats do not write the fourth byte, so an alpha
+/// of 0 rather than 255 is the specific bug this guards.
 void test_a_jpeg_decodes_without_sdl() {
     browser page{browser_options{200, 200}};
     page.load_html(std::string{R"(<html><body><img id="j" src=")"} + jpeg_8x8 +

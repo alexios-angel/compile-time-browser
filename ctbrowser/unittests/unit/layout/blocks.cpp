@@ -1,9 +1,12 @@
+//===- ctbrowser/unittests/unit/layout/blocks.cpp - Block layout tests ----===//
+//
 // Block layout: the box tree is not the DOM tree, and a block's geometry -
-// widths, lengths, min/max clamps, auto margins, and what a fragment does not
-// carry back to the DOM. Carved out of unit/layout_basics.cpp on 2026-09-08,
-// when that file was 1,364 lines; the other layout_*.cpp files beside this one
-// are the rest of it, and fixture.hpp carries the fixture and the prose
+// widths, lengths, min/max clamps, auto margins, tables and list markers, and
+// what a fragment does not carry back to the DOM. The other layout tests are
+// the .cpp files beside this one; fixture.hpp holds the shared fixture and
 // assertions.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -23,7 +26,7 @@ using namespace ctbrowser::layout;
 
 namespace {
 
-// --- 1. the box tree is not the DOM tree ---------------------------------
+// --- The box tree is not the DOM tree ------------------------------------
 
 void test_display_none_produces_no_box() {
     fixture f;
@@ -237,9 +240,9 @@ void test_percent_and_em_lengths() {
 void test_a_percentage_height_needs_a_containing_block_to_be_one() {
     // CSS 2.1 §10.5: a percentage height whose containing block's height depends
     // on its own content behaves as `auto`. Resolving it against zero instead
-    // COLLAPSES the box - and Bootstrap's `.h-100` on a card is exactly that
-    // declaration, so a row of three cards came out zero-high and everything
-    // below drew straight through them.
+    // collapses the box, and Bootstrap's `.h-100` on a card is exactly that
+    // declaration: a row of three cards would come out zero-high and
+    // everything below would draw straight through them.
     {
         fixture f;
         f.load("<html><body><div id=outer><div id=a>x</div></div></body></html>",
@@ -252,7 +255,7 @@ void test_a_percentage_height_needs_a_containing_block_to_be_one() {
         }
     }
     {
-        // And it IS a percentage when the containing block has a real height.
+        // And it is a percentage when the containing block has a real height.
         fixture f;
         f.load("<html><body><div id=outer><div id=a>x</div></div></body></html>",
                "body { margin: 0; padding: 0 } #outer { height: 200px } "
@@ -264,12 +267,10 @@ void test_a_percentage_height_needs_a_containing_block_to_be_one() {
     }
 }
 
-// A table's gaps and insets come from CSS, not from two constants. They used to
-// be a hardcoded 2px of spacing and a hardcoded 2px of padding, and both were
-// visible: Bootstrap's Reboot collapses every table's borders, so a striped
-// table drew a sliver of the table's own background between every pair of cells
-// - and the cell's own CSS padding was applied INSIDE it as well, so each cell
-// was inset twice.
+// A table's gaps and insets come from CSS (border-collapse, border-spacing,
+// cell padding), and a cell's padding is applied exactly once. Bootstrap's
+// Reboot collapses every table's borders, so any fixed spacing would show as a
+// sliver of the table's background between the cells of a striped table.
 void test_a_tables_spacing_comes_from_css() {
     const auto cell_x = [](std::string_view css) {
         fixture f;
@@ -284,24 +285,22 @@ void test_a_tables_spacing_comes_from_css() {
         return std::pair{a != nullptr ? a->bounds.x : -1.0f, b != nullptr ? b->bounds.x : -1.0f};
     };
     {
-        // COLLAPSED: no gap anywhere, so the second cell starts exactly where the
+        // Collapsed: no gap anywhere, so the second cell starts exactly where the
         // first one ends and the first starts at the table's own edge.
         const auto [a, b] = cell_x("table { border-collapse: collapse }");
         expect_near(a, 0, "a collapsed table's first cell is flush with its edge");
         expect_near(b, 2 * 10 * 0.6f, "and the second begins where the first ends");
     }
     {
-        // SEPARATE is the browser default and 2px is its default spacing - which
-        // is where the old constant came from, and it is right for this case and
-        // this case only.
+        // Separate is the browser default (with 2px of spacing); here the
+        // stated border-spacing is used instead.
         const auto [a, b] = cell_x("table { border-collapse: separate; border-spacing: 4px }");
         expect_near(a, 4, "a separated table insets its first cell by the spacing");
         expect_near(b, 4 + 2 * 10 * 0.6f + 4, "and puts the spacing between them too");
     }
     {
-        // A CELL'S PADDING IS APPLIED ONCE. Twice, and every column is four
-        // pixels too wide and every cell's text four pixels in from where it
-        // belongs.
+        // A cell's padding is applied once. Twice, and every column would be
+        // too wide and every cell's text inset too far.
         fixture f;
         f.load("<html><body><table><tr><td id=a>xx</td></tr></table></body></html>",
                "body { margin: 0; padding: 0 } table { border-collapse: collapse } "
@@ -318,8 +317,8 @@ void test_a_tables_spacing_comes_from_css() {
 
 void test_a_list_marker_belongs_to_the_display() {
     // Not to the tag. A `<li class="d-flex">` is a flex container and not a list
-    // item, which is why Bootstrap's list groups and navs show no bullets - and
-    // keying the marker off the tag drew one beside every one of them.
+    // item, which is why Bootstrap's list groups and navs show no bullets;
+    // keying the marker off the tag would draw one beside every one of them.
     const auto markers = [](std::string_view css) {
         fixture f;
         f.load("<html><body><ul><li id=a>one</li></ul></body></html>", css);
@@ -339,9 +338,9 @@ void test_fragments_carry_no_geometry_back_to_the_dom() {
     engine eng;
     const fragment first = eng.run(f.root, 300);
     const fragment second = eng.run(f.root, 600);
-    // Two passes over the SAME box tree at different widths. If layout wrote
-    // anything back - which is exactly what the previous engine did - the second pass would be
-    // contaminated by the first.
+    // Two passes over the same box tree at different widths. If layout wrote
+    // anything back into the tree, the second pass would be contaminated by the
+    // first.
     const fragment * a1 = first.find(f.find_id("a"));
     const fragment * a2 = second.find(f.find_id("a"));
     check(a1 != nullptr && a2 != nullptr, "both passes produced the fragment");
@@ -350,9 +349,8 @@ void test_fragments_carry_no_geometry_back_to_the_dom() {
     expect_near(a2->bounds.width, 600, "second pass is unaffected by the first");
 }
 
-// `max-width` and `min-width` were ignored ENTIRELY, and `margin: 0 auto` resolved
-// both margins to 0 - so a page could not be centred at all and `.container` filled
-// its parent instead of stopping at a breakpoint's width.
+// `max-width` and `min-width` clamp a block's width, which is how `.container`
+// stops at a breakpoint's width instead of filling its parent.
 void test_min_and_max_width_clamp() {
     {
         fixture f;
@@ -375,8 +373,8 @@ void test_min_and_max_width_clamp() {
         if (a != nullptr) { expect_near(a->bounds.width, 200, "min-width raises a stated width"); }
     }
     {
-        // MIN WINS over max, which is what CSS 2.1 says and what applying max first
-        // and min second produces without a special case.
+        // Min wins over max, which is what CSS 2.1 says and what applying max
+        // first and min second produces without a special case.
         fixture f;
         f.load("<html><body><div id=a></div></body></html>",
                "div { height: 10px; min-width: 400px; max-width: 100px } "
@@ -401,7 +399,7 @@ void test_auto_margins_centre() {
         if (a != nullptr) { expect_near(a->bounds.x, 300, "both autos centre it"); }
     }
     {
-        // ONE auto takes the whole remainder, which is how a box is pushed right.
+        // One auto margin takes the whole remainder, which is how a box is pushed right.
         fixture f;
         f.load("<html><body><div id=a></div></body></html>",
                "div { height: 10px; width: 200px; margin-left: auto } "
@@ -412,11 +410,10 @@ void test_auto_margins_centre() {
         if (a != nullptr) { expect_near(a->bounds.x, 600, "one auto pushes it right"); }
     }
     {
-        // AN UNSET MARGIN IS NOT auto, and this is the case that matters most: a
+        // An unset margin is not auto, and this is the case that matters most: a
         // `length{}` defaults to unit::auto_, so an unset margin and an explicit
-        // `auto` are the same VALUE. Reading the length rather than a flag centred
-        // every definite-width box that declared no margins at all - which the
-        // event tests caught by clicking where an element used to be.
+        // `auto` are the same value. Layout must read the flag, not the length,
+        // or every definite-width box that declared no margins would be centred.
         fixture f;
         f.load("<html><body><div id=a></div></body></html>",
                "div { height: 10px; width: 200px } body { padding: 0; margin: 0 }");
@@ -426,7 +423,7 @@ void test_auto_margins_centre() {
         if (a != nullptr) { expect_near(a->bounds.x, 0, "no margins means no centring"); }
     }
     {
-        // An AUTO WIDTH absorbs the remainder itself, so the margins stay at zero.
+        // An auto width absorbs the remainder itself, so the margins stay at zero.
         fixture f;
         f.load("<html><body><div id=a></div></body></html>",
                "div { height: 10px; margin-left: auto; margin-right: auto } "

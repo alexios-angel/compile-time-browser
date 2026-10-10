@@ -1,9 +1,11 @@
-// WHAT THE PARSER AND A FEW DOM STEPS DO THAT A PAGE CAN SEE, each the
-// smallest expression that fails if its fix goes:
+//===- parser_steps.cpp - parser and DOM steps ---------------- -*- C++ -*-===//
+//
+// Page-visible results of parser and DOM steps, each the smallest expression
+// that fails if the behaviour regresses:
 //
 //   * an <option> popped off the stack of open elements is cloned into its
 //     select's <selectedcontent> when it is the selected one (HTML 4.10.10);
-//   * the Document's own child list is noted like any other parent's, so a
+//   * the Document's own child list is tracked like any other parent's, so a
 //     live range on the Document moves when its element goes (DOM 5.5);
 //   * `rootElement` is the <svg> root of an SVG document and null otherwise;
 //   * NodeList's iterators are Array.prototype's own functions (WebIDL
@@ -11,7 +13,8 @@
 //   * Selection.extend() into another tree collapses at the new focus;
 //   * `shadowRoot` is Element's attribute, and a prefixed div may host one;
 //   * an event interface's prototype names itself to Object.prototype.toString.
-
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
@@ -29,13 +32,14 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <p id=before>Before</p><div id=host></div>
 </body></html>)";
 
+/// Evaluates `expression` on a fresh copy of page_html and checks its string.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
 
 void test_the_selected_option_is_cloned_into_selectedcontent() {
     // The second option carries `selected`, so it is the selected one when it
-    // is popped - its children are copied, markup and all.
+    // is popped, and its children are copied, markup and all.
     is("document.getElementById('sc').innerHTML", "Y<b>!</b>");
     // A `multiple` select has no enabled selectedcontent.
     is("document.getElementById('msc').childNodes.length", "0");
@@ -94,7 +98,7 @@ void test_shadow_root_is_an_elements_attribute() {
     is("'shadowRoot' in Element.prototype && !('shadowRoot' in Node.prototype) && "
        "!('shadowRoot' in Text.prototype)",
        "true");
-    // The LOCAL name decides whether an element may host: a prefixed HTML div
+    // The local name decides whether an element may host: a prefixed HTML div
     // is a div.
     is("document.createElementNS('http://www.w3.org/1999/xhtml', 'x:div')"
        ".attachShadow({ mode: 'open' }).host.localName",

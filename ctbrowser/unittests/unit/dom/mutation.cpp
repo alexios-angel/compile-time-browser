@@ -1,27 +1,22 @@
-// The DOM bindings: script driving the page.
+//===- ctbrowser/unittests/unit/dom/mutation.cpp - DOM mutation tests -----===//
 //
-// the previous engine's bindings were safe because the document owned every node forever and
-// nothing was concurrent. this engine's hold HANDLES, so the interesting tests are the
-// ones the previous engine could not have failed:
+// Script writing to the document, checked through the browser: classList and
+// style, the document API, the document's own properties, and the pixels
+// following each write.
+//
+// Script wrappers hold node handles, not pointers, and a node can be removed
+// while script still holds its wrapper. So the important tests are:
 //
 //   * a wrapper for a removed element resolves to nothing, and its methods do
-//     nothing, rather than writing through a dangling pointer
-//   * a mutation from script invalidates the pipeline, so the NEXT frame shows
-//     it - script and rendering are not two views that can disagree
+//     nothing, rather than writing through a dangling pointer;
+//   * a mutation from script invalidates the pipeline, so the next frame shows
+//     it: script and rendering are not two views that can disagree.
 //
-// Plus the ordinary web-platform surface, checked through the browser rather
-// than against the bindings in isolation: a binding that mutates the DOM but
-// does not change what is drawn is not working, whatever a unit test says.
+// A binding that mutates the DOM but does not change what is drawn is not
+// working, so most cases check the rendered output. Shared helpers (log_of)
+// come from ../chrome_probe.hpp.
 //
-// This file keeps the original's subject - script WRITING to the document and
-// the pixels following: classList and style, the document API, the document's
-// own properties, a stale handle staying inert - and its two robustness cases.
-//
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
-
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -52,8 +47,8 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-// Everything the page ends up drawing as text. The honest way to ask "did the
-// page change", since that is what a user sees.
+/// All the text the page draws, concatenated. The reliable way to ask "did the
+/// page change", since that is what a user sees.
 [[nodiscard]] std::string rendered_text(browser & page) {
     std::string out;
     const auto walk = [&](auto && self, const layout::fragment & f) -> void {
@@ -64,6 +59,7 @@ namespace {
     return out;
 }
 
+/// How many paint commands across all layers fill with `want`.
 [[nodiscard]] std::size_t count_fill(browser & page, color want) {
     std::size_t n = 0;
     for (const auto & layer : page.layers().layers) {
@@ -95,7 +91,7 @@ void test_class_list_edits_the_attribute() {
     </script></body></html>)");
     check(page.script_error().empty(), "the class list script ran: " + page.script_error());
     const auto & log = log_of(page);
-    // add is a SET, not an append - twice is once.
+    // add treats the list as a set, not an append: adding twice adds once.
     check(log[0] == "added=a b c", "classList.add appends a token, once: " + log[0]);
     check(log[1] == "has=true,false", "classList.contains: " + log[1]);
     // The count is live, so it moves with the attribute rather than reporting
@@ -179,7 +175,7 @@ void test_style_writes_reach_the_document() {
     // The IDL name and the CSS name are different spellings of one property.
     check(log[2].find("background-color: red") != std::string::npos,
           "backgroundColor is background-color: " + log[2]);
-    // Assigning "" REMOVES a declaration. Emitting `display: ;` instead would
+    // Assigning "" removes a declaration. Emitting `display: ;` instead would
     // leave the old value standing as far as the parser is concerned.
     check(log[3].find("display") == std::string::npos,
           "assigning the empty string removes it: " + log[3]);
@@ -206,7 +202,7 @@ void test_script_mutates_what_is_drawn() {
         "<script>document.getElementById('a').textContent = 'replaced';</script></body></html>");
     page.frame();
     check(page.script_error().empty(), "the script ran without error");
-    // The whole point: the mutation reached the pixels, not just the DOM.
+    // The mutation must reach the rendered page, not just the DOM.
     check(rendered_text(page).find("replaced") != std::string::npos,
           "textContent changed the page");
     check(rendered_text(page).find("original") == std::string::npos, "and removed the old text");
@@ -234,17 +230,15 @@ void test_attributes_and_classes() {
         check(log[1] == "hot=true", "classList sees the class it added");
         check(log[2] == "cold=false", "and does not see one it did not");
     }
-    // And the class actually restyled the element, which is the part that
-    // matters: adding a class that changes nothing on screen is not a binding
-    // that works.
+    // The class also restyled the element: adding a class that changes nothing
+    // on screen is not a working binding.
     check(count_fill(page, color::rgba(255, 0, 0)) == 1, "classList.add restyled the element");
 }
 
 // --- the document's own properties ------------------------------------------
 
-// `document.title` and `getElementsByTagName` simply were not there. A page
-// asking for either got `undefined` and, in the second case, died on calling
-// it - which is how the comparison rig found them.
+/// `document.title` reads the <title> text, and `getElementsByTagName` walks
+/// the whole tree in document order.
 void test_document_title_and_tag_lookup() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><title>a page</title></head><body>
@@ -269,18 +263,16 @@ void test_document_title_and_tag_lookup() {
     check(log[3] == "star=true", "'*' matches every element");
     check(log[4] == "none=0", "and a tag nothing uses is an empty list");
 
-    // ...and the title is LIVE, not a snapshot taken when the document object
-    // was built. Rewriting the <title> has to be visible, which is the same bug
-    // class location.href had: set once at install and wrong ever after.
+    // The title is live, not a snapshot taken when the document object was
+    // built: rewriting the <title> element is visible through document.title.
     (void)page.run_script("document.getElementsByTagName('title')[0].textContent = 'renamed';");
     page.frame();
     (void)page.run_script("console.log('after=' + document.title);");
     check(log.size() == 6 && log[5] == "after=renamed", "document.title follows the element");
 }
 
-// `document.activeElement` is the script-visible mirror of browser::focused().
-// The bindings could SET focus - element.focus() - but nothing came back, so
-// the property could not exist at all.
+/// `document.activeElement` mirrors browser::focused(), whether focus moved by
+/// script, by keyboard or by blur.
 void test_document_active_element_follows_focus() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body>
@@ -298,10 +290,10 @@ void test_document_active_element_follows_focus() {
     };
     ask("start");
 
-    // Focus by SCRIPT...
+    // Focus by script...
     (void)page.run_script("document.getElementById('b').focus();");
     ask("scripted");
-    // ...by the KEYBOARD...
+    // ...by the keyboard...
     (void)page.handle(input_event::key_press("Tab"));
     ask("tabbed");
     // ...and blurred.
@@ -317,10 +309,8 @@ void test_document_active_element_follows_focus() {
     check(log[3] == "blurred=body", "and blur clears it, back to the body");
 }
 
-// A page that errors ONCE used to report that error for ever: run_script only
-// ever assigned script_error_, never cleared it, so every later success still
-// carried the old message. The rig hit this immediately - a perfectly good eval
-// came back with a failure from three calls earlier.
+/// script_error() describes the most recent script only: a successful
+/// run_script clears an earlier failure.
 void test_a_script_error_does_not_outlive_the_script() {
     browser page{browser_options{400, 300}};
     page.load_html("<body><p id=p>x</p></body>");
@@ -378,9 +368,9 @@ void test_a_stale_handle_is_inert() {
     console.log('survived');
     </script></body></html>)");
     page.frame();
-    // the previous engine held a raw node* here. The handle turns a use-after-free into a
-    // lookup that finds nothing, so the writes go nowhere and the page is
-    // unharmed - which is the entire argument for handles.
+    // The wrapper holds a handle, not a node pointer, so writing through a removed
+    // node is a lookup that finds nothing: the writes are dropped and the page is
+    // unharmed, where a raw pointer would be a use-after-free.
     check(page.script_error().empty(), "writing through a stale handle does not fail the script");
     check(log_of(page).size() == 1 && log_of(page)[0] == "survived",
           "and execution continues past it");
@@ -397,12 +387,10 @@ void test_layout_is_visible_to_script() {
     </script></body></html>)");
     page.frame();
 
-    // The script ran BEFORE the first frame - and reading `offsetWidth` is
-    // what asks for a layout (the accessor flushes, as getBoundingClientRect
-    // and getComputedStyle do), so it reports the real box rather than 0. A
-    // page that sizes itself from the number - Bootstrap's reflow idiom, every
-    // WPT file that styles a box and measures it in the same script - needs
-    // exactly that. Before 2026-09-12 this read 0 until the first frame.
+    // The script runs before the first frame, and reading `offsetWidth` forces a
+    // layout (as getBoundingClientRect and getComputedStyle do), so it reports
+    // the real box rather than 0. Pages that measure a box in the same script
+    // that styles it depend on this (Bootstrap's reflow idiom, many WPT files).
     check(log_of(page).size() == 1, "one console line");
     if (!log_of(page).empty()) {
         check(log_of(page)[0] == "w=123 h=45",
@@ -468,12 +456,12 @@ void test_window_and_performance() {
     check(log.size() == 2, "two console lines");
     if (log.size() == 2) {
         check(log[0] == "size 321x234", "window reports the viewport");
-        // A POSITIVE TIME ORIGIN, and a FIXED one. `performance.now()` on a
-        // page's first line is not zero in any browser - the origin is when the
-        // document began loading and script runs after that - and
-        // `dom/events/Event-constructors.any.js` asserts `timeStamp > 0`. It is
-        // a constant rather than a real clock for the reason `Math.random` is
-        // seeded: three example pages byte-compare their render.
+        // A positive, fixed time origin. `performance.now()` on a page's first
+        // line is not zero in any browser (the origin is when the document began
+        // loading, and script runs after that), and WPT's
+        // `dom/events/Event-constructors.any.js` asserts `timeStamp > 0`. It is a
+        // constant rather than a real clock for the same reason `Math.random` is
+        // seeded: some example pages byte-compare their render.
         check(log[1] == "t0 1", "and the page clock starts at a positive origin");
     }
 }

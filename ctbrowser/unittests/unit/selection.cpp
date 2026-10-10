@@ -1,10 +1,14 @@
+//===- ctbrowser/unittests/unit/selection.cpp - Selection API tests -------===//
+//
 // The Selection API: one selection per window, a range and a direction.
 //
-// The regression net for lib/Shell/bindings/selection.cpp. What it pins down
-// is the model: `getSelection()` is the SAME object every time, the selection
-// holds the caller's own Range (so `getRangeAt(0) === range`), the anchor
-// follows the direction, and a document with no browsing context has no
-// selection at all.
+// The regression tests for lib/Shell/bindings/selection.cpp. They pin down the
+// model: `getSelection()` is the same object every time, the selection holds
+// the caller's own Range (so `getRangeAt(0) === range`), the anchor follows
+// the direction, and a document with no browsing context has no selection at
+// all.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -58,7 +62,7 @@ void test_add_range_keeps_the_callers_range() {
                   "alert(s.toString());"
                   "s.removeAllRanges();"
                   "alert(s.rangeCount);"
-                  // A CLONE IS A LIVE RANGE too, and the selection takes it
+                  // A clone is a live range too, and the selection takes it
                   // (selection/collapse-*.html add theirs that way).
                   "var c = r.cloneRange(); s.addRange(c);"
                   "alert(s.rangeCount + ',' + (s.getRangeAt(0) === c));"
@@ -93,8 +97,8 @@ void test_what_the_selection_refuses() {
              "var s = getSelection();"
              "alert(threw(function(){ s.extend(document.body, 0); }));"
              "alert(threw(function(){ s.getRangeAt(0); }));"
-             // A node in a detached fragment is not in this document: the
-             // call is ABORTED, not an exception, and nothing is selected.
+             // A detached node is not in this document's tree: the call is
+             // silently ignored, not an exception, and nothing is selected.
              "var loose = document.createElement('div');"
              "s.collapse(loose, 0);"
              "alert(s.rangeCount);"
@@ -111,11 +115,11 @@ void test_what_the_selection_refuses() {
         "InvalidStateError;IndexSizeError;0;IndexSizeError;0,none;TypeError,TypeError,TypeError");
 }
 
-// A SELECTION ACROSS A SHADOW BOUNDARY: the anchor inside a closed tree and
-// the focus outside it. The direction comes from the shadow-including order,
-// the selection is collapsed where its range is, and getComposedRanges()
-// rescopes the inner point to the host unless its tree is named - and refuses
-// a list that holds anything but ShadowRoots.
+/// A selection across a shadow boundary: the anchor inside a closed tree and
+/// the focus outside it. The direction comes from the shadow-including order,
+/// the selection is collapsed where its range is, and getComposedRanges()
+/// rescopes the inner point to the host unless its tree is named, and refuses
+/// a list that holds anything but ShadowRoots.
 void test_a_selection_across_a_shadow_boundary() {
     CHECK_EQ(said("<html><body><div id=c>a<div id=h></div>b</div><script>"
                   "function threw(f){ try { f(); return 'ok'; } catch (e) { return e.name; } }"

@@ -1,9 +1,14 @@
+//===- ctbrowser/unittests/js/vm/control_flow.cpp - VM control flow -------===//
+//
 // Statements: loops, labels, switch, try/catch/finally, and what an exception
-// carries. Also the handful of cases that drive the VM from C++ - the
-// collector, a native binding, and what an error report says - because each
-// needs a `context` of its own rather than a program. Carved out of
-// js/vm_basics.cpp on 2026-09-08 - operators.cpp names the family, and
-// expect.hpp is the assertion every file in it shares.
+// carries. Also the handful of cases that drive the VM from C++ (the
+// collector, a native binding, and what an error report says), because each
+// needs a `context` of its own rather than a program. The other files in
+// unittests/js/vm/ cover the rest of the VM; expect.hpp holds the shared
+// assertion helpers.
+// Section numbers are ECMA-262's.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -25,7 +30,7 @@ void test_errors() {
     expect_result(
         "try { throw new TypeError('t'); } catch (e) { return e.name + ':' + e.message; }",
         "TypeError:t");
-    // a page's own error type, which is the shape 239 `throw new` in p5 rely on
+    // A page's own error type, the shape p5.js's many `throw new` statements use.
     expect_result(
         "class MyError extends Error { constructor(m) { super(m); this.name = 'MyError'; } } "
         "try { throw new MyError('x'); } catch (e) { return e.name + '/' + e.message + '/' + "
@@ -308,9 +313,9 @@ catch (e) { return e + ':' + trace; })JS",
 }
 
 void test_increment_semantics() {
-    expect_result("let i = 5; let a = i++; return a;", "5"); // postfix yields the old value
+    expect_result("let i = 5; let a = i++; return a;", "5"); // Postfix yields the old value.
     expect_result("let i = 5; let a = i++; return i;", "6");
-    expect_result("let i = 5; let a = ++i; return a;", "6"); // prefix yields the new one
+    expect_result("let i = 5; let a = ++i; return a;", "6"); // Prefix yields the new one.
     expect_result("let i = 5; i--; return i;", "4");
 }
 
@@ -326,9 +331,9 @@ void test_gc_traces_captured_cells() {
     const run_result r = cx.run(prog);
     CHECK(r.ok);
     const std::size_t freed = cx.collect();
-    CHECK(freed > 0); // the 100 discarded closures and their cells
+    CHECK(freed > 0); // The 100 discarded closures and their cells.
 
-    // and the surviving closure still works after the sweep
+    // The surviving closure still works after the sweep.
     const program check = compiler::compile("function make(v) { return function() { return v; }; }"
                                             "let keep = make(99); return keep();");
     context cx2;
@@ -372,7 +377,7 @@ void test_errors_are_reported_not_crashes() {
     bool ok = true;
     const std::string out = run_vm("let x = 1; x();", &ok);
     CHECK(!ok);
-    // The message NAMES what was called and what it turned out to be, and
+    // The message names what was called and what it turned out to be, and
     // carries the stack it happened on. "attempted to call a non-function" is
     // true and useless; in a 4.5 MB bundle it is the difference between a
     // diagnostic and a shrug.
@@ -394,22 +399,21 @@ void test_errors_are_reported_not_crashes() {
 }
 
 void test_compound_assignment() {
-    // `x += 1` is in essentially every script ever written, and it did not
-    // compile at all - the compiler rejected the whole program.
+    // Compound assignment operators, on numbers and strings.
     expect_result("var x = 1; x += 4; return x;", "5");
     expect_result("var x = 10; x -= 4; return x;", "6");
     expect_result("var x = 3; x *= 4; return x;", "12");
     expect_result("var x = 12; x /= 4; return x;", "3");
     expect_result("var x = 13; x %= 5; return x;", "3");
-    expect_result("var s = 'a'; s += 'b'; return s;", "ab"); // += concatenates strings
+    expect_result("var s = 'a'; s += 'b'; return s;", "ab"); // += concatenates strings.
     expect_result("var o = {n: 1}; o.n += 5; return o.n;", "6");
     expect_result("var a = [1,2]; a[0] += 9; return a[0];", "10");
     expect_result("var x = 0; function f() { x += 2; } f(); f(); return x;", "4");
 }
 
 void test_compound_assignment_evaluates_its_target_once() {
-    // THE case the reference machinery exists for. If the target were compiled
-    // twice - once to read and once to write - this would increment i twice and
+    // The case the reference machinery exists for. If the target were compiled
+    // twice (once to read and once to write), this would increment i twice and
     // store into the wrong slot.
     expect_result("var a = [0,0,0]; var i = 0; a[i++] += 5; return i;", "1");
     expect_result("var a = [0,0,0]; var i = 0; a[i++] += 5; return a[0];", "5");
@@ -417,8 +421,8 @@ void test_compound_assignment_evaluates_its_target_once() {
 
 void test_update_on_properties_and_indices() {
     expect_result("var o = {n: 1}; o.n++; return o.n;", "2");
-    expect_result("var o = {n: 1}; var r = o.n++; return r;", "1"); // postfix: the old value
-    expect_result("var o = {n: 1}; var r = ++o.n; return r;", "2"); // prefix: the new one
+    expect_result("var o = {n: 1}; var r = o.n++; return r;", "1"); // Postfix: the old value.
+    expect_result("var o = {n: 1}; var r = ++o.n; return r;", "2"); // Prefix: the new one.
     expect_result("var a = [5]; a[0]--; return a[0];", "4");
 }
 
@@ -431,7 +435,7 @@ void test_break_and_continue() {
     expect_result("var t = 0; for (var i = 0; i < 5; i++) { if (i == 2) { continue; } t += 1; }"
                   "return t;",
                   "4");
-    // The subtle one: `continue` in a for-loop must run the UPDATE. If it jumped
+    // The subtle one: `continue` in a for-loop must run the update. If it jumped
     // back to the condition instead, this would never terminate.
     expect_result("var n = 0; for (var i = 0; i < 4; i++) { if (i < 2) { continue; } n += 1; }"
                   "return n;",
@@ -443,7 +447,7 @@ void test_break_and_continue() {
 }
 
 void test_labeled_break() {
-    // Without the label, `break` leaves only the inner loop - so this would be
+    // Without the label, `break` leaves only the inner loop, so this would be
     // 3, one break per outer iteration, rather than 1.
     expect_result("var n = 0;"
                   "outer: for (var i = 0; i < 3; i++) {"
@@ -482,35 +486,33 @@ void test_exceptions_unwind_call_frames() {
                   "5");
 }
 
-// `finally` RUNS ON EVERY WAY OUT, and the two cases below were the only two it
-// used to get right. The block was emitted twice - once after the try body and
-// once after the catch - and every other exit left without reaching it. Six of
-// these nine were wrong until 2026-08-21, and the worst LOST AN EXCEPTION:
-// `try { throw x } finally { }` sent the throw to a catch path that had no catch
-// to run, ran the finally, and fell through with x discarded and no error.
+// `finally` runs on every exit from its try: normal completion, a throw with
+// or without a catch, return, break, continue, and nested combinations. The
+// most dangerous failure is `try { throw x } finally {}` silently swallowing x
+// instead of rethrowing it.
 void test_finally() {
     expect_result("var r = 0; try { r = 1; } finally { r += 10; } return r;", "11");
     expect_result("var r = 0; try { throw 1; } catch (e) { r = 2; } finally { r += 10; }"
                   "return r;",
                   "12");
 
-    // A FINALLY WITH NO CATCH MUST RETHROW. This one returned 0.
+    // A finally with no catch must rethrow (losing it would return 0).
     expect_result("var r = 0;"
                   "try { try { throw 7; } finally { r += 1; } } catch (e) { r += e; }"
                   "return r;",
                   "8");
 
-    // RETURN RUNS THE FINALLY ON ITS WAY OUT. `return` emitted op::ret straight
-    // away and never saw the block.
+    // `return` runs the finally on its way out rather than emitting op::ret
+    // straight away.
     expect_result("var log = '';"
                   "function g() { try { return 'T'; } finally { log += 'f'; } }"
                   "var got = g(); return log + got;",
                   "fT");
 
-    // AND THE FINALLY CAN REPLACE IT. This returned 'T'.
+    // And the finally can replace the returned value.
     expect_result("function g() { try { return 'T'; } finally { return 'F'; } } return g();", "F");
 
-    // BREAK AND CONTINUE ARE EXITS TOO. Both jumped past the block.
+    // break and continue are exits too, and must not jump past the block.
     expect_result("var log = '';"
                   "for (;;) { try { break; } finally { log += 'f'; } }"
                   "return log + 'done';",
@@ -520,14 +522,14 @@ void test_finally() {
                   "return log + 'done';",
                   "ffdone");
 
-    // A THROW FROM A CATCH STILL RUNS THAT TRY'S FINALLY. It did not, because
-    // unwinding into the catch had already consumed this try's handler.
+    // A throw from a catch still runs that try's finally, even though
+    // unwinding into the catch has already consumed this try's handler.
     expect_result("var log = '';"
                   "try { try { throw 1; } catch (e) { throw 2; } finally { log += 'f'; } }"
                   "catch (e) { log += 'outer' + e; } return log;",
                   "fouter2");
 
-    // NESTING: a return crossing two finallys runs both, innermost first. The
+    // Nesting: a return crossing two finallys runs both, innermost first. The
     // dispatch re-emits the return, which the next open finally then catches.
     expect_result("var log = '';"
                   "function g() { try { try { return 'R'; } finally { log += 'i'; } }"
@@ -535,18 +537,18 @@ void test_finally() {
                   "var got = g(); return log + got;",
                   "ioR");
 
-    // AND A BREAK CROSSING TWO OF THEM.
+    // And a break crossing two of them.
     expect_result(
         "var log = '';"
         "for (;;) { try { try { break; } finally { log += 'i'; } } finally { log += 'o'; } }"
         "return log + 'done';",
         "iodone");
 
-    // A LOOP INSIDE THE TRY IS NOT CROSSED BY THE FINALLY. `break` here leaves
-    // the loop and stays in the try, so it must NOT be routed through the
-    // completion record - doing so made the dispatch re-emit a jump to a loop
-    // that had already been popped, which asan reported as a leaked patch list
-    // in the compiler and which the default preset could not see at all.
+    // A loop inside the try is not crossed by the finally. `break` here leaves
+    // the loop and stays in the try, so it must not be routed through the
+    // completion record: the dispatch would re-emit a jump to a loop that has
+    // already been popped, leaking the compiler's patch list (visible only
+    // under asan).
     expect_result("var log = '';"
                   "try { for (;;) { log += 'b'; break; } log += 't'; } finally { log += 'f'; }"
                   "return log;",
@@ -557,14 +559,14 @@ void test_finally() {
                   "try { outer: for (;;) { log += 'b'; break outer; } log += 't'; }"
                   " finally { log += 'f'; } return log;",
                   "btf");
-    // A break that DOES cross it still does, with the loop outside the try.
+    // A break that does cross it still runs it, with the loop outside the try.
     expect_result("var log = '';"
                   "for (;;) { try { log += 'b'; break; } finally { log += 'f'; } }"
                   "return log + 'done';",
                   "bfdone");
 
     // An async function's return is a promise, and the finally must not lose
-    // the wrapping - the dispatch re-applies op::wrap_promise because it IS the
+    // the wrapping: the dispatch re-applies op::wrap_promise because it is the
     // function's return.
     expect_result("var log = '';"
                   "async function g() { try { return 5; } finally { log += 'f'; } }"
@@ -582,7 +584,7 @@ void test_nested_try() {
 void test_break_out_of_try() {
     // Jumping out of a try block has to drop its handler. If it does not, the
     // catch stays reachable after the loop and a later throw lands in dead
-    // code - a crash, not a wrong answer.
+    // code: a crash, not a wrong answer.
     expect_result("var n = 0;"
                   "for (var i = 0; i < 3; i++) { try { n += 1; break; } catch (e) { n = 99; } }"
                   "var caught = 0; try { throw 5; } catch (e) { caught = e; } return caught;",
@@ -599,12 +601,12 @@ void test_for_of() {
                   "return t;",
                   "1");
     // The loop variable is per-iteration, so a closure made in the body sees
-    // THIS element and not the last one.
+    // this element and not the last one.
     expect_result("var fns = []; for (const x of [1,2,3]) { fns.push(function () { return x; }); }"
                   "return fns[0]() + fns[2]();",
                   "4");
-    // THE PROTOCOL, LAZILY (14.7.5.6): a generator is pulled one value per
-    // iteration, so an infinite one ends at `break` - and `break` closes the
+    // The iterator protocol, lazily (14.7.5.6): a generator is pulled one value
+    // per iteration, so an infinite one ends at `break`, and `break` closes the
     // iterator through its `return()` (7.4.10 IteratorClose), once, while a
     // loop that ran to `done` does not call it.
     expect_result("function* nat() { let i = 0; while (true) { yield i++; } }"
@@ -638,23 +640,23 @@ void test_for_of() {
                   "TypeError");
 }
 
-// Nested for-of: the OUTER (or a middle) binding must survive an inner
+// Nested for-of: the outer (or a middle) binding must survive an inner
 // for-of that runs to completion.
 void test_nested_for_of() {
     // Plain outer binding read after an inner for-of.
     expect_result("var out = ''; for (const a of [1, 2]) { for (const b of [3, 4]) {} out += a; }"
                   "return out;",
                   "12");
-    // Outer binding read INSIDE the inner loop body.
+    // Outer binding read inside the inner loop body.
     expect_result("var out = ''; for (const a of [1, 2]) { for (const b of [3, 4]) { out += a; } }"
                   "return out;",
                   "1122");
-    // Three levels: the MIDDLE binding read after the innermost loop.
+    // Three levels: the middle binding read after the innermost loop.
     expect_result("var out = ''; for (const a of [1]) { for (const b of [2, 3]) {"
                   " for (const c of [4]) {} out += b; } } return out;",
                   "23");
     // Boxed (captured) outer binding: each iteration's closure sees its own
-    // value (String() keeps the join unambiguous - `+` on numbers would add).
+    // value (String() keeps the join unambiguous; `+` on numbers would add).
     expect_result("var fns = []; for (const a of [1, 2]) { for (const b of [3]) {}"
                   " fns.push(() => a); } return fns[0]() + ',' + fns[1]();",
                   "1,2");
@@ -665,14 +667,13 @@ void test_nested_for_of() {
                   "2,3");
 }
 
-// A binding captured ONLY through an object shorthand `{ b }` - whose name is
-// text on the property node, not an ident child - must still be boxed. The
-// capture pre-pass (`tour`) missed the shorthand, so is_captured answered
-// false, no per-iteration cell was made, and resolve_upvalue's after-the-fact
-// boxing turned every direct read into a cell_get on a plain register:
-// undefined. This is what cost shadow-dom/attach-shadow-non-html-namespace.html
-// its 304 subtests (`attachShadow({ mode })` in a nested arrow, `${mode}` read
-// in a sibling template, all in a three-deep for-of).
+// A binding captured only through an object shorthand `{ b }` must still be
+// boxed. The name is text on the property node, not an identifier child, so
+// the capture pre-pass (`tour` in compile/capture.cpp) has to look for it
+// explicitly. Otherwise is_captured answers false, no per-iteration cell is
+// made, and every direct read becomes a cell_get on a plain register that
+// returns undefined. (WPT shadow-dom/attach-shadow-non-html-namespace.html has
+// this shape: `attachShadow({ mode })` in a nested arrow inside a for-of.)
 void test_shorthand_capture() {
     // The reduced shape: read after a nested closure that captures via shorthand.
     expect_result("var seen = []; for (const b of ['B1', 'B2']) {"
@@ -702,7 +703,7 @@ void test_for_in() {
     expect_result("var keys = ''; for (const k in {a: 1, b: 2}) { keys += k; } return keys;", "ab");
     expect_result("var t = 0; var o = {a: 1, b: 2}; for (const k in o) { t += o[k]; } return t;",
                   "3");
-    // INHERITED ENUMERABLE KEYS TOO (14.7.5.9), own first, a shadowed name
+    // Inherited enumerable keys too (14.7.5.9), own first, a shadowed name
     // once, and a non-enumerable own property shadows an inherited one.
     expect_result("var p = { inherited: 1, get acc() { return 2; } };"
                   "var o = Object.create(p); o.own = 3; o.inherited = 4;"
@@ -721,28 +722,23 @@ void test_switch() {
                   "20");
     expect_result("var r = 0; switch (9) { case 1: r = 10; break; default: r = 99; } return r;",
                   "99");
-    // FALLTHROUGH is the behaviour code relies on, so it has to be preserved.
+    // Fallthrough is behaviour code relies on, so it has to be preserved.
     expect_result("var r = ''; switch (1) { case 1: r += 'a'; case 2: r += 'b'; break;"
                   "  case 3: r += 'c'; } return r;",
                   "ab");
-    // switch matches STRICTLY - `switch (1)` does not match `case '1'`.
+    // switch matches strictly: `switch (1)` does not match `case '1'`.
     expect_result("var r = 'no'; switch (1) { case '1': r = 'yes'; break; } return r;", "no");
 }
 
-// `new Error().stack` CARRIES THE FRAMES.
-//
-// It said "TypeError: whatever" and stopped there - which reads as a stack to
-// code that only prints it, and is useless to code that wants to know WHERE.
-// Reporting the site of an error is the normal reason to look at one; p5's
-// Friendly Error System is exactly that, and so is any page logging what it
-// caught. The VM already built a trace when it raised a fault; a constructed
-// error simply never asked for one.
+// `new Error().stack` includes the call frames, not just "Name: message";
+// pages (e.g. p5's Friendly Error System) read it to report where an error
+// came from.
 void test_error_stacks() {
     expect_result("function inner() { return new Error('boom'); }"
                   "function outer() { return inner(); }"
                   "return outer().stack.indexOf('Error: boom') === 0;",
                   "true");
-    // The frame that WROTE `new Error` is named first - a native pushes no
+    // The frame that wrote `new Error` is named first: a native pushes no
     // frame of its own, so the top of the stack is already the right one.
     expect_result("function inner() { return new Error('boom'); }"
                   "function outer() { return inner(); }"
@@ -760,13 +756,8 @@ void test_error_stacks() {
                   "true");
 }
 
-// CALLING A NON-FUNCTION IS A CATCHABLE TypeError.
-//
-// It used to end the run outright. Pages catch it - feature detection is
-// written as `try { thing() } catch (e) {}` at least as often as a typeof test -
-// and an uncatchable fault also unwinds nothing, so a probe wrapped in
-// try/catch reported no error and the failure appeared to come from wherever
-// the run happened to stop.
+// Calling a non-function throws a catchable TypeError; feature detection
+// relies on `try { thing() } catch (e) {}`.
 void test_calling_a_non_function_throws() {
     expect_result("try { undefined(); } catch (e) { return e.name; } return 'not thrown';",
                   "TypeError");
@@ -780,15 +771,15 @@ void test_calling_a_non_function_throws() {
     expect_result("try { ({}).missing(); } catch (e) {"
                   "  return e.message.indexOf('missing') >= 0; } return false;",
                   "true");
-    // The run CONTINUES afterwards, which is what "catchable" means.
+    // The run continues afterwards, which is what "catchable" means.
     expect_result("let n = 0; try { undefined(); } catch (e) { n = 1; } n += 1; return n;", "2");
 }
 
 } // namespace
 
 // `with (o) body` (14.11): the object stands in front of the scope chain for
-// every name the body does not declare itself. Compiled, not interpreted -
-// see compile/with.cpp - so what is tested is the resolution order: object
+// every name the body does not declare itself. Compiled, not interpreted
+// (see lib/Script/compile/with.cpp), so what is tested is the resolution order: object
 // over outer local, object over global, a body-local over the object, the
 // @@unscopables veto, a nested closure seeing the object, `this` on a call
 // through it, an assignment landing on the object, and the TypeError for a
@@ -810,20 +801,20 @@ void test_with() {
                   "TypeError");
     expect_result("function f(o) { with (o) { return arguments.length; } } return f({});", "1");
     // B.3.4: a script's `var` sharing a catch parameter's name initialises
-    // the parameter, and the global var stays undefined
+    // the parameter, and the global var stays undefined.
     expect_result("var seen; try { throw 1; } catch (e) { var e = 2; seen = e; }"
                   " return seen + ':' + typeof e;",
                   "2:undefined");
-    // a `var`'s initialiser writes the name as the with resolves it - the
-    // object's property when it has one - and `var v;` alone writes nothing
+    // A `var`'s initialiser writes the name as the with resolves it (the
+    // object's property when it has one), and `var v;` alone writes nothing.
     expect_result("var o = {v: 1}; with (o) { var v = 2; var w = 3; var q; }"
                   " return o.v + ':' + typeof v + ':' + w;",
                   "2:undefined:3");
     CHECK(!compiler::compile("'use strict'; with ({}) {}").ok);
 }
 
-// A BLOCK'S `let` IS A BINDING FROM THE BLOCK'S START (14.2.3): a closure
-// written before the declaration captures it, and reads it once it is set -
+// A block's `let` is a binding from the block's start (14.2.3): a closure
+// written before the declaration captures it, and reads it once it is set,
 // in a nested block, a loop body and a function's block alike.
 void test_block_lexical_captured_early() {
     expect_result("{ let f = () => later; let later = 1; return f(); }", "1");

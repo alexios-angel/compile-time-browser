@@ -1,15 +1,14 @@
-// fetch, over a real socket.
+//===- ctbrowser/unittests/unit/net_basics.cpp - Networking tests ---------===//
 //
-// HERMETIC: this stands up an HTTP server on the loopback interface and talks to
-// it. No test in this suite reaches the internet - a suite whose result depends
-// on somebody else's uptime is not a test - but the code path exercised is the
-// real one, sockets and all.
+// shell::http_get over a real socket. The test is hermetic: it stands up an
+// HTTP server on the loopback interface and talks to it, so nothing reaches the
+// internet, but the code path exercised is the real one, sockets and all.
+//
+//===----------------------------------------------------------------------===//
 
-// PLAIN SOCKETS, because the engine no longer depends on Asio and a test
-// harness has no business reintroducing the dependency it just removed. What a
-// canned-reply server needs - listen, accept, read once, write, close - is a
-// dozen calls, and having them here means `ctest` proves the transport against
-// a real socket without Boost.Asio existing anywhere in the tree.
+// Plain sockets rather than a networking library, so the test adds no
+// dependency the engine does not have. A canned-reply server needs only
+// listen, accept, read, write and close.
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -63,13 +62,13 @@ using iolen_t = std::size_t;
 struct winsock_once {};
 #endif
 
-// A one-shot server: it answers `replies.size()` requests and stops. The
-// canned replies are byte-exact so the client's parsing is what is under test.
+/// A one-shot server: it answers `replies.size()` requests and stops. The
+/// canned replies are byte-exact so the client's parsing is what is under test.
 class test_server {
 public:
     explicit test_server(std::vector<std::string> replies) : replies_{std::move(replies)} {
         listener_ = ::socket(AF_INET, SOCK_STREAM, 0);
-        // PORT ZERO, and the port read back afterwards: a fixed port makes the
+        // Port zero, and the port read back afterwards: a fixed port makes the
         // suite fail when anything else on the machine happens to hold it, and
         // fail in a way that looks like the client is broken.
         sockaddr_in address{};
@@ -91,9 +90,11 @@ public:
     test_server(const test_server &) = delete;
     test_server & operator=(const test_server &) = delete;
 
+    /// The URL of \p path on this server.
     [[nodiscard]] std::string url(std::string_view path) const {
         return "http://127.0.0.1:" + std::to_string(port_) + std::string{path};
     }
+    /// The raw bytes of the last request received (one read of up to 4 KiB).
     [[nodiscard]] std::string last_request() const { return last_request_; }
 
 private:
@@ -105,7 +106,7 @@ private:
             const auto got = ::recv(peer, buffer, sizeof(buffer), 0);
             if (got > 0) { last_request_.assign(buffer, static_cast<std::size_t>(got)); }
             ::send(peer, reply.data(), static_cast<iolen_t>(reply.size()), 0);
-            // The client may read to EOF, so the close IS the end of the body.
+            // The client may read to EOF, so the close is the end of the body.
             close_socket(peer);
         }
     }
@@ -118,8 +119,8 @@ private:
     std::thread thread_;
 };
 
-// THIS SUITE TALKS TO 127.0.0.1 over http, which the default fetch policy
-// refuses - so every request to the test server opts in, explicitly.
+/// This suite talks to 127.0.0.1 over http, which the default fetch policy
+/// refuses, so every request to the test server opts in explicitly.
 [[nodiscard]] ctbrowser::shell::http_options local(ctbrowser::shell::http_options options = {}) {
     options.policy.schemes = {"http", "https"};
     options.policy.allow_private_addresses = true;
@@ -130,6 +131,7 @@ private:
     return std::string{reinterpret_cast<const char *>(response.body.data()), response.body.size()};
 }
 
+/// A complete 200 response carrying \p body with the given Content-Type.
 [[nodiscard]] std::string canned(std::string_view body, std::string_view type = "text/plain") {
     return "HTTP/1.1 200 OK\r\nContent-Type: " + std::string{type} +
            "\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + std::string{body};
@@ -149,7 +151,7 @@ void test_get() {
 }
 
 void test_chunked() {
-    // An HTTP/1.1 server may chunk ANY response. A client that ignores the
+    // An HTTP/1.1 server may chunk any response. A client that ignores the
     // encoding reads the chunk sizes as content.
     test_server server{{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                         "5\r\nhello\r\n1\r\n \r\n5\r\nworld\r\n0\r\n\r\n"}};
@@ -192,7 +194,7 @@ void test_body_limit() {
 }
 
 void test_status_and_body() {
-    // A 404 COMPLETED - it is not a network failure, and fetch only rejects on
+    // A 404 completed: it is not a network failure, and fetch only rejects on
     // the latter. Getting this wrong turns every missing page into an exception.
     test_server server{{"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nno such!!"}};
     const auto response = ctbrowser::shell::http_get(server.url("/missing"), local());
@@ -255,7 +257,7 @@ void test_timeout() {
     const unsigned short port = ::ntohs(bound.sin_port);
     std::atomic<bool> stop{false};
     std::thread server{[&] {
-        // ACCEPT AND THEN SAY NOTHING, holding the connection open. The socket
+        // Accept and then say nothing, holding the connection open. The socket
         // has to outlive the accept or the client sees a close rather than a
         // hang, and would fail for the wrong reason.
         const socket_t peer = ::accept(listener, nullptr, nullptr);
@@ -284,8 +286,9 @@ void test_tls_is_honest() {
                 ctbrowser::shell::tls_available() ? "enabled" : "disabled");
 }
 
-// THE DEFAULT POLICY: https only, public addresses only - checked on the URL,
-// on each redirect hop, and on the address the socket actually connects to.
+/// The default fetch policy allows https only and public addresses only,
+/// checked on the URL, on each redirect hop, and on the address the socket
+/// actually connects to.
 void test_policy() {
     using ctbrowser::shell::check_request;
     using ctbrowser::shell::fetch_policy;
@@ -320,14 +323,15 @@ void test_policy() {
     CHECK(!refused.completed());
     CHECK(refused.error.find("fetch policy") != std::string::npos);
     // An allowed scheme on a private literal is still refused. (A hostname
-    // that RESOLVES to one is refused when the socket opens - not testable
+    // that resolves to one is refused when the socket opens, which is not testable
     // hermetically without a resolver that lies.)
     ctbrowser::shell::http_options http_only;
     http_only.policy.schemes = {"http"};
     const auto private_peer = ctbrowser::shell::http_get("http://127.0.0.1:1/", http_only);
     CHECK(private_peer.error.find("private address") != std::string::npos);
     // A redirect is re-checked on its own URL: only the first hop's host is
-    // allowed here, so the Location is refused rather than followed.
+    // allowed here, so the Location is refused rather than followed. substr(17)
+    // drops the 17-character "http://127.0.0.1:" prefix, keeping port and path.
     test_server target2{{canned("should not arrive")}};
     test_server hop2{{"HTTP/1.1 302 Found\r\nLocation: http://localhost:" +
                       target2.url("/x").substr(17) + "\r\nContent-Length: 0\r\n\r\n"}};

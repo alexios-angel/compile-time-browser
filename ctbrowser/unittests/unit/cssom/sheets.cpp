@@ -1,15 +1,14 @@
-// THE SHEET OBJECTS, AND THE DECLARATION BLOCKS A SCRIPT READS OFF AN ELEMENT.
+//===- sheets.cpp - CSSOM stylesheet tests ----------------------*- C++ -*-===//
 //
-// `new CSSStyleSheet`, `styleElement.sheet`, `adoptedStyleSheets` and `replace`,
-// the text the cascade would be handed, a `<style>` a script appends actually
-// applying - then `getComputedStyle` with a pseudo-element argument, the
-// automatic minimum size, a font family keeping its case, and `el.style`
-// following the attribute. rules.cpp is the other half, and carries the
-// original file's header: what a RULE serialises to, and what this cannot test.
+// The stylesheet objects, and the declaration blocks a script reads off an
+// element: `new CSSStyleSheet`, `styleElement.sheet`, `adoptedStyleSheets` and
+// `replace`, the text the cascade is handed, a `<style>` a script appends
+// actually applying, then `getComputedStyle` with a pseudo-element argument,
+// the automatic minimum size, a font family keeping its case, and `el.style`
+// following the attribute. rules.cpp tests what a rule serialises to.
+// `logged`, used by this file and rules.cpp, is in probe.hpp.
 //
-// One of two files carved out of unittests/unit/cssom.cpp on 2026-09-07, when it
-// passed 1,000 lines. Every case is verbatim and in the order it had; `logged`,
-// which both need, is in probe.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -73,7 +72,7 @@ void test_a_constructed_sheet() {
     CHECK_EQ(logged(page, "inserted="), std::string{"inserted=3,.c { color: green; }"});
     CHECK_EQ(logged(page, "adopted="), std::string{"adopted=0"});
     CHECK_EQ(logged(page, "adoptedNow="), std::string{"adoptedNow=1,true"});
-    // `replace`/`replaceSync` belong to a CONSTRUCTED sheet and to nothing else.
+    // `replace`/`replaceSync` work only on a constructed sheet.
     CHECK_EQ(logged(page, "regular="), std::string{"regular=NotAllowedError"});
     CHECK_EQ(logged(page, "promised="), std::string{"promised=true,1"});
 }
@@ -98,10 +97,9 @@ void test_the_sheet_of_an_element() {
     CHECK_EQ(logged(page, "grew="), std::string{"grew=2"});
 }
 
-// WHAT THE CASCADE WOULD BE HANDED. `insertRule` cannot reach the style engine
-// from the bindings - the browser loads the author sheet once per page - so the
-// thing to assert is the TEXT `set_author_styles_hook` publishes, which is the
-// whole of the contract between this rung and the one that wires it up.
+/// The text the cascade is handed. The bindings never touch the style engine
+/// directly; they publish the re-serialised author CSS through
+/// `set_author_styles_hook`, so that text is what this test asserts.
 void test_the_text_the_cascade_would_get() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>body { width: 50%; }</style></head><body><script>
@@ -110,7 +108,7 @@ void test_the_text_the_cascade_would_get() {
     CHECK(page.script_error().empty());
     CHECK_EQ(page.bindings().author_style_text(),
              std::string{"body { width: 50%; }\n#bar { margin: 10px; }\n"});
-    // A DISABLED sheet contributes nothing, which is the other half of what the
+    // A disabled sheet contributes nothing, which is the other half of what the
     // hook has to get right.
     browser off{browser_options{400, 200}};
     off.load_html(R"(<html><head><style>body { width: 50%; }</style></head><body><script>
@@ -120,20 +118,15 @@ void test_the_text_the_cascade_would_get() {
     CHECK_EQ(off.bindings().author_style_text(), std::string{});
 }
 
-// AN ADOPTED SHEET REACHES THE AUTHOR CSS, and in the order it was adopted in.
-//
-// It was in the object model and in nothing else: `document.styleSheets`
-// correctly does not include a constructed sheet, so a sheet a page adopted
-// appeared in no serialisation of the document's styles at all. CSSOM puts the
-// adopted sheets LAST in the final list, which is what makes
-// `adoptedStyleSheets = [red, green]` green and `[green, red]` red -
-// `adoptedstylesheets-cascade-order.html` asserts that pair and then asserts it
-// again for a rotation that adds and removes nothing.
-//
-// THE TEXT AND NOT A PIXEL, for the same reason the case above asserts text:
-// `set_author_styles_hook` is still unfilled, so `browser::refresh_author_styles`
-// re-collects the `<style>` elements' own bytes and an adopted sheet is not one
-// of them. What this pins is the contract between the two rungs.
+/// An adopted sheet reaches the author CSS, in the order it was adopted.
+/// `document.styleSheets` correctly excludes constructed sheets, so the author
+/// CSS must add them separately. CSSOM puts adopted sheets last in the final
+/// list, which makes `adoptedStyleSheets = [red, green]` green and
+/// `[green, red]` red (`adoptedstylesheets-cascade-order.html`).
+///
+/// Like the case above, this asserts the author-CSS text rather than pixels:
+/// that text is what `set_author_styles_hook` hands the browser
+/// (lib/Shell/browser/scripts.cpp), so it is the contract this test pins.
 void test_an_adopted_sheet_reaches_the_author_css() {
     const auto adopt = [](const char * order) {
         auto page = std::make_unique<browser>(browser_options{400, 200});
@@ -163,9 +156,10 @@ void test_an_adopted_sheet_reaches_the_author_css() {
     CHECK_EQ(none->bindings().author_style_text(), std::string{"#t { color: rgb(1, 2, 3); }\n"});
 }
 
-// adoptedstylesheets-observablearray: the array is mutated IN PLACE and each
-// mutation is checked and reaches the author CSS; a held computed style sees
-// it (the style stamp), and the array keeps its identity across `= [...]`.
+/// adoptedstylesheets-observablearray: the array is mutated in place, and each
+/// mutation is validated and reaches the author CSS; a held computed style
+/// sees it (through the style stamp), and the array keeps its identity across
+/// `= [...]`.
 void test_adopted_sheets_are_an_observable_array() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style></head>
@@ -194,7 +188,7 @@ void test_adopted_sheets_are_an_observable_array() {
     CHECK_EQ(logged(page, "refused="), std::string{"refused=NotAllowedError,TypeError,1"});
 }
 
-// `replace` and `replaceSync` REFUSE DIFFERENTLY: one throws and one rejects.
+/// On a non-constructed sheet `replaceSync` throws and `replace` rejects.
 void test_replace_refuses_a_regular_sheet() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>#t { color: rgb(1, 2, 3) }</style></head>
@@ -214,10 +208,9 @@ void test_replace_refuses_a_regular_sheet() {
     CHECK_EQ(logged(page, "async="), std::string{"async=NotAllowedError"});
 }
 
-// A `<style>` A SCRIPT APPENDS ACTUALLY APPLIES. `browser::load_author_styles`
-// latched, so until `refresh_author_styles` this did nothing at all - injecting
-// a stylesheet and then reading `getComputedStyle` is how a great many tests
-// and no few libraries work, and the page simply kept the styles it loaded with.
+/// A `<style>` a script appends applies to getComputedStyle, and removing it
+/// restores the page (browser::refresh_author_styles). Many tests and
+/// libraries inject a stylesheet and then read computed style.
 void test_an_injected_style_element_restyles() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><p id=t>x</p><script>
@@ -231,8 +224,8 @@ void test_an_injected_style_element_restyles() {
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "color="), std::string{"color=rgb(0, 0, 0)|rgb(1, 2, 3)"});
 
-    // ...and REMOVING it puts the page back, which is the half a one-way
-    // "append to the sheet" hook would have got wrong.
+    // Removing it puts the page back, which a one-way "append to the sheet"
+    // hook would get wrong.
     browser undo{browser_options{400, 200}};
     undo.load_html(R"(<html><head><style id=s>#t { color: rgb(1, 2, 3) }</style></head>
     <body><p id=t>x</p><script>
@@ -245,10 +238,10 @@ void test_an_injected_style_element_restyles() {
     CHECK_EQ(logged(undo, "gone="), std::string{"gone=rgb(1, 2, 3)|rgb(0, 0, 0)"});
 }
 
-// ONCE THE PAGE HAS EDITED THROUGH THE CSSOM, A DOM CHANGE DOES NOT UNDO IT.
-// The restyle used to re-collect the <style> elements' text, which never had
-// the inserted rule or the adopted sheet: css-style-reparse and the "adopted
-// after non-adopted" case of CSSStyleSheet-constructable.
+/// After CSSOM edits, a DOM change elsewhere must not undo them: the restyle
+/// must not fall back to the `<style>` elements' text, which lacks inserted
+/// rules and adopted sheets (WPT css-style-reparse and the "adopted after
+/// non-adopted" case of CSSStyleSheet-constructable).
 void test_a_cssom_edit_survives_a_dom_change() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>div { min-width: 0px }</style>
@@ -274,20 +267,12 @@ void test_a_cssom_edit_survives_a_dom_change() {
     CHECK_EQ(logged(page, "reparse="), std::string{"reparse=42px|0px|42px|7px"});
 }
 
-// A PSEUDO-ELEMENT ARGUMENT IS NOT AN ARGUMENT TO IGNORE. `getComputedStyle`
-// took a second argument and threw it away, so `getComputedStyle(el,
-// '::before')` reported the ORIGINATING ELEMENT's style as the
-// pseudo-element's - `100px` where every engine says `""`. CSSOM says a
-// pseudo-element that does not exist reports an EMPTY declaration, and this
-// engine has no pseudo-element styling at all, so every colon-prefixed argument
-// is that case.
-//
-// THE THREE SHAPES, which are what css/cssom's getComputedStyle-pseudo,
-// -pseudo-with-argument, -pseudo-picker and -pseudo-checkmark divide their
-// assertions into: no colon is IGNORED, one colon and two colons are both
-// pseudo-element requests, and an empty declaration is still a
-// CSSStyleDeclaration - it answers the empty string rather than `undefined`,
-// and it still refuses to be written to.
+/// getComputedStyle's pseudo-element argument, as css/cssom's
+/// getComputedStyle-pseudo, -pseudo-with-argument, -pseudo-picker and
+/// -pseudo-checkmark test it. An argument without a colon is ignored and the
+/// element answers; `::before`/`::after` answer with their own style; any other
+/// or unparseable colon-prefixed argument gets an empty CSSStyleDeclaration
+/// ("" for every property, and still read-only).
 void test_a_pseudo_element_argument_is_not_the_element() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>#t { color: rgb(255, 0, 0); width: 100px }
@@ -328,8 +313,8 @@ void test_a_pseudo_element_argument_is_not_the_element() {
     CHECK_EQ(logged(page, "ignored="), std::string{"ignored=rgb(255, 0, 0)|true"});
     CHECK_EQ(logged(page, "before="), std::string{"before=true|rgb(255, 0, 0)|50px|\"x\"|50px"});
     CHECK_EQ(logged(page, "after="), std::string{"after=auto|static|inline|block|\"Foo\""});
-    // Empty - and empty means the EMPTY STRING for every property, not the
-    // `undefined` a missing accessor would give.
+    // Empty means the empty string for every property, not the `undefined` a
+    // missing accessor would give.
     CHECK_EQ(logged(page, "legacy="), std::string{"legacy=0|0"});
     CHECK_EQ(logged(page, "absent="),
              std::string{"absent=rgb(255, 0, 0)|rgb(255, 0, 0)|rgb(255, 0, 0)"});
@@ -337,15 +322,14 @@ void test_a_pseudo_element_argument_is_not_the_element() {
              std::string{"readonly=NoModificationAllowedError|NoModificationAllowedError"});
 }
 
-// `min-width: auto` RESOLVES TO ZERO unless something makes the automatic
-// minimum mean a size, and css/cssom's getComputedStyle-resolved-min-size-auto
-// asserts every element in its fixture twice - once as the initial value and
-// once with the same `auto` written down. Only the first of the pair used to
-// reach this rule: an `auto` the author wrote fell through to the length branch
-// and came back as the keyword.
-//
-// THREE THINGS PRESERVE IT: a flex item, a grid item, and a specified
-// `aspect-ratio` - and none of them if the element generates no box at all.
+/// `min-width: auto` resolves to `0px` unless something makes the automatic
+/// minimum size meaningful. css/cssom's getComputedStyle-resolved-min-size-auto
+/// asserts every element twice: once with the initial value and once with
+/// `auto` written explicitly, and both must resolve the same way.
+///
+/// Exactly three things keep it `auto`: being a flex item, being a grid item,
+/// and a specified `aspect-ratio`; none of them applies if the element
+/// generates no box.
 void test_the_automatic_minimum_size() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>#f { display: flex } #g { display: grid }
@@ -376,13 +360,12 @@ void test_the_automatic_minimum_size() {
     CHECK_EQ(logged(page, "given="), std::string{"given=5px"});
 }
 
-// A FONT FAMILY IS NOT A KEYWORD, and `getComputedStyle` folded it like one:
-// `Twisty Tie` came back `twisty tie` on every element of every page that names
-// a font. The case is the author's. So is the QUOTING, which CSSOM decides
-// rather than copies: a name that is a valid identifier sequence loses its
-// quotes, one that is not keeps them, and the quotes it keeps are double ones
-// whichever the author wrote. css/cssom/font-family-serialization-001 makes
-// five assertions about the computed value and these are them.
+/// A font family is not a keyword, so getComputedStyle keeps the author's case
+/// (`Twisty Tie`, not `twisty tie`). The quoting is decided by CSSOM rather
+/// than copied: a name that is a valid identifier sequence loses its quotes,
+/// one that is not keeps them, and kept quotes are always double. These are
+/// the five computed-value assertions of
+/// css/cssom/font-family-serialization-001.
 void test_the_computed_font_family_keeps_its_case() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body>
@@ -403,7 +386,7 @@ void test_the_computed_font_family_keeps_its_case() {
     </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "bare="), std::string{"bare=Twisty Tie"});
-    // A quoted name that IS an identifier sequence loses its quotes...
+    // A quoted name that is an identifier sequence loses its quotes...
     CHECK_EQ(logged(page, "unquoted="), std::string{"unquoted=Times New Roman"});
     // ...and one that is not keeps them: `34J` starts with a digit, `serif`
     // would become the generic family, and the double space in `A  B` would not
@@ -415,15 +398,11 @@ void test_the_computed_font_family_keeps_its_case() {
              std::string{"list=Twisty Tie, \"34J\", \"serif\", Veronica, sans-serif"});
 }
 
-// `el.style` FOLLOWS THE ATTRIBUTE, and the attribute follows `el.style`.
-//
-// The declaration store was filled once, when the wrapper was made, and never
-// again - so `el.setAttribute("style", ...)`, which writes the attribute
-// directly and never touches the proxy, left the read side answering with what
-// the element had at construction. `css-style-attr-decl-block.html` says it in
-// its own subtest name ("Changes to style attribute should reflect on CSS
-// declaration block"), and `serialize-values.html` is 697 subtests of exactly
-// that shape: createElement, setAttribute("style", ...), read the IDL attribute.
+/// `el.style` follows the `style` attribute, and the attribute follows
+/// `el.style`. `el.setAttribute("style", ...)` bypasses the proxy, so the
+/// declaration must re-read the attribute (WPT css-style-attr-decl-block, and
+/// serialize-values, whose subtests all do createElement, setAttribute("style",
+/// ...), then read the IDL attribute).
 void test_the_inline_style_follows_the_attribute() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><body><p id=t>x</p><script>
@@ -447,8 +426,8 @@ void test_the_inline_style_follows_the_attribute() {
     CHECK_EQ(logged(page, "before="), std::string{"before=|0"});
     CHECK_EQ(logged(page, "after="), std::string{"after=rgb(1, 2, 3)|2|10px|color"});
     CHECK_EQ(logged(page, "again="), std::string{"again=|2px|1"});
-    // The trailing space is `style_attribute`'s and deliberate - see the note
-    // above `css_text_of`, which is the one CSSOM does specify.
+    // The attribute is the serialised declaration block, the same string
+    // `cssText` answers (style_attribute in lib/Shell/bindings/element/declarations.cpp).
     CHECK_EQ(logged(page, "wrote="), std::string{"wrote=height: 2px; color: rgb(4, 5, 6);"});
     CHECK_EQ(logged(page, "unset="), std::string{"unset=|true|true"});
 }

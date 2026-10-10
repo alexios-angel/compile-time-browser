@@ -1,7 +1,10 @@
-// What an application looks like: one import, one link target, no SDL.
+//===- ctbrowser/test/package/main.cpp - Installed-package check ----------===//
 //
-// This file is the acceptance criterion for the whole packaging story. If it
-// compiles against an installed prefix, an outside project can use ctbrowser.
+// What an application looks like: one include, one link target, no SDL.
+// If this compiles and runs against an installed prefix, an outside project can
+// use ctbrowser. tools/check/check-package.sh builds it.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

@@ -1,3 +1,10 @@
+//===- ctbrowser/unittests/unit/dom/token_list.cpp - DOMTokenList tests ---===//
+//
+// Unit tests for dom/token_list.hpp, the engine side of DOMTokenList
+// (classList, relList): ordered-set parsing, token validation, and the
+// toggle/add/remove/update steps that rewrite the attribute.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/dom/document.hpp>
 #include <ctbrowser/dom/token_list.hpp>
 
@@ -11,6 +18,7 @@ using namespace ctbrowser;
 
 namespace {
 
+/// HTML's ordered set parser: split on ASCII whitespace, drop duplicates.
 void test_ordered_tokens() {
     CHECK_EQ(parse_ordered_tokens(" first\tsecond\nfirst\fthird\rsecond "),
              (std::vector<std::string>{"first", "second", "third"}));
@@ -22,6 +30,7 @@ void test_ordered_tokens() {
     CHECK(!validate_token("a\302\240b"));
 }
 
+/// A toggle button's class and aria-pressed, each change logged as one write.
 void test_button_toggle() {
     atom_table atoms;
     document doc{atoms};
@@ -47,6 +56,8 @@ void test_button_toggle() {
     }
 }
 
+/// DOM's update steps: with no attribute and no tokens nothing is written;
+/// otherwise the attribute is rewritten even when its text is unchanged.
 void test_update_steps() {
     atom_table atoms;
     document doc{atoms};
@@ -86,6 +97,8 @@ void test_update_steps() {
     }
 }
 
+/// A toggle that changes nothing leaves the raw text alone, and an empty or
+/// whitespace-containing token is rejected without writing.
 void test_noop_and_validation() {
     atom_table atoms;
     document doc{atoms};
@@ -118,6 +131,8 @@ void test_noop_and_validation() {
     CHECK_EQ(doc.take_writes().size(), 1u);
 }
 
+/// A toggle on a missing or non-element node reports the DOM error and
+/// writes nothing.
 void test_failed_write() {
     atom_table atoms;
     document doc{atoms};
@@ -140,6 +155,8 @@ void test_failed_write() {
     CHECK(doc.take_writes().empty());
 }
 
+/// contains_token never writes; add_tokens and remove_tokens validate every
+/// token first (reporting the first bad index), then serialize the set once.
 void test_contains_add_remove() {
     atom_table atoms;
     document doc{atoms};

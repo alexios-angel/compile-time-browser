@@ -1,8 +1,12 @@
+//===- ctbrowser/unittests/unit/hyperlink_utils.cpp - <a> URL parts -------===//
+//
 // HTMLHyperlinkElementUtils (HTML 4.6.3) on <a> and <area>, against a live
-// page - one case per rule url/a-element.html and
-// url/url-setters-a-area.window.js found the other answer to. The pattern is
+// page: one case per rule that url/a-element.html and
+// url/url-setters-a-area.window.js check. The pattern is
 // unit/document/api_wpt.cpp's: one expression against a fresh page, and
 // whatever it logged.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -21,20 +25,20 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <a id=bad href="http://[::1">unparseable</a>
 </body></html>)";
 
-// Each case is an IIFE, since most of them need more than one statement.
+/// Checks that \p body, run as the body of an IIFE (most cases need more than
+/// one statement), returns \p expected.
 void is(const std::string & body, const std::string & expected) {
     ctbrowser_test::is_in(page_html, "(function () { " + body + " })()", expected);
 }
 
-// --- the getters ------------------------------------------------------------
+// --- The getters ------------------------------------------------------------
 
 void test_every_member_of_the_mixin_reports() {
     is("var a = document.getElementById('a');"
        " return [a.protocol, a.username, a.password, a.host, a.hostname, a.port,"
        " a.pathname, a.search, a.hash, a.origin].join('|');",
        "http:|user|pass|host:8080|host|8080|/p/q|?x=1|#frag|http://host:8080");
-    // `username` and `password` are the two the hand-cut accessors this
-    // replaced did not have at all, and are the first thing a-element.js reads.
+    // `username` and `password` are the first members a-element.js reads.
     is("return typeof document.getElementById('area').username;", "string");
     is("var a = document.getElementById('area');"
        " return [a.protocol, a.host, a.pathname, a.search, a.hash].join('|');",
@@ -47,7 +51,7 @@ void test_no_href_and_a_href_that_does_not_parse() {
     is("var b = document.getElementById('bare');"
        " return [b.href, b.protocol, b.host, b.pathname].join('|');",
        "|:||");
-    // A href that does not parse: `href` is the CONTENT ATTRIBUTE and
+    // A href that does not parse: `href` is the content attribute and
     // `protocol` is ":", which is exactly how a-element.js tells a failure.
     is("var b = document.getElementById('bad'); return b.href + '|' + b.protocol;",
        "http://[::1|:");
@@ -67,7 +71,7 @@ void test_the_base_element_is_the_base() {
        "https://other.test/dir/c");
 }
 
-// --- the setters ------------------------------------------------------------
+// --- The setters ------------------------------------------------------------
 
 void test_a_setter_runs_the_url_standards_steps_and_writes_href_back() {
     is("var a = document.getElementById('a'); a.protocol = 'https'; return a.href;",

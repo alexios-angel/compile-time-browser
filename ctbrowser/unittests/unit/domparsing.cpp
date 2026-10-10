@@ -1,11 +1,15 @@
-// DOMParser and XMLSerializer: the two halves of DOM Parsing.
+//===- ctbrowser/unittests/unit/domparsing.cpp - DOM Parsing tests --------===//
 //
-// The regression net for lib/Shell/bindings/domparsing.cpp and for the
-// scripting flag DOMParser turns off. What it pins down is that XML
-// serialisation is NOT the HTML fragment serialiser - an empty element is
-// self-closed, a namespace comes out with the element that has it - and that a
-// document no script will ever run in parses `<noscript>` as elements.
-
+// DOMParser and XMLSerializer, the two halves of the DOM Parsing spec, plus
+// the HTML fragment methods (createContextualFragment, appendHTML and kin).
+//
+// Regression tests for lib/Shell/bindings/domparsing.cpp and for the scripting
+// flag DOMParser turns off. They check that XML serialisation is not the HTML
+// fragment serialiser (an empty element is self-closed, a namespace comes out
+// with the element that has it) and that a document no script will ever run in
+// parses `<noscript>` as elements.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/layout/layout.hpp>
@@ -27,6 +31,8 @@ using ctbrowser_test::said;
 
 namespace {
 
+/// Elements, documents and HTML elements serialise as XML, with attribute
+/// values escaped (a tab becomes `&#9;`).
 void test_serialize_to_string() {
     CHECK_EQ(said("<html><body><script>"
                   "var s = new XMLSerializer();"
@@ -46,10 +52,10 @@ void test_serialize_to_string() {
              "function");
 }
 
-// XMLSerializer-serializeToString.html: the namespace prefix map. A null
-// namespace root writes no xmlns; a prefix in scope for the namespace is
-// reused; an attribute in a namespace nobody declared gets `ns1`; the XML
-// namespace is `xml:`; a redundant declaration is dropped.
+/// XMLSerializer-serializeToString.html: the namespace prefix map. A null
+/// namespace root writes no xmlns; a prefix in scope for the namespace is
+/// reused; an attribute in a namespace nobody declared gets `ns1`; the XML
+/// namespace is `xml:`; a redundant declaration is dropped.
 void test_serialize_namespaces() {
     CHECK_EQ(
         said("<html><body><script>"
@@ -75,10 +81,10 @@ void test_serialize_namespaces() {
         "<root xmlns=\"u\"><child/></root>");
 }
 
-// The scripting flag is the DOCUMENT's: a DOMParser document can never run a
-// script, so `<noscript>` holds elements rather than one raw text node. The
-// page's own document keeps the flag ON, which is what a `<noscript>` in the
-// markup below checks.
+/// The scripting flag belongs to the document: a DOMParser document can never
+/// run a script, so its `<noscript>` holds elements rather than one raw text
+/// node. The page's own document keeps the flag on, which the `<noscript>` in
+/// the page markup below checks.
 void test_noscript_follows_the_documents_scripting_flag() {
     CHECK_EQ(said("<html><body><noscript><p id=x>one</noscript><script>"
                   "var d = new DOMParser().parseFromString("
@@ -92,10 +98,10 @@ void test_noscript_follows_the_documents_scripting_flag() {
              "2,t1,p;1,3");
 }
 
-// XMLSerializer-serializeToString.html's three: ONE prefix index for the
-// whole serialisation (a sibling's generated prefix continues the count), a
-// null-namespace `xmlns` attribute read as the default namespace declaration
-// it spells, and an Attr serialised as the empty string.
+/// Three cases from XMLSerializer-serializeToString.html: one prefix index for
+/// the whole serialisation (a sibling's generated prefix continues the count),
+/// a null-namespace `xmlns` attribute read as the default namespace
+/// declaration it spells, and an Attr serialised as the empty string.
 void test_serialize_prefixes_and_declarations() {
     CHECK_EQ(said("<html><body><script>"
                   "var s = new XMLSerializer();"
@@ -114,9 +120,9 @@ void test_serialize_prefixes_and_declarations() {
              "<package/>||");
 }
 
-// XML 1.0 [75]: a PUBLIC identifier with no system literal after it is
-// ill-formed, so the document carries the parser's error element; with one -
-// even an empty one - it parses.
+/// XML 1.0 [75]: a PUBLIC identifier with no system literal after it is
+/// ill-formed, so the document carries the parser's error element; with one,
+/// even an empty one, it parses.
 void test_an_external_id_needs_its_system_literal() {
     CHECK_EQ(said("<html><body><script>"
                   "var p = new DOMParser();"
@@ -130,9 +136,9 @@ void test_an_external_id_needs_its_system_literal() {
              "1,0");
 }
 
-// createContextualFragment on a range in a DETACHED Text node: no parent
-// element, so the context is a new <body> - and the fragment's script runs
-// when the fragment is inserted, not before.
+/// createContextualFragment on a range in a detached Text node: there is no
+/// parent element, so the context is a new <body>, and the fragment's script
+/// runs when the fragment is inserted, not before.
 void test_a_contextual_fragment_without_a_context_element() {
     CHECK_EQ(
         said("<html><body><script>"
@@ -146,11 +152,12 @@ void test_a_contextual_fragment_without_a_context_element() {
         "B,undefined;1");
 }
 
-// THE HTML PARTIAL UPDATES: each position lands where its name says, the safe
-// spelling drops the script and an event handler the Unsafe one keeps (and
-// runs only with runScripts), a sanitizer's removeElements takes the element
-// and its text, a template's markup goes into its contents, and a node whose
-// parent gives no context element - a plain fragment, a Document - refuses.
+/// The HTML partial-update methods (beforeHTML, appendHTML and the rest): each
+/// position lands where its name says; the safe spelling drops the script and
+/// event handler that the Unsafe one keeps (and runs only with runScripts); a
+/// sanitizer's removeElements takes the element and its text; a template's
+/// markup goes into its contents; and a node whose parent gives no context
+/// element (a plain fragment, a Document) throws.
 void test_positional_html_methods() {
     CHECK_EQ(
         said("<html><body><div id=t><i id=r>r</i></div><script>"

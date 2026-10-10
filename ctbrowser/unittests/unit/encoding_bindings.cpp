@@ -1,8 +1,11 @@
-// TextEncoder and TextDecoder - the Encoding Standard §8, against a live page.
-// One case per rule: the UTF-8 decoder's error handling, the two UTF-16 byte
-// orders, a legacy single-byte index, the label table, the flags and
-// encodeInto.
-
+//===- encoding_bindings.cpp - TextEncoder/Decoder ------------ -*- C++ -*-===//
+//
+// TextEncoder and TextDecoder (Encoding Standard section 8), tested on a live
+// page. One case per rule: the UTF-8 decoder's error handling, the two UTF-16
+// byte orders, legacy single-byte indexes, the label table, the fatal and
+// ignoreBOM flags, streaming, encodeInto, and hostile BufferSource objects.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
@@ -14,6 +17,7 @@ namespace {
 
 constexpr const char * page_html = "<!DOCTYPE html><html><body></body></html>";
 
+/// Runs `body` as a function body on a fresh page and checks its string result.
 void is(const std::string & body, const std::string & expected) {
     ctbrowser_test::is_in(page_html, "(function () { " + body + " })()", expected);
 }
@@ -24,7 +28,7 @@ void test_the_encoder() {
     is("return new TextEncoder().encoding;", "utf-8");
     is("return Array.from(new TextEncoder().encode('h\\u00e9\\u{1f320}')).join(',');",
        "104,195,169,240,159,140,160");
-    // A LONE SURROGATE is U+FFFD: `encode` takes a USVString.
+    // A lone surrogate becomes U+FFFD: `encode` takes a USVString.
     is("return Array.from(new TextEncoder().encode('\\ud800')).join(',');", "239,191,189");
     is("return new TextEncoder().encode().length;", "0");
 }
@@ -35,7 +39,7 @@ void test_encode_into_writes_whole_code_points_only() {
     is("var r = new TextEncoder().encodeInto('\\u{1f320}', new Uint8Array(3));"
        " return r.read + '|' + r.written;",
        "0|0");
-    // `read` counts UTF-16 CODE UNITS, which is two for U+1F320.
+    // `read` counts UTF-16 code units, which is two for U+1F320.
     is("var r = new TextEncoder().encodeInto('\\u{1f320}', new Uint8Array(8));"
        " return r.read + '|' + r.written;",
        "2|4");
@@ -55,7 +59,7 @@ void test_the_label_table() {
        " new TextDecoder('iso-8859-1').encoding].join('|');",
        "windows-1252|windows-1252|windows-1252");
     is("return new TextDecoder('unicodeFEFF').encoding;", "utf-16le");
-    // The replacement encoding must be REFUSED, which is the whole point of it.
+    // The replacement encoding's labels must be rejected; that is its purpose.
     is("try { new TextDecoder('iso-2022-kr'); return 'no throw'; } catch (e) { return e.name; }",
        "RangeError");
     is("try { new TextDecoder('not-an-encoding'); return 'no throw'; } catch (e) { return e.name; "
@@ -65,13 +69,12 @@ void test_the_label_table() {
 
 void test_the_utf8_decoder() {
     is("return new TextDecoder().decode(new Uint8Array([104, 195, 169]));", "h\xc3\xa9");
-    // A truncated sequence is ONE U+FFFD, not one per byte, and the byte that
+    // A truncated sequence is one U+FFFD, not one per byte, and the byte that
     // ended it is decoded again from scratch, so E0 41 is U+FFFD then "A".
     //
-    // EVERY CASE HERE COMPARES THE STRING, never `length` or `charCodeAt`:
-    // a JS string is UTF-8 bytes in this engine and those two count bytes
-    // rather than UTF-16 code units (docs/script.md, "The UTF-16 gap"), so an
-    // index-based assertion would pin the gap instead of the decoder.
+    // Most cases compare the decoded string itself. `length` and `charCodeAt`
+    // count UTF-16 code units, as in any engine (see "The UTF-16 gap" in
+    // docs/script/02-a--b-was-false.md).
     is("return new TextDecoder().decode(new Uint8Array([0xE0, 0x41]));", "\xef\xbf\xbd"
                                                                          "A");
     is("return new TextDecoder().decode(new Uint8Array([0xC2]));", "\xef\xbf\xbd");
@@ -99,7 +102,8 @@ void test_the_bom_and_streaming() {
 }
 
 void test_view_hardening() {
-    // A getter that drops __bytes mid-read must not leave a dangling store.
+    // A getter that drops __bytes (the buffer's backing store) mid-read must
+    // not leave the decoder holding a dangling store.
     is("var b = new ArrayBuffer(4); var v = new Uint8Array(b);"
        " Object.defineProperty(v, 'byteLength', {get: function () { delete b.__bytes;"
        " return 4; }}); return typeof new TextDecoder().decode(v);",
@@ -110,9 +114,8 @@ void test_view_hardening() {
        "hi");
     // A plain-object source whose byteLength getter drops the only reference to
     // the store and then allocates enough to collect it. The getters run before
-    // the store is looked up, so the decode sees no store and refuses the
-    // source - a plain object is not a BufferSource anyway - rather than copying
-    // out of a collected one (freed memory under ASan).
+    // the store is looked up, so decode() finds no store and throws a TypeError
+    // instead of copying out of freed memory (which ASan would catch).
     is("var buf = {__bytes: new Uint8Array([104, 105])};"
        " var s = {buffer: buf, byteOffset: 0, get byteLength() { buf.__bytes = null;"
        " for (var i = 0; i < 2e5; i++) ({}); return 2; }};"
@@ -144,10 +147,10 @@ void test_utf16_and_a_single_byte_index() {
 
 } // namespace
 
-// A BufferSource's byteLength is read off the OBJECT, so a plain object with a
-// huge byteLength once made decode() reserve() gigabytes and abort the process
-// (security review DOS-004). The reserve is now bounded to the real bytes, so
-// this decodes the two bytes that exist and returns rather than crashing.
+/// decode() reads byteLength from the object it is given, so a plain object
+/// can claim a huge length. The reservation must be bounded by the bytes that
+/// actually exist: this decodes the two real bytes instead of trying to
+/// allocate gigabytes and aborting.
 void test_a_crafted_bytelength_does_not_over_reserve() {
     is("var u = new Uint8Array([104, 105]);"
        " return new TextDecoder().decode({ buffer: u.buffer, byteOffset: 0, byteLength: 1e12 });",

@@ -1,10 +1,15 @@
-// THE WHEEL, A FINGER AND THE END OF A SCROLL, through the browser the way a
-// driver sends them: a wheel event's cancelability follows its listeners'
-// passivity (UI Events), `mousewheel` is the legacy name a trusted `wheel`
-// reaches, a notch scrolls the nearest scroll container that can move, a touch
-// is a TouchEvent after its touch PointerEvent, and every completed scroll
-// ends in `scrollend` (CSSOM View §13.1). Each case names the dom/events file
-// it stands in for.
+//===- ctbrowser/unittests/unit/input/wheel_touch.cpp - Wheel, touch ------===//
+//
+// The wheel, a finger, a mouse drag and the end of a scroll, sent through the
+// browser the way a driver sends them: a wheel event's cancelability follows
+// its listeners' passivity (UI Events), `mousewheel` is the legacy name a
+// trusted `wheel` reaches, a notch scrolls the nearest scroll container that
+// can move, a touch is a TouchEvent after its touch PointerEvent, a drag
+// extends the page's Selection, and every completed scroll ends in `scrollend`
+// (CSSOM View §13.1). Each case names the WPT file (dom/events, selection,
+// html) it stands in for.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -36,12 +41,16 @@ constexpr const char * page_source = R"(<!doctype html><html><head><style>
     }
     </script></body></html>)";
 
+/// Paints, runs one tick and paints again, so pending scroll and scrollend work
+/// has happened.
 void settle(browser & page) {
     page.frame();
     (void)page.tick(1);
     page.frame();
 }
 
+/// Returns what the page pushed onto its `seen` array since the last call, as
+/// "seen=" followed by the space-joined entries, and empties the array.
 [[nodiscard]] std::string seen(browser & page) {
     (void)page.run_script("console.log('seen=' + seen.join(' ')); seen = [];");
     std::string last;
@@ -83,7 +92,7 @@ void test_wheel_cancelability_and_mousewheel() {
 }
 
 // wheel-event-transactions-basic, scrollend-event-fired-for-programmatic-
-// scroll: a notch over a scroll container scrolls IT, not the page; one
+// scroll: a notch over a scroll container scrolls it, not the page; one
 // anywhere else scrolls the page; each completed scroll ends in a scrollend
 // that bubbles from the document and not from an element.
 void test_wheel_scrolls_the_container_and_scrollend_follows() {
@@ -225,7 +234,7 @@ void test_a_removed_scroller_hears_no_scrollend() {
 }
 
 // scrollend-event-fired-after-sequence-of-scrolls.tentative.html: a drag that
-// pans cancels the finger's pointer once, and its scrolls end in ONE
+// pans cancels the finger's pointer once, and its scrolls end in one
 // scrollend, after the lift.
 void test_a_panning_drag_cancels_its_pointer_and_ends_once() {
     browser page{browser_options{400, 300}};

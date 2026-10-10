@@ -1,17 +1,14 @@
+//===- ctbrowser/test/support/dom_probe.hpp - Live-page query helpers -----===//
+//
+// Test helpers that query a live page: run one expression on a fresh page,
+// collect alerts, find an element by id, and get its laid-out box.
+//
+// They stay in test/support rather than engine API: a page uses
+// document.getElementById and getBoundingClientRect; only a test walks the
+// document without a script context or wants the raw fragment rectangle.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
-// Asking a live page where something ENDED UP. Shared because it was copied.
-//
-// `find_id` and `box_of` were byte-identical in unittests/unit/chrome_basics.cpp (now
-// control_editing.cpp and its siblings) and
-// unittests/unit/widgets_basics.cpp, and unittests/unit/bootstrap_layout.cpp wanted a
-// third copy. That is the trigger CLAUDE.md names: "small shared algorithms live
-// in core/algorithms.hpp - everything there had at least three copies before it
-// moved". This is the test suite's equivalent of that shelf.
-//
-// It stays in test/support rather than becoming engine API on purpose. A page
-// finds an element with `document.getElementById`; only a TEST wants to walk the
-// document for an id without a script context, and only a test wants the raw
-// fragment rectangle rather than `getBoundingClientRect`.
 
 #include <cstdio>
 #include <string>
@@ -24,12 +21,10 @@
 
 namespace ctbrowser_test {
 
-// ONE EXPRESSION against a FRESH page, and whatever it logged. Fresh because
-// most DOM cases mutate the document, and a case that changed the tree for
-// the next one would report a failure in the wrong place. The `try` is not
-// politeness: a thrown exception answers as "threw:<name>", which is what half
-// the DOM tests assert on, and without it a fence regression would look like
-// the answer. Eleven tests carried this before it moved here.
+/// Evaluates one expression on a fresh page built from `html` and returns what
+/// it logged, as a string. Fresh, because most DOM cases mutate the document
+/// and must not affect the next case. A thrown exception logs as
+/// "threw:<name>", which many DOM tests assert on.
 [[nodiscard]] inline std::string answer_in(std::string html, const std::string & expression) {
     ctbrowser::browser page{ctbrowser::browser_options{400, 300}};
     const std::string tail = "<script>try { console.log(String(" + expression +
@@ -41,6 +36,8 @@ namespace ctbrowser_test {
     return logged.back();
 }
 
+/// Checks that `expression` evaluated in `html` answers `expected`
+/// (see answer_in()), printing the expression on failure.
 inline void is_in(const std::string & html, const std::string & expression,
                   const std::string & expected) {
     const std::string got = answer_in(html, expression);
@@ -48,10 +45,9 @@ inline void is_in(const std::string & html, const std::string & expression,
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
-// A page's alerts, `;`-joined, from a FRESH page with `html` loaded. A script
-// fault is appended as `|error:` rather than swallowed: a test whose page threw
-// halfway through would otherwise report a short list and blame the feature.
-// Eight DOM tests carried this before it moved here.
+/// Returns the alerts of a fresh page with `html` loaded, joined with `;`. A
+/// script error is appended as `|error:<message>` rather than swallowed, so a
+/// page that threw halfway does not just look like a short list.
 [[nodiscard]] inline std::string said(std::string_view html) {
     ctbrowser::browser page{ctbrowser::browser_options{200, 100}};
     page.load_html(html);
@@ -64,7 +60,7 @@ inline void is_in(const std::string & html, const std::string & expression,
     return out;
 }
 
-// The first element whose `id` attribute is `want`, in document order.
+/// Returns the first element whose `id` attribute is `want`, in document order.
 [[nodiscard]] inline ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {
     const auto txn = page.doc().read();
     const ctbrowser::atom key = page.atoms().intern("id");
@@ -77,11 +73,10 @@ inline void is_in(const std::string & html, const std::string & expression,
     return found;
 }
 
-// The absolute box of the first fragment for `id`, so a test can click a control
-// rather than guessing where it is.
-//
-// FIRST NON-EMPTY fragment, not first fragment: an element that breaks across
-// lines has several, and an empty leading one is not where a click should go.
+/// Returns the absolute box of the first non-empty fragment for `id`, so a test
+/// can click a control rather than guess where it is. An element that breaks
+/// across lines has several fragments, and an empty leading one is not where a
+/// click should go.
 [[nodiscard]] inline ctbrowser::rect box_of(ctbrowser::browser & page, std::string_view id) {
     const ctbrowser::node_id want = find_id(page, id);
     const auto walk = [&](auto && self, const ctbrowser::layout::fragment & f, float dx,

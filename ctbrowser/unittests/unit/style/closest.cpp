@@ -1,3 +1,10 @@
+//===- closest.cpp - Element.closest() tests --------------------*- C++ -*-===//
+//
+// style::engine::closest, the matcher behind Element.closest(): the nearest
+// inclusive ancestor matching a selector list, `:scope` as the starting
+// element, detached subtrees, and shadow-root boundaries.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/style/engine.hpp>
 
 #include "check.hpp"
@@ -43,7 +50,7 @@ int main() {
     CHECK(!closest(node_id{icon.slot, icon.generation + 1}, "*"));
     CHECK(!selectors.closest(txn, icon, {}));
 
-    // Detachment preserves node identity and ordinary ancestors within the subtree.
+    // Detaching a subtree keeps node identity and the ancestors inside it.
     CHECK(doc.remove_child(outer).has_value());
     CHECK(closest(icon, "[data-bs-toggle=button]") == button);
     CHECK(closest(icon, "div") == outer);
@@ -51,6 +58,7 @@ int main() {
     CHECK(doc.append_child(body, outer).has_value());
     CHECK(closest(icon, "body") == body);
 
+    // The walk stops at a shadow root and does not continue into the host's tree.
     const node_id shadow = doc.attach_shadow(outer, true).value();
     const node_id shadow_button = doc.create_element(atoms.intern("button"));
     const node_id shadow_icon = doc.create_element(atoms.intern("span"));
@@ -59,6 +67,6 @@ int main() {
     CHECK(closest(shadow_icon, "button") == shadow_button);
     CHECK(!closest(shadow_icon, "div"));
     CHECK(!closest(shadow_icon, "body"));
-    CHECK(closest(icon, "body") == body); // earlier queries do not retain their scope
+    CHECK(closest(icon, "body") == body); // Earlier queries do not keep their scope.
     REPORT("style_closest");
 }

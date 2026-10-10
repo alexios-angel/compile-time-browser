@@ -1,13 +1,18 @@
-// The standard library's internal slots are PRIVATE-keyed (TYPE-001).
+//===- ctbrowser/unittests/js/internal_slots.cpp - Private internal slots -===//
 //
-// A Map's entry list, a promise's state and reactions, a generator's
-// coroutine, an array iterator's list and cursor and a Date's time value were
-// ordinary string properties - `__entries`, `__settled`, `__handlers`, `__co`,
-// `__items`, `__ms` - which a page could read, overwrite, or forge on a plain
-// object, and natives cast what they found: `m.__entries = [1.5e-300];
-// m.get(0)` dereferenced a pointer the page chose. Each class below checks the
-// three things that fix promises: the slot is not observable, writing the old
-// name does not reach it, and a forged object is not mistaken for the real one.
+// The standard library's internal slots use private keys that page script
+// cannot spell. A Map's entries, a promise's state and reactions, a
+// generator's coroutine, an array iterator's list and cursor, and a Date's
+// time value must not be reachable as string properties such as `__entries`,
+// `__settled`, `__handlers`, `__co`, `__items` or `__ms`. If they were, a page
+// could forge them, and natives that trust what they find could be made to
+// dereference a pointer the page chose (`m.__entries = [1.5e-300]; m.get(0)`).
+//
+// Each section checks three guarantees: the slot is not observable, writing
+// the old string name does not reach it, and a forged object is not mistaken
+// for the real one.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 #include "vm/expect.hpp"
@@ -18,7 +23,7 @@ int main() {
               "return Object.getOwnPropertyNames(m).length+','+Reflect.ownKeys(m).length+','+n+','+"
               "JSON.stringify(m)+','+('__entries' in m)})()",
               "0,0,0,{},false");
-    // The old name is now an ordinary property the natives never read.
+    // The old string name is an ordinary property the natives never read.
     js_expect("(function(){var m=new Map([[1,2]]);m.__entries=[1.5e-300];"
               "return m.get(1)+','+m.size+','+structuredClone(m).get(1)})()",
               "2,1,2");
@@ -77,7 +82,8 @@ int main() {
                       "(async function () { var got = await {__settled: false, __handlers: h};"
                       "  result = h.length + ',' + typeof got; })();",
                       "0,object");
-    // The double-resume attack: an async function's continuation runs ONCE.
+    // The double-resume attack: an async function's continuation runs once,
+    // even if a page pushes its reaction a second time.
     expect_after_turn("var result; var n = 0; var go;"
                       "var p = new Promise(function (r) { go = r; });"
                       "async function f() { await p; n++; result = n; }"

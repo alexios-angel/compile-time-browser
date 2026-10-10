@@ -1,6 +1,8 @@
-// FORM SUBMISSION THAT LEAVES THE PAGE: HTML 4.10.21.3 from the entry list
-// on - the enctype's encoding of the list, the submitter's formaction,
-// formmethod, formenctype and formtarget, the navigation PLANNED at the frame
+//===- submission.cpp - Form submission tests -------------------*- C++ -*-===//
+//
+// Form submission that leaves the page: HTML 4.10.21.3 from the entry list
+// on. Covers the enctype's encoding of the list, the submitter's formaction,
+// formmethod, formenctype and formtarget, the navigation planned at the frame
 // the target names, and the request an embedder answers
 // (browser_options::on_request) before the registry is asked.
 //
@@ -8,6 +10,8 @@
 // emulation does: it records what arrived and answers with it, so a case
 // asserts on both halves - the bytes the engine sent, and the document the
 // frame got back.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -24,13 +28,15 @@ using ctbrowser::shell::resource_request;
 
 namespace {
 
+/// What one submission produced: the requests the embedder saw, and the
+/// console output.
 struct run {
     std::vector<resource_request> seen;
     std::string logged;
 };
 
-// Load `body`, let the page's load handler submit, tick until the frame's
-// `load` has been heard, and answer with what arrived and what was logged.
+/// Loads `body`, lets the page's load handler submit, ticks until the frame's
+/// `load` has been heard, and returns what arrived and what was logged.
 [[nodiscard]] run submit(const std::string & body) {
     run out;
     browser_options options{400, 300};
@@ -105,7 +111,7 @@ void test_the_encodings_follow_the_forms_charset() {
 
 void test_the_submitters_attributes_win() {
     // formaction, formmethod, formenctype and formtarget on the button that
-    // submitted - and a GET's entry list REPLACES the action's query.
+    // submitted - and a GET's entry list replaces the action's query.
     const run got =
         submit("<iframe name=one></iframe><iframe name=two></iframe>"
                "<form id=f action=blank.html?old=1 target=one method=post>"
@@ -161,9 +167,9 @@ void test_a_button_in_a_frame_submits_its_form() {
 
 void test_a_disabled_fieldset_disables_a_frames_button() {
     // HTML 4.10.18.5: a button in a disabled <fieldset> is actually disabled,
-    // in a frame as in the page - and one in its first <legend> is not. A
-    // DISPATCHED click, which reaches the activation behaviour whatever the
-    // element (click() itself refuses a disabled control first).
+    // in a frame as in the page - and one in its first <legend> is not. The
+    // test dispatches a click, which reaches the activation behaviour whatever
+    // the element (click() itself refuses a disabled control first).
     const run got =
         submit("<iframe id=t src=blank.html></iframe>"
                "<script>addEventListener('load', function () {"
@@ -216,7 +222,7 @@ void test_an_image_submitter_in_a_frame_sends_its_coordinate() {
     }
 }
 
-// THE BOUNDARY IS NOT A CONSTANT: fresh per body, and never one a value
+// The multipart boundary is not a constant: it is fresh per body, and never one a value
 // contains - with a fixed public one a value could close its part and forge
 // fields after it.
 void test_the_multipart_boundary_is_fresh_and_absent_from_the_values() {
@@ -229,6 +235,7 @@ void test_the_multipart_boundary_is_fresh_and_absent_from_the_values() {
     const auto two = multipart_form_body(entries, "UTF-8");
     CHECK(one.boundary != two.boundary);
     CHECK(one.boundary.starts_with("----ctbrowser"));
+    // "----ctbrowser" (13 chars) followed by 24 random alphanumerics.
     CHECK_EQ(one.boundary.size(), std::size_t{13 + 24});
     CHECK_EQ(one.body, "--" + one.boundary +
                            "\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n--" +

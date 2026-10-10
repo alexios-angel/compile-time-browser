@@ -1,11 +1,16 @@
-// THE METHODS ARE ON THE PROTOTYPES, not on every wrapper: what
+//===- ctbrowser/unittests/unit/node/prototype.cpp - Node prototype tests -===//
+//
+// DOM methods live on the interface prototypes, not on every wrapper: what
 // `Node.prototype.appendChild.call(x, y)`, `"insertBefore" in Node.prototype`,
 // `appendChild.length` and `"moveBefore" in textNode` answer, and that a node
-// of a SECOND document edits its own tree when its method runs through the
-// shared prototype - see define_operation in lib/Shell/bindings/element/methods.cpp.
+// of a second document edits its own tree when its method runs through the
+// shared prototype. See define_operation in
+// lib/Shell/bindings/element/methods.cpp.
 //
-// The pattern is unit/dom/nodes_wpt.cpp's: one expression against a fresh
-// page, and whatever it logged.
+// The pattern is unittests/unit/dom/nodes_wpt.cpp's: one expression against a
+// fresh page, and whatever it evaluated to.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -21,6 +26,7 @@ constexpr const char * page_html =
     "<!DOCTYPE html><html><body><div id=box><span id=a></span>text</div>"
     "<canvas id=cv></canvas></body></html>";
 
+/// Checks that \p expression evaluates to \p expected on a fresh page_html.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -87,8 +93,9 @@ void test_node_constants_and_compare_document_position() {
 }
 
 void test_a_second_document_edits_its_own_tree() {
-    // The prototype natives are shared; the receiver decides which document
-    // runs. Before, the primary's copy ran with the other tree's node ids.
+    // The prototype natives are shared, so the receiver must decide which
+    // document the call edits; running the main document's copy with another
+    // document's node ids would edit the wrong tree.
     is("(function () { var doc = document.implementation.createHTMLDocument('t');"
        " var p = doc.createElement('p'); p.setAttribute('id', 'made');"
        " doc.body.appendChild(p); p.append('hi');"

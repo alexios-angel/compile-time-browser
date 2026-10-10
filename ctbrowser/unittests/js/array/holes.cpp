@@ -1,7 +1,12 @@
-// An ELISION IN AN ARRAY LITERAL IS A HOLE (13.2.4.1): `[1, , 3]` has length
-// 3 and no element 1 - `in`, hasOwnProperty, forEach and Object.keys all tell
-// a hole from an undefined element, and test262 has thirty forEach files
-// that ask. The literal used to append undefined there.
+//===- ctbrowser/unittests/js/array/holes.cpp - Array holes -----*- C++ -*-===//
+//
+// Holes in arrays. An elision in an array literal is a hole (ECMA-262
+// 13.2.4.1): `[1, , 3]` has length 3 and no element 1, and `in`,
+// hasOwnProperty, forEach and Object.keys all tell a hole from an undefined
+// element. Also covers holes made by a length, reads and writes that reach the
+// prototypes through a hole, and callbacks that throw and catch internally.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -17,13 +22,13 @@ int main() {
     js_expect("[1, , 3][1]", "undefined");
     // A hole written to is an element again.
     js_expect("(function () { var a = [1, , 3]; a[1] = 2; return 1 in a; })()", "true");
-    // An explicit undefined is NOT a hole.
+    // An explicit undefined is not a hole.
     js_expect("1 in [1, undefined, 3]", "true");
     // A spread before the elision moves it; the positions are no longer
     // static, and the slot is appended as undefined then.
     js_expect("[...[1, 2], , 4].length", "4");
 
-    // A LENGTH MAKES HOLES TOO (array_object::holes_begin): `new Array(n)`, a
+    // A length makes holes too (array_object::holes_begin): `new Array(n)`, a
     // grown `length` and a write past the end leave indices that are not
     // properties, and a fill in either direction turns them into elements.
     js_expect("0 in new Array(3)", "false");
@@ -46,7 +51,7 @@ int main() {
     js_expect("new Array(3).fill(7).join()", "7,7,7");
     js_expect("(function () { var a = new Array(3); a.push(1); return Object.keys(a).join(); })()",
               "3");
-    // A HOLE, OR AN INDEX PAST THE END, READS THROUGH TO THE PROTOTYPES -
+    // A hole, or an index past the end, reads through to the prototypes,
     // getters included (OrdinaryGet step 3).
     js_expect("(function () { Array.prototype[1] = 'p'; var a = [0]; a.length = 2;"
               " var r = a[1] + a.join(); delete Array.prototype[1]; return r; })()",
@@ -56,7 +61,7 @@ int main() {
               " var r = [, 1][0] + ',' + [][0]; delete Array.prototype[0]; return r; })()",
               "11,11");
     js_expect("1 / [true].indexOf(true, -0)", "Infinity");
-    // AND A WRITE to an index the array does not have asks the prototypes
+    // A write to an index the array does not have also asks the prototypes
     // first (OrdinarySet step 2): a setter on Array.prototype[0] takes a push
     // and a write into a hole alike. (A string collects them: pushing onto an
     // array in that setter would call it again, in every engine.)
@@ -66,9 +71,9 @@ int main() {
               " delete Array.prototype[0];"
               " return got + '|' + a.length + (0 in a) + (0 in b) + c[0]; })()",
               "56|1falsefalse7");
-    // A CALLBACK THAT THROWS AND CATCHES INSIDE ITSELF has not thrown: the
-    // walks that stop at a callback's throw ask for a PARKED one, which this
-    // is not.
+    // A callback that throws and catches inside itself has not thrown.
+    // Builtins that stop on a callback's exception must check for an exception
+    // still pending after the call, not for any throw that happened inside it.
     js_expect("[1, 2, 3].map(function (x) { try { throw x; } catch (e) {} return x * 2; }).join()",
               "2,4,6");
     js_expect("(function () { var n = 0; [1, 2, 3].forEach(function () {"

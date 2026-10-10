@@ -1,13 +1,14 @@
-// THE LISTENER-INVOCATION RULES, one assertion apiece: the default passive
-// value, the listener list copied before it runs, a throwing listener not
-// stopping the dispatch, `handleEvent` on a listener object, the EventTarget
-// methods as bare globals, and `window.event`. The dispatch machinery itself -
-// the path, the interfaces, the options - is dispatch.cpp.
+//===- ctbrowser/unittests/unit/event/listeners.cpp - Event listener tests ===//
 //
-// One of five files carved out of unittests/unit/chrome_basics.cpp on
-// 2026-09-07, when it had reached 2,299 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the five needs are in
-// chrome_probe.hpp beside this.
+// Listener-invocation rules, one assertion apiece: the default passive value,
+// the listener list copied before it runs, a throwing listener not stopping
+// the dispatch, `handleEvent` on a listener object, the EventTarget methods as
+// bare globals, and `window.event`. The dispatch machinery itself (the path,
+// the interfaces, the options) is tested in dispatch.cpp.
+//
+// Shared helpers are in ../chrome_probe.hpp and test/support/dom_probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -25,28 +26,23 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-// Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
+// Shared probe helpers from test/support/dom_probe.hpp.
 using ctbrowser_test::box_of;
 using ctbrowser_test::find_id;
 using ctbrowser_test::log_of;
 
 namespace {
 
-// --- the event batch --------------------------------------------------------
+// --- Listener invocation rules ----------------------------------------------
 //
-// DISPATCH IS THE ONE THING HERE A GOLDEN CANNOT SEE. A listener that never
-// ran, ran twice, or cancelled something it had promised not to leaves exactly
-// the same pixels behind, so every case below asks a script what happened and
-// reads the answer back out of the console.
-//
-// They are together because they are one subject and because each is two or
-// three lines: dom/events is the WPT suite this engine is closest to finishing,
-// and these are the rules it was getting wrong, one assertion apiece.
+// A golden image cannot see dispatch: a listener that never ran, ran twice, or
+// cancelled something it had promised not to leaves exactly the same pixels
+// behind. So every case below asks a script what happened and reads the
+// answer back out of the console.
 
-// Run a snippet that logs exactly one line, and return that line. Anything else
-// - a script that would not run, a snippet that logged twice - comes back as a
-// string that fails the comparison AND says what happened, which is worth more
-// than an index into the log at the point of failure.
+/// Runs a snippet that logs exactly one line, and returns that line. Anything
+/// else (a script that would not run, a snippet that logged twice) comes back
+/// as a string that fails the comparison and says what happened.
 [[nodiscard]] std::string one_log(browser & page, const std::string & source) {
     const std::size_t before = log_of(page).size();
     if (!page.run_script(source)) { return "<did not run: " + page.script_error() + ">"; }
@@ -55,23 +51,21 @@ namespace {
     return log_of(page).back();
 }
 
-// THE DEFAULT PASSIVE VALUE - https://dom.spec.whatwg.org/#default-passive-value
+// The default passive value: https://dom.spec.whatwg.org/#default-passive-value
 //
-// One sentence: a `touchstart`, `touchmove`, `wheel` or `mousewheel` listener on
-// the WINDOW, the DOCUMENT, the DOCUMENT ELEMENT or the BODY is passive unless
-// the page said `{passive: false}`. Nowhere else, and no other type.
+// A `touchstart`, `touchmove`, `wheel` or `mousewheel` listener on the window,
+// the document, the document element or the body is passive unless the page
+// said `{passive: false}`. Nowhere else, and no other type.
 //
-// It reads like a footnote and it is not: `passive` means the canceled flag is
-// not set while the listener runs, so the default decides whether
-// `preventDefault` in the commonest listener on the web does anything at all.
-// 32 subtests of dom/events/passive-by-default.html are this rule and only this
-// rule.
+// `passive` means the canceled flag is not set while the listener runs, so the
+// default decides whether `preventDefault` in these common listeners does
+// anything at all (dom/events/passive-by-default.html).
 void test_a_scroll_blocking_listener_is_passive_by_default() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
     page.frame();
 
-    // Register, cancel from inside the listener, dispatch a CANCELABLE event,
+    // Register, cancel from inside the listener, dispatch a cancelable event,
     // and report both halves of the answer: whether the flag took, and what
     // dispatchEvent said. The two must agree, which is why both are logged.
     const auto cancels = [&page](const std::string & target, const std::string & type,
@@ -94,8 +88,8 @@ void test_a_scroll_blocking_listener_is_passive_by_default() {
     check(cancels("window", "mousewheel", "") == "false,true",
           "mousewheel is in the set as well as wheel");
 
-    // THE OTHER SIDE OF THE SAME RULE, which is the half that makes it a
-    // default rather than a prohibition.
+    // The other side of the same rule, which makes it a default rather than a
+    // prohibition.
     check(cancels("window", "wheel", ", {passive: false}") == "true,false",
           "a page that asks for {passive: false} can still cancel");
     check(cancels("window", "wheel", ", {passive: undefined}") == "false,true",
@@ -107,20 +101,20 @@ void test_a_scroll_blocking_listener_is_passive_by_default() {
           "a standalone EventTarget is in no document, so nothing scrolls for it");
 }
 
-// THE LISTENER LIST IS COPIED BEFORE ANY OF IT RUNS.
+// The listener list is copied before any of it runs.
 //
-// Two rules fall out of the copy rather than being written anywhere: one
-// REGISTERED during a dispatch is not in the copy and does not run, and one
-// REMOVED during it is skipped. Walking the live list cannot do the second
-// half, because removal here MOVES every later entry - so the loop's index then
-// names the next listener and that one is silently skipped.
+// Two rules follow from the copy: a listener registered during a dispatch is
+// not in the copy and does not run, and one removed during it is skipped.
+// Walking the live list cannot do the second half, because removal shifts
+// every later entry down, so the loop's index then names the next listener and
+// that one is silently skipped.
 void test_the_listener_list_is_copied_before_it_runs() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
     page.frame();
 
     // `first` removes `third` and adds `late`; `second` must still run, `third`
-    // must not, and `late` must not run until the NEXT dispatch.
+    // must not, and `late` must not run until the next dispatch.
     check(one_log(page, R"((function () {
             var t = new EventTarget(), ran = [];
             var second = function () { ran.push('second'); };
@@ -143,7 +137,7 @@ void test_the_listener_list_is_copied_before_it_runs() {
     // that it is right. The first dispatch runs `outer` alone - the listener it
     // adds is not in the copy that dispatch is walking - and adds one `late`.
     // The second walks [outer, late]: `outer` runs first because listeners fire
-    // in registration order, adding a THIRD listener nobody will reach, and
+    // in registration order, adding a third listener nobody will reach, and
     // then the `late` registered by the first dispatch runs.
     check(one_log(page, R"((function () {
             var t = new EventTarget(), ran = [];
@@ -313,11 +307,11 @@ void test_handler_getter_preserves_selected_passive_flag() {
              "1,false,true");
 }
 
-// A LISTENER THAT THROWS DOES NOT STOP THE DISPATCH, and the throw does not
+// A listener that throws does not stop the dispatch, and the throw does not
 // come back out of `dispatchEvent`: the page is told through an `error` event
-// instead. dom/events/Event-dispatch-throwing.html and the last case of
-// EventTarget-dispatchEvent.html are this, and getting it wrong stops a page
-// dead at the first faulting handler in a library it did not write.
+// instead (dom/events/Event-dispatch-throwing.html and the last case of
+// dom/events/EventTarget-dispatchEvent.html). Getting it wrong stops a page at
+// the first faulting handler in a library it did not write.
 void test_a_throwing_listener_is_reported_and_the_rest_still_run() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
@@ -334,9 +328,9 @@ void test_a_throwing_listener_is_reported_and_the_rest_still_run() {
           })())") == "first,second;true;1",
           "the second listener runs, dispatchEvent returns true, and onerror is told once");
 
-    // AND `window.onerror` GETS THE MESSAGE AS A STRING, not the event: HTML's
-    // OnErrorEventHandler is (message, filename, lineno, colno, error) and
-    // twenty years of shipped code reads the first argument as text.
+    // The `error` event carries the thrown value itself. (`window.onerror`, by
+    // contrast, gets the message as a string: HTML's OnErrorEventHandler is
+    // (message, filename, lineno, colno, error), as the case above checks.)
     check(one_log(page, R"((function () {
             var t = new EventTarget(), thrown = {name: 'mine'}, seen = null;
             window.addEventListener('error', function (e) { seen = e.error; });
@@ -347,20 +341,20 @@ void test_a_throwing_listener_is_reported_and_the_rest_still_run() {
           "the error event carries the value that was thrown, not only its text");
 }
 
-// A LISTENER OBJECT NEEDS A CALLABLE `handleEvent`, and WebIDL says what
+// A listener object needs a callable `handleEvent`, and WebIDL says what
 // happens when it has not got one.
 //
 // That `this` is the object and that the property is fetched once per dispatch
-// are event_dispatch's cases; these are the two edges of the same clause it does
-// not cover - a callable listener is never asked for the method at all, and a
-// non-callable one is a TypeError rather than a listener that quietly does
-// nothing. dom/events/EventListener-handleEvent.html is four tests about them.
+// are tested in dispatch.cpp and handlers.cpp; these are the two edges of the same clause: a
+// callable listener is never asked for the method at all, and a non-callable
+// one is a TypeError rather than a listener that quietly does nothing
+// (dom/events/EventListener-handleEvent.html).
 void test_a_listener_object_needs_a_callable_handle_event() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
     page.frame();
 
-    // A FUNCTION IS NEVER ASKED FOR ONE: `handleEvent` on a callable listener
+    // A function is never asked for one: `handleEvent` on a callable listener
     // is an ordinary property and nothing looks at it.
     check(one_log(page, R"((function () {
             var t = new EventTarget(), calls = 0, wrong = 0;
@@ -372,7 +366,7 @@ void test_a_listener_object_needs_a_callable_handle_event() {
           })())") == "1,0",
           "a callable listener is called, and its own handleEvent is left alone");
 
-    // AND A NON-CALLABLE ONE IS A TypeError - reported, like any other fault in
+    // A non-callable one is a TypeError, reported like any other fault in
     // a listener, rather than a listener that quietly does nothing.
     check(one_log(page, R"((function () {
             var t = new EventTarget(), seen = '';
@@ -384,10 +378,8 @@ void test_a_listener_object_needs_a_callable_handle_event() {
           "a listener object whose handleEvent is not callable reports a TypeError");
 }
 
-// THE WINDOW IS THE GLOBAL OBJECT, so its three EventTarget methods are three
-// bare names. Two of them were globals and `dispatchEvent` was not, so a page
-// written the way the specification's own examples are written registered a
-// listener and then threw on the very next line.
+// The window is the global object, so its three EventTarget methods are also
+// bare global names, as the specification's own examples use them.
 void test_the_event_target_methods_are_bare_globals() {
     browser page{browser_options{300, 200}};
     page.load_html("<body><div id=d>x</div></body>");
@@ -408,7 +400,7 @@ void test_the_event_target_methods_are_bare_globals() {
           "and the bare name is the same function as window.dispatchEvent");
 }
 
-// `window.event` IS SET FOR THE WHOLE DISPATCH AND RESTORED AFTER IT, including
+// `window.event` is set for the whole dispatch and restored after it, including
 // across a nested dispatch and across a handler that throws out of one. It is
 // the oldest event API there is and pages still reach for it.
 void test_window_event_is_set_and_restored() {

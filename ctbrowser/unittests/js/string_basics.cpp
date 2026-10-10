@@ -1,37 +1,26 @@
-// Strings, against V8.
+//===- ctbrowser/unittests/js/string_basics.cpp - String tests ------------===//
 //
-// Written by differentially testing String.prototype and the relational
-// operators against node (V8, the engine Chrome ships) over ~1,550 expressions.
-// As with unittests/js/math_basics.cpp the expectations came out of V8 BEFORE the
-// fixes were written, so this file failed on the day it was committed rather
-// than agreeing with the bug. The sweep found 233 differences; the fixes below
-// took that to 60, of which 8 are deliberate (see the case-folding note).
+// String.prototype, the String statics, the URI functions and the relational
+// operators on strings, checked against node (V8). Expected values came from
+// V8, recorded before the engine was fixed, so each case once failed here.
+// Section numbers are ECMA-262's.
 //
-// TWO THINGS THIS FILE DELIBERATELY DOES NOT ASSERT.
+// Strings are UTF-16 code units over WTF-8 storage (script/utf16.hpp), so
+// lengths and indices below match V8, including for non-ASCII text.
 //
-// 1. NON-ASCII LENGTHS AND INDICES. This engine stores a JS string as UTF-8
-//    BYTES; ECMA-262 specifies a sequence of UTF-16 CODE UNITS. So `"é".length`
-//    is 2 here and 1 in V8, and a non-BMP emoji is 4 here and 2 there. That is a
-//    representation difference, not a bug list, and closing it means changing
-//    `string_object` engine-wide. The `-- the UTF-16 gap --` section at the
-//    bottom PINS THE CURRENT (WRONG) ANSWERS on purpose, labelled, so that the
-//    day someone migrates the representation the test fails and hands them a
-//    ready-made acceptance list.
+// Case conversion uses Unicode's default full mapping from a table generated
+// off the pinned Unicode release (builtins/text/case_mapping.cpp). It is
+// compiled in, so a render cannot depend on the host locale.
 //
-// 2. UNICODE CASE CONVERSION is Unicode's default full mapping since
-//    2026-09-25, from a table generated off the pinned Unicode release
-//    (builtins/text/case_mapping.cpp) - compiled in, so a render still cannot
-//    depend on the host, which is what the ASCII-only fold was protecting.
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 int main() {
     // --- the relational operators -------------------------------------------
-    // THE BIGGEST THING THIS SWEEP FOUND. All four opcodes were
-    // `to_number(a) < to_number(b)`, and ToNumber of a non-numeric string is
-    // NaN, so every comparison between two strings was FALSE - `<`, `>`, `<=`
-    // and `>=` alike. A page ordering names or keys with
-    // `(x, y) => x < y ? -1 : 1` got its input back untouched, with no error.
+    // Two strings compare by code unit, not by ToNumber. (Comparing as numbers
+    // makes every non-numeric string NaN, so all four operators would answer
+    // false and a comparator-based sort would return its input unchanged.)
     js_expect("\"a\" < \"b\"", "true");
     js_expect("\"b\" > \"a\"", "true");
     js_expect("\"a\" <= \"b\"", "true");
@@ -39,11 +28,11 @@ int main() {
     js_expect("\"a\" < \"a\"", "false");
     js_expect("\"a\" <= \"a\"", "true");
     js_expect("\"abc\" < \"abd\"", "true");
-    js_expect("\"abc\" < \"ab\"", "false"); // a prefix is LESS, so this is false
+    js_expect("\"abc\" < \"ab\"", "false"); // A prefix is less, so this is false.
     js_expect("\"ab\" < \"abc\"", "true");
     js_expect("\"\" < \"a\"", "true");
-    js_expect("\"A\" < \"a\"", "true"); // by code unit, so capitals sort first
-    // Text, NOT numbers: "10" < "9" is true because "1" precedes "9".
+    js_expect("\"A\" < \"a\"", "true"); // By code unit, so capitals sort first.
+    // Text, not numbers: "10" < "9" is true because "1" precedes "9".
     js_expect("\"10\" < \"9\"", "true");
     js_expect("[\"b\",\"a\",\"c\"].sort(function(x,y){return x<y?-1:(x>y?1:0)}).join(\"\")", "abc");
     // Numbers still compare as numbers, and a string against a number coerces.
@@ -52,22 +41,21 @@ int main() {
     js_expect("\"5\" < 10", "true");
     js_expect("10 < \"9\"", "false");
     // ToPrimitive first: an array becomes its join, and two of those are
-    // strings, so this is a TEXT comparison.
+    // strings, so this is a text comparison.
     js_expect("[2] < [3]", "true");
-    // NaN makes all four false - that is the `undefined` result of 7.2.13.
+    // NaN makes all four false: that is the `undefined` result of 7.2.13.
     js_expect("NaN < 1", "false");
     js_expect("1 < NaN", "false");
     js_expect("NaN <= NaN", "false");
     js_expect("NaN >= NaN", "false");
 
-    // --- at, and the index coercion that hung the engine --------------------
-    // `"abc".at(NaN)` cast NaN to size_t - undefined behaviour - and the engine
-    // HUNG. A missing argument is undefined and ToNumber(undefined) is NaN, so
-    // `.at()`, `.at(undefined)` and `.at({})` all reached it. ToIntegerOrInfinity
-    // makes NaN zero, which is both the fix and the specification.
+    // --- at, and its index coercion ----------------------------------------
+    // ToIntegerOrInfinity makes NaN zero. A missing argument is undefined and
+    // ToNumber(undefined) is NaN, so `.at()`, `.at(undefined)` and `.at({})` all
+    // index 0. (Casting NaN to size_t instead is undefined behaviour.)
     js_expect("\"abc\".at(0)", "a");
     js_expect("\"abc\".at(2)", "c");
-    js_expect("\"abc\".at(-1)", "c"); // at DOES count from the end
+    js_expect("\"abc\".at(-1)", "c"); // at() does count from the end.
     js_expect("\"abc\".at(-3)", "a");
     js_expect("\"abc\".at(3)", "undefined");
     js_expect("\"abc\".at(-4)", "undefined");
@@ -75,13 +63,13 @@ int main() {
     js_expect("\"abc\".at(NaN)", "a");
     js_expect("\"abc\".at(undefined)", "a");
     js_expect("\"abc\".at({})", "a");
-    js_expect("\"abc\".at(1.7)", "b"); // truncates toward zero
+    js_expect("\"abc\".at(1.7)", "b"); // Truncates toward zero.
     js_expect("\"\".at(0)", "undefined");
     js_expect("\"\".at(NaN)", "undefined");
 
     // --- charAt / charCodeAt / codePointAt ----------------------------------
-    // A NEGATIVE POSITION IS OUT OF RANGE, not clamped to zero. Clamping made
-    // `"abc".charAt(-1)` answer "a" and `charCodeAt(-1)` answer 97.
+    // A negative position is out of range, not clamped to zero. Clamping would
+    // make `"abc".charAt(-1)` answer "a" and `charCodeAt(-1)` answer 97.
     js_expect("\"abc\".charAt(1)", "b");
     js_expect("\"abc\".charAt(-1)", "");
     js_expect("\"abc\".charAt(3)", "");
@@ -95,9 +83,9 @@ int main() {
     js_expect("\"abc\".codePointAt(-1)", "undefined");
     js_expect("\"abc\".codePointAt(3)", "undefined");
 
-    // --- the search family, which all ignored their position ----------------
-    // `"abc".indexOf("a", 1)` answered 0, so the idiom for walking every
-    // occurrence - `while ((i = s.indexOf(x, i + 1)) !== -1)` - never advanced.
+    // --- the search family honours its position argument -------------------
+    // If `"abc".indexOf("a", 1)` answered 0, the idiom for walking every
+    // occurrence, `while ((i = s.indexOf(x, i + 1)) !== -1)`, would never advance.
     js_expect("\"abc\".indexOf(\"a\")", "0");
     js_expect("\"abc\".indexOf(\"a\", 1)", "-1");
     js_expect("\"aaa\".indexOf(\"a\", 1)", "1");
@@ -105,7 +93,7 @@ int main() {
     js_expect("\"aaa\".indexOf(\"a\", -5)", "0");
     js_expect("\"abc\".indexOf(\"z\")", "-1");
     js_expect("\"abc\".indexOf(\"\")", "0");
-    // A MISSING NEEDLE IS "undefined", not the empty string.
+    // A missing needle is "undefined", not the empty string.
     js_expect("\"abc\".indexOf()", "-1");
     js_expect("\"undefined\".indexOf()", "0");
     js_expect("\"aaa\".lastIndexOf(\"a\")", "2");
@@ -118,12 +106,12 @@ int main() {
     js_expect("\"abc\".startsWith(\"b\", 1)", "true");
     js_expect("\"abc\".startsWith(\"b\")", "false");
     js_expect("\"abc\".endsWith(\"c\")", "true");
-    js_expect("\"abc\".endsWith(\"b\", 2)", "true"); // an END position, not a start
+    js_expect("\"abc\".endsWith(\"b\", 2)", "true"); // An end position, not a start.
     js_expect("\"abc\".endsWith(\"b\")", "false");
 
     // --- slice / substring / substr -----------------------------------------
-    // An explicit `undefined` end means "to the end", exactly as an ABSENT one
-    // does. Testing the argument count alone coerced it to 0 and returned "".
+    // An explicit `undefined` end means "to the end", exactly as an absent one
+    // does. Testing the argument count alone would coerce it to 0 and return "".
     js_expect("\"abc\".slice(1)", "bc");
     js_expect("\"abc\".slice(1, undefined)", "bc");
     js_expect("\"abc\".slice(-2)", "bc");
@@ -132,15 +120,15 @@ int main() {
     js_expect("\"abc\".slice()", "abc");
     js_expect("\"abc\".substring(1)", "bc");
     js_expect("\"abc\".substring(1, undefined)", "bc");
-    js_expect("\"abc\".substring(2, 1)", "b"); // substring SWAPS a reversed range
-    js_expect("\"abc\".substring(-1)", "abc"); // and clamps a negative, unlike slice
+    js_expect("\"abc\".substring(2, 1)", "b"); // substring swaps a reversed range...
+    js_expect("\"abc\".substring(-1)", "abc"); // ...and clamps a negative, unlike slice.
     js_expect("\"abc\".substr(1)", "bc");
     js_expect("\"abc\".substr(1, undefined)", "bc");
     js_expect("\"abc\".substr(-2)", "bc");
     js_expect("\"abc\".substr(NaN)", "abc");
     js_expect("\"abc\".substr(1, 1)", "b");
 
-    // --- split, whose limit was ignored -------------------------------------
+    // --- split, including its limit ----------------------------------------
     js_expect("\"a-b-c\".split(\"-\").join(\"|\")", "a|b|c");
     js_expect("\"a-b-c\".split(\"-\", 2).join(\"|\")", "a|b");
     js_expect("\"a-b-c\".split(\"-\", 0).length", "0");
@@ -150,7 +138,7 @@ int main() {
     js_expect("\"abc\".split().length", "1");
     js_expect("\"a1b2c\".split(/[0-9]/).join(\"|\")", "a|b|c");
 
-    // --- the parts that already worked, pinned so they keep working ---------
+    // --- everyday string operations -----------------------------------------
     js_expect("\"abc\".length", "3");
     js_expect("\"abc\"[1]", "b");
     js_expect("\"abc\".concat(\"d\", \"e\")", "abcde");
@@ -158,7 +146,7 @@ int main() {
     js_expect("\"ab\".repeat(0)", "");
     js_expect("\"abc\".padStart(5, \"xy\")", "xyabc");
     js_expect("\"abc\".padEnd(5, \"xy\")", "abcxy");
-    js_expect("\"abc\".padStart(2)", "abc"); // already long enough
+    js_expect("\"abc\".padStart(2)", "abc"); // Already long enough.
     js_expect("\"  x  \".trim()", "x");
     js_expect("\"  x  \".trimStart()", "x  ");
     js_expect("\"  x  \".trimEnd()", "  x");
@@ -179,14 +167,11 @@ int main() {
     js_expect("\"a\" === \"a\"", "true");
     js_expect("\"a\" !== \"b\"", "true");
 
-    // --- RequireObjectCoercible: the step 1 that was missing everywhere -----
-    //
-    // 22.1.3 opens EVERY method with RequireObjectCoercible(this value), and
-    // this file did only the ToString that follows it - so
-    // `String.prototype.trim.call(null)` answered "null" and
-    // `charAt.call(undefined)` answered "u". test262 has 45 files asserting the
-    // TypeError instead. `e.name` rather than a message, because the message is
-    // not the behaviour.
+    // --- RequireObjectCoercible ---------------------------------------------
+    // Every String.prototype method (22.1.3) starts with
+    // RequireObjectCoercible(this), so a null or undefined receiver throws
+    // TypeError rather than being stringified to "null" or "undefined". Tests
+    // check `e.name`, not the message, because the message is not specified.
     const auto throws = [](std::string_view code) {
         return "(function () { try { " + std::string{code} +
                "; return 'no'; } catch (e) { return e.name; } })()";
@@ -223,7 +208,7 @@ int main() {
     js_expect(throws("String.prototype.toLocaleLowerCase.call(null)"), "TypeError");
     js_expect(throws("String.prototype.localeCompare.call(null, 'a')"), "TypeError");
     js_expect(throws("String.prototype.normalize.call(null)"), "TypeError");
-    // A receiver that is merely NOT A STRING is still fine - the methods are
+    // A receiver that is merely not a string is still fine: the methods are
     // generic over everything ToString accepts, which is what makes
     // `String.prototype.trim.call(false)` answer "false" and not throw.
     js_expect("String.prototype.trim.call(false)", "false");
@@ -231,11 +216,11 @@ int main() {
     js_expect("String.prototype.charAt.call(123, 1)", "2");
     js_expect("String.prototype.indexOf.call({toString: function () { return 'abc'; }}, 'b')", "1");
 
-    // --- toString and valueOf are NOT generic (22.1.3.28, 22.1.3.35) --------
+    // --- toString and valueOf are not generic (22.1.3.28, 22.1.3.35) --------
     // thisStringValue, not ToString: a Number receiver is a TypeError, and it
-    // has to be - `''.concat({toString: String.prototype.toString})` is an
+    // has to be, since `''.concat({toString: String.prototype.toString})` is an
     // infinite regress if this coerces instead of refusing. That last case is
-    // NOT asserted here: the throw happens inside context::to_primitive_string,
+    // not asserted here: the throw happens inside context::to_primitive_string,
     // which reads the native's return value rather than checking for a pending
     // throw, so what a `catch` sees around it is the engine's unwinding and not
     // this method's contract.
@@ -245,14 +230,14 @@ int main() {
     js_expect(throws("String.prototype.toString.call(['s'])"), "TypeError");
     js_expect(throws("String.prototype.valueOf.call(1)"), "TypeError");
     // String.prototype's own [[StringData]] is the empty String, which is why
-    // this is "" and not a TypeError - the same rule that makes
+    // this is "" and not a TypeError: the same rule that makes
     // `Number.prototype.toString()` answer "0".
     js_expect("String.prototype.toString()", "");
     js_expect("String.prototype.valueOf()", "");
 
     // --- argument coercion: observable, once, and in the specified order ----
-    // The index arguments went through the STATIC ToNumber, which cannot run a
-    // user `valueOf` at all - so every object index read NaN and became 0.
+    // Index arguments must use the re-entrant ToNumber: the static one cannot
+    // run a user `valueOf`, so every object index would read NaN and become 0.
     js_expect("\"abc\".charAt({valueOf: function () { return 1; }})", "b");
     js_expect("\"abc\".at({valueOf: function () { return -1; }})", "c");
     js_expect("\"abc\".charCodeAt({valueOf: function () { return 1; }})", "98");
@@ -266,7 +251,7 @@ int main() {
     js_expect("\"abc\".substring({valueOf: function () { return 1; }})", "bc");
     js_expect("\"abc\".substr({valueOf: function () { return 1; }})", "bc");
     js_expect("\"a,b,c\".split(\",\", {valueOf: function () { return 2; }}).length", "2");
-    // 22.1.3.9 steps 3 and 4: ToString(searchString) BEFORE
+    // 22.1.3.9 steps 3 and 4: ToString(searchString) before
     // ToIntegerOrInfinity(position). Reversing them is invisible until one of
     // the two has a side effect, and then it is a wrong log with a right answer.
     js_expect(R"((function () {
@@ -286,10 +271,10 @@ int main() {
     })())",
               "sp");
 
-    // --- IsRegExp: includes/startsWith/endsWith REFUSE a pattern (7.2.8) ----
-    // `'a/b'.includes(/b/)` searching for the six characters of the source is a
-    // mistake often enough that the specification made it loud. This
-    // stringified the pattern, found nothing, and answered false.
+    // --- IsRegExp: includes/startsWith/endsWith refuse a pattern (7.2.8) ----
+    // `'a/b'.includes(/b/)` searching for the characters of the pattern's
+    // source is a common enough mistake that the specification throws
+    // TypeError rather than stringifying the pattern.
     js_expect(throws("\"abc\".includes(/b/)"), "TypeError");
     js_expect(throws("\"abc\".startsWith(/a/)"), "TypeError");
     js_expect(throws("\"abc\".endsWith(/c/)"), "TypeError");
@@ -304,10 +289,9 @@ int main() {
               "true");
     js_expect("typeof Symbol.match", "symbol");
 
-    // --- trim over the SPECIFIED whitespace set (12.2 + 12.3) ---------------
-    // The set was the ASCII six; fourteen more code points belong to it and all
-    // of them are non-ASCII, so - unlike case folding - they are answerable
-    // exactly from UTF-8 bytes with no table and no locale.
+    // --- trim over the specified whitespace set (12.2 + 12.3) ---------------
+    // The whitespace set is the ASCII six plus fourteen non-ASCII code points
+    // (U+00A0, U+FEFF, the Zs category and U+2028/U+2029).
     js_expect("\"\\u00a0x\\u00a0\".trim()", "x");
     js_expect("\"\\ufeffx\\ufeff\".trim()", "x");
     js_expect("\"\\u2028\\u2029x\\u3000\".trim()", "x");
@@ -318,15 +302,15 @@ int main() {
     // U+180E was a space separator in Unicode 6.2 and stopped being one in 6.3,
     // so it survives untouched.
     js_expect("\"\\u180ex\\u180e\".trim().length", "3");
-    // A byte that is not part of a well-formed sequence is NOT the character it
-    // resembles: é's second UTF-8 byte is A9, beside U+00A0's A0, and the
-    // character must not be trimmed away.
+    // A byte inside a multi-byte sequence is not the character it resembles:
+    // é's second UTF-8 byte is A9, beside U+00A0's A0, and the character must
+    // not be trimmed away.
     js_expect("\"\\u00e9\".trim().length", "1");
 
-    // --- match / search / matchAll take a PATTERN, not only a RegExp --------
-    // 22.1.3.13, 22.1.3.21 and 22.1.3.14 each RegExpCreate their argument.
-    // A non-object answered "no match" - null, or -1 - which is the commonest
-    // spelling of all and is silent: `if (s.match(x))` reads null as "absent".
+    // --- match / search / matchAll take a pattern, not only a RegExp --------
+    // 22.1.3.13, 22.1.3.21 and 22.1.3.14 each RegExpCreate their argument, so a
+    // string or number is compiled as a pattern rather than answering "no
+    // match" (null or -1), which `if (s.match(x))` would silently read as absent.
     js_expect("\"1234567890\".match(3)[0]", "3");
     js_expect("\"1234567890\".match(3).index", "2");
     js_expect("\"1234567890\".match(3).input", "1234567890");
@@ -335,21 +319,20 @@ int main() {
     js_expect("\"abc\".search(\"b\")", "1");
     js_expect("\"a2c\".search(2)", "1");
     js_expect("\"abc\".search(\"z\")", "-1");
-    // matchAll builds its RegExp with `g`, which is what makes this three
-    // matches rather than the first one forever - and answers an ITERATOR
-    // (22.1.3.14 step 5, since 2026-09-12; it was an array).
+    // matchAll builds its RegExp with `g`, so this finds three matches rather
+    // than the first one forever, and it returns an iterator (22.1.3.14 step 5).
     js_expect("[...\"aaa\".matchAll(\"a\")].length", "3");
     js_expect("[...\"abc\".matchAll(\"z\")].length", "0");
-    // ...and REFUSES a RegExp that has no `g`, because the answer would be
+    // ...and refuses a RegExp that has no `g`, because the answer would be
     // wrong either way (22.1.3.14 step 2b).
     js_expect(throws("\"aaa\".matchAll(/a/)"), "TypeError");
     js_expect("[...\"aaa\".matchAll(/a/g)].length", "3");
     js_expect(throws("\"aaa\".replaceAll(/a/, \"b\")"), "TypeError");
     js_expect("\"aaa\".replaceAll(/a/g, \"b\")", "bbb");
     // 22.1.3.20 step order: the argument's @@replace and the global-flag
-    // refusal come BEFORE ToString(this) - a receiver whose toString throws
+    // refusal come before ToString(this), so a receiver whose toString throws
     // never runs it when the argument answers or is refused.
-    // (js_expect takes an EXPRESSION, hence the IIFEs.)
+    // (js_expect takes an expression, hence the IIFEs.)
     js_expect("(function () { var poison = { toString() { throw 'no'; } }; var r; try {"
               " ''.replaceAll.call(poison, /a/, 'b'); } catch (e) { r = e instanceof TypeError; }"
               " return r; })()",
@@ -362,9 +345,10 @@ int main() {
               "no");
 
     // --- normalize checks its form even though it normalises nothing --------
-    // The identity is a stated deviation (strings are bytes, so there is no
-    // decomposition to compose); the RangeError of 22.1.3.15 step 4 is not, and
-    // it is what tells a page that wrote "NFKC1" that it made a typo.
+    // normalize() returns its input unchanged: this engine has no Unicode
+    // normalization tables. It still validates the form argument and throws
+    // RangeError for an unknown one (22.1.3.15 step 4), which is how a page that
+    // wrote "NFKC1" finds its typo.
     js_expect("\"abc\".normalize()", "abc");
     js_expect("\"abc\".normalize(undefined)", "abc");
     js_expect("\"abc\".normalize(\"NFD\")", "abc");
@@ -393,7 +377,7 @@ int main() {
     js_expect("String.fromCharCode.length", "1");
     js_expect("String.raw.length", "1");
 
-    // ToUint16 wrapping is independent of the byte-based string indexing below.
+    // String.fromCharCode wraps each argument with ToUint16.
     js_expect("String.fromCharCode(-1, 65537, 4294967361) === '\\uffff\\u0001A'", "true");
     js_expect("String.fromCharCode(NaN, Infinity, -Infinity) === '\\u0000\\u0000\\u0000'", "true");
     // A direct numeric TypeError must stop before converting the next argument.
@@ -595,9 +579,9 @@ int main() {
         .map(function (i) { return 'zA'.charCodeAt(i); }).join())",
               "122,122,122,65,NaN,NaN,NaN,NaN");
     js_expect("''.charCodeAt()", "NaN");
-    // AND charAt AND charCodeAt DESCRIBE THE SAME CHARACTER AT EVERY INDEX,
-    // whatever the representation: a string walked with both - the WPT
-    // results reporter's quote() - must not see two different strings.
+    // charAt and charCodeAt describe the same character at every index,
+    // whatever the representation: a string walked with both (as the WPT
+    // results reporter's quote() does) must not see two different strings.
     js_expect(R"((function () {
         var s = 'a\u00e9\u20ac\ud83d\ude00';
         for (var i = 0; i < s.length; i++) {
@@ -625,28 +609,26 @@ int main() {
     })())",
               "true");
 
-    // --- the UTF-16 gap, CLOSED ----------------------------------------------
-    //
-    // Until 2026-09-26 every line here pinned a WRONG answer - the length and
-    // every index counted UTF-8 bytes - with V8's beside it as the acceptance
-    // list. They read V8's answers now: a string is UTF-16 code units over
-    // WTF-8 storage (script/utf16.hpp).
-    js_expect("\"e\\u0301\".length", "2"); // a combining mark is one unit
+    // --- UTF-16 code units --------------------------------------------------
+    // Lengths, indices and RegExp positions count UTF-16 code units (strings
+    // are WTF-8 storage behind a UTF-16 view, script/utf16.hpp). Expected values
+    // are V8's.
+    js_expect("\"e\\u0301\".length", "2"); // A combining mark is one unit.
     js_expect("\"\\u00e9\".length", "1");
     js_expect("\"\\u00e9\".charCodeAt(0)", "233");
-    js_expect("\"\\ud83d\\ude00\".length", "2"); // a surrogate pair
+    js_expect("\"\\ud83d\\ude00\".length", "2"); // A surrogate pair.
     js_expect("\"\\ud83d\\ude00\".charCodeAt(0)", "55357");
     js_expect("\"\\ud83d\\ude00\".charCodeAt(1)", "56832");
     js_expect("\"\\ud83d\\ude00\".codePointAt(0)", "128512");
-    js_expect("\"\\ud83d\\ude00\".codePointAt(1)", "56832"); // the trail alone
+    js_expect("\"\\ud83d\\ude00\".codePointAt(1)", "56832"); // The trail alone.
     js_expect("\"\\ud83d\\ude00\".split(\"\").length", "2");
-    js_expect("[...\"\\ud83d\\ude00\"].length", "1"); // iteration is by code POINT
+    js_expect("[...\"\\ud83d\\ude00\"].length", "1"); // Iteration is by code point.
     js_expect("Array.from(\"a\\u{1F600}b\").length", "3");
     js_expect("\"\\u00e9\".slice(0, 1) === \"\\u00e9\"", "true");
     js_expect("\"a\\u00e9b\".substring(1, 2) === \"\\u00e9\"", "true");
     js_expect("\"a\\u00e9b\".charAt(2)", "b");
     js_expect("\"a\\u00e9b\"[1] === \"\\u00e9\"", "true");
-    js_expect("\"abc\"[\"1\"]", "b"); // an index spelled as a string
+    js_expect("\"abc\"[\"1\"]", "b"); // An index spelled as a string.
     js_expect("\"\\u00e9b\".indexOf(\"b\")", "1");
     js_expect("\"b\\u00e9b\".lastIndexOf(\"b\")", "2");
     js_expect("\"\\u00e9\\u00e9x\".startsWith(\"x\", 2)", "true");
@@ -662,7 +644,7 @@ int main() {
     js_expect("String.fromCharCode(0xFFFF).charCodeAt(0)", "65535");
     js_expect("String.fromCharCode(0xD83D, 0xDE00).length", "2");
     js_expect("Object.keys(\"\\u00e9x\").join()", "0,1");
-    // Code UNIT order, which is not code point order: a pair sorts below
+    // Code unit order, which is not code point order: a pair sorts below
     // U+FFFD because its first unit is D83D.
     js_expect("\"\\u{1F600}\" < \"\\ufffd\"", "true");
     js_expect("[\"\\ufffd\", \"\\u{1F600}\"].sort()[0] === \"\\u{1F600}\"", "true");
@@ -678,7 +660,7 @@ int main() {
     js_expect("atob(\"6Q==\").charCodeAt(0)", "233");
     js_expect("atob(\"6Q==\").length", "1");
     js_expect("btoa(\"\\u0100\")", "THREW");
-    js_expect("atob(\"a\")", "THREW"); // a length leaving a remainder of 1
+    js_expect("atob(\"a\")", "THREW"); // A length leaving a remainder of 1.
 
     // --- Unicode's default case conversion ----------------------------------
     // SpecialCasing's unconditional entries, Final_Sigma, and the supplementary
@@ -697,11 +679,11 @@ int main() {
     js_expect("'abc'.split({[Symbol.split](s, l){return [s, l];}}, 2).join()", "abc,2");
     js_expect("'abc'.matchAll({[Symbol.matchAll](s){return s.length;}})", "3");
     js_expect("'abc'.match({get [Symbol.match]() { throw new Error('poison'); }})", "THREW");
-    js_expect("'abc'.match({[Symbol.match]: 1})", "THREW"); // GetMethod: not callable
-    // GetMethod: null is absent, so RegExpCreate(ToString(obj)) runs - a class
+    js_expect("'abc'.match({[Symbol.match]: 1})", "THREW"); // GetMethod: not callable.
+    // GetMethod: null is absent, so RegExpCreate(ToString(obj)) runs; a class
     // of the characters in "[object Object]" matches the b.
     js_expect("'abc'.match({[Symbol.match]: null})[0]", "b");
-    js_expect("'abc'.match(/b/)[0]", "b"); // a real RegExp is unchanged
+    js_expect("'abc'.match(/b/)[0]", "b"); // A real RegExp is unchanged.
     js_expect("'a-b'.split('-').length", "2");
 
     // --- 19.2.6 the URI functions (node's answers) ---------------------------
@@ -713,9 +695,9 @@ int main() {
     js_expect("decodeURIComponent('%E2%82%AC')", "€");
     js_expect("decodeURIComponent('%')", "THREW");
     js_expect("decodeURIComponent('%zz')", "THREW");
-    js_expect("decodeURIComponent('%C0%80')", "THREW");    // overlong
-    js_expect("decodeURIComponent('%ED%A0%80')", "THREW"); // a surrogate
-    js_expect("decodeURIComponent('%E2%82')", "THREW");    // truncated
+    js_expect("decodeURIComponent('%C0%80')", "THREW");    // Overlong.
+    js_expect("decodeURIComponent('%ED%A0%80')", "THREW"); // A surrogate.
+    js_expect("decodeURIComponent('%E2%82')", "THREW");    // Truncated.
     js_expect("encodeURIComponent()", "undefined");
     js_expect("[encodeURI.length, decodeURIComponent.name].join()", "1,decodeURIComponent");
 

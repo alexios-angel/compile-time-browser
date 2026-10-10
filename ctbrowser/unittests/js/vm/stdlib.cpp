@@ -1,8 +1,11 @@
+//===- ctbrowser/unittests/js/vm/stdlib.cpp - VM standard library tests ---===//
+//
 // The standard library: Math, Array, String, RegExp, JSON, Date, the
-// collections, typed arrays over a shared ArrayBuffer, and the two web globals
-// (btoa/atob and structuredClone). Carved out of js/vm_basics.cpp on
-// 2026-09-08 - operators.cpp names the family, and expect.hpp is the
-// assertion every file in it shares.
+// collections, typed arrays over a shared ArrayBuffer, eval, and the web
+// globals btoa/atob and structuredClone. expect.hpp holds the shared
+// assertions.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -17,17 +20,15 @@ using namespace ctbrowser::script;
 
 namespace {
 
-// A REGEX ENGINE. Literals were rejected by name; there was none. Ported from
-// ctjs's backtracking matcher, which was already self-contained and coupled to
-// its host by exactly two calls, then extended with what p5.js actually uses:
-// lookahead, the sticky flag and named groups - and, for test262's String
-// rows, lookbehind and backreferences.
+/// Regular expressions. The engine is a backtracking matcher ported from
+/// ctjs, extended with what p5.js uses (lookahead, the sticky flag, named
+/// groups) and, for test262's String tests, lookbehind and backreferences.
 void test_regex() {
-    // Invalid FLAGS are an early error - a SyntaxError of the source,
-    // reported as a parse error - not a throw when the line runs. So is a
-    // body that is provably not a Pattern by inspection - an unclosed group,
-    // nothing to repeat - while anything the scan does not judge is left to
-    // the line (compile/early_errors/regexp.cpp says what it judges).
+    // Invalid flags are an early error (a SyntaxError of the source, reported
+    // as a parse error), not a throw when the line runs. So is a body that is
+    // provably not a Pattern by inspection (an unclosed group, nothing to
+    // repeat); anything the scan does not judge is left to run time
+    // (lib/Script/compile/early_errors/regexp.cpp says what it judges).
     CHECK(!compiler::compile("var r = /a/gg;").ok);
     CHECK(compiler::compile("var r = /a/gg;").error.starts_with("parse error:"));
     CHECK(!compiler::compile("var r = /a/q;").ok);
@@ -37,47 +38,45 @@ void test_regex() {
     CHECK(!compiler::compile("var r = /a{2,1}/;").ok);
     CHECK(!compiler::compile("var r = /(?<a>x)(?<a>y)/;").ok);
     CHECK(compiler::compile("var r = /(?<a>x)|(?<a>y)/;").ok);
-    CHECK(compiler::compile("var r = /a{1/;").ok); // Annex B: a literal brace
+    CHECK(compiler::compile("var r = /a{1/;").ok); // Annex B: a literal brace.
     CHECK(!compiler::compile("var r = /a{1/u;").ok);
     CHECK(compiler::compile("var r = /[/]/;").ok);
     CHECK(compiler::compile("var r = / /;").ok);
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[0];", "abbbc");
     expect_result("return /a(b+)c/.exec('xxabbbcyy')[1];", "bbb");
-    // .index is the most-used feature of all, at 143 sites in p5.js
+    // `.index` is the most-used regex feature in p5.js.
     expect_result("return /a(b+)c/.exec('xxabbbcyy').index;", "2");
     expect_result("return /nope/.exec('abc') === null;", "true");
     expect_result("return /^\\d+$/.test('4711');", "true");
     expect_result("return /^\\d+$/.test('47a1');", "false");
     expect_result("return /x/i.test('X');", "true");
     expect_result("return /[a-f0-9]{2}/i.exec('zz A9 zz')[0];", "A9");
-    // the constructor and the literal build the same thing
+    // The constructor and the literal build the same thing.
     expect_result("return new RegExp('b+', '').exec('abbbc')[0];", "bbb");
     expect_result("return /ab/g.source + '|' + /ab/gi.flags;", "ab|gi");
-    // lookahead, positive and negative
+    // Lookahead, positive and negative.
     expect_result("return /foo(?=bar)/.test('foobar');", "true");
     expect_result("return /foo(?=bar)/.test('foobaz');", "false");
     expect_result("return /foo(?!bar)/.test('foobaz');", "true");
-    // a named group is an ordinary capture that also answers to a name
+    // A named group is an ordinary capture that also answers to a name.
     expect_result("return /(?<n>\\d+)/.exec('x42').groups.n;", "42");
-    // `g` resumes from lastIndex and writes it back
+    // `g` resumes from lastIndex and writes it back.
     expect_result("const re = /\\d/g; const s = 'a1b2'; re.exec(s); return re.exec(s)[0];", "2");
     expect_result("const re = /\\d/g; re.exec('a1'); re.exec('a1'); return re.lastIndex;", "0");
-    // lookbehind and backreferences, since 2026-09-12 (../regexp/model.cpp has
-    // the rest of the object model)
+    // Lookbehind and backreferences (../regexp/model.cpp tests the rest of the
+    // RegExp object model).
     expect_result("return /(?<=x)y/.test('xy');", "true");
     expect_result("return /(a)\\1/.test('aa') + '' + /(a)\\1/.test('ab');", "truefalse");
-    // and a pattern that cannot compile is a SyntaxError when the line runs
+    // A pattern that cannot compile is a SyntaxError when the line runs.
     expect_result("try { new RegExp('('); return 'no'; } catch (e) { return e.name; }",
                   "SyntaxError");
 }
 
-// `a.length = n` RESIZES, and a write that is silently dropped is the kind of
-// gap that looks like support. The engine read `length` and ignored every write
-// to it, so `a.length = 0` - which is how a great deal of code empties an array
-// - left the array exactly as full as it was. Phaser found it: its scene
-// manager ends boot with `this._pending.length = 0`, so the queue it had just
-// drained was still full and the next frame added the same scene again and
-// threw "Cannot add Scene with duplicate key".
+/// `a.length = n` resizes the array. `a.length = 0` is how a great deal of code
+/// empties an array: Phaser's scene manager ends boot with
+/// `this._pending.length = 0`, and if the write were dropped the next frame
+/// would add the same scene again and throw "Cannot add Scene with duplicate
+/// key".
 void test_array_length_is_writable() {
     expect_result("var a = [1,2,3]; a.length = 0; return a.length;", "0");
     expect_result("var a = [1,2,3]; a.length = 0; return JSON.stringify(a);", "[]");
@@ -88,23 +87,16 @@ void test_array_length_is_writable() {
     expect_result("var a = [1]; a.length = 3; return String(a[2]);", "undefined");
     // A string coerces, as it does everywhere else.
     expect_result("var a = [1,2,3]; a.length = '1'; return JSON.stringify(a);", "[1]");
-    // NONSENSE THROWS, and these two rows used to assert the opposite.
-    //
-    // The leniency they pinned - "a dropped nonsense write leaves the array as
-    // it was" - was not free: the same branch that swallowed `-1` also had to
-    // decide what to do with 4294967295, and it RESIZED, which is 34 GB and the
-    // SIGABRT test262 measured in eleven of its Array tests on 2026-09-02. One
-    // predicate now answers both questions (array_object::set_js_length), and
-    // 10.4.2.4's RangeError is what it answers with. No page can have depended
-    // on the old behaviour, because every browser throws here.
+    // An invalid length (negative, fractional, NaN, or 2^32 or more) throws a
+    // RangeError (ECMA-262 10.4.2.4), as every browser does.
+    // array_object::set_js_length makes this check.
     expect_result("var a = [1,2]; try { a.length = -1; } catch (e) { return e.name; }",
                   "RangeError");
     expect_result("var a = [1,2]; try { a.length = NaN; } catch (e) { return e.name; }",
                   "RangeError");
-    // ...and the array is untouched by the refusal, which is the half of the
-    // old leniency worth keeping.
+    // The refused write leaves the array unchanged.
     expect_result("var a = [1,2]; try { a.length = -1; } catch (e) {} return a.length;", "2");
-    // A TYPED array is a view over bytes sized once; resizing it would leave
+    // A typed array is a view over bytes sized once; resizing it would leave
     // the view and its buffer disagreeing, so the write is a no-op.
     expect_result("var t = new Uint8Array(4); t.length = 0; return t.length;", "4");
     // And the ordinary uses still work either side of it.
@@ -124,15 +116,15 @@ void test_collections() {
     expect_result(
         "const m = new Map(); m.set('k', 1); m.set('k', 9); return m.get('k') + '|' + m.size;",
         "9|1");
-    // An ITERATOR, so it has no `join` - `[...m.keys()].join(',')` is how it is
-    // written in a browser and here.
+    // `keys()` returns an iterator, which has no `join`; `[...m.keys()]` is how
+    // it is written in a browser and here.
     expect_result("const m = new Map([['a', 1], ['b', 2]]); return [...m.keys()].join(',');",
                   "a,b");
     expect_result("const m = new Map([['a', 1]]); return m.has('z');", "false");
-    // NaN matches NaN as a key, which === does not
+    // NaN matches NaN as a key (SameValueZero), which === does not.
     expect_result("const s = new Set([NaN]); return s.has(NaN);", "true");
-    // and a class may extend one - which means super() has to initialise the
-    // RECEIVER rather than making a fresh object
+    // A class may extend one, so super() has to initialise the receiver rather
+    // than make a fresh object.
     expect_result(
         "class S extends Set {} const s = new S(); s.add(5); return s.has(5) + '|' + s.size;",
         "true|1");
@@ -150,41 +142,41 @@ void test_stdlib_additions() {
     expect_result("return [1, 2].flatMap(x => [x, x]).join(',');", "1,1,2,2");
     expect_result("return [1, 2, 3].findLast(x => x < 3);", "2");
     expect_result("return Math.cbrt(27) + '|' + Math.log2(8) + '|' + Math.log10(1000);", "3|3|3");
-    // AND IT IS EXACTLY 3, which the line above did not actually establish: it
-    // passed for years against 3.0000000000000004, because `to_string` rounded
-    // to six decimals and printed "3" either way. glibc's cbrt is an ulp out on
-    // a perfect cube. `===` is what asks the question the string never did.
+    // Exactly 3, which the string comparison above cannot establish: a result
+    // of 3.0000000000000004 prints as "3" too. glibc's cbrt is one ulp out on
+    // some perfect cubes, so `===` checks the exact value.
     expect_result("return Math.cbrt(27) === 3 && Math.cbrt(216) === 6 && "
                   "Math.cbrt(-27) === -3 && Math.cbrt(1e9) === 1000;",
                   "true");
     expect_result("return Number.isInteger(2) + '|' + Number.isInteger(2.5);", "true|false");
-    // these do NOT coerce, and the difference is used deliberately
+    // Number.isFinite does not coerce and the global isFinite does; code relies
+    // on the difference.
     expect_result("return Number.isFinite('1') + '|' + isFinite('1');", "false|true");
     expect_result("return Number.MAX_SAFE_INTEGER;", "9007199254740991");
 }
 
-// TYPED ARRAYS COERCE ON WRITE, which is the whole of what makes them typed.
-// Stored as ordinary arrays of values rather than packed bytes - that buys the
-// existing array machinery for nothing - but a shortcut on the coercion would
-// have been a silent wrong answer in exactly the place it matters most.
+/// Typed arrays coerce on write, which is what makes them typed. One without a
+/// buffer is stored as an ordinary array of values rather than packed bytes
+/// (see value/arrays.hpp), so the coercion is the only thing standing between
+/// a write and a wrong value.
 void test_typed_arrays() {
     expect_result("const a = new Uint8Array(3); return a.length + '|' + a[0];", "3|0");
     expect_result("const a = new Uint8Array([1, 2, 3]); return a.join(',');", "1,2,3");
-    // wrapping, and the one type that CLAMPS instead - it is the pixel type
+    // Integer kinds wrap; Uint8ClampedArray, the pixel type, clamps instead.
     expect_result("const a = new Uint8Array(1); a[0] = 300; return a[0];", "44");
     expect_result("const a = new Uint8ClampedArray(1); a[0] = 300; return a[0];", "255");
     expect_result("const a = new Uint8ClampedArray(1); a[0] = -5; return a[0];", "0");
     expect_result("const a = new Int8Array(1); a[0] = 200; return a[0];", "-56");
     expect_result("const a = new Int32Array(1); a[0] = 2147483648; return a[0];", "-2147483648");
-    // a float32 loses precision a double would keep, which is observable
+    // A float32 loses precision a double would keep, which is observable.
     expect_result("const a = new Float32Array(1); a[0] = 0.1; return a[0] === 0.1;", "false");
     expect_result("const a = new Float64Array(1); a[0] = 0.1; return a[0] === 0.1;", "true");
-    // and a typed array does NOT grow: a write past the end is dropped
+    // A typed array does not grow: a write past the end is dropped.
     expect_result("const a = new Uint8Array(2); a[5] = 1; return a.length;", "2");
     expect_result("return Uint16Array.BYTES_PER_ELEMENT;", "2");
-    // 23.2.7: each constructor has a prototype OBJECT of its own, with
-    // `constructor` and BYTES_PER_ELEMENT, and an instance's chain starts
-    // there - which is what `class S extends Uint8Array {}` reads.
+    // ECMA-262 23.2.7: each constructor has a prototype object of its own,
+    // with `constructor` and BYTES_PER_ELEMENT, and an instance's chain starts
+    // there, which is what `class S extends Uint8Array {}` reads.
     expect_result("return Uint8Array.prototype.constructor === Uint8Array;", "true");
     expect_result("return Uint8Array.prototype.BYTES_PER_ELEMENT;", "1");
     expect_result("return Object.getPrototypeOf(new Uint8Array(1)) === Uint8Array.prototype;",
@@ -193,9 +185,6 @@ void test_typed_arrays() {
     expect_result("return new Uint8Array(1) instanceof Int8Array;", "false");
     expect_result("return new Float32Array(1).constructor.name;", "Float32Array");
     expect_result("Uint8Array.prototype.tag = 'u8'; return new Uint8Array(1).tag;", "u8");
-    // (`class S extends Uint8Array {}; new S(2)` still answers the class's own
-    // instance rather than the typed array super() built - the constructor
-    // path in vm/call, not the prototype - so it is not asserted here.)
     expect_result("const a = new Uint8Array(4); a.set([9, 8], 1); return a.join(',');", "0,9,8,0");
     expect_result("const a = new Uint8Array([1, 2, 3, 4]); return a.subarray(1, 3).join(',');",
                   "2,3");
@@ -205,16 +194,16 @@ void test_string_statics() {
     expect_result("return String.fromCharCode(104, 105);", "hi");
     expect_result("return String.fromCharCode.apply(null, [97, 98, 99]);", "abc");
     expect_result("return String(42);", "42");
-    // one code unit, whatever its UTF-8 is
+    // One code unit, whatever its UTF-8 is.
     expect_result("return String.fromCharCode(233).length;", "1");
 }
 
-// btoa and atob are BYTE oriented: btoa's argument is a binary string of values
-// 0-255, not text. Treating it as text is how a page's exported image arrives
-// truncated at the first byte that is not valid UTF-8.
+/// btoa and atob are byte oriented: btoa's argument is a binary string of
+/// values 0-255, not text. Treating it as text would truncate a page's exported
+/// image at the first byte that is not valid UTF-8.
 void test_base64() {
     expect_result("return btoa('hello');", "aGVsbG8=");
-    expect_result("return btoa('hi');", "aGk="); // the padding says how many bytes were real
+    expect_result("return btoa('hi');", "aGk="); // The padding says how many bytes were real.
     expect_result("return btoa('abc');", "YWJj");
     expect_result("return btoa('');", "");
     expect_result("return atob('aGVsbG8=');", "hello");
@@ -227,8 +216,7 @@ void test_base64() {
 }
 
 void test_math() {
-    // Math.random aside, these are the functions every page reaches for. None
-    // of them existed: `Math` itself was undefined.
+    // Math.random aside, these are the functions every page reaches for.
     expect_result("return Math.floor(3.7);", "3");
     expect_result("return Math.ceil(3.2);", "4");
     expect_result("return Math.abs(-5);", "5");
@@ -236,8 +224,8 @@ void test_math() {
     expect_result("return Math.min(1, 9, 4);", "1");
     expect_result("return Math.sqrt(16);", "4");
     expect_result("return Math.pow(2, 10);", "1024");
-    // JS rounds .5 toward POSITIVE infinity; std::round rounds away from zero
-    // and would give -1 here.
+    // JavaScript rounds .5 toward positive infinity; std::round rounds away
+    // from zero and would give -1 here.
     expect_result("return Math.round(-0.5);", "0");
     expect_result("return Math.round(2.5);", "3");
     expect_result("return Math.floor(Math.PI * 100) / 100;", "3.14");
@@ -253,7 +241,6 @@ void test_math_random_is_in_range_and_moves() {
 }
 
 void test_array_methods() {
-    // `arr.push` resolved to nothing before the prototype table existed.
     expect_result("var a = [1,2]; a.push(3); return a.length;", "3");
     expect_result("var a = [1,2,3]; return a.pop();", "3");
     expect_result("var a = [1,2,3]; a.shift(); return a[0];", "2");
@@ -268,8 +255,7 @@ void test_array_methods() {
 }
 
 void test_array_iteration_calls_back_into_the_vm() {
-    // These are the ones that need context::call - a native invoking a JS
-    // function. Without it none of them can exist at all.
+    // These need context::call: a native function invoking a JavaScript one.
     expect_result("var t = 0; [1,2,3].forEach(function (x) { t += x; }); return t;", "6");
     expect_result("return [1,2,3].map(function (x) { return x * 2; }).join(',');", "2,4,6");
     expect_result("return [1,2,3,4].filter(function (x) { return x % 2 == 0; }).join(',');", "2,4");
@@ -277,7 +263,7 @@ void test_array_iteration_calls_back_into_the_vm() {
     expect_result("return [1,2,3].find(function (x) { return x > 1; });", "2");
     expect_result("return [1,2,3].some(function (x) { return x > 2; });", "true");
     expect_result("return [1,2,3].every(function (x) { return x > 0; });", "true");
-    // The callback gets the index too, which half of real uses depend on.
+    // The callback gets the index too, which many real uses depend on.
     expect_result("var s = ''; ['a','b'].forEach(function (x, i) { s += i + x; }); return s;",
                   "0a1b");
 }
@@ -289,11 +275,10 @@ void test_array_sort() {
     // [10, 9] sorts to [10, 9] and surprises everyone once.
     expect_result("return [10,9].sort().join(',');", "10,9");
 
-    // --- what the merge sort has to keep -----------------------------------
-    // It replaced a stable insertion sort that was O(n^2) - 104 ms at 4000
-    // elements, tracking n^2 exactly. Speed is not what these check.
+    // The properties the merge sort must keep. These check correctness, not
+    // speed.
 
-    // STABLE: equal keys keep their original order. The specification requires
+    // Stable: equal keys keep their original order. The specification requires
     // it, and a merge that takes the right side on a tie would quietly break it
     // while still producing sorted output.
     expect_result("const xs = [['b',1],['a',1],['c',0],['d',1]];"
@@ -302,7 +287,7 @@ void test_array_sort() {
                   "cbad");
 
     // Big enough that a quadratic sort would be visible, and checked by
-    // CONTENT rather than by trusting the sort that produced it.
+    // content rather than by trusting the sort that produced it.
     expect_result("const a = []; let s = 12345;"
                   "for (let i = 0; i < 2000; i++) { s = (s * 1103515245 + 12345) & 2147483647;"
                   "  a.push(s % 1000); }"
@@ -312,10 +297,10 @@ void test_array_sort() {
                   "return String(ok);",
                   "true");
 
-    // AN INCONSISTENT COMPARATOR MUST NOT CORRUPT ANYTHING. This is why
-    // std::sort is not used: it would be undefined behaviour. A merge reads
+    // An inconsistent comparator must not corrupt anything, which is why
+    // std::sort is not used (it would be undefined behaviour). A merge reads
     // only inside two ranges it computed itself, so no answer can move an index
-    // out of them - the result is unspecified, staying alive is not.
+    // out of them: the order is unspecified, but the engine survives.
     expect_result("const a = [5,3,8,1,9,2,7];"
                   "a.sort(function () { return 1; });"
                   "return String(a.length);",
@@ -325,10 +310,9 @@ void test_array_sort() {
                   "return String(a.length);",
                   "7");
 
-    // A COMPARATOR THAT MUTATES THE ARRAY IT IS SORTING. The old loop indexed
-    // the live array while calling out, so this walked off the end; the merge
-    // sorts a snapshot and writes it back, so the worst case is an unspecified
-    // order.
+    // A comparator that mutates the array it is sorting. The merge sorts a
+    // snapshot and writes it back, so the worst case is an unspecified order,
+    // never a read past the end of the live array.
     expect_result("const a = [4,2,5,1,3];"
                   "a.sort(function (x, y) { a.length = 0; return x - y; });"
                   "return 'survived';",
@@ -338,8 +322,8 @@ void test_array_sort() {
                   "return 'survived';",
                   "survived");
 
-    // The default path now precomputes its string keys; it must still be the
-    // same lexicographic order, and still stable.
+    // The default comparison precomputes its string keys; it must still give
+    // the same lexicographic order, and still be stable.
     expect_result("return ['banana','apple','cherry'].sort().join(',');", "apple,banana,cherry");
     expect_result("return [1,5,20,3].sort().join(',');", "1,20,3,5");
     expect_result("return [].sort().length;", "0");
@@ -354,16 +338,16 @@ void test_string_methods() {
     expect_result("return 'hello'.indexOf('ll');", "2");
     expect_result("return 'hello'.includes('ell');", "true");
     expect_result("return 'hello'.slice(1, 3);", "el");
-    expect_result("return 'hello'.substring(3, 1);", "el"); // substring swaps
+    expect_result("return 'hello'.substring(3, 1);", "el"); // substring swaps its arguments.
     expect_result("return '  hi  '.trim();", "hi");
     expect_result("return 'ab'.repeat(3);", "ababab");
-    expect_result("return 'a-b-a'.replace('a', 'X');", "X-b-a");    // first only
-    expect_result("return 'a-b-a'.replaceAll('a', 'X');", "X-b-X"); // all
+    expect_result("return 'a-b-a'.replace('a', 'X');", "X-b-a");    // The first only.
+    expect_result("return 'a-b-a'.replaceAll('a', 'X');", "X-b-X"); // All.
     expect_result("return '5'.padStart(3, '0');", "005");
     expect_result("return 'abc'.charAt(1);", "b");
     expect_result("return 'A'.charCodeAt(0);", "65");
     expect_result("return 'abc'.startsWith('ab');", "true");
-    expect_result("return 'abc'.length;", "3"); // still works alongside the methods
+    expect_result("return 'abc'.length;", "3"); // Still works alongside the methods.
 }
 
 void test_number_and_conversions() {
@@ -371,7 +355,7 @@ void test_number_and_conversions() {
     expect_result("return parseInt('42');", "42");
     expect_result("return parseInt('ff', 16);", "255");
     expect_result("return parseFloat('3.5');", "3.5");
-    // parseInt of nonsense is NaN, not an error - a page checks it with isNaN
+    // parseInt of nonsense is NaN, not an error; a page checks it with isNaN
     // straight afterwards.
     expect_result("return isNaN(parseInt('abc'));", "true");
     expect_result("return String(42);", "42");
@@ -385,19 +369,19 @@ void test_json() {
     expect_result("return JSON.parse('[1,2,3]')[2];", "3");
     expect_result("var o = JSON.parse(JSON.stringify({a: [1, {b: 2}]})); return o.a[1].b;", "2");
     expect_result("return JSON.stringify(JSON.parse('{\"s\":\"a\\\\nb\"}'));",
-                  "{\"s\":\"a\\nb\"}"); // escapes survive a round trip
+                  "{\"s\":\"a\\nb\"}"); // Escapes survive a round trip.
 }
 
-// `entries`, `keys` and `values` on an array, and `entries` on a Set.
-//
-// Each is a REAL ITERATOR: it has `next` and `@@iterator`, its own state is not
-// enumerable, and for..of and spread both walk it. They used to be bare Arrays,
-// and a page that drove one by hand - Babylon does, for the Map of shadow
-// generators a light owns - got "`next` is undefined". An ARRAY's three are
-// LIVE (23.1.5.1): `length` is read on every step, over any array-like.
+/// `entries`, `keys` and `values` on an array, and `entries` on a Set.
+///
+/// Each returns a real iterator: it has `next` and `@@iterator`, its own state
+/// is not enumerable, and for..of and spread both walk it. Babylon drives one
+/// by hand for the Map of shadow generators a light owns. An array's three are
+/// live (ECMA-262 23.1.5.1): `length` is read on every step, over any
+/// array-like.
 void test_array_iterators() {
-    // `{}` and not the pairs: an iterator has no enumerable own property, which
-    // is also the guard that its `__items` and `__at` stay invisible.
+    // `{}` and not the pairs: an iterator has no enumerable own property, so
+    // its internal state stays invisible.
     expect_result("return JSON.stringify(['x', 'y'].entries());", "{}");
     expect_result("return JSON.stringify([...['x', 'y'].entries()]);", "[[0,\"x\"],[1,\"y\"]]");
     expect_result("const it = [7, 8].values(); const a = it.next();"
@@ -425,31 +409,28 @@ void test_array_iterators() {
                   "0,a|1,b");
     expect_result("try { Array.prototype.values.call(null); } catch (e) { return e.name; }",
                   "TypeError");
-    // A Set's entries pairs each member WITH ITSELF, which looks odd and is the
-    // spec: it exists so a Set and a Map can be walked by the same code.
+    // A Set's entries pairs each member with itself, which looks odd and is the
+    // spec: it lets a Set and a Map be walked by the same code.
     expect_result("const s = new Set(['a']);"
                   "let out = ''; for (const [k, v] of s.entries()) { out += k + v; } return out;",
                   "aa");
     expect_result("return typeof new Map().entries;", "function");
 }
 
-// `Date` IS CONSTRUCTIBLE, and reads a calendar out of a millisecond count.
-//
-// It was a namespace with `now()` on it, so `new Date()` was "Date is not a
-// function". p5 exposes day()/month()/year()/hour() and every one builds a
-// Date, so a sketch showing a clock failed on its first line.
-//
-// UTC only - a timezone database is a different project - so the local and
-// UTC methods agree. `new Date()` with no argument is the epoch, deliberately:
-// the clock is fixed here for the same reason Math.random is seeded, so a page
-// that draws from either can have a golden.
+/// `Date` is constructible and reads a calendar out of a millisecond count.
+/// p5's day()/month()/year()/hour() each build a Date.
+///
+/// UTC only (a timezone database is a different project), so the local and
+/// UTC methods agree. `new Date()` with no argument is the epoch, deliberately:
+/// the clock is fixed for the same reason Math.random is seeded, so a page
+/// that draws from either can have a golden image.
 void test_date() {
     expect_result("const d = new Date(0);"
                   "return [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()].join(',');",
                   "1970,0,1,4");
     expect_result("return new Date(0).toISOString();", "1970-01-01T00:00:00.000Z");
-    // (year, monthIndex, day, h, m, s) - the month is ZERO-BASED, which is the
-    // wart every calendar bug starts with.
+    // (year, monthIndex, day, h, m, s): the month is zero-based, the wart
+    // every calendar bug starts with.
     expect_result("const d = new Date(2026, 6, 29, 13, 45, 30);"
                   "return [d.getFullYear(), d.getMonth(), d.getDate(),"
                   "        d.getHours(), d.getMinutes(), d.getSeconds()].join(',');",
@@ -470,11 +451,10 @@ void test_date() {
     expect_result("return new Date(2024, 12, 1).toISOString();", "2025-01-01T00:00:00.000Z");
     expect_result("return Date.UTC(1970, 0, 2);", "86400000");
     expect_result("return new Date(0) instanceof Date;", "true");
-    // valueOf, so a Date works in arithmetic - `end - start` is the reason it
-    // exists.
+    // valueOf makes a Date work in arithmetic, as in `end - start`.
     expect_result("return typeof (new Date(5000) - new Date(2000));", "number");
     expect_result("return new Date(5000) - new Date(2000);", "3000");
-    // 21.4.4.45 @@toPrimitive: `+` takes the string, `-` the number.
+    // ECMA-262 21.4.4.45 @@toPrimitive: `+` takes the string, `-` the number.
     expect_result("return new Date(0) + '';",
                   "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)");
     // Date.parse and the string constructor: the ISO format, with and without
@@ -514,13 +494,10 @@ void test_date() {
         "TypeError");
 }
 
-// AN ARRAYBUFFER IS SHARED STORAGE.
-//
-// It used to be a length and nothing else, so two views over one buffer were
-// silently independent: a page that wrote through one and read through the
-// other got zeroes. A view over the WHOLE of a buffer is now that storage
-// rather than a copy of it, which is the entire reason a page wraps
-// `await res.arrayBuffer()` in one.
+/// An ArrayBuffer is shared storage: every view over it reads and writes the
+/// same bytes, so a page that writes through one view and reads through
+/// another sees its writes. That is why a page wraps `await res.arrayBuffer()`
+/// in a view.
 void test_array_buffer_is_shared() {
     expect_result("return new ArrayBuffer(4).byteLength;", "4");
     expect_result("const buf = new ArrayBuffer(4);"
@@ -534,13 +511,11 @@ void test_array_buffer_is_shared() {
     expect_result("const buf = new ArrayBuffer(4); return new Uint8Array(buf).length;", "4");
     // The view still coerces on write, so the element kind means something.
     expect_result("const a = new Uint8Array(new ArrayBuffer(2)); a[0] = 300; return a[0];", "44");
-    // A view made WITHOUT a buffer owns its own elements, as before.
+    // A view made without a buffer owns its own elements.
     expect_result("const buf = new ArrayBuffer(2); const shared = new Uint8Array(buf);"
                   "const own = new Uint8Array(2); own[0] = 9; shared[0] = 1; return own[0];",
                   "9");
-    // A SUB-RANGE view. This used to throw RangeError, because a view owned its
-    // elements and an offset one could not have seen writes through the buffer.
-    // A view views now, so it works and sees them.
+    // A sub-range view sees writes through the buffer at its offset.
     expect_result("const buf = new ArrayBuffer(4); const whole = new Uint8Array(buf);"
                   "const part = new Uint8Array(buf, 1, 2);"
                   "whole[1] = 5; whole[2] = 6; return part[0] + ',' + part[1] + ',' + part.length;",
@@ -549,19 +524,16 @@ void test_array_buffer_is_shared() {
                   "const part = new Uint8Array(buf, 2, 2); part[0] = 9; return whole[2];",
                   "9");
 
-    // VIEWS OF DIFFERENT WIDTHS OVER ONE BUFFER, which is the case that was
-    // silently wrong: every view was handed the SAME array with its element
-    // kind overwritten, so the last one made won and every earlier view's
-    // writes were coerced to the wrong type. A float written through the F32
-    // view came back as an integer - 64 read back as 9e-44, which is zero to
-    // anything that asks. Phaser makes four such views over its vertex buffer,
-    // which is why its WebGL renderer drew nothing at all.
+    // Views of different element widths over one buffer must reinterpret the
+    // same bytes (Phaser's WebGL renderer keeps four such views over its vertex
+    // buffer).
     expect_result("const buf = new ArrayBuffer(8);"
                   "const f = new Float32Array(buf), u = new Uint32Array(buf);"
                   "const b = new Uint8Array(buf), h = new Uint16Array(buf);"
                   "f[0] = 64; return f[0];",
                   "64");
-    // 64.0f is 0x42800000, so the bytes are readable through every other view.
+    // 64.0f is 0x42800000 (1115684864 as a uint32; bytes 0, 0, 128, 66 in
+    // little-endian order), readable through every other view.
     expect_result("const buf = new ArrayBuffer(4);"
                   "const f = new Float32Array(buf), u = new Uint32Array(buf);"
                   "f[0] = 64; return u[0];",
@@ -576,11 +548,11 @@ void test_array_buffer_is_shared() {
                   "const f = new Float32Array(buf), b = new Uint8Array(buf);"
                   "b[3] = 66; b[2] = 128; return f[0];",
                   "64");
-    // A view's length is in ELEMENTS and its byteLength in bytes.
+    // A view's length is in elements and its byteLength in bytes.
     expect_result("const buf = new ArrayBuffer(8); const f = new Float32Array(buf);"
                   "return f.length + ',' + f.byteLength + ',' + f.BYTES_PER_ELEMENT;",
                   "2,8,4");
-    // `subarray` SHARES; it is not `slice`.
+    // `subarray` shares the buffer; it is not `slice`.
     expect_result("const buf = new ArrayBuffer(16); const f = new Float32Array(buf);"
                   "const tail = f.subarray(2); f[2] = 7; return tail[0] + ',' + tail.length;",
                   "7,2");
@@ -588,26 +560,19 @@ void test_array_buffer_is_shared() {
     expect_result("const f = new Float32Array(new ArrayBuffer(4));"
                   "const b = new Uint8Array(f.buffer); f[0] = 64; return b[3];",
                   "66");
-    // Signed kinds reinterpret rather than wrap on READ.
+    // Signed kinds reinterpret the bytes on read.
     expect_result("const buf = new ArrayBuffer(4);"
                   "const u = new Uint8Array(buf), s = new Int8Array(buf);"
                   "u[0] = 200; return s[0];",
                   "-56");
 }
 
-// `replace` WITH A REGEXP - which is what the method is mostly for, and which
-// did not work at all.
-//
-// The pattern was coerced with to_string and looked for with std::string::find,
-// so `s.replace(/ /g, '|')` searched for the literal text of a regex object and,
-// finding none, returned the string unchanged. No error, no clue.
-//
-// It is not a corner: acorn builds its keyword tables with
-// `new RegExp('^(?:' + words.replace(/ /g, '|') + ')$')`, so every keyword
-// matcher inside the parser p5 bundles was a pattern that could never match -
-// and p5's error system reported a SyntaxError on ordinary code because of it.
+/// String.prototype.replace with a RegExp pattern: global vs. first match,
+/// $-substitutions, and function replacements. acorn (bundled by p5) builds
+/// its keyword tables with `words.replace(/ /g, '|')`; treating the pattern as
+/// literal text would leave every keyword matcher unable to match.
 void test_string_replace() {
-    // The whole reason the bug was invisible: with a STRING pattern it was right.
+    // A string pattern is literal text.
     expect_result("return 'a b c'.replace(' ', '|');", "a|b c");
     expect_result("return 'a b c'.replaceAll(' ', '|');", "a|b|c");
     // `g` on the pattern means every match; without it, the first only.
@@ -620,7 +585,7 @@ void test_string_replace() {
     expect_result("return 'John Smith'.replace(/(\\w+) (\\w+)/, '$2, $1');", "Smith, John");
     expect_result("return 'abc'.replace(/b/, '[$&]');", "a[b]c");
     expect_result("return 'abc'.replace(/b/, '$$');", "a$c");
-    // A FUNCTION replacement is called with (match, p1..pn, offset, whole).
+    // A function replacement is called with (match, p1..pn, offset, whole).
     expect_result("return 'a1b2'.replace(/\\d/g, function (m) { return '<' + m + '>'; });",
                   "a<1>b<2>");
     expect_result("return 'xy'.replace(/(x)(y)/, function (m, p1, p2, off, whole) {"
@@ -628,7 +593,7 @@ void test_string_replace() {
                   "yx02");
     // Anchors and greedy groups, which is the shape p5 builds its CDN url with.
     expect_result("return '1.2.3-x'.replace(/^(\\d+\\.\\d+)\\.\\d+.*$/, '$1');", "1.2");
-    // The idiom that broke acorn.
+    // acorn's keyword-table idiom.
     expect_result("return new RegExp('^(?:' + 'break case function'.replace(/ /g, '|') + ')$')"
                   "  .test('function');",
                   "true");
@@ -636,22 +601,21 @@ void test_string_replace() {
     expect_result("return 'ab'.replace(/x*/g, '-');", "-a-b-");
 }
 
-// `String.prototype.match` - the commonest thing done with a regular
-// expression, and it simply was not here. The two forms return DIFFERENT
-// SHAPES, which is what code branches on.
+/// `String.prototype.match`. The forms with and without `g` return different
+/// shapes, which is what code branches on.
 void test_string_match() {
     expect_result("const m = 'a1b22'.match(/([a-z])(\\d+)/);"
                   "return m[0] + ',' + m[1] + ',' + m[2] + ',' + m.index;",
                   "a1,a,1,0");
     // With `g` it is a flat list of matched strings and nothing else.
     expect_result("return 'a1b22'.match(/\\d+/g).join('|');", "1|22");
-    // No match is NULL in both forms - the usual guard is `if (m)`, and an
+    // No match is null in both forms: the usual guard is `if (m)`, and an
     // empty array is truthy.
     expect_result("return 'xyz'.match(/\\d/) === null;", "true");
     expect_result("return 'xyz'.match(/\\d/g) === null;", "true");
 }
 
-// `structuredClone` - a deep copy of plain data, including through a cycle.
+/// `structuredClone`: a deep copy of plain data, including through a cycle.
 void test_structured_clone() {
     expect_result("const a = { n: 1, deep: { list: [1, 2] } };"
                   "const b = structuredClone(a);"
@@ -675,10 +639,10 @@ void test_structured_clone() {
     expect_result("try { structuredClone({ f: function () {} }); } catch (e) { return e.name; }"
                   "return 'not thrown';",
                   "DataCloneError");
-    // HTML 2.7: what the specification serialises - a wrapper, a Date, a
-    // RegExp (lastIndex reset), a Map and a Set, an Error of the seven kinds,
-    // a bigint, an ArrayBuffer and a view over it - and what it does not: a
-    // non-enumerable or inherited property, a symbol, a getter that throws.
+    // HTML 2.7: what the specification serialises (a wrapper, a Date, a
+    // RegExp with lastIndex reset, a Map and a Set, an Error of the seven
+    // kinds, a bigint, an ArrayBuffer and a view over it) and what it does not
+    // (a non-enumerable or inherited property, a symbol, a getter that throws).
     expect_result("const b = structuredClone(new Number(5));"
                   "return (b instanceof Number) + ',' + Number(b) + ',' + typeof b;",
                   "true,5,object");
@@ -723,9 +687,9 @@ void test_structured_clone() {
 
 } // namespace
 
-// `eval`, as an INDIRECT eval (global scope): the completion value comes
-// back, declarations land on the global object, a syntax error is a
-// catchable SyntaxError, and a non-string is returned as is.
+/// `eval`, as an indirect eval (global scope): the completion value comes
+/// back, declarations land on the global object, a syntax error is a
+/// catchable SyntaxError, and a non-string is returned as is.
 void test_eval() {
     expect_result("return eval('1 + 1');", "2");
     expect_result("return eval('var q = 5; q * 2');", "10");
@@ -736,13 +700,14 @@ void test_eval() {
         "try { eval('let x = ;'); return 'no'; } catch (e) { return e instanceof SyntaxError; }",
         "true");
     expect_result("return eval('') === undefined;", "true");
-    // `++x` as a program's FIRST statement: the update node is node 1 and its
-    // prefix flag is 1, which the capture tour once followed as a child.
+    // `++x` as a program's first statement: the update node is node 1 and its
+    // prefix flag is 1, which a tree walk must not mistake for a child index.
     expect_result("var x = 1; return eval('++x');", "2");
     expect_result("var x = 1; return eval('++x; x++; x');", "3");
-    // THE COMPLETION VALUE, 14.2.2 and UpdateEmpty: a declaration is empty
-    // and keeps the previous value; an `if`, a loop, a `switch`, a `try`
-    // start from undefined and take their body's; a finally keeps the try's.
+    // The completion value (ECMA-262 14.2.2 and UpdateEmpty): a declaration is
+    // empty and keeps the previous value; an `if`, a loop, a `switch` and a
+    // `try` start from undefined and take their body's; a finally keeps the
+    // try's.
     expect_result("return eval('3; var y = 1;');", "3");
     expect_result("return String(eval('3; if (true) {}'));", "undefined");
     expect_result("return eval('3; if (true) { 4; }');", "4");

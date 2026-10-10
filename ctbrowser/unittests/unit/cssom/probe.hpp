@@ -1,7 +1,10 @@
+//===- probe.hpp - Console-line test helper ---------------------*- C++ -*-===//
+//
+// Shared helper for the CSSOM tests: find a logged console line by its prefix.
+// Private to unittests/unit/.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
-// A logged line by its prefix - the one helper both files carved out of
-// cssom.cpp on 2026-09-07 need. Verbatim from that file but for `inline` and the
-// namespace. Private to unittests/unit/, like the tests themselves.
 
 #include <ctbrowser/shell/shell.hpp>
 
@@ -12,8 +15,10 @@ namespace ctbrowser_test {
 
 using ctbrowser::shell::browser;
 
-// A logged line by its prefix, so a case that adds a `console.log` in the
-// middle does not renumber every assertion after it.
+/// Returns the first console line of \p page that starts with \p prefix, or a
+/// "<no line beginning ...>" marker. Looking lines up by prefix means a case
+/// that adds a `console.log` in the middle does not renumber every assertion
+/// after it.
 [[nodiscard]] inline std::string logged(browser & page, std::string_view prefix) {
     for (const std::string & line : page.bindings().console_output()) {
         if (line.starts_with(prefix)) { return line; }

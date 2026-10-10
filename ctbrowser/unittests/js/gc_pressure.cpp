@@ -1,22 +1,24 @@
-// A synchronous script that allocates far more than it keeps, and finishes.
+//===- ctbrowser/unittests/js/gc_pressure.cpp - Collection inside a turn --===//
 //
-// Until 2026-09-12 the only production trigger was `collect_if_due`, once per
-// tick, BETWEEN turns - so one long top-level script accumulated every object
-// it ever made. Seven WPT html/dom/reflection-*.html files, thousands of
-// subtests each in a single script, died at 1.6-2.0 s under the driver's 4 GB
-// address-space cap; run-wpt.py saw the socket close and called it TIMEOUT.
-// `safepoint()` now runs the same threshold check inside a turn, at every C++
-// entry into JavaScript - `Function.prototype.call` here, `.apply` in
-// testharness.js's Test.prototype.step.
+// Garbage collection while a script is running. The first case is a
+// synchronous script that allocates far more than it keeps, and finishes.
+// `safepoint()` runs the collection-threshold check inside a turn, at every
+// C++ entry into JavaScript (`Function.prototype.call` here, `.apply` in
+// testharness.js's Test.prototype.step). Without it a long top-level script
+// collects only between turns (`collect_if_due`) and can exhaust memory, as
+// WPT html/dom/reflection-*.html did under the driver's 4 GB address-space cap.
+// The later cases check that what natives and the interpreter hold across a
+// call into script survives those collections.
 //
 // ponytail: an interpreted JS-to-JS call is not a safepoint (pinned by
-// ctcompile/test/EscapeCycle.cpp), so a loop that only makes those still
-// collects at the tick; add op::call to the trigger when a page shows it.
+// ctcompile/test/Analysis/Escape/cycle.js), so a loop that only makes those
+// still collects at the tick; add op::call to the trigger when a page shows it.
 //
-// THE COUNTER, NOT ONLY THE ANSWER. The sum is the same whether or not a
-// collection ran, so the case also asserts that collections happened and that
-// the heap was bounded when the script returned - the two facts an unbounded
-// collector gets wrong.
+// The cases check the collection counter, not only the answer: the sum is
+// the same whether or not a collection ran, so they also assert that
+// collections happened and that the heap was bounded at the end.
+//
+//===----------------------------------------------------------------------===//
 
 #include "vm/expect.hpp"
 
@@ -39,11 +41,11 @@ int main() {
     std::printf("  gc: %zu collections, %zu live at the end\n", cx.collections(),
                 cx.live_objects());
 
-    // A NATIVE'S OWN ALLOCATIONS SURVIVE ITS CALL BACK INTO SCRIPT. `build`
+    // A native's own allocations survive its call back into script. `build`
     // makes an object, runs a script callback that collects (every safepoint,
-    // under stress), then writes to the object - the shape of `new Blob`
-    // stringifying its parts, and of every binding that was safe only because
-    // nothing collected inside a turn. See context::native_scope.
+    // under stress), then writes to the object: the shape of `new Blob`
+    // stringifying its parts, and of any binding that allocates and then calls
+    // script. See context::native_scope.
     {
         context stress;
         install_builtins(stress);
@@ -66,12 +68,11 @@ int main() {
         CHECK(stress.collections() > 0);
     }
 
-    // A MICROTASK'S ARGUMENTS SURVIVE THE HANDLER THEY ARE DELIVERED TO. The
+    // A microtask's arguments survive the handler they are delivered to. The
     // promise reaction job holds its record only in the popped job's argument
-    // vector; a collection inside the handler freed it and the settle that
-    // followed wrote into freed memory. 200 rounds of an async loop awaiting
-    // settled, later-resolved and rejected promises crossed the threshold and
-    // crashed in allocate().
+    // vector, so a collection inside the handler must not free it before the
+    // settle that follows. An async loop awaiting settled, later-resolved and
+    // rejected promises crosses the threshold many times.
     {
         context cx2;
         install_builtins(cx2);
@@ -96,10 +97,10 @@ int main() {
         CHECK(cx2.collections() > 0);
     }
 
-    // A NATIVE'S SCRIPT CALLEE COLLECTS ITS OWN GARBAGE. testharness.js runs
-    // every test body through `Function.prototype.apply`, and pinning all the
-    // callee allocated held a NodeList read loop's garbage to the 4 GB cap
-    // (dom/nodes/NodeList-static-length-getter-tampered-*).
+    // A native's script callee collects its own garbage. testharness.js runs
+    // every test body through `Function.prototype.apply`; if everything the
+    // callee allocated stayed pinned, a long loop's garbage would reach the
+    // 4 GB cap (WPT dom/nodes/NodeList-static-length-getter-tampered-*).
     {
         context cx3;
         install_builtins(cx3);
@@ -123,7 +124,7 @@ int main() {
         std::printf("  gc: peak %s live under apply\n", cx3.to_string(r3.returned).c_str());
     }
 
-    // ... AND WHAT THE CALLEE RETURNED SURVIVES, because the native holds it in
+    // ...and what the callee returned survives, because the native holds it in
     // a C++ local while later calls collect (every safepoint, under stress).
     {
         context stress;
@@ -144,11 +145,10 @@ int main() {
         CHECK_EQ(stress.to_string(got.returned), std::string{"7"});
     }
 
-    // WHAT THE INTERPRETER ITSELF HOLDS ACROSS A CALL is rooted where it is
+    // What the interpreter itself holds across a call is rooted where it is
     // made, not by a native's pin: a generator whose parameters run a callback
     // before its object is anywhere else, and a spread through a proxy's `get`
-    // trap. Both were freed once the pin narrowed (ASan, 2026-09-26), and both
-    // were already exposed in a script no native was running.
+    // trap. Both are exposed even in a script no native is running.
     {
         context stress;
         install_builtins(stress);
@@ -163,7 +163,7 @@ int main() {
         CHECK_EQ(stress.to_string(got.returned), std::string{"5"});
     }
 
-    // A NATIVE CALLEE'S RESULT SURVIVES TOO. A bound Reflect.get hands `hold`
+    // A native callee's result survives too. A bound Reflect.get hands `hold`
     // a value read off a data property; the next callback clears the property
     // and collects, and nothing but the pin holds the object any more.
     {
@@ -186,10 +186,11 @@ int main() {
         CHECK_EQ(stress.to_string(got.returned), std::string{"7"});
     }
 
-    // A RE-ENTRY REFUSED WITHOUT A THROW is still a throw to call_fenced. The
+    // A re-entry refused without a throw is still a throw to call_fenced. The
     // first refusal of an episode throws the RangeError; the next one, made
-    // from the same depth, answered undefined with threw=false, and an
-    // async-from-sync step cast that undefined to its result array.
+    // from the same depth, must also report threw=true rather than answer
+    // undefined, which a caller such as async-from-sync iteration's step would
+    // cast to its result array.
     {
         context cx4;
         install_builtins(cx4);

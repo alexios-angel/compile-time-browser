@@ -1,19 +1,20 @@
-// EVENT HANDLERS: what a listener that throws does, and what an `on...`
+//===- ctbrowser/unittests/unit/event/handlers.cpp - Event handler tests --===//
+//
+// Event handlers: what a listener that throws does, and what an `on...`
 // property is.
 //
-// Two things that look unrelated and are the same subject. A handler property
-// is a listener registered by assignment, and both of them are CALLED by
-// `fire_at` - so the questions a page can ask about them are the same
-// questions: does it run, what is `this`, and where does an exception go.
+// These are one subject: a handler property is a listener registered by
+// assignment, and `fire_at` calls both, so a page asks the same questions of
+// each: does it run, what is `this`, and where does an exception go.
 //
-// The exception is the reason this file exists. `context::throw_error` unwinds
-// to the innermost live `try` ANYWHERE below it on the stack, and a dispatch is
-// almost always reached from inside one - `test(function () { ... })` is a
-// `try`, and so is every library's own error reporting. So a listener that
-// threw did not stop at `dispatchEvent`: it left the dispatch entirely, the
-// remaining listeners never ran, and the page was told nothing. Every case
-// below that dispatches from inside a `try` is testing that containment, and
-// the harness helper puts one there ON PURPOSE.
+// The exception case matters most. `context::throw_error` unwinds to the
+// innermost live `try` anywhere below it on the stack, and a dispatch is
+// almost always reached from inside one (a test harness or a library's error
+// reporting). A listener's throw must therefore be contained by the dispatch:
+// later listeners still run, and the error is reported to the page. The
+// helper below runs every case inside a `try` on purpose, to test that.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -33,7 +34,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=target>hello</div>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks that `expression` evaluates to `expected`, on a fresh page per case
+/// since many cases mutate the document.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -42,14 +44,14 @@ void is(const std::string & expression, const std::string & expected) {
 
 void test_a_throwing_listener_does_not_leave_the_dispatch() {
     // dom/events/Event-dispatch-throwing.html, first test. `dispatchEvent`
-    // RETURNS; the exception does not reach the `try` the page is inside.
+    // returns; the exception does not reach the `try` the page is inside.
     is("(function () {"
        " var el = document.createElement('div');"
        " el.addEventListener('x', function () { throw new Error('boom'); });"
        " el.dispatchEvent(new Event('x'));"
        " return 'returned'; })()",
        "returned");
-    // ...and the same through a handler PROPERTY, which is the other way to
+    // ...and the same through a handler property, which is the other way to
     // register one.
     is("(function () {"
        " var el = document.createElement('div');"
@@ -60,10 +62,8 @@ void test_a_throwing_listener_does_not_leave_the_dispatch() {
 }
 
 void test_a_throwing_listener_does_not_stop_the_next_one() {
-    // Event-dispatch-throwing.html's second test: "Error from first listener",
-    // and the second listener still runs. It failed twice over - the throw left
-    // the dispatch, and every later `cx.call` declined while the VM's failure
-    // flag was up.
+    // dom/events/Event-dispatch-throwing.html, second test: after the first
+    // listener throws, the second listener still runs.
     is("(function () {"
        " var el = document.createElement('div');"
        " var second = false;"
@@ -75,7 +75,7 @@ void test_a_throwing_listener_does_not_stop_the_next_one() {
 }
 
 void test_the_page_hears_about_it() {
-    // `window.onerror` takes a STRING first - OnErrorEventHandler is
+    // `window.onerror` takes a string first - OnErrorEventHandler is
     // (message, filename, lineno, colno, error) and not the event.
     is("(function () {"
        " var kind = 'never called';"
@@ -85,7 +85,7 @@ void test_the_page_hears_about_it() {
        " el.dispatchEvent(new Event('x'));"
        " return kind; })()",
        "string");
-    // ONE report per throw, not one per dispatch and not none.
+    // Exactly one report per throw, not one per dispatch and not none.
     is("(function () {"
        " var count = 0;"
        " window.onerror = function () { count++; };"
@@ -94,7 +94,8 @@ void test_the_page_hears_about_it() {
        " el.dispatchEvent(new Event('x'));"
        " return count; })()",
        "1");
-    // AND THE VALUE, not only the text. EventListener-handleEvent.html rethrows
+    // The thrown value is reported too, not only its text.
+    // dom/events/EventListener-handleEvent.html rethrows
     // `event.error` and asserts its identity against the object the listener
     // threw, which no string can answer.
     is("(function () {"
@@ -109,9 +110,9 @@ void test_the_page_hears_about_it() {
 }
 
 void test_a_throwing_onerror_is_contained_too() {
-    // window-event-restored-after-throwing-onerror.html: the reporting dispatch
-    // is a dispatch, so a handler that throws out of it has to be contained by
-    // the same fence - and the report is NOT retried, or an onerror that always
+    // dom/events/window-event-restored-after-throwing-onerror.html: the
+    // reporting dispatch is a dispatch, so a handler that throws out of it is
+    // contained the same way, and the report is not retried, or an onerror that always
     // throws would recurse without bound.
     is("(function () {"
        " var calls = 0;"
@@ -123,7 +124,7 @@ void test_a_throwing_onerror_is_contained_too() {
        "1");
 }
 
-// --- EventListener is a callback INTERFACE ---------------------------------
+// --- EventListener is a callback interface ---------------------------------
 
 void test_an_object_with_handle_event_is_a_listener() {
     is("(function () {"
@@ -134,7 +135,7 @@ void test_an_object_with_handle_event_is_a_listener() {
        " el.dispatchEvent(new Event('x'));"
        " return calls; })()",
        "1");
-    // `this` IS THE LISTENER OBJECT, not the target: handleEvent is a method of
+    // `this` is the listener object, not the target: handleEvent is a method of
     // the object and reads its own state.
     is("(function () {"
        " var listener = { seen: null, handleEvent: function () { this.seen = 'me'; } };"
@@ -147,7 +148,7 @@ void test_an_object_with_handle_event_is_a_listener() {
 
 void test_handle_event_is_looked_up_on_every_dispatch() {
     // EventListener-handleEvent.html, "performs `Get` every time event is
-    // dispatched": the Get is at DISPATCH time, not at registration, so an
+    // dispatched": the Get happens at dispatch time, not at registration, so an
     // accessor runs once per dispatch and a method replaced in between takes
     // effect.
     is("(function () {"
@@ -171,7 +172,7 @@ void test_handle_event_is_looked_up_on_every_dispatch() {
 
 void test_a_function_is_never_asked_for_handle_event() {
     // The other half of the same clause, and the last two tests of
-    // EventListener-handleEvent.html: a callable listener is CALLED, whatever
+    // EventListener-handleEvent.html: a callable listener is called, whatever
     // properties it happens to carry.
     is("(function () {"
        " var calls = 0;"
@@ -185,7 +186,7 @@ void test_a_function_is_never_asked_for_handle_event() {
 }
 
 void test_a_listener_object_without_a_callable_handle_event_is_a_type_error() {
-    // ...and it is a TypeError REPORTED to the page, not a listener that quietly
+    // ...and it is a TypeError reported to the page, not a listener that quietly
     // does nothing and not an exception that escapes the dispatch. Both the
     // falsy and the truthy case, which that file tests separately.
     is("(function () {"
@@ -224,13 +225,13 @@ void test_a_throwing_handle_event_getter_reaches_the_page() {
 // --- the EventTarget surface ------------------------------------------------
 
 void test_the_prototypes_methods_know_a_node_when_they_see_one() {
-    // EVERY WRAPPER INHERITS THESE. The interface chain ends at EventTarget, so
+    // Every wrapper inherits these methods. The interface chain ends at EventTarget, so
     // `EventTarget.prototype.addEventListener` is reachable from a comment node
     // as much as from `new EventTarget()` - and reading `this` as a standalone
     // target would put the listener in a bucket no dispatch through the tree
     // ever visits.
     //
-    // Called as a METHOD of the node rather than through
+    // Called as a method of the node rather than through
     // `Function.prototype.call`, because what is under test is which target the
     // receiver names and nothing else.
     is("(function () {"
@@ -272,25 +273,25 @@ void test_a_standalone_target_is_still_its_own_whole_path() {
 
 // --- the event handler IDL attributes, HTML 8.1.7.2 -------------------------
 //
-// `onscroll` is the name used throughout because it is one this engine does not
-// dispatch and one `install_element_methods` does not put an own null property
-// on the wrapper for - so what is under test is the ACCESSOR and nothing else.
-// See install_event_handler_attributes for why the 19 names that file lists are
-// still data properties and what has to move for them not to be.
+// `onscroll` is used throughout because this engine never dispatches it and
+// install_element_methods puts no own null property for it on the wrapper, so
+// these cases test only the accessor. The 19 names that are still own data
+// properties are listed, with the reason, in
+// lib/Shell/bindings/events/handler_attributes.cpp.
 
 void test_a_handler_attribute_is_null_before_it_is_anything() {
     is("document.createElement('div').onscroll", "null");
     is("document.onscroll", "null");
     is("window.onscroll", "null");
-    // PRESENT and null, which is a different thing from absent - a library
+    // Present and null, which is a different thing from absent - a library
     // feature-detects with `'onscroll' in el`.
     is("'onscroll' in document.createElement('div')", "true");
 }
 
 void test_a_handler_attribute_stores_only_an_object() {
     // WebIDL's [LegacyTreatNonObjectAsNull]: a function round-trips, and
-    // anything that is not an object is null. `el.onscroll = ""` used to read
-    // back "" and is twelve of Body-FrameSet-Event-Handlers.html's assertions.
+    // anything that is not an object reads back as null (`el.onscroll = ""`
+    // included).
     is("(function () {"
        " var el = document.createElement('div');"
        " function nop() {}"
@@ -318,7 +319,8 @@ void test_a_handler_attribute_stores_only_an_object() {
 }
 
 void test_the_prefixed_and_unprefixed_names_are_not_aliases() {
-    // webkit-animation-end-event.html's first test. They are separate handlers
+    // dom/events/webkit-animation-end-event.html, first test. They are separate
+    // handlers
     // for separate event types; setting one must not be visible in the other.
     is("(function () {"
        " var el = document.createElement('div');"
@@ -333,32 +335,32 @@ void test_the_prefixed_and_unprefixed_names_are_not_aliases() {
 }
 
 void test_a_content_attribute_compiles_to_a_function() {
-    // The attribute's value is a function BODY with one parameter named `event`
+    // The attribute's value is a function body with one parameter named `event`
     // - which is what makes `onclick="alert(event.type)"` work at all.
     is("(function () {"
        " var el = document.createElement('div');"
        " el.setAttribute('onscroll', 'return 1');"
        " return typeof el.onscroll; })()",
        "function");
-    // ONE function, not one per read: `el.onscroll === el.onscroll`.
+    // A single function, not one per read: `el.onscroll === el.onscroll`.
     is("(function () {"
        " var el = document.createElement('div');"
        " el.setAttribute('onscroll', 'return 1');"
        " return el.onscroll === el.onscroll; })()",
        "true");
-    // ...and it RUNS, with the event as its argument.
+    // ...and it runs, with the event as its argument.
     is("(function () {"
        " var el = document.createElement('div');"
        " el.setAttribute('onscroll', 'window.seenType = event.type');"
        " el.dispatchEvent(new Event('scroll'));"
        " return window.seenType; })()",
        "scroll");
-    // THE SCOPE CHAIN, HTML 8.1.8.1: the document, then the form owner, then
+    // The scope chain, HTML 8.1.8.1: the document, then the form owner, then
     // the element, are object environments around the body - innermost last,
     // so `id` reads the element's, `body` the document's (an element has no
-    // `body`), `acceptCharset` the form owner's - and `remove` is the GLOBAL,
+    // `body`), `acceptCharset` the form owner's - and `remove` is the global,
     // because Element.prototype[@@unscopables] vetoes the method
-    // (remove-unscopable.html).
+    // (dom/nodes/remove-unscopable.html).
     is("(function () {"
        " var el = document.createElement('div');"
        " el.id = 'the-id';"
@@ -396,8 +398,8 @@ void test_a_content_attribute_compiles_to_a_function() {
        " el.removeAttribute('onscroll');"
        " return el.onscroll; })()",
        "null");
-    // AN ASSIGNMENT DISCARDS THE MARKUP'S HANDLER - HTML's "deactivate an event
-    // handler" - so a present null does NOT fall back to the attribute.
+    // An assignment discards the markup's handler (HTML's "deactivate an event
+    // handler"), so a present null does not fall back to the attribute.
     is("(function () {"
        " var el = document.createElement('div');"
        " el.setAttribute('onscroll', 'return 1');"
@@ -425,8 +427,9 @@ void test_a_handler_attribute_is_a_listener() {
 }
 
 void test_the_four_prefixed_handlers_answer_to_a_name_no_fold_produces() {
-    // `onwebkitanimationend` handles `webkitAnimationEnd`, so "on" + type is the
-    // wrong property by four capital letters - see handler_property_name.
+    // `onwebkitanimationend` handles `webkitAnimationEnd`, so lowercasing
+    // "on" + type does not give the event type - see event_type_of_handler in
+    // lib/Shell/bindings/events/handler_attributes.cpp.
     is("(function () {"
        " var el = document.createElement('div');"
        " var count = 0;"
@@ -434,9 +437,7 @@ void test_the_four_prefixed_handlers_answer_to_a_name_no_fold_produces() {
        " el.dispatchEvent(new Event('webkitAnimationEnd'));"
        " return count; })()",
        "1");
-    // ...and the unprefixed handler does NOT hear the prefixed event, which is
-    // three of the four assertions webkit-animation-end-event.html makes about
-    // the pair.
+    // ...and the unprefixed handler does not hear the prefixed event.
     is("(function () {"
        " var el = document.createElement('div');"
        " var count = 0;"
@@ -447,7 +448,7 @@ void test_the_four_prefixed_handlers_answer_to_a_name_no_fold_produces() {
 }
 
 void test_an_animation_event_can_be_constructed() {
-    // The four webkit-*-event.html files synthesise one to ask whether the
+    // The four dom/events/webkit-*-event.html files synthesise one to ask whether the
     // prefixed and unprefixed handlers are separate; without the constructor
     // the question cannot be put. The interface existing is not a claim that
     // this engine runs animations.
@@ -477,8 +478,8 @@ void test_a_synthetic_touch_event_is_not_cancelable() {
     is("(new TouchEvent('touchstart')).cancelable", "false");
     is("(new TouchEvent('touchstart')).touches.length", "0");
     is("(new TouchEvent('touchstart') instanceof UIEvent)", "true");
-    // ...so preventDefault does nothing to one, which is what
-    // synthetic-events-cancelable.html asks four times.
+    // ...so preventDefault does nothing to one
+    // (dom/events/synthetic-events-cancelable.html).
     is("(function () {"
        " var seen = null;"
        " window.addEventListener('touchstart', function (e) {"
@@ -489,7 +490,7 @@ void test_a_synthetic_touch_event_is_not_cancelable() {
 }
 
 void test_the_window_keeps_both_spellings() {
-    // `window` IS the global object in HTML, but the globals table and the
+    // `window` is the global object in HTML, but the globals table and the
     // window object are separate storage here - so an own accessor on the
     // window would otherwise make the bare form unreachable.
     is("(function () {"
@@ -509,8 +510,7 @@ void test_the_window_keeps_both_spellings() {
 void test_a_sheets_onload_attribute_has_run_by_the_windows_load() {
     // css/cssom/HTMLStyleElement-load-event: three `<style onload="++N">`,
     // counted from a `window` load listener. HTML delays the document's load
-    // until its subresources have settled, so the count is three and not - as
-    // it was with the sheets queued beside the timers - zero.
+    // event until its subresources have settled, so the count is three.
     browser page{browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><html><head><script>var N = 0;</script>"
                    "<style onload='++N'></style><style onload='++N'>p{}</style>"
@@ -529,7 +529,7 @@ void test_a_sheets_onload_attribute_has_run_by_the_windows_load() {
 
 void test_a_body_handler_is_the_windows() {
     // HTML's window-reflecting body element event handler set, as
-    // dom/events/Body-FrameSet-Event-Handlers.html reads it: `body.onload` IS
+    // dom/events/Body-FrameSet-Event-Handlers.html reads it: `body.onload` is
     // `window.onload`, both ways, and a `<body onload>` attribute is the
     // window's handler - so the load event runs it.
     is("(function () { function f() {} document.body.onresize = f;"
@@ -539,7 +539,7 @@ void test_a_body_handler_is_the_windows() {
        " var a = typeof window.onblur === 'function' && window.onblur === document.body.onblur;"
        " document.body.removeAttribute('onblur'); return a && window.onblur === null; })()",
        "true");
-    // A DETACHED body's content attribute reaches the window too - the
+    // A detached body's content attribute reaches the window too - the
     // file's "Forward" cases set it on a `createElement("body")`.
     is("(function () { window.onscroll = null; var b = document.createElement('body');"
        " b.setAttribute('onscroll', 'return 2');"

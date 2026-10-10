@@ -1,25 +1,23 @@
-// The early errors: source text this engine must REFUSE, and the valid
-// near-miss beside each one that it must still run.
+//===- ctbrowser/unittests/js/early_errors.cpp - Early errors ---*- C++ -*-===//
 //
-// `negative parse/SyntaxError: got runtime` was the single largest failure
-// cause in test262 - 2,812 tests asserting that source text is a SyntaxError
-// while this engine parsed it, ran it, and reported whatever happened next.
-// lib/Script/compile/early_errors/ is the pass that answers them and its
-// header, compile/early_errors.hpp, says which families are deliberately absent.
+// The early errors: source text this engine must refuse, and the valid
+// near-miss beside each one that it must still run. lib/Script/compile/
+// early_errors/ is the pass that enforces them, and its header,
+// compile/early_errors.hpp, says which families are deliberately absent.
+// Section numbers in the banners below are ECMA-262 clauses.
 //
-// EVERY REFUSAL HERE IS PAIRED. The `refused` line proves the rule fires; the
-// `accepted` line beside it proves the rule stops where it should, and it is
-// the one that matters more: a false positive is not a wrong answer, it is a
-// page that does not load. This engine compiles p5.js, Phaser, Babylon.js and
-// Bootstrap as ratchet tests, and all four were run through this pass before it
-// was committed - the accepted cases below are the shapes those bundles
-// contain, written small enough to read.
+// Every refusal here is paired. The `refused` line proves the rule fires; the
+// `accepted` line beside it proves the rule stops where it should, and that
+// one matters more: a false positive is not a wrong answer, it is a page that
+// does not load. The accepted cases are the shapes that the p5.js, Phaser,
+// Babylon.js and Bootstrap bundles contain, written small enough to read.
 //
-// A REFUSAL MUST ALSO BE A SYNTAX ERROR AND NOT A REFUSAL. The engine has two
-// ways to fail a compile: the source is not a program (a SyntaxError), or the
-// compiler does not implement the construct. Only the first is what a
-// specification early error is, and `ct262` tells them apart by the message's
-// prefix - so `refused` checks the prefix rather than just `ok == false`.
+// A refused source must fail as a SyntaxError, not as an unimplemented
+// construct. The two are told apart by the error message's "parse error:"
+// prefix (as `ct262` does), so `refused` checks the prefix, not just
+// `ok == false`.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -30,7 +28,8 @@
 
 namespace {
 
-// Source that must not compile, with a SyntaxError rather than a refusal.
+/// Checks that `source` fails to compile with a SyntaxError, not as an
+/// unimplemented construct.
 void refused(std::string_view source) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(source);
@@ -46,10 +45,10 @@ void refused(std::string_view source) {
     }
 }
 
-// THE SAME TWO, COMPILED AS A MODULE. `import` and `export` are in no other
-// grammar, and a module's top level carries rules a script's does not, so
-// these cannot be asked with compile() alone. Only the compile is checked:
-// running a module wants the loader, which is test/corpus/modules' subject.
+/// refused(), compiling `source` as a module. `import` and `export` exist in no
+/// other grammar, and a module's top level has rules a script's does not.
+/// Only the compile is checked: running a module needs the loader, which
+/// test/corpus/modules covers.
 void module_refused(std::string_view source) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(source, script_kind::module_);
@@ -66,6 +65,7 @@ void module_refused(std::string_view source) {
     }
 }
 
+/// Checks that `source` compiles as a module (see module_refused()).
 void module_accepted(std::string_view source) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(source, script_kind::module_);
@@ -76,9 +76,9 @@ void module_accepted(std::string_view source) {
     }
 }
 
-// Source that must compile AND run. Running matters: half the near-misses below
-// are about scope, and a scope rule can be got wrong in a way that compiles to
-// the wrong register rather than to no program at all.
+/// Checks that `source` compiles and runs without throwing. Running matters:
+/// half the near-misses below are about scope, and a scope rule can be wrong
+/// in a way that compiles to the wrong register rather than to no program.
 void accepted(std::string_view source) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(source);
@@ -98,8 +98,8 @@ void accepted(std::string_view source) {
     }
 }
 
-// Source that must compile, run, and answer `expected` - for the cases where
-// "it ran" is not enough and the SCOPE it ran in is the point.
+/// Checks that `source` compiles, runs and returns `expected`, for the cases
+/// where "it ran" is not enough and the scope it ran in is the point.
 void answers(std::string_view source, std::string_view expected) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(source);
@@ -203,7 +203,7 @@ int main() {
     accepted("var $a, _b, \\u0061c, \xc3\xa9t\xc3\xa9;");
 
     // ================================================================
-    // 1. DUPLICATE LEXICAL DECLARATIONS - 14.2.1, 15.2.1, 16.1.1
+    // 1. Duplicate lexical declarations - 14.2.1, 15.2.1, 16.1.1
     // ================================================================
     refused("let x; let x;");
     refused("let x; const x = 1;");
@@ -228,23 +228,23 @@ int main() {
     accepted("{ let s = 1; } { let s = 2; }");
     accepted("switch (0) { case 1: { let s; break; } default: { let s; } }");
     accepted("for (let i = 0; i < 1; ++i) { let i2 = i; }");
-    // A LOOP VARIABLE AND A BODY BINDING OF THE SAME NAME are two scopes, not
-    // a redeclaration - this is the shape every bundle in vendor/ contains.
+    // A loop variable and a body binding of the same name are two scopes, not
+    // a redeclaration; every bundle in vendor/ contains this shape.
     accepted("for (let i = 0; i < 1; ++i) { let i = 9; }");
     accepted("for (const item of [1, 2]) { let item2 = item; }");
 
-    // A `var` and a function of the same name at the TOP of a function body is
-    // legal - both are var-scoped there - and so is a function declaration in a
+    // A `var` and a function of the same name at the top of a function body is
+    // legal (both are var-scoped there), and so is a function declaration in a
     // block that shares its name with an outer binding.
     accepted("function h() { var k; function k() {} }");
     accepted("let m; { function m() {} }");
     // Annex B.3.3.2: a function declaration as the whole body of an `if` is
     // hoisted only where hoisting would not be an early error, so it may not
-    // MAKE one. Five of test262's annexB tests are exactly this.
+    // make one.
     accepted("let n = 1; if (true) function n() {}");
 
     // ================================================================
-    // 2. A PARAMETER, AND THE BODY THAT MAY NOT REDECLARE IT - 15.2.1
+    // 2. A parameter, and the body that may not redeclare it - 15.2.1
     // ================================================================
     refused("function f(a) { let a; }");
     refused("function f(a) { const a = 1; }");
@@ -254,7 +254,7 @@ int main() {
     refused("try {} catch (e) { let e; }");
 
     // `var` re-declaring a parameter is legal and common in transpiled code,
-    // and so is a lexical binding in a NESTED block of the body.
+    // and so is a lexical binding in a nested block of the body.
     accepted("function f(a) { var a; return a; }");
     accepted("function f(a) { { let a = 1; return a; } }");
     accepted("try {} catch (e) { var e; }");
@@ -262,7 +262,7 @@ int main() {
     answers("function f(a) { { let a = 2; } return a; } return f(1);", "1");
 
     // ================================================================
-    // 3. DUPLICATE PARAMETER NAMES - 15.1.2, 15.2.1, 15.3.1
+    // 3. Duplicate parameter names - 15.1.2, 15.2.1, 15.3.1
     // ================================================================
     // Only where the specification says so without strict mode: a list that is
     // not simple, an arrow, or a method.
@@ -275,16 +275,15 @@ int main() {
     // 15.1.1: a rest parameter is the last one.
     refused("function f(...rest, last) {}");
 
-    // A DUPLICATE IN A SIMPLE LIST IS SLOPPY-LEGAL, and this engine has no
-    // strict mode - so it is accepted, deliberately. Refusing it would refuse
-    // valid sloppy JavaScript.
+    // A duplicate in a simple parameter list is legal in sloppy code, so it is
+    // accepted here; section 19 checks that strict code refuses it.
     accepted("function f(a, a) { return a; }");
     accepted("function f(a, b = 1, ...rest) { return a; }");
     accepted("var f = (a, b) => a + b;");
     accepted("var o = { m(a, b) { return a; } };");
 
     // ================================================================
-    // 4. `const` WITHOUT AN INITIALISER - 14.3.1.1
+    // 4. `const` without an initialiser - 14.3.1.1
     // ================================================================
     refused("const c;");
     refused("const a = 1, b;");
@@ -298,7 +297,7 @@ int main() {
     accepted("for (const key in { a: 1 }) { }");
 
     // ================================================================
-    // 5. AN ASSIGNMENT TARGET THAT IS NOT ONE - 13.15.1
+    // 5. An assignment target that is not one - 13.15.1
     // ================================================================
     refused("1 = 2;");
     refused("'a' = 2;");
@@ -324,14 +323,14 @@ int main() {
     accepted("var a; ({ a } = { a: 1 });");
     accepted("var o = { p: 0 }; [o.p] = [1];");
     accepted("var i = 0; i++; ++i; i += 1;");
-    // A CALL is refused in strict code only: sloppy code gets the web-compat
+    // A call is refused in strict code only: sloppy code gets the web-compat
     // runtime ReferenceError (see the top of main and web_compat_call).
     refused("'use strict'; function f() { return {}; } f() = 1;");
     refused("'use strict'; f() += 1;");
     refused("'use strict'; f()++;");
 
     // ================================================================
-    // 6. `break`, `continue` AND LABELS - 13.8.1, 13.9.1, 14.13.1
+    // 6. `break`, `continue` and labels - 13.8.1, 13.9.1, 14.13.1
     // ================================================================
     refused("break;");
     refused("continue;");
@@ -348,23 +347,20 @@ int main() {
     accepted("do { continue; } while (0);");
     accepted("switch (0) { case 0: break; }");
     accepted("outer: while (0) { break outer; }");
-    // COUNTED, AND NOT `for (;;)`. `accepted` COMPILES AND RUNS its source, so
-    // a body that always continues an endless loop does not come back - this
-    // pair was written `outer: for (;;) { continue outer; }` and hung the whole
-    // executable until ctest killed it at 1500 s. The counter is incremented in
-    // the BODY rather than the head, so the loop ends whether `continue` lands
-    // on the update or on the test.
+    // A bounded loop, not `for (;;)`, because `accepted` also runs the source.
+    // The counter is incremented in the body so the loop ends whether
+    // `continue` goes to the update or to the test.
     accepted("var i = 0; outer: for (; i < 2; ) { ++i; continue outer; }");
     // A label on a labelled loop still names a loop, which is what makes this
     // legal - the label set is unwrapped rather than tested one deep.
     accepted("var j = 0; a: b: for (; j < 2; ) { ++j; continue a; }");
     accepted("block: { break block; }");
-    // Two labels of one name in SEQUENCE are fine; only nesting is an error.
+    // Two labels of one name in sequence are fine; only nesting is an error.
     accepted("a: ; a: ;");
     accepted("function f() { L: for (;;) { break L; } } f();");
 
     // ================================================================
-    // 7. `new.target` AND `super` OUTSIDE ANYTHING THAT HAS ONE
+    // 7. `new.target` and `super` outside anything that has one
     // ================================================================
     refused("super.x;");
     refused("super();");
@@ -375,27 +371,22 @@ int main() {
     accepted("class C { m() { return super.toString; } }");
     accepted("class C { constructor() { this.x = 1; } } new C();");
     accepted("var o = { m() { return super.toString; } };");
-    // `return` at the top level is NOT refused: it is this engine's embedding
+    // `return` at the top level is not refused: it is this engine's embedding
     // contract, the way a compiled program hands a value back. See the note on
     // `nk::return_stmt` in early_errors/statements.cpp.
     answers("return 42;", "42");
-    // ...AND NEITHER IS `new.target`, for the same reason and in the same
-    // breath. 16.1.1 admits both only inside a function, this engine's top
-    // level IS a function body, and refusing one while accepting the other
-    // refuses the calling convention halfway - `return String(new.target)` is a
-    // line in unittests/js/vm/objects.cpp and it was a SyntaxError until this
-    // pair agreed. There is no constructor at the top level, which is exactly
-    // what `undefined` says.
+    // `new.target` at the top level is accepted for the same reason: 16.1.1
+    // admits both only inside a function, and the top level is a function body
+    // in this engine. With no constructor it is `undefined`.
     answers("return String(new.target);", "undefined");
     answers("var f = () => new.target; return String(f());", "undefined");
-    // `super` is NOT this case: it needs a home object, which no top level has.
+    // `super` is different: it needs a home object, which no top level has.
 
     // ================================================================
-    // 8. `delete` OF A PRIVATE MEMBER - 13.5.1.1
+    // 8. `delete` of a private member - 13.5.1.1
     // ================================================================
-    // The one `delete` rule that does not need strict mode, and 192 test262
-    // files. `delete x` on a plain identifier IS strict-only and is accepted
-    // here, deliberately.
+    // The one `delete` rule that does not need strict mode. `delete x` on a
+    // plain identifier is an error only in strict code, so it is accepted here.
     refused("class C { #x; m() { delete this.#x; } }");
     refused("class C { #x; m() { delete (this.#x); } }");
 
@@ -405,7 +396,7 @@ int main() {
     accepted("class C { #x = 1; m() { return this.#x; } } new C().m();");
 
     // ================================================================
-    // 9. MORE OF 15.7.1, AND THE CONTEXTUAL NAMES - 15.5.1, 15.8.1
+    // 9. More of 15.7.1, and the contextual names - 15.5.1, 15.8.1
     // ================================================================
     // A field initialiser may not mention `arguments`, through an arrow but
     // not through a function; no field may be named `constructor`, static or
@@ -433,7 +424,7 @@ int main() {
     accepted("async function f() { var g = () => 1; return g(); }");
 
     // ================================================================
-    // 10. import() IS A CALL EXPRESSION - 13.3.10
+    // 10. import() is a call expression - 13.3.10
     // ================================================================
     // Grammar, so the parser's refusal: one or two arguments, never a
     // `new`, and a bare `import` is not an expression.
@@ -445,7 +436,7 @@ int main() {
     accepted("var p = () => import('x',);");
 
     // ================================================================
-    // 9. TWO `__proto__` IN ONE OBJECT LITERAL - B.3.1
+    // 11. Two `__proto__` in one object literal - B.3.1
     // ================================================================
     refused("var o = { __proto__: null, __proto__: null };");
     refused("({ __proto__: 1, __proto__: 2 });");
@@ -457,12 +448,12 @@ int main() {
     accepted("var __proto__ = 1; var o = { __proto__, __proto__: null };");
     accepted("var o = { ['__proto__']: 1, ['__proto__']: 2 };");
     accepted("var o = { __proto__() { return 1; }, __proto__: null };");
-    // A duplicate ORDINARY key is legal and always has been - the last one
-    // wins, and minifiers rely on it.
+    // A duplicate ordinary key is legal: the last one wins, and minifiers rely
+    // on it.
     answers("var o = { a: 1, a: 2 }; return o.a;", "2");
 
     // ================================================================
-    // 10. THE CLASS BODY - 15.7.1
+    // 12. The class body - 15.7.1
     // ================================================================
     refused("class C { constructor() {} constructor() {} }");
     refused("class C { get constructor() { return 1; } }");
@@ -472,20 +463,20 @@ int main() {
     refused("class C { static prototype = 1; }");
 
     accepted("class C { constructor() { this.x = 1; } m() {} } new C();");
-    // NOT an early error when the key is computed - and a RUNTIME TypeError:
+    // Not an early error when the key is computed, but a runtime TypeError:
     // the method is defined (DefineMethodProperty), and a class's own
     // `prototype` is not configurable (test262 static-method-non-configurable-err).
     answers("try { class C { static ['prototype']() { return 1; } } return 'defined'; }"
             " catch (e) { return e.name; }",
             "TypeError");
     accepted("class C { static m() {} get x() { return 1; } }");
-    // `constructor` on the STATIC side is an ordinary name, and a computed key
+    // `constructor` on the static side is an ordinary name, and a computed key
     // is never the constructor.
     accepted("class C { static constructor() { return 1; } }");
     accepted("class C { ['constructor']() { return 1; } }");
 
     // ================================================================
-    // 11. A REST ELEMENT THAT IS NOT LAST - 13.15.5.1
+    // 13. A rest element that is not last - 13.15.5.1
     // ================================================================
     refused("var a, b, c; [a, ...b, c] = [1, 2, 3];");
     refused("function f([a, ...b, c]) {}");
@@ -493,12 +484,12 @@ int main() {
     accepted("var a, b; [a, ...b] = [1, 2, 3];");
     accepted("function f([a, ...b]) { return b; } f([1, 2]);");
     accepted("var xs = [1, 2]; var ys = [0, ...xs, 3];");
-    // A SPREAD IN A CALL OR AN ARRAY LITERAL IS NOT A REST ELEMENT and may
-    // appear anywhere - which is the distinction this rule has to keep.
+    // A spread in a call or an array literal is not a rest element and may
+    // appear anywhere; this rule has to keep that distinction.
     accepted("function f() { return arguments.length; } f(1, ...[2, 3], 4);");
 
     // ================================================================
-    // 12. A DECLARATION IS NOT A STATEMENT - the grammar, not a clause
+    // 14. A declaration is not a statement - the grammar, not a clause
     // ================================================================
     // The body of an `if`, a loop or a labelled statement is a Statement, and
     // `let`, `const`, `class`, a generator and an async function are
@@ -514,10 +505,9 @@ int main() {
     refused("while (0) function f() {}");
     refused("label: class C {}");
 
-    // Annex B is the exception and it is narrow: B.3.3 admits a plain function
-    // declaration as an `if` clause and B.3.2 as a labelled item, in sloppy
-    // code - which is all the code there is here. A `var` was never a
-    // Declaration in this sense.
+    // Annex B is the narrow exception: in sloppy code, B.3.3 admits a plain
+    // function declaration as an `if` clause and B.3.2 admits one as a
+    // labelled item. A `var` was never a Declaration in this sense.
     accepted("if (true) var x = 1;");
     accepted("if (true) function f() {}");
     accepted("if (false) function f() {} else function g() {}");
@@ -525,12 +515,12 @@ int main() {
     accepted("if (true) { let x = 1; }");
     accepted("while (0) { let x = 1; }");
     accepted("for (;;) { let x = 1; break; }");
-    // `let` IN STATEMENT POSITION FOLLOWED BY A NEWLINE IS AN IDENTIFIER, and
-    // a semicolon is inserted after it. Twelve test262 files are this shape.
+    // `let` in statement position followed by a newline is an identifier, and
+    // a semicolon is inserted after it.
     accepted("if (false) let \nx = 1;");
 
     // ================================================================
-    // 13. THE PRIVATE NAMES OF A CLASS BODY - 15.7.1
+    // 15. The private names of a class body - 15.7.1
     // ================================================================
     refused("class C { #m() {} #m() {} }");
     refused("class C { #x; #x; }");
@@ -543,7 +533,7 @@ int main() {
     accepted("class C { get #m() { return 1; } set #m(v) {} }");
     accepted("class C { #m() {} #n() {} }");
     accepted("class C { static #m() {} #n() {} }");
-    // ...and a static half and an instance half of ONE name are still a
+    // ...and a static half and an instance half of one name are still a
     // duplicate: the get/set exception needs both to be on the same side.
     refused("class C { static get #m() { return 1; } set #m(v) {} }");
 
@@ -588,7 +578,7 @@ int main() {
             "2:4");
 
     // ================================================================
-    // 14. `super()` - 15.7.1
+    // 16. `super()` - 15.7.1
     // ================================================================
     // A SuperCall is admitted in exactly one place: the constructor of a class
     // that has a heritage.
@@ -604,9 +594,9 @@ int main() {
     accepted("class B {} class C extends B { m() { return super.toString; } }");
 
     // ================================================================
-    // 15. A DESTRUCTURING ASSIGNMENT IS A PATTERN, NOT A LITERAL - 13.15.5
+    // 17. A destructuring assignment is a pattern, not a literal - 13.15.5
     // ================================================================
-    // An ArrayLiteral or ObjectLiteral on the left of `=` is REINTERPRETED as a
+    // An ArrayLiteral or ObjectLiteral on the left of `=` is reinterpreted as a
     // pattern, and the reinterpretation is not total: every element has to be
     // something a value can be assigned to, or another pattern.
     refused("[[(x, y)]] = [[]];");
@@ -624,12 +614,12 @@ int main() {
     accepted("var a, b; [a = 1, b = 2] = [];");
     accepted("var a; [, a] = [1, 2];");
     accepted("var o = {}; ({ a: o.x = 1 } = {});");
-    // A SPREAD IN A LITERAL IS NOT A REST ELEMENT and none of this applies to
-    // it - `[...a, 1]` and `{ ...b, c: 1 }` are ordinary constructions.
+    // A spread in a literal is not a rest element and none of this applies to
+    // it: `[...a, 1]` and `{ ...b, c: 1 }` are ordinary constructions.
     accepted("var a = [1], b = { p: 1 }; var c = [...a, 2]; var d = { ...b, q: 2 };");
 
-    // A QUOTED `__proto__` NAMES THE SAME THING a plain one does, and a
-    // COMPUTED one does not, including when comments separate it from `[`. The
+    // A quoted `__proto__` names the same thing a plain one does, and a
+    // computed one does not, including when comments separate it from `[`. The
     // parser's quoted-name bit preserves the distinction; escaped names are cooked.
     refused("({ __proto__: 1, '__proto__': 2 });");
     refused("({ __proto__: null, '\\x5f_proto__': null });");
@@ -642,7 +632,7 @@ int main() {
     accepted("({ ['__proto__']: 1, ['__proto__']: 2, __proto__: null });");
 
     // ================================================================
-    // 16. A NUMERIC LITERAL'S OWN GRAMMAR - 12.9.3
+    // 18. A numeric literal's own grammar - 12.9.3
     // ================================================================
     // The lexer is total on purpose: it takes `0` plus a radix letter plus
     // every identifier character, and a decimal run of digits, dots and
@@ -656,7 +646,7 @@ int main() {
     refused("var x = 0b_1;");
     refused("var x = 1e_5;");
     refused("var x = 0_1;");
-    // A BigInt is an INTEGER, and it has no leading zero.
+    // A BigInt is an integer, and it has no leading zero.
     refused("var x = 1.5n;");
     refused("var x = 1e1n;");
     refused("var x = 01n;");
@@ -670,13 +660,13 @@ int main() {
     accepted("var x = 0x1F + 0b1010 + 0o17;");
     accepted("var x = 1n + 0n + 1_000n + 0xFFn;");
     accepted("var o = { 0: 1, 0.5: 2, 1e3: 3 };");
-    // A LEGACY OCTAL AND A NON-OCTAL DECIMAL ARE LEGAL SLOPPY JavaScript, and
-    // this engine has no strict mode - so both are accepted, deliberately.
+    // A legacy octal and a non-octal decimal literal are legal in sloppy code,
+    // so both are accepted here; section 19 checks that strict code refuses them.
     accepted("var x = 01;");
     accepted("var x = 08;");
 
     // ================================================================
-    // 17. STRICT MODE CODE - 11.2.2, 13.1.1, 13.5.1.1, 12.9.3.1, 15.2.1
+    // 19. Strict mode code - 11.2.2, 13.1.1, 13.5.1.1, 12.9.3.1, 15.2.1
     // ================================================================
     // Legal sloppy JavaScript, an early error once a directive, a class body
     // or a module makes the code strict. The sloppy form of each stays
@@ -705,8 +695,8 @@ int main() {
     accepted("var before = 1; 'use strict'; function f(a, a) {}");
 
     // --- modules (16.2.1): an ImportDeclaration and an ExportDeclaration are
-    // ModuleItems. Not statements - so nowhere but a module's own top level -
-    // and a script's grammar has neither at all.
+    // ModuleItems, not statements, so they appear nowhere but a module's own
+    // top level, and a script's grammar has neither.
     refused("export var x = 1;");
     refused("import x from './m.js';");
     module_refused("{ export default null; }");
@@ -715,8 +705,8 @@ int main() {
     module_refused("if (true) export default null;");
     module_accepted("export var x = 1; export default 42;");
     module_accepted("import x from './m.js'; export { x as y };");
-    // An exported name may not be exported twice, and an exported BINDING
-    // must be one this module declares - unless it came `from` another.
+    // An exported name may not be exported twice, and an exported binding
+    // must be one this module declares, unless it came `from` another.
     module_refused("var x; export { x }; export { x };");
     module_refused("var x, y; export default x; export { y as default };");
     module_refused("export function f() {} export class f {}");
@@ -729,7 +719,7 @@ int main() {
     module_accepted("import defer * as ns from './m.js'; export { ns };");
     module_accepted("import defer from './m.js'; export { defer };");
     module_refused("import defer * as ns, { x } from './m.js';");
-    // A module's top-level function declarations are LEXICAL, so two of a
+    // A module's top-level function declarations are lexical, so two of a
     // name are a redeclaration where a script allows them.
     accepted("function x() {} function x() {}");
     module_refused("function x() {} function x() {}");
@@ -742,7 +732,7 @@ int main() {
     module_refused("class F {} export default function F() {}");
     module_refused("var G; export default function* G() {}");
     module_accepted("export default class C {} export { C as D };");
-    // ...but a default EXPRESSION binds nothing, so its name is no duplicate.
+    // ...but a default expression binds nothing, so its name is no duplicate.
     module_accepted("const y = 42; export default y; export { y as z };");
     module_accepted("export default function F() {} export { F as G };");
     // A string ModuleExportName must be well-formed Unicode (16.2.2.1).

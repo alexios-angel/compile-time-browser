@@ -1,8 +1,12 @@
-// TEMPORAL'S CORE on plain records - the ISO calendar, rounding, the string
-// forms, the RFC 9557 grammar and the relative-rounding machinery - with no VM
+//===- ctbrowser/unittests/js/temporal_core.cpp - Temporal core tests -----===//
+//
+// Temporal's core on plain records (the ISO calendar, rounding, the string
+// forms, the RFC 9557 grammar and the relative-rounding machinery) with no VM
 // in the way (lib/Script/builtins/temporal/core.hpp). The expected values are
 // the specification's and test262's answers; the classes built on these are
 // measured by test262's built-ins/Temporal.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../../lib/Script/builtins/temporal/core.hpp"
 
@@ -15,6 +19,7 @@ using namespace ctbrowser::script::temporal;
 #define EXPECT(cond) CHECK(cond)
 #define EXPECT_STR(a, b) CHECK_EQ(std::string{a}, std::string{b})
 
+/// Formats a date duration as "years/months/weeks/days".
 static std::string dd(const date_duration & d) {
     return integer_to_string(d.years) + "/" + integer_to_string(d.months) + "/" +
            integer_to_string(d.weeks) + "/" + integer_to_string(d.days);
@@ -144,7 +149,7 @@ int main() {
         EXPECT(!parse_iso_datetime("1214", {goal::time}));
         EXPECT(!parse_iso_datetime("2021-12", {goal::time}));
         EXPECT(parse_iso_datetime("12:14", {goal::time}));
-        EXPECT(!parse_iso_datetime("1261", {goal::time})); // 12:61 is not a time
+        EXPECT(!parse_iso_datetime("1261", {goal::time})); // 12:61 is not a time.
         const auto md = parse_iso_datetime("--12-25", {goal::month_day});
         EXPECT(md && !md->year && md->month == 12 && md->day == 25);
         const auto ym = parse_iso_datetime("202112", {goal::year_month});

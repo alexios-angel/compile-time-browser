@@ -1,12 +1,14 @@
-// ctbrowser.paint: colours, recording, and what a display list is FOR.
+//===- ctbrowser/unittests/unit/paint/basics.cpp - Display list tests -----===//
 //
-// The interesting property is not that a fragment tree can be turned into
-// drawing commands - it is that the result outlives the frame. the previous engine returned a
-// paint_cmd vector that the shell drew and discarded, so a scroll or a caret
-// blink re-ran layout. The tests here pin the properties that make a recorded
-// list reusable: it is complete, it is ordered back-to-front, it is
-// deterministic, and it can be queried per region so a tile pays only for what
-// touches it.
+// Tests for ctbrowser.paint: colour parsing, recording a fragment tree into a
+// display list, paint order, per-region queries and layers.
+//
+// A display list must outlive the frame, so that a scroll or caret blink can
+// reuse it without re-running layout. These tests pin the properties that
+// make it reusable: it is complete, ordered back-to-front, deterministic, and
+// can be queried per region so a tile pays only for what touches it.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -26,8 +28,8 @@ using namespace ctbrowser::paint;
 
 namespace {
 
-// The whole front of the pipeline, since a display list is only meaningful at
-// the end of it.
+/// The whole front of the pipeline (parse, style, box tree, layout), since a
+/// display list is only meaningful at the end of it.
 struct fixture {
     atom_table atoms;
     document doc{atoms};
@@ -36,6 +38,8 @@ struct fixture {
     layout::box_node tree;
     layout::fragment placed;
 
+    /// Parses \p html, applies \p css and lays the page out at \p viewport
+    /// pixels wide into `placed`.
     void load(std::string_view html, std::string_view css, float viewport = 200) {
         (void)parse_html(doc, html);
         styles.add_sheet(css, 1);
@@ -53,6 +57,7 @@ struct fixture {
     }
 };
 
+/// Returns how many commands in \p list have operation \p op.
 [[nodiscard]] std::size_t count_op(const display_list & list, paint_op op) {
     std::size_t n = 0;
     for (const paint_command & c : list.commands()) {
@@ -68,6 +73,8 @@ struct fixture {
     return nullptr;
 }
 
+/// Returns the index of the first fill of colour \p want, or the command count
+/// if there is none. first_text_index does the same for a text run.
 [[nodiscard]] std::size_t first_fill_index(const display_list & list, color want) {
     const auto commands = list.commands();
     for (std::size_t i = 0; i < commands.size(); ++i) {
@@ -87,7 +94,7 @@ struct fixture {
 // --- colours --------------------------------------------------------------
 
 void test_opacity_fades_a_whole_subtree() {
-    // `opacity` is applied to what a subtree APPENDED rather than to each kind of
+    // `opacity` is applied to what a subtree appended rather than to each kind of
     // command, which is what makes it reach the background, the text and the
     // border alike. `.btn:disabled` is `opacity: .65` and it is on every disabled
     // control Bootstrap ships.
@@ -138,13 +145,10 @@ void test_color_syntaxes() {
     is("rgba(255, 0, 0, 0.5)", 0x80FF0000, "rgba() with a fractional alpha");
     is("transparent", 0x00000000, "transparent");
 
-    // ASCII CASE-INSENSITIVE, which is not pedantry about the spec. Bootstrap's
-    // `.text-bg-*` utilities write `RGBA(...)` in CAPITALS, 62 times, so a
-    // case-sensitive prefix test dropped the background colour of every badge and
-    // every coloured label on the page - and dropped it INVISIBLY to the parity
-    // harness, which normalises both sides' text and so compared the two spellings
-    // equal. The box was laid out, reported the right computed value, and painted
-    // nothing. Only a screenshot could see it.
+    // Colour function and keyword names are ASCII case-insensitive. Bootstrap's
+    // `.text-bg-*` utilities write `RGBA(...)` in capitals, and a case-sensitive
+    // match silently dropped those backgrounds: the box reported the right
+    // computed value and painted nothing.
     is("RGBA(255, 0, 0, 0.5)", 0x80FF0000, "an uppercase function name is the same function");
     is("RGB(255, 0, 0)", 0xFFFF0000, "...and so is RGB()");
     is("Red", 0xFFFF0000, "a capitalised colour name");
@@ -214,15 +218,14 @@ void test_paint_order_is_back_to_front() {
         ++i;
     }
     // The parent's background has to be recorded before the child's, or the
-    // child disappears under it. the previous engine needed a separate collect_backgrounds()
-    // pre-pass to get this; the Appendix E phase walkers now preserve the
-    // parent-before-child decoration order without that separate pass.
+    // child disappears under it. The recorder's CSS 2.1 Appendix E paint phases
+    // guarantee this parent-before-child order.
     check(red_at < blue_at, "a parent's background is recorded before its child's");
 }
 
 void test_all_block_decorations_precede_normal_inline_content() {
     fixture f;
-    // Appendix E does not paint each normal subtree atomically. Every in-flow
+    // CSS 2.1 Appendix E does not paint each normal subtree atomically. Every in-flow
     // block decoration in the context comes before the later inline-content
     // phase, so this later sibling's blue background belongs behind the earlier
     // sibling's text even though tree recursion would encounter the text first.
@@ -350,7 +353,7 @@ void test_z_auto_descendants_escape_but_z_zero_descendants_do_not() {
 
 void test_positioned_auto_paints_after_later_in_flow_content() {
     fixture f;
-    // Positioned z-index:auto content is in Appendix E's zero phase, after ALL
+    // Positioned z-index:auto content is in Appendix E's zero phase, after all
     // ordinary in-flow content in the context - even content later in the tree.
     f.load("<html><body><div id=automatic></div><div id=flow></div></body></html>",
            "body { margin: 0 } #automatic { position: relative; width: 20px; height: 20px; "
@@ -364,7 +367,7 @@ void test_positioned_auto_paints_after_later_in_flow_content() {
 void test_opacity_establishes_one_atomic_context() {
     fixture f;
     // Opacity is a context even without position or z-index. The child's 999 is
-    // trapped below the outside 1, and the context's fade reaches it ONCE.
+    // trapped below the outside 1, and the context's fade reaches it once.
     f.load("<html><body><div id=faded><div id=high></div></div><div id=one></div></body></html>",
            "body { margin: 0 } #faded { opacity: .5; height: 20px } "
            "#high { position: absolute; z-index: 999; width: 20px; height: 20px; "
@@ -479,7 +482,7 @@ void test_equal_negative_levels_keep_tree_order() {
 
 void test_an_escaped_context_keeps_its_ancestor_clip() {
     fixture f;
-    // The blue child escapes the ancestor's STACKING context (there is none), but
+    // The blue child escapes the ancestor's stacking context (there is none), but
     // not its overflow clip. The green z=1 sibling paints first and outside that
     // clip; then blue paints at z=2 while the clip is active.
     f.load("<html><body><div id=clip><div id=high></div></div><div id=one></div></body></html>",

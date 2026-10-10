@@ -1,7 +1,10 @@
-// Inline layout: text wrapping, line boxes, inline-block, replaced elements,
-// baselines, text-align and line-height. Carved out of unit/layout_basics.cpp
-// on 2026-09-08 - blocks.cpp names the family, and fixture.hpp
-// is the fixture every file in it shares.
+//===- ctbrowser/unittests/unit/layout/inline.cpp - Inline layout tests ---===//
+//
+// Inline layout tests: text wrapping, line boxes, inline-block, replaced
+// elements, baselines, text-align and line-height. Shared helpers are in
+// fixture.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -64,12 +67,9 @@ void test_a_block_with_only_text_still_honours_its_own_box() {
     const fragment * a = out.find(f.find_id("a"));
     check(a != nullptr, "the block produced a fragment");
     if (a == nullptr) { return; }
-    // Found while rendering: a block whose children are all inline was being
-    // laid out as if it WERE an inline box, so it took its size from its text
-    // and ignored its own width, height, padding and margins. Since nearly
-    // every leaf element in a real document contains only text, that was nearly
-    // every leaf element - `<div style="height:2000px">x</div>` came out one
-    // line high.
+    // A block whose children are all inline is still a block: it keeps its own
+    // width, height, padding and margins rather than taking its size from its
+    // text (`<div style="height:2000px">x</div>` is 2000px tall).
     expect_near(a->bounds.height, 500, "an explicit height is honoured over the text height");
     expect_near(a->bounds.width, 120, "and so is an explicit width");
     check(!a->children.empty(), "the text is still laid out inside it");
@@ -89,17 +89,15 @@ void test_an_inline_box_shrink_wraps() {
     const fragment * s = out.find(f.find_id("s"));
     check(a != nullptr && s != nullptr, "both fragments exist");
     if (a == nullptr || s == nullptr) { return; }
-    // The block fills; the inline inside it does not. Getting this backwards is
-    // what the dispatch fix above was about.
+    // The block fills; the inline inside it shrink-wraps.
     expect_near(a->bounds.width, 400, "the block fills the viewport");
     expect_near(s->bounds.width, 2 * 10 * 0.6f, "the inline shrinks to its two glyphs");
 }
 
-// `display: inline-block` - a BLOCK formatting context inside, at an INLINE level
-// outside. Both halves matter and each is a different bug when it is missing:
-// without the inside it cannot hold block children, and without the outside it
-// fills its containing block, which is what made every Bootstrap `.badge` a
-// full-width bar and `.btn` on an `<a>` span the whole row.
+/// `display: inline-block` is a block formatting context inside, at an inline
+/// level outside. Without the inside it cannot hold block children; without the
+/// outside it fills its containing block, turning every Bootstrap `.badge` into
+/// a full-width bar.
 void test_inline_block_shrinks_to_fit() {
     fixture f;
     f.load("<html><body><div id=a><span id=s>hi</span></div></body></html>",
@@ -128,9 +126,9 @@ void test_inline_blocks_share_a_line() {
 }
 
 void test_an_inline_levels_margins_belong_to_the_line() {
-    // Bootstrap separates every label from its field with `margin-bottom: .5rem`
-    // on an inline-block, and inline_flow ignored child margins outright - so the
-    // gap was 0 and every form control sat hard against its label.
+    // An inline-level box's margins belong to its line. Bootstrap separates
+    // every label from its field with `margin-bottom: .5rem` on an inline-block,
+    // so without this every form control sits hard against its label.
     fixture f;
     f.load("<html><body><span id=a>hi</span><span id=b>yo</span>"
            "<div id=c>next</div></body></html>",
@@ -144,16 +142,15 @@ void test_an_inline_levels_margins_belong_to_the_line() {
     check(a_box != nullptr && b != nullptr && c != nullptr, "all three fragments exist");
     if (a_box == nullptr || b == nullptr || c == nullptr) { return; }
     expect_near(b->bounds.x, a_box->bounds.width + 4, "a right margin separates two on a line");
-    // The margin BELOW extends the line box, so what follows clears it.
+    // The margin below extends the line box, so what follows clears it.
     expect_near(c->bounds.y, 16, "a bottom margin pushes the next line down");
 }
 
 void test_a_stated_size_on_a_replaced_element_is_the_border_box() {
-    // Under `box-sizing: border-box` - which Bootstrap sets on `*` - a stated
-    // width is the border box, for a replaced element as for every other. The
-    // replaced branch used to add the padding and border AROUND it regardless,
-    // making every `.form-control` 26px wider than Chrome's. (layout_sizing has
-    // the content-box rule, where they ARE added around it.)
+    // Under `box-sizing: border-box` (Bootstrap sets it on `*`), a stated width
+    // on a replaced element is the border box, as for any other element; padding
+    // and border are not added around it. layout/sizing.cpp tests the content-box
+    // case, where they are.
     fixture f;
     f.load("<html><body><input id=a><input id=b></body></html>",
            "body { margin: 0; padding: 0 } input { padding: 0 12px; border: 1px solid #000; "
@@ -166,14 +163,14 @@ void test_a_stated_size_on_a_replaced_element_is_the_border_box() {
     check(a_box != nullptr && b != nullptr, "both fragments exist");
     if (a_box == nullptr || b == nullptr) { return; }
     expect_near(a_box->bounds.width, 320, "a stated width IS the border box");
-    // The other half of the same rule: an INTRINSIC width is a content size, so
+    // The other half of the same rule: an intrinsic width is a content size, so
     // the padding and the border are added around that one.
     check(b->bounds.width > 26, "an intrinsic width grows by the padding and border");
 }
 
 void test_an_inline_block_still_stacks_its_own_blocks() {
-    // The INSIDE half. An inline BOX would put these on one line; an
-    // inline-BLOCK stacks them, which is the whole reason the two exist.
+    // The inside half: an inline box would put these on one line; an
+    // inline-block stacks them, which is the whole reason the two exist.
     fixture f;
     f.load("<html><body><div id=a><p id=p>one</p><p id=q>two</p></div></body></html>",
            "body { margin: 0; padding: 0 } #a { display: inline-block } "
@@ -189,10 +186,10 @@ void test_an_inline_block_still_stacks_its_own_blocks() {
 }
 
 void test_an_inline_block_sits_on_its_last_lines_baseline() {
-    // CSS 2.1 §10.8.1, and the padding is the point: a `.badge` is .35em of
-    // padding, a line of text and .35em more. Aligning it by its FONT's ascent -
-    // which is what every other inline box does - hangs the whole pill above the
-    // sentence by exactly its top padding.
+    // CSS 2.1 §10.8.1: an inline-block's baseline is its last line box's
+    // baseline, padding included. A `.badge` is .35em of padding, a line of text
+    // and .35em more; aligning it by its font's ascent, as other inline boxes
+    // are, would hang the pill above the sentence by exactly its top padding.
     fixture f;
     f.load("<html><body><div id=w>text <span id=s>tag</span></div></body></html>",
            "body { margin: 0; padding: 0 } div { font-size: 10px } "
@@ -205,7 +202,7 @@ void test_an_inline_block_sits_on_its_last_lines_baseline() {
     if (s == nullptr || w == nullptr) { return; }
     // monospace_measure's ascent is 0.8 of the size, so the plain run's baseline
     // is 8 below its top and the badge's is 6 (its padding) + 8 = 14 below its.
-    // Sharing a baseline therefore leaves the TALLER one where it is and drops the
+    // Sharing a baseline therefore leaves the taller one where it is and drops the
     // text by the difference. Using the badge's own font ascent instead would put
     // both tops at 0, and the badge's text would sit six pixels below the sentence
     // it is part of.
@@ -221,9 +218,9 @@ void test_an_inline_block_sits_on_its_last_lines_baseline() {
 }
 
 void test_text_align() {
-    // A line is aligned by SHIFTING everything on it, against the content width
-    // the container handed down - not against how wide the line turned out, which
-    // is a number that has no leftover in it by construction.
+    // A line is aligned by shifting everything on it, against the content width
+    // the container handed down; not against how wide the line turned out, which
+    // has no leftover space in it by construction.
     const std::string_view html = "<html><body><div id=a>hi</div></body></html>";
     const auto run = [&](std::string_view align) {
         fixture f;
@@ -235,7 +232,7 @@ void test_text_align() {
         engine eng{monospace_measure()};
         const fragment out = eng.run(f.root, 200);
         const fragment * a = out.find(f.find_id("a"));
-        // The TEXT run inside, not the block - the block still fills its parent.
+        // The text run inside, not the block; the block still fills its parent.
         return a != nullptr && !a->children.empty() ? a->children[0].bounds.x : -1.0f;
     };
     const float width = 2 * 10 * 0.6f; // "hi"
@@ -244,8 +241,8 @@ void test_text_align() {
     expect_near(run("center"), (200 - width) / 2, "center splits the leftover");
     expect_near(run("right"), 200 - width, "right puts it all before the line");
     expect_near(run("end"), 200 - width, "and `end` is the same thing here");
-    // INHERITED, which is what makes `.text-center` on a container centre
-    // everything inside it rather than only its own text.
+    // text-align is inherited, which is what makes `.text-center` on a
+    // container centre everything inside it rather than only its own text.
     {
         fixture f;
         f.load("<html><body><div id=outer><p id=a>hi</p></div></body></html>",
@@ -260,7 +257,8 @@ void test_text_align() {
     }
 }
 
-// line-height, which was a hardcoded 1.25 for every box on every page.
+/// line-height: a number is a factor of font-size, a length is used as is,
+/// a percentage is a factor, and `normal` is 1.25.
 void test_line_height() {
     {
         fixture f;
@@ -275,7 +273,7 @@ void test_line_height() {
         }
     }
     {
-        // A LENGTH is itself, not a factor - the case a naive implementation gets
+        // A length is itself, not a factor: the case a naive implementation gets
         // backwards because parse_length calls a unitless value px.
         fixture f;
         f.load(
@@ -297,8 +295,7 @@ void test_line_height() {
         if (a != nullptr) { expect_near(a->bounds.height, 30, "a percentage is a factor"); }
     }
     {
-        // `normal` keeps the 1.25 fallback, which is what stops every existing
-        // render moving for a reason no stylesheet asked for.
+        // `normal` uses the 1.25 fallback factor.
         fixture f;
         f.load("<html><body><p id=a>hi</p></body></html>",
                "p { font-size: 20px; margin: 0 } body { padding: 0; margin: 0 }");
@@ -311,10 +308,10 @@ void test_line_height() {
 
 } // namespace
 
-// An inline box's horizontal padding and border take room on the line, as
-// measure already counted them: the text after `<span>` with 8px of right
-// padding starts 8px further on (Bootstrap's breadcrumb divider). An
-// inline-block is the height it came to, zero included - not a line.
+/// An inline box's horizontal padding and border take room on the line, as
+/// measure already counted them: the text after a `<span>` with 8px of right
+/// padding starts 8px further on (Bootstrap's breadcrumb divider). An
+/// inline-block is the height its content gives it, zero included, not a line.
 void test_an_inline_boxs_padding_takes_room_on_the_line() {
     fixture f;
     f.load("<html><body><div id=a><span id=s>ab</span><span id=t>c</span>"

@@ -1,3 +1,4 @@
-# Tests named for their path below unittests/unit/: attrs.cpp here is
-# `element_attrs` (ctbrowser_test_directory, cmake/modules/CTTest.cmake).
+# Builds every .cpp here as a test named for its path below unittests/unit/,
+# so attrs.cpp becomes `element_attrs` (see ctbrowser_test_directory in
+# cmake/modules/CTTest.cmake).
 ctbrowser_test_directory()

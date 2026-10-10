@@ -1,12 +1,15 @@
-// `boolean`, against V8.
+//===- ctbrowser/unittests/js/boolean_basics.cpp - Boolean against V8 -----===//
 //
-// Two values and a conversion table, which is most of what makes control flow
-// work: every `if`, every `&&`, every `||` runs ToBoolean on something that is
-// usually not a boolean. Differentially tested against node (V8); 1 difference.
+// The `boolean` type, with expected values taken from node (V8). Two values and
+// a conversion table, which is most of what makes control flow work: every
+// `if`, `&&` and `||` runs ToBoolean on something that is usually not a
+// boolean.
 //
-// The rule worth internalising is that the falsy set is CLOSED and short -
-// seven values - so everything else is true, including "0", "false", [] and {}.
-// Most "why did my guard not fire" bugs are a member of that list.
+// The rule worth internalising is that the falsy set is closed and short
+// (seven values), so everything else is true, including "0", "false", [] and
+// {}. Most "why did my guard not fire" bugs involve a member of that list.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -45,7 +48,7 @@ int main() {
     js_expect("JSON.stringify(true)", "true");
 
     // --- equality and comparison ---------------------------------------------
-    // `==` converts a boolean to a NUMBER first, which is why "1" equals true
+    // `==` converts a boolean to a number first, which is why "1" equals true
     // and "true" does not.
     js_expect("true == 1", "true");
     js_expect("true === 1", "false");
@@ -63,16 +66,16 @@ int main() {
     js_expect("typeof Boolean.prototype", "object");
     js_expect("Boolean.prototype.toString.call(true)", "true");
 
-    // --- && and || return an OPERAND, not a boolean --------------------------
+    // --- && and || return an operand, not a boolean --------------------------
     js_expect("true && false", "false");
     js_expect("true || false", "true");
     js_expect("1 && 2", "2");
     js_expect("0 || \"d\"", "d");
     js_expect("null && \"x\"", "null");
 
-    // `new Boolean(false)` is an OBJECT, and every object is truthy - which is
-    // the standard argument against the wrapper constructors. Boxed since
-    // 2026-09-12 (unittests/js/wrapper_objects.cpp is the full account).
+    // `new Boolean(false)` is an object, and every object is truthy: the
+    // standard argument against the wrapper constructors.
+    // unittests/js/wrapper_objects.cpp covers the wrappers in full.
     js_expect("Boolean(new Boolean(false))", "true");
     js_expect("Boolean.prototype.toString.call({})", "THREW");
 

@@ -1,31 +1,25 @@
-// JSON, against V8 - the whole of 25.5 rather than the half of it that was here.
+//===- ctbrowser/unittests/js/json_basics.cpp - JSON against V8 -----------===//
 //
-// `JSON.stringify` was one free function of (value, string &). It had no
-// replacer, no `space`, no `toJSON`, and - the one that is not a missing
-// feature but a crash - no stack, so `a = []; a[0] = a; JSON.stringify(a)`
-// recursed until the C++ stack ran out. `JSON.parse` accepted `+1`, `01`, `1.`,
-// `.5`, a raw control character inside a string and anything at all AFTER the
-// document, and answered `undefined` for source it could not read instead of
-// throwing the SyntaxError every page's try/catch is written for.
+// JSON.parse and JSON.stringify (ECMA-262 25.5), with expected values taken
+// from node. Covers replacer, space, toJSON, reviver, cycle detection, the
+// strict number and whitespace grammar, and bounded nesting depth.
 //
-// THIS FILE IS THE REGRESSION NET, not test262: that suite is opt-in
-// (-DCTBROWSER_TEST262=ON), needs a 273 MB corpus that is deliberately not in
-// the repository, and takes five minutes. The expected values are node's.
+// This file is the regression net, not test262: that suite is opt-in
+// (-DCTBROWSER_TEST262=ON), needs a 273 MB corpus kept outside the repository,
+// and takes minutes.
 //
-// Two deviations are asserted as they ARE rather than as the specification has
-// them, because each belongs to this engine's value model rather than to JSON:
+// One deviation is asserted as it is rather than as the specification has it,
+// because it belongs to this engine's value model rather than to JSON: an
+// array is walked to `items.size()` and not to its `length` property, the same
+// deviation every array built-in has (see array_object::sparse).
 //
-//   * a string is UTF-8 BYTES, so `.length` counts bytes and a lone surrogate
-//     cannot be represented - `"\ud800"` parses to U+FFFD. A surrogate PAIR is
-//     joined into one code point, which is the half that was wrong.
-//   * an array is walked to `items.size()` and not to its `length` property,
-//     the same deviation every array built-in has (see array_object::sparse).
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
-// `e.name` for whatever the expression threw, or "no" when it did not throw at
-// all. Every negative case below is one of these: what is being asserted is
-// WHICH error, and "THREW" from js_expect cannot say.
+/// Builds an expression answering `e.name` for whatever `source` threw, or "no"
+/// when it did not throw. The negative cases below assert which error, which
+/// js_expect's flattened "THREW" cannot say.
 [[nodiscard]] static std::string threw(std::string_view source) {
     return "(function () { try { " + std::string{source} +
            "; return 'no'; } catch (e) { return e.name; } })()";
@@ -51,7 +45,7 @@ int main() {
     js_expect("JSON.stringify(true)", "true");
     js_expect("JSON.stringify('a')", "\"a\"");
     js_expect("JSON.stringify(1.5)", "1.5");
-    // 25.5.2 step 12: an unserialisable value at the TOP LEVEL is undefined,
+    // 25.5.2 step 12: an unserialisable value at the top level is undefined,
     // and inside an array it is null. The two are different answers on purpose.
     js_expect("JSON.stringify(undefined)", "undefined");
     js_expect("JSON.stringify(function () {})", "undefined");
@@ -66,8 +60,7 @@ int main() {
     js_expect("JSON.stringify([-0])", "[0]");
 
     // --- QuoteJSONString, 25.5.2.3 ------------------------------------------
-    // \b and \f were the two rows of the table that were missing: both came out
-    // as the six-character \u0008 and \u000c forms.
+    // \b and \f use their short escapes, not \u0008 and \u000c.
     js_expect("JSON.stringify(String.fromCharCode(8))", "\"\\b\"");
     js_expect("JSON.stringify(String.fromCharCode(12))", "\"\\f\"");
     js_expect("JSON.stringify(String.fromCharCode(10))", "\"\\n\"");
@@ -82,7 +75,7 @@ int main() {
     // ================================================================
     js_expect("JSON.stringify({toJSON: function () { return 42; }})", "42");
     js_expect("JSON.stringify({a: {toJSON: function () { return [1]; }}})", "{\"a\":[1]}");
-    // It is handed the KEY it is being serialised under, which is what lets one
+    // It is handed the key it is being serialised under, which is what lets one
     // toJSON answer differently in two places.
     js_expect("JSON.stringify({a: {toJSON: function (k) { return k; }}})", "{\"a\":\"a\"}");
     js_expect("JSON.stringify([{toJSON: function (k) { return k; }}])", "[\"0\"]");
@@ -100,16 +93,16 @@ int main() {
               "{\"a\":2,\"b\":4}");
     // It sees the root under the key "" before it sees anything else.
     js_expect("JSON.stringify(1, function (k, v) { return k === '' ? v + 1 : v; })", "2");
-    // Returning undefined OMITS the member.
+    // Returning undefined omits the member.
     js_expect("JSON.stringify({a: 1, b: 2},"
               " function (k, v) { return k === 'a' ? undefined : v; })",
               "{\"b\":2}");
-    // Its receiver is the HOLDER, so a replacer can see which object a value
+    // Its receiver is the holder, so a replacer can see which object a value
     // came out of.
     js_expect("JSON.stringify({a: 1}, function (k, v) { return k === 'a' ? this.a + 10 : v; })",
               "{\"a\":11}");
-    // A replacer ARRAY is a property list, applied to objects and not to
-    // arrays, keeping ITS order rather than the object's.
+    // A replacer array is a property list, applied to objects and not to
+    // arrays, keeping its own order rather than the object's.
     js_expect("JSON.stringify({a: 1, b: 2, c: 3}, ['b', 'a'])", "{\"b\":2,\"a\":1}");
     js_expect("JSON.stringify({a: 1, b: 2}, ['b'])", "{\"b\":2}");
     // A duplicate name appears once - the list is a set, in insertion order.
@@ -131,7 +124,7 @@ int main() {
     js_expect("JSON.stringify([1, 2], null, 1)", "[\n 1,\n 2\n]");
     js_expect("JSON.stringify({a: {b: 1}}, null, 1)", "{\n \"a\": {\n  \"b\": 1\n }\n}");
     js_expect("JSON.stringify([[1]], null, 1)", "[\n [\n  1\n ]\n]");
-    // An EMPTY object or array is written flat even with a gap: there are no
+    // An empty object or array is written flat even with a gap: there are no
     // members, so there is nothing to put on a line.
     js_expect("JSON.stringify({a: {}, b: []}, null, 1)", "{\n \"a\": {},\n \"b\": []\n}");
     // A string gap is used as it is; a number gap is that many spaces.
@@ -149,12 +142,12 @@ int main() {
     js_expect("JSON.stringify({a: 1}, null, '')", "{\"a\":1}");
 
     // ================================================================
-    // 5. The cycle check - a TypeError where there used to be a segfault
+    // 5. The cycle check - a TypeError, not unbounded recursion
     // ================================================================
     js_expect(threw("var a = []; a[0] = a; JSON.stringify(a)"), "TypeError");
     js_expect(threw("var o = {}; o.self = o; JSON.stringify(o)"), "TypeError");
     js_expect(threw("var o = {a: {}}; o.a.up = o; JSON.stringify(o)"), "TypeError");
-    // THE SAME OBJECT TWICE IS NOT A CYCLE. The stack holds the ancestors of
+    // The same object twice is not a cycle. The stack holds the ancestors of
     // the value being written, not everything already seen, and a shared
     // subobject is perfectly serialisable.
     js_expect("(function () { var s = {v: 1}; return JSON.stringify([s, s]); })()",
@@ -176,10 +169,9 @@ int main() {
     js_expect("JSON.parse('[\"\\\\\\\\\"]')[0].length", "1");
     js_expect("JSON.parse('[\"\\\\b\"]')[0].charCodeAt(0)", "8");
     js_expect("JSON.parse('[\"\\\\f\"]')[0].charCodeAt(0)", "12");
-    // A SURROGATE PAIR IS ONE CODE POINT, two UTF-16 units. Encoding the halves
-    // separately produced two replacement characters.
+    // A surrogate pair escape is one code point: two UTF-16 units.
     js_expect("JSON.parse('[\"\\\\ud83d\\\\ude00\"]')[0].length", "2");
-    // A LONE surrogate stays one: its own unit, kept as WTF-8.
+    // A lone surrogate stays one: its own unit, kept as WTF-8.
     js_expect("JSON.parse('[\"\\\\ud800\"]')[0].length", "1");
     js_expect("JSON.parse('[\"\\\\ud800\"]')[0].charCodeAt(0)", "55296");
     // Round-tripping is the property that matters most, and it holds.
@@ -187,7 +179,7 @@ int main() {
               "{\"a\":[1,{\"b\":null}],\"c\":\"x\"}");
 
     // ================================================================
-    // 7. JSON.parse - what it REFUSES, and with which error
+    // 7. JSON.parse - what it refuses, and with which error
     // ================================================================
     js_expect(threw("JSON.parse('')"), "SyntaxError");
     js_expect(threw("JSON.parse('{')"), "SyntaxError");
@@ -196,7 +188,7 @@ int main() {
     js_expect(threw("JSON.parse('{\"a\":1,}')"), "SyntaxError");
     js_expect(threw("JSON.parse('{a:1}')"), "SyntaxError");
     js_expect(threw("JSON.parse(\"{'a':1}\")"), "SyntaxError");
-    // Trailing content, which this reader did not look for at all.
+    // Trailing content after the document.
     js_expect(threw("JSON.parse('[1,2]junk')"), "SyntaxError");
     js_expect(threw("JSON.parse('1 2')"), "SyntaxError");
     // The number grammar: no leading plus, no leading zero, a digit either side
@@ -225,11 +217,11 @@ int main() {
     js_expect("JSON.parse('{\"a\":1,\"b\":2}',"
               " function (k, v) { return typeof v === 'number' ? v * 10 : v; }).b",
               "20");
-    // Returning undefined DELETES the property, which is how one filters.
+    // Returning undefined deletes the property, which is how one filters.
     js_expect("JSON.stringify(JSON.parse('{\"a\":1,\"b\":2}',"
               " function (k, v) { return k === 'a' ? undefined : v; }))",
               "{\"b\":2}");
-    // The walk is POST-ORDER: a child is revived and written back before its
+    // The walk is post-order: a child is revived and written back before its
     // parent is offered, so the parent sees the finished object.
     js_expect("JSON.parse('{\"a\":{\"b\":1}}',"
               " function (k, v) { return k === 'a' ? v.b : v; }).a",
@@ -298,9 +290,8 @@ int main() {
               " } }]); return 'no'; } catch (e) { return e.name; } })()",
               "no");
 
-    // DEEP NESTING IS BOUNDED, NOT A NATIVE STACK OVERFLOW. Before the depth
-    // caps a document nested past the native stack aborted the process; now
-    // each path fails with a catchable error. (security review DOS-001/002/003.)
+    // Deep nesting is capped: past the limit, each path fails with a catchable
+    // error instead of overflowing the native stack and aborting the process.
     js_expect("(function () { var s = '['.repeat(50000) + ']'.repeat(50000);"
               " try { JSON.parse(s); return 'no throw'; } catch (e) { return e.name; } })()",
               "SyntaxError");
@@ -310,7 +301,7 @@ int main() {
     js_expect("(function () { var a = []; for (var i = 0; i < 50000; i++) { a = [a]; }"
               " try { structuredClone(a); return 'no throw'; } catch (e) { return e.name; } })()",
               "DataCloneError");
-    // ...and a document at the LEGAL depth still round-trips.
+    // ...and a document at the legal depth still round-trips.
     js_expect("JSON.parse('[[[[[1]]]]]')[0][0][0][0][0]", "1");
 
     return ctbrowser_test_failures == 0 ? 0 : 1;

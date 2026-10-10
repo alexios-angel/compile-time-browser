@@ -1,23 +1,27 @@
-#pragma once
-// THE ENGINE SEAM, for every workload test (Bootstrap, p5, Phaser, Babylon).
+//===- ctbrowser/test/support/engine.hpp - Workload test engine seam ------===//
 //
-// A workload test keeps ALL of its JavaScript in .js and .html files beside it,
+// The engine seam for every workload test (Bootstrap, p5, Phaser, Babylon).
+//
+// A workload test keeps all of its JavaScript in .js and .html files beside it,
 // as named functions, and reaches that JavaScript only through `call()`. Its C++
 // never builds or evaluates JavaScript text: no run_script, no ask(), no inline
 // <script> in a C++ string, no alert hook for answers.
 //
-// That is what lets the same test run on two engines. ctcompile compiles ahead
-// of time, so it can only compile JavaScript that exists as source at build
-// time - which these files are - and a native engine will call the compiled
-// functions directly. tools/check/check-workload.py's native-run stage will run
-// each test as `<name>.native`: the same executable with
-// CTBROWSER_TEST_ENGINE=native. Until ctcompile can provide that engine,
-// selecting it fails loudly instead of quietly running the VM.
+// That lets the same test run on two engines. ctcompile compiles ahead of
+// time, so it can only compile JavaScript that exists as source at build time
+// (these files), and a native engine will call the compiled functions
+// directly. tools/check/check-workload.py will run each test natively as
+// `<name>.native`: the same executable with CTBROWSER_TEST_ENGINE=native.
+// Until ctcompile provides that engine, selecting it fails loudly instead of
+// quietly running the VM.
 //
-// WHAT THE SEAM DOES NOT COVER YET: loading the page, ticking frames, reading
-// pixels and dispatching input still go through ctbrowser::shell::browser, which
-// links the VM. A native run needs a native host for those too; its shape is
-// for the compiler work to decide, so it is not guessed at here.
+// Not covered yet: loading the page, ticking frames, reading pixels and
+// dispatching input still go through ctbrowser::shell::browser, which links
+// the VM. A native run needs a native host for those too; its shape is left
+// to the compiler work rather than guessed at here.
+//
+//===----------------------------------------------------------------------===//
+#pragma once
 
 #include <cstdio>
 #include <cstdlib>
@@ -32,23 +36,26 @@
 
 namespace ctbrowser_test {
 
+/// How a workload test reaches its page's JavaScript; see the file comment.
 class engine {
 public:
     virtual ~engine() = default;
-    // Run one of the test's script FILES in the page, as a classic script: its
-    // top-level code runs and its functions become globals. For a page that
-    // must stay as it is (a fixture other tools load too); a page the test owns
-    // lists its scripts itself. Empty on success, otherwise the error.
+    /// Runs one of the test's script files in the page as a classic script: its
+    /// top-level code runs and its functions become globals. For a page that
+    /// must stay as it is (a fixture other tools load too); a page the test
+    /// owns lists its scripts itself. Returns empty on success, else the error.
     [[nodiscard]] virtual std::string load(const std::string & path) = 0;
-    // Call a global function of the page's scripts with string arguments. The
-    // answer is String(result), or "threw: <message>" when the call throws.
+    /// Calls a global function of the page's scripts with string arguments. The
+    /// answer is String(result), or "threw: <message>" when the call throws.
     [[nodiscard]] virtual std::string call(std::string_view function,
                                            std::initializer_list<std::string_view> args = {}) = 0;
+    /// The engine's name, "vm" or "native".
     [[nodiscard]] virtual const char * name() const = 0;
 };
 
-// A JavaScript string literal for `text`, the one piece of JavaScript the VM
-// engine writes: the call expression around the test's own function.
+/// Quotes `text` as a JavaScript string literal. The VM engine uses it to build
+/// the call expression around the test's own function, the one piece of
+/// JavaScript it writes.
 [[nodiscard]] inline std::string js_string(std::string_view text) {
     std::string out = "\"";
     for (const char c : text) {
@@ -71,10 +78,10 @@ public:
     return out + "\"";
 }
 
-// The interpreter: the call runs inside the page and its answer comes back on
-// the console, the one channel both engines will share. The console is append-
-// only, so the answer is the marked line added by this call - not `back()`,
-// which would pick up anything the library logged in between.
+/// The interpreter engine. The call runs inside the page and its answer comes
+/// back on the console, the one channel both engines will share. The console
+/// is append-only, so the answer is the marked line added by this call, not
+/// `back()`, which would pick up anything the library logged in between.
 class vm_engine final : public engine {
 public:
     explicit vm_engine(ctbrowser::browser & page) : page_{page} {}
@@ -116,9 +123,9 @@ private:
     ctbrowser::browser & page_;
 };
 
-// The engine CTBROWSER_TEST_ENGINE names: unset or "vm" is the interpreter.
-// "native" has no implementation yet, and anything else is a typo; both end the
-// test with a FAIL rather than measure the wrong engine.
+/// Returns the engine CTBROWSER_TEST_ENGINE names: unset or "vm" is the
+/// interpreter. "native" has no implementation yet, and anything else is a
+/// typo; both end the test with a FAIL rather than measure the wrong engine.
 [[nodiscard]] inline std::unique_ptr<engine> make_engine(ctbrowser::browser & page) {
     const char * chosen = std::getenv("CTBROWSER_TEST_ENGINE");
     const std::string_view kind = chosen == nullptr ? "vm" : chosen;

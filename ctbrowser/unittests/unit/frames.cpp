@@ -1,22 +1,22 @@
-// `<iframe>` - a nested browsing context, which here is a second Document.
+//===- ctbrowser/unittests/unit/frames.cpp - <iframe> nested documents ----===//
 //
-// Its own file because what it pins down is a MODEL rather than a method, the
-// same way unit/second_document.cpp does: a frame is a second `dom_bindings`
-// over its own tree, with a REALM of its own for its scripts, and the file that
-// builds it is lib/Shell/bindings/frames.cpp. These cases are the parts of that
-// decision that would otherwise drift.
+// `<iframe>` is a nested browsing context, which here is a second Document.
+// These tests pin down a model rather than a method, as
+// unit/second_document.cpp does: a frame is a second `dom_bindings` over its
+// own tree, with a realm of its own for its scripts, built by
+// lib/Shell/bindings/frames.cpp.
 //
-// TWO OF THEM ASSERT A LIMIT, and those are the important ones: the frame's
-// realm shares the page's intrinsics (one `Array`, one `Node`), and a `src`
-// that resolves to nothing still leaves a Document behind and reports `error`
-// rather than `load`. A test that only checked the happy path would let each
-// of those turn into a silent wrong answer.
+// Some cases pin a limit rather than a feature: the frame's realm shares the
+// page's intrinsics (one `Array`, one `Node`), and a `src` that resolves to
+// nothing still leaves a Document behind and fires `load`, as a 404 does.
 //
-// THE ORDERING IS THE POINT of the last two: a page's own `load` handler is
-// where a test reads `frame.contentDocument`, so the frame's document has to
-// exist BEFORE that event - and the frame's own `load`, like a sheet's, is
-// settled just before it, since HTML delays the window's load until the
-// subresources have (bindings/events/input.cpp, dispatch).
+// Ordering matters too. A page's own `load` handler is where a test reads
+// `frame.contentDocument`, so the frame's document must exist before that
+// event, and the frame's own `load`, like a sheet's, is settled just before
+// it, because HTML delays the window's load until its subresources have
+// loaded (bindings/events/input.cpp, dispatch).
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -32,17 +32,17 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-// Two frame sources, seeded into the registry rather than written to disk, so
-// the test is hermetic and needs no document root: `asset_registry::load`
-// consults the registry before it ever looks at the filesystem.
+/// Two frame sources, seeded into the registry rather than written to disk, so
+/// the test is hermetic and needs no document root: `asset_registry::load`
+/// consults the registry before it ever looks at the filesystem.
 constexpr const char * inner_html = "<!DOCTYPE html><html><head><title>inner</title></head>"
                                     "<body><p id=greeting>hello</p></body></html>";
 constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1 1\">"
                                    "<Leaf/>text</root>";
 
-// Load a page with the two frames available by name, run enough ticks for the
-// reconcile and the frame's load event to have happened, and answer with what
-// the expression logged.
+/// Loads a page with the frame sources available by name, runs enough ticks
+/// for the reconcile and the frame's load event to have happened, and returns
+/// what \p expression logged (or a description of the failure).
 [[nodiscard]] std::string answer(const std::string & body, const std::string & expression) {
     browser page{browser_options{400, 300}};
     // An address, so a frame's `location` resolves against something: a
@@ -51,10 +51,11 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     page.assets().add("inner.html", bytes_of(inner_html));
     page.assets().add("inner.xml", bytes_of(inner_xml));
     page.assets().add("self.html", bytes_of("<p>self</p><iframe id=s src=self.html></iframe>"));
-    // A `setTimeout` INSIDE the window's load handler. One tick does, in
-    // order: reconcile the frames, settle the frame and sheet loads, dispatch
-    // the page's own `load`, then run the timers - so the timer is a moment at
-    // which everything has happened, whichever way the middle two are ordered.
+    // The expression runs from a `setTimeout` inside the window's load
+    // handler. One tick does, in order: reconcile the frames, settle the frame
+    // and sheet loads, dispatch the page's own `load`, then run the timers. So
+    // the timer is a moment at which everything has happened, whichever way
+    // the middle two are ordered.
     const std::string html =
         "<!DOCTYPE html><html><head><title>the page</title></head><body>" + body +
         "<script>window.addEventListener('load', function () {"
@@ -69,6 +70,7 @@ constexpr const char * inner_xml = "<?xml version=\"1.0\"?><root viewBox=\"0 0 1
     return logged.back();
 }
 
+/// Checks that \p expression, evaluated by answer() over \p body, logs \p expected.
 void is(const std::string & body, const std::string & expression, const std::string & expected) {
     const std::string got = answer(body, expression);
     CHECK_EQ(got, expected);
@@ -82,7 +84,7 @@ void test_a_frame_has_a_document_of_its_own() {
     is(one_frame,
        "document.getElementById('f').contentDocument.getElementById('greeting').textContent",
        "hello");
-    // NOT THE PAGE'S DOCUMENT. The whole model is that it is a second one, and
+    // Not the page's document. The whole model is that it is a second one, and
     // an implementation that answered with the page's would pass every
     // assertion above.
     is(one_frame, "document.getElementById('f').contentDocument === document", "false");
@@ -91,7 +93,7 @@ void test_a_frame_has_a_document_of_its_own() {
     is(one_frame, "document.getElementById('f').contentWindow.frameElement.id", "f");
     is(one_frame, "document.getElementById('f').contentWindow.document.title", "inner");
     is(one_frame, "document.getElementById('f').contentWindow.parent === window", "true");
-    // THE FRAME'S WINDOW REACHES THE PAGE'S GLOBALS, because the realm is one:
+    // The frame's window reaches the page's globals, because the realm is one:
     // `assert_throws_dom` is handed `root.ownerDocument.defaultView
     // .DOMException` and needs a constructor whose `.name` is "DOMException"
     // and whose prototype an exception the frame's DOM threw is on.
@@ -106,8 +108,8 @@ void test_a_frame_has_a_document_of_its_own() {
        " return (e instanceof d.defaultView.DOMException) && e.name === 'SyntaxError'; } })()",
        "true");
     is(one_frame, "'TypeError' in document.getElementById('f').contentWindow", "true");
-    // ...BUT NOT THE PAGE'S BROWSING-CONTEXT STATE: a frame's `location` is
-    // its own document's, never the page's.
+    // But not the page's browsing-context state: a frame's `location` is its
+    // own document's, never the page's.
     is(one_frame,
        "(function () { var w = document.getElementById('f').contentWindow;"
        " return (w.location === window.location) + ',' + /inner\\.html$/.test(w.location.href);"
@@ -118,7 +120,7 @@ void test_a_frame_has_a_document_of_its_own() {
 void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {
     constexpr const char * xml_frame = "<iframe id=f src=inner.xml></iframe>";
     is(xml_frame, "document.getElementById('f').contentDocument.contentType", "application/xml");
-    // CASE IS PRESERVED, which is the whole reason the XML front end exists: the
+    // Case is preserved, which is the reason the XML front end exists: the
     // HTML tree builder would answer `LEAF` here and lowercase `viewBox`.
     is(xml_frame, "document.getElementById('f').contentDocument.documentElement.tagName", "root");
     is(xml_frame,
@@ -127,8 +129,8 @@ void test_a_frame_whose_source_is_xml_is_parsed_as_xml() {
 }
 
 void test_a_frame_with_no_source_is_still_a_document() {
-    // about:blank, which a page uses as a scratch document: `frame.contentDocument
-    // .body` has to be there to write into.
+    // An about:blank frame, which a page uses as a scratch document:
+    // `frame.contentDocument.body` has to be there to write into.
     is("<iframe id=f></iframe>", "document.getElementById('f').contentDocument.body.tagName",
        "BODY");
     is("<iframe id=f></iframe>", "document.getElementById('f').contentDocument.contentType",
@@ -138,7 +140,7 @@ void test_a_frame_with_no_source_is_still_a_document() {
 void test_a_source_that_resolves_to_nothing_still_loads() {
     // A Document is still there - a browser shows its own error page in one -
     // and it is `load` that the element hears, as for a 404: an iframe's
-    // navigation always ends in a document. An EMPTY file is the same case.
+    // navigation always ends in a document. An empty file is the same case.
     is("<iframe id=f src=missing.html></iframe>",
        "document.getElementById('f').contentDocument.body.tagName", "BODY");
     // The listener is registered by a script in the markup, which runs while
@@ -163,9 +165,9 @@ void test_the_load_event_arrives_at_the_frame() {
 }
 
 void test_a_frame_appended_by_script_loads_too() {
-    // The one that cannot go through `answer`: the frame does not exist until
+    // This case cannot go through `answer`: the frame does not exist until
     // the page's own load handler has run, so what it reports has to be read a
-    // tick later, from the frame's OWN load event.
+    // tick later, from the frame's own load event.
     browser page{browser_options{400, 300}};
     page.assets().add("inner.html", bytes_of(inner_html));
     page.load_html("<!DOCTYPE html><html><body>"
@@ -187,7 +189,7 @@ void test_a_data_url_frame_carries_its_own_type() {
 
 void test_a_frame_runs_its_scripts_in_its_own_realm() {
     // The frame's `var`s are the frame's and not the page's; its function,
-    // called BY THE PAGE, reads the frame's `document` and the frame's
+    // called by the page, reads the frame's `document` and the frame's
     // globals (dom/ranges' Range-test-iframe.html is exactly this: the page
     // calls the frame's `run()`); an inline handler in the frame compiles in
     // the frame's realm; and the frame's window hears its own `load` before
@@ -223,7 +225,7 @@ void test_a_frame_runs_its_scripts_in_its_own_realm() {
 }
 
 void test_windows_post_messages_to_each_other() {
-    // HTML 9.4.3: the message is CLONED when posted and arrives in a later
+    // HTML 9.4.3: the message is cloned when posted and arrives in a later
     // task as a MessageEvent whose `source` is the sender's window - so the
     // frame's reply names the frame, and the page's names the page.
     browser page{browser_options{400, 300}};
@@ -256,7 +258,7 @@ void test_windows_post_messages_to_each_other() {
 }
 
 void test_a_shadowed_origin_does_not_forge_a_message() {
-    // ACCESS-006: the sender's `origin` and the targetOrigin check come from
+    // The sender's `origin` and the targetOrigin check come from
     // the document's URL. A page that shadows `window.origin` neither signs
     // its messages with the shadow nor receives one addressed to it.
     browser page{browser_options{400, 300}};
@@ -277,7 +279,7 @@ void test_a_shadowed_origin_does_not_forge_a_message() {
 
 void test_a_frame_window_scrolls_its_own_viewport() {
     // scrollIntoView-iframes.html: a frame's message handler answers with its
-    // `scrollY`, which a frame window did not have.
+    // `scrollY`, so a frame's window must have its own scroll position.
     is("<iframe id=f src=inner.html></iframe>",
        "[typeof document.getElementById('f').contentWindow.scrollY,"
        " typeof document.getElementById('f').contentWindow.scrollTo].join()",
@@ -297,7 +299,7 @@ void test_a_frames_function_and_eval_are_the_frames() {
 
 void test_report_error_fires_at_its_this_window() {
     // reporterror-cross-realm-method.html: the page's `reportError` called on
-    // a frame's window reports in the FRAME - `this`'s global, not the realm
+    // a frame's window reports in the frame - `this`'s global, not the realm
     // the method came from.
     browser page{browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><html><body><iframe id=f></iframe><script>"
@@ -317,7 +319,7 @@ void test_report_error_fires_at_its_this_window() {
 void test_a_removed_frames_callbacks() {
     // settimeout-detached-iframe.html: a timer set on a frame that is then
     // removed never fires - the attached frame's does. And an animation
-    // frame callback of a frame's realm reports its throw at the FRAME
+    // frame callback of a frame's realm reports its throw at the frame
     // (callback-cross-realm-report-exception.html).
     browser page{browser_options{400, 300}};
     page.load_html(
@@ -378,8 +380,8 @@ void test_an_inserted_frame_has_its_window_at_once() {
 
 void test_a_frame_and_a_script_inserted_together_run_in_tree_order() {
     // Node-appendChild-script-and-iframe.html: the post-connection steps run
-    // per inserted node in tree order, so a script inserted AFTER a frame in
-    // the same appendChild sees the frame's window, and one inserted BEFORE
+    // per inserted node in tree order, so a script inserted after a frame in
+    // the same appendChild sees the frame's window, and one inserted before
     // it sees null - the frame is set up after the script has run.
     browser page{browser_options{400, 300}};
     page.load_html("<!DOCTYPE html><html><body><script>"
@@ -401,7 +403,7 @@ void test_a_frame_and_a_script_inserted_together_run_in_tree_order() {
 }
 
 void test_a_frame_document_is_a_full_member_of_the_realm() {
-    // Node-isConnected.html's iframe case: the page's node goes INTO a frame's
+    // Node-isConnected.html's iframe case: the page's node goes into a frame's
     // document (adopted, connected there), and a frame inside a frame gets a
     // document of its own - while a document with no browsing context does
     // not give its <iframe> one.
@@ -434,7 +436,7 @@ void test_a_frame_loaded_at_a_fragment_has_a_target() {
        "greeting,true,0,true");
 }
 
-// THE RENDERING HALF: a frame's document is laid out at the size its box got
+// The rendering half: a frame's document is laid out at the size its box got
 // (browser/nested.cpp), so what a script measures inside it is about the
 // frame. `100vw` in a 200px-wide frame is 200px, a media query in the frame's
 // own sheet is evaluated against the frame's viewport, and the two reads that
@@ -454,7 +456,7 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
                 d.querySelectorAll('style').length, w.getComputedStyle(d.body).marginLeft].join();
     })())JS",
        "200px,50px,rgb(1, 2, 3),50,1,0px");
-    // A SECOND WRITE IS SEEN BY THE NEXT READ: the frame has no mutation hook,
+    // A second write is seen by the next read: the frame has no mutation hook,
     // so the flush compares the document's version with the one laid out.
     is(sized_frame,
        R"JS((function () {
@@ -476,9 +478,10 @@ void test_a_frame_document_is_laid_out_at_the_size_of_its_box() {
 } // namespace
 
 // HTML 4.10.21.3: a GET submission aimed at a frame this document names
-// navigates the frame to the action with the entries as its query. PLANNED:
-// the frame still has its old document when submit() returns, and the new
-// one - whose `location` reads the query back - by the frame's next `load`.
+// navigates the frame to the action with the entries as its query. The
+// navigation is queued: the frame still has its old document when submit()
+// returns, and has the new one (whose `location` reads the query back) by its
+// next `load`.
 void test_a_form_submits_into_a_named_frame() {
     browser page{browser_options{400, 300}};
     page.set_location("file:///pages/the-page.html");
@@ -511,8 +514,8 @@ void test_window_open_follows_the_window_open_steps() {
        " window.open('inner.html', 'f') === document.getElementById('f').contentWindow,"
        " window.open('inner.html', 'f', 'noopener')].join('|'); })()",
        "SyntaxErrortrue|||true|");
-    // ...and the navigation it started has happened a tick later - to the
-    // ABSOLUTE URL, which a page from disk reads as that path.
+    // The navigation it started has happened a tick later, to the absolute
+    // URL, which a page from disk reads as that path.
     browser page{browser_options{400, 300}};
     page.set_location("file:///pages/the-page.html");
     page.assets().add("/pages/inner.html", bytes_of(inner_html));
@@ -529,7 +532,7 @@ void test_window_open_follows_the_window_open_steps() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"inner?x=1"}); }
 }
 
-// THE LOCATION OBJECT, HTML 7.2.4: getters over the document's URL, and
+// The Location object, HTML 7.2.4: getters over the document's URL, and
 // setters that navigate - `window.location = url` forwards to `href`
 // ([PutForwards]), a URL that does not parse is a SyntaxError, and a new
 // fragment is a fragment navigation whose `hashchange` comes a task later.
@@ -562,7 +565,7 @@ void test_the_location_object_navigates() {
 }
 
 // HTML 4.8.5's insertion steps: a frame inserted with no `src` fires its
-// about:blank `load` DURING the insertion - heard by a listener added before
+// about:blank `load` during the insertion - heard by a listener added before
 // it, never by one added after - and a `src` given afterwards is the only
 // `load` a later listener hears (dom/ranges' Range-test-iframe setup).
 void test_a_blank_frame_loads_during_its_insertion() {
@@ -620,7 +623,7 @@ void test_a_javascript_source_is_its_string_result() {
     if (!logged.empty()) { CHECK_EQ(logged.back(), std::string{"js|0"}); }
 }
 
-// A FRAME IN A FRAME'S DOCUMENT LOADS ON THE TICK, not only when its
+// A frame in a frame's document loads on the tick, not only when its
 // `contentWindow` is read: the tick reconciles the page's frames and each
 // frame document's own (html-forms/test-003.html waited for such a `load`).
 void test_a_frame_inside_a_frame_document_loads() {
@@ -631,7 +634,7 @@ void test_a_frame_inside_a_frame_document_loads() {
        "window.nested", "inner");
 }
 
-// THE ANIMATION FRAME CALLBACKS DOCUMENT BY DOCUMENT: the page's, then its
+// Animation frame callbacks run document by document: the page's, then its
 // frames' in tree order, whatever order they were asked for in
 // (child-document-raf-order.html) - and a removed frame's never.
 void test_animation_frames_run_in_document_order() {
@@ -648,10 +651,10 @@ void test_animation_frames_run_in_document_order() {
        "'unused'", "page,first,second");
 }
 
-// A PAGE THAT EMBEDS ITSELF STOPS AT ONE COPY (HTML 4.8.5: an ancestor
+// A page that embeds itself stops at one copy (HTML 4.8.5: an ancestor
 // navigable's document already has the URL, so the frame gets no navigable).
-// Before the guard each copy's frame loaded the next, in one tick, until the
-// native stack ran out.
+// Without this guard each copy's frame would load the next in the same tick
+// until the native stack overflowed.
 void test_a_frame_that_embeds_itself_stops() {
     is("<iframe id=f src=self.html></iframe>",
        "document.getElementById('f').contentDocument.getElementById('s').contentDocument", "null");

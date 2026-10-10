@@ -1,4 +1,9 @@
-// Public numeric conversion must work when only Core is linked.
+//===- unittests/unit/core/text.cpp - Core number formatting --------------===//
+//
+// Public numeric conversion (number_to_string, string_to_number and friends in
+// core/number_format.hpp) must work when only Core is linked.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/number_format.hpp>
 
 #include "check.hpp"
@@ -57,7 +62,8 @@ int main() {
     CHECK_EQ(out_of_range_value("1e-400"), 0.0);
     CHECK(std::isinf(out_of_range_value("1e400")));
 
-    // Bootstrap M compares the input with Number(input).toString().
+    // Bootstrap's data-attribute normaliser (minified as `M`) treats a string as
+    // a number only when Number(input).toString() reproduces it exactly.
     for (std::string_view text : {"0", "NaN", "Infinity", "-Infinity", "1e+21", "0.000001"}) {
         CHECK_EQ(number_to_string(string_to_number(text)), text);
     }

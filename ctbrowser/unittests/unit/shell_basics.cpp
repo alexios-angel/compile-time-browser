@@ -1,9 +1,10 @@
+//===- shell_basics.cpp - Shell integration tests ---------------*- C++ -*-===//
+//
 // ctbrowser.shell: the engine assembled, and what a frame is allowed to skip.
 //
-// Every earlier test checked one subsystem. This checks that they compose into
-// something that behaves like a browser - and the claims worth pinning are the
-// ones about WORK NOT DONE, because those are the whole point of the
-// architecture and the only ones a screenshot cannot show:
+// The other unit tests each check one subsystem. This checks that they compose
+// into something that behaves like a browser. The claims worth pinning are the
+// ones about work not done, because a screenshot cannot show them:
 //
 //   a scroll        re-composites, and does not re-layout or re-raster
 //   an idle frame   does nothing at all
@@ -11,7 +12,11 @@
 //   a new document  starts clean, with no rules left over from the last one
 //
 // Plus the things a browser is simply expected to do: apply the UA stylesheet,
-// hit-test through scroll, and render the same bytes twice.
+// hit-test through scroll, and render the same bytes twice. It also covers how
+// a page's <script>s are compiled, cached as precompiled images, and isolated
+// from one another.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -53,8 +58,8 @@ constexpr std::string_view demo_page = R"(
 <div class=card><p>And a fourth.</p></div>
 </body></html>)";
 
-// How many tiles the renderer has drawn. The evidence for "this frame did no
-// raster" has to come from the backend, not from a stopwatch.
+/// Returns how many tiles the renderer has drawn. The evidence for "this frame
+/// did no raster" has to come from the backend, not from a stopwatch.
 [[nodiscard]] std::size_t raster_calls(const browser & page) {
     return page.rendering_with().raster_calls();
 }
@@ -131,20 +136,17 @@ void test_a_scroll_only_recomposites() {
     page.scroll_by(20);
     check(page.scroll_y() == 20, "the scroll took effect");
     page.frame();
-    // THE claim of the whole architecture: the PAGE's tiles are in content
-    // space and survive a scroll. the previous engine re-ran layout here.
+    // The page's tiles are in content space, so a scroll re-composites them
+    // without re-running layout or raster.
     //
-    // The scrollbar's own tile does not survive, and must not: its thumb is a
-    // function of where the page now is, and a tile is identified by (layer,
-    // column, row) - so leaving it cached serves the old thumb forever, which
-    // is what "the scrollbar does not update" looked like. ONE tile, the
-    // chrome's, is the price.
+    // The scrollbar's own tile must be redrawn: its thumb depends on the scroll
+    // position, but a tile is identified by (layer, column, row), so a cached
+    // one would keep showing the old thumb. That one tile is the price.
     const std::size_t scrolled = raster_calls(page);
     check(scrolled > after_first, "the scrollbar's tile is redrawn");
     check(scrolled - after_first <= 2, "and only the scrollbar's - not the page's");
 
-    // With no scrollbar there is nothing to redraw at all, which is the
-    // original claim with the chrome taken out of it.
+    // With no scrollbar there is nothing to redraw at all.
     browser_options no_chrome;
     no_chrome.width = 400;
     no_chrome.height = 200;
@@ -195,9 +197,8 @@ void test_a_new_document_starts_clean() {
     page.frame();
     check(page.title().empty(), "the old title is gone");
 
-    // The first page's author rules must not survive. They would, if the style
-    // engine were reused - which is exactly the bug this checks for, and it
-    // shows up as one page bleeding into the next.
+    // The first page's author rules must not survive. They would if the style
+    // engine were reused, and one page would bleed into the next.
     std::size_t red_fills = 0;
     for (const auto & layer : page.layers().layers) {
         if (!layer.contents) { continue; }
@@ -220,7 +221,7 @@ void test_hit_testing_follows_the_scroll() {
 
     // The property, stated so it does not depend on the page's exact geometry:
     // scrolling by S and looking at y is the same as not scrolling and looking
-    // at y + S. Fragments are in CONTENT space; the scroll is applied at
+    // at y + S. Fragments are in content space; the scroll is applied at
     // hit-test time.
     const float step = 120;
     const node_id deeper_unscrolled = page.hit_test(10, 10 + step);
@@ -288,9 +289,8 @@ void test_hit_testing_respects_escaped_context_clips() {
           "an escaped context cannot receive hits outside its ancestor clip");
 }
 
-// The text a node carries, read straight from the document. `find_id` comes
-// from dom_probe.hpp; there is no shared text helper, and one line of read
-// transaction is clearer than another header.
+/// Returns the concatenated text of the children of the element whose id is
+/// \p id, read straight from the document, or "" if there is no such element.
 [[nodiscard]] std::string text_of(browser & page, std::string_view id) {
     const ctbrowser::node_id want = find_id(page, id);
     if (!want) { return {}; }
@@ -300,28 +300,26 @@ void test_hit_testing_respects_escaped_context_clips() {
     return out;
 }
 
-// A PAGE THAT DOES NOT COMPILE ITS OWN JAVASCRIPT.
+// A page that does not compile its own JavaScript.
 //
 // Compiling is about forty percent of a page load and running is 1.4%
 // (docs/performance.md), so handing the page a precompiled image is the largest
 // saving a packaged application gets. This proves the three things that make it
 // usable rather than merely fast: the page behaves identically, the fast path
-// was actually taken, and an image built from OTHER source is refused instead
+// was actually taken, and an image built from other source is refused instead
 // of run.
 void test_a_page_can_load_its_scripts_from_an_image() {
-    // TWO CLASSIC SCRIPTS, because one is the case that cannot show what this
-    // is for: a page's scripts are compiled and cached one at a time, so
-    // editing the second must not invalidate the first.
+    // Two classic scripts, because a page's scripts are compiled and cached one
+    // at a time, and editing the second must not invalidate the first.
     constexpr std::string_view page =
         "<html><body><div id=out></div>"
         "<script>function shared() { return 'from ' + (1 + 1); }</script>"
         "<script>document.getElementById('out').textContent = shared();</script>"
         "</body></html>";
 
-    // WHAT THE BROWSER WILL HASH, asked of the browser rather than written out
-    // here. A second implementation of that rule is a copy free to drift from
-    // the one that matters, and a drifted copy presents as "the cache does
-    // nothing" rather than as a broken test.
+    // Ask the browser for the exact text it will hash rather than repeating
+    // that rule here: a copy could drift, and a drifted copy would look like
+    // "the cache does nothing" rather than like a broken test.
     std::vector<std::string> scripts;
     {
         browser probe{browser_options{200, 100}};
@@ -356,7 +354,7 @@ void test_a_page_can_load_its_scripts_from_an_image() {
             check(page_browser.add_script_image(one), "the image is admitted");
         }
         page_browser.load_html(page);
-        // THE COUNTER IS THE PROOF. Without it a cache that silently misses
+        // The counter is the proof. Without it a cache that silently misses
         // looks exactly like one that works: the page renders either way.
         check(page_browser.scripts_compiled_from_source() == 0,
               "with matching images the page compiles nothing");
@@ -365,10 +363,9 @@ void test_a_page_can_load_its_scripts_from_an_image() {
     }
 
     {
-        // THE POINT OF THE SPLIT. Hand over only the FIRST script's image - the
-        // developer edited the second - and exactly one script recompiles. Under
-        // the concatenated scheme this was impossible: the two shared one key,
-        // so editing either threw away both.
+        // Hand over only the first script's image, as if the developer edited
+        // the second, and exactly one script recompiles. Each script has its
+        // own cache key, so editing one does not throw away the other.
         browser page_browser{browser_options{200, 100}};
         check(page_browser.add_script_image(images[0]), "the first script's image is admitted");
         page_browser.load_html(page);
@@ -378,8 +375,8 @@ void test_a_page_can_load_its_scripts_from_an_image() {
     }
 
     {
-        // AN IMAGE OF DIFFERENT SOURCE IS REFUSED, NOT RUN. This is the whole
-        // safety property: a stale image is not a slow path, it is yesterday's
+        // An image of different source is refused, not run. This is the safety
+        // property: a stale image is not a slow path, it is yesterday's
         // JavaScript at full speed.
         const auto other = ctbrowser::script::compiler::compile(
             "document.getElementById('out').textContent = 'STALE';\n");
@@ -394,9 +391,9 @@ void test_a_page_can_load_its_scripts_from_an_image() {
     }
 
     {
-        // BYTES THAT ARE NOT AN IMAGE ARE REFUSED AT THE DOOR, so a packager
-        // hears about it when it hands them over rather than as a cache that
-        // never hits.
+        // Bytes that are not an image are refused by add_script_image, so a
+        // packager hears about it when it hands them over rather than as a
+        // cache that never hits.
         browser page_browser{browser_options{200, 100}};
         check(!page_browser.add_script_image(std::vector<std::byte>{}),
               "an empty buffer is not an image");
@@ -410,8 +407,8 @@ void test_a_page_can_load_its_scripts_from_an_image() {
     }
 
     {
-        // A MODULE'S IMAGE IS NOT A CLASSIC SCRIPT'S, even when the text is
-        // identical. It is admitted - it is a valid image - and it must never
+        // A module's image is not a classic script's, even when the text is
+        // identical. It is admitted (it is a valid image), but it must never
         // answer a classic script's lookup, because a module's declarations go
         // to its own scope and the page would see nothing.
         const auto as_module = ctbrowser::script::compiler::compile(
@@ -427,16 +424,14 @@ void test_a_page_can_load_its_scripts_from_an_image() {
     }
 }
 
-// THE THREE THINGS AN ADVERSARIAL REVIEW FOUND WRONG WITH THE SPLIT ITSELF.
-// Each was introduced by giving every <script> its own program, each is invisible
-// from a rendered page, and none had a test.
+// Regressions from compiling each <script> as its own program rather than
+// concatenating them: none is visible in a rendered page.
 void test_what_the_split_got_wrong_the_first_time() {
-    // ONE. `script_sources()` IS WHAT GETS COMPILED, exactly. It used to list
-    // every <script>'s contribution including the ones the loop then skipped -
-    // a `<script></script>` or a `<script src>` that did not resolve leaves
-    // nothing but the newlines the walk added - so a packager building an image
-    // per entry built images nothing would ever look up, and a tool checking
-    // "one script recompiled" counted a script that never ran.
+    // `script_sources()` lists exactly what gets compiled. An empty
+    // `<script></script>` or a `<script src>` that did not resolve is skipped,
+    // and must not be listed: a packager building one image per entry would
+    // build images nothing looks up, and "one script recompiled" would count a
+    // script that never ran.
     {
         browser page{browser_options{200, 100}};
         page.load_html("<html><body>"
@@ -452,10 +447,9 @@ void test_what_the_split_got_wrong_the_first_time() {
         check(page.scripts_compiled_from_source() == 2, "and exactly two compiles");
     }
 
-    // TWO. A MISSING <script src> MUST NOT MASK EVERY LATER ERROR. The walk
-    // writes its complaint into the same field the first-failure-wins rule
-    // reads, so the field was already full before any script ran and no script
-    // could ever report anything again.
+    // A missing <script src> must not mask every later error. The complaint
+    // about it goes into the same field as script errors, where the first
+    // failure wins, so it must not be written before the scripts have run.
     {
         browser page{browser_options{200, 100}};
         page.load_html("<html><body><script src='does-not-resolve.js'></script>"
@@ -465,8 +459,8 @@ void test_what_the_split_got_wrong_the_first_time() {
               "a script's own failure outranks a missing src");
     }
     {
-        // ...and with no script failure the missing src is still reported,
-        // which is the half that would be lost by simply clearing the field.
+        // With no script failure the missing src is still reported, which
+        // simply clearing the field would lose.
         browser page{browser_options{200, 100}};
         page.load_html("<html><body><script src='does-not-resolve.js'></script>"
                        "<script>var fine = 1;</script></body></html>");
@@ -474,10 +468,9 @@ void test_what_the_split_got_wrong_the_first_time() {
               "and a missing src is still reported when nothing else failed");
     }
 
-    // THREE. THE COMPILE COUNTER IS PER LOAD. It never reset, so the second
-    // load of a fully cached page still reported the first load's misses - and
-    // it is read against classic_programs_held(), which is per load, so the
-    // ratio was nonsense after the first navigation.
+    // The compile counter is per load, like classic_programs_held(), which it
+    // is read against: a second load of the same page reports only its own
+    // compiles.
     {
         constexpr std::string_view page_html =
             "<html><body><script>var counted = 1;</script></body></html>";
@@ -491,15 +484,15 @@ void test_what_the_split_got_wrong_the_first_time() {
     }
 }
 
-// TWO MORE THINGS THAT ONLY BECAME VISIBLE ONCE A PAGE'S SCRIPTS WERE SEPARATE
-// PROGRAMS. Both cross a boundary that did not exist when the page was one.
+// Two boundaries between a page's scripts, each of which runs as a separate
+// program.
 void test_nothing_leaks_from_one_script_into_the_next() {
-    // A DEAD SCRIPT'S MICROTASKS DO NOT RUN INSIDE THE NEXT SCRIPT'S TURN.
-    // drain_microtasks stops on failure, so a script that threw used to leave
-    // its queued handlers behind - and the next script's checkpoint ran them,
-    // after that script's own code. See context::run in vm/call/run.cpp for why
-    // they are dropped
-    // rather than run, and where that differs from Chrome.
+    // A dead script's microtasks do not run inside the next script's turn.
+    // drain_microtasks stops on failure, so without care a script that threw
+    // would leave its queued handlers for the next script's checkpoint, after
+    // that script's own code. See context::run in lib/Script/vm/call/run.cpp
+    // for why they are dropped rather than run, and where that differs from
+    // Chrome.
     {
         browser page{browser_options{200, 100}};
         page.load_html("<html><body>"
@@ -511,9 +504,9 @@ void test_nothing_leaks_from_one_script_into_the_next() {
         check(said == "second;", "the dead script's handler does not surface in the next script");
     }
 
-    // A SCRIPT THAT NAVIGATES SYNCHRONOUSLY ENDS ITS PAGE. The remaining
+    // A script that navigates synchronously ends its page. The remaining
     // <script>s belong to a document that is gone; running them against the new
-    // one let a discarded page read and overwrite it.
+    // one would let a discarded page read and overwrite it.
     {
         browser page{browser_options{200, 100}};
         constexpr std::string_view next_page = "<html><body><div id=out>NEW</div>"
@@ -536,17 +529,14 @@ void test_nothing_leaks_from_one_script_into_the_next() {
     }
 }
 
-// A PACKAGED APPLICATION CARRIES ITS COMPILED SCRIPTS, and a packaging mistake
-// has to be loud.
+// A packaged application carries its compiled scripts, and a packaging mistake
+// has to be visible.
 //
-// `app_options` could bake in every PNG a page needs and not the one thing that
-// actually costs: reading its JavaScript is about forty percent of a page load.
-// The interesting half of this is the failure, though. An image built by
-// another engine build is refused at the door and countable; an image that
-// simply matches NO script on the page is refused by nothing at all - it is
-// never looked up, the page compiles from source, and the application works
-// perfectly and slowly with nothing said anywhere. That is the shape of failure
-// this project treats as worst, and the counter is the only thing that sees it.
+// An image built by another engine build is refused by add_script_image. An
+// image that matches no script on the page is refused by nothing at all: it is
+// never looked up, the page compiles from source, and the application works,
+// slowly, with nothing reported. scripts_compiled_from_source() is the only
+// thing that sees it.
 void test_a_page_reports_when_its_images_did_not_match() {
     constexpr std::string_view page =
         "<html><body><div id=out></div>"
@@ -561,7 +551,7 @@ void test_a_page_reports_when_its_images_did_not_match() {
     if (scripts.empty()) { return; }
 
     {
-        // THE PACKAGED CASE: an image built from exactly what the page runs.
+        // The packaged case: an image built from exactly what the page runs.
         browser packaged{browser_options{200, 100}};
         check(packaged.add_script_image(
                   ctbrowser::script::write_image(ctbrowser::script::compiler::compile(scripts[0]))),
@@ -571,9 +561,9 @@ void test_a_page_reports_when_its_images_did_not_match() {
         check(text_of(packaged, "out") == "ran", "and the page ran");
     }
     {
-        // THE MISPACKAGED CASE: a valid image of some OTHER script. Nothing
-        // refuses it and the page still works - which is exactly why the count
-        // has to be checked rather than the output.
+        // The mispackaged case: a valid image of some other script. Nothing
+        // refuses it and the page still works, which is why the count has to
+        // be checked rather than the output.
         browser wrong{browser_options{200, 100}};
         check(wrong.add_script_image(ctbrowser::script::write_image(
                   ctbrowser::script::compiler::compile("var unrelated = 1;\n"))),
@@ -586,15 +576,14 @@ void test_a_page_reports_when_its_images_did_not_match() {
     }
 }
 
-// TWO IMAGES OF ONE SCRIPT, AND WHICH ONE WINS MUST NOT DEPEND ON THE ORDER.
+// Two images of one script: which one wins must not depend on the order.
 //
 // An image can keep `program::source` or drop it, and both are valid images of
-// the same text with the same hash and the same kind - so they collide in the
-// cache. They are NOT interchangeable: one makes `f.toString()` return the
+// the same text with the same hash and the same kind, so they collide in the
+// cache. They are not interchangeable: one makes `f.toString()` return the
 // function's text and the other "[native code]", and p5's own error system
-// reads its source. Last-writer-wins made the answer depend on the order a
-// packager happened to call add_script_image in, which is measured here in both
-// directions.
+// reads its source. The image that kept its source must win whichever order
+// add_script_image was called in.
 void test_an_image_that_keeps_its_source_outranks_one_that_drops_it() {
     constexpr std::string_view page =
         "<html><body><script>function shown() { return 'body'; }</script></body></html>";
@@ -618,8 +607,8 @@ void test_an_image_that_keeps_its_source_outranks_one_that_drops_it() {
         for (const auto & one : images) { (void)p.add_script_image(one); }
         p.load_html(page);
         (void)p.run_script("alert(shown.toString());");
-        // THE COUNTER FIRST: a run that fell back to compiling would answer
-        // from source and look like a pass.
+        // Check the counter first: a run that fell back to compiling would
+        // answer from source and look like a pass.
         if (p.scripts_compiled_from_source() != 0) { return std::string{"<not from an image>"}; }
         return p.alerts().empty() ? std::string{"<nothing>"} : p.alerts().back();
     };
@@ -630,32 +619,31 @@ void test_an_image_that_keeps_its_source_outranks_one_that_drops_it() {
     check(says({lean}).find("native code") != std::string::npos,
           "and one that dropped it does not");
 
-    // THE POINT. Both orders must agree, and both must agree with the better of
-    // the two - taking the degraded image when the other was also offered is
-    // the wrong default, not merely a different one.
+    // Both orders must agree, and both must agree with the better of the two:
+    // taking the degraded image when the other was also offered is the wrong
+    // default, not merely a different one.
     check(says({kept, lean}) == from_kept, "keep then drop keeps the source");
     check(says({lean, kept}) == from_kept, "and so does drop then keep");
 }
 
-// A SCRIPT THAT DIED INSIDE A `try` MUST NOT CATCH THE NEXT SCRIPT'S THROW.
+// A script that died inside a `try` must not catch the next script's throw.
 //
-// The VM's handler stack is not part of a call frame, and `context::execute`
-// cleared `frames_` without clearing it. A VM-level raise - the call-stack
-// ceiling here - returns out of the interpreter WITHOUT unwinding, so a `try`
+// The VM's handler stack is not part of a call frame, so context::run must
+// clear `handlers_` as well as `frames_`. A VM-level raise (the call-stack
+// ceiling here) returns out of the interpreter without unwinding, so a `try`
 // that was live at that moment stays recorded against frame 0. The next
-// top-level program has a frame 0 as well, so the dead handler looked live: the
-// throw was swallowed and the interpreter jumped to an address out of the
-// PREVIOUS program's bytecode and carried on from there.
+// top-level program also has a frame 0, so a stale handler would look live:
+// the throw would be swallowed and the interpreter would jump to an address in
+// the previous program's bytecode.
 //
-// Found by an adversarial review of the script split, which is what made it
-// reachable - one program per page meant a raise in the first script ended the
-// only top level.
+// Reachable only since each <script> became its own program: with one
+// program per page, a raise in the first script ended the only top level.
 void test_a_dead_script_cannot_catch_the_next_scripts_throw() {
     browser page{browser_options{200, 100}};
     page.load_html("<html><body>"
-                   // Exhausts the call stack INSIDE a try, so the raise leaves
+                   // Exhausts the call stack inside a try, so the raise leaves
                    // a handler behind. The catch never runs: a raise is not
-                   // catchable, which is the whole reason the handler is stale.
+                   // catchable, which is why the handler is stale.
                    "<script>try { var p0 = 0; (function r() { return r(); })(); } "
                    "catch (e) { }</script>"
                    "<script>alert('1');alert('2');alert('3');alert('4');"
@@ -664,9 +652,9 @@ void test_a_dead_script_cannot_catch_the_next_scripts_throw() {
                    "</body></html>");
     std::string said;
     for (const std::string & one : page.alerts()) { said += one; }
-    // Each statement runs ONCE and the throw ends that script. The measured
-    // failure was "12345678345678" - eight alerts, then six of them again -
-    // with the throw never reported at all.
+    // Each statement runs once and the throw ends that script. With a stale
+    // handler the output was "12345678345678" (eight alerts, then six of them
+    // again) and the throw was never reported.
     check(said == "12345678", "the second script runs once and stops at its throw");
     check(said.find("345678345678") == std::string::npos,
           "and does not re-execute a suffix of itself");
@@ -675,16 +663,14 @@ void test_a_dead_script_cannot_catch_the_next_scripts_throw() {
           "and an error is reported rather than swallowed");
 }
 
-// A MODULE'S PROGRAM OUTLIVES THE LOAD, AND ONLY THIS LOAD. Each
+// A module's program outlives its load, but only until the next one. Each
 // <script type="module"> is compiled to its own program and kept, because its
-// functions close over its top-level frame - so the vector holding them cannot
-// be emptied at the end of a load. It was emptied at the start of one either,
-// which made every navigation add another page's programs to a list nothing
-// could reach and nothing would free.
+// functions close over its top-level frame, so the programs cannot be freed at
+// the end of a load. They must be freed at the start of the next one, or every
+// navigation adds another page's programs to a list nothing can reach.
 //
-// The count is the only way to see it. A leak and a working cache look
-// identical from the page: the modules run, the DOM updates, and the memory
-// behind them never comes back.
+// The count is the only way to see a leak here: from the page, the modules
+// run and the DOM updates either way.
 void test_module_programs_do_not_accumulate_across_loads() {
     constexpr std::string_view page = "<html><body><div id=out></div>"
                                       "<script type=\"module\">"
@@ -708,18 +694,16 @@ void test_module_programs_do_not_accumulate_across_loads() {
     page_browser.load_html("<html><body><script>var x = 1;</script></body></html>");
     check(page_browser.module_programs_held() == 0,
           "and a page with no modules holds no module programs");
-    // AND THE SAME FOR CLASSIC PROGRAMS, which are kept for the same reason and
-    // were given the same treatment.
+    // The same holds for classic programs, which are kept for the same reason.
     check(page_browser.classic_programs_held() == 1,
           "and one classic script leaves exactly one classic program");
 }
 
-// WHAT SPLITTING THE PAGE'S SCRIPTS CHANGED, and it is not only caching. Per the
-// HTML specification each classic <script> is its own Script Record; gluing them
-// into one program made the page MORE permissive than the web platform in one
-// direction and LESS in two others. All four cases below were measured against
-// the concatenating engine before the change, and three of them behaved
-// differently.
+// Per the HTML specification each classic <script> is its own Script Record.
+// Concatenating them into one program would be more permissive than the web
+// platform in one way (calling a function declared in a later script) and less
+// in others (a parse error or uncaught throw stopping later scripts, and one
+// microtask checkpoint per page instead of per script).
 void test_each_classic_script_is_its_own_program() {
     const auto said = [](std::string_view html) {
         browser page{browser_options{200, 100}};
@@ -729,27 +713,24 @@ void test_each_classic_script_is_its_own_program() {
         return all;
     };
 
-    // A PARSE ERROR IS THAT SCRIPT'S PROBLEM. It used to silence the rest of the
-    // page: one concatenation, one compile, nothing ran.
+    // A parse error affects only that script.
     check(said("<html><body><script>function ( {</script>"
                "<script>alert('second ran');</script></body></html>") == "second ran;",
           "a script that does not parse does not stop the next one");
 
-    // AND SO IS AN UNCAUGHT THROW.
+    // So does an uncaught throw.
     check(said("<html><body><script>throw new Error('boom');</script>"
                "<script>alert('second ran');</script></body></html>") == "second ran;",
           "a script that throws does not stop the next one");
 
-    // WHAT WAS LOST, and it is what the specification says should be lost: a
-    // call in an earlier script to a function declared in a later one. It
-    // returned 42 when the page was one program; it is a ReferenceError
-    // now, as in Chrome.
+    // A call in an earlier script to a function declared in a later one is a
+    // ReferenceError, as the specification says and as in Chrome.
     check(said("<html><body>"
                "<script>try { alert('got ' + f()); } catch (e) { alert('threw'); }</script>"
                "<script>function f() { return 42; }</script></body></html>") == "threw;",
           "an earlier script cannot call a function declared in a later one");
 
-    // AND WHAT MUST NOT CHANGE: everything that goes through the global object.
+    // Everything that goes through the global object is shared.
     check(said("<html><body><script>function g() { return 7; }</script>"
                "<script>alert('got ' + g());</script></body></html>") == "got 7;",
           "a later script still sees an earlier one's function");
@@ -766,18 +747,16 @@ void test_each_classic_script_is_its_own_program() {
                "<script>alert('three');</script></body></html>") == "one;two;three;",
           "and three scripts still run in document order");
 
-    // A MICROTASK CHECKPOINT PER SCRIPT, which is what the split makes true and
-    // what the specification asks for: "run a classic script" ends by cleaning
-    // up, which drains the microtask queue once the stack is empty. One program
-    // per page meant ONE checkpoint, after the last script; a promise resolved
-    // in the first script had its handler run after the last one. Chrome runs it
-    // before the second script, and now so does this.
+    // A microtask checkpoint per script, as the specification asks: "run a
+    // classic script" ends by cleaning up, which drains the microtask queue
+    // once the stack is empty. A promise resolved in the first script settles
+    // before the second script runs, as in Chrome.
     check(said("<html><body>"
                "<script>Promise.resolve().then(function () { alert('then'); });</script>"
                "<script>alert('two');</script></body></html>") == "then;two;",
           "a promise resolved in one script settles before the next script runs");
-    // And the checkpoint is still at the END of a script rather than between two
-    // of its statements, which is the other half of the same rule.
+    // And the checkpoint is at the end of a script rather than between two of
+    // its statements, which is the other half of the same rule.
     check(said("<html><body><script>"
                "Promise.resolve().then(function () { alert('then'); }); alert('sync');"
                "</script></body></html>") == "sync;then;",
@@ -835,7 +814,7 @@ void test_resize_keeps_the_renderer() {
     browser page{browser_options{400, 300}};
     page.load_html(demo_page);
     page.frame();
-    // resize() RESIZES the backend rather than building a fresh one, so the
+    // resize() resizes the backend rather than building a fresh one, so the
     // fonts and the raster counter it was given survive a window resize.
     const std::size_t drawn = raster_calls(page);
     page.resize(700, 500);
@@ -850,8 +829,8 @@ void test_background_is_honoured() {
     browser_options options{80, 60};
     options.background = color::rgba(0, 0, 255);
     browser page{options};
-    // A page with no body background shows the canvas colour. browser_options
-    // carried this field and nothing read it.
+    // A page with no body background shows browser_options::background, the
+    // canvas colour. 0xFF0000FF is opaque blue in the surface's ARGB format.
     page.load_html("<html><body></body></html>");
     page.frame();
     check(page.read_pixels().row(30)[40] == 0xFF0000FFu,
@@ -859,8 +838,7 @@ void test_background_is_honoured() {
 }
 
 // A browser holds three `this`-capturing lambdas; moving one would leave them
-// pointing at the old address. The implicit move was available until it was
-// deleted, so this is worth stating as a compile-time fact.
+// pointing at the old address, so it must stay neither movable nor copyable.
 static_assert(!std::is_move_constructible_v<browser>, "browser must not be movable");
 static_assert(!std::is_copy_constructible_v<browser>, "browser must not be copyable");
 

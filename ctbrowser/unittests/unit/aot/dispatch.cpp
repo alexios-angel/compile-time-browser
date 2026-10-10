@@ -1,23 +1,27 @@
-// ctbrowser.aot: all six mixed-mode transitions, and the counter for each.
+//===- ctbrowser/unittests/unit/aot/dispatch.cpp - Mixed-mode dispatch ----===//
 //
-// Phase 3's gate is "arbitrary nested mixed-mode invocation works", and the
-// plan is specific about why it needs a phase of its own: a call path that
-// cannot reach a compiled body DOES NOT FAIL. It interprets, returns the right
-// answer, and presents as a performance cliff under one particular browser
-// callback - a timer, a promise settling, a getter - long after the code that
-// caused it ran.
+// All six mixed-mode transitions, and the counter for each.
 //
-// So the answers here prove nothing. Every arm below returns the same number
-// whether it took the compiled body or the interpreter, and the ONLY evidence
-// that dispatch happened is the transition counter. That is the same discipline
-// aot_basics uses for one transition, applied to the six the plan requires:
+// Every call path between C++, the interpreter (VM) and compiled (AOT) bodies
+// must dispatch to a compiled body when one exists. A path that does not still
+// returns the right answer through the interpreter, so the failure only shows
+// up as a slowdown under some callback (a timer, a promise job, a getter),
+// long after the code that caused it ran.
+//
+// So the answers here prove nothing: every arm returns the same number whether
+// it took the compiled body or the interpreter, and the only evidence that
+// dispatch happened is the transition counter. That is the same discipline
+// aot_basics uses for one transition, applied to all six transitions:
 //
 //   C++ -> VM    C++ -> AOT    VM -> AOT    AOT -> VM    AOT -> AOT    AOT -> C++
 //
-// The three with an AOT SOURCE go through ct_aot_call, the ABI's own call
-// helper, rather than reaching around it into the runtime - a test that called
-// context::call directly from a "compiled" body would be testing C++, not the
-// contract the code generators will emit against.
+// The three with an AOT source go through ct_aot_call, the ABI's own call
+// helper, rather than reaching around it into the runtime: a compiled body
+// that called context::call directly would be testing C++, not the contract
+// the code generators emit against.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -48,8 +52,8 @@ std::size_t native_calls = 0;
 std::size_t point_calls = 0;
 std::uint32_t saw_constructing = 0;
 
-// A COMPILED `function leaf(a, b) { return a + b; }`, as a backend would emit
-// it: enter, work, hand the result through ct_aot_return_value, leave.
+/// A compiled `function leaf(a, b) { return a + b; }`, as a backend would emit
+/// it: enter, work, hand the result through ct_aot_return_value, leave.
 extern "C" std::int32_t sample_leaf(ctbrowser::aot::ct_aot_ctx * ctx,
                                     const ctbrowser::aot::ct_aot_site * site,
                                     const std::uint64_t * argv, std::uint32_t argc,
@@ -80,19 +84,18 @@ extern "C" std::int32_t sample_leaf(ctbrowser::aot::ct_aot_ctx * ctx,
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
 
-// A COMPILED `function caller(f, a, b) { return f(a, b); }`. This is the one
-// that matters: whatever it is handed - an interpreted function, another
-// compiled one, or a native built-in - it calls through ct_aot_call, and the
-// dispatcher decides. Three of the six transitions are this function being
-// handed three different things.
+/// A compiled `function caller(f, a, b) { return f(a, b); }`. Whatever it is
+/// handed (an interpreted function, another compiled one, or a native
+/// built-in), it calls through ct_aot_call and the dispatcher decides. Three of
+/// the six transitions are this function being handed three different things.
 extern "C" std::int32_t sample_caller(ctbrowser::aot::ct_aot_ctx * ctx,
                                       const ctbrowser::aot::ct_aot_site * site,
                                       const std::uint64_t * argv, std::uint32_t argc,
                                       std::uint64_t receiver, std::uint32_t constructing,
                                       std::uint64_t * out) {
     ++caller_calls;
-    // READ BEFORE ct_aot_enter, which the entry row requires: enter resizes the
-    // register file and may reallocate it, so argv is dangling afterwards.
+    // Read argv before ct_aot_enter: enter resizes the register file and may
+    // reallocate it, which leaves argv dangling (see aot_entry.h).
     const std::uint64_t callee = argc > 0 ? argv[0] : value::undefined().bits();
     std::vector<std::uint64_t> forwarded;
     for (std::uint32_t i = 1; i < argc; ++i) { forwarded.push_back(argv[i]); }
@@ -120,15 +123,11 @@ extern "C" std::int32_t sample_caller(ctbrowser::aot::ct_aot_ctx * ctx,
     return static_cast<std::int32_t>(ctbrowser::aot::ct_aot_status::ok);
 }
 
-// A COMPILED CONSTRUCTOR. `new` had its own entry into a function - it pushed a
-// frame without ever asking whether there was a compiled body - so this is the
-// arm that was missing until removing that dispatch left the test green.
-//
-// It also exercises `constructing`, which is not decoration: it is what makes a
-// constructor with no explicit return evaluate to its receiver, and the ABI
-// hands that decision to ct_aot_return_value. This body returns a NUMBER, so an
-// arm that failed to pass `constructing` would produce 7 where `new` must
-// produce the instance.
+/// A compiled `function Point(x, y)`. It returns a number on purpose: only
+/// ct_aot_return_value with `constructing` set makes `new` yield the instance
+/// instead of the sum. `constructing` is what makes a constructor with no
+/// explicit return evaluate to its receiver, and the ABI hands that decision to
+/// ct_aot_return_value.
 extern "C" std::int32_t sample_point(ctbrowser::aot::ct_aot_ctx * ctx,
                                      const ctbrowser::aot::ct_aot_site * site,
                                      const std::uint64_t * argv, std::uint32_t argc,
@@ -167,8 +166,7 @@ constexpr std::string_view fixture = "function leaf(a, b) { return a + b; }\n"
                                      "var fromScript = leaf(20, 22);\n"
                                      "var built = new Point(3, 4);\n";
 
-// One arm: reset the counters, do the thing, and say which transition it was
-// supposed to cross.
+/// One arm: the transition it is supposed to cross and the counter before it.
 struct arm {
     transition crossing;
     std::uint64_t before = 0;
@@ -205,10 +203,9 @@ int main() {
     check(ran.ok, "the program runs");
     check(ctx.global("fromScript").as_number() == 42.0, "and computes 42 at its top level");
     check(transitions(transition::cxx_to_vm) >= 1, "running a program is C++ reaching the VM");
-    // TWO CROSSINGS, not one: `leaf(20, 22)` and `new Point(3, 4)`. Both are the
-    // interpreter reaching a compiled body, through two different opcodes that
-    // used to have two different answers - `op::call` asked and `op::construct`
-    // did not.
+    // Two crossings: `leaf(20, 22)` and `new Point(3, 4)`. Both are the
+    // interpreter reaching a compiled body, through two different opcodes
+    // (op::call and op::construct) that must each check for one.
     check(transitions(transition::vm_to_aot) == 2,
           "AND THE SCRIPT REACHED BOTH COMPILED BODIES - two VM -> AOT crossings");
     check(leaf_calls == 1, "which is also what the body's own counter says");
@@ -223,9 +220,8 @@ int main() {
 
     // ---- C++ -> AOT -------------------------------------------------------
     //
-    // The transition that could not happen at all before Phase 3: every entry
-    // from C++ - a DOM event, a timer, a promise job - pushed a frame and ran
-    // the interpreter without ever asking whether the function had a body.
+    // Every entry from C++ (a DOM event, a timer, a promise job) must check for
+    // a compiled body instead of always pushing an interpreter frame.
     {
         ctbrowser::script::reset_transitions();
         leaf_calls = 0;
@@ -288,13 +284,11 @@ int main() {
         check(transitions(transition::aot_to_cxx) == 1, "counted as AOT -> C++");
     }
 
-    // ---- `new` ON A COMPILED CONSTRUCTOR ---------------------------------
+    // ---- `new` on a compiled constructor ---------------------------------
     //
-    // A SECOND ENTRY INTO A FUNCTION, and it asked nothing. `op::construct`
-    // pushed its own frame, so a constructor with a compiled body was
-    // interpreted and nothing reported it - and this arm did not exist until
-    // the dispatch was removed and the test stayed green, which is the whole
-    // argument for removing a guard to see its test fail.
+    // `new` is a separate entry into a function (op::construct and
+    // context::construct); both must dispatch to a compiled constructor and
+    // pass `constructing`.
     {
         check(point_calls == 1, "the script's `new Point(3, 4)` reached the compiled constructor");
         check(saw_constructing == 1u, "AND IT WAS TOLD IT WAS CONSTRUCTING");
@@ -302,7 +296,7 @@ int main() {
         check(built.is_object_like(),
               "so `new` evaluates to the instance, not to the number the body returned");
 
-        // AND FROM C++, through context::construct, which is the other way in.
+        // From C++, through context::construct, the other way in.
         ctbrowser::script::reset_transitions();
         point_calls = 0;
         saw_constructing = 0;
@@ -314,16 +308,16 @@ int main() {
         check(transitions(transition::cxx_to_aot) == 1, "counted as C++ -> AOT");
     }
 
-    // ---- NESTED, which is the gate's actual words -------------------------
+    // ---- Nested mixed-mode calls -----------------------------------------
     //
-    // "Arbitrary nested mixed-mode invocation works." One expression that goes
-    // C++ -> AOT -> VM -> AOT: the compiled caller is handed the INTERPRETED
+    // Arbitrarily nested mixed-mode calls must work. One call goes
+    // C++ -> VM -> AOT -> AOT: an interpreted relay is handed the compiled
     // caller, which calls the compiled leaf.
     {
         ctbrowser::script::reset_transitions();
         leaf_calls = 0;
         caller_calls = 0;
-        // The relay is INTERPRETED and forwards to whatever it is given, so
+        // The relay is interpreted and forwards to whatever it is given, so
         // `relay(caller, leaf, 41, 1)` is one expression that crosses three
         // boundaries: C++ into the interpreter, the interpreter into the
         // compiled caller, and that caller into the compiled leaf.
@@ -346,13 +340,12 @@ int main() {
         check(caller_calls == 1 && leaf_calls == 1, "and both compiled bodies ran once");
     }
 
-    // ---- A COMPILED TOP LEVEL --------------------------------------------
+    // ---- A compiled top level --------------------------------------------
     //
-    // THE CASE ctcompile ACTUALLY PRODUCES. A page's `<script>` is a program's
-    // top level, so a backend that compiles anything compiles this - and
-    // `execute` entered it by pushing a frame of its own, without asking. A
-    // whole compiled script would have been interpreted, silently, which is
-    // the entire feature failing to do anything while reporting success.
+    // The case ctcompile actually produces. A page's `<script>` is a program's
+    // top level, so a backend that compiles anything compiles this. Running a
+    // program must dispatch its entry function to a compiled body too;
+    // otherwise a whole compiled script would be interpreted silently.
     {
         program top = ctbrowser::script::compiler::compile("var ignored = 1;\n");
         check(top.ok, "the top-level fixture compiles");
@@ -369,25 +362,21 @@ int main() {
               "and the interpreter was never entered at all, which is the point");
     }
 
-    // ---- AND A MODULE EVALUATING INSIDE ITS IMPORTER ---------------------
+    // ---- A module evaluating inside its importer --------------------------
     //
-    // THE THIRD PLACE THAT ENTERED A TOP LEVEL BY PUSHING ITS OWN FRAME.
-    // `run` cannot be re-entered - it clears `frames_`, because it is the entry
-    // point for a whole turn - so a module evaluated from inside a running
-    // program goes through `run_reentrant` instead, and that was a separate
-    // copy of the same omission: an imported module's compiled body would have
-    // been interpreted purely because of WHO IMPORTED IT.
-    //
-    // This arm exists because removing that dispatch left the suite green.
+    // The third place that enters a top level. `run` cannot be re-entered (it
+    // clears `frames_`, because it is the entry point for a whole turn), so a
+    // module evaluated from inside a running program goes through
+    // `run_reentrant` instead, which must also dispatch to a compiled body.
     {
         program module_body = ctbrowser::script::compiler::compile("var inModule = 1;\n");
         check(module_body.ok, "the module fixture compiles");
         module_body.functions[0].aot_entry = &sample_leaf;
 
-        // A FRAME MUST BE ON THE STACK, or run_module takes `run` and this
+        // A frame must be on the stack, or run_module takes `run` and this
         // tests the path that is already covered. The compiled `caller` gives
         // one: it is entered from C++, and from inside it the module is
-        // evaluated - which is exactly the shape a dynamic import has.
+        // evaluated, which is the shape a dynamic import has.
         ctbrowser::script::reset_transitions();
         leaf_calls = 0;
         ctbrowser::script::module_record record;
@@ -405,18 +394,13 @@ int main() {
               "and the interpreter was not entered for it");
     }
 
-    // ---- WHERE PHASE 3 STOPS, PINNED ------------------------------------
+    // ---- Generators are not dispatched to AOT ----------------------------
     //
-    // A GENERATOR IS NOT DISPATCHED, and that is deliberate rather than an
-    // omission nobody noticed. Calling a generator RUNS NOTHING - it builds a
-    // coroutine - and resuming one restores a saved REGISTER WINDOW copied out
-    // of the flat register file, which a compiled frame does not have. The
-    // master plan says so where it lists generator_resume and resume: they are
-    // what Phase 14 has to reconcile with AOT frames.
-    //
-    // So this arm asserts the CURRENT boundary, not a wish. If a later phase
-    // makes a compiled generator work, this test fails and is the right place
-    // to record the change.
+    // Deliberate: calling a generator only builds a coroutine, and resuming
+    // one restores a register window copied out of the interpreter's register
+    // file, which a compiled frame does not have. This pins the current
+    // boundary; if compiled generators are supported later, this test should
+    // fail and be updated.
     {
         program gen = ctbrowser::script::compiler::compile(
             "function* counter(n) { for (var i = 0; i < n; i++) { yield i; } }\n");
@@ -436,11 +420,11 @@ int main() {
         check(transitions(transition::cxx_to_aot) == 0, "so nothing was counted as a crossing");
     }
 
-    // ---- ALL SIX, over the whole run --------------------------------------
+    // ---- All six, over the whole run --------------------------------------
     //
-    // The plan's actual requirement: "a test asserting all six required
-    // transitions are exercised by the test suite". A suite that never crosses
-    // one of them passes every assertion above and proves nothing about it.
+    // Each of the six transitions must be crossed at least once in this run;
+    // otherwise every assertion above could pass without testing that
+    // transition.
     {
         ctbrowser::script::reset_transitions();
         leaf_calls = 0;

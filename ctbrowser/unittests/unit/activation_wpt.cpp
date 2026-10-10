@@ -1,18 +1,24 @@
-// ACTIVATION BEHAVIOUR IN DISPATCH - DOM 2.9 steps 5.5-5.11 and 11 - one case
-// per rule dom/events found the other answer to: a checkbox is toggled BEFORE
-// its click listeners run, a `click` that is not a MouseEvent toggles nothing,
-// a parent's activation behaviour is reached only when the event bubbles and
-// only the first is run, preventDefault puts the checkedness back, `input`
-// and `change` fire on activation and only when connected, `element.click()`
-// on a disabled control does nothing at all while dispatchEvent still reaches
-// it, the event has stopped travelling by the time `change` fires, a form that
-// is not connected does not submit, a button inside a link is the activation
-// target rather than the link, a label's activation is a click at its control,
-// and the engine's own mouse click takes the same path.
+//===- activation_wpt.cpp - Activation behaviour tests ----------*- C++ -*-===//
 //
-// Each case names the WPT file it stands in for. They are here rather than in
-// events_wpt because every one is about what happens AT the activation target,
-// where that file is about the path an event travels.
+// Activation behaviour during event dispatch (DOM Standard 2.9, "dispatching
+// events", steps 5.5-5.11 and 11). One case per rule where the WPT tests in
+// dom/events expected a different result from this engine: a checkbox is
+// toggled before its click listeners run; a `click` that is not a MouseEvent
+// toggles nothing; a parent's activation behaviour is reached only when the
+// event bubbles, and only the first is run; preventDefault puts the
+// checkedness back; `input` and `change` fire on activation and only when
+// connected; `element.click()` on a disabled control does nothing while
+// dispatchEvent still reaches it; the event has stopped travelling by the time
+// `change` fires; a form that is not connected does not submit; a button
+// inside a link is the activation target rather than the link; a label's
+// activation is a click at its control; and the engine's own mouse click takes
+// the same path.
+//
+// Each case names the WPT file it stands in for. They live here rather than in
+// events_wpt because each is about what happens at the activation target,
+// while that file is about the path an event travels.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -36,8 +42,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <input id=d type=checkbox disabled>
 </body></html>)";
 
-// ONE EXPRESSION, EVALUATED AFTER THE PAGE HAS LAID OUT, with `dump` in scope
-// the way Event-dispatch-click.html has it.
+/// Evaluates one expression after the page has laid out, with `dump` in scope
+/// the way Event-dispatch-click.html has it, and returns what it logged.
 [[nodiscard]] std::string answer(const std::string & expression) {
     browser page{browser_options{400, 300}};
     page.load_html(page_html);
@@ -51,6 +57,7 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
     return logged.back();
 }
 
+/// Checks that \p expression evaluates to \p expected, printing it on failure.
 void is(const std::string & expression, const std::string & expected) {
     const std::string got = answer(expression);
     CHECK_EQ(got, expected);
@@ -61,11 +68,11 @@ void is(const std::string & expression, const std::string & expected) {
 constexpr const char * checkbox_setup = "var i = document.createElement('input');"
                                         " i.type = 'checkbox'; dump.appendChild(i);";
 
-// --- the legacy-pre-activation behaviour ------------------------------------
+// --- The legacy-pre-activation behaviour ------------------------------------
 
 void test_click_toggles_before_the_listeners_run() {
     // Event-dispatch-click.html "basic with click()": the click listener reads
-    // the NEW checkedness. The event is a MouseEvent and, being synthetic, is
+    // the new checkedness. The event is a MouseEvent and, being synthetic, is
     // not trusted.
     is(std::string{"(function () {"} + checkbox_setup +
            " var seen;"
@@ -108,11 +115,13 @@ void test_only_the_first_node_with_activation_behaviour_is_activated() {
        "false,true");
 }
 
-// --- the legacy-canceled-activation behaviour --------------------------------
+// --- The legacy-canceled-activation behaviour --------------------------------
 
 void test_prevent_default_puts_the_checkedness_back() {
-    // "disabled checkbox should get legacy-canceled-activation behavior": the
-    // listener saw it checked; after the dispatch it is not.
+    // Legacy-canceled-activation: preventDefault in the click listener restores
+    // the checkedness (the listener saw it checked; afterwards it is not).
+    // Adapted from WPT "disabled checkbox should get legacy-canceled-activation
+    // behavior", using an enabled checkbox.
     is(std::string{"(function () {"} + checkbox_setup +
            " var seen;"
            " i.onclick = function (e) { seen = i.checked; e.preventDefault(); };"
@@ -135,7 +144,7 @@ void test_a_cancelled_radio_click_rechecks_the_radio_it_unchecked() {
        "false,true");
 }
 
-// --- the activation behaviour -----------------------------------------------
+// --- The activation behaviour -----------------------------------------------
 
 void test_input_then_change_fire_only_when_connected() {
     // Event-dispatch-detached-input-and-change.html: nothing while detached,
@@ -167,7 +176,7 @@ void test_click_on_a_disabled_control_does_nothing_but_dispatch_event_reaches_it
 
 void test_the_event_has_stopped_travelling_when_change_fires() {
     // "event state during post-click handling": eventPhase NONE, currentTarget
-    // null, the path empty - and the target still the checkbox.
+    // null, the path empty, and the target still the checkbox.
     is(std::string{"(function () {"} + checkbox_setup +
            " var ev = new MouseEvent('click'); var seen;"
            " i.onchange = function () {"
@@ -195,8 +204,7 @@ void test_a_form_submits_only_when_connected_and_the_button_enabled() {
 void test_a_button_inside_a_link_is_the_activation_target() {
     // Event-dispatch-single-activation-behavior.html: the first node on the
     // path with activation behaviour is the button, so the link is not
-    // followed. It used to be: the default action walked up from the click to
-    // the nearest <a>.
+    // followed.
     is("(function () {"
        " var a = document.createElement('a'); a.href = '#gone';"
        " var b = a.appendChild(document.createElement('button')); b.type = 'button';"
@@ -220,13 +228,13 @@ void test_a_label_activation_is_a_click_at_its_control() {
        "1,true,1,true");
 }
 
-// --- the engine's own click -------------------------------------------------
+// --- The engine's own click -------------------------------------------------
 
 void test_a_mouse_click_takes_the_same_path() {
-    // browser::handle's mouse_up used to dispatch a plain Event and call the
-    // default action itself; now it is a MouseEvent through dispatch, so the
-    // checkbox is checked when its click listener runs and `input` and `change`
-    // follow. A disabled control hears no click at all.
+    // A real mouse click (browser::handle's mouse_up) dispatches a MouseEvent
+    // through the same dispatch path, so the checkbox is already checked when
+    // its click listener runs, and `input` and `change` follow. A disabled
+    // control receives no click.
     browser page{browser_options{400, 300}};
     page.load_html(page_html);
     page.frame();

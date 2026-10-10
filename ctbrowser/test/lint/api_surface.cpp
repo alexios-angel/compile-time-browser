@@ -1,13 +1,12 @@
-// The application-facing API claim, enforced rather than asserted.
+//===- ctbrowser/test/lint/api_surface.cpp - Public API boundary lint -----===//
 //
-// "One import, one link target, no SDL" is easy to state and easy to lose: a
-// stray `#include <SDL3/SDL.h>` in an example still compiles, and a second
-// `import` still works. Both would quietly undo the thing this API exists for,
-// and neither would fail any other test.
+// Enforces the application-facing API promise: "one include, one link target,
+// no SDL". A stray `#include <SDL3/SDL.h>` in an example still compiles and a
+// second engine include still works, so no other test would notice either.
+// This lint reads the sources an application author is meant to copy, and
+// sweeps the engine for SDL outside the files allowed to use it.
 //
-// So this test reads the sources an application author is meant to copy and
-// checks them. It is a lint, and it lives here because the property it defends
-// is a design promise, not a formatting rule.
+//===----------------------------------------------------------------------===//
 
 #include "check.hpp"
 #include <algorithm>
@@ -30,10 +29,9 @@ namespace {
     return buffer.str();
 }
 
-// Comments talk ABOUT SDL constantly - that is most of what the design notes in
-// this tree are for. A lint that matched them would fail on its own
-// explanations, so strip them first. Crude but sufficient: no string literal in
-// these files contains a comment opener.
+/// Removes // and /* */ comments, which mention SDL constantly; a lint that
+/// matched them would fail on its own explanations. Crude but sufficient: no
+/// string literal in these files contains a comment opener.
 [[nodiscard]] std::string strip_comments(const std::string & source) {
     std::string out;
     out.reserve(source.size());
@@ -53,20 +51,17 @@ namespace {
     return out;
 }
 
-// Every #include naming the engine. An application is allowed <cstdio> and
-// friends; what it is not allowed is to reach past the umbrella header into
-// the subsystems, which is the header-era shape of "exactly one import".
+/// Returns every #include that names the engine. An application may include
+/// <cstdio> and friends, but must not reach past the umbrella header into the
+/// subsystems: that is what "exactly one include" means.
 [[nodiscard]] std::vector<std::string> engine_includes(const std::string & source) {
     std::vector<std::string> out;
     std::istringstream in{source};
     std::string line;
     while (std::getline(in, line)) {
         const std::size_t at = line.find_first_not_of(" \t");
-        // BOTH spellings: the umbrella is <ctbrowser.hpp>, which sits beside
-        // the subsystem directory rather than inside it, so a test that looked
-        // only for "<ctbrowser/" would match every reach-past include and miss
-        // the one legal include entirely - reporting zero and failing every
-        // application source for the opposite of the real reason.
+        // Match both <ctbrowser/...> and the umbrella <ctbrowser.hpp>, which
+        // is outside that directory; otherwise the one legal include is missed.
         const bool names_engine = line.find("<ctbrowser/") != std::string::npos ||
                                   line.find("<ctbrowser.hpp>") != std::string::npos;
         if (at != std::string::npos && names_engine && line.compare(at, 8, "#include") == 0) {
@@ -76,8 +71,9 @@ namespace {
     return out;
 }
 
-// Files an application author would copy. If any of these needs SDL or a second
-// import, the API has regressed for everyone.
+/// Checks one file an application author would copy: no SDL, and exactly one
+/// engine include, `<ctbrowser.hpp>`. A failure means the API has regressed
+/// for everyone.
 void check_application_source(const std::string & path) {
     const std::string raw = read(path);
     check(!raw.empty(), path + ": readable");
@@ -102,19 +98,13 @@ int main() {
     check_application_source("tools/ctbrowse/ctbrowse.cpp");
     check_application_source("test/package/main.cpp");
 
-    // The engine may use SDL only where it is ALLOWED to. Everywhere else,
-    // "the engine is SDL-free" - the claim that makes headless rendering and
-    // this whole test suite possible - has broken.
+    // The engine may use SDL only in the files listed in `allowed`. Anywhere
+    // else breaks "the engine is SDL-free", the property that makes headless
+    // rendering and this whole test suite possible.
     //
-    // A SWEEP of the engine, not a hand-written list. The list version could
-    // not catch a NEW file that used SDL, and it did not: raster/ttf was added
-    // and this test stayed green because nobody had added it to the list.
-    //
-    // Both trees, since the engine is headers in include/ and implementations
-    // in lib/: sweeping one of them would leave the other unwatched. The paths
-    // are relative to this project directory - ctest runs every test with
-    // WORKING_DIRECTORY = PROJECT_SOURCE_DIR, and that became ctbrowser/ when
-    // the repository became a monorepo.
+    // Sweep every .cpp/.hpp under include/ and lib/ rather than a hand-kept
+    // list, so a new file that uses SDL is caught too. Paths are relative to
+    // ctbrowser/, the WORKING_DIRECTORY ctest gives every test.
     const std::set<std::string> allowed = {
         "include/ctbrowser/app/app.hpp", // the window, the event loop, audio, image decode
         "lib/App/app/internal.hpp",      //   and its implementation: the includes
@@ -137,11 +127,11 @@ int main() {
                   path + ": engine source is SDL-free");
         }
     }
-    // If the sweep found nothing it is not passing, it is not looking.
+    // A sweep that visited nothing would pass without having looked.
     check(swept > 20, "the sweep actually visited the engine");
 
-    // And every file claiming the exception has to exist, or the list is
-    // carrying a name that moved and is silently allowing nothing.
+    // Every allowed file must exist; a name that moved would silently allow
+    // nothing.
     for (const std::string & path : allowed) {
         check(std::filesystem::exists(path), path + ": the SDL exception list is current");
     }

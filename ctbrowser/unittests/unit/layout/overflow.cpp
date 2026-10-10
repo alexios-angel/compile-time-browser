@@ -1,12 +1,17 @@
-// ctbrowser.layout: the scrollable overflow and scrolling area of a finished
-// box (CSS Overflow 3 §3.3, CSSOM View §2) - what scrollWidth/scrollHeight
-// and a scroll offset's clamp are made of. Each case names the css/cssom-view
-// file whose numbers it pins.
+//===- ctbrowser/unittests/unit/layout/overflow.cpp - Overflow tests ------===//
+//
+// The scrollable overflow and scrolling area of a finished box (CSS Overflow 3
+// §3.3, CSSOM View §2): what scrollWidth/scrollHeight and a scroll offset's
+// clamp are computed from. Each case names the WPT css/cssom-view file whose
+// numbers it pins.
+//
+//===----------------------------------------------------------------------===//
 
 #include "fixture.hpp"
 
 namespace {
 
+/// A fixture plus its laid-out fragment tree, with lookups by element id.
 struct laid_out {
     fixture f;
     fragment out;
@@ -22,9 +27,9 @@ struct laid_out {
 
 constexpr std::string_view reset = "body { margin: 0; padding: 0 } ";
 
-// scrollWidthHeight-negative-margin-001: a child pulled out by negative
-// margins reaches exactly the padding edge, so the area IS the padding box -
-// whatever the overflow value.
+/// scrollWidthHeight-negative-margin-001: a child pulled out by negative
+/// margins reaches exactly the padding edge, so the area is the padding box,
+/// whatever the overflow value.
 void test_a_child_ending_at_the_padding_edge_adds_nothing() {
     for (const char * overflow : {"visible", "hidden", "auto", "clip"}) {
         laid_out page;
@@ -40,9 +45,9 @@ void test_a_child_ending_at_the_padding_edge_adds_nothing() {
     }
 }
 
-// scrollWidthHeight-negative-margin-002: the child's border box past the
-// padding edge grows the area; what it spills up and left is unreachable and
-// does not.
+/// scrollWidthHeight-negative-margin-002: the child's border box past the
+/// padding edge grows the area; what it spills up and left is unreachable and
+/// does not.
 void test_a_child_past_the_padding_edge_grows_the_area() {
     laid_out page;
     page.run(R"(<div id=w><div id=i></div></div>)",
@@ -57,10 +62,10 @@ void test_a_child_past_the_padding_edge_grows_the_area() {
     expect_near(a.height, 201, "scrollHeight: to the child's bottom border edge (1+1-100+300 - 1)");
 }
 
-// ...and in a flex container whose axis runs backwards the origin is the
-// right or bottom padding edge, so what spills left or up is what scrolls:
-// `row-reverse` reaches from 104 back to the item's left border edge at -80,
-// `wrap-reverse` from 90 up to its top one at -118.
+/// In a flex container whose axis runs backwards the origin is the right or
+/// bottom padding edge, so what spills left or up is what scrolls:
+/// `row-reverse` reaches from 104 back to the item's left border edge at -80,
+/// `wrap-reverse` from 90 up to its top one at -118.
 void test_a_reversed_flex_container_scrolls_from_its_end() {
     for (const char * flow : {"row-reverse", "row wrap-reverse"}) {
         laid_out page;
@@ -76,8 +81,8 @@ void test_a_reversed_flex_container_scrolls_from_its_end() {
     }
 }
 
-// scrollWidthHeight-flex-column-padding-001: a scroll container keeps its
-// end padding past its overflowing in-flow content.
+/// scrollWidthHeight-flex-column-padding-001: a scroll container keeps its
+/// end padding past its overflowing in-flow content.
 void test_a_scroll_container_keeps_its_end_padding() {
     laid_out page;
     page.run(
@@ -87,7 +92,7 @@ void test_a_scroll_container_keeps_its_end_padding() {
             " width: 100px; height: 206px; padding: 100px 0 } .i { flex-shrink: 0; height: 38px }");
     expect_near(padding_box_of(*page.at("s")).height, 206, "clientHeight is the padding box");
     expect_near(page.area("s").height, 276, "scrollHeight: 100 + 38 + 38 + 100");
-    // ...and a box that does not scroll keeps nothing past its content.
+    // A box that does not scroll keeps nothing past its content.
     laid_out plain;
     plain.run(
         R"(<div id=s><div class=i></div><div class=i></div></div>)",
@@ -97,9 +102,9 @@ void test_a_scroll_container_keeps_its_end_padding() {
     expect_near(plain.area("s").height, 206, "overflow: visible adds no end padding");
 }
 
-// A descendant that clips its own overflow contributes only its border box;
-// an absolutely positioned box belongs to its containing block's area and to
-// the viewport's when there is none.
+/// A descendant that clips its own overflow contributes only its border box;
+/// an absolutely positioned box belongs to its containing block's area, or to
+/// the viewport's when there is none.
 void test_clipping_and_containing_blocks() {
     laid_out page;
     page.run(

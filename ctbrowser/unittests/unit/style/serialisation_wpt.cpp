@@ -1,10 +1,14 @@
-// WHAT css/cssom ASKS OF THE SELECTOR AND VALUE SERIALISERS, one case per
-// behaviour that moved on 2026-09-10.
+//===- serialisation_wpt.cpp - CSSOM serialisation cases --------*- C++ -*-===//
 //
-// Beside ../cssom/wpt.cpp rather than in it: every case here is about how a
-// selector or a declaration value is WRITTEN BACK - `selectorText` and
+// What the css/cssom WPT suite requires of the selector and value
+// serialisers, one case per behaviour.
+//
+// Kept apart from ../cssom/wpt.cpp because every case here is about how a
+// selector or a declaration value is written back - `selectorText` and
 // `el.style.x` - and each names the `css/cssom` file it stands in for.
 // `logged` is shared through ../cssom/probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>

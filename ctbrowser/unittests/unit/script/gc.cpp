@@ -1,22 +1,25 @@
+//===- ctbrowser/unittests/unit/script/gc.cpp - Collector rooting tests ---===//
+//
 // The precise collector, made to run at the moment a C++ local is the only
 // reference to a heap value.
 //
-// WHY THIS FILE EXISTS AT ALL. In a shipped page NOTHING COLLECTS WHILE SCRIPT
-// IS RUNNING: the only production trigger is `collect_if_due`, once per tick,
-// from the browser's frame loop. So every rooting bug inside a synchronous
-// builtin call is unreachable from an ordinary page and perfectly invisible to
-// test262 and WPT, which measure conformance from outside. It is reachable
-// through `$262.gc` and through gc stress - and those are exactly the modes
-// ctcompile's differential gate runs this interpreter in, holding the compiler
-// to whatever answer comes back. A wrong answer here is not a failure; it is a
-// specification.
+// In a shipped page nothing collects while script is running: the only
+// production trigger is `collect_if_due`, once per tick, from the browser's
+// frame loop. So a rooting bug inside a synchronous builtin call is unreachable
+// from an ordinary page and invisible to test262 and WPT. It is reachable
+// through `$262.gc` and through GC-stress mode, and the ctcompile differential
+// tests run this interpreter in those modes and treat its answers as the
+// reference the compiler must match, so a wrong answer here becomes a wrong
+// expectation there.
 //
-// `gc()` here is `$262.gc` minus test262 - c.collect(), the real mark-sweep -
+// `gc()` here is `$262.gc` without test262: c.collect(), the real mark-sweep,
 // so a case in this file is a case a corpus run can reproduce. Every assertion
-// checks TWO things: the answer, and that a collection actually happened.
-// Asserting an answer alone proves nothing, because the answer is the same when
-// the collector silently did not run, which is precisely how a broken forced-GC
-// mode looks.
+// checks two things: the answer, and that a collection actually happened. An
+// answer alone proves nothing, because it is the same when the collector
+// silently did not run, which is exactly how a broken forced-GC mode looks.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/script/script.hpp>
 
 #include "check.hpp"
@@ -34,11 +37,15 @@ using ctbrowser::script::value;
 
 namespace {
 
+/// The result of run_with_gc: the script's answer as a string ("THREW" if it
+/// threw) and how many collections ran.
 struct gc_run {
     std::string answer;
     std::size_t collections = 0;
 };
 
+/// Compiles and runs \p source in a fresh context with a global `gc()` that
+/// forces a full collection.
 [[nodiscard]] gc_run run_with_gc(const std::string & source) {
     const program prog = ctbrowser::script::compiler::compile(source);
     context cx;
@@ -54,6 +61,8 @@ struct gc_run {
     return out;
 }
 
+/// Fails the test unless \p source answers \p want and at least one
+/// collection ran.
 void expect_gc(std::string_view what, const std::string & source, std::string_view want) {
     const gc_run got = run_with_gc(source);
     if (got.answer != want) {
@@ -61,7 +70,7 @@ void expect_gc(std::string_view what, const std::string & source, std::string_vi
                     std::string{want}.c_str());
         ++ctbrowser_test_failures;
     }
-    // THE GUARD ON THE GUARD. A `gc()` that collected nothing gives the same
+    // A guard on the guard: a `gc()` that collected nothing gives the same
     // answer as a correct engine, so without this the whole file could pass
     // while measuring an interpreter no collection ever entered.
     if (got.collections == 0) {
@@ -222,14 +231,14 @@ void test_private_proxy_survives_a_collection() {
 // --- native lambda captures ------------------------------------------------
 //
 // A `value` captured by a C++ lambda inside a native is invisible to the
-// collector: `mark_object`'s native arm walks `props` and nothing else, and
-// `each_root` has no inventory of captures. `new Promise` was fixed by rooting
-// its captures in a property; these two were not.
+// collector unless the native also lists it in native_object::retained.
+// These cases free everything else and check the captured values survive.
 
-// `Function.prototype.bind` captures THREE values - the target closure, the
-// receiver and the bound arguments - and roots none of them. The IIFE is what
-// makes the capture the only reference there is: after it returns, `target` and
-// `tag` are reachable from the bound native's C++ lambda and from nowhere else.
+/// `Function.prototype.bind` captures three values - the target closure, the
+/// receiver and the bound arguments - in its native's lambda. The IIFE makes
+/// that capture the only reference: after it returns, `target` and `tag` are
+/// reachable only through the bound function, so the test fails unless they
+/// are rooted.
 void test_bind_captures_survive_a_collection() {
     expect_gc("bind's target and bound args survive gc", R"(
         var g = (function () {
@@ -248,10 +257,9 @@ void test_bind_captures_survive_a_collection() {
               "bound/late");
 }
 
-// `Symbol.for`'s registry is a shared_ptr<vector<pair<string, value>>> captured
-// by `for` and by `keyFor`. The KEYS are C++ strings and survive; the SYMBOLS
-// are values in a capture, so a collection frees them while the registry still
-// lists them - and `Symbol.for` then hands back a pointer into a recycled cell.
+/// `Symbol.for`'s registry must keep its symbols alive across a collection:
+/// a freed symbol would let `Symbol.for` hand back a pointer into a recycled
+/// cell.
 void test_symbol_registry_survives_a_collection() {
     expect_gc("Symbol.for's registry survives gc", R"(
         var s = Symbol.for('KEY');
@@ -271,7 +279,7 @@ void test_symbol_registry_survives_a_collection() {
         return Symbol.keyFor(Symbol.for('OTHER'));
     )",
               "OTHER");
-    // AND IDENTITY, which is the one guarantee the registry exists to give.
+    // And identity, which is the one guarantee the registry exists to give.
     expect_gc("Symbol.for interns across a gc", R"(
         var a = Symbol.for('SAME');
         a = null;
@@ -319,13 +327,13 @@ void test_native_accessors_survive_a_collection() {
 // --- array builtins across a callback --------------------------------------
 //
 // Each of these holds a heap value in a C++ local across a call back into the
-// VM. `context::rooted` is the primitive for exactly this and none of them used
-// it. The callback's `gc()` is what a page cannot do and `$262.gc` can.
+// VM, which `context::rooted` must protect. The callback's `gc()` is what a
+// page cannot do and `$262.gc` can.
 
 void test_map_result_survives_a_collection() {
-    // `map`'s `out` is allocated BEFORE the first callback and lives only in a
-    // C++ local until it is returned, so the first `gc()` frees the array the
-    // remaining iterations then push into.
+    // `map`'s `out` is allocated before the first callback and is held only in
+    // a C++ local until it is returned; unrooted, the first `gc()` would free
+    // the array the remaining iterations then push into.
     expect_gc("map's result array survives gc in the callback", R"(
         var out = [1, 2, 3].map(function (x) { gc(); return { v: x }; });
         return out.length + ':' + out[0].v + ',' + out[1].v + ',' + out[2].v;
@@ -334,8 +342,9 @@ void test_map_result_survives_a_collection() {
 }
 
 void test_filter_result_survives_a_collection() {
-    // `filter` survived only by accident: the values it keeps are also in the
-    // rooted source array. Its `out` is as unrooted as `map`'s.
+    // `filter`'s result array is held only in a C++ local, like `map`'s; its
+    // elements are also in the rooted source array, which would hide a missing
+    // root on the elements but not on the array itself.
     expect_gc("filter's result array survives gc in the callback", R"(
         var src = [{ v: 1 }, { v: 2 }, { v: 3 }];
         var out = src.filter(function (o) { gc(); return o.v !== 2; });
@@ -354,10 +363,9 @@ void test_flat_map_result_survives_a_collection() {
 
 void test_sort_snapshot_survives_a_collection() {
     // `sort` copies the array so a comparator cannot make it index out of
-    // bounds - and that snapshot is a bare std::vector<value>. A comparator
-    // that empties the array leaves the snapshot holding the ONLY reference to
-    // every element not currently an argument, and `gc()` then frees them
-    // under the merge that is still reading them.
+    // bounds. A comparator that empties the array leaves that snapshot holding
+    // the only reference to every element not currently an argument, so an
+    // unrooted snapshot would be freed under the merge still reading it.
     expect_gc("sort's snapshot survives gc in the comparator", R"(
         var a = [{ k: 3 }, { k: 1 }, { k: 4 }, { k: 2 }];
         a.sort(function (x, y) { a.length = 0; gc(); return x.k - y.k; });
@@ -379,11 +387,10 @@ void test_sort_snapshot_survives_a_collection() {
         return out.join(',');
     )",
               "1,2,3");
-    // THE DEFAULT SORT RUNS USER CODE TOO. It has no comparator, but it calls
+    // The default sort runs user code too. It has no comparator, but it calls
     // `to_string` on every element to build its keys, and `toString` is a page
-    // method - so the same window is open on the path nobody passes a function
-    // to. This one also walks `self->items` with a range-for while that code
-    // can push to it.
+    // method, so the same window is open on the path nobody passes a function
+    // to. That code can also push to the array being sorted.
     expect_gc("the default sort survives a mutating toString", R"(
         var a = [];
         a.push({ toString: function () { a.push({ toString: function () { return 'z'; } });
@@ -397,14 +404,14 @@ void test_sort_snapshot_survives_a_collection() {
 
 // --- the mark phase --------------------------------------------------------
 
-// `mark_object` recursed once per EDGE, with no depth bound and no worklist, so
-// the C++ stack had to be as deep as the object graph is long. A linked list is
-// the ordinary shape that produces one: `head = { next: head }` in a loop is
-// something a page writes on purpose.
-//
-// 200,000 is chosen because ~130,000 was measured to exhaust the default 8 MiB
-// stack. The failure was not a bad answer - it was exit 139, with `mark_object`
-// all the way up the backtrace.
+/// Marking must not recurse once per edge, or the C++ stack has to be as deep
+/// as the object graph's longest chain; `mark_object` uses a worklist. A linked
+/// list is the ordinary shape that produces a long chain: `head = { next: head }`
+/// in a loop is something a page writes on purpose.
+///
+/// 200,000 is chosen because a recursive marker exhausts the default 8 MiB
+/// stack at about 130,000, and crashes (exit 139) rather than giving a wrong
+/// answer.
 void test_a_deep_chain_does_not_exhaust_the_stack() {
     expect_gc("a 200k-deep chain can be marked", R"(
         var head = null;
@@ -431,17 +438,10 @@ void test_a_deep_chain_does_not_exhaust_the_stack() {
 
 } // namespace
 
-// ONE CASE AT A TIME, from the command line - `ctbrowser-test-script_gc bind`.
-//
-// Not a convenience. ASan does not recover: the first heap-use-after-free ends
-// the process, so a file of use-after-free cases run in one go reports the
-// first and hides the rest. Under the asan preset each case has to be run on
-// its own to be seen at all, and the filter is what makes that one command
-// rather than an edit-and-rebuild. ctest runs the whole file with no argument.
-// A LOOP THAT ONLY CONCATENATES reaches no call and so no safepoint: 300
-// megabytes of dead strings, none collected, was how a 100,000-character tag
-// name built with `+=` reached the 4 GB address-space cap (document-write/
-// 032.html). The loop's back edge collects once the string budget is spent.
+/// A loop that only concatenates reaches no call and so no safepoint, so the
+/// loop's back edge must collect once the string budget is spent. Without it,
+/// a 100,000-character tag name built with `+=` (WPT document-write/032.html)
+/// left 300 MB of dead strings and hit the 4 GB address-space cap.
 void test_a_concatenating_loop_collects_its_strings() {
     const program prog =
         ctbrowser::script::compiler::compile("var big = 'x'.repeat(1 << 20); var t;"
@@ -455,6 +455,11 @@ void test_a_concatenating_loop_collects_its_strings() {
     CHECK(cx.collections() > 0);
 }
 
+// Runs one case at a time from the command line: `ctbrowser-test-script_gc
+// bind` runs the cases whose name contains "bind". ASan does not recover: the
+// first heap-use-after-free ends the process, so under the asan preset each
+// case has to be run on its own to be seen at all. ctest runs every case with
+// no argument.
 int main(int argc, char ** argv) {
     namespace po = boost::program_options;
     std::string only;

@@ -1,8 +1,10 @@
+//===- ctbrowser/unittests/unit/layout/margins.cpp - Margin tests ---------===//
+//
 // Margin collapsing: adjacent siblings, an empty block collapsing through,
-// parent and child edges, and the four things that stop it - a line box,
-// padding or border, overflow, and min-height. Carved out of
-// unit/layout_basics.cpp on 2026-09-08 - blocks.cpp names the family,
-// and fixture.hpp is the fixture every file in it shares.
+// parent and child edges, and the four things that stop it: a line box,
+// padding or border, overflow, and min-height. Shared setup is in fixture.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -22,9 +24,9 @@ using namespace ctbrowser::layout;
 
 namespace {
 
-// Adjacent vertical margins form one margin, rather than two pieces of space.
-// Positive margins take the largest positive; negative margins take the most
-// negative; a positive and a negative are then added.
+/// Adjacent vertical margins form one margin, rather than two pieces of space.
+/// Positive margins take the largest positive; negative margins take the most
+/// negative; a positive and a negative are then added.
 void test_adjacent_block_margins_collapse() {
     {
         fixture f;
@@ -67,7 +69,7 @@ void test_adjacent_block_margins_collapse() {
 }
 
 void test_an_empty_blocks_margins_collapse_through_it() {
-    // All four adjoining margins are ONE group. Keeping only a pairwise scalar
+    // All four adjoining margins are one group. Keeping only a pairwise scalar
     // loses the +20 when -30 is seen and gives the wrong answer once +15 arrives;
     // the group needs both its largest positive and its most-negative member.
     fixture f;
@@ -259,7 +261,7 @@ void test_overflow_stops_parent_child_margin_collapse() {
     };
 
     // hidden/auto/scroll establish an independent block formatting context
-    // even without a border or padding. `clip` deliberately does NOT; authors
+    // even without a border or padding. `clip` deliberately does not; authors
     // combine it with `flow-root` when they need both behaviours.
     run("overflow: hidden", true, "overflow:hidden produced every fragment");
     run("overflow-x: auto", true, "one scrollable axis produced every fragment");

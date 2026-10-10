@@ -1,25 +1,14 @@
-// The four `Promise` statics this engine did not have: `withResolvers`,
-// `allSettled`, `any` and `race`.
+//===- ctbrowser/unittests/js/promise/combinators.cpp - Combinators -------===//
 //
-// `withResolvers` is why the file exists - WPT's
-// `css/css-values/urls/referrer-policy/no-referrer/url-import-referrer-policy.html`
-// fails on exactly that name, and it is the shape every modern test harness
-// uses to hand a promise to one place and its settlement to another. The other
-// three were missing beside it and are the same machinery.
+// Promise combinators: `withResolvers`, `allSettled`, `any`, `race` and `all`.
 //
-// EVERY CASE WAITS FOR THE TURN. A combinator's reaction is queued as a
-// microtask, exactly as `then`'s is, so what it produced is only readable after
-// `run()` has drained the queue - which is what `expect_after_turn` is. A test
-// that read the answer immediately would be asserting the bug these were
-// written to avoid: a handler that fires the instant it is attached.
+// Reactions run as microtasks, so every case reads its answer only after
+// `run()` drains the queue (`expect_after_turn`). Each combinator is also
+// tested with an input that is still pending when it is called, because all
+// of them must go through the same `then` path whether an input is settled,
+// pending or not a promise.
 //
-// AND EVERY ONE OF THEM IS ALSO EXERCISED OVER A PROMISE THAT IS STILL PENDING
-// WHEN THE COMBINATOR IS CALLED. That is the whole point of `react`: all four
-// statics go through the path `then` takes, so "already settled", "still
-// pending" and "not a promise at all" reach one implementation. `Promise.all`
-// was the last one that did not - it read `__value` off each entry as it
-// walked the array, which answers immediately and wrongly for an input that
-// has not settled - and the `d.resolve(...)` cases below are what proves it.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -31,8 +20,9 @@
 
 namespace {
 
-// Run a program, drain the turn, and report the global `result` - the same
-// shape `vm_async` uses for every promise case it has (../vm/expect.hpp).
+/// Runs \p source, drains the microtask queue, and fails the test unless the
+/// global `result` then reads \p want. This is the shape `vm_async` uses for
+/// its promise cases (../vm/expect.hpp).
 void expect_after_turn(std::string_view source, std::string_view want) {
     using namespace ctbrowser::script;
     const program prog = compiler::compile(std::string{source});
@@ -51,7 +41,7 @@ void expect_after_turn(std::string_view source, std::string_view want) {
 
 int main() {
     // ================================================================
-    // THEY EXIST, AND THEY ARE FUNCTIONS
+    // They exist, and they are functions.
     // ================================================================
     js_expect("typeof Promise.withResolvers", "function");
     js_expect("typeof Promise.allSettled", "function");
@@ -59,16 +49,11 @@ int main() {
     js_expect("typeof Promise.race", "function");
 
     // ================================================================
-    // Promise.withResolvers - 27.2.4.8
+    // Promise.withResolvers: ECMA-262 27.2.4.8.
     // ================================================================
     // `new Promise(executor)` turned inside out: the same promise and the same
     // two functions, handed back as an object rather than to a callback.
-    // AN EXPRESSION, IN AN IIFE. `js_expect` compiles `return (<what you gave
-    // it>);`, so a `var` and a second statement handed to it are not a program
-    // at all - this line was written as two statements and reported THREW,
-    // which `js_run` says for a source that does not COMPILE just as it says it
-    // for one that throws. `Promise.withResolvers` was never the defect: the
-    // six `expect_after_turn` cases below drive it end to end and pass.
+    // `js_expect` compiles `return (<source>);`, so statements go inside an IIFE.
     js_expect("(function(){var d = Promise.withResolvers();"
               "return typeof d.promise + ',' + typeof d.resolve + ',' + typeof d.reject;})()",
               "object,function,function");
@@ -78,12 +63,12 @@ int main() {
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "d.promise.catch(e => { result = 'caught ' + e; }); d.reject('no');",
                       "caught no");
-    // SETTLED BEFORE ANYTHING IS ATTACHED, which is the other order a page
+    // Settled before anything is attached, which is the other order a page
     // writes and the one a settled-only promise gets wrong.
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "d.resolve('early'); d.promise.then(v => { result = v; });",
                       "early");
-    // A promise settles ONCE.
+    // A promise settles once.
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "d.promise.then(v => { result = v; }); d.resolve('first'); d.resolve('two');",
                       "first");
@@ -93,9 +78,9 @@ int main() {
                       "destructured");
 
     // ================================================================
-    // Promise.allSettled - 27.2.4.2
+    // Promise.allSettled: ECMA-262 27.2.4.2.
     // ================================================================
-    // It NEVER rejects: every outcome is reported, in input order.
+    // It never rejects: every outcome is reported, in input order.
     expect_after_turn(
         "var result = ''; Promise.allSettled([Promise.resolve(1), Promise.reject('e')])"
         ".then(r => { result = r.map(x => x.status).join(','); });",
@@ -112,7 +97,7 @@ int main() {
     expect_after_turn("var result = 'x'; Promise.allSettled([])"
                       ".then(r => { result = 'len=' + r.length; });",
                       "len=0");
-    // ...AND IT WAITS. The input is pending when allSettled is called.
+    // It waits: the input is pending when allSettled is called.
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "Promise.allSettled([d.promise, 2]).then(r => { result = r[0].value; });"
                       "d.resolve('late');",
@@ -123,30 +108,28 @@ int main() {
                       "rejected");
 
     // ================================================================
-    // Promise.any - 27.2.4.3
+    // Promise.any: ECMA-262 27.2.4.3.
     // ================================================================
-    // The first FULFILMENT wins, and a rejection before it is not an answer.
+    // The first fulfilment wins, and a rejection before it is not an answer.
     expect_after_turn("var result = ''; Promise.any([Promise.reject(1), Promise.resolve(2)])"
                       ".then(v => { result = 'got ' + v; });",
                       "got 2");
-    // Every input rejecting is the only way `any` rejects, and what it rejects
-    // with is an AggregateError carrying `errors` in input order. This engine
-    // has no AggregateError CONSTRUCTOR (docs/test262.md names it as absent),
-    // so the error is an Error with that name - which is what a page reads.
+    // Every input rejecting is the only way `any` rejects, and it rejects with an
+    // AggregateError whose `errors` are in input order.
     expect_after_turn("var result = ''; Promise.any([Promise.reject('a'), Promise.reject('b')])"
                       ".catch(e => { result = e.name + ':' + e.errors.join(','); });",
                       "AggregateError:a,b");
     // An empty list is already "all rejected".
     expect_after_turn("var result = ''; Promise.any([]).catch(e => { result = e.name; });",
                       "AggregateError");
-    // ...AND IT WAITS.
+    // It waits for a pending input.
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "Promise.any([Promise.reject('r'), d.promise]).then(v => { result = v; });"
                       "d.resolve('won');",
                       "won");
 
     // ================================================================
-    // Promise.race - 27.2.4.5
+    // Promise.race: ECMA-262 27.2.4.5.
     // ================================================================
     // Whichever settles first settles the result, however it settled.
     expect_after_turn("var result = ''; Promise.race([Promise.resolve('a'), Promise.reject('b')])"
@@ -160,19 +143,19 @@ int main() {
         "var result = ''; var d = Promise.withResolvers();"
         "Promise.race([d.promise, Promise.resolve('now')]).then(v => { result = v; });",
         "now");
-    // ...and one that settles later still wins when it is the only entry.
+    // One that settles later still wins when it is the only entry.
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "Promise.race([d.promise]).then(v => { result = v; }); d.resolve('alone');",
                       "alone");
-    // AN EMPTY RACE STAYS PENDING FOREVER, which is the specified answer and
-    // not an oversight - so `result` is never written.
+    // An empty race stays pending forever, which is the specified answer and
+    // not an oversight, so `result` is never written.
     expect_after_turn("var result = 'never'; Promise.race([]).then(v => { result = 'settled'; });",
                       "never");
 
     // ================================================================
-    // Promise.all - 27.2.4.1
+    // Promise.all: ECMA-262 27.2.4.1.
     // ================================================================
-    // The values in INPUT ORDER, whatever order they arrived in.
+    // The values in input order, whatever order they arrived in.
     expect_after_turn("var result = ''; Promise.all([Promise.resolve(1), Promise.resolve(2)])"
                       ".then(v => { result = v.join(','); });",
                       "1,2");
@@ -180,7 +163,7 @@ int main() {
     expect_after_turn("var result = ''; Promise.all([1, Promise.resolve(2), 3])"
                       ".then(v => { result = v.join(','); });",
                       "1,2,3");
-    // ONE rejection settles the whole thing, and the values beside it are lost.
+    // One rejection settles the whole thing, and the values beside it are lost.
     expect_after_turn(
         "var result = ''; Promise.all([Promise.resolve(1), Promise.reject('e')])"
         ".then(v => { result = 'resolved ' + v; }, e => { result = 'rejected ' + e; });",
@@ -188,8 +171,8 @@ int main() {
     // An empty list resolves at once, with an empty array.
     expect_after_turn(
         "var result = 'x'; Promise.all([]).then(r => { result = 'len=' + r.length; });", "len=0");
-    // ...AND IT WAITS. This is the case that was wrong: the input is pending
-    // when `all` is called, and the answer is the one that arrives later.
+    // The input is still pending when `all` is called; the result is the value
+    // that arrives later.
     expect_after_turn("var result = ''; var d = Promise.withResolvers();"
                       "Promise.all([d.promise, 2]).then(v => { result = v.join(','); });"
                       "d.resolve('late');",
@@ -198,21 +181,20 @@ int main() {
                       "Promise.all([d.promise]).then(v => { result = 'resolved'; },"
                       " e => { result = 'rejected ' + e; }); d.reject('no');",
                       "rejected no");
-    // INPUT ORDER, not arrival order: the second entry settles first.
+    // Input order, not arrival order: the second entry settles first.
     expect_after_turn("var result = ''; var a = Promise.withResolvers();"
                       "var b = Promise.withResolvers();"
                       "Promise.all([a.promise, b.promise]).then(v => { result = v.join(','); });"
                       "b.resolve('B'); a.resolve('A');",
                       "A,B");
-    // A PENDING INPUT THAT NEVER SETTLES NEVER RESOLVES THE WHOLE, which is
-    // what the specification says and what this used to get wrong by
-    // answering `[undefined]` in the same turn.
+    // An input that never settles keeps `all` pending forever, as the
+    // specification requires.
     expect_after_turn("var result = 'never'; var d = Promise.withResolvers();"
                       "Promise.all([d.promise]).then(v => { result = 'settled'; });",
                       "never");
 
     // ================================================================
-    // AND THE ONES THAT WERE ALREADY THERE STILL ANSWER
+    // Promise.resolve and Promise.reject.
     // ================================================================
     expect_after_turn("var result = ''; Promise.resolve('r').then(v => { result = v; });", "r");
     expect_after_turn("var result = ''; Promise.reject('j').catch(e => { result = e; });", "j");

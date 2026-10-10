@@ -1,11 +1,13 @@
-#pragma once
-// The assertions the vm_*.cpp files share: a whole program run as written, and
-// what a global holds after the turn's microtasks have drained. They were
-// js/vm_basics.cpp's file-scope helpers until that file was split on 2026-09-08;
-// the using-directive below is the one that file had at file scope, so every
-// file here sees exactly what that one saw.
+//===- ctbrowser/unittests/js/vm/expect.hpp - Assertions --------*- C++ -*-===//
 //
-// NOT js_expect.hpp, and the comment above `expect_result` says why.
+// Assertions shared by the js/vm/*.cpp tests: a whole program run as written,
+// and what a global holds after the turn's microtasks drain. These tests do
+// not use js_expect.hpp; the comment above `expect_result` says why. The
+// file-scope using-directive below is deliberate: every including test
+// relies on it.
+//
+//===----------------------------------------------------------------------===//
+#pragma once
 
 #include <ctbrowser/script/script.hpp>
 
@@ -16,7 +18,9 @@
 
 using namespace ctbrowser::script;
 
-// Run through the the engine VM and render the result the way JS would print it.
+/// Runs `source` on the engine VM and renders the result the way JS would
+/// print it. When `ok` is non-null it receives whether the program ran; a
+/// failed run renders as "<error: ...>".
 [[nodiscard]] inline std::string run_vm(std::string_view source, bool * ok = nullptr) {
     const program prog = compiler::compile(source);
     context cx;
@@ -27,21 +31,17 @@ using namespace ctbrowser::script;
     return cx.to_string(r.returned);
 }
 
-// A whole program, run as written. The stage-2 tests are about STATEMENTS -
-// loops, labels, try blocks - so they are written as programs ending in an
-// explicit `return`, not as expressions to be wrapped.
-//
-// WHICH IS WHY THIS FILE DOES NOT USE `js_expect` from test/support. That
-// helper wraps its argument as `return (expr);`, which is right for the ten
-// differential suites next door and cannot express a function declaration, a
-// class body or a labelled loop - and 765 of the 768 assertions here are whole
-// statements. `run_vm` also has a second caller this file cannot do without:
-// `diff_vs_v1` needs the same source through ctjs, and needs to know whether
-// each side merely RAN as well as what it returned.
-//
-// There was a second, identical `expect()` beside this until 2026-08-09 - same
-// body, same output, 386 call sites against this one's 385. Two spellings of
-// one assertion in one file is how two halves of a suite drift apart.
+/// Fails the test unless the whole program `source`, run as written, returns
+/// `want`. These tests are about statements (loops, labels, try blocks), so
+/// they are written as programs ending in an explicit `return`, not as
+/// expressions to be wrapped.
+///
+/// This does not use js_expect (ctbrowser/test/support/js_expect.hpp): that
+/// helper wraps its argument as `return (expr);`, which cannot express a
+/// function declaration, class body or labelled loop, and most assertions
+/// here are whole statements. run_vm also serves diff_vs_v1 in
+/// vm/operators.cpp, which needs to know whether each side ran as well as
+/// what it returned.
 inline void expect_result(std::string_view source, std::string_view want) {
     const std::string got = run_vm(source);
     if (got != want) {
@@ -51,14 +51,13 @@ inline void expect_result(std::string_view source, std::string_view want) {
     }
 }
 
-// What `globalThis.result` holds AFTER THE TURN ENDS - which is where a promise
-// handler runs.
-//
-// `expect_result` reads what the top level RETURNED, and a `return` is evaluated
-// before the microtask queue drains, so it cannot see anything a `then` did.
-// That is not a limitation of the test: it is the ordering being asserted, and
-// these two functions together say both halves - `then` has not run yet at the
-// return, and it has by the end of the turn.
+/// Fails the test unless `globalThis.result` holds `want` after the turn ends,
+/// which is when promise handlers have run.
+///
+/// `expect_result` reads what the top level returned, and a `return` is
+/// evaluated before the microtask queue drains, so it cannot see anything a
+/// `then` did. That is the ordering being asserted: together the two helpers
+/// show that `then` has not run at the return and has by the end of the turn.
 inline void expect_after_turn(std::string_view source, std::string_view want) {
     const program prog = compiler::compile(std::string{source});
     context cx;

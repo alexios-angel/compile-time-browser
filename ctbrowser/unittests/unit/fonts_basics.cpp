@@ -1,11 +1,12 @@
-// Fonts: which face a run is drawn in, and how it gets there.
+//===- ctbrowser/unittests/unit/fonts_basics.cpp - Font selection tests ---===//
 //
-// The engine used to have no answer at all - `measure_text_fn` was
-// (text, size), so a page could ask for bold 20px Fira Sans and be measured in
-// whatever the rasterizer felt like, then drawn in something else again. The
-// interesting tests are therefore about AGREEMENT: the face layout resolved is
-// the face the command carries, and the width layout measured is the width the
-// rasterizer draws.
+// Fonts: which face a text run is drawn in, and how it gets there.
+//
+// Most tests here check that layout and raster agree: the face layout resolved
+// is the face the paint command carries, and the width layout measured is the
+// width the rasterizer draws.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -27,7 +28,7 @@ using ctbrowser_test::find_id;
 
 namespace {
 
-// Every text command the page draws, in order.
+/// Every text command the page draws, in order.
 [[nodiscard]] std::vector<paint::paint_command> text_commands(browser & page) {
     std::vector<paint::paint_command> out;
     for (const auto & layer : page.layers().layers) {
@@ -39,6 +40,8 @@ namespace {
     return out;
 }
 
+/// The first text run containing `text`, or null. The pointer refers to a
+/// static copy and is invalidated by the next call to this function.
 [[nodiscard]] const paint::paint_command * run_saying(browser & page, std::string_view text) {
     static std::vector<paint::paint_command> held;
     held = text_commands(page);
@@ -70,7 +73,7 @@ void test_family_weight_and_style_resolve() {
 
     const paint::paint_command * sloped = run_saying(page, "sloped");
     if (sloped != nullptr) {
-        // The FIRST name of the list, unquoted: choosing among the alternatives
+        // The first name of the list, unquoted: choosing among the alternatives
         // is layout's job, and a quoted name is the same name.
         check(sloped->face.family == "Cousine", "the first family of a list, unquoted");
         check(sloped->face.italic, "and the style");
@@ -162,7 +165,7 @@ void test_the_underline_is_actually_drawn() {
 
 void test_layout_measures_with_the_drawing_font() {
     // font8x8 advances by 8 * scale per code point, and layout must measure
-    // with THAT - a run whose recorded box is narrower than what gets drawn is
+    // with that - a run whose recorded box is narrower than what gets drawn is
     // text that overflows its own line.
     browser page{browser_options{600, 120}};
     page.load_html("<body><p>abcdef</p></body>");
@@ -174,14 +177,14 @@ void test_layout_measures_with_the_drawing_font() {
 }
 
 void test_font8x8_quantises_and_says_so() {
-    // font8x8 scales an 8x8 cell by an INTEGER factor - round(size/8) - so every
+    // font8x8 scales an 8x8 cell by an integer factor - round(size/8) - so every
     // size in a bucket renders identically: 12px through 19px are all scale 2.
     // That is a property of the font rather than a rounding bug, and it is
     // asserted here so it cannot be mistaken for one. An outline backend
     // removes it.
     //
-    // (The plan said "16px and 20px render identically". They do not: 20/8
-    // rounds to 3. The bucket boundary is at 20px, not past it.)
+    // Note the boundary: 20/8 = 2.5 rounds to 3, so 20px is already in the next
+    // bucket.
     check(raster::font8x8_advance("x", 12) == raster::font8x8_advance("x", 19),
           "12px and 19px are the same in font8x8");
     check(raster::font8x8_advance("x", 16) == raster::font8x8_advance("x", 18),
@@ -190,17 +193,16 @@ void test_font8x8_quantises_and_says_so() {
           "20px is the next bucket up");
 }
 
-// font8x8 SYNTHESISES bold and italic - a smear and a shear over the one set of
-// bitmaps it has. Before this it had a single face, so `<b>` and `<h1>` drew
-// identically to body text and the goldens could not see a font-weight bug at
-// all.
+// font8x8 synthesises bold and italic from its single set of bitmaps: bold
+// smears each stroke and italic shears the glyph. Without this, `<b>` and
+// `<h1>` would draw like body text and the goldens could not catch a
+// font-weight bug.
 //
-// Counted in INK rather than compared to a reference image: the point is that
-// the four styles are four different things, and that bold is heavier and
-// italic is not.
+// The test counts ink instead of comparing to a reference image: the four
+// styles must differ, bold must be heavier, and italic must not be.
 void test_font8x8_has_bold_and_italic() {
-    // How much ink, and WHERE. Both are needed: bold adds pixels, but a shear
-    // only MOVES them - italic draws exactly as much ink as regular does, so a
+    // How much ink, and where. Both are needed: bold adds pixels, but a shear
+    // only moves them - italic draws exactly as much ink as regular does, so a
     // count alone cannot tell them apart and the positions have to be hashed.
     struct drawn {
         std::size_t ink = 0;
@@ -236,12 +238,12 @@ void test_font8x8_has_bold_and_italic() {
     check(plain.ink > 0, "regular text draws");
     // The smear roughly doubles a one-pixel stroke, so bold is markedly darker.
     check(bold.ink > plain.ink, "bold draws more ink than regular");
-    // Italic is the same amount of ink in DIFFERENT PLACES.
+    // Italic is the same amount of ink in different places.
     check(italic.shape != plain.shape, "italic puts its pixels somewhere else");
     check(both.ink > italic.ink, "and bold italic is heavier than italic alone");
     check(both.shape != bold.shape, "and slanted, unlike bold alone");
 
-    // THE ADVANCE DOES NOT MOVE. Layout measures with font8x8_advance and the
+    // The advance does not change. Layout measures with font8x8_advance and the
     // rasterizer draws with the above; a style that advanced differently from
     // how it draws would put every caret and every wrap in the wrong place.
     // The styles overhang their cell instead, which is what italics do anyway.
@@ -255,17 +257,17 @@ void test_font8x8_has_bold_and_italic() {
 
 // The faces baked into the binary, where a build asked for them.
 //
-// Asserted as a CONTRACT rather than a fact, because it is a build option and
+// Asserted as a contract rather than a fact, because it is a build option and
 // this test has to mean something either way: if the build embedded them there
 // are twelve, each loadable by the name use_real_fonts asks for; if it did not,
 // there are none and the loader reads the directory. What must never happen is
 // the in-between - `have_embedded_fonts()` saying yes while nothing registers,
 // which is how a font path silently falls back and nobody notices.
 void test_embedded_fonts_match_what_the_build_promised() {
-    // A directory that CANNOT exist. asset_registry::load falls back to the
+    // A directory that cannot exist. asset_registry::load falls back to the
     // filesystem when the registry misses, and this test runs from the source
-    // root where resources/fonts/ sits - so asking for "resources/fonts/..." would find the
-    // file on disk and prove nothing about what was embedded.
+    // root where resources/fonts/ sits - so asking for "resources/fonts/..."
+    // would find the file on disk and prove nothing about what was embedded.
     shell::asset_registry registry;
     const std::size_t registered = shell::register_embedded_fonts(registry, "not-a-real-directory");
 
@@ -289,9 +291,8 @@ void test_embedded_fonts_match_what_the_build_promised() {
 
 // --- the real font backend ------------------------------------------------
 //
-// Skipped, loudly, where SDL3_ttf is absent - the same shape the GPU
-// test uses. A test that silently passes on a machine that cannot run it is
-// worse than one that says so.
+// Skipped, with a printed note, where SDL3_ttf is absent. A test that silently
+// passes on a machine that cannot run it is worse than one that says so.
 
 void test_real_fonts() {
     if (!raster::ttf_available()) {
@@ -299,7 +300,7 @@ void test_real_fonts() {
         return;
     }
     browser page{browser_options{400, 200}};
-    // ASSERTED, not skipped: the OFL faces are checked into this repository and
+    // Asserted, not skipped: the OFL faces are checked into this repository and
     // the tests run from its root, so a failure here is a real failure. A skip
     // that cannot be told apart from a pass is how a whole feature quietly
     // stops being tested.
@@ -313,13 +314,13 @@ void test_real_fonts() {
     check(run != nullptr, "the run was recorded");
     if (run == nullptr) { return; }
 
-    // A proportional face is NOT font8x8's fixed 8-per-character grid, and the
+    // A proportional face is not font8x8's fixed 8-per-character grid, and the
     // recorded box has to be the real width or the text overflows its line.
     const float grid = raster::font8x8_advance("Hamburgefonstiv", run->font_size);
     check(run->bounds.width != grid, "a real face does not measure on font8x8's grid");
     check(run->bounds.width > 0, "and it measures something");
 
-    // It puts ANTIALIASED ink on the page: font8x8 is on or off, so a partly
+    // It puts antialiased ink on the page: font8x8 is on or off, so a partly
     // covered pixel can only come from an outline.
     const raster::surface & image = page.read_pixels();
     std::size_t partial = 0;
@@ -346,8 +347,8 @@ void test_real_fonts_distinguish_faces() {
     const float regular = width_of("font-family: Fira Sans");
     check(regular > 0, "regular measures something");
     // Bold is wider than regular in a real face, and a monospace family is a
-    // different width again. If any of these matched, the face was being
-    // ignored - which is exactly the bug this whole stage is about.
+    // different width again. If any of these matched, layout measured every run
+    // in the same face and ignored the requested one.
     check(width_of("font-family: Fira Sans; font-weight: bold") != regular,
           "bold measures differently from regular");
     check(width_of("font-family: Cousine") != regular, "and monospace differently again");
@@ -367,14 +368,10 @@ void test_unknown_family_falls_back() {
     }
 }
 
-// CANVAS text goes through the same backend as the page around it.
-//
-// It did not: canvas_context::fill_text drew 8x8 bitmap cells scaled by an
-// integer whatever `ctx.font` said, and measureText answered from the same
-// table - so "16px Arial" advanced a monospaced 16px a glyph where real Arial
-// takes about 7. That is what clipped pong's HUD: MDN positions "Lives: N" at
-// canvas.width - 65, which is right for the metrics it asked for and 63px short
-// of the metrics it got.
+// Canvas text goes through the same font backend as the page around it.
+// examples/pages/pong.html draws its "Lives: N" HUD at canvas.width - 65 in
+// "16px Arial"; measured with font8x8 (128px wide) the text would be clipped
+// at the canvas edge.
 void test_canvas_text_uses_the_real_font() {
     if (!raster::ttf_available()) { return; }
     browser page{browser_options{520, 360}};
@@ -399,9 +396,9 @@ void test_canvas_text_uses_the_real_font() {
     check(width > 0, "the text measures something");
     check(width < 65, "and fits in the 65px pong leaves for it (font8x8 wanted 128)");
 
-    // Now the pixels, because a width that is merely a smaller NUMBER proves
+    // Now the pixels, because a width that is merely a smaller number proves
     // nothing about what was drawn. The run must start inside the HUD area and
-    // must END before the canvas edge - clipping is precisely what it did not.
+    // must end before the canvas edge.
     const shell::canvas_context * canvas = page.canvases().find(find_id(page, "c"));
     check(canvas != nullptr, "the canvas exists");
     if (canvas == nullptr) { return; }
@@ -428,14 +425,13 @@ void test_canvas_text_uses_the_real_font() {
           "the ink ends where measureText said it would");
 }
 
-// The glyph cache, hit CONCURRENTLY AND COLD.
+// The glyph cache, hit concurrently and cold.
 //
 // Going through the browser does not test this: layout measures every run
 // before raster draws it, so by the time tiles fan out the cache is warm and
-// the parallel path only reads. Removing the lock and watching TSan stay silent
-// is what showed that up. This drives the backend directly, from several
-// threads, on glyphs nobody has asked for yet - which is the only arrangement
-// where the lock is load bearing.
+// the parallel path only reads (TSan stays silent even without the lock).
+// This drives the backend directly, from several threads, on glyphs nobody has
+// asked for yet, which is the only arrangement where the lock matters.
 void test_the_glyph_cache_is_thread_safe() {
     if (!raster::ttf_available()) { return; }
     const std::unique_ptr<raster::ttf_backend> fonts = raster::make_ttf_backend();
@@ -450,7 +446,7 @@ void test_the_glyph_cache_is_thread_safe() {
     check(fonts->add_face("Fira Sans", false, false, regular), "the face loads");
     check(fonts->add_face("Fira Sans", true, false, bold), "and its bold");
 
-    // Every thread measures a DIFFERENT size, so every one of them misses and
+    // Every thread measures a different size, so every one of them misses and
     // rasterizes - which is the state the lock exists for.
     const auto measure_all = [&fonts](int size) {
         std::string out;
@@ -498,7 +494,7 @@ void test_replacing_a_face_keeps_measuring() {
     check(fonts->face_count() == 1, "replaced, not added");
     check(fonts->advance("Hamburgefonstiv", 13, "Fira Sans", false, false) == before,
           "the replaced face measures the same");
-    // Glyphs no earlier call measured: these must be read from the NEW bytes,
+    // Glyphs no earlier call measured: these must be read from the new bytes,
     // which is where a sized font left over from the old ones would read freed
     // memory.
     check(fonts->advance("QXZjkwy0123", 13, "Fira Sans", false, false) > 0,
@@ -506,9 +502,10 @@ void test_replacing_a_face_keeps_measuring() {
     check(fonts->ascent(13, "Fira Sans", false, false) > 0, "and its metrics are live");
 }
 
-// DOS-024: every font-size opened a FreeType face that was never closed, and a
-// size of 1e30 or NaN was an undefined float-to-int cast. The caches are bounded
-// (and the glyph a draw is using survives an eviction); sizes clamp.
+// A page controls font-size, so the backend must survive hostile sizes: each
+// distinct size opens a FreeType face, so the cache of them is bounded (and a
+// glyph in use survives eviction), and a size such as 1e30 or NaN is clamped
+// before the float-to-int conversion, which would otherwise be undefined.
 void test_font_sizes_are_bounded() {
     if (!raster::ttf_available()) { return; }
     const std::unique_ptr<raster::ttf_backend> fonts = raster::make_ttf_backend();
@@ -530,7 +527,7 @@ void test_font_sizes_are_bounded() {
           "and NaN is a size, not undefined behaviour");
 }
 
-// A page's OWN font, from its @font-face rule. The file is named by the page
+// A page's own font, from its @font-face rule. The file is named by the page
 // and loaded through the asset registry like any other resource, so a page can
 // ship a face the machine has never heard of.
 void test_page_font_face() {
@@ -557,7 +554,7 @@ void test_page_font_face() {
 
 void test_real_fonts_are_deterministic_and_thread_safe() {
     if (!raster::ttf_available()) { return; }
-    // Tiles raster in PARALLEL and an FT_Face is not reentrant, so the glyph
+    // Tiles raster in parallel and an FT_Face is not reentrant, so the glyph
     // cache is the one piece of shared mutable state in the whole text path.
     // Rendering the same page twice - once across the scheduler - must give the
     // same pixels, and TSan runs this suite.
@@ -589,7 +586,7 @@ void test_real_fonts_are_deterministic_and_thread_safe() {
 
 void test_real_fonts_do_not_quantise() {
     if (!raster::ttf_available()) { return; }
-    // The quantisation asserted above for font8x8 is a property of THAT font.
+    // The quantisation asserted above for font8x8 is a property of that font.
     // An outline face has a distinct size for every pixel size, which is most
     // of the reason to want one.
     const auto width_at = [](int size) {

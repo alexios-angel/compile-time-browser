@@ -1,5 +1,10 @@
-// Observable callee lookup precedes arguments, including getters and proxies.
-// Expected results are checked independently with Node's JavaScript engine.
+//===- ctbrowser/unittests/js/call_order.cpp - Call evaluation order ------===//
+//
+// Observable callee lookup precedes argument evaluation, including through
+// getters and proxies. Expected results were checked independently with node.
+// Bare section numbers are ECMA-262.
+//
+//===----------------------------------------------------------------------===//
 #include "js_expect.hpp"
 
 int main() {
@@ -175,7 +180,7 @@ int main() {
     })())",
               "15,19");
 
-    // A RELATIONAL COMPARISON asks ToPrimitive for a NUMBER (7.2.13): two
+    // A relational comparison asks ToPrimitive for a number (7.2.13): two
     // Dates compare as times, not as their strings, and @@toPrimitive is
     // handed "number", left operand first.
     js_expect("new Date(2020, 0, 1) < new Date(2020, 0, 2)", "true");

@@ -1,34 +1,37 @@
-// THE DEBUG SIDE TABLES: local names, their registers and live ranges, and one
+//===- ctbrowser/unittests/unit/script/debug.cpp - Debug side tables ------===//
+//
+// The debug side tables: local names, their registers and live ranges, and one
 // source offset per instruction.
 //
-// Phase 44 of the lexical-backend plan. `function_proto` carried names for
-// globals and properties and nothing at all for locals, and `source_begin` /
-// `source_end` were per FUNCTION - so every question a backend, a stack trace
-// or a debugger wants to ask ("which variable is `r4`?", "which line is this
-// instruction?") had no answer, and the AOT backend's C++ said `v18[4] = v17`
-// where the source said `this._isEnabled = ...`.
+// Without these tables `function_proto` named only globals and properties, and
+// `source_begin`/`source_end` covered a whole function, so a backend, stack
+// trace or debugger could not ask "which variable is `r4`?" or "which line is
+// this instruction?" - the AOT backend's C++ said `v18[4] = v17` where the
+// source said `this._isEnabled = ...`.
 //
-// WHAT IS ASSERTED HERE, and why each one is not obvious:
+// What is asserted here, and why each one is not obvious:
 //
-//   - the NAMES and the REGISTERS, which is the plan's own gate. It is a real
-//     gate because `frame::locals` is a stack the compiler POPS at every scope
-//     exit: the plan proposed filling the table in `finish_frame`, and by then
-//     there is nothing left in it but whatever the outermost scope still holds.
-//     A block-scoped `let` would have been silently absent.
-//   - the LIVE RANGE, because a table recording every local as live for the
+//   - The names and the registers. This is not trivial because
+//     `frame::locals` is a stack the compiler pops at every scope exit: by
+//     `finish_frame` only the outermost scope's locals remain, so a table
+//     built there would silently miss a block-scoped `let`.
+//   - The live range, because a table recording every local as live for the
 //     whole function is the same table with the useful part removed.
-//   - the OFFSETS being PARALLEL to the code, exactly, and pointing at the
+//   - The offsets being exactly parallel to the code, and pointing at the
 //     right text. An off-by-one here is a debugger that steps to the wrong
 //     line, which is worse than no debugger.
-//   - the ROUND TRIP through a program image, because a serialization that
+//   - The round trip through a program image, because a serialization that
 //     drops the tables is indistinguishable from a build with the option off.
 //
-// AND THE MEASUREMENT. `CTBROWSER_DEBUG_TABLE_COST=1 ctbrowser-test-script_debug`
-// compiles the three corpora in ctbrowser/vendor/ and reports what the tables
+// The measurement: `CTBROWSER_DEBUG_TABLE_COST=1 ctbrowser-test-script_debug`
+// compiles the Bootstrap, p5 and Phaser bundles in ctbrowser/vendor/ (run it
+// from ctbrowser/, since the paths are relative) and reports what the tables
 // cost in a program image. It is off by default because reading 13 MB of
-// JavaScript does not belong in a unit test; it is HERE rather than in a
-// throwaway script because the number is one the next person will want to
-// re-take.
+// JavaScript does not belong in a unit test; it lives here rather than in a
+// throwaway script so the number can be re-taken.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/script/compile.hpp>
 #include <ctbrowser/script/program_image.hpp>
 #include <ctbrowser/script/source_lines.hpp>
@@ -53,8 +56,8 @@ using ctbrowser::script::write_image;
 
 namespace {
 
-// The proto whose `name` is `wanted`, or nullptr. Programs are flat: [0] is the
-// top-level script and every function is a sibling of every other.
+/// Returns the proto whose `name` is \p wanted, or nullptr. Programs are flat:
+/// [0] is the top-level script and every function is a sibling of every other.
 [[nodiscard]] const function_proto * function_named(const program & p, std::string_view wanted) {
     for (const function_proto & fn : p.functions) {
         if (fn.name == wanted) { return &fn; }
@@ -62,6 +65,7 @@ namespace {
     return nullptr;
 }
 
+/// Returns the local of \p fn named \p wanted, or nullptr.
 [[nodiscard]] const local_desc * local_named(const function_proto & fn, std::string_view wanted) {
     for (const local_desc & d : fn.locals) {
         if (d.name == wanted) { return &d; }
@@ -69,9 +73,8 @@ namespace {
     return nullptr;
 }
 
-// THE PLAN'S OWN GATE, spelled exactly as it is written there:
-// "a unit test compiles `function f(a){var n=1;return n+a;}` and asserts
-// `locals` names `a` and `n` against the right registers."
+/// The basic case: `function f(a){var n=1;return n+a;}` must list `a` and `n`
+/// in `locals` with their registers and whole-function live ranges.
 void names_and_registers() {
     const program p = compiler::compile("function f(a){var n=1;return n+a;}");
     CHECK(p.ok);
@@ -85,16 +88,16 @@ void names_and_registers() {
     CHECK(n != nullptr);
     if (a == nullptr || n == nullptr) { return; }
 
-    // THE PARAMETER TAKES REGISTER ZERO because parameters are allocated first
-    // - `compile_parameter_prologue`'s comment says the argument values arrive
-    // in the registers just past the declared parameters, which only works
-    // because the parameters are the low ones.
+    // The parameter takes register zero because parameters are allocated
+    // first: `compile_parameter_prologue` relies on the argument values
+    // arriving in the registers just past the declared parameters, which only
+    // works because the parameters are the low ones.
     CHECK_EQ(a->reg, 0u);
     CHECK_EQ(n->reg, 1u);
     CHECK(!a->boxed);
     CHECK(!n->boxed);
 
-    // AND THEY ARE LIVE TO THE END. Nothing in this body opens a block, so the
+    // Both are live to the end. Nothing in this body opens a block, so the
     // only scope is the function's own and both ranges close at `finish_frame`.
     CHECK_EQ(a->first_pc, 0u);
     CHECK_EQ(a->last_pc, static_cast<std::uint32_t>(f->code.size()));
@@ -102,9 +105,9 @@ void names_and_registers() {
     CHECK_EQ(n->last_pc, static_cast<std::uint32_t>(f->code.size()));
 }
 
-// A `let` INSIDE A BLOCK, which is the case that made `finish_frame` the wrong
-// place to build this table: by the time a function is finished, `pop_scope`
-// has already removed `inner` from the compiler's own list.
+/// A `let` inside a block, the case that makes `finish_frame` the wrong place
+/// to build this table: by the time a function is finished, the scope exit has
+/// already removed `inner` from the compiler's own list.
 void a_block_scoped_local_survives() {
     const program p = compiler::compile("function g(){ { let inner = 1; inner; } return 2; }");
     CHECK(p.ok);
@@ -116,21 +119,18 @@ void a_block_scoped_local_survives() {
     CHECK(inner != nullptr);
     if (inner == nullptr) { return; }
 
-    // AND ITS RANGE IS A REAL RANGE THAT ENDS BEFORE THE FUNCTION DOES.
-    //
-    // BOTH HALVES, and the first one is not decoration. `last_pc < code.size()`
-    // alone passes for a table that never closed the range at all, because an
-    // unclosed one keeps the `last_pc == first_pc` it was born with and that is
-    // less than the code size too. Falsified: commenting out the `close_local`
-    // call in `shrink_locals` left this test GREEN until the second assertion
-    // was added, and red afterwards.
+    // Its range is a real range that ends before the function does. Both
+    // checks are needed: `last_pc < code.size()` alone passes for a range that
+    // was never closed, because an unclosed one keeps the
+    // `last_pc == first_pc` it was born with, which is less than the code size
+    // too. Removing the `close_local` call in `shrink_locals` must fail this.
     CHECK(inner->last_pc > inner->first_pc);
     CHECK(inner->last_pc < g->code.size());
 }
 
-// A CAPTURED LOCAL IS BOXED, and it is discovered AFTER the declaration - so a
-// table that copied `boxed` at `add_local` and never looked again would say
-// `false` here.
+/// A captured local is boxed, and that is discovered after the declaration,
+/// so a table that copied `boxed` at `add_local` and never looked again would
+/// say `false` here.
 void a_captured_local_is_boxed() {
     const program p =
         compiler::compile("function h(){ let c = 0; return function(){ return c; }; }");
@@ -143,9 +143,9 @@ void a_captured_local_is_boxed() {
     if (c != nullptr) { CHECK(c->boxed); }
 }
 
-// PER-INSTRUCTION OFFSETS: parallel to the code, and pointing at the right
-// text. The source is laid out so the line of the `return` is known by
-// counting, not by trusting the compiler.
+/// Per-instruction offsets: parallel to the code, and pointing at the right
+/// text. The source is laid out so the line of the `return` is known by
+/// counting, not by trusting the compiler.
 void per_instruction_offsets() {
     const std::string source = "var q = 1;\n"     // line 1
                                "function k() {\n" // line 2
@@ -158,24 +158,24 @@ void per_instruction_offsets() {
     CHECK(k != nullptr);
     if (k == nullptr) { return; }
 
-    // EXACTLY PARALLEL. Not "roughly the same length": a reader indexes
+    // Exactly parallel, not "roughly the same length": a reader indexes
     // `code_offsets[ip]` and an off-by-one attributes every instruction after
     // the first to the wrong place.
     CHECK_EQ(k->code_offsets.size(), k->code.size());
     for (const std::uint32_t offset : k->code_offsets) { CHECK(offset <= source.size()); }
 
     const line_table lines{source};
-    // SIX, NOT FIVE. The text ends with a newline, and the offset just past it
-    // is on a line of its own - the empty one an editor shows at the bottom of
-    // a file that ends properly. `wc -l` says five because it counts newlines;
-    // a line TABLE has to be able to answer for `source.size()`.
+    // Six lines, not five: the text ends with a newline, and the offset just
+    // past it is on a line of its own, the empty one an editor shows at the
+    // bottom of a file. `wc -l` says five because it counts newlines; a line
+    // table has to be able to answer for `source.size()`.
     CHECK_EQ(lines.line_count(), 6u);
     CHECK_EQ(lines.line_of(0), 1u);
     CHECK_EQ(lines.column_of(0), 1u);
     CHECK_EQ(lines.line_of(static_cast<std::uint32_t>(source.find("return z"))), 4u);
     CHECK_EQ(lines.column_of(static_cast<std::uint32_t>(source.find("return z"))), 3u);
 
-    // AND THE BODY IS ATTRIBUTED TO THE BODY'S LINES. Every instruction in `k`
+    // The body is attributed to the body's lines. Every instruction in `k`
     // has to come from lines 2 through 5; an instruction attributed to line 1
     // would mean the cursor was never moved off whatever preceded it.
     bool reached_the_return = false;
@@ -187,9 +187,9 @@ void per_instruction_offsets() {
     CHECK(reached_the_return);
 }
 
-// THE TABLES SURVIVE A PROGRAM IMAGE. Not a formality: the image is the shape
-// the AOT compiler's second entry point reads, and a round trip that quietly
-// drops the tables looks exactly like a build with the option off.
+/// The tables survive a program image. The image is what the AOT compiler's
+/// second entry point reads, and a round trip that quietly drops the tables
+/// looks exactly like a build with the option off.
 void the_image_round_trips_them() {
     const program before = compiler::compile("function f(a){var n=1;return n+a;}");
     CHECK(before.ok);
@@ -211,7 +211,7 @@ void the_image_round_trips_them() {
     if (n != nullptr) { CHECK_EQ(n->reg, 1u); }
     CHECK_EQ(f->code_offsets.size(), f->code.size());
 
-    // AND AN IMAGE WITHOUT SOURCE KEEPS THE NAMES AND DROPS THE OFFSETS. Both
+    // An image without source keeps the names and drops the offsets. Both
     // halves are asserted: the offsets are the expensive part and are useless
     // without the text, and the names are the cheap part and are the whole
     // reason the table exists.
@@ -229,9 +229,9 @@ void the_image_round_trips_them() {
 
 // --- the measurement ------------------------------------------------------
 
-// What the tables cost in an image, for one corpus. Reported rather than
-// asserted: a size is a fact about the corpus, and a ratchet on it would fail
-// the day somebody upgrades p5.
+/// Prints what the tables cost in an image for the corpus at \p path. Reported
+/// rather than asserted: a size is a fact about the corpus, and a ratchet on it
+/// would fail the day somebody upgrades p5.
 void report_cost(const char * name, const char * path) {
     const std::string source = read_file(path);
     if (source.empty()) {
@@ -253,8 +253,8 @@ void report_cost(const char * name, const char * path) {
 
     const std::size_t with = write_image(p, image_option::keep_source).size();
     const std::size_t with_no_source = write_image(p, image_option::drop_source).size();
-    // THE SAME PROGRAM WITH THE TABLES REMOVED, which is what a build with
-    // CTBROWSER_SCRIPT_DEBUG_NAMES=OFF produces - measured by emptying them
+    // The same program with the tables removed, which is what a build with
+    // CTBROWSER_SCRIPT_DEBUG_NAMES=OFF produces. Measured by emptying them
     // rather than by rebuilding, so both numbers come from one run.
     for (function_proto & fn : p.functions) {
         fn.locals.clear();
@@ -281,9 +281,9 @@ void report_cost(const char * name, const char * path) {
 
 int main() {
     if (!debug_names_enabled()) {
-        // NOT A PASS AND NOT A FAILURE. The option is real, and a test that
-        // silently reported ok in a build that cannot possibly satisfy it is
-        // the kind of green that costs an afternoon.
+        // Neither a pass nor a failure: the option is real, and a test that
+        // silently reported ok in a build that cannot satisfy it would hide
+        // that nothing was checked.
         std::printf("ok script_debug (SKIPPED - built with CTBROWSER_SCRIPT_DEBUG_NAMES=OFF)\n");
         return 0;
     }

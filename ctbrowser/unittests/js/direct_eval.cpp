@@ -1,11 +1,14 @@
-// A DIRECT EVAL SEES ITS CALLER'S BINDINGS (19.2.1.1 PerformEval, direct).
+//===- ctbrowser/unittests/js/direct_eval.cpp - Direct eval scoping -------===//
+//
+// A direct eval sees its caller's bindings (ECMA-262 19.2.1.1 PerformEval).
 //
 // `eval(src)` written in a function runs `src` in that function's scope: its
-// locals, the enclosing functions' and `arguments` are read and written
+// locals, the enclosing functions' locals and `arguments` are read and written
 // through the same cells the function uses (compiler_impl::compile_direct_eval,
-// direct_eval_name). Before, every eval was indirect and a local was a
-// ReferenceError - css/mediaqueries/test_media_queries.html evaluates a
-// template of a loop variable that way 176 times.
+// direct_eval_name). css/mediaqueries/test_media_queries.html depends on this:
+// it evaluates a template of a loop variable that way 176 times.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
@@ -50,7 +53,7 @@ int main() {
     js_expect("(function(){ var c = 0; var inc = eval('(function(){ return ++c; })');"
               " inc(); inc(); return c; })()",
               "2");
-    // A STRICT eval's `var` is its own (a new variable environment), whether
+    // A strict eval's `var` is its own (a new variable environment), whether
     // the caller or the source is strict.
     js_expect("(function(){ 'use strict'; var n = 0; eval('var n = 1'); return n; })()", "0");
     js_expect("(function(){ var n = 0; eval(\"'use strict'; var n = 1; n\"); return n; })()", "0");
@@ -59,10 +62,10 @@ int main() {
               "2");
     // An eval inside the eval sees what the outer one was handed.
     js_expect("(function(){ var v = 'a'; return eval(\"var v = 'b'; eval('v')\"); })()", "b");
-    // A pattern parameter's register is nobody's binding, and is not boxed.
+    // A destructured parameter is still readable after a direct eval.
     js_expect("(function(...[a = 1]){ eval(''); return a; })()", "1");
     js_expect("(function({k}){ eval(''); return k; })({k: 'k'})", "k");
-    // WHERE THE EVAL IS decides what its source may say (19.2.1.1 steps 4-7):
+    // Where the eval is decides what its source may say (19.2.1.1 steps 4-7):
     // a strict caller's eval is strict code from its first line...
     js_expect("(function(){ 'use strict'; try { eval('var public = 1'); } catch (e) {"
               " return e.constructor.name; } return 'none'; })()",
@@ -112,8 +115,8 @@ int main() {
     js_expect("(function(){ class C { x = eval('arguments'); } try { new C(); } catch (e) {"
               " return e.constructor.name; } return 'none'; })()",
               "SyntaxError");
-    // A NEW `var` OR FUNCTION IS THE CALLER'S FUNCTION'S (19.2.1.3 steps
-    // 16-17), not a global: the rest of the body and its closures see it,
+    // A new `var` or function belongs to the caller's function (19.2.1.3 steps
+    // 16-17), not the global object: the rest of the body and its closures see it,
     // the global never does, and a `delete` removes it.
     js_expect("(function(){ eval('var fresh = 1; function made() { return 2; }');"
               " return fresh + made() + ',' + typeof globalThis.fresh + ','"
@@ -124,7 +127,8 @@ int main() {
     js_expect("(function(){ eval('{ function blk() {} }'); return typeof blk + ','"
               " + typeof globalThis.blk; })()",
               "function,undefined");
-    // A call of one has no `this` of the environment's.
+    // Calling a function the eval declared passes undefined as `this`
+    // (globalThis in sloppy mode), not the environment object.
     js_expect("(function(){ eval('function who() { return this === undefined ||"
               " this === globalThis; }'); return who(); })()",
               "true");
@@ -135,8 +139,8 @@ int main() {
               " eval('var inner = outer + 1'); return eval('inner + outer'); })()"
               " + ',' + typeof inner; })()",
               "3,undefined");
-    // Found through a `with` around the call, one is still called with no
-    // receiver of the environment's, where the with's object is its own.
+    // Found through a `with` around the call, such a function still gets no
+    // environment receiver, while the with object's own method gets the object.
     js_expect("(function(o){ eval('function who() { return this; }'); with (o) {"
               " return [who() === globalThis, own() === o].join(); } })"
               "({ own() { return this; } })",

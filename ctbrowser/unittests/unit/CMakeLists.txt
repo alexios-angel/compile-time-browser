@@ -1,7 +1,8 @@
-# One folder per first word the tests' names share, and the rest here. Each
-# folder's CMakeLists.txt calls ctbrowser_test_directory(), which names a test
-# for its path below this directory - aot/basics.cpp is `aot_basics`
-# (cmake/modules/CTTest.cmake) - and adds its own subfolders.
+# Unit tests. Tests whose names share a first word live in a folder named for
+# it; the rest live here. Each folder's CMakeLists.txt calls
+# ctbrowser_test_directory() (cmake/modules/CTTest.cmake), which names a test
+# for its path below this directory (aot/basics.cpp is `aot_basics`), and adds
+# its own subfolders.
 set(CTBROWSER_TEST_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 ctbrowser_test_directory()
 add_subdirectory(aot)
@@ -28,15 +29,16 @@ add_subdirectory(style)
 add_subdirectory(url)
 add_subdirectory(xml)
 
-# navigation drives run_app, which initialises SDL - and SDL reaches libdbus,
-# whose own lock order TSan reports as an inversion; its offscreen video driver
-# initialises EGL without releasing it, which LeakSanitizer reports. Both
-# suppressed by LIBRARY - see the files - so a real one in our code is still
-# caught.
+# The navigation test drives run_app, which initialises SDL. SDL reaches
+# libdbus, whose own lock order TSan reports as an inversion, and its offscreen
+# video driver initialises EGL without releasing it, which LeakSanitizer
+# reports. Both are suppressed by library name (see tsan.supp and lsan.supp),
+# so a real report in our code is still caught.
 #
-# set_tests_properties resolves a test name in the directory scope that created it, so a property for
-# a unittest belongs in this file. ENVIRONMENT is one property, so this REPLACES
-# the font path ctbrowser_test() set rather than adding to it. CTBROWSER_CLOCK is
-# what test_environment_overrides_are_opt_in looks for.
+# set_tests_properties resolves a test name in the directory scope that
+# created it, so a property for a test in this directory belongs in this file.
+# ENVIRONMENT is one property, so this replaces the font path ctbrowser_test()
+# set rather than adding to it. navigation.cpp's
+# test_environment_overrides_are_opt_in looks for CTBROWSER_CLOCK.
 set_tests_properties(navigation PROPERTIES ENVIRONMENT
   "CTBROWSER_FONT_PATH=${PROJECT_SOURCE_DIR}/resources/fonts;CTBROWSER_CLOCK=86400000;SDL_VIDEODRIVER=offscreen;SDL_AUDIODRIVER=dummy;TSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/tsan.supp;LSAN_OPTIONS=suppressions=${CTBROWSER_TEST_SUPPORT_DIR}/lsan.supp")

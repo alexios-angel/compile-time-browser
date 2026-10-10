@@ -1,8 +1,12 @@
-// Map, Set, WeakMap and WeakSet as 24.1-24.4 write them: the receiver checks,
-// the -0 key, WeakMap and WeakSet as their own classes with weakly-holdable
-// keys, the ES2025 set algebra over set-likes, Map.groupBy and the upsert
-// pair. Each assertion is one that test262's built-ins/Map or /Set rows
-// failed on 2026-09-12.
+//===- ctbrowser/unittests/js/keyed_collections.cpp - Map and Set tests ---===//
+//
+// Map, Set, WeakMap and WeakSet as ECMA-262 24.1-24.4 define them: the
+// receiver checks, the -0 key, WeakMap and WeakSet as their own classes with
+// weakly-holdable keys, the ES2025 set algebra over set-likes, Map.groupBy and
+// the upsert pair (getOrInsert, getOrInsertComputed). Each assertion
+// reproduces a test262 built-ins/Map or built-ins/Set failure.
+//
+//===----------------------------------------------------------------------===//
 
 #include "vm/expect.hpp"
 
@@ -21,11 +25,11 @@ void test_receivers() {
                   "TypeError");
     expect_result("try { new Set([1]).forEach(3); return 'no'; } catch (e) { return e.name; }",
                   "TypeError");
-    // a subclass instance reaches the base through super() and keeps its state
+    // A subclass instance reaches the base through super() and keeps its state.
     expect_result("class S extends Set { x = 1 } const s = new S([1, 2]); return s.size + s.x;",
                   "3");
-    // the seed goes through the receiver's own adder, and a Map entry must be
-    // an object
+    // The seed goes through the receiver's own adder, and a Map entry must be
+    // an object.
     expect_result("class M extends Map { set(k, v) { return super.set(k, v * 2); } } "
                   "return new M([['a', 1]]).get('a');",
                   "2");
@@ -41,7 +45,7 @@ void test_keys() {
                   "Object.is([...m.keys()][0], 0);",
                   "true|true");
     expect_result("const s = new Set([1]); s.add(1); s.add(NaN); s.add(NaN); return s.size;", "2");
-    // forEach sees an entry added during the walk
+    // forEach sees an entry added during the walk.
     expect_result(
         "const s = new Set([1]); let n = 0; s.forEach(v => { n++; if (v === 1) s.add(2); });"
         " return n;",
@@ -73,7 +77,7 @@ void test_algebra() {
         "return new Set([1]).isSubsetOf(new Set([1, 2])) + '' + "
         "new Set([1, 2]).isSupersetOf(new Set([1])) + new Set([1]).isDisjointFrom(new Set([2]));",
         "truetruetrue");
-    // a set-like is anything with size, has and keys; a bad size is refused
+    // A set-like is anything with size, has and keys; a bad size is refused.
     expect_result("const like = {size: 2, has: v => v === 'a', keys: () => ['a', 'b'].values()};"
                   " return [...new Set(['x']).union(like)].join();",
                   "x,a,b");
@@ -86,15 +90,16 @@ void test_algebra() {
     expect_result("try { new Set().union({size: 1, has: 1, keys() {}}); return 'no'; } "
                   "catch (e) { return e.name; }",
                   "TypeError");
-    // the result is a plain Set even from a subclass
+    // The result is a plain Set even from a subclass.
     expect_result("class S extends Set {} return new S([1]).union(new Set()).constructor === Set;",
                   "true");
 }
 
 void test_extras() {
     // forEach walks the live list: a deleted-then-re-added member is visited
-    // again at the end, and deleting the current one skips nothing. ONCE - a
-    // callback that re-adds on every visit walks forever, in every engine.
+    // again at the end, and deleting the current one skips nothing. The test
+    // re-adds only once, because a callback that re-adds on every visit walks
+    // forever in every engine.
     expect_result("const s = new Set([1, 2, 3]); const seen = []; let again = true;"
                   " s.forEach(v => { seen.push(v);"
                   " if (v === 1 && again) { again = false; s.delete(1); s.add(1); } });"
@@ -104,9 +109,9 @@ void test_extras() {
                   " m.forEach((v, k) => { seen.push(k); if (k === 'a') m.delete('a'); });"
                   " return seen.join();",
                   "a,b,c");
-    // ...and so do the iterators (24.1.5.1): an entry added mid-walk is
-    // visited, one deleted before its turn is not, finished stays finished,
-    // and an `entries` pair is a fresh array.
+    // The iterators walk the live list too (ECMA-262 24.1.5.1): an entry added
+    // mid-walk is visited, one deleted before its turn is not, finished stays
+    // finished, and an `entries` pair is a fresh array.
     expect_result("const m = new Map([[1, 11], [2, 22]]); const it = m[Symbol.iterator]();"
                   " it.next(); m.set(3, 33); const r = [...it].map(p => p[0]).join();"
                   " m.set(4, 44); return r + '|' + it.next().done;",
@@ -133,10 +138,10 @@ void test_extras() {
                   "[object Map][object Set]");
 }
 
-// 24.1.1.2 AddEntriesFromIterable, one step at a time: an endless iterator
-// ends when the adder throws, the iterator is CLOSED (return() called once)
-// and the adder's throw is the one that surfaces; a non-object entry closes
-// it too; a non-iterable is a TypeError before anything is read.
+/// ECMA-262 24.1.1.2 AddEntriesFromIterable, one step at a time: an endless
+/// iterator ends when the adder throws, the iterator is closed (return() is
+/// called once) and the adder's throw is the one that surfaces; a non-object
+/// entry closes it too; a non-iterable is a TypeError before anything is read.
 void test_constructor_steps_its_iterable() {
     expect_result("var count = 0; var it = { [Symbol.iterator]() { return { next() { return {"
                   " value: [], done: false }; }, return() { count++; return {}; } }; } };"
@@ -158,7 +163,7 @@ void test_constructor_steps_its_iterable() {
                   " Object.prototype.toString.call(new Map().entries()), a[Symbol.iterator]() ==="
                   " a, [...a].join()].join('|');",
                   "true|true|false|Array Iterator|[object Map Iterator]|true|1");
-    // ...and the prototype is nobody's global: it lives under a private key on
+    // The prototype is nobody's global: it lives under a private key on
     // Array.prototype, so neither `window` nor Array.prototype enumerates it.
     expect_result("[1].values(); new Map().keys(); return Object.keys(globalThis).concat("
                   "Object.getOwnPropertyNames(Array.prototype)).filter(k => k.includes("

@@ -1,9 +1,13 @@
-// CSS Animations and CSS Transitions, driven from the cascade - the shape
-// css/support/interpolation-testcommon.js drives every `*-interpolation.html`
-// with: `animation-delay: -50s` on a `100s` animation read back synchronously
-// through getComputedStyle, and a transition started by changing a property
-// after a style recalc. See lib/Shell/bindings/animations/css.cpp for the
-// model and lib/Style/css/keyframes.cpp for what a `@keyframes` rule becomes.
+//===- ctbrowser/unittests/unit/css/animations.cpp - CSS animation tests --===//
+//
+// CSS Animations and CSS Transitions, driven from the cascade the way
+// css/support/interpolation-testcommon.js drives every `*-interpolation.html`:
+// `animation-delay: -50s` on a `100s` animation read back synchronously through
+// getComputedStyle, and a transition started by changing a property after a
+// style recalc. See lib/Shell/bindings/animations/css.cpp for the model and
+// lib/Style/css/keyframes.cpp for what a `@keyframes` rule becomes.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -20,8 +24,8 @@ using ctbrowser::shell::browser_options;
 namespace {
 
 constexpr const char * stage =
-    // `animation-timing-function` is not a property-table row yet, so the
-    // element's is always the initial `ease`; the keyframes say `linear`.
+    // The element sets no `animation-timing-function`, so its own is the
+    // initial `ease`; keyframes that say `linear` override it for their interval.
     "<style>@keyframes slide { from { left: 0px; animation-timing-function: linear }"
     " to { left: 100px } }"
     "@keyframes fade { from { opacity: 0; animation-timing-function: steps(1, start) }"
@@ -40,7 +44,7 @@ constexpr const char * stage =
     return logged.back();
 }
 
-// A page with the stage, `setup` run as its script, then `expression` logged.
+/// A page with the stage, `setup` run as its script, then `expression` logged.
 [[nodiscard]] std::string answer(const std::string & setup, const std::string & expression) {
     browser page{browser_options{400, 300}};
     page.load_html(std::string{"<!DOCTYPE html><html><body>"} + stage +
@@ -57,11 +61,11 @@ void is(const std::string & setup, const std::string & expression, const std::st
     if (got != expected) { std::printf("    %s\n", expression.c_str()); }
 }
 
-// The harness's CSS Animations row: a name, 100s, -50s.
+/// The harness's CSS Animations row: a name, 100s, -50s.
 constexpr const char * midway =
     "t.style.animationName = 'slide'; t.style.animationDuration = '100s';"
     " t.style.animationDelay = '-50s';";
-// ...and its CSS Transitions row: recalc, then the transition, then the change.
+/// The harness's CSS Transitions row: recalc, then the transition, then the change.
 constexpr const char * transitioned =
     "getComputedStyle(t).left; t.style.transitionProperty = 'left';"
     " t.style.transitionDuration = '100s'; t.style.transitionDelay = '-50s';"
@@ -78,7 +82,7 @@ void test_keyframes_are_captured() {
                      "@media (min-width: 5000px) { @keyframes k { from { top: 9px } } }");
     const ctbrowser::style::keyframes_rule * k = engine.keyframes_of("k");
     CHECK(k != nullptr);
-    // The LAST unconditional rule of the name wins; the one behind a false
+    // The last unconditional rule of the name wins; the one behind a false
     // media query does not.
     CHECK(k != nullptr && k->keyframes.size() == 1 && k->keyframes[0].values.size() == 1 &&
           k->keyframes[0].values[0].first == "top" && k->keyframes[0].values[0].second == "1px");
@@ -198,11 +202,11 @@ void test_a_css_transition_starts_from_the_before_change_style() {
     // style, so nothing transitions.
     is("t.style.transition = 'left 100s -50s linear'; t.style.left = '100px';",
        "getComputedStyle(t).left", "100px");
-    // A pair that cannot interpolate does not transition...
+    // A pair that cannot interpolate does not transition,
     is("t.style.zIndex = '1'; getComputedStyle(t).zIndex;"
        " t.style.transition = 'z-index 100s -50s linear'; t.style.zIndex = 'auto';",
        "getComputedStyle(t).zIndex + ' ' + t.getAnimations().length", "auto 0");
-    // ...and a colour does.
+    // but a colour does.
     is("t.style.color = 'rgb(0, 0, 255)'; getComputedStyle(t).color;"
        " t.style.transition = 'color 100s -50s linear'; t.style.color = 'rgb(255, 0, 0)';",
        "getComputedStyle(t).color", "rgb(128, 0, 128)");
@@ -266,11 +270,11 @@ void test_events_fire_as_the_clock_moves() {
     };
     (void)page.tick(10);
     CHECK_EQ(logged(), std::string{"transitionrun:opacity:0:T"});
-    (void)page.tick(50); // 60: the animation's delay is over, and so is the transition's
+    (void)page.tick(50); // 60: the animation's delay and the transition's are over.
     CHECK_EQ(logged(), std::string{"transitionstart:opacity:0:T animationstart:slide:0:A"});
-    (void)page.tick(100); // 160: second iteration; transition done at 120
+    (void)page.tick(100); // 160: second iteration; the transition ended at 120.
     CHECK_EQ(logged(), std::string{"transitionend:opacity:0.1:T animationiteration:slide:0.1:A"});
-    (void)page.tick(100); // 260: done at 250
+    (void)page.tick(100); // 260: the animation ended at 250.
     CHECK_EQ(logged(), std::string{"animationend:slide:0.2:A"});
     CHECK(page.run_script("console.log(t.getAnimations().length)"));
     CHECK_EQ(last_line(page), std::string{"0"});
@@ -285,7 +289,7 @@ void test_events_fire_as_the_clock_moves() {
     // Nothing left to wake up for.
     CHECK(page.next_wakeup_ms() == std::numeric_limits<double>::infinity());
 
-    // THE LEGACY TYPES (DOM "invoke" step 6): a trusted `animationend` with
+    // Legacy prefixed types (DOM "invoke" step 6): a trusted `animationend` with
     // no listener for that name reaches a `webkitAnimationEnd` listener and
     // the `onwebkitanimationend` handler, under the prefixed type; one that
     // has an unprefixed listener does not; a synthetic event is never mapped.

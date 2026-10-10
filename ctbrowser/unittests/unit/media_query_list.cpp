@@ -1,8 +1,12 @@
+//===- ctbrowser/unittests/unit/media_query_list.cpp - matchMedia tests ---===//
+//
 // `matchMedia` and MediaQueryList, CSSOM View §4.2: a list is an EventTarget
 // whose `matches` is live, the page's window resize and a frame's box change
 // each report a `change` MediaQueryListEvent, and `addListener` is
-// `addEventListener("change")`. Each case names the css/cssom-view file it
+// `addEventListener("change")`. Each case names the WPT css/cssom-view file it
 // stands in for.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -17,8 +21,8 @@ using ctbrowser_test::logged;
 
 namespace {
 
-// matchMedia.html, MediaQueryListEvent.html: the interface, the
-// serialisation ("::" is "not all", "all and" drops), the event constructor.
+/// matchMedia.html, MediaQueryListEvent.html: the interface, the
+/// serialisation ("::" is "not all", "all and" drops), the event constructor.
 void test_interface_and_serialisation() {
     browser page{browser_options{400, 300}};
     page.load_html(R"html(<!doctype html><html><body><script>
@@ -44,10 +48,10 @@ void test_interface_and_serialisation() {
     CHECK_EQ(logged(page, "ctor="), std::string{"ctor=TypeError"});
 }
 
-// MediaQueryList-change-event-matches-value, -extends-EventTarget,
-// -addListener-removeListener: a resize across the breakpoint fires `change`
-// once, at every kind of listener, with the list's new answer; `matches` is
-// live before the event; a removed listener does not hear it.
+/// MediaQueryList-change-event-matches-value, -extends-EventTarget,
+/// -addListener-removeListener: a resize across the breakpoint fires `change`
+/// once, at every kind of listener, with the list's new answer; `matches` is
+/// live before the event; a removed listener does not hear it.
 void test_change_events_on_the_page() {
     browser page{browser_options{400, 300}};
     page.load_html(R"html(<!doctype html><html><body><script>
@@ -79,9 +83,9 @@ void test_change_events_on_the_page() {
         std::string{"after=true|handler:true,(max-width: 300px),change,true,true,true;listener"});
 }
 
-// matchMedia.html's iframe cases and MediaQueryList-extends-EventTarget: a
-// frame's list reads the FRAME's viewport, and the frame's box changing
-// reports the change.
+/// matchMedia.html's iframe cases and MediaQueryList-extends-EventTarget: a
+/// frame's list reads the frame's viewport, and the frame's box changing
+/// reports the change.
 void test_a_frame_has_its_own_lists() {
     browser page{browser_options{400, 300}};
     page.assets().add("frame.html", bytes_of("<!doctype html><html><body></body></html>"));

@@ -1,4 +1,9 @@
-// ctbrowser.core: handles, the slab, atoms, geometry, the scheduler.
+//===- unittests/unit/core/basics.cpp - Core library basics ---------------===//
+//
+// ctbrowser.core: handles, the slab, atoms, geometry, the thread pool, base64,
+// UTF-8/WTF-8/UTF-16 conversion, Unicode lowercasing and the global allocator.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/allocator.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -26,10 +31,9 @@ using namespace ctbrowser;
 
 namespace {
 
-// Seconds of CPU - user plus kernel, summed across threads - this process has
-// consumed. Not std::clock(): on some Windows runtimes that is WALL time since
-// the process started, which made the idle-pool test below pass there for the
-// wrong reason and then fail for the wrong reason too.
+/// Seconds of CPU (user plus kernel, summed across threads) this process has
+/// consumed. Not std::clock(): on some Windows runtimes that is wall time since
+/// the process started, which would make the idle-pool test below meaningless.
 double process_cpu_seconds() {
 #if defined(_WIN32)
     FILETIME created{};
@@ -66,8 +70,8 @@ void test_handle() {
     CHECK((thing_id{3, 1} == thing_id{3, 1}));
     CHECK((thing_id{3, 1} != thing_id{3, 2})); // same slot, different generation
 
-    // the total order is what makes multi-node locking deadlock-free, so it
-    // has to actually be a total order
+    // The total order is what makes multi-node locking deadlock-free, so it
+    // has to actually be a total order.
     std::vector<thing_id> ids{{2, 1}, {1, 5}, {1, 2}, {3, 1}};
     std::ranges::sort(ids, [](thing_id a, thing_id b) { return a.key() < b.key(); });
     CHECK(std::ranges::is_sorted(ids, [](thing_id a, thing_id b) { return a.key() < b.key(); }));
@@ -93,8 +97,8 @@ void test_slab_basics() {
     CHECK_EQ(*s.get(b), std::string{"beta"});
 }
 
-// The whole point of generations: a recycled slot must not answer to the
-// handle that used to name it.
+/// The whole point of generations: a recycled slot must not answer to the
+/// handle that used to name it.
 void test_stale_handle_does_not_resolve() {
     slab<std::string, thing_tag> s;
 
@@ -170,7 +174,7 @@ void test_atoms() {
     CHECK(atoms.intern_lower("DIV") == div); // HTML names fold
     CHECK(atoms.intern_lower("DiV") == div);
 
-    // the views must survive growth of the table they point into
+    // The views must survive growth of the table they point into.
     std::vector<atom> many;
     for (int i = 0; i < 5000; ++i) { many.push_back(atoms.intern("name" + std::to_string(i))); }
     CHECK_EQ(atoms.text(many[0]), std::string_view{"name0"});
@@ -200,17 +204,15 @@ void test_geometry() {
     CHECK(true); // the assertions above are compile-time; this keeps the counter honest
 }
 
-// AN IDLE POOL COSTS NOTHING.
-//
-// Idle workers used to wait on their own queue with a ONE MILLISECOND timeout,
-// because submit() notifies only the queue it pushed to and a worker discovers
-// stealable work by looking. The cost is a pool that never sleeps: a thousand
-// wakeups per second per worker, on every hardware thread, forever. On an idle
-// page that was the entire CPU cost of the application - about 65% of a
-// machine with nothing on screen changing.
-//
-// Measured as CPU time against wall time, which is the thing that was wrong;
-// counting wakeups would test the implementation instead of the symptom.
+/// An idle pool costs nothing.
+///
+/// submit() notifies only the queue it pushed to and a worker discovers
+/// stealable work by looking, so a worker that waited with a short timeout
+/// would never sleep: a thousand wakeups per second per worker at 1 ms, which on
+/// an idle page is the whole CPU cost of the application.
+///
+/// Measured as CPU time against wall time, the symptom itself; counting wakeups
+/// would test the implementation instead.
 void test_an_idle_pool_sleeps() {
     const auto cpu_ms = [] { return static_cast<long long>(process_cpu_seconds() * 1000.0); };
     scheduler pool{4};
@@ -225,14 +227,14 @@ void test_an_idle_pool_sleeps() {
                                 std::chrono::steady_clock::now() - wall_before)
                                 .count();
 
-    // Four workers polling at 1 kHz spent several hundred ms of CPU over this
-    // half second. Asleep they spend approximately none; the bar is loose
+    // Four workers polling at 1 kHz would spend several hundred ms of CPU over
+    // this half second. Asleep they spend approximately none; the bar is loose
     // because a loaded machine can steal a few ms of scheduling noise.
     CHECK(wall_spent >= 400); // the measurement window really elapsed
     // Four idle workers burn well under a quarter of one core doing nothing.
     CHECK(cpu_spent < wall_spent / 4);
 
-    // And it still WORKS: a sleeping pool that misses its wakeup is worse
+    // And it still works: a sleeping pool that misses its wakeup is worse
     // than a spinning one.
     std::atomic<int> ran{0};
     pool.parallel_for(64, [&ran](std::size_t) { ran.fetch_add(1); });
@@ -251,8 +253,8 @@ void test_scheduler() {
     }
     CHECK(all);
 
-    // nested parallel_for must not deadlock: the caller helps drain the pool,
-    // which is the property that makes recursive layout safe
+    // Nested parallel_for must not deadlock: the caller helps drain the pool,
+    // which is the property that makes recursive layout safe.
     std::vector<int> nested(64, 0);
     pool.parallel_for(8, [&](std::size_t outer) {
         pool.parallel_for(8, [&](std::size_t inner) { nested[outer * 8 + inner] = 1; });
@@ -289,23 +291,14 @@ void test_scheduler_teardown() {
 
 } // namespace
 
-// THE ALLOCATOR IS ACTUALLY mimalloc, and this is not a formality.
-//
-// A global `operator new` living in a static archive is pulled in only to
-// satisfy an undefined symbol. If the link order lets libstdc++ answer first,
-// the override is dropped and the binary runs on the system allocator while
-// building, linking and passing every other test identically - a ~4% regression
-// that announces itself to nobody. allocator_name() asks mimalloc whether a
-// fresh allocation came out of its own regions, so this is the override
-// reporting on itself rather than a build flag reporting on its intent.
-// BASE64 KEEPS ITS LENIENCY, which matters because the fast path does not have
-// it. simdutf's strict mode handles every well-formed payload at 42x; anything
-// it refuses falls through to the hand-written loop, and THAT is what these
-// pin. Delete the fallback and the last three of these fail.
-//
-// The inputs are not invented: "=w%S5" is the first case where simdutf's
-// `accept_garbage` option - the obvious drop-in - disagreed with this decoder,
-// out of 4.7% of 200,000 malformed inputs that did.
+/// Base64 keeps its leniency, which matters because the fast path does not
+/// have it. simdutf's strict mode handles every well-formed payload at 42x;
+/// anything it refuses falls through to the hand-written loop, and that is what
+/// these pin. Delete the fallback and the last three of these fail.
+///
+/// The inputs are not invented: "=w%S5" is the first case where simdutf's
+/// `accept_garbage` option (the obvious drop-in) disagreed with this decoder,
+/// out of 4.7% of 200,000 malformed inputs that did.
 void test_base64_leniency() {
     // Well-formed: the fast path, and the ordinary case.
     CHECK_EQ(ctbrowser::base64_decode("aGVsbG8="), std::string{"hello"});
@@ -313,16 +306,16 @@ void test_base64_leniency() {
     CHECK_EQ(ctbrowser::base64_decode("aGVs bG8="), std::string{"hello"}); // whitespace skipped
     CHECK_EQ(ctbrowser::base64_decode(""), std::string{});
     // Refused by strict mode, so answered by the loop: characters outside the
-    // alphabet are IGNORED rather than fatal, and a `=` does not stop the read.
+    // alphabet are ignored rather than fatal, and a `=` does not stop the read.
     CHECK_EQ(ctbrowser::base64_decode("aGVs!bG8="), std::string{"hello"});
     CHECK_EQ(ctbrowser::base64_decode("=aGVsbG8="), std::string{"hello"});
     CHECK_EQ(ctbrowser::base64_decode("a@G#V$s%b&G*8"), std::string{"hello"});
 }
 
-// decode_utf8 is the one decoder behind the font walk, dir=auto, XML names and
-// CharacterData's UTF-16 offsets. It checks continuation FORM, not range: a
-// WTF-8 lone surrogate must come back as the surrogate (CharacterData splits
-// pairs), and a truncated sequence is the lead byte, one byte wide.
+/// decode_utf8 is the one decoder behind the font walk, dir=auto, XML names and
+/// CharacterData's UTF-16 offsets. It checks continuation form, not range: a
+/// WTF-8 lone surrogate must come back as the surrogate (CharacterData splits
+/// pairs), and a truncated sequence is the lead byte, one byte wide.
 void test_decode_utf8() {
     std::size_t at = 0;
     const auto next = [&](std::string_view text) {
@@ -383,8 +376,9 @@ void test_wtf8_utf16() {
     CHECK_EQ(utf16_to_wtf8(wtf8_to_utf16(high + low)), "🌠");
     CHECK(wtf8_to_utf16(utf16_to_wtf8(u"\xDC00x\xD800")) == u"\xDC00x\xD800");
 
-    // Preserve the historical continuation-only decoder, not replacement
-    // characters or rejection. These bytes need not round-trip unchanged.
+    // Malformed input decodes the way decode_utf8 does (continuation form
+    // only), with no replacement characters and no rejection. These bytes need
+    // not round-trip unchanged.
     CHECK(wtf8_to_utf16("\xE2\x82") == u"\xE2\x82");
     CHECK(wtf8_to_utf16("\xC3\x41") == u"\xC3\x41");
     CHECK(wtf8_to_utf16("\xFF\x80") == u"\xFF\x80");
@@ -413,6 +407,8 @@ void test_unicode_lowercase_unit() {
 
     // Independent UCD output checksum from tools/gen/unicode_lowercase.py:
     // every unit, including identity mappings, holes and all lone surrogates.
+    // The hash is 64-bit FNV-1a (offset basis 14695981039346656037, prime
+    // 1099511628211).
     std::uint64_t checksum = 14695981039346656037ull;
     for (std::uint32_t cp = 0; cp < 0x10000; ++cp) {
         const auto lower = unicode_lowercase_unit(static_cast<char16_t>(cp));
@@ -425,16 +421,23 @@ void test_unicode_lowercase_unit() {
     CHECK_EQ(ascii_lower_copy("\u00C9I\u0130"), "\u00C9i\u0130");
 }
 
+/// Checks that the linked allocator is really mimalloc. A global `operator new`
+/// in a static archive is pulled in only to satisfy an undefined symbol; if the
+/// link order lets libstdc++ answer first, the override is silently dropped and
+/// every other test still passes (a ~4% slowdown nobody notices).
+/// allocator_name() asks mimalloc whether a fresh allocation came from its own
+/// regions, so the override reports on itself rather than a build flag
+/// reporting its intent.
 void test_allocator_is_mimalloc() {
-    // The DEFAULT build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
+    // The default build uses mimalloc; -DCTBROWSER_USE_MIMALLOC=OFF is a
     // supported configuration and says "system" honestly rather than being
     // asserted out of existence.
     const std::string which = ctbrowser::allocator_name();
     CHECK(which == "mimalloc" || which == "system");
     if (which == "mimalloc") {
-        // V3, which catches the specific accident of a box with both major
-        // versions installed compiling against one header and linking the
-        // other - they are different allocators behind the same header name.
+        // Version 3, which catches a machine with both major versions installed
+        // compiling against one header and linking the other: they are
+        // different allocators behind the same header name.
         CHECK(ctbrowser::allocator_version() >= 300);
     }
 }

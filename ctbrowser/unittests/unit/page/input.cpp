@@ -1,15 +1,14 @@
-// INPUT REACHING SCRIPT, AND REAL PAGES RESPONDING TO IT: keyboard and mouse
-// events delivered to listeners with the legacy `keyCode` and `which`,
-// `preventDefault` stopping the browser's own handling, and MDN's breakout,
-// pong and the invaders page played by injecting input and asserting that the
-// frames change. Every page here is one nobody wrote for this engine. p5.js's
-// event system driven by real events moved to test/corpus/p5/p5_page.cpp on
-// 2026-10-09.
+//===- ctbrowser/unittests/unit/page/input.cpp - Page input tests ---------===//
 //
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
+// Input reaching script, and real pages responding to it: keyboard and mouse
+// events delivered to listeners with the legacy `keyCode` and `which`,
+// `preventDefault` stopping the browser's own handling, and MDN's breakout
+// (examples/pages/pong.html) and the invaders page played by injecting input
+// and asserting that the frames change. Tests that drive p5.js's event system
+// are in test/corpus/p5/p5_page.cpp. Helpers shared with the other unit tests
+// are in ../chrome_probe.hpp; `find_id` is in test/support/dom_probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
@@ -43,14 +42,10 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-// `keyCode` AND `which` - deprecated, and universally used.
-//
-// The engine had `code` and `key`, the modern pair, and stopped there. The
-// event looked complete and was unusable to a large amount of real code:
-// PHASER'S ENTIRE KEYBOARD SYSTEM MATCHES ON keyCode - `KeyCodes.LEFT` is 37 -
-// so every arrow key in a Phaser game did nothing. The listener fired, the
-// event arrived, `code` was correct, and no key ever matched. A game that
-// renders and cannot be played.
+/// `keyCode` and `which`: deprecated, and still universally used.
+///
+/// Real code still depends on them: Phaser's keyboard system matches on
+/// keyCode (`KeyCodes.LEFT` is 37), so without it no arrow key matches.
 void test_key_events_carry_the_legacy_codes() {
     browser page{browser_options{200, 150}};
     page.load_html(R"(<html><body><script>
@@ -61,9 +56,8 @@ void test_key_events_carry_the_legacy_codes() {
     </script></body></html>)");
     page.frame();
 
-    // The arrows first, because they are the ones that were broken. The numbers
-    // are the well-known ones every browser reports rather than anything
-    // derived, which is the whole reason they are worth having.
+    // The numbers are the well-known ones every browser reports rather than
+    // anything derived, which is the whole reason they are worth having.
     for (const char * code : {"ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown", "Space", "Enter",
                               "Escape", "KeyA", "KeyZ", "Digit0", "Digit9", "F1", "F12"}) {
         (void)page.handle(input_event::key_press(code));
@@ -90,9 +84,9 @@ void test_key_events_carry_the_legacy_codes() {
 
 // --- input reaches script -------------------------------------------------
 //
-// This is the gap that made every game unplayable: the browser handled keys
-// itself - scrolling, caret movement - and never told the page. A page could
-// register a keydown listener and receive nothing, forever, with no error.
+// Keys must reach the page's listeners before the browser's own handling
+// (scrolling, caret movement); otherwise a keydown listener silently receives
+// nothing.
 
 void test_keyboard_reaches_script() {
     browser page{browser_options{400, 200}};
@@ -114,10 +108,10 @@ void test_keyboard_reaches_script() {
     check(log.size() == 5, "five key events reached the page");
     if (log.size() == 5) {
         check(log[0] == "down ArrowRight key=ArrowRight shift=false", "an arrow key");
-        // A RELEASE, which did not exist at all before: without it a game that
-        // tracks held keys never stops moving.
+        // The release: without it a game that tracks held keys never stops
+        // moving.
         check(log[1] == "up ArrowRight", "the release");
-        // `code` is the physical key, `key` is what it means - and shift is
+        // `code` is the physical key, `key` is what it means, and shift is
         // what makes them differ.
         check(log[2] == "down KeyA key=a shift=false", "a letter");
         check(log[3] == "down KeyA key=A shift=true", "the same letter shifted");
@@ -125,6 +119,8 @@ void test_keyboard_reaches_script() {
     }
 }
 
+/// A keydown listener that calls preventDefault stops the browser's own
+/// handling of the key (here, Space scrolling the page).
 void test_preventDefault_stops_the_browser_acting() {
     const char * tall = "<body><div style='height:2000px'>tall</div>";
 
@@ -137,7 +133,7 @@ void test_preventDefault_stops_the_browser_acting() {
     (void)page.handle(input_event::key_press("Space"));
     check(page.scroll_y() == 0, "a cancelled keydown does not scroll the page");
 
-    // ...and without the listener it does, which is what makes the test above
+    // Without the listener it does, which is what makes the test above
     // about preventDefault rather than about Space doing nothing.
     browser plain{browser_options{200, 100}};
     plain.load_html(std::string{tall} + "</body>");
@@ -172,15 +168,9 @@ void test_mouse_reaches_script() {
     }
 }
 
-// The end-to-end version of the three tests above, against a page nobody wrote
-// for this engine: MDN's breakout reads e.code and e.clientX, and if input does
-// not reach it the paddle simply never moves. Comparing frames with and without
-// input is the assertion, because "the paddle moved" is JS state this test
-// cannot see - but it can see the pixels.
-// The reason any of this exists: MDN's breakout ENDS by calling alert("GAME
-// OVER") and then document.location.reload(). Both were undefined identifiers,
-// so the one page in the suite that proves web compatibility died on its own
-// game-over - after the point every other test stops looking.
+/// MDN's breakout ends by calling alert("GAME OVER") and then
+/// document.location.reload(). The page must survive both and play again,
+/// which is past the point every other test stops looking.
 void test_the_breakout_page_survives_its_own_game_over() {
     browser page{browser_options{480, 320}};
     std::ifstream in{"examples/pages/pong.html", std::ios::binary};
@@ -201,7 +191,7 @@ void test_the_breakout_page_survives_its_own_game_over() {
     check(page.script_error().empty(), "and reloading itself did not break the script");
 
     // The reload really re-ran the page: it is playing again, so it can end
-    // AGAIN rather than sitting on a dead context.
+    // again rather than sitting on a dead context.
     const std::size_t after_first = page.alerts().size();
     for (int frame = 0; frame < 2000 && page.alerts().size() == after_first; ++frame) {
         (void)page.tick(1000.0 / 60.0);
@@ -210,13 +200,13 @@ void test_the_breakout_page_survives_its_own_game_over() {
     check(page.alerts().size() > after_first, "and the reloaded game runs and ends too");
 }
 
-// The paddle stays ON the canvas however the mouse is moved.
-//
-// MDN's mouseMoveHandler gates on the CURSOR being inside the canvas and then
-// centres the paddle on it WITHOUT clamping the resulting rect, so the paddle
-// hangs up to half its width off either edge - in Chrome and Firefox too. The
-// page carries one deviation from the tutorial to fix that (see the comment in
-// examples/demos/pong.cpp); this is what says the deviation is still there.
+/// The paddle stays on the canvas however the mouse is moved.
+///
+/// MDN's mouseMoveHandler gates on the cursor being inside the canvas and then
+/// centres the paddle on it without clamping the resulting rect, so the paddle
+/// hangs up to half its width off either edge, in Chrome and Firefox too. The
+/// page carries one deviation from the tutorial to fix that (see the comment in
+/// examples/demos/pong.cpp); this checks the deviation is still there.
 void test_the_breakout_paddle_stays_on_the_canvas() {
     browser page{browser_options{480, 320}};
     std::ifstream in{"examples/pages/pong.html", std::ios::binary};
@@ -239,7 +229,7 @@ void test_the_breakout_paddle_stays_on_the_canvas() {
     };
 
     // Hard against the left wall. relativeX = 2 puts MDN's unclamped paddle at
-    // -35.5 - most of a 75px paddle off the canvas.
+    // -35.5, most of a 75px paddle off the canvas.
     (void)page.handle(input_event::mouse_move_to(2, 300));
     check(ask("paddleX >= 0 ? 'in' : 'out'") == "in", "the paddle does not cross the left wall");
 
@@ -256,6 +246,11 @@ void test_the_breakout_paddle_stays_on_the_canvas() {
           "and it still tracks the mouse in between");
 }
 
+/// The end-to-end version of the keyboard and mouse tests above, against a
+/// page nobody wrote for this engine: MDN's breakout reads e.code and
+/// e.clientX, and if input does not reach it the paddle never moves. Comparing
+/// frames with and without input is the assertion, because "the paddle moved"
+/// is JS state this test cannot see, but it can see the pixels.
 void test_a_real_page_responds_to_input() {
     const auto render = [](std::string_view held) {
         browser page{browser_options{480, 320}};
@@ -283,14 +278,15 @@ void test_a_real_page_responds_to_input() {
     check(idle.size() == pressed.size(), "both runs are the same size");
     check(idle != pressed, "holding a key changes what MDN's breakout draws");
 
-    // The control: a key the page does not read must change NOTHING. Without
+    // The control: a key the page does not read must change nothing. Without
     // it, "the frames differ" could just mean the run is not reproducible, and
     // the test above would pass whether or not input worked.
     check(render("KeyQ") == idle, "a key the page ignores changes nothing");
 }
 
-// The same question asked of the ported example page, because it is the one
-// whose key names I had to change: e.key was "Left", which nothing produces.
+/// The same question for the invaders example page, whose key names were
+/// changed from the non-standard "Left"/"Right" (which no browser produces) to
+/// "ArrowLeft"/"ArrowRight".
 void test_the_invaders_page_responds_to_input() {
     const auto ship_row = [](std::string_view held) {
         browser page{browser_options{320, 240}};
@@ -318,10 +314,10 @@ void test_the_invaders_page_responds_to_input() {
     check(ship_row("KeyQ") == still, "a key the page ignores does not");
 }
 
-// Space fires. It did not, and the reason was not input at all: the page tests
-// `e.code === "Space"`, and `===` compared string ALLOCATIONS, so it was false
-// for every event. Counting the bullet's own colour is what distinguishes
-// "the key arrived" from "the page acted on it".
+/// Space fires a bullet. The page tests `e.code === "Space"`, so this also
+/// checks that `===` compares string contents, not allocations. Counting the
+/// bullet's own colour is what distinguishes "the key arrived" from "the page
+/// acted on it".
 void test_the_invaders_page_shoots() {
     browser page{browser_options{320, 240}};
     // run_app installs playSound; a bare browser does not, and the page must
@@ -359,10 +355,10 @@ void test_the_invaders_page_shoots() {
     check(bullet_pixels() > 0, "Space fires a bullet");
 }
 
-// A letterboxed page is authored at its LOGICAL size and the window only
-// decides how big that gets drawn. SDL announces the window's pixel size on the
-// first frame, and taking that as a page resize left the canvas - 320x240 by
-// its own attributes - occupying a ninth of the viewport.
+/// A letterboxed page is authored at its logical size and the window only
+/// decides how big that gets drawn. SDL announces the window's pixel size on
+/// the first frame, and that must not be taken as a page resize, or the canvas
+/// (320x240 by its own attributes) would occupy a fraction of the viewport.
 void test_a_letterboxed_page_keeps_its_size() {
     browser page{browser_options{320, 240}};
     std::ifstream in{"examples/pages/invaders.html", std::ios::binary};

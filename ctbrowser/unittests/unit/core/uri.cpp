@@ -1,3 +1,11 @@
+//===- ctbrowser/unittests/unit/core/uri.cpp - decodeURI tests --*- C++ -*-===//
+//
+// Tests for decode_uri and decode_uri_component (ECMA-262 Decode): valid
+// %-escapes, malformed UTF-8 escapes, and which reserved characters each
+// function leaves escaped.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/uri.hpp>
 
 #include "check.hpp"
@@ -9,7 +17,7 @@ int main() {
         CHECK(decode("") == "");
         CHECK(decode("plain+text") == "plain+text");
         CHECK(decode("a%20b%25c") == "a b%c");
-        CHECK(decode("%252F") == "%2F"); // one decoding pass
+        CHECK(decode("%252F") == "%2F"); // One decoding pass.
         CHECK(decode("%C2%80%DF%BF") == "\xC2\x80\xDF\xBF");
         CHECK(decode("%E0%A0%80%ED%9F%BF%EE%80%80%EF%BF%BF") ==
               "\xE0\xA0\x80\xED\x9F\xBF\xEE\x80\x80\xEF\xBF\xBF");
@@ -18,7 +26,8 @@ int main() {
         CHECK((decode("a%00b") == std::string{"a\0b", 3}));
         CHECK((decode(std::string_view{"a\0b", 3}) == std::string{"a\0b", 3}));
 
-        // Only escaped bytes are UTF-8 validated, matching the original VM decoder.
+        // Only %-escaped bytes are UTF-8 validated; raw bytes pass through
+        // unchanged, as in ECMAScript's Decode.
         for (unsigned byte = 0; byte <= 255; ++byte) {
             if (byte == '%') { continue; }
             const std::string raw(1, static_cast<char>(byte));
@@ -55,7 +64,7 @@ int main() {
                                                  "prefix%20ok%"}) {
             CHECK(!decode(malformed));
         }
-        CHECK(!decode("%C2\x80")); // raw continuation bytes cannot complete an escape
+        CHECK(!decode("%C2\x80")); // Raw continuation bytes cannot complete an escape.
     }
 
     CHECK(decode_uri("%3b%2F%3f%3A%40%26%3d%2B%24%2c%23") == "%3b%2F%3f%3A%40%26%3d%2B%24%2c%23");

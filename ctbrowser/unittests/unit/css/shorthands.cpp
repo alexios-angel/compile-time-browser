@@ -1,7 +1,12 @@
+//===- shorthands.cpp - CSSOM shorthand tests -------------------*- C++ -*-===//
+//
 // The shorthands whose grammar lives in the CSSOM declaration block and
-// nowhere else - `font`, `white-space`, `animation` - reach the cascade
-// through that block and read back from getComputedStyle in their canonical
-// form. One case per file of css-fonts, css-text and css-animations moved.
+// nowhere else (`font`, `white-space`, `animation`) reach the cascade through
+// that block and read back from getComputedStyle in their canonical form.
+// Each case is ported from one WPT file in css-fonts, css-text or
+// css-animations; the comment above each test names its source files.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
@@ -25,8 +30,8 @@ namespace {
     return declaration_value(block, property);
 }
 
-// white-space-shorthand, white-space-valid/invalid: CSS Text 4 §3's keywords
-// are spellings of white-space-collapse and text-wrap-mode.
+/// white-space-shorthand, white-space-valid/invalid: CSS Text 4 §3's keywords
+/// are spellings of white-space-collapse and text-wrap-mode.
 void test_white_space_is_a_shorthand() {
     CHECK_EQ(set_and_read("white-space", "pre"), std::string{"pre"});
     CHECK_EQ(set_and_read("white-space", "preserve nowrap"), std::string{"pre"});
@@ -72,7 +77,7 @@ void test_white_space_is_a_shorthand() {
     CHECK_EQ(set_and_read("position-try-fallbacks", "start start"), std::string{"start"});
 }
 
-// animation-shorthand, animation-valid, animation-name-valid/invalid.
+/// animation-shorthand, animation-valid, animation-name-valid/invalid.
 void test_animation_is_a_shorthand() {
     declaration_block block;
     (void)set_declaration(block, "animation",
@@ -127,10 +132,10 @@ void test_animation_is_a_shorthand() {
     CHECK(!check_declaration("animation-name", "\"\"").valid);
 }
 
-// font-computed, white-space-computed, animation-computed: through a page,
-// the cascade splits each shorthand into its longhands - a `font` sets the
-// font-size every `em` resolves against - and getComputedStyle folds the
-// computed longhands back.
+/// font-computed, white-space-computed, animation-computed: through a page,
+/// the cascade splits each shorthand into its longhands - a `font` sets the
+/// font-size every `em` resolves against - and getComputedStyle folds the
+/// computed longhands back.
 void test_what_a_page_reads_back() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -176,8 +181,8 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "set="), std::string{"set=20px / 1.5 fantasy|20px / 30px fantasy"});
 }
 
-// grid-template and grid (CSS Grid 2 §7.4, §7.8): split into their longhands
-// and folded back only when the longhands can be spelled as one value.
+/// grid-template and grid (CSS Grid 2 §7.4, §7.8): split into their longhands
+/// and folded back only when the longhands can be spelled as one value.
 void test_grid_is_a_shorthand() {
     declaration_block block;
     CHECK(set_declaration(block, "grid-template", "[a] \"a\" 10px [] \"b\" / 5fr", false));
@@ -197,10 +202,10 @@ void test_grid_is_a_shorthand() {
     CHECK_EQ(declaration_value(mixed, "grid-template"), std::string{"30px / 50px"});
 }
 
-// LOGIC-058/059: an escaped token made the declaration keep the author's RAW
-// text, and the shorthand splitters sliced it by offsets into the preprocessed
-// token pool, where each NUL is three bytes - `substr` threw past the end and
-// terminated the engine. Surviving without a throw is the assertion.
+/// Regression: an escaped token made the declaration keep the author's raw
+/// text, while the shorthand splitters sliced it by offsets into the
+/// preprocessed token pool, where each NUL is three bytes, so `substr` threw
+/// past the end. Surviving without a throw is the assertion.
 void test_nul_bearing_values_split_without_throwing() {
     using namespace std::string_literals;
     const std::string nuls = "\\61\0\0\0\0/"s;

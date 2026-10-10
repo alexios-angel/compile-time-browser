@@ -1,12 +1,13 @@
-// `@import`, THE SHEETS OF A SHADOW TREE, AND `HTMLLinkElement.disabled`.
+//===- imports.cpp - @import and shadow sheet tests -------------*- C++ -*-===//
 //
-// Three things the CSSOM answered wrongly or not at all: an `@import` was
-// consumed by the sheet parser and reached neither the cascade nor
-// `rule.styleSheet`; a `<style>` in a shadow root had no `sheet` and no list to
-// be in; and a `<link disabled>` was a stylesheet like any other. Each case
-// here is the shape of the css/cssom file that asserts it - cssimportrule,
-// cssimportrule-parent, StyleSheetList-constructable-shadow and
-// HTMLLinkElement-disabled-001 - reduced to what the engine can log.
+// `@import`, the stylesheets of a shadow tree, and `HTMLLinkElement.disabled`.
+// Tests that an `@import` reaches the cascade and `rule.styleSheet`, that a
+// `<style>` in a shadow root has a `sheet` in the root's own list, and that
+// `<link disabled>` is not a stylesheet. Each case is a reduced form of the
+// WPT css/cssom test that asserts it: cssimportrule, cssimportrule-parent,
+// StyleSheetList-constructable-shadow and HTMLLinkElement-disabled-001.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -32,9 +33,9 @@ using ctbrowser_test::logged;
 
 namespace {
 
-// THE STATEMENTS THE FRONT END FINDS: only the leading run, the URL in any of
-// its three spellings, the media list with `layer` and `supports()` removed,
-// and byte spans a caller can splice.
+/// The `@import` statements the stylesheet parser reports: only the leading
+/// run, the URL in any of its three spellings, the media list with `layer` and
+/// `supports()` removed, and byte spans a caller can splice.
 void test_leading_imports() {
     const auto leading_imports = [](std::string_view css) {
         ctbrowser::atom_table atoms;
@@ -60,9 +61,9 @@ void test_leading_imports() {
     CHECK_EQ(tricky[0].href, std::string{"a;b.css"});
 }
 
-// THE CASCADE SEES THE IMPORTED RULES - through a `<link>` whose sheet imports
-// a second sheet relative to itself, and through a `<style>` importing with a
-// media query that does not match, which must not apply.
+/// The cascade sees imported rules: through a `<link>` whose sheet imports a
+/// second sheet relative to itself, and through a `<style>` importing with a
+/// media query that does not match, which must not apply.
 void test_an_import_reaches_the_cascade() {
     browser page{browser_options{400, 200}};
     page.assets().add("css/main.css",
@@ -80,9 +81,9 @@ void test_an_import_reaches_the_cascade() {
              std::string{"colors=rgb(255, 0, 0)|rgb(0, 0, 255)|rgb(0, 0, 0)"});
 }
 
-// CSSImportRule: `styleSheet` is a sheet of its own with its own rules and its
-// parent, `deleteRule` unlinks it, and the object model's text - the one the
-// cascade is handed after a CSSOM write - carries the imported rules.
+/// CSSImportRule: `styleSheet` is a sheet of its own with its own rules and its
+/// parent, `deleteRule` unlinks it, and the object model's text (the one the
+/// cascade is handed after a CSSOM write) carries the imported rules.
 void test_the_import_rule_object() {
     browser page{browser_options{400, 200}};
     page.assets().add("a.css", bytes_of("@import 'b.css';\n.a { color: green }"));
@@ -129,9 +130,10 @@ void test_the_import_rule_object() {
                          ".own { color: red; }\n"});
 }
 
-// A SHADOW ROOT HAS ITS OWN LIST: a `<style>` appended to one has a `sheet`,
-// that sheet is in `shadowRoot.styleSheets` and not in the document's, and
-// `adoptedStyleSheets` on the root takes constructed sheets only.
+/// A shadow root has its own stylesheet list: a `<style>` appended to one has a
+/// `sheet`, that sheet is in `shadowRoot.styleSheets` and not in the
+/// document's, and `adoptedStyleSheets` on the root takes constructed sheets
+/// only.
 void test_the_sheets_of_a_shadow_tree() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>p { color: red }</style></head><body><div id=h></div>
@@ -158,11 +160,12 @@ void test_the_sheets_of_a_shadow_tree() {
     CHECK_EQ(logged(page, "refused="), std::string{"refused=NotAllowedError|0"});
 }
 
-// `<link disabled>` IS NOT A STYLESHEET until the attribute goes, and
-// `link.disabled` is what removes it - firing `load` once the sheet applies
-// - and puts it back, at which point the sheet answers null for `ownerNode`
-// and leaves `document.styleSheets`. An `alternate stylesheet` applies only
-// once the link has been explicitly enabled that way.
+/// `<link disabled>` is not a stylesheet until the attribute is removed.
+/// Setting `link.disabled = false` removes it (firing `load` once the sheet
+/// applies); setting it back to true restores the attribute, after which the
+/// sheet answers null for `ownerNode` and leaves `document.styleSheets`. An
+/// `alternate stylesheet` applies only once the link has been explicitly
+/// enabled that way.
 void test_link_disabled() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head>
@@ -193,7 +196,8 @@ void test_link_disabled() {
     CHECK_EQ(logged(page, "loaded="),
              std::string{"loaded=rgb(0, 128, 0)|true|null|false|true|0|rgb(0, 0, 0)"});
 
-    // THE ALTERNATE: fetched (its `load` fires), not applied and not listed.
+    // The alternate sheet is fetched (its `load` fires) but neither applied nor
+    // listed.
     // `disabled = false` with no attribute present changes nothing;
     // true-then-false removes the attribute, which explicitly enables it.
     browser alternate{browser_options{400, 200}};
@@ -221,9 +225,9 @@ void test_link_disabled() {
     CHECK_EQ(logged(alternate, "alt="), std::string{"alt=fired"});
 }
 
-// THE `background` SHORTHAND REACHES THE CASCADE. It was recorded whole and
-// never expanded, so `background: green` - which every HTMLLinkElement-disabled
-// test asserts through the root's computed backgroundColor - painted nothing.
+/// The `background` shorthand is expanded for the cascade, so
+/// `background: green` sets backgroundColor (every HTMLLinkElement-disabled
+/// test asserts through the root's computed backgroundColor).
 void test_the_background_shorthand() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -247,9 +251,9 @@ void test_the_background_shorthand() {
 
 namespace {
 
-// A HUNDRED IMPORTS OF A SHEET THAT IMPORTS THE NEXT A HUNDRED TIMES, sixteen
-// deep: 100^16 expansions inside the depth cap. The breadth is capped per
-// sheet, and the page's own rules still apply.
+/// A hundred imports of a sheet that imports the next one a hundred times,
+/// sixteen deep: 100^16 expansions inside the depth cap. The breadth is capped
+/// per sheet, and the page's own rules still apply.
 void test_import_breadth_is_capped() {
     browser page{browser_options{400, 200}};
     for (int k = 0; k < 16; ++k) {

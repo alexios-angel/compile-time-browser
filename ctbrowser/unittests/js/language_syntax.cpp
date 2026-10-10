@@ -1,14 +1,17 @@
-// The language forms that landed with test/language on 2026-09-12: what the
-// parser must READ (Unicode whitespace, static blocks, `await` as a name,
-// any left-hand side in a for-in/of head, CoverInitializedName, tagged
-// templates, `using`), what the early-error pass must REFUSE (the ASI rules,
-// string and number grammar, static-block rules, `**` and `??` mixing), and
-// what the VM must ANSWER (a static field's `this`, a static block's order,
-// `using` disposal in reverse with a SuppressedError).
+//===- ctbrowser/unittests/js/language_syntax.cpp - Syntax tests ----------===//
+//
+// Newer language forms: what the parser must read (Unicode whitespace, static
+// blocks, `await` as a name, any left-hand side in a for-in/of head,
+// CoverInitializedName, tagged templates, `using`), what the early-error pass
+// must refuse (the ASI rules, string and number grammar, static-block rules,
+// `**` and `??` mixing), and what the VM must answer (a static field's `this`,
+// a static block's order, `using` disposal).
 //
 // Paired like early_errors.cpp: every refusal has the valid near-miss beside
-// it, because a false positive is a page that does not load - the four
-// vendored bundles are parsed through this same front end.
+// it, because a false positive is a page that does not load; the vendored
+// library bundles are parsed through this same front end.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/script/script.hpp>
 
@@ -23,6 +26,8 @@ namespace {
 
 using namespace ctbrowser::script;
 
+/// Fails the test unless \p source is refused with a parse error (a
+/// SyntaxError), not accepted and not refused as an unsupported feature.
 void refused(std::string_view source) {
     const program prog = compiler::compile(source);
     if (prog.ok) {
@@ -37,6 +42,8 @@ void refused(std::string_view source) {
     }
 }
 
+/// Fails the test unless \p source compiles, runs, and returns \p expected
+/// (as a string; a throw reads "THREW <error>").
 void answers(std::string_view source, std::string_view expected) {
     const program prog = compiler::compile(source);
     if (!prog.ok) {
@@ -56,9 +63,9 @@ void answers(std::string_view source, std::string_view expected) {
     }
 }
 
-// IS `export default function` HOISTED in this module? Its closure is then
-// made before the module's first statement - the call to `first` here - and
-// otherwise after it.
+/// Returns whether `export default function` is hoisted in this module. A
+/// hoisted function's closure is made before the module's first statement
+/// (the call to `first` here); otherwise it is made after it.
 bool default_hoisted(std::string_view source) {
     const program prog = compiler::compile(source, script_kind::module_);
     if (!prog.ok || prog.functions.empty()) { return false; }
@@ -77,7 +84,7 @@ bool default_hoisted(std::string_view source) {
 int main() {
     // --- `export default function` is a declaration, hoisted; a parenthesised
     // one is an expression, and a comment between `default` and the function
-    // is neither (16.2.3).
+    // is neither (ECMA-262 16.2.3).
     check(default_hoisted("first(); export default function () {}"),
           "export default function is hoisted");
     check(default_hoisted("first(); export default /* ( */ function () {}"),
@@ -89,20 +96,20 @@ int main() {
     check(!default_hoisted("first(); export default (/* c */ function () {})"),
           "nor with a comment after its parenthesis");
 
-    // --- the lexer: whitespace and line terminators beyond ASCII (12.2, 12.3)
-    answers("var x = 1;\u00a0x\u00a0+= 1; return x;", "2");     // NBSP between tokens
-    answers("var y = 1 // comment\u2028y = 2; return y;", "2"); // LS ends a line comment
-    answers("var z = 1\u2029z = 3; return z;", "3");            // PS is a line break for ASI
-    refused("x\u00a0y");                                        // still not two statements
+    // --- The lexer: whitespace and line terminators beyond ASCII (ECMA-262 12.2, 12.3).
+    answers("var x = 1;\u00a0x\u00a0+= 1; return x;", "2");     // NBSP between tokens.
+    answers("var y = 1 // comment\u2028y = 2; return y;", "2"); // LS ends a line comment.
+    answers("var z = 1\u2029z = 3; return z;", "3");            // PS is a line break for ASI.
+    refused("x\u00a0y");                                        // Still not two statements.
 
-    // --- ASI (12.10): a statement ends at `;`, `}`, EOF or a line break
+    // --- ASI (ECMA-262 12.10): a statement ends at `;`, `}`, EOF or a line break.
     refused("var a = 1 var b = 2");
     refused("3in []");
     answers("var a = 1\nvar b = 2; return a + b;", "3");
-    answers("var k = 1; k\n++k; return k;", "2");  // postfix ++ does not cross a line
-    answers("do {} while (false) return 7;", "7"); // a do-while takes a virtual `;`
+    answers("var k = 1; k\n++k; return k;", "2");  // Postfix ++ does not cross a line.
+    answers("do {} while (false) return 7;", "7"); // A do-while takes a virtual `;`.
 
-    // --- `await` is a name outside an async body
+    // --- `await` is a name outside an async body.
     answers("function f(await) { return await; } return f(4);", "4");
     answers("function g() { var await = 5; return await; } return g();", "5");
     answers("async function h() { return await 6; } return await h();", "6");
@@ -110,26 +117,27 @@ int main() {
             "Promise.resolve().then(r)); return r;",
             "8");
 
-    // --- for-in/of heads: any LeftHandSideExpression, a literal as a pattern
+    // --- For-in/of heads: any LeftHandSideExpression, a literal as a pattern.
     answers("var o = {}; for (o.p of [1, 2]) {} return o.p;", "2");
     answers("var o = {}; for ([o.a, o.b] of [[1, 2]]) {} return o.a + o.b;", "3");
     answers("var o = {}, k; for (k in {q: 1}) { o.k = k; } return o.k;", "q");
-    // A call head is ~web-compat~ in sloppy code (13.15.1, AssignmentTargetType
-    // of a CallExpression): each iteration throws the ReferenceError, an empty
-    // loop throws nothing - and strict code refuses it outright.
+    // A call head is allowed for web compatibility in sloppy code (ECMA-262
+    // 13.15.1, AssignmentTargetType of a CallExpression): each iteration throws
+    // the ReferenceError and an empty loop throws nothing. Strict code refuses
+    // it outright.
     answers("function f() {} for (f() of []) {} return 1;", "1");
     refused("'use strict'; for (f() of xs) {}");
     refused("for (let [x, x] of []) {}");
     refused("for (let x of []) { var x; }");
     refused("for (x of a, b) {}");
 
-    // --- CoverInitializedName: `{ a = 1 }` is a pattern, and only a pattern
+    // --- CoverInitializedName: `{ a = 1 }` is a pattern, and only a pattern.
     answers("var a; ({ a = 3 } = {}); return a;", "3");
     answers("var b; ({ b = 3 } = { b: 4 }); return b;", "4");
     refused("({ a = 1 });");
     refused("({ a = 1 }).a;");
 
-    // --- class static blocks and static fields
+    // --- Class static blocks and static fields.
     answers("var seq = []; class C { static x = seq.push('f1'); static { seq.push('b1'); }"
             " static y = seq.push('f2'); static { seq.push('b2'); } } return seq.join();",
             "f1,b1,f2,b2");
@@ -149,21 +157,21 @@ int main() {
     answers("class C { static { (() => { class await {} }); } } return 1;", "1");
     refused("class let {}");
     refused("class yield {}");
-    answers("class C { static = 'foo'; } return new C().static;", "foo"); // a field named static
+    answers("class C { static = 'foo'; } return new C().static;", "foo"); // A field named static.
 
-    // --- class fields end at `;`, `}` or a line break; `async` and `#`
+    // --- Class fields end at `;`, `}` or a line break; `async` and `#`.
     refused("class C { x y }");
     refused("class C { # x }");
     refused("class C { \\u0023m() {} }");
     answers("class C { x = 1\n y = 2 } var c = new C(); return c.x + c.y;", "3");
     answers("class C { async\n m() { return 1; } } return typeof new C().async;", "undefined");
 
-    // --- escaped words are names, never keywords
+    // --- Escaped words are names, never keywords.
     refused("({ \\u0067et m() {} })");
     refused("\\u0061sync () => {}");
     answers("function f() { var \\u0061wait = 9; return await; } return f();", "9");
 
-    // --- `**` and `??` grammar
+    // --- `**` and `??` grammar.
     refused("-2 ** 2");
     refused("typeof 1 ** 2");
     answers("return (-2) ** 2;", "4");
@@ -172,20 +180,20 @@ int main() {
     answers("return (0 ?? 1) || 2;", "2");
     answers("return (null ?? 1) || 2;", "1");
 
-    // --- string and template escapes, and number grammar
+    // --- String and template escapes, and number grammar.
     refused("'\\x0'");
     refused("'\\u00g0'");
     refused("`\\u{110000}`");
     refused("`\\01`");
     refused("'use strict'; '\\01'");
-    answers("return '\\01'.length;", "1"); // legacy octal is fine in sloppy code
+    answers("return '\\01'.length;", "1"); // Legacy octal is fine in sloppy code.
     refused("00b0");
     refused("1e");
     refused("0\\u00620");
     answers("return 0b11 + 0o7 + 0xf + 1_0;", "35");
 
-    // --- tagged templates (13.2.8): cooked and raw strings, one frozen array
-    // per site, the tag called on its object; `?.` refuses one
+    // --- Tagged templates (ECMA-262 13.2.8): cooked and raw strings, one
+    // frozen array per site, the tag called on its object; `?.` refuses one.
     answers("function tag(s, ...v) { return s.length + ':' + s.raw[0] + ':' + v[0]; }"
             " return tag`x\\n${7}`;",
             "2:x\\n:7");
@@ -197,10 +205,10 @@ int main() {
             "\\unicode");
     refused("a?.`x`");
     refused("a?.b`x`");
-    // an untagged template cooks every escape, and a quote is just a character
+    // An untagged template cooks every escape, and a quote is just a character.
     answers("return `'\\x41\\u{42}' ${1 + 1}`;", "'AB' 2");
 
-    // --- `import.source` is a rejected promise, never a throw
+    // --- `import.source` is a rejected promise, never a throw.
     answers("var r; import.source('x').catch(e => { r = e.name; }); await new Promise(r => "
             "Promise.resolve().then(r)); return r;",
             "SyntaxError");
@@ -208,7 +216,7 @@ int main() {
             " await new Promise(r => Promise.resolve().then(r)); return r;",
             "boom");
 
-    // --- `delete` answers what 13.5.1.2 says and throws where it says
+    // --- `delete` answers what ECMA-262 13.5.1.2 says and throws where it says.
     answers("var o = { a: 1 }; Object.defineProperty(o, 'b', { value: 2 });"
             " return [delete o.a, delete o.b, delete o.zz, delete 1, delete void 0, 'a' in o,"
             " 'b' in o].join();",
@@ -225,7 +233,7 @@ int main() {
             "false,false,true");
 
     // --- yield* in an async generator: GetIterator(obj, async) refuses a
-    // non-object result before any next() (7.4.3)
+    // non-object result before any next() (ECMA-262 7.4.3).
     answers("var r = 'none'; var obj = { [Symbol.asyncIterator]() { return true; } };"
             " async function* g() { yield* obj; } g().next().catch(e => { r = e.name; });"
             " await new Promise(r => Promise.resolve().then(r)); return r;",
@@ -240,8 +248,8 @@ int main() {
             " return out.join();",
             "1");
 
-    // --- a direct eval in a parameter expression may not var-declare that
-    // scope's names (19.2.1.3 step 3.d)
+    // --- A direct eval in a parameter expression may not var-declare that
+    // scope's names (ECMA-262 19.2.1.3 step 3.d).
     answers("var r = 'none'; function f(p = eval('var arguments')) {} try { f(); }"
             " catch (e) { r = e.name; } return r;",
             "SyntaxError");
@@ -253,12 +261,12 @@ int main() {
             " catch (e) { r = e.name; } return r;",
             "ok");
 
-    // --- `f.length` is ExpectedArgumentCount (15.1.5), not the register count
+    // --- `f.length` is ExpectedArgumentCount (ECMA-262 15.1.5), not the register count.
     answers("function f(a, b = 1, c) {} function g(...r) {} function h(a, b,) {}"
             " return f.length + ':' + g.length + ':' + h.length + ':' + ((x, y) => 0).length;",
             "1:0:2:2");
 
-    // --- the heritage (15.7.14 steps 6-9) and `super.x` with a receiver
+    // --- The heritage (ECMA-262 15.7.14 steps 6-9) and `super.x` with a receiver.
     answers("var r = 'none'; try { class C extends 42 {} } catch (e) { r = e.name; } return r;",
             "TypeError");
     answers("var r = 'none'; try { class C extends (() => {}) {} } catch (e) { r = e.name; }"
@@ -280,8 +288,9 @@ int main() {
             " return Object.getPrototypeOf(N.prototype) === null;",
             "true");
 
-    // --- private brands (7.3.28-30): a method's holder carries the class's
-    // brand, a field is added once, a public field is defined rather than set
+    // --- Private brands (ECMA-262 7.3.28-30): a method's holder carries the
+    // class's brand, a field is added once, a public field is defined rather
+    // than set.
     answers("class C { #m() { return 7; } static call(o) { return o.#m(); } }"
             " var r; try { C.call(Object.create(C.prototype)); } catch (e) { r = e.name; }"
             " return r + ':' + C.call(new C());",
@@ -390,7 +399,7 @@ int main() {
             " return C.read(new C()) + ',' + traps;",
             "1,0");
 
-    // --- strict code cannot create a global by assignment (6.2.5.6)
+    // --- Strict code cannot create a global by assignment (ECMA-262 6.2.5.6).
     answers("var r; (function () { 'use strict'; try { zz1 = 1; } catch (e) { r = e.name; } })();"
             " return r;",
             "ReferenceError");
@@ -415,24 +424,26 @@ int main() {
     answers("const o = {}; class P { constructor() { return o; } } class D extends P { }"
             " return new D() === o;",
             "true");
-    // KNOWN WRONG until the native prover reads hoisted_vars (see
-    // statements/dispatch.cpp): `var x;` after a write reads undefined here.
+    // Known wrong: a `var x;` with no initialiser still writes undefined, so it
+    // erases the earlier `x = 5`. The compiler keeps that write on purpose because
+    // tools/check/bootstrap-host-prefix.py depends on it; see the note in
+    // lib/Script/compile/statements/dispatch.cpp.
     answers("var n = 0; for (var x of [99]) { var x; n += x; } x = 5; var x; var u; return [n, x, "
             "typeof u].join();",
-            "NaN,,undefined"); // spec: "99,5,undefined"; join() spells undefined ""
+            "NaN,,undefined"); // Spec: "99,5,undefined"; join() spells undefined "".
     answers("eval('var ev; var ew = 2;'); return typeof ev + ew;", "undefined2");
-    answers("qq = 5; return qq;", "5"); // sloppy code still may
+    answers("qq = 5; return qq;", "5"); // Sloppy code still may.
     answers(
         "'use strict'; var n = 0; for (const [p, q] = [1, 2]; n < 1; n++) {} for (var [s] = [3];;)"
         " { break; } { const { t } = { t: 4 }; n += t; } return n + s;",
         "8");
-    // ...while a declaration's own first write is not an assignment
+    // A declaration's own first write is not an assignment...
     answers("'use strict'; var a = 1; a = 2; let b = 1; b = 3; class C {} C = 0;"
             " const [d] = [4]; for (const e of [5]) { a += e; } return a + b + d;",
             "14");
-    // ...but an expression INSIDE a declaration is: an initialiser, a
-    // function body written in one, a pattern default (review of 2026-09-13:
-    // declaring_ once covered the whole declarator loop).
+    // ...but an expression inside a declaration is an assignment: an
+    // initialiser, a function body written in one, or a pattern default. Only the
+    // declaration's own binding write is exempt.
     answers("'use strict'; var r = 'no'; var f = function () { zz3 = 1; };"
             " try { f(); } catch (e) { r = e.name; } return r;",
             "ReferenceError");
@@ -446,8 +457,8 @@ int main() {
             " try { new K().m(); } catch (e) { r = e.name; } return r;",
             "ReferenceError");
 
-    // --- 19.1: NaN, Infinity and undefined are not writable - a sloppy
-    // write is dropped, a strict one is a TypeError.
+    // --- ECMA-262 19.1: NaN, Infinity and undefined are not writable; a
+    // sloppy write is dropped, a strict one is a TypeError.
     answers("undefined = 1; var undefined = 2; NaN = 3; Infinity = 4;"
             " return [typeof undefined, NaN !== NaN, Infinity].join();",
             "undefined,true,Infinity");
@@ -455,9 +466,9 @@ int main() {
             "TypeError");
     answers("function f() { var undefined = 5; return undefined; } return f();", "5");
 
-    // --- the temporal dead zone, statically: a read of this frame's own
+    // --- The temporal dead zone, statically: a read of this frame's own
     // let/const/class before the declarator that initialises it throws
-    // (9.1.1.1.6), typeof included; a read after it, or from a nested
+    // (ECMA-262 9.1.1.1.6), typeof included; a read after it, or from a nested
     // function, or of an outer binding, does not.
     answers("function f() { try { x; } catch (e) { return e.name; } let x = 1; return 'no'; }"
             " return f();",
@@ -478,7 +489,7 @@ int main() {
     answers("function f() { const {a, b = a + 1} = {a: 1}; let [c, d = c * 2] = [3]; return"
             " a + b + c + d; } return f();",
             "12");
-    // ...and a template substitution, re-parsed from its own text, reads a
+    // A template substitution, re-parsed from its own text, reads a
     // binding declared before the template without a false dead zone.
     answers("function f() { const map = new Map([['k', 1]]); return `${[...map.keys()][0]}:${map"
             ".size}`; } return f();",
@@ -487,8 +498,8 @@ int main() {
             " try { return f(); } catch (e) { return e.name; }",
             "ReferenceError");
 
-    // --- an object literal's method has the literal as its home object
-    // (15.4.4) - and only a method that says `super` carries the link.
+    // --- An object literal's method has the literal as its home object
+    // (ECMA-262 15.4.4), and only a method that says `super` carries the link.
     answers("const base = { hi() { return 'base'; } }; const o = { __proto__: base,"
             " hi() { return 'o+' + super.hi(); }, get g() { return super.hi(); },"
             " viaArrow() { return (() => super.hi())(); } };"
@@ -516,10 +527,10 @@ int main() {
             "undefined");
     answers("var r = typeof blockFn; { function blockFn() { return 3; } } return r + blockFn();",
             "undefined3");
-    // A SCRIPT'S BLOCK IS A SCOPE TOO, and the global is a copy the
-    // declaration makes when it runs (B.3.3.2): the block's own binding is
-    // what the function body closes over, and a `let` at the top level - or
-    // in any block on the way down - stops the copy being made at all.
+    // A script's block is a scope too, and the global is a copy the
+    // declaration makes when it runs (Annex B.3.3.2): the block's own binding
+    // is what the function body closes over, and a `let` at the top level, or
+    // in any block on the way down, stops the copy being made at all.
     answers("{ function scoped() { var was = scoped; scoped = 1;"
             " return typeof was + ':' + scoped; } } return scoped();",
             "function:1");
@@ -527,8 +538,8 @@ int main() {
     answers("{ let inner = 1; { function inner() {} } } return typeof inner;", "undefined");
     answers("'use strict'; { function strictOnly() {} } return typeof strictOnly;", "undefined");
     // The heads that bind lexically for the block below them: a `for`, a
-    // `switch` body, and a DESTRUCTURING catch parameter - a simple one is
-    // B.3.5's relaxation, so the extension still applies there.
+    // `switch` body, and a destructuring catch parameter. A simple catch
+    // parameter is Annex B.3.5's relaxation, so the extension still applies.
     answers("function f() { for (let h; ;) { { function h() {} } break; } return typeof h; }"
             " return f();",
             "undefined");
@@ -546,7 +557,7 @@ int main() {
     answers("function f() { { function h() { return 1; } { function h() { return 2; } } }"
             " return h(); } return f();",
             "1");
-    // The var binding is only CREATED when nothing has the name; the write
+    // The var binding is only created when nothing has the name; the write
     // happens whenever a `var` or another function declaration does.
     answers("function f() { { function h() { return 'inner'; } } var r = h();"
             " function h() { return 'outer'; } return r; } return f();",
@@ -556,30 +567,31 @@ int main() {
     answers("function f() { { function h() { return 1; } } { function h() { return 2; } }"
             " return h(); } return f();",
             "2");
-    // ...and never for `arguments`, whose binding the extension leaves alone.
+    // The extension never applies to `arguments`, whose binding it leaves alone.
     answers("function f() { { function arguments() {} } return typeof arguments; } return f();",
             "object");
-    // A parameter of the name keeps it, `if` clause or block (B.3.4 makes the
+    // A parameter of the name keeps it, `if` clause or block (Annex B.3.4 makes the
     // clause a block of its own, so the declaration binds there).
     answers("function f(p) { if (true) function p() {} return p; } return f(123);", "123");
 
-    // --- `using` (9.13): the syntax and the early errors. The disposal
-    // itself needs Symbol.dispose, which is not installed yet (see the
-    // report of 2026-09-12); a null resource registers nothing and runs.
+    // --- `using` (ECMA-262 9.13): the syntax and the early errors. A null or
+    // undefined resource registers nothing; an object with no [Symbol.dispose]
+    // is a TypeError at the declaration.
     answers("{ using a = null; using b = undefined; } return 1;", "1");
     answers("var t = 0; try { using a = {}; } catch (e) { t = e instanceof TypeError; } return t;",
             "true");
     refused("using x;");
     answers("var using = [], q = 0; using [q] = 7; return using[0];",
-            "7"); // an index, not a pattern
+            "7"); // An index, not a pattern.
     refused("if (x) using y = z;");
     refused("function f() { await using x = y; }");
-    answers("var using = 1; return using;", "1"); // an ordinary name everywhere else
+    answers("var using = 1; return using;", "1"); // An ordinary name everywhere else.
     answers("var using, x; using\nx = 2; return x;", "2");
 
-    // --- A TEMPLATE HOLE ends at the `}` that balances it as a TOKEN (LOGIC-023):
-    // a brace inside a string, comment, regex or nested template is data. The
-    // naive cut made `${"}${alert(1)}"}` two holes, the second one code.
+    // --- A template hole ends at the `}` that balances it as a token: a brace
+    // inside a string, comment, regex or nested template is data. Counting raw
+    // braces would split `${"}${alert(1)}"}` into two holes and run the second
+    // as code.
     answers("var ran = 0; function alert() { ran = 1; }"
             " var s = `${\"}${alert(1)}\"}`; return s + ran;",
             "}${alert(1)}0");
@@ -587,10 +599,10 @@ int main() {
             " var s = String.raw`${'}${alert(1)}'}`; return s + ran;",
             "}${alert(1)}0");
     answers("return `<${ /* } */ 1 }|${ /}/.source }|${ `a${1}b` }>`;", "<1|}|a1b>");
-    // ponytail: the ctjs LEXER still cuts the whole template by counting raw
+    // ponytail: the ctjs lexer still cuts the whole template by counting raw
     // braces, so a `{` in data (`${"{"}`) or a backtick after a `}` in data
-    // (`${"}`"}`) mis-cuts the token itself - a parse error, or the source
-    // after it swallowed into the template - fixable only in the submodule.
+    // (`${"}`"}`) mis-cuts the token itself: a parse error, or the source after
+    // it swallowed into the template. Only a fix in the ctjs lexer can solve it.
     answers("return `${ {v: '}'}.v }`;", "}");
     // A hole that does not parse is a SyntaxError where it runs, not undefined.
     answers("try { return `${ 1 + }`; } catch (e) { return e instanceof SyntaxError; }", "true");

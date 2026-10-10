@@ -1,8 +1,12 @@
-// The CSSOM declaration block - CSSOM §6.6 over style/css/properties.hpp -
-// with the shorthand expansion and reconstruction css/cssom compares as
-// strings. Each case names the WPT file it stands in for; the block is driven
-// directly, with no page, because both `el.style` and `rule.style` are built
-// on exactly these functions.
+//===- declarations.cpp - CSSOM declaration block tests ---------*- C++ -*-===//
+//
+// The CSSOM declaration block (CSSOM 6.6, implemented in
+// style/css/properties.hpp), with the shorthand expansion and reconstruction
+// that WPT css/cssom compares as strings. Each case names the WPT file it
+// stands in for. The block is driven directly, with no page, because both
+// `el.style` and `rule.style` are built on exactly these functions.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/style/css/properties.hpp>
 
@@ -29,7 +33,7 @@ namespace {
     return serialize_declaration_block(block);
 }
 
-// shorthand-values.html: every row is `cssText = a; cssText == b`.
+/// shorthand-values.html: every row is `cssText = a; cssText == b`.
 void test_shorthand_values() {
     CHECK_EQ(round_trip("border: 1px; border-top: 1px;"), std::string{"border: 1px;"});
     CHECK_EQ(round_trip("border: 1px solid red;"), std::string{"border: 1px solid red;"});
@@ -72,7 +76,7 @@ void test_shorthand_values() {
              std::string{"padding: 10px !important;"});
 }
 
-// cssstyledeclaration-csstext.html: the logical property groups.
+/// cssstyledeclaration-csstext.html: the logical property groups.
 void test_logical_groups() {
     CHECK_EQ(round_trip("margin: 10px; margin-inline: 10px; margin-block: 10px; margin-inline-end: "
                         "10px; margin-bottom: 10px;"),
@@ -92,7 +96,7 @@ void test_logical_groups() {
              std::string{"padding-block-start: 2px; padding-top: 3px;"});
 }
 
-// shorthand-serialization, flex-serialization, cssstyledeclaration-all-shorthand.
+/// shorthand-serialization, flex-serialization, cssstyledeclaration-all-shorthand.
 void test_reads_and_all() {
     declaration_block block;
     CHECK(set_declaration(block, "margin", "20px 20px 20px 20px", false));
@@ -128,15 +132,16 @@ void test_reads_and_all() {
     CHECK_EQ(declaration_value(block, "width"), std::string{"unset"});
     CHECK_EQ(declaration_value(block, "all"), std::string{"unset"});
     CHECK(!set_declaration(block, "all", "10px", false));
-    // A shorthand this table cannot split still answers from its longhands
-    // when `all` set them, and its whole entry is gone.
+    // After `all` overrides a shorthand's longhands, the shorthand reads back
+    // from them and its own declaration is removed.
     block.clear();
     parse_declaration_block(block, "font: 12px serif; all: revert");
     CHECK_EQ(declaration_value(block, "font"), std::string{"revert"});
     CHECK_EQ(serialize_declaration_block(block), std::string{"all: revert;"});
     block.clear();
     parse_declaration_block(block, "font: 12px serif");
-    // Seven it names and the six other font-variant-* longhands it resets.
+    // The seven longhands `font` names plus the six other font-variant-*
+    // longhands it resets.
     CHECK_EQ(block.size(), std::size_t{13});
     CHECK_EQ(declaration_value(block, "font"), std::string{"12px serif"});
     CHECK_EQ(declaration_value(block, "font-weight"), std::string{"normal"});
@@ -155,8 +160,9 @@ void test_reads_and_all() {
     CHECK_EQ(round_trip("outline-color: invert"), std::string{});
     CHECK_EQ(round_trip("font: Arial"), std::string{});
 
-    // A value this table cannot split stays whole, and a whole shorthand
-    // still reads back - shorthand-serialization's `background: var(--a)`.
+    // A shorthand value the longhand table cannot split (such as `var()`)
+    // stays whole and still reads back (shorthand-serialization's
+    // `background: var(--a)`).
     block.clear();
     CHECK(set_declaration(block, "margin", "var(--a)", false));
     CHECK_EQ(block.size(), std::size_t{1});
@@ -200,7 +206,7 @@ void test_reads_and_all() {
     CHECK_EQ(serialize_declaration_block(block), std::string{"--ab: value; --0: x;"});
 }
 
-// css/css-backgrounds/parsing/{border-radius,webkit-border-radius}-*.
+/// css/css-backgrounds/parsing/{border-radius,webkit-border-radius}-*.
 void test_border_radius() {
     using ctbrowser::style::css::supports_declaration;
     for (const std::string_view name : {"border-radius", "-webkit-border-radius"}) {
@@ -270,7 +276,7 @@ void test_border_radius() {
              std::string{"border-radius: var(--radius);"});
 }
 
-// css/css-backgrounds/parsing/border-image-*: grouped slice/width/outset and resets.
+/// css/css-backgrounds/parsing/border-image-*: grouped slice/width/outset and resets.
 void test_border_image() {
     using ctbrowser::style::css::supports_declaration;
     for (const auto & [value, expected] :
@@ -397,7 +403,7 @@ void test_repeating_gradients() {
         !supports_declaration("background-image", "repeating-linear-gradient(red, unknown(blue))"));
 }
 
-// css/css-multicol/parsing/columns-*: width/count in either order and optional height.
+/// css/css-multicol/parsing/columns-*: width/count in either order and optional height.
 void test_columns() {
     using ctbrowser::style::css::supports_declaration;
     for (const auto & [value, expected] : {std::pair{"auto 10em", "10em"},
@@ -465,7 +471,7 @@ void test_columns() {
     CHECK(removed && block.empty());
 }
 
-// Background layer components reset omitted longhands and retain their own order.
+/// Background layer components reset omitted longhands and retain their own order.
 void test_background() {
     using ctbrowser::style::css::supports_declaration;
     declaration_block block;

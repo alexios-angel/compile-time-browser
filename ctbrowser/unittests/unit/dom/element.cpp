@@ -1,3 +1,10 @@
+//===- ctbrowser/unittests/unit/dom/element.cpp - element tests -----------===//
+//
+// Unit tests for dom/element.hpp: element_ref identity and validation, and the
+// name-validated attribute helpers behind setAttribute, getAttribute and
+// toggleAttribute (HTML lowercasing, XML case preservation, namespaces).
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/dom/element.hpp>
 
 #include "check.hpp"
@@ -8,6 +15,8 @@ using namespace ctbrowser;
 
 namespace {
 
+/// An element_ref is (document, node): equal node ids in different documents
+/// are different elements, and a detached node is still a valid element.
 void test_borrowed_identity() {
     atom_table atoms;
     atom_table other_atoms;
@@ -43,6 +52,8 @@ void test_borrowed_identity() {
     }
 }
 
+/// set_element_attribute lowercases HTML names, logs exactly one write per
+/// call, and rejects an invalid name without interning it or writing.
 void test_attribute_names_and_writes() {
     atom_table atoms;
     document doc{atoms};
@@ -82,6 +93,7 @@ void test_attribute_names_and_writes() {
         const auto result = set_element_attribute(doc, element, name, "changed");
         CHECK(!result && result.error() == dom_error::invalid_attribute_name);
     }
+    // An invalid name is reported even when the node is invalid too.
     const auto priority = set_element_attribute(doc, {}, "", "changed");
     CHECK(!priority && priority.error() == dom_error::invalid_attribute_name);
     CHECK_EQ(doc.version(), version);
@@ -93,6 +105,8 @@ void test_attribute_names_and_writes() {
     CHECK(!text && text.error() == dom_error::not_an_element);
 }
 
+/// Names are not lowercased on SVG elements or in an XML document, and a
+/// qualified-name write changes only the first matching attribute.
 void test_case_and_namespace() {
     atom_table atoms;
     document doc{atoms};
@@ -131,6 +145,8 @@ void test_case_and_namespace() {
     CHECK(get_element_attribute(doc, element, "P:ATTR") == "two");
 }
 
+/// get_element_attribute returns an owned copy, never writes, and accepts
+/// names the setter would reject.
 void test_attribute_reads() {
     atom_table atoms;
     document doc{atoms};
@@ -164,6 +180,8 @@ void test_attribute_reads() {
     CHECK(doc.take_writes().empty());
 }
 
+/// toggle_element_attribute with and without `force`: only real changes bump
+/// the version or log a write, and errors are reported in a fixed order.
 void test_attribute_toggle() {
     atom_table atoms;
     document doc{atoms};
@@ -196,7 +214,7 @@ void test_attribute_toggle() {
     CHECK(!result.present && result.update.value());
     CHECK(!doc.read().has_attribute(element, disabled));
     CHECK_EQ(doc.version(), before + 1);
-    // A removal is noted too, as one: HTML's attribute change steps run for it
+    // A removal is logged too, as one write: HTML's attribute change steps run for it
     // (a <details> losing `open` queues its toggle).
     const auto removed = doc.take_writes();
     CHECK_EQ(removed.size(), 1u);
@@ -228,6 +246,8 @@ void test_attribute_toggle() {
     CHECK(result.present && !result.update && result.update.error() == dom_error::not_an_element);
 }
 
+/// toggle_element_attribute follows the same case and namespace rules as
+/// set_element_attribute.
 void test_toggle_case_and_namespace() {
     atom_table atoms;
     document doc{atoms};

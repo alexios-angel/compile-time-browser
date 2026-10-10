@@ -1,12 +1,14 @@
-// THE dom/nodes CORNERS THAT A DIFF, A HANDLE OR A BYTE COUNT GOT WRONG.
+//===- ctbrowser/unittests/unit/dom/nodes_wpt.cpp - dom/nodes WPT cases ---===//
 //
-// Each case here stood behind a failing web-platform-tests file in dom/nodes,
-// and each is the smallest expression that fails if the fix goes: the document
-// element's parentNode, a same-value attribute write still queueing a
-// mutation record, an Attr keeping its identity, a surrogate pair being split
-// on a UTF-16 offset, a collection's indices being its own properties, and
-// `createElement("f:oo")` keeping the colon in its local name.
-
+// Minimal reproductions of web-platform-tests dom/nodes cases: the document
+// element's parentNode, a same-value attribute write still queueing a mutation
+// record, an Attr keeping its identity, a surrogate pair split at a UTF-16
+// offset, a collection's indices being its own properties,
+// `createElement("f:oo")` keeping the colon in its local name, fragment
+// parsing, Range, and nodes moved between documents. Each case fails if the
+// behaviour its WPT file checks regresses.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
@@ -22,19 +24,20 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <div id=outer><p id=p1 class="a">one</p></div>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Evaluates `expression` on a fresh copy of page_html (many cases mutate the
+/// document) and checks that it stringifies to `expected`.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
 
-// The document element sits in the Document node's child list with no
-// parent pointer (document::document_node), and the page must not see that.
+/// The document element sits in the Document node's child list with no
+/// parent pointer (document::document_node), and the page must not see that.
 void test_the_document_element_has_a_parent_and_siblings() {
     is("document.documentElement.parentNode === document", "true");
     is("document.documentElement.previousSibling === document.doctype", "true");
     is("document.doctype.nextSibling === document.documentElement", "true");
     is("document.documentElement.parentElement === null", "true");
-    // ...and a node of ANOTHER document is DISCONNECTED, consistently.
+    // A node of another document is disconnected, and both directions agree.
     is(R"JS((function () {
         var other = document.implementation.createHTMLDocument('');
         var a = document.getElementById('p1'), b = other.body;
@@ -44,8 +47,9 @@ void test_the_document_element_has_a_parent_and_siblings() {
        "true");
 }
 
-// A diff of before against after cannot see `setAttribute("class", "a")` on
-// an element whose class is already "a"; the write log can.
+/// A diff of before against after cannot see `setAttribute("class", "a")` on
+/// an element whose class is already "a"; the document's write log can, so the
+/// MutationObserver record is still queued.
 void test_a_write_that_changes_nothing_still_queues_a_record() {
     is(R"JS((function () {
         var p = document.getElementById('p1');
@@ -60,7 +64,7 @@ void test_a_write_that_changes_nothing_still_queues_a_record() {
         return records.map(function (r) { return r.type + ':' + r.oldValue; }).join(',');
     })())JS",
        "attributes:a,attributes:a,characterData:one");
-    // The record names the LOCAL name and the namespace.
+    // The record names the local name and the namespace.
     is(R"JS((function () {
         var p = document.getElementById('p1');
         var m = new MutationObserver(function () {});
@@ -72,6 +76,8 @@ void test_a_write_that_changes_nothing_still_queues_a_record() {
        "lang http://example.org/");
 }
 
+/// The same Attr object comes back from every lookup, keeps its value after
+/// removal, and cannot be set on a second element.
 void test_an_attr_keeps_its_identity_and_loses_its_owner_when_removed() {
     is(R"JS((function () {
         var p = document.getElementById('p1');
@@ -91,9 +97,9 @@ void test_an_attr_keeps_its_identity_and_loses_its_owner_when_removed() {
     is("document.createAttribute('x').cloneNode() instanceof Attr", "true");
 }
 
-// Offsets are UTF-16 code units, and one may fall between the halves of a
-// surrogate pair: the lone half survives (as WTF-8) and rejoins on the other
-// side of a replaceData.
+/// Offsets are UTF-16 code units, and one may fall between the halves of a
+/// surrogate pair: the lone half survives (stored as WTF-8) and rejoins its
+/// partner after a replaceData.
 void test_a_surrogate_pair_can_be_split_and_rejoined() {
     is(R"JS((function () {
         var t = document.createTextNode('🌠 test');
@@ -104,11 +110,11 @@ void test_a_surrogate_pair_can_be_split_and_rejoined() {
        "true,true,7");
 }
 
-// WebIDL's legacy platform object: indices and exposed names are own
-// properties, `item` is inherited and an expando may shadow it.
+/// WebIDL's legacy platform object: indices and exposed names are own
+/// properties, `item` is inherited and an expando may shadow it.
 void test_a_collection_owns_its_indices_and_names() {
     // Numeric access uses the actual collection length. Large absent indices
-    // and overflowing/noncanonical keys must remain harmless reads.
+    // and overflowing or noncanonical keys must remain harmless reads.
     is(R"JS((function () {
         var list = document.querySelectorAll('p');
         return list.length === 1 && list[0] === list.item(0) &&
@@ -139,8 +145,9 @@ void test_a_collection_owns_its_indices_and_names() {
        "true,2,true,true");
     // NodeList-live-mutations: the own keys after a mutation nothing read
     // through, and NodeList-Iterable: the iterator sees what is appended
-    // between two `next()`s. (A `for...of` over a collection still snapshots -
-    // the VM materialises a proxy rather than calling its @@iterator.)
+    // between two `next()`s. (A `for...of` over a collection still snapshots:
+    // context::iterable_values copies a proxy's elements into an array rather
+    // than calling its @@iterator.)
     is(R"JS((function () {
         var d = document.createElement('div');
         var kids = d.childNodes;
@@ -159,9 +166,9 @@ void test_a_collection_owns_its_indices_and_names() {
     })())JS",
        "0|0,1|b1 b2 afterb1 afterb2|0 1 2 3|b2|true|true");
     // WebIDL's legacy platform object (3.9): an index and a visible name are
-    // read-only DATA properties that can be neither redefined nor deleted, an
-    // assignment does not shadow a name, and `length` is branded - asked of
-    // anything but a collection it is a TypeError.
+    // read-only data properties that can be neither redefined nor deleted, an
+    // assignment does not shadow a name, and `length` is branded: reading it
+    // from anything but a collection is a TypeError.
     is(R"JS((function () {
         var list = document.getElementsByTagName('p');
         var d = Object.getOwnPropertyDescriptor(list, 0);
@@ -183,6 +190,8 @@ void test_a_collection_owns_its_indices_and_names() {
        "true,false,true,true,true,false,TypeError,true,false,false,p1,TypeError");
 }
 
+/// createElement keeps a colon in the local name; createElementNS splits it
+/// into a prefix.
 void test_a_colon_is_a_prefix_only_when_it_was_made_as_one() {
     is("document.createElement('f:oo').localName", "f:oo");
     is("document.createElement('f:oo').prefix === null", "true");
@@ -193,6 +202,7 @@ void test_a_colon_is_a_prefix_only_when_it_was_made_as_one() {
        "true");
 }
 
+/// Reading outerHTML serializes the element; writing it replaces the element.
 void test_outer_html_both_ways() {
     is("document.getElementById('p1').outerHTML", "<p id=\"p1\" class=\"a\">one</p>");
     is(R"JS((function () {
@@ -204,8 +214,8 @@ void test_outer_html_both_ways() {
 }
 
 void test_markup_fragments_keep_leading_metadata_and_node_order() {
-    // All three fragment consumers used to parse a document and discard its
-    // head. This lost styles before they could reach layout, including frames.
+    // innerHTML, outerHTML and insertAdjacentHTML keep leading metadata such as
+    // a <style> in the fragment, so the styles reach layout, frames included.
     for (const char * write : {
              "host.innerHTML = markup;",
              "anchor.outerHTML = markup;",
@@ -232,9 +242,9 @@ void test_markup_fragments_keep_leading_metadata_and_node_order() {
 
 } // namespace
 
-// DOM 5's Range, the shape MutationObserver-childList.html uses it in:
-// boundaries, toString, deleteContents across a text edge, extractContents
-// into a fragment, insertNode splitting a text node, surroundContents.
+/// DOM 5's Range, the way MutationObserver-childList.html uses it:
+/// boundaries, toString, deleteContents across a text edge, extractContents
+/// into a fragment, insertNode splitting a text node, surroundContents.
 void test_a_range_cuts_moves_and_wraps() {
     is("(function () { var d = document.getElementById('outer');"
        " d.innerHTML = '<b>ab</b>cd<i>ef</i>'; var r = document.createRange();"
@@ -278,9 +288,9 @@ void test_a_range_cuts_moves_and_wraps() {
        "IndexSizeError,NotSupportedError");
 }
 
-// adoption.window.js and Node-isEqualNode-xhtml.xhtml: a fragment inserted
-// from another document is emptied there and stays there; adoptNode takes the
-// fragment itself; and isEqualNode reads across documents.
+/// adoption.window.js and Node-isEqualNode-xhtml.xhtml: a fragment inserted
+/// from another document is emptied and stays in that document; adoptNode
+/// takes the fragment itself; and isEqualNode compares across documents.
 void test_another_documents_fragment_and_nodes() {
     is(R"JS((function () {
         var doc = document.implementation.createHTMLDocument('');

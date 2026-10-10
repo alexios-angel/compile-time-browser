@@ -1,10 +1,16 @@
-// What a native holds while the page runs: rooted, copied, or found again.
+//===- unittests/unit/bindings_rooting.cpp - Natives survive page GC ------===//
 //
-// Each case gives a native a page callback - a getter, a toString, an
-// overridden DOM method - that mutates what the native is walking and
-// allocates enough to make the next call boundary collect. Without the fix
-// the native reads freed memory; ASan (the asan preset) says so, and a plain
-// build usually answers wrong or dies. With it, the answer below.
+// What a native holds while the page runs must be rooted, copied, or found
+// again.
+//
+// Each case gives a native a page callback (a getter, a toString, an overridden
+// DOM method) that mutates what the native is walking and allocates enough to
+// make the next call boundary collect. If the native does not root, copy or
+// re-find what it holds, it reads freed memory: ASan (the asan preset) reports
+// it, and a plain build usually answers wrong or crashes. A correct native
+// produces the expected answer below.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -26,17 +32,19 @@ using ctbrowser_test::said;
 
 namespace {
 
-// Enough garbage to put the heap past its collection threshold, so the next
-// C++ entry into script collects.
+/// Script defining churn(), which makes enough garbage to put the heap past
+/// its collection threshold, so the next C++ entry into script collects.
 const std::string churn = "function churn(){ var a = []; for (var i = 0; i < 200000; ++i)"
                           " a.push({i: i}); return a.length; }";
 
+/// Runs `script` (with churn() defined) in a fresh page; returns its alerts.
 std::string page(const std::string & script) {
     return said("<html><body><script>" + churn + script + "</script></body></html>");
 }
 
-// localStorage's backing object was a deletable `__items` property and the
-// only heap reference to what six natives hold by pointer.
+/// localStorage's backing object is what the Storage natives hold by pointer;
+/// it must not be reachable as a deletable `__items` property, or deleting that
+/// property frees it.
 void test_storage_backing_cannot_be_deleted() {
     CHECK_EQ(page("localStorage.setItem('a', '1');"
                   "delete localStorage.__items; churn(); churn();"
@@ -52,9 +60,9 @@ void test_storage_backing_cannot_be_deleted() {
              "v");
 }
 
-// Object spread reads each accessor, and this getter defines more accessors
-// on the object being walked - reallocating the table under the walk. What is
-// copied is the key list as it stood (CopyDataProperties takes it once).
+/// Object spread reads each accessor, and this getter defines more accessors
+/// on the object being walked - reallocating the table under the walk. What is
+/// copied is the key list as it stood (CopyDataProperties takes it once).
 void test_spread_walks_a_snapshot() {
     CHECK_EQ(page("var o = {};"
                   "for (var i = 0; i < 4; ++i) Object.defineProperty(o, 'k' + i, {enumerable: true,"
@@ -65,8 +73,9 @@ void test_spread_walks_a_snapshot() {
              "k0,k1,k2,k3");
 }
 
-// A getter's answer lived only in copy_own_properties' C++ list while the next
-// getter ran, and that getter's native call collected.
+/// Each getter's answer sits in copy_own_properties' C++ list while the next
+/// getter runs, and that getter's native call collects, so the list must be
+/// rooted.
 void test_spread_holds_getter_results() {
     const std::string collect = "churn(); [0].forEach(function() {});";
     CHECK_EQ(page("var o = {get a() { return {tag: 'kept'}; }, get b() { " + collect +
@@ -76,10 +85,11 @@ void test_spread_holds_getter_results() {
              "kept2");
 }
 
-// A re-entry refused AFTER its episode's one RangeError returned undefined with
-// nothing thrown, and the async-from-sync step cast that undefined to its pair
-// array. Each depth is tried, since which one lands on the refusal depends on
-// how many natives the step itself goes through.
+/// Once the stack-depth limit has thrown its RangeError, a further re-entry
+/// that is refused must still throw, not return undefined: the async-from-sync
+/// iterator's step would treat that undefined as its result pair. Several depths
+/// are tried, because which call hits the limit depends on how many natives the
+/// step goes through.
 void test_refused_reentry_is_a_throw() {
     CHECK_EQ(
         page("function nest(fn, n) { var args = [fn, null, []];"
@@ -93,8 +103,8 @@ void test_refused_reentry_is_a_throw() {
         "survived");
 }
 
-// A Float32Array store of a double past float's range is Infinity (the plain
-// cast is undefined behaviour), through the array and through a DataView.
+/// A Float32Array store of a double past float's range is Infinity (the plain
+/// cast is undefined behaviour), through the array and through a DataView.
 void test_float32_store_out_of_range() {
     CHECK_EQ(page("var f = new Float32Array(2); f[0] = 1e300; f[1] = -1e300;"
                   "var v = new DataView(new ArrayBuffer(4)); v.setFloat32(0, 1e300);"
@@ -102,9 +112,9 @@ void test_float32_store_out_of_range() {
              "Infinity,-Infinity,Infinity");
 }
 
-// new Blob(parts): a part's `__bytes` getter grows the page's own array under
-// the walk and collects; new File(parts, name): the name's toString collects
-// while the Blob the constructor made is only in a C++ local.
+/// new Blob(parts): a part's `__bytes` getter grows the page's own array under
+/// the walk and collects; new File(parts, name): the name's toString collects
+/// while the Blob the constructor made is only in a C++ local.
 void test_blob_and_file_constructors() {
     CHECK_EQ(page("var parts = ['ab', {get __bytes() { for (var i = 0; i < 256; ++i)"
                   " parts.push('zz'); churn(); return [1, 2]; }}, 'c'];"
@@ -114,8 +124,8 @@ void test_blob_and_file_constructors() {
              "5;n.txt:3");
 }
 
-// new URLSearchParams(sequence): iterable_values hands back the page's own
-// arrays, and a toString can grow the outer one and empty a pair.
+/// new URLSearchParams(sequence): iterable_values hands back the page's own
+/// arrays, and a toString can grow the outer one and empty a pair.
 void test_url_search_params_sequence() {
     CHECK_EQ(page("var init = [['a', {toString() { init.push(['q', 'r']); init[0].length = 0;"
                   " churn(); return '1'; }}], ['b', '2']];"
@@ -123,9 +133,9 @@ void test_url_search_params_sequence() {
              "a=1&b=2");
 }
 
-// Range.createContextualFragment in an XML document reads the list its
-// querySelectorAll call returns - here the page's own array - and walks each
-// entry through calls the page can use to drop the entry and collect.
+/// Range.createContextualFragment in an XML document reads the list its
+/// querySelectorAll call returns - here the page's own array - and walks each
+/// entry through calls the page can use to drop the entry and collect.
 void test_contextual_fragment_holds_what_it_read() {
     CHECK_EQ(page("var doc = new DOMParser().parseFromString("
                   "'<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p/></body></html>',"
@@ -143,10 +153,11 @@ void test_contextual_fragment_holds_what_it_read() {
              "removed:3;done");
 }
 
-// Range.cloneContents holds the clone its `cloneNode` call returned while it
-// looks up `appendChild`. A bound Reflect.get is a NATIVE callee answering a
-// value read off a data property - nothing but the invoke pin holds it once
-// the getter clears the property and collects.
+/// Range.cloneContents holds the clone its `cloneNode` call returned while it
+/// looks up `appendChild`. A bound Reflect.get is a native callee that returns a
+/// value read from a data property. Once the getter clears the property and
+/// collects, only the root the invoke path keeps for the callee's result holds
+/// it.
 void test_range_holds_a_native_callees_result() {
     CHECK_EQ(page("var t = document.createTextNode('hello'); document.body.appendChild(t);"
                   "var store = {c: {tag: 'ok'}};"
@@ -159,9 +170,9 @@ void test_range_holds_a_native_callees_result() {
              "got:ok:el;done");
 }
 
-// A module that dynamic-imports while it runs: the loader inserts into the
-// registry the running module's record lives in, and the record must stay
-// where run_module left it.
+/// A module that dynamic-imports while it runs: the loader inserts into the
+/// registry the running module's record lives in, and the record must stay
+/// where run_module left it.
 void test_dynamic_import_inside_a_running_module() {
     browser p{browser_options{200, 100}};
     for (int i = 0; i < 64; ++i) {

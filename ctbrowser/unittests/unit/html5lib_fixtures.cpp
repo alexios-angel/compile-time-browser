@@ -1,6 +1,8 @@
-// THE HTML PARSER AGAINST THE html5lib TREE-CONSTRUCTION FIXTURES - the record
-// of what every browser builds from every malformed input anyone has found
-// worth writing down. The WPT checkout carries them as
+//===- ctbrowser/unittests/unit/html5lib_fixtures.cpp - html5lib trees ----===//
+//
+// Runs the HTML parser against the html5lib tree-construction fixtures: the
+// record of what every browser builds from every malformed input anyone has
+// found worth writing down. The WPT checkout carries them as
 // html/syntax/parsing/resources/*.dat and runs them through iframes and
 // document.write (html5lib_write.html); this runs the same cases through the
 // tree builder directly, the way html/syntax/parsing/resources/test.js does:
@@ -8,15 +10,17 @@
 // context element through the fragment parser, `#script-off` cases skipped
 // (scripting is on), and the tree serialised in the .dat format.
 //
-// A RATCHET, PER FILE. The table below is the measured count of passing cases
+// The test is a ratchet, per file. The table below is the measured count of passing cases
 // in each file; a file that passes fewer fails this test, and one that passes
 // more fails it too - so an improvement has to be recorded, and a regression
 // in one file cannot hide behind a gain in another. What does not pass:
 // the scripted_* files need a script runner this test does not have.
 //
-// SKIPS WITHOUT THE CORPUS: the fixtures live in ~/.cache/wpt (fetched by
-// tools/wpt/fetch-wpt.sh), and a checkout without them has nothing to measure
-// - the same rule svg_basics follows without plutosvg.
+// It skips without the corpus: the fixtures live in ~/.cache/wpt (fetched by
+// tools/wpt/fetch-wpt.sh), and a checkout without them has nothing to measure,
+// the same rule svg_basics follows without plutosvg.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -37,6 +41,7 @@ using namespace ctbrowser;
 
 namespace {
 
+/// One test case from a .dat file: its input, expected tree, and options.
 struct dat_case {
     std::string data;
     std::string document;
@@ -45,9 +50,9 @@ struct dat_case {
     bool script_off = false;
 };
 
-// The .dat format, read the way test.js's parseDat reads it: each section
-// accumulates its lines, and at every case boundary the active section loses
-// the blank-line separator before the trailing newline is trimmed.
+/// Parses the .dat format the way test.js's parseDat reads it: each section
+/// accumulates its lines, and at every case boundary the active section loses
+/// the blank-line separator before the trailing newline is trimmed.
 [[nodiscard]] std::vector<dat_case> parse_dat(std::string text) {
     if (text.ends_with('\n')) { text.pop_back(); }
     std::vector<std::string> lines;
@@ -111,8 +116,9 @@ struct dat_case {
     return out;
 }
 
-// The tree in the .dat format: `|` and 2*depth-1 spaces per node, attributes
-// sorted by name one level in, a template's contents under "content".
+/// Appends \p node and its subtree to \p out in the .dat format: `|` and
+/// 2*depth-1 spaces per node, attributes sorted by name one level in, a
+/// template's contents under "content".
 void serialize(const read_txn & txn, const document & doc, atom_table & atoms, node_id node,
                int depth, std::string & out) {
     const std::string pad =
@@ -187,13 +193,14 @@ void serialize(const read_txn & txn, const document & doc, atom_table & atoms, n
     }
 }
 
+/// The recorded pass and fail counts for one fixture file.
 struct expectation {
     std::string_view file;
     int pass;
     int fail;
 };
 
-// MEASURED 2026-09-17 against the WPT checkout's html5lib-tests. Document
+// Measured on 2026-09-17 against the WPT checkout's html5lib-tests. Document
 // cases and fragment cases in every context, `#script-off` excluded.
 constexpr expectation expected[] = {
     {"adoption01", 18, 0},

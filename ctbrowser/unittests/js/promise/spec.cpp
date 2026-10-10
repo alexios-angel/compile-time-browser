@@ -1,22 +1,26 @@
-// Promise as 27.2 specifies it, after the 2026-09-12 rewrite of builtins/async.cpp:
-// the resolving functions, the SEPARATE thenable job, species and
-// subclassing, the combinators over the iterator protocol, and the ES2026
-// globals installed beside it - Iterator helpers, DisposableStack -
-// each with one assertion that fails if its algorithm is wrong.
+//===- ctbrowser/unittests/js/promise/spec.cpp - Promise spec tests -------===//
 //
-// EVERY PROMISE CASE WAITS FOR THE TURN (`expect_after_turn`, ../vm/expect.hpp):
+// Promise as ECMA-262 27.2 specifies it: the resolving functions, the separate
+// thenable job, species and subclassing, the combinators over the iterator
+// protocol, and the ES2026 globals installed beside it (Iterator helpers,
+// DisposableStack), each with one assertion that fails if its algorithm is
+// wrong.
+//
+// Every promise case waits for the turn (`expect_after_turn`, ../vm/expect.hpp):
 // a reaction runs as a microtask, never at the moment it is attached.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../vm/expect.hpp"
 #include "js_expect.hpp"
 
 int main() {
     // ================================================================
-    // RESOLUTION, 27.2.1.3.2: a thenable is ADOPTED, on its own tick
+    // Resolution, ECMA-262 27.2.1.3.2: a thenable is adopted, on its own tick.
     // ================================================================
     // `resolve(thenable)` queues NewPromiseResolveThenableJob: the thenable's
-    // `then` runs on the FIRST tick (it was queued before anything else), and
-    // the value it resolves with is delivered a tick after 'a' - which is
+    // `then` runs on the first tick (it was queued before anything else), and
+    // the value it resolves with is delivered a tick after 'a', which is
     // why 'c' lands between 'a' and 'b'.
     expect_after_turn("var result = ''; var log = [];"
                       "var thenable = { then(r) { log.push('then'); r('c'); } };"
@@ -27,22 +31,22 @@ int main() {
                       "thenacb");
     // A handler returning a promise costs the same two extra ticks: the
     // handler on tick 1, the thenable job on 2, its reaction on 3, and the
-    // value on 4 - after 1, 2 and 3.
+    // value on 4, after 1, 2 and 3.
     expect_after_turn("var result = ''; var log = [];"
                       "Promise.resolve().then(() => Promise.resolve('x')).then(v => log.push(v));"
                       "Promise.resolve().then(() => log.push(1)).then(() => log.push(2))"
                       ".then(() => log.push(3)).then(() => { result = log.join(''); });",
                       "123x");
-    // An async function RESUMED after an await that returns a PENDING
-    // promise adopts it: it settles with that promise's value, after it. It
-    // fulfilled with undefined at once (select-event.html).
+    // An async function resumed after an await that returns a pending promise
+    // adopts it and settles with that promise's value, after it settles
+    // (regression seen in WPT select-event.html, where it fulfilled with undefined).
     expect_after_turn("var result = ''; var log = []; var go;"
                       "var p = new Promise(r => { go = r; });"
                       "(async () => { await null; return p; })().then(v => {"
                       " log.push('f:' + v); result = log.join(','); });"
                       "Promise.resolve().then(() => 0).then(() => { log.push('go'); go('P'); });",
                       "go,f:P");
-    // 27.7.5.3 Await: PromiseResolve(%Promise%, v) - a thenable that is not
+    // ECMA-262 27.7.5.3 Await: PromiseResolve(%Promise%, v). A thenable that is not
     // a promise is adopted through its `then`, on its own tick, so a thenable
     // that rejects throws at the await, and one that resolves hands its
     // value over; a plain object awaits to itself.
@@ -75,7 +79,7 @@ int main() {
                       "boom");
 
     // ================================================================
-    // THE COMBINATORS TAKE AN ITERABLE, and read `resolve` once
+    // The combinators take an iterable, and read `resolve` once.
     // ================================================================
     expect_after_turn("var result = ''; Promise.all(new Set([1, Promise.resolve(2)]))"
                       ".then(v => { result = v.join(','); });",
@@ -103,12 +107,12 @@ int main() {
                       "r");
 
     // ================================================================
-    // SPECIES AND SUBCLASSING
+    // Species and subclassing.
     // ================================================================
-    // `Object.setPrototypeOf(P, Promise)` is what `extends` is specified to
-    // do for the CONSTRUCTOR (15.7.14 step 8.d) and what compile/classes.cpp
-    // does not yet: it links only the prototypes, so a subclass inherits no
-    // statics - no `P.resolve`, no `P[Symbol.species]` - without it.
+    // `extends` also sets the subclass constructor's [[Prototype]] to Promise
+    // (ECMA-262 15.7.14 step 8.d), so P inherits the statics `P.resolve` and
+    // `P[Symbol.species]`. The explicit setPrototypeOf below is redundant but
+    // harmless.
     expect_after_turn("var result = ''; class P extends Promise {}"
                       "Object.setPrototypeOf(P, Promise);"
                       "var p = new P(r => r(1));"
@@ -132,7 +136,7 @@ int main() {
     js_expect("Promise.length + Promise.prototype.then.length + Promise.all.length", "4");
 
     // ================================================================
-    // async functions still adopt their return
+    // Async functions adopt their return value.
     // ================================================================
     expect_after_turn("var result = ''; (async () => { return await Promise.resolve('a'); })()"
                       ".then(v => { result = v; });",
@@ -141,7 +145,7 @@ int main() {
         "var result = ''; (async () => { throw 'e'; })().catch(e => { result = e; });", "e");
 
     // ================================================================
-    // ITERATOR HELPERS, 27.1.3 / 27.1.4
+    // Iterator helpers, ECMA-262 27.1.3 / 27.1.4.
     // ================================================================
     // IIFEs: js_expect compiles `return (<expression>);`, and a generator
     // declaration is a statement.
@@ -175,7 +179,7 @@ int main() {
               "1-2,3");
 
     // ================================================================
-    // SYMBOL, REFLECT, DISPOSABLESTACK
+    // Symbol, Reflect, DisposableStack.
     // ================================================================
     js_expect("(function(){ try { new Symbol(); return 'no'; } catch (e) { return "
               "e.constructor.name; } })()",
@@ -193,8 +197,8 @@ int main() {
     js_expect("(function(){ try { Reflect.get(1, 'x'); return 'no'; } catch (e) { return "
               "e.constructor.name; } })()",
               "TypeError");
-    // WeakRef and FinalizationRegistry (collections/weak.cpp): installed
-    // since ctcompile retired its absence pin; a target is held strongly.
+    // WeakRef and FinalizationRegistry (collections/weak.cpp) are installed; a
+    // target is held strongly, so deref() always returns it.
     js_expect("typeof WeakRef + ',' + typeof FinalizationRegistry", "function,function");
     js_expect("(function(){ var o = {}; return new WeakRef(o).deref() === o; })()", "true");
     js_expect(

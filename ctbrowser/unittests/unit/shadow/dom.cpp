@@ -1,23 +1,24 @@
-// `Element.attachShadow` AND THE SHADOW ROOT.
+//===- ctbrowser/unittests/unit/shadow/dom.cpp - attachShadow tests -------===//
 //
-// DOM 4.8, far enough that a test which merely USES a shadow tree can run -
-// which is what thirty-one files across `dom/nodes`, `dom/events`, `css/cssom`
-// and `css/css-values` do. Most of them are not ABOUT shadow DOM: they attach a
-// tree as scaffolding and then assert something else, and every one of them died
-// on `attachShadow is undefined, not a function` before one assertion ran.
+// `Element.attachShadow` and the shadow root, DOM 4.8, far enough that a test
+// which merely uses a shadow tree can run. Thirty-one WPT files across
+// `dom/nodes`, `dom/events`, `css/cssom` and `css/css-values` attach a tree as
+// scaffolding and then assert something else.
 //
-// TWO THINGS HERE ARE NOT CONFORMANCE CHECKS AND ARE THE POINT.
+// Two checks here are not conformance checks and are the point.
 //
-// The first is that a shadow tree is INVISIBLE TO THE LIGHT DOM. It is a
-// detached DocumentFragment, so `document.querySelector` must not find anything
-// in it and the host's `childNodes` must not grow - and if a later rung ever
-// grafts the fragment into the tree to make it render, these are the assertions
-// that catch the light DOM changing shape underneath every other test.
+// The first is that a shadow tree is invisible to the light DOM. It is a
+// detached DocumentFragment, so `document.querySelector` must not find
+// anything in it and the host's `childNodes` must not grow. If rendering ever
+// grafts the fragment into the tree, these assertions catch the light DOM
+// changing shape under every other test.
 //
-// The second is that `shadowRoot.querySelector` answers AT ALL: the selector
+// The second is that `shadowRoot.querySelector` answers at all: the selector
 // engine's `select` walks from the top of the tree its root is in, and a
-// ShadowRoot is a fragment at the top of its own - the cases below run a real
+// ShadowRoot is a fragment at the top of its own. The cases below run a real
 // selector against one, through the same matcher the cascade uses.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -36,13 +37,14 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <my-widget id=custom></my-widget>
 </body></html>)";
 
-// A fresh page per case, since many of these mutate the document.
+/// Checks \p expression against a fresh page per case, since many of these
+/// mutate the document.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
 
-// An expression run after `h` is a host and `r` its open shadow root, so that
-// every case below is one line rather than four.
+/// Wraps \p body in a function that first makes `h` the #host element and `r`
+/// its open shadow root, so that every case below is one line rather than four.
 [[nodiscard]] std::string with_root(const std::string & body) {
     return "(function () { var h = document.getElementById('host');"
            " var r = h.attachShadow({mode: 'open'}); " +
@@ -53,14 +55,14 @@ void is(const std::string & expression, const std::string & expected) {
 
 void test_attach_shadow_makes_a_shadow_root() {
     // A DocumentFragment by node type - 11 - because that is what a shadow root
-    // IS. The interface is a second name for the same kind of node, which is why
+    // is. The interface is a second name for the same kind of node, which is why
     // both instanceof questions have to answer true.
     is(with_root("return r.nodeType;"), "11");
     is(with_root("return r.nodeName;"), "#document-fragment");
     is(with_root("return r instanceof ShadowRoot;"), "true");
     is(with_root("return r instanceof DocumentFragment;"), "true");
     is(with_root("return r instanceof Node;"), "true");
-    // ...and a fragment a page made itself is NOT one, which is the half that
+    // ...and a fragment a page made itself is not one, which is the half that
     // makes the distinction worth storing.
     is("document.createDocumentFragment() instanceof ShadowRoot", "false");
     is("document.createDocumentFragment() instanceof DocumentFragment", "true");
@@ -68,14 +70,14 @@ void test_attach_shadow_makes_a_shadow_root() {
     // called on.
     is(with_root("return r.mode;"), "open");
     is(with_root("return r.host === h;"), "true");
-    // THE SAME OBJECT EVERY TIME. A wrapper is cached per node, and a page that
+    // The same object every time: a wrapper is cached per node, and a page that
     // stashes `el.shadowRoot` and compares it later relies on that.
     is(with_root("return h.shadowRoot === r;"), "true");
 }
 
 void test_the_mode_is_required_and_is_one_of_two_words() {
     // `mode` is a required member of a required dictionary, so WebIDL's argument
-    // conversion throws a plain TypeError - NOT a DOMException - and it throws
+    // conversion throws a plain TypeError, not a DOMException - and it throws
     // before one thing about the element has been looked at.
     is("(function () { try { document.getElementById('host').attachShadow({}); }"
        " catch (e) { return e.name; } return 'no throw'; })()",
@@ -87,7 +89,7 @@ void test_the_mode_is_required_and_is_one_of_two_words() {
        " document.getElementById('host').attachShadow({mode: 'ajar'}); }"
        " catch (e) { return e.name; } return 'no throw'; })()",
        "TypeError");
-    // A CLOSED ROOT IS A REAL ROOT. It is only `element.shadowRoot` that refuses
+    // A closed root is a real root. It is only `element.shadowRoot` that refuses
     // to hand it over - everything else about it works, which is what makes the
     // mode a privacy measure rather than a feature switch.
     is("document.getElementById('host').attachShadow({mode: 'closed'}).mode", "closed");
@@ -107,13 +109,13 @@ void test_only_some_elements_may_host_one() {
     is("(function () { try { document.getElementById('nothost').attachShadow({mode:'open'}); }"
        " catch (e) { return e.name; } return 'no throw'; })()",
        "NotSupportedError");
-    // ...but ANY valid custom element name is, and there can be no list of those.
+    // ...but any valid custom element name is, and there can be no list of those.
     is("document.getElementById('custom').attachShadow({mode: 'open'}).mode", "open");
     is("document.createElement('section').attachShadow({mode: 'open'}).nodeType", "11");
     is("(function () { try { document.createElement('input').attachShadow({mode:'open'}); }"
        " catch (e) { return e.name; } return 'no throw'; })()",
        "NotSupportedError");
-    // TWICE IS A REFUSAL, not a second tree and not the first one handed back.
+    // A second call is refused: not a second tree and not the first one handed back.
     is(with_root("try { h.attachShadow({mode: 'open'}); }"
                  " catch (e) { return e.name; } return 'no throw';"),
        "NotSupportedError");
@@ -147,7 +149,7 @@ void test_conversion_and_foreign_document_boundaries() {
 // --- the tree inside it -----------------------------------------------------
 
 void test_a_shadow_root_holds_a_tree() {
-    // `innerHTML` PARSES, on a fragment exactly as on an element - the same
+    // `innerHTML` parses, on a fragment exactly as on an element - the same
     // function, because a shadow root has children like anything else.
     is(with_root("r.innerHTML = '<div class=\"c\">x</div>'; return r.childNodes.length;"), "1");
     is(with_root("r.innerHTML = '<div class=\"c\">x</div>'; return r.firstChild.tagName;"), "DIV");
@@ -169,7 +171,7 @@ void test_a_shadow_root_holds_a_tree() {
 }
 
 void test_the_shadow_tree_is_invisible_to_the_light_dom() {
-    // THE ASSERTION THIS FILE EXISTS FOR. A shadow root is detached, so nothing
+    // The assertion this file exists for: a shadow root is detached, so nothing
     // reached from the document can see into it: the host has no children, and
     // the document's own query finds nothing.
     is(with_root("r.innerHTML = '<div class=\"c\">x</div>'; return h.childNodes.length;"), "0");
@@ -179,7 +181,7 @@ void test_the_shadow_tree_is_invisible_to_the_light_dom() {
     is(with_root("r.innerHTML = '<div id=\"inside\">x</div>';"
                  " return String(document.getElementById('inside'));"),
        "null");
-    // ...and the id inside it IS findable through the root, which is what makes
+    // ...and the id inside it is findable through the root, which is what makes
     // the two scopes different scopes rather than one broken one.
     is(with_root("r.innerHTML = '<div id=\"inside\">x</div>';"
                  " return r.getElementById('inside').id;"),
@@ -208,7 +210,7 @@ void test_query_selector_searches_the_shadow_tree() {
     is(with_root("r.innerHTML = '<slot name=\"outer\"></slot>';"
                  " return r.querySelector('slot[name=\"outer\"]').getAttribute('name');"),
        "outer");
-    // THE COMBINATORS, which the subtree matcher walks through parent and
+    // The combinators, which the subtree matcher walks through parent and
     // sibling links of its own rather than through the cascade's cursor.
     is(with_root("r.innerHTML = '<div><span>a</span></div>';"
                  " return r.querySelector('div > span').textContent;"),
@@ -227,8 +229,8 @@ void test_query_selector_searches_the_shadow_tree() {
     is(with_root("r.innerHTML = '<p class=\"a\">1</p><p>2</p>';"
                  " return r.querySelector('p:not(.a)').textContent;"),
        "2");
-    // A DESCENDANT SEARCH NEVER RETURNS THE ROOT and never leaves the tree: a
-    // selector naming the HOST's tag must not match the host from inside.
+    // A descendant search never returns the root and never leaves the tree: a
+    // selector naming the host's tag must not match the host from inside.
     is(with_root("r.innerHTML = '<b>x</b>'; return String(r.querySelector('div'));"), "null");
     is(with_root("r.innerHTML = '<b>x</b>'; return r.querySelectorAll('*').length;"), "1");
     // Not a selector at all is a SyntaxError, exactly as on the document.
@@ -255,15 +257,14 @@ void test_get_root_node_stops_at_the_boundary() {
                  " var c = r.querySelector('.shadowChild');"
                  " return c.getRootNode({composed: true}) === document;"),
        "true");
-    // A CLOSED ROOT IS STILL A ROOT. `getRootNode` does not consult the mode -
+    // A closed root is still a root. `getRootNode` does not consult the mode -
     // only `element.shadowRoot` does.
     is("(function () { var h = document.getElementById('host');"
        " var r = h.attachShadow({mode: 'closed'}); r.innerHTML = '<b>x</b>';"
        " return r.firstChild.getRootNode() === r; })()",
        "true");
-    // And the ordinary cases, which have nothing to do with shadow DOM and had
-    // no method to answer them at all: `rootNode.html` is four more tests of
-    // exactly this.
+    // And the ordinary cases, which have nothing to do with shadow DOM:
+    // `rootNode.html` is four more tests of exactly this.
     is("document.body.getRootNode() === document", "true");
     is("document.createElement('div').getRootNode().tagName", "DIV");
     is("(function () { var p = document.createElement('div');"
@@ -282,7 +283,7 @@ void test_get_root_node_stops_at_the_boundary() {
 
 void test_is_connected_crosses_the_boundary() {
     // "Shadow-including root is a document" - so a node inside a shadow tree
-    // whose HOST is in the document is connected, and the same tree on a
+    // whose host is in the document is connected, and the same tree on a
     // detached host is not. That difference is `Node-isConnected-shadow-dom`.
     is("document.body.isConnected", "true");
     is("document.createElement('div').isConnected", "false");

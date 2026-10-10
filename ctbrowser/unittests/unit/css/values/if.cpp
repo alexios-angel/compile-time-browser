@@ -1,7 +1,11 @@
-// `if()`, CSS Values 5 §if-notation, and the Media Queries 4 condition grammar
-// it shares with `@media`. The cases are `css/css-values/if-conditionals`'
-// shapes, one per behaviour, run through the substituter directly and through
-// a page.
+//===- if.cpp - if() and media condition tests ------------------*- C++ -*-===//
+//
+// `if()`, CSS Values 5 §if-notation, and the Media Queries 4 condition
+// grammar it shares with `@media`. The cases follow WPT
+// `css/css-values/if-conditionals`, one per behaviour, run through the
+// substituter directly and through a page.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
@@ -25,8 +29,8 @@ using ctbrowser::style::css::evaluate_media_condition;
 using ctbrowser::style::css::media_environment;
 using ctbrowser::style::css::substitute_var;
 
-// An element with a few custom properties, a parent with its own, one
-// attribute, and a 30px font.
+/// An element with a few custom properties, a parent with its own, one
+/// attribute, and a 30px font.
 struct scope {
     atom_table atoms;
     std::map<std::string, std::string> own{{"--x", "3"},
@@ -82,9 +86,10 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if(style(--x: 1): v1; style(--x: 3): v3; else: v4)"), std::string{"v3"});
     CHECK_EQ(s.sub("if(style(--x: 1): v1; else: v2; style(--x: 3): v3)"), std::string{"v2"});
     CHECK_EQ(s.sub("if(style(--x: 3): a; else: b)if(style(--x): c)"), std::string{"a/**/c"});
-    // CSS Syntax 3 §9.2's pairs: an ident before `(`, `#` before a name, `+`
-    // before a number and `/` before `*` would merge too; `)` before anything
-    // would not.
+    // When two adjacent substitutions would re-tokenize as one token (CSS Syntax
+    // 3 §9.2: two idents, an ident before `(`, `#` before a name, `+` before a
+    // number, `/` before `*`), the substituter puts an empty comment `/**/`
+    // between them. A `)` merges with nothing, so `()a` gets no comment.
     CHECK_EQ(s.sub("if(style(--x: 3): foo)if(style(--x): ())"), std::string{"foo/**/()"});
     CHECK_EQ(s.sub("if(style(--x: 3): #)if(style(--x): bar)"), std::string{"#/**/bar"});
     CHECK_EQ(s.sub("if(style(--x: 3): +)if(style(--x): 12)"), std::string{"+/**/12"});
@@ -119,9 +124,9 @@ void test_branches_and_else() {
     CHECK_EQ(s.sub("if(style((--x) or (--loop)): a; else: b)"), std::string{"a"});
 }
 
-// ident-function-substitution and attr-argument-grammar: ident() joins its
-// arguments at computed-value time and may name a var()'s property; a var()
-// in attr()'s head may not grow a comma; a cycle is not rescued by a fallback.
+/// ident-function-substitution and attr-argument-grammar: ident() joins its
+/// arguments at computed-value time and may name a var()'s property; a var()
+/// in attr()'s head may not grow a comma; a cycle is not rescued by a fallback.
 void test_ident_and_argument_lists() {
     scope s;
     s.own["--part"] = "\"name\"";
@@ -175,12 +180,13 @@ void test_style_queries() {
     CHECK(!holds("style(--x: revert)"));
     CHECK(holds("style((--x: 3) and (not (--len: 1px)))"));
     CHECK(holds("style((--x: 0) or (--len: 11px))"));
-    CHECK(!holds("style((--x: 3) and (not (--y: red) or (--z: 10px)))")); // unparseable: unknown
+    CHECK(
+        !holds("style((--x: 3) and (not (--y: red) or (--z: 10px)))")); // Unparseable, so unknown.
     CHECK(holds("style(--x: 3) and style(--len: 11px)"));
     CHECK(holds("style(--x: 0) or (style(--len: 11px) and style(--n: 5))"));
     CHECK(!holds("style(style(--x))"));
     CHECK(!holds("style(--x!)"));
-    CHECK(holds("style(color: green)") == false); // rgb(0, 128, 0) is not the text `green`
+    CHECK(holds("style(color: green)") == false); // rgb(0, 128, 0) is not the text `green`.
     CHECK(holds("style(color: rgb(0, 128, 0))"));
     // Ranges.
     CHECK(holds("style(5 > 3)"));
@@ -229,8 +235,8 @@ void test_media_and_supports() {
                 "supports(display: table-cell)"));
 }
 
-// Media Queries 4: ranges, `or`, nesting, `not`, and an unknown feature that is
-// unknown rather than a syntax error.
+/// Media Queries 4: ranges, `or`, nesting, `not`, and an unknown feature that is
+/// unknown rather than a syntax error.
 void test_media_conditions() {
     media_environment env;
     env.viewport_width = 800;
@@ -249,9 +255,9 @@ void test_media_conditions() {
     CHECK_EQ(q("(width > 100px) or (unknown-feature)"), std::optional<bool>{true});
     CHECK_EQ(q("(width > 100px) and (height > 100px) or (hover)"), std::optional<bool>{});
     CHECK_EQ(q("width > 100px"), std::optional<bool>{true});
-    CHECK_EQ(q("garbage"), std::optional<bool>{false}); // a boolean feature nothing here knows
+    CHECK_EQ(q("garbage"), std::optional<bool>{false}); // A boolean feature nothing here knows.
     CHECK_EQ(q("garbage garbage garbage"), std::optional<bool>{});
-    // ...and a whole query list, as `@media` writes one.
+    // A whole query list, as `@media` writes one.
     using ctbrowser::style::css::evaluate;
     using ctbrowser::style::css::parse_media_query_list;
     const auto list = [&](std::string_view text) {
@@ -266,15 +272,15 @@ void test_media_conditions() {
     CHECK(list("only screen and (max-width: 900px)"));
     CHECK(!list("screen and (max-width: 500px)"));
     CHECK(list("(width >= 600px) and (width <= 900px)"));
-    CHECK(!list("screen and (min-width: 900px) or (max-width: 10px)")); // `or` after a type
+    CHECK(!list("screen and (min-width: 900px) or (max-width: 10px)")); // `or` after a media type.
     CHECK(list(""));
     CHECK(!list("screen and"));
     CHECK(!list("and (width > 1px)"));
     CHECK(list("(prefers-color-scheme: light)"));
 }
 
-// The whole way through a page: a custom property, an ordinary one, and a
-// parent to inherit from.
+/// The whole way through a page: a custom property, an ordinary one, and a
+/// parent to inherit from.
 void test_a_page_reads_if_back() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;

@@ -1,8 +1,12 @@
+//===- ctbrowser/unittests/unit/image/bitmap.cpp - ImageBitmap --*- C++ -*-===//
+//
 // createImageBitmap and ImageBitmap (HTML 8.10): a bitmap from a canvas, an
 // ImageData or another bitmap, cropped, drawn back with drawImage and detached
-// by close(); and the REJECTIONS - a Blob that is no image an
+// by close(); and the rejections: a Blob that is no image is an
 // InvalidStateError (what promise-rejection-events.html's UA-triggered
 // rejection is), an empty crop a RangeError, a non-image a TypeError.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

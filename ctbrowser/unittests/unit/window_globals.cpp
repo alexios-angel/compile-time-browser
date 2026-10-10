@@ -1,12 +1,16 @@
-// A SCRIPT'S `var` IS A PROPERTY OF THE WINDOW THAT `delete` CANNOT REMOVE.
+//===- window_globals.cpp - Window global tests -----------------*- C++ -*-===//
 //
-// 16.1.7 GlobalDeclarationInstantiation binds a script's `var`s - and a block
-// function's Annex B var - with CreateGlobalVarBinding(name, false):
+// A script's `var` is a property of the window that `delete` cannot remove.
+//
+// ECMA-262 16.1.7 GlobalDeclarationInstantiation binds a script's `var`s, and
+// a block function's Annex B var, with CreateGlobalVarBinding(name, false):
 // enumerable, not configurable. An eval's are configurable (19.2.1.3), and a
 // global made by plain assignment is an ordinary configurable property that a
 // `delete` really removes (realm_record::declared, the window view's traps).
 // Stands in for test262's language/global-code/decl-var.js and the Annex B
 // global-init files, seen through the Window instead of the bare VM global.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

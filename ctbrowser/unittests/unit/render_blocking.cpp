@@ -1,21 +1,25 @@
-// THE `blocking` ATTRIBUTE, HTML 2.5.7, and what "render-blocking" means here.
+//===- ctbrowser/unittests/unit/render_blocking.cpp - blocking attr -------===//
+//
+// The `blocking` attribute, HTML 2.5.7, and what "render-blocking" means here.
 //
 // `[SameObject, PutForwards=value] readonly attribute DOMTokenList blocking` on
 // `<link>`, `<script>` and `<style>`, with `render` as its one supported token.
-// It is the same token-list object `classList` is, over another attribute -
-// see install_element_views in lib/Shell/bindings/element/views.cpp - so the
-// first two cases pin down the shape `html/dom/render-blocking/blocking-idl-
-// attr.html` asks for: `supports`, the forwarding assignment, and that the
-// list follows the attribute in both directions.
+// It is the same token-list object `classList` is, over another attribute (see
+// install_element_child_views in lib/Shell/bindings/element/child_views.cpp),
+// so the first two cases pin down the shape `html/dom/render-blocking/
+// blocking-idl-attr.html` asks for: `supports`, the forwarding assignment, and
+// that the list follows the attribute in both directions.
 //
-// THE LAST CASE IS THE ORDERING, AND IT IS THE ENGINE'S ONLY ORDERING. The
-// corpus observes render-blocking through time - a paint entry must not
-// precede the sheet's load - and this engine loads a stylesheet synchronously
-// from the asset registry while the page is built, so there is no moment at
-// which a frame could run before the sheet applied. That is what the case
-// proves: the first animation frame and the window's load event both see the
-// blocking sheet's colour. A rung that makes stylesheet loading asynchronous
-// is a rung that has to keep this case green by holding the frame back.
+// The last case is the ordering, the only one this engine has. The WPT tests
+// observe render-blocking through time (a paint entry must not precede the
+// sheet's load), and this engine loads a stylesheet synchronously from the
+// asset registry while the page is built, so no frame can run before the sheet
+// applies. The case proves it: the first animation frame and the window's load
+// event both see the blocking sheet's colour. If stylesheet loading ever
+// becomes asynchronous, the first frame must be held back until the sheet
+// applies, or this case fails.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>

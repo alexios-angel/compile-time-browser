@@ -1,7 +1,10 @@
+//===- pseudo_classes.cpp - Pseudo-class matching tests ---------*- C++ -*-===//
+//
 // Pseudo-classes: the structural ones, :nth-child() and its arithmetic, the
-// functional ones (:is, :where, :not, :has) and the element-state ones. Carved
-// out of unit/style_basics.cpp on 2026-09-08 - shorthands.cpp names the
-// family, and fixture.hpp is the fixture every file in it shares.
+// functional ones (:is, :where, :not, :has) and the element-state ones.
+// fixture.hpp is the shared document-and-resolve fixture.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -20,7 +23,7 @@ using namespace ctbrowser::style;
 
 namespace {
 
-// STRUCTURAL PSEUDO-CLASSES. Position, not name - so every one of them is
+// Structural pseudo-classes. Position, not name - so every one of them is
 // arithmetic on four numbers the traversal counted on its way down.
 void test_structural_pseudos() {
     {
@@ -34,7 +37,7 @@ void test_structural_pseudos() {
         CHECK(f.value_of(f.find_id("b"), "background-color").empty());
     }
     {
-        // :only-child needs the level TOTAL, which the traversal cannot know from the
+        // :only-child needs the level total, which the traversal cannot know from the
         // siblings it has already seen - it is counted when the level is entered.
         fixture f;
         f.load("<div><p id=lonely></p></div><div><p id=x></p><p id=y></p></div>",
@@ -56,13 +59,13 @@ void test_structural_pseudos() {
         expect_value(f, f.find_id("e1"), "border-color", "#030303", ":only-of-type");
     }
     {
-        // :empty. WHITESPACE IS CONTENT per the spec, so `<p> </p>` is not empty -
+        // :empty. Whitespace is content per the spec, so `<p> </p>` is not empty -
         // this is the case an implementation trims and gets wrong.
         fixture f;
         f.load("<p id=none></p><p id=space> </p><p id=text>x</p><p id=child><em></em></p>",
                "p:empty { color: #010101 }");
         expect_value(f, f.find_id("none"), "color", "#010101", ":empty on nothing");
-        CHECK(f.value_of(f.find_id("space"), "color").empty()); // whitespace counts
+        CHECK(f.value_of(f.find_id("space"), "color").empty()); // Whitespace counts.
         CHECK(f.value_of(f.find_id("text"), "color").empty());
         CHECK(f.value_of(f.find_id("child"), "color").empty());
     }
@@ -74,7 +77,7 @@ void test_structural_pseudos() {
     }
 }
 
-// nth-child AND ITS THREE RELATIVES. The An+B series is where the awkwardness is:
+// nth-child and its three relatives. The An+B series is where the awkwardness is:
 // the tokenizer has already decided where the numbers are, so `2n+1` is a dimension
 // then a signed number while `2n + 1` is a dimension, a delim and a number.
 void test_nth_child() {
@@ -85,7 +88,7 @@ void test_nth_child() {
     };
     {
         fixture f;
-        f.load(six, "li:nth-child(2n) { color: #010101 }"); // the even ones
+        f.load(six, "li:nth-child(2n) { color: #010101 }"); // The even ones.
         CHECK(!lit(f, "n1", "1"));
         CHECK(lit(f, "n2", "2"));
         CHECK(!lit(f, "n3", "3"));
@@ -93,7 +96,7 @@ void test_nth_child() {
     }
     {
         fixture f;
-        f.load(six, "li:nth-child(2n+1) { color: #010101 }"); // the odd ones
+        f.load(six, "li:nth-child(2n+1) { color: #010101 }"); // The odd ones.
         CHECK(lit(f, "n1", "1"));
         CHECK(!lit(f, "n2", "2"));
         CHECK(lit(f, "n3", "3"));
@@ -111,7 +114,7 @@ void test_nth_child() {
         CHECK(lit(f, "n2", "2"));
     }
     {
-        // a == 0 is a SINGLE index, not a series.
+        // a == 0 is a single index, not a series.
         fixture f;
         f.load(six, "li:nth-child(3) { color: #010101 }");
         CHECK(!lit(f, "n2", "2"));
@@ -119,7 +122,7 @@ void test_nth_child() {
         CHECK(!lit(f, "n4", "4"));
     }
     {
-        // A NEGATIVE step counts down from B, so this is the first three and nothing
+        // A negative step counts down from B, so this is the first three and nothing
         // else. An implementation that only checks divisibility matches everything.
         fixture f;
         f.load(six, "li:nth-child(-n+3) { color: #010101 }");
@@ -136,7 +139,7 @@ void test_nth_child() {
         CHECK(!lit(f, "n2", "2"));
     }
     {
-        // nth-last-child counts from the END.
+        // nth-last-child counts from the end.
         fixture f;
         f.load(six, "li:nth-last-child(1) { color: #010101 }");
         CHECK(lit(f, "n6", "last"));
@@ -159,7 +162,7 @@ void test_nth_child() {
     }
 }
 
-// :not, :is AND :where. The argument is a full selector list run against the same
+// :not, :is and :where. The argument is a full selector list run against the same
 // subject, so it may carry combinators of its own.
 void test_functional_pseudos() {
     {
@@ -169,8 +172,8 @@ void test_functional_pseudos() {
         expect_value(f, f.find_id("b"), "color", "#010101", ":not excludes");
     }
     {
-        // A selector LIST inside :not() - none of them may match. The old front end
-        // split the prelude on a bare comma and fragmented this into two halves.
+        // A selector list inside :not(): none of them may match. A parser that
+        // splits the rule's selector on every comma breaks this into two halves.
         fixture f;
         f.load("<p id=a class=x></p><p id=b class=y></p><p id=c></p>",
                "p:not(.x, .y) { color: #010101 }");
@@ -197,7 +200,7 @@ void test_functional_pseudos() {
         CHECK(f.value_of(f.find_id("c"), "color").empty());
     }
     {
-        // A COMBINATOR inside the argument. The nested selector's subject is the same
+        // A combinator inside the argument. The nested selector's subject is the same
         // element, so its combinators walk from the same cursor.
         fixture f;
         f.load("<div class=wrap><p id=in></p></div><p id=out></p>",
@@ -221,14 +224,14 @@ void test_functional_pseudos() {
         expect_value(f, f.find_id("b"), "color", "#010101", ":not(:is(...))");
     }
     {
-        // SPECIFICITY. `:is()` takes its most specific argument, so `p:is(#a)` is
+        // Specificity. `:is()` takes its most specific argument, so `p:is(#a)` is
         // (1,0,1) and beats `.cls` at (0,1,0).
         fixture f;
         f.load("<p id=a class=cls></p>", ".cls { color: #010101 } p:is(#a) { color: #020202 }");
         expect_value(f, f.find_id("a"), "color", "#020202", ":is takes its argument's weight");
     }
     {
-        // ...and `:where()` contributes NOTHING, which is the entire reason it
+        // ...and `:where()` contributes nothing, which is the reason it
         // exists. `p:where(#a)` is (0,0,1) and loses to `.cls`.
         fixture f;
         f.load("<p id=a class=cls></p>", "p:where(#a) { color: #010101 } .cls { color: #020202 }");
@@ -261,16 +264,9 @@ void test_functional_pseudos() {
     }
 }
 
-// :disabled, :enabled, :checked, :link - facts about the element, not UI state.
-//
-// These were state bits beside `:hover` and NOTHING EVER SET THEM. That was
-// invisible while `:not()` was unsupported, because the selector simply never
-// matched; implementing `:not()` turned it into a wrong render, since
-// `.btn:not(:disabled)` then matched disabled buttons too - and Bootstrap writes
-// exactly that eight times.
-//
-// It also shows what the coverage census cannot see: those selectors ALWAYS counted
-// as "can match", because they parsed. Countable is not the same as correct.
+// :disabled, :enabled, :checked, :link - facts about the element, not UI
+// state. Bootstrap's `.btn:not(:disabled)` depends on them: if :disabled never
+// matched, that selector would also match disabled buttons.
 void test_element_state_pseudos() {
     {
         fixture f;
@@ -283,8 +279,8 @@ void test_element_state_pseudos() {
         CHECK(f.value_of(f.find_id("off"), "background-color").empty());
     }
     {
-        // THE BUG THIS RUNG WOULD OTHERWISE HAVE SHIPPED: `:not(:disabled)` must
-        // exclude a disabled control. With :disabled unset it matched everything.
+        // `:not(:disabled)` must exclude a disabled control; if :disabled were never
+        // set, it would match every control.
         fixture f;
         f.load("<button id=off disabled></button><button id=on></button>",
                "button:not(:disabled) { color: #010101 }");
@@ -292,7 +288,7 @@ void test_element_state_pseudos() {
         expect_value(f, f.find_id("on"), "color", "#010101", ":not(:disabled) keeps the enabled");
     }
     {
-        // `:enabled` is NOT the negation of `:disabled`: it applies only to elements
+        // `:enabled` is not the negation of `:disabled`: it applies only to elements
         // that could be disabled, so a <div> is neither.
         fixture f;
         f.load("<div id=d></div>", "div:enabled { color: #010101 }");
@@ -322,7 +318,7 @@ void test_element_state_pseudos() {
 
 // `:focus-within` is `:focus` on the element or on anything under it, derived
 // from the one bit; `:focus-visible` is a bit of its own the shell sets with
-// the focus when the heuristic says to show it (browser/focus.cpp).
+// the focus when the heuristic says to show it (lib/Shell/browser/focus.cpp).
 void test_focus_within_and_visible() {
     fixture f;
     (void)parse_html(f.doc, "<div id=outer><div id=inner><input id=i></div></div><p id=p></p>");
@@ -340,7 +336,7 @@ void test_focus_within_and_visible() {
     CHECK(f.value_of(f.find_id("p"), "z-index").empty());
 }
 
-// `dir=auto` on a text control reads its VALUE - the attribute until the form
+// `dir=auto` on a text control reads its value - the attribute until the form
 // store says it was edited - and a date control reads nothing (HTML §3.2.6.4,
 // dir-auto-form-associated).
 void test_dir_auto_reads_a_controls_value() {

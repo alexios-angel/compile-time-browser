@@ -1,11 +1,14 @@
-// The CSS tokenizer, against the cases the thing it replaced got wrong.
+//===- ctbrowser/unittests/unit/css/syntax.cpp - CSS tokenizer tests ------===//
 //
-// The submodule this supersedes had no tokenizer: a whole-input comment strip,
-// then a scan for `{`, `}`, `;` and the first `:`. Nothing knew that a quote opens
-// a string. Bootstrap survived it by luck - percent-encoded data URIs, no braces
-// in strings - so a test suite built from Bootstrap alone would not notice.
-// Every case below is either a documented §4.3 behaviour or a specific way the
-// old path produced a wrong answer, and the second kind is labelled.
+// Tests for the CSS Syntax Level 3 tokenizer. Most cases come from the spec's
+// tokenization rules (CSS Syntax 3 §4.3; bare § numbers below are that spec);
+// cases labelled "Regression" cover inputs that the earlier ctcss-based parser
+// mishandled because it had no tokenizer: it stripped comments over the whole
+// input, then scanned for `{`, `}`, `;` and the first `:`, so a `;`, `}` or
+// `/*` inside a string broke it. Bootstrap happens to avoid all of these, so a
+// suite built from Bootstrap alone would not notice.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -57,8 +60,8 @@ namespace {
     return "?";
 }
 
-// The token types, whitespace dropped, as one string - so an expectation reads
-// like the shape of the input rather than like a list of assertions.
+/// The token types, whitespace dropped, as one string, so an expectation reads
+/// like the shape of the input rather than like a list of assertions.
 [[nodiscard]] std::string shape(const token_stream & s) {
     std::string out;
     for (const auto & t : s.tokens) {
@@ -69,8 +72,8 @@ namespace {
     return out;
 }
 
-// Every non-whitespace token's TEXT, pipe-separated. This is what catches a
-// token whose type is right and whose extent is wrong.
+/// Every non-whitespace token's text, pipe-separated. This catches a token
+/// whose type is right and whose extent is wrong.
 [[nodiscard]] std::string texts(const token_stream & s) {
     std::string out;
     for (const auto & t : s.tokens) {
@@ -138,7 +141,7 @@ void test_numbers_dimensions_and_percentages() {
     expect_shape(".5em", "dimension");
     expect_shape("1e3", "number");
     expect_shape("2e-2", "number");
-    // `12 px` is NOT a dimension, and a grammar that cannot tell it from `12px`
+    // `12 px` is not a dimension, and a grammar that cannot tell it from `12px`
     // will accept nonsense.
     expect_shape("12 px", "number ident");
     // An `e` that is not an exponent must not be swallowed: `3em` is 3 + `em`.
@@ -149,7 +152,7 @@ void test_numbers_dimensions_and_percentages() {
     expect_number("1.5", 1.5, false);
     expect_number("-3", -3, true);
     expect_number("+4", 4, true);
-    // A percentage carries a value but NO type flag - §4 defines one for
+    // A percentage carries a value but no type flag: §4 defines one for
     // number-token and dimension-token only, and nothing needs a percentage's
     // integer-ness.
     expect_number("50%", 50, false);
@@ -165,17 +168,16 @@ void test_numbers_dimensions_and_percentages() {
 }
 
 void test_hash_is_id_like_when_its_body_could_be_an_identifier() {
-    // NOT "colour versus selector" - that was the first guess and it is wrong.
-    // `#fff` is id-like, and `#fff { }` really does select id="fff". What the flag
-    // answers is whether the body COULD be an identifier at all.
+    // The id-like flag says whether the hash body could be an identifier, not
+    // whether it is a colour: `#fff` is id-like, and `#fff { }` selects id="fff".
     const token_stream id = tokenize("#nav");
     CHECK((id.tokens.front().flags & flag_id_hash) != 0);
     const token_stream three = tokenize("#fff");
     CHECK((three.tokens.front().flags & flag_id_hash) != 0);
     const token_stream letters_first = tokenize("#f0a1b2");
     CHECK((letters_first.tokens.front().flags & flag_id_hash) != 0);
-    // A DIGIT first cannot start an identifier, so this one is not id-like - which
-    // is what lets a selector parser reject `#0d6efd` as an id.
+    // A digit cannot start an identifier, so this one is not id-like, which is
+    // what lets a selector parser reject `#0d6efd` as an id.
     const token_stream digit_first = tokenize("#0d6efd");
     CHECK((digit_first.tokens.front().flags & flag_id_hash) == 0);
     const token_stream nine = tokenize("#999");
@@ -187,33 +189,33 @@ void test_hash_is_id_like_when_its_body_could_be_an_identifier() {
     expect_shape("# ", "delim");
 }
 
-// --- the ones the old path got wrong ---------------------------------------
+// --- regressions from the tokenizer-less parser ------------------------------
 
 void test_a_semicolon_inside_a_string_is_not_a_declaration_end() {
-    // THE OLD FAILURE: `;` was structural everywhere, so this declaration was cut
-    // in half and the tail became a garbage property.
+    // Regression: a `;` inside a string must not end the declaration (the old
+    // parser cut it in half and made the tail a garbage property).
     expect_shape("content:\"a;b\"", "ident colon string");
     expect_texts("content:\"a;b\"", "content|:|\"a;b\"");
 }
 
 void test_a_brace_inside_a_string_does_not_desynchronise() {
-    // THE OLD FAILURE: the brace scanner counted this `}` and every rule after it
-    // in the file was mis-parsed - a whole-sheet corruption from one string.
+    // Regression: a `}` inside a string must not close the block (the old brace
+    // scanner counted it and mis-parsed every later rule in the file).
     expect_shape("a{content:\"}\"}", "ident { ident colon string }");
     const token_stream s = tokenize("a{content:\"}\"} b{c:d}");
     CHECK(shape(s) == "ident { ident colon string } ident { ident colon ident }");
 }
 
 void test_a_comment_opener_inside_a_string_is_just_text() {
-    // THE OLD FAILURE: comments were stripped by a pre-pass with no idea what a
-    // string was, so this ate the rest of the file to the next `*/`.
+    // Regression: a `/*` inside a string must not open a comment (the old
+    // comment-stripping pre-pass ate the rest of the file to the next `*/`).
     expect_shape("content:\"/*\"", "ident colon string");
     expect_texts("a:\"/*\";b:c", "a|:|\"/*\"|;|b|:|c");
 }
 
 void test_a_semicolon_inside_url_is_not_a_declaration_end() {
-    // Bootstrap's data URIs are percent-encoded, which is the only reason the old
-    // path survived them. An un-encoded one cut the declaration at the `;`.
+    // Regression: an un-encoded data URI must keep its `;` (Bootstrap's are
+    // percent-encoded, which hid the bug).
     expect_shape("background:url(data:image/svg+xml;base64,AAA)", "ident colon url");
     const token_stream s = tokenize("background:url(data:image/png;base64,iVBOR)");
     CHECK(std::string{s.value_of(s.tokens.back() /*eof*/)}.empty());
@@ -223,7 +225,8 @@ void test_a_semicolon_inside_url_is_not_a_declaration_end() {
 }
 
 void test_a_comment_is_a_token_boundary() {
-    // Stripping comments up front joined the two idents into one.
+    // Regression: a comment separates two idents (stripping comments up front
+    // joined them into one).
     expect_shape("a/**/b", "ident ident");
     expect_texts("a/**/b", "a|b");
     expect_shape("/* leading */a", "ident");
@@ -231,9 +234,9 @@ void test_a_comment_is_a_token_boundary() {
 }
 
 void test_a_bom_does_not_become_part_of_the_first_selector() {
-    // THE OLD FAILURE: the three BOM bytes were name code points as far as
-    // anything knew, so the first rule's selector was `\xEF\xBB\xBFbody` and
-    // silently matched nothing.
+    // Regression: a leading BOM is dropped (the old parser treated its three
+    // bytes as name code points, so the first rule's selector was
+    // `\xEF\xBB\xBFbody` and silently matched nothing).
     const std::string with_bom = std::string{"\xEF\xBB\xBF"} + "body{a:b}";
     expect_texts(with_bom, "body|{|a|:|b|}");
 }
@@ -243,8 +246,8 @@ void test_a_bom_does_not_become_part_of_the_first_selector() {
 void test_strings_and_their_failures() {
     expect_shape("\"abc\"", "string");
     expect_shape("'abc'", "string");
-    // A NEWLINE inside a string is a bad-string, and the newline is left for
-    // whatever follows - that is what makes the rest of the sheet parse.
+    // A newline inside a string is a bad-string, and the newline is left for
+    // whatever follows; that is what makes the rest of the sheet parse.
     expect_shape("\"ab\ncd\"", "bad-string ident string");
     // EOF inside a string is a parse error but still a normal string, per §4.3.4.
     expect_shape("\"abc", "string");
@@ -254,11 +257,11 @@ void test_strings_and_their_failures() {
 }
 
 void test_urls_quoted_unquoted_and_bad() {
-    // Unquoted is its own token; QUOTED is a function plus a string, per §4.3.4.
+    // Unquoted is its own token; quoted is a function plus a string, per §4.3.4.
     expect_shape("url(a.png)", "url");
     expect_shape("url(\"a.png\")", "function string )");
     expect_shape("url('a.png')", "function string )");
-    // Whitespace is allowed around an unquoted body but not INSIDE it.
+    // Whitespace is allowed around an unquoted body but not inside it.
     expect_shape("url(  a.png  )", "url");
     expect_shape("url(a b.png)", "bad-url");
     // A bad url consumes to the `)` so the next rule survives.
@@ -281,8 +284,8 @@ void test_escapes_decode_into_the_token() {
     const token_stream amp = tokenize("\\26 B");
     CHECK(amp.tokens.front().type == token_type::ident);
     CHECK(amp.text_of(amp.tokens.front()) == "&B");
-    // A colon in a class name - how a framework writes `sm:block`. The old path
-    // split on `:` and turned this into an unknown pseudo, killing the rule.
+    // Regression: an escaped colon in a class name, as a framework writes
+    // `sm:block` (the old parser split on `:` and made it an unknown pseudo).
     const token_stream cls = tokenize(".foo\\:bar");
     CHECK(shape(cls) == "delim ident");
     for (const auto & t : cls.tokens) {
@@ -303,7 +306,7 @@ void test_escapes_decode_into_the_token() {
 void test_at_keywords_and_the_charset_line() {
     expect_shape("@media", "at");
     expect_shape("@import url(a.css);", "at url semicolon");
-    // Bootstrap's line 1. It must be one at-keyword, a string and a semicolon -
+    // Bootstrap's line 1. It must be one at-keyword, a string and a semicolon,
     // not something that swallows the rule after it.
     expect_texts("@charset \"UTF-8\";", "@charset|\"UTF-8\"|;");
     // `@` followed by something that cannot start an identifier is a delim.
@@ -316,8 +319,8 @@ void test_at_keywords_and_the_charset_line() {
 void test_important_and_the_delims_around_it() {
     expect_shape("color:red!important", "ident colon ident delim ident");
     expect_shape("color:red ! important", "ident colon ident delim ident");
-    // A `!` in the middle of a value is a delim too - nothing here decides what
-    // it MEANS, which is the parser's job and is why rfind('!') was fragile.
+    // A `!` in the middle of a value is a delim too; deciding what it means
+    // (such as `!important`) is the parser's job, not the tokenizer's.
     expect_shape("a:b!c", "ident colon ident delim ident");
 }
 
@@ -347,7 +350,7 @@ void test_a_real_bootstrap_shaped_rule() {
                                  "border:var(--bs-btn-border-width) solid transparent}";
     const token_stream s = tokenize(css);
     CHECK(s.tokens.back().type == token_type::eof);
-    // The custom property is ONE ident: `--bs-btn-padding-x`. A tokenizer that
+    // The custom property is one ident: `--bs-btn-padding-x`. A tokenizer that
     // treated `-` as a delim would make it five tokens and nothing downstream
     // could put it back together.
     bool found = false;
@@ -363,10 +366,10 @@ void test_a_real_bootstrap_shaped_rule() {
     CHECK(functions == 2);
 }
 
-// A declaration's stored text is the SOURCE slice, and where an escape forced
-// a rebuild it is written back as CSS: `\33 myident` decodes to `3myident`,
-// which would read as a dimension the second time round
-// (ident-function-computed).
+/// A declaration's stored text is the source slice, and where an escape forced
+/// a rebuild it is written back as CSS: `\33 myident` decodes to `3myident`,
+/// which would read as a dimension the second time round
+/// (WPT ident-function-computed).
 void test_an_escaped_identifier_is_stored_as_one() {
     ctbrowser::atom_table atoms;
     const auto sheet =
@@ -377,21 +380,14 @@ void test_an_escaped_identifier_is_stored_as_one() {
     }
 }
 
-// --- the front end's own score ---------------------------------------------
+// --- Bootstrap selector census -----------------------------------------------
 
-// HOW MANY OF BOOTSTRAP'S SELECTORS CAN MATCH AT ALL.
-//
-// This exists because the Chrome parity harness cannot see a front-end rung. Its
-// compared set is 48 properties that layout and paint consume; a selector that
-// starts matching delivers custom properties nothing reads yet, or properties not
-// in the set, so `differ` does not move by one. Attribute selectors and `:root`
-// landing changed the parity numbers by exactly zero - and unlocked the 128 global
-// custom properties every Bootstrap component reads.
-//
-// So the front end is scored here instead, and the floor is the ratchet: it may
-// only ever be raised, and raising it is a deliberate line in a commit. A rung that
-// widens the selector grammar and does NOT move this number has not done what it
-// claimed.
+/// Counts how many of Bootstrap's selectors parse into something the matcher
+/// can consider, and fails if the count drops below a floor. The Chrome parity
+/// harness compares only 48 layout/paint properties, so selector-parsing
+/// improvements (which mostly unlock custom properties) do not show up there.
+/// The floor may only be raised; a change that widens the selector grammar
+/// should raise it.
 void test_how_much_of_bootstrap_can_match() {
     std::ifstream in{"vendor/bootstrap/bootstrap.css", std::ios::binary};
     if (!in) {
@@ -412,45 +408,32 @@ void test_how_much_of_bootstrap_can_match() {
                 live, total, 100.0 * static_cast<double>(live) / static_cast<double>(total),
                 sheet.rules.size(), sheet.declarations.size());
 
-    // THE FLOOR. Raise it when a rung widens the grammar; never lower it.
-    //   2550  the front-end substitution (tag/#id/.class, descendant/child)
-    //   2603  + attribute selectors and :root
-    //   2651  + the sibling combinators, + and ~
-    //   2767  + :not/:is/:where, the structural pseudos and nth-child(An+B)
-    //   2778  + @media print's rules, which are now RECORDED AND GATED rather than
-    //         discarded. Note what this shows about the metric: those eleven selectors
-    //         did not become more matchable, they became present. The census counts
-    //         what PARSES.
-    //
-    // WHAT THIS NUMBER CANNOT SEE: a selector counts as matchable if it PARSES into
-    // something the matcher will consider. `:disabled` counted from the very first
-    // rung, as a state bit that nothing ever set - so it parsed, was counted, and
-    // never matched. Countable is not correct, and the tests are where correct lives.
+    // Minimum matchable selectors. Raise it when the selector grammar widens;
+    // never lower it. 2778 covers type/id/class, descendant and child, attribute
+    // selectors, :root, sibling combinators, :not/:is/:where, structural pseudos
+    // and the rules inside @media print (parsed and kept, but inactive on
+    // screen). A selector that parses may still never match (a state pseudo
+    // nothing sets), so this measures parsing, not correctness.
     constexpr std::size_t floor = 2778;
     if (live < floor) {
         std::printf("FAIL bootstrap census: %zu selectors can match, was at least %zu\n", live,
                     floor);
         ++ctbrowser_test_failures;
     }
-    // The sheet's SHAPE is pinned too, so a parser change that quietly dropped
-    // rules could not hide behind a selector count that happened to hold.
-    // 2,550 rather than 2,539, and 2,961 selectors rather than 2,950, since `@media`
-    // became real: the one `@media print` block used to be CONSUMED AND DISCARDED and
-    // is now recorded with a condition that evaluates false. The rules exist, gated,
-    // and would apply to a print target - which is why the count went up while nothing
-    // on screen changed.
-    // AND ONE FEWER SINCE 2026-09-25: a style rule whose selector list does not
-    // parse is dropped whole (Selectors 4 §3.1, CSS Syntax 3 §9), and exactly one
-    // Bootstrap rule has one - `.form-select:-moz-focusring`, a pseudo-class no
-    // browser but Firefox knows, which Chrome drops the same way. It styled
-    // nothing before either; it is now not there to count.
+    // The rule and selector totals are pinned too, so a parser change that drops
+    // rules cannot hide behind a selector count that still meets the floor. The
+    // totals include the @media print rules and exclude the one rule whose
+    // selector list does not parse (`.form-select:-moz-focusring`, a
+    // Firefox-only pseudo-class), which is dropped whole as Selectors 4 §3.1
+    // requires, as Chrome also does.
     CHECK_EQ(sheet.rules.size(), std::size_t{2549});
     CHECK_EQ(total, std::size_t{2960});
 }
 
-// NESTING IS CAPPED, and past the cap the declaration or selector holding the
-// nesting is invalid - never a stack overflow, never a partial parse. Thirty
-// thousand `(` recursed once per level through consume_block.
+/// Nesting is capped, and past the cap the declaration or selector holding the
+/// nesting is invalid: never a stack overflow, never a partial parse. Without
+/// the cap, thirty thousand `(` would recurse once per level through
+/// consume_block.
 void test_deep_nesting_invalidates_only_what_holds_it() {
     const auto nest = [](std::string_view open, std::string_view inner, std::string_view close,
                          int levels) {

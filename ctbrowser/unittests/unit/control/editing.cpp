@@ -1,13 +1,14 @@
-// FORM CONTROLS AS THEY LOOK AND AS THEY ARE EDITED: the caret measured in the
+//===- unittests/unit/control/editing.cpp - Form control editing ----------===//
+//
+// Form controls as they look and as they are edited: the caret measured in the
 // face the text is drawn in, a click and the arrow keys placing it, a drag
 // selecting inside a field, password bullets, a disabled control, the tick in a
-// checkbox, a button's label, a textarea's lines and soft wraps - and, at the
+// checkbox, a button's label, a textarea's lines and soft wraps, and, at the
 // end, what a script reads back off a control and writes into one.
 //
-// One of five files carved out of unittests/unit/chrome_basics.cpp on
-// 2026-09-07, when it had reached 2,299 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the five needs are in
-// chrome_probe.hpp beside this.
+// Helpers shared with the other control tests are in ../chrome_probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -25,7 +26,8 @@ using namespace ctbrowser;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 using ctbrowser::shell::input_event;
-// Shared with widgets_basics and bootstrap_layout - test/support/dom_probe.hpp.
+// box_of and find_id come from test/support/dom_probe.hpp; the rest are
+// ../chrome_probe.hpp's.
 using ctbrowser_test::box_of;
 using ctbrowser_test::caret_bars;
 using ctbrowser_test::caret_of;
@@ -38,12 +40,13 @@ using ctbrowser_test::selection_of;
 
 namespace {
 
-// --- the form-control batch ------------------------------------------------
+// --- how form controls look and what scripts read ---------------------------
 //
-// Eight bugs a real page found that the test suite did not, because every one
-// of them lives in what a control LOOKS like or what a script can READ from it
-// - and the example ctests only check that the process exits 0.
+// Regression tests for bugs a real page found: each lives in what a control
+// looks like or what a script can read from it, which the example ctests
+// (which only check the exit code) cannot see.
 
+/// How many rows of the drop-down arrow are painted for `id`.
 [[nodiscard]] std::size_t arrow_rows(browser & page, std::string_view id) {
     // The drop-down arrow is a stack of 1px-tall fills in the frame colour.
     const node_id want = find_id(page, id);
@@ -59,17 +62,13 @@ namespace {
 
 // --- editing with the mouse and the arrow keys ----------------------------
 
-// A caret must be measured with the face the text is DRAWN in. A textarea is
-// monospace by UA rule and its text was drawn in the default serif, so the
-// caret ran ahead by the difference on every character - which reads as a
-// growing gap between what you typed and where the caret is.
+/// A caret must be measured with the face the text is drawn in. A textarea is
+/// monospace by UA rule; if its text were drawn in the default serif, the caret
+/// would run ahead by the difference on every character, a growing gap between
+/// what you typed and where the caret is.
 void test_a_control_draws_in_the_face_it_measures() {
-    // NO SDL3_ttf, NO REAL FACES. `use_real_fonts()` answers false in that
-    // build and this asserted it was true, so the whole file failed on a
-    // machine that simply does not have the library - which the engine
-    // supports and `test_inline_text_shares_a_baseline` below already guarded
-    // for. Found when builds moved to the shared devbox, which has no SDL at
-    // all.
+    // Without SDL3_ttf there are no real faces and use_real_fonts() is
+    // false; that is a supported build, so skip rather than fail.
     if (!raster::ttf_available()) {
         std::printf("     no SDL3_ttf in this build - real-font checks skipped\n");
         return;
@@ -94,7 +93,7 @@ void test_a_control_draws_in_the_face_it_measures() {
         }
     }
     check(drawn == "Hello world", "the value is drawn");
-    // The caret sits at the END of the drawn text, measured in the SAME face.
+    // The caret sits at the end of the drawn text, measured in the same face.
     const std::vector<rect> bars = caret_bars(page, "t");
     check(bars.size() == 1, "there is a caret");
     if (bars.empty()) { return; }
@@ -109,11 +108,11 @@ void test_clicking_in_a_textarea_places_the_caret() {
     page.frame();
     const rect box = box_of(page, "t");
 
-    // The start of the FIRST line.
+    // The start of the first line.
     click(page, box.x + 7, box.y + 6);
     check(caret_of(page, "t") == 0, "clicking the first character lands before it");
 
-    // The start of the SECOND line: past the newline, at offset 7.
+    // The start of the second line: past the newline, at offset 7.
     click(page, box.x + 7, box.y + 26);
     check(caret_of(page, "t") == 7, "clicking the second line lands at its start");
 
@@ -133,14 +132,14 @@ void test_arrows_move_by_visual_line_in_a_textarea() {
     (void)page.handle(input_event::key_press("ArrowRight"));
     check(caret_of(page, "t") == 2, "right moves by a character");
 
-    // DOWN keeps the column. Walking by characters through the newline would
+    // ArrowDown keeps the column. Walking by characters through the newline would
     // land at 3, which is not what down means.
     (void)page.handle(input_event::key_press("ArrowDown"));
     check(caret_of(page, "t") == 9, "down keeps the column on the next line");
     (void)page.handle(input_event::key_press("ArrowUp"));
     check(caret_of(page, "t") == 2, "and up comes back to it");
 
-    // HOME and END are that LINE's ends, not the whole value's.
+    // Home and End go to that line's ends, not the whole value's.
     (void)page.handle(input_event::key_press("ArrowDown"));
     (void)page.handle(input_event::key_press("End"));
     check(caret_of(page, "t") == 13, "End goes to the end of the second line");
@@ -161,7 +160,7 @@ void test_dragging_selects_inside_a_field() {
     check(from == 0, "the selection starts where the press was");
     check(to > from, "and covers what was dragged over");
 
-    // And it can be COPIED, which is the whole reason to select it.
+    // And it can be copied, which is the whole reason to select it.
     std::string clipboard;
     page.set_clipboard_hooks([&clipboard](const std::string & text) { clipboard = text; },
                              [&clipboard] { return clipboard; });
@@ -252,7 +251,7 @@ void test_a_password_caret_is_measured_on_the_bullets() {
     const std::vector<rect> bars = caret_bars(page, "p");
     check(bars.size() == 1, "there is a caret");
     if (bars.empty() || drawn.empty()) { return; }
-    // Measured on what is SHOWN. A bullet is wider than most letters, so
+    // Measured on what is shown. A bullet is wider than most letters, so
     // measuring the letters puts the caret inside the bullets.
     const float expected = text_x + page.metrics()(drawn, 16, layout::text_face{});
     check(std::fabs(bars[0].x - expected) < 2, "and it sits after the last bullet");
@@ -277,7 +276,7 @@ void test_a_disabled_control_looks_and_acts_disabled() {
     check(!(live == dead), "and a disabled button is NOT drawn like a live one");
     check(dead == color{style::ua_widget_disabled_text}, "it is greyed");
 
-    // And it is INERT: no focus, no activation, no events.
+    // And it is inert: no focus, no activation, no events.
     const rect off = box_of(page, "off");
     click(page, off.x + 6, off.y + 6);
     check(!page.focused(), "a disabled button does not take focus");
@@ -287,14 +286,12 @@ void test_a_disabled_control_looks_and_acts_disabled() {
     check(!page.text_input("hello"), "so typing goes nowhere");
 }
 
-// A CHECKED checkbox has a TICK in it, and that is what distinguishes it from
-// an unchecked one. What it used to draw was a white square inset a quarter of
-// the box - at 13x13, an empty blue ring - so checked and unchecked differed by
-// a border and a checked box read as unchecked.
-//
-// Counted in PIXELS rather than commands: the tick is a staircase of short
-// rows, so "how many commands" says nothing about whether it looks like a tick,
-// and a future implementation that draws it differently should still pass.
+/// A checked checkbox has a tick in it, and that is what distinguishes it from
+/// an unchecked one; a mark that differs only by a border reads as unchecked.
+///
+/// Counted in pixels rather than commands: the tick is a staircase of short
+/// rows, so "how many commands" says nothing about whether it looks like a tick,
+/// and a future implementation that draws it differently should still pass.
 void test_a_checked_checkbox_draws_a_tick() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><input type=checkbox id=on checked><input type=checkbox id=off></body>");
@@ -304,7 +301,7 @@ void test_a_checked_checkbox_draws_a_tick() {
         const rect box = box_of(page, id);
         const raster::surface & image = page.read_pixels();
         std::size_t marks = 0;
-        // White INSIDE the box's border - the tick, or nothing.
+        // White inside the box's border: the tick, or nothing.
         for (int y = static_cast<int>(box.y) + 2; y < static_cast<int>(box.bottom()) - 2; ++y) {
             const auto row = image.row(y);
             for (int x = static_cast<int>(box.x) + 2; x < static_cast<int>(box.right()) - 2; ++x) {
@@ -314,7 +311,7 @@ void test_a_checked_checkbox_draws_a_tick() {
         return marks;
     };
 
-    // An unchecked box is white THROUGHOUT, so it has the most white of all -
+    // An unchecked box is white throughout, so it has the most white of all;
     // the comparison that matters is that the checked one has some white (the
     // tick) but much less (the blue fill around it).
     const std::size_t on = mark_pixels("on");
@@ -359,10 +356,9 @@ void test_a_button_shows_its_label() {
                    "</body>");
     page.frame();
 
-    // A BUTTON IS NOT A SELECT. They shared one painter arm, so a button was
-    // asked for its selected <option> - it has none, so the label came out
-    // empty - and then got the drop-down arrow anyway. Every button on the
-    // page was an empty box with an arrow in it.
+    // A button is not a select: it draws its own label and no drop-down
+    // arrow. Painting it like a select would ask it for a selected <option>,
+    // which it does not have, and draw an empty box with an arrow in it.
     check(draws_text(page, "Send it"), "the button draws its label");
     check(arrow_rows(page, "b") == 0, "and has NO drop-down arrow");
     check(arrow_rows(page, "s") > 0, "while the select still has one");
@@ -378,9 +374,9 @@ void test_a_submit_button_has_a_default_label() {
     check(draws_text(page, "Reset"), "and so is reset");
 }
 
-// The caret must be measured with the font that DRAWS the text. Verified with
-// real fonts on purpose: font8x8 quantises every size to the same cell, so the
-// two measurements agree there and the bug is invisible.
+/// The caret must be measured with the font that draws the text. Verified with
+/// real fonts on purpose: font8x8 quantises every size to the same cell, so the
+/// two measurements agree there and the bug is invisible.
 void test_the_caret_is_measured_with_the_drawing_font() {
     if (!raster::ttf_available()) {
         std::printf("     no SDL3_ttf in this build - real-font checks skipped\n");
@@ -401,13 +397,13 @@ void test_the_caret_is_measured_with_the_drawing_font() {
     check(bars.size() == 1, "there is one caret");
     if (bars.size() != 1) { return; }
 
-    // Where the caret SHOULD be: the width of "abcd" in the field's own font,
+    // Where the caret should be: the width of "abcd" in the field's own font,
     // from the text's left edge. Measured through the browser's metrics, which
     // is the same object the rasterizer draws with.
     const float expected = page.metrics()("abcd", 16, layout::text_face{"serif", false, false});
     const float actual = bars[0].x - field.x;
-    // Generous, because the inset is the painter's business - but nothing like
-    // the 2x that measuring with font8x8 produced.
+    // Generous, because the inset is the painter's business, but far tighter
+    // than the 2x error that measuring with font8x8 would give.
     check(std::fabs(actual - expected) < expected * 0.5f + 8,
           "the caret sits at the END of what was typed, not a font's width past it");
 }
@@ -417,16 +413,16 @@ void test_a_textarea_shows_a_caret_on_the_right_line() {
     page.load_html("<body><textarea id=t rows=3 cols=20>one\ntwo</textarea></body>");
     page.frame();
     const rect box = box_of(page, "t");
-    // Clicked on the SECOND line, which is also the click-to-position test:
+    // Clicked on the second line, which is also the click-to-position test:
     // the caret goes where the pointer was, not where it happened to be.
     (void)page.handle(input_event::mouse_down_at(box.x + 6, box.y + 28));
     (void)page.handle(input_event::mouse_up_at(box.x + 6, box.y + 28));
     check(page.focused() == find_id(page, "t"), "the textarea is focused");
     page.frame();
 
-    // Measured as one run the caret landed the width of "one\ntwo" past the
-    // left edge - past the right edge of the box, where the clip threw it
-    // away. That is why a textarea appeared to have no caret at all.
+    // Measured as one run, the caret would land the width of "one\ntwo" past
+    // the left edge, past the right edge of the box where the clip throws it
+    // away, and the textarea would appear to have no caret at all.
     const std::vector<rect> bars = caret_bars(page, "t");
     check(bars.size() == 1, "the textarea has a caret");
     if (bars.size() != 1) { return; }
@@ -454,16 +450,12 @@ void test_a_textarea_draws_its_lines_separately() {
     check(first >= 0 && second > first, "the second line is BELOW the first");
 }
 
-// A textarea SOFT-WRAPS a line too long for it.
-//
-// value_lines split on '\n' and nothing else, so a paragraph with no newline in
-// it was one line however long, drawn straight through the right edge of the
-// box and clipped. This is the last thing on docs/history/v1-retirement.md's list that
-// the deleted engine had and this one did not.
-//
-// Deliberately NOT use_real_fonts(): font8x8's advance is exactly
-// 8 * round(size/8) per glyph, so where the break falls is the same number on
-// every machine, and this test does not need SDL3_ttf to mean something.
+/// A textarea soft-wraps a line too long for it. Without soft wrapping a line
+/// with no newline is drawn past the right edge of the box and clipped.
+///
+/// Deliberately not use_real_fonts(): font8x8's advance is exactly
+/// 8 * round(size/8) per glyph, so where the break falls is the same number on
+/// every machine, and this test does not need SDL3_ttf to mean something.
 void test_a_textarea_soft_wraps_a_long_line() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=4 cols=10>aaaaaaaaaa bbbbbbbbbb</textarea></body>");
@@ -483,18 +475,17 @@ void test_a_textarea_soft_wraps_a_long_line() {
     }
     check(runs.size() >= 2, "it is drawn as two or more lines");
     if (runs.size() >= 2) { check(runs[1].y > runs[0].y, "the second line is BELOW the first"); }
-    // A soft break consumes NO character, unlike a '\n'. If the wrapper ate the
+    // A soft break consumes no character, unlike a '\n'. If the wrapper ate the
     // space it broke at, this is where it shows.
     check(rebuilt == "aaaaaaaaaa bbbbbbbbbb", "and the lines still spell the whole value");
 }
 
-// The regression guard for the boundary case the wrap creates. After a soft
-// break line n's end IS line n+1's begin, so a caret sitting exactly there
-// satisfies both lines' range test - and the painter, which loops over lines,
-// drew a bar on each.
+/// The boundary case the wrap creates. After a soft break line n's end is line
+/// n+1's begin, so a caret sitting exactly there satisfies both lines' range
+/// test, and a painter that loops over lines would draw a bar on each.
 void test_a_soft_wrapped_textarea_shows_exactly_one_caret() {
     browser page{browser_options{400, 200}};
-    // Words that FIT, so every caret position lands well inside the box and
+    // Words that fit, so every caret position lands well inside the box and
     // caret_bars can see it. (An unbreakable word wider than the field
     // overflows by design, and a caret at its end sits on the frame, where the
     // helper cannot tell it from the outline.)
@@ -517,8 +508,8 @@ void test_a_soft_wrapped_textarea_shows_exactly_one_caret() {
     }
 }
 
-// Click and paint must agree about which line is which, including after a soft
-// break - the whole reason the geometry lives in one place.
+/// Click and paint must agree about which line is which, including after a soft
+/// break, which is why the geometry lives in one place.
 void test_clicking_the_second_visual_line_of_a_wrapped_textarea() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=4 cols=10>aaaaaaaaaa bbbbbbbbbb</textarea></body>");
@@ -545,8 +536,8 @@ void test_clicking_the_second_visual_line_of_a_wrapped_textarea() {
     check(caret_of(page, "t") <= 11, "and ArrowUp returns to the first visual line");
 }
 
-// A textarea is sized by `rows` and does not grow, so wrapping past the bottom
-// has to scroll or the caret types somewhere nobody can see.
+/// A textarea is sized by `rows` and does not grow, so wrapping past the bottom
+/// has to scroll or the caret types somewhere nobody can see.
 void test_a_textarea_scrolls_to_keep_the_caret_visible() {
     browser page{browser_options{400, 200}};
     page.load_html("<body><textarea id=t rows=2 cols=10></textarea></body>");
@@ -590,9 +581,9 @@ void test_script_reads_a_live_control_value() {
     check(page.script_error().empty(), "the script ran");
     page.frame();
 
-    // A wrapper's properties were a SNAPSHOT taken when it was made, so a page
-    // that kept the element in a variable - which every page does - read the
-    // page-load value forever. The widget gallery reported `color: undefined`.
+    // A wrapper's properties must be live, not a snapshot taken when it was
+    // made: a page that keeps the element in a variable (every page does)
+    // must read the current value.
     check(page.run_script("report()"), "the script call runs");
     check(!log_of(page).empty(), "it logged");
     if (!log_of(page).empty()) {
@@ -600,8 +591,8 @@ void test_script_reads_a_live_control_value() {
     }
 
     const rect field = box_of(page, "f");
-    // Clicked PAST the end of the text, so the caret lands after it - a click
-    // places the caret now, and clicking at the left edge would insert there.
+    // Clicked past the end of the text, so the caret lands after it: a click
+    // places the caret, and clicking at the left edge would insert there.
     (void)page.handle(input_event::mouse_down_at(field.right() - 8, field.y + 6));
     (void)page.handle(input_event::mouse_up_at(field.right() - 8, field.y + 6));
     check(page.text_input("!"), "typed into it");
@@ -621,7 +612,7 @@ void test_an_input_listener_sees_the_new_value() {
     (void)page.handle(input_event::mouse_up_at(field.x + 4, field.y + 6));
     check(page.text_input("a"), "typed");
     check(page.text_input("b"), "typed again");
-    // The handler runs AFTER the edit, so it must see the character that
+    // The handler runs after the edit, so it must see the character that
     // caused it. Refreshing wrappers only after layout would show the value
     // from before the keystroke.
     check(log_of(page).size() == 2, "the listener fired per keystroke");
@@ -642,9 +633,8 @@ void test_script_writes_a_control_value() {
                           "document.getElementById('c').checked = true;"),
           "the script runs");
     page.frame();
-    // The VM has no property accessors, so a write is a sync rather than a
-    // setter - without the write-back this sets a property nothing reads and
-    // the field keeps showing the old text.
+    // The assignment must reach the control's state, not just land as a plain
+    // property on the wrapper, or the field keeps showing the old text.
     check(draws_text(page, "new"), "the field shows what the script assigned");
     check(!draws_text(page, "old"), "and not what it used to say");
     check(page.run_script("console.log(String(document.getElementById('c').checked));"),
@@ -658,8 +648,7 @@ void test_one_wrapper_per_element() {
     console.log(String(document.getElementById('p') === document.getElementById('p')));
     </script></body>)");
     check(!log_of(page).empty(), "it logged");
-    // A browser hands out the SAME object every time. Two wrappers for one
-    // element also meant two independent property snapshots.
+    // A browser hands out the same object every time for one element.
     if (!log_of(page).empty()) { check(log_of(page).back() == "true", "one element, one wrapper"); }
 }
 

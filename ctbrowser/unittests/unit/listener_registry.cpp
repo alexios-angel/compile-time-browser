@@ -1,3 +1,12 @@
+//===- ctbrowser/unittests/unit/listener_registry.cpp - Listener tests ----===//
+//
+// shell::listener_registry, the per-document store of event listeners:
+// duplicate detection by (target, type, callback, capture), snapshots taken
+// before dispatch, `once` listeners spent on first use, handler-property
+// slots, and removal while a dispatch is running.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/listener_registry.hpp>
 
 #include "check.hpp"
@@ -10,9 +19,12 @@ using ctbrowser::shell::listener_target;
 
 namespace {
 
+/// A move-only payload, so the tests also prove entries are never copied.
 using registry = listener_registry<std::unique_ptr<int>>;
 constexpr listener_target target{event_target_kind::node, 17};
 
+/// A bubbling "test" listener on \c target with callback \p id, whose payload
+/// holds \p payload.
 registry::entry listener(std::uint64_t id, int payload = 0) {
     return {.target = target,
             .type = "test",
@@ -20,6 +32,9 @@ registry::entry listener(std::uint64_t id, int payload = 0) {
             .payload = std::make_unique<int>(payload)};
 }
 
+/// A listener's identity is (target, type, callback, capture): a duplicate is
+/// rejected and keeps the first registration's payload and flags, while a
+/// different capture flag or target is a separate listener.
 void test_registration_identity() {
     static_assert(!std::is_copy_constructible_v<registry::entry>);
     registry listeners;
@@ -52,6 +67,9 @@ void test_registration_identity() {
     CHECK_EQ(listeners.entries().size(), 6u);
 }
 
+/// A dispatch snapshots callback ids, not entries: removing and re-adding the
+/// same id before its turn runs the new entry, and a listener added after the
+/// snapshot is not in it.
 void test_snapshot_and_same_identity_replacement() {
     registry listeners;
     CHECK(listeners.add(listener(1)));
@@ -71,6 +89,8 @@ void test_snapshot_and_same_identity_replacement() {
     CHECK(!listeners.begin(target, "test", queued[0], false));
 }
 
+/// A `once` listener is spent by begin() and leaves later snapshots, but its
+/// payload stays alive until reap_spent(), so a nested dispatch can still use it.
 void test_once_and_nested_membership() {
     registry listeners;
     auto once = listener(1, 42);
@@ -99,6 +119,9 @@ void test_once_and_nested_membership() {
     CHECK_EQ(listeners.snapshot(target, "test", false), (std::vector<std::uint64_t>{2, 1}));
 }
 
+/// A handler-property slot (`onfoo`) ignores `once` and keeps its position
+/// until remove_handler(); erase_if() removes by payload, and an entry that
+/// arrives already spent is not added.
 void test_handler_slots_and_owner_removal() {
     registry listeners;
     auto handler = listener(1);

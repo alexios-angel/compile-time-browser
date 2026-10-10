@@ -1,3 +1,10 @@
+//===- ctbrowser/unittests/unit/dom/dataset.cpp - dataset tests -----------===//
+//
+// Unit tests for dom/dataset.hpp, the engine side of `element.dataset`
+// (HTML 3.2.6.6): converting between `data-foo-bar` attribute names and
+// `fooBar` keys, rejecting invalid keys, and reading the entries off an element.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/dom/dataset.hpp>
 #include <ctbrowser/dom/document.hpp>
 
@@ -12,6 +19,8 @@ using namespace ctbrowser;
 
 namespace {
 
+/// Attribute name <-> dataset key conversion, both directions, for every
+/// case the spec's camel-casing rules distinguish.
 void test_names() {
     constexpr auto names = std::to_array<std::pair<std::string_view, std::string_view>>({
         {"data-", ""},
@@ -36,6 +45,8 @@ void test_names() {
     }
 }
 
+/// A key with "-" followed by an ASCII lowercase letter is a SyntaxError;
+/// a key that would make an invalid attribute name fails on its characters.
 void test_invalid_keys() {
     std::string name;
     for (const std::string_view key : {"-foo", "foo-bar", "foo--bar", "bad name-foo"}) {
@@ -55,6 +66,8 @@ void test_invalid_keys() {
     }
 }
 
+/// Only attributes in no namespace count, in attribute order, and the
+/// snapshots returned earlier do not change when the element does.
 void test_document_values() {
     atom_table atoms;
     document doc{atoms};
@@ -108,6 +121,7 @@ void test_document_values() {
     CHECK(second != nullptr && second->value == "two");
 }
 
+/// A null, stale or non-element node has no dataset entries.
 void test_missing_nodes() {
     atom_table atoms;
     document doc{atoms};

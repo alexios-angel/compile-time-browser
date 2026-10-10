@@ -1,3 +1,12 @@
+//===- ctbrowser/unittests/unit/timer_queue.cpp - Timer queue tests -------===//
+//
+// Tests shell::timer_queue, the scheduling state behind setTimeout and
+// setInterval: due order, the host/page task-source split, cancellation and
+// rescheduling while a batch of due timers is being dispatched, interval
+// rearming, and odd ids and delays (NaN, infinity, a repeated id).
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/shell/timer_queue.hpp>
 
 #include "check.hpp"
@@ -10,6 +19,8 @@ using ctbrowser::shell::timer_source;
 
 namespace {
 
+/// The ids of the entries due at `now_ms`, in registration order: the snapshot
+/// a dispatcher takes before running a batch.
 std::vector<std::uint32_t> due(const timer_queue & queue, double now_ms,
                                bool queued_tasks_only = false) {
     std::vector<std::uint32_t> result;
@@ -38,6 +49,8 @@ void test_order_and_task_sources() {
     CHECK_EQ(due(queue, 100), (std::vector<std::uint32_t>{1, 3}));
 }
 
+/// A callback that cancels a later timer in the same snapshot stops it from
+/// running; one it schedules waits for the next snapshot.
 void test_mutation_during_dispatch() {
     timer_queue queue;
     queue.schedule(1, 0, 0, false);
@@ -87,6 +100,8 @@ void test_intervals_and_nested_batches() {
     queue.discard_cancelled();
 }
 
+/// Ids belong to the caller and may repeat; a NaN delay is due immediately and
+/// an infinite one never.
 void test_caller_ids_and_delay_values() {
     timer_queue queue;
     queue.schedule(0, 0, std::numeric_limits<double>::quiet_NaN(), false);

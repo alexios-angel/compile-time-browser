@@ -1,7 +1,11 @@
-// SHADOWREALM: a realm with intrinsics of its own (builtins'
+//===- ctbrowser/unittests/js/shadow_realm.cpp - ShadowRealm tests --------===//
+//
+// ShadowRealm: a realm with intrinsics of its own (builtins'
 // create_intrinsic_realm), and the callable boundary between it and its
-// creator - primitives cross as they are, functions cross wrapped, and any
+// creator. Primitives cross as they are, functions cross wrapped, and any
 // other object, or anything thrown, is a TypeError of the side that asked.
+//
+//===----------------------------------------------------------------------===//
 
 #include "vm/expect.hpp"
 
@@ -80,8 +84,8 @@ void test_wrapped_functions() {
                   "true");
 }
 
-// The shadow realm's intrinsics are roots: a collection between two
-// evaluations keeps them, and its globals.
+/// The shadow realm's intrinsics are GC roots: a collection between two
+/// evaluations keeps them, and its globals.
 void test_survives_collection() {
     context cx;
     install_builtins(cx);

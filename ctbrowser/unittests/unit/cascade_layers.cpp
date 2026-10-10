@@ -1,8 +1,12 @@
+//===- unittests/unit/cascade_layers.cpp - Layers, scope, nesting ---------===//
+//
 // The cascade's newer sort criteria and rollbacks: `@layer` (CSS Cascade 5
 // §6.4) with `revert-layer`, `@scope` (CSS Cascade 6 §3) with proximity, CSS
 // Nesting's `&` and implicit nesting, `@supports` decided at parse time, and
 // the `revert-rule` draft keyword. Each case is one the WPT files in
 // css/css-cascade and css/css-nesting assert through getComputedStyle.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -19,7 +23,7 @@ using namespace ctbrowser::style;
 
 namespace {
 
-// layer-basic.html's cases: the rule that says `green` must win.
+/// layer-basic.html's cases: the rule that says `green` must win.
 void test_layer_order() {
     const std::string_view cases[] = {
         "@layer { } t { color: green }",
@@ -47,7 +51,7 @@ void test_layer_order() {
     }
 }
 
-// Two sheets share a layer by name; an anonymous layer is never shared.
+/// Two sheets share a layer by name; an anonymous layer is never shared.
 void test_layers_across_sheets() {
     fixture f;
     (void)parse_html(f.doc, "<t>x</t>");
@@ -57,9 +61,9 @@ void test_layers_across_sheets() {
     expect_value(f, f.find("t"), "color", "green", "a second sheet's @layer a is the first's");
 }
 
-// A `@keyframes` name defined in two layers means the stronger layer's rule,
-// unlayered above every layer, whatever the document order
-// (layer-keyframes-override).
+/// A `@keyframes` name defined in two layers means the stronger layer's rule,
+/// unlayered above every layer, whatever the document order
+/// (layer-keyframes-override).
 void test_keyframes_by_layer() {
     fixture f;
     f.styles.add_sheet("@keyframes a { from { top: 1px } } @layer { @keyframes a { from { top: 2px "
@@ -213,8 +217,10 @@ void test_scope() {
     expect_value(h, t.children(ha)[1], "color", "", "outside the inner scope");
     expect_value(h, ha, "z-index", "3", "& in @scope is the root");
 
-    // The IMPLICIT scope: rooted at the element the shell names ahead of the
-    // sheet (css::scope_block), and at nothing when none is named.
+    // The implicit scope of a prelude-less `@scope`: rooted at the element
+    // named by a preceding `@-ctbrowser-scope-root <key>;` directive (an
+    // engine-private rule the shell writes for a <style> inside an element;
+    // see css::scope_block), and matching nothing when no root is named.
     fixture k;
     (void)parse_html(k.doc, "<div><p>1</p></div><section><p>2</p></section>");
     const node_id root = k.find("div");
@@ -236,9 +242,9 @@ void test_scope() {
     CHECK(css::import_scope_prelude("").empty());
 }
 
-// `@container`: a style query needs no layout; a size query asks the hook
-// for the nearest `container-type: size` ancestor's box, and is unknown -
-// so its rules do not apply - until the browser installs one.
+/// `@container`: a style query needs no layout; a size query asks the hook
+/// for the nearest `container-type: size` ancestor's box, and is unknown -
+/// so its rules do not apply - until the browser installs one.
 void test_container_queries() {
     fixture f;
     (void)parse_html(f.doc, "<div id=c><div id=n><span>x</span></div></div>");

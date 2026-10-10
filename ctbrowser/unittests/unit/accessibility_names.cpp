@@ -1,8 +1,13 @@
-// THE COMPUTED ROLE AND THE ACCESSIBLE NAME - what testdriver's
-// get_computed_role and get_computed_label read through ctdrive: the role
-// attribute, then ElementInternals' default, then HTML-AAM's implicit role;
-// the name by Accessible Name 1.2 (aria-labelledby, aria-label, <label>, alt,
-// the subtree). Each case names the WPT file it stands in for.
+//===- accessibility_names.cpp - Computed role and name ---------*- C++ -*-===//
+//
+// The computed role and the accessible name, which testdriver's
+// get_computed_role and get_computed_label read through ctdrive. The role
+// comes from the role attribute, then ElementInternals' default, then
+// HTML-AAM's implicit role; the name follows Accessible Name 1.2
+// (aria-labelledby, aria-label, <label>, alt, the subtree). Each case names
+// the WPT file it stands in for.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -19,8 +24,9 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-// The slot the driver would fill, and the answer for the element `expression`
-// names: "role|label", or <none> when the bindings found no element.
+/// Installs \p expression in the global slot ctdrive would fill and returns
+/// "role|label" for the element it names, or "<none>" when the bindings found
+/// no element.
 [[nodiscard]] std::string ask(browser & page, const std::string & expression) {
     if (!page.run_script("window.__ctdrive_asked = function () { return " + expression + "; };")) {
         return "<did not run: " + page.script_error() + ">";

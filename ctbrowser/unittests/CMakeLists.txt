@@ -1,6 +1,7 @@
 # The focused tests: unit/ one file per subsystem, js/ the language suites.
 #
-# Preserve the executable paths consumed by test scripts and local workflows.
+# Put the executables directly in this binary directory, where test scripts
+# and local workflows look for them.
 if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
@@ -30,9 +31,9 @@ foreach(client style_easing style_closest)
   set_property(TARGET ctbrowser-test-${client} PROPERTY LINK_LIBRARIES "${_style_libs}")
 endforeach()
 
-# vm_operators is the one file that still runs ctjs - `diff_vs_v1` sends an
-# expression through the previous engine's interpreter as well - and that
-# public header also reaches its nested ctc dependency.
+# vm_operators (js/vm/operators.cpp) is the one test that still links ctjs, the
+# older constexpr JavaScript interpreter: `diff_vs_v1` runs each expression
+# through it as well, and ctjs's public header needs ctc's include path too.
 target_include_directories(ctbrowser-test-vm_operators PRIVATE
   "${CTBROWSER_CTJS}/include"
   "${CTBROWSER_CTC}/include")
@@ -40,14 +41,13 @@ target_include_directories(ctbrowser-test-vm_operators PRIVATE
 # --- Precompiled header: parse the umbrella once, not once per test ----------
 #
 # `<ctbrowser.hpp>` is the one-include public API, and parsing it costs ~2.9 s
-# (measured; an empty TU is 0.01 s). Every full test re-parsed it, so the ~480
-# test TUs spent ~1,400 s of the suite's build - over half of it - on the same
-# parse. Built ONCE here and reused across the targets, which roughly halves
-# the unittests' compile time.
+# (measured; an empty TU is 0.01 s). Across ~480 test TUs that is ~1,400 s,
+# over half of the suite's build. Building it once here and reusing it across
+# the targets roughly halves the unittests' compile time.
 #
-# LEFT OUT: tests that deliberately link a SUBSET of the libraries (the
-# three foreach blocks above) and do not include the umbrella - forcing it onto
-# them would reference libraries their link line drops. `selectors` is the
+# Left out: tests that deliberately link a subset of the libraries (the three
+# foreach blocks above) and do not include the umbrella; forcing it onto them
+# would reference libraries their link line drops. `selectors` is the
 # arbitrary full-engine anchor that builds the shared PCH. timer_queue uses
 # only its public scheduling header, and listener_registry its registration
 # header, so their binaries can be checked without Script.
@@ -56,8 +56,8 @@ target_precompile_headers(${_pch_anchor} PRIVATE <ctbrowser.hpp>)
 set(_pch_excluded core_basics core_text core_uri core_json
                   dom_token_list dom_element dom_shadow dom_dataset
                   style_easing style_closest timer_queue listener_registry)
-# A directory's targets and those of every directory below it: the tests live
-# in folders (unit/aot/, js/vm/) since 2026-10-09.
+# A directory's targets and those of every directory below it, because tests
+# live in subfolders (unit/aot/, js/vm/).
 function(ctbrowser_targets_below dir out)
   get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
   get_property(children DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)

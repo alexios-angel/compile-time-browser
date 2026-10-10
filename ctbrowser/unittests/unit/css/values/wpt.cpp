@@ -1,8 +1,11 @@
-// The `css/css-values` behaviours fixed against the WPT run of 2026-09-10 -
-// one case per behaviour, each named after the file it moves. ../values.cpp
-// asks what a specified value is worth; this asks the questions the corpus
-// asked and got wrong: what a value COMPUTES to, and what the evaluator does
-// at the edges of its number line.
+//===- wpt.cpp - WPT css-values regressions ---------------------*- C++ -*-===//
+//
+// Regression tests for web-platform-tests `css/css-values` failures: one case
+// per behaviour, each comment naming the WPT file it makes pass. ../values.cpp
+// tests what a specified value is worth; this file tests what a value computes
+// to, and what the math evaluator does at the edges of its number line.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/shell/shell.hpp>
 #include <ctbrowser/style/style.hpp>
@@ -19,8 +22,8 @@ using ctbrowser::style::css::computed_position;
 
 namespace {
 
-// position/position-computed.tentative: a `<position>`'s keywords compute to
-// percentages, and the flow-relative ones through the writing mode.
+/// position/position-computed.tentative: a `<position>`'s keywords compute to
+/// percentages, and the flow-relative ones through the writing mode.
 void test_a_position_computes_to_percentages() {
     const auto horizontal = [](std::string_view specified) {
         return computed_position(specified, "horizontal-tb", "ltr");
@@ -36,8 +39,8 @@ void test_a_position_computes_to_percentages() {
              std::string{"calc(100% - 20px) calc(100% - 10px)"});
     CHECK_EQ(horizontal("x-end 10px top 20px"), std::string{"calc(100% - 10px) 20px"});
     CHECK_EQ(horizontal("left 10px y-end 20%"), std::string{"10px 80%"});
-    // A math function is a component like any other and keeps its text -
-    // getComputedStyle-calc-mixed-units-001's `background-position`.
+    // A math function is a component like any other and keeps its text
+    // (getComputedStyle-calc-mixed-units-001's `background-position`.
     CHECK_EQ(horizontal("calc(0% + 320px)"), std::string{"calc(0% + 320px) 50%"});
     // The flow-relative keywords follow the writing mode.
     CHECK_EQ(computed_position("x-start", "horizontal-tb", "rtl"), std::string{"100% 50%"});
@@ -50,8 +53,9 @@ void test_a_position_computes_to_percentages() {
     CHECK_EQ(horizontal("garbage"), std::string{});
 }
 
-// calc-infinity-nan-computed: at computed-value time a NaN is zero and an
-// infinity is the bound it overflowed. The specified value keeps its calc().
+/// calc-infinity-nan-computed: at computed-value time a NaN is zero and an
+/// infinity is clamped to 33554432 (2^25, Chrome's LayoutUnit maximum; see
+/// lib/Style/css/calc/fold.cpp). The specified value keeps its calc().
 void test_infinity_and_nan_are_clamped_when_computed() {
     using ctbrowser::style::css::fold_math;
     using ctbrowser::style::css::length_context;
@@ -67,20 +71,20 @@ void test_infinity_and_nan_are_clamped_when_computed() {
     CHECK_EQ(fold_math("calc(NaN * 1s)", ctx, math_context::any).text, std::string{"0s"});
     CHECK_EQ(fold_math("calc(infinity)", ctx, math_context::any).text, std::string{"33554432"});
     CHECK_EQ(fold_math("calc(NaN)", ctx, math_context::integer).text, std::string{"0"});
-    // Two infinities that cancel for any basis are a NaN, and so zero - a
+    // Two infinities that cancel for any basis are a NaN, and so zero: a
     // plain zero length, with nothing left for a basis to resolve.
     CHECK_EQ(fold_math("calc(infinity * 1px - infinity * 1%)", ctx, math_context::length).text,
              std::string{"0px"});
     CHECK_EQ(fold_math("calc(infinity * 1px + infinity * 1%)", ctx, math_context::length).text,
              std::string{"calc(33554432% + 33554432px)"});
-    // ...and only when computed: `el.style` reads the calc() back.
+    // Clamping happens only when computed: `el.style` reads the calc() back.
     CHECK_EQ(simplify_math("calc(NaN * 1px)"), std::string{"calc(NaN * 1px)"});
     CHECK_EQ(simplify_math("calc(1 / 0)"), std::string{"calc(infinity)"});
 }
 
-// round-function, signed-zero and signs-abs-computed: the step's sign is
-// ignored and defaults to 1, the two zeros stay distinct through min(), max(),
-// clamp() and mod(), and a specified `-0em` keeps its sign.
+/// round-function, signed-zero and signs-abs-computed: the step's sign is
+/// ignored and defaults to 1, the two zeros stay distinct through min(), max(),
+/// clamp() and mod(), and a specified `-0em` keeps its sign.
 void test_the_evaluator_at_zero_and_around_a_step() {
     using ctbrowser::style::css::evaluate_math;
     using ctbrowser::style::css::length_context;
@@ -97,7 +101,7 @@ void test_the_evaluator_at_zero_and_around_a_step() {
     CHECK_EQ(number("round(1.5)"), 2.0);
     CHECK_EQ(number("round(down, 1.5)"), 1.0);
     CHECK(evaluate_math("round(1.5px)", ctx).outcome == math_outcome::invalid);
-    // The sign of a zero, read the way the corpus reads it: through 1 / sign().
+    // The sign of a zero, read the way WPT reads it: through 1 / sign().
     CHECK_EQ(number("1 / sign(min(0, -0))"), -std::numeric_limits<double>::infinity());
     CHECK_EQ(number("1 / sign(max(-0, 0))"), std::numeric_limits<double>::infinity());
     CHECK_EQ(number("1 / sign(clamp(-0, 0, 0))"), std::numeric_limits<double>::infinity());
@@ -107,8 +111,8 @@ void test_the_evaluator_at_zero_and_around_a_step() {
     CHECK_EQ(simplify_math("sign(sign(-0em))"), std::string{"sign(sign(-0em))"});
 }
 
-// clamp-partial-serialize.tentative: a clamp() with an absent bound is the
-// comparison that is left.
+/// clamp-partial-serialize.tentative: a clamp() with an absent bound is the
+/// comparison that is left.
 void test_a_clamp_with_an_absent_bound_is_a_comparison() {
     using ctbrowser::style::css::simplify_math;
     CHECK_EQ(simplify_math("clamp(none, 2px, 3em)"), std::string{"min(2px, 3em)"});
@@ -132,9 +136,9 @@ void test_a_clamp_with_an_absent_bound_is_a_comparison() {
     CHECK_EQ(fold_math("min(1em, 2em)", ctx).text, std::string{"16px"});
 }
 
-// calc-numbers and calc-rounds-to-integer: a math function's result is clamped
-// to the property's range at computed-value time, and an <integer> property
-// refuses a <number-token> that is not one while rounding a calc() that is.
+/// calc-numbers and calc-rounds-to-integer: a math function's result is clamped
+/// to the property's range at computed-value time, and an <integer> property
+/// refuses a <number-token> that is not one while rounding a calc() that is.
 void test_the_range_of_a_property_is_applied_when_computed() {
     using ctbrowser::style::css::check_declaration;
     using ctbrowser::style::css::non_negative;
@@ -162,9 +166,9 @@ void test_the_range_of_a_property_is_applied_when_computed() {
     CHECK(check_declaration("column-span", "all").valid);
 }
 
-// typed_arithmetic and getComputedStyle-calc-mixed-units-003: two dimensions
-// multiply and divide into a type of their own, and a type no property takes is
-// still a syntax error as the whole answer.
+/// typed_arithmetic and getComputedStyle-calc-mixed-units-003: two dimensions
+/// multiply and divide into a type of their own, and a type no property takes is
+/// still a syntax error as the whole answer.
 void test_typed_arithmetic() {
     using ctbrowser::style::css::check_declaration;
     using ctbrowser::style::css::evaluate_math;
@@ -190,7 +194,7 @@ void test_typed_arithmetic() {
              std::string{"100%"});
     CHECK_EQ(fold_math("calc(1px * 10em / 0em)", ctx, math_context::length).text,
              std::string{"33554432px"});
-    // ...and one that would need the basis twice, or as a divisor, waits.
+    // One that would need the basis twice, or as a divisor, waits.
     CHECK(evaluate_math("10% * 10%", ctx).outcome == math_outcome::unresolved);
     CHECK(evaluate_math("52px * 1px / 10%", ctx).outcome == math_outcome::unresolved);
     CHECK(evaluate_math("10% / 1px", ctx).outcome == math_outcome::unresolved);
@@ -203,7 +207,7 @@ void test_typed_arithmetic() {
     CHECK_EQ(number("sign(0cqi / 1px)"), 0.0);
     CHECK_EQ(number("10cqw"), 102.4);
     CHECK_EQ(number("10cqmin"), 76.8);
-    // ...and the bases are applied in double: `mod(18vw, 5vw)` is exactly what
+    // The bases are applied in double: `mod(18vw, 5vw)` is exactly what
     // `3vw` is, which single-precision bases put five millionths off
     // (round-mod-rem-computed).
     CHECK_EQ(static_cast<float>(number("mod(18vw, 5vw)")), static_cast<float>(number("3vw")));
@@ -216,10 +220,10 @@ void test_typed_arithmetic() {
     CHECK(!check_declaration("width", "calc(2px * 1px)").valid);
 }
 
-// calc-mix-serialize, calc-mix-computed: a weighted sum whose weights are
-// normalised like color-mix()'s - filled equally when omitted, scaled down
-// over 100%, not scaled up under - and whose specified value folds only when
-// every value in it has a magnitude.
+/// calc-mix-serialize, calc-mix-computed: a weighted sum whose weights are
+/// normalised like color-mix()'s (filled equally when omitted, scaled down
+/// over 100%, not scaled up under) and whose specified value folds only when
+/// every value in it has a magnitude.
 void test_calc_mix() {
     using ctbrowser::style::css::check_declaration;
     using ctbrowser::style::css::fold_math;
@@ -242,7 +246,7 @@ void test_calc_mix() {
              std::string{"calc-mix(10px 25%, 3em 25%, 5em 25%, 7em 25%)"});
     CHECK_EQ(specified("text-indent", "calc(10px + calc-mix(1% 0%, 3px 0%))"),
              std::string{"calc(0% + 10px)"});
-    // ...and the zero length beside a percentage is kept the same way; only
+    // The zero length beside a percentage is kept the same way; only
     // two zeros of one unit add up to nothing to keep.
     CHECK_EQ(specified("text-indent", "calc(10% + calc-mix(1px 0%, 3% 0%))"),
              std::string{"calc(10% + 0px)"});
@@ -278,9 +282,9 @@ void test_calc_mix() {
     CHECK_EQ(fold("calc(10px + calc-mix(10% 50%, 30% 50%))"), std::string{"calc(20% + 10px)"});
 }
 
-// random-computed: random() picks between its bounds on a base that is fixed
-// per key, so the same declaration lands on the same value, and the corners
-// of its range are the specification's.
+/// random-computed: random() picks between its bounds on a base that is fixed
+/// per key, so the same declaration lands on the same value, and the corners
+/// of its range are the specification's.
 void test_random() {
     using ctbrowser::style::css::fold_math;
     using ctbrowser::style::css::length_context;
@@ -327,9 +331,9 @@ void test_random() {
     }());
 }
 
-// tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"
-// files: sibling-index() and sibling-count() resolve in the cascade, where the
-// element is, and nowhere else.
+/// tree-counting/calc-sibling-function and the trig, exp and sqrt "computed"
+/// files: sibling-index() and sibling-count() resolve in the cascade, where the
+/// element is, and nowhere else.
 void test_the_tree_counting_functions() {
     using ctbrowser::style::css::check_declaration;
     using ctbrowser::style::css::fold_math;
@@ -362,8 +366,8 @@ void test_the_tree_counting_functions() {
     }
 }
 
-// attr-all-types, attr-argument-grammar, attr-length-specified: attr() is a
-// substitution like var(), judged by the type it asks for.
+/// attr-all-types, attr-argument-grammar, attr-length-specified: attr() is a
+/// substitution like var(), judged by the type it asks for.
 void test_attr_substitution() {
     using ctbrowser::style::css::attribute_lookup;
     using ctbrowser::style::css::custom_lookup;
@@ -396,13 +400,13 @@ void test_attr_substitution() {
     CHECK_EQ(sub("attr(data-nested type(*), 1px)"), std::string{"10"});
     CHECK_EQ(sub("attr(data-ring type(*), 1px)"), std::string{"1px"});
     CHECK_EQ(sub("attr(data-ring type(*))"), std::string{"<invalid>"});
-    // ...and a ring closed by a BARE attr(), which reads the attribute as a
-    // string, is a ring all the same - as is an attribute naming itself in
+    // A ring closed by a bare attr(), which reads the attribute as a string,
+    // is a ring all the same, as is an attribute naming itself in
     // an attr() the tokenizer has to close for it (attr-cycle 3, 28).
     CHECK_EQ(sub("attr(data-raw-ring type(*))"), std::string{"<invalid>"});
     CHECK_EQ(sub("attr(data-unclosed type(*), abc)"), std::string{"abc"});
     CHECK_EQ(sub("attr(data-hz type(<frequency>))"), std::string{"3khz"});
-    // ...but a custom property read through var() computes its own attr()s
+    // A custom property read through var(), though, computes its own attr()s
     // as the strings they are, whatever attribute is being substituted
     // around it (attr-cycle 26).
     {
@@ -442,7 +446,7 @@ void test_attr_substitution() {
     CHECK_EQ(sub("attr(data-foo type(<url>))"), std::string{"<invalid>"});
     CHECK_EQ(sub("attr(data-foo type(<number>) !)"), std::string{"<invalid>"});
     CHECK_EQ(sub("attr(!)"), std::string{"<invalid>"});
-    // ...and a var() whose name is followed by anything but a comma is too.
+    // So is a var() whose name is followed by anything but a comma.
     CHECK_EQ(sub("var(--foo type(*))"), std::string{"<invalid>"});
     {
         fixture f;
@@ -459,9 +463,9 @@ void test_attr_substitution() {
     }
 }
 
-// The getComputedStyle half, through a page: a position resolved against the
-// writing mode, an opacity as a number in [0, 1], a custom property with its
-// substitutions performed, and a background-position given its second half.
+/// The getComputedStyle half, through a page: a position resolved against the
+/// writing mode, an opacity as a number in [0, 1], a custom property with its
+/// substitutions performed, and a background-position given its second half.
 void test_what_a_page_reads_back() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -550,12 +554,12 @@ void test_what_a_page_reads_back() {
     CHECK_EQ(logged(page, "vi="), std::string{"vi=400px 200px|400px 200px|200px 400px"});
 }
 
-// exp-log-serialize, minmax-number-serialize, progress-serialize and their
-// kin: the computed `transform` is the product of its functions as a
-// `matrix()`, `none` is `none`, a translation's percentage is of the border
-// box (the div is 384px wide, so `translate(10%)` moves 38.4px), and a
-// function this engine cannot multiply out keeps its text rather than
-// guessing.
+/// exp-log-serialize, minmax-number-serialize, progress-serialize and their
+/// kin: the computed `transform` is the product of its functions as a
+/// `matrix()`, `none` is `none`, a translation's percentage is of the border
+/// box (the div is 384px wide, so `translate(10%)` moves 38.4px), and a
+/// function this engine cannot multiply out keeps its text rather than
+/// guessing.
 void test_a_transform_computes_to_a_matrix() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -582,9 +586,9 @@ void test_a_transform_computes_to_a_matrix() {
                          "matrix(0, 0, 0, 0, 0, 0)"});
 }
 
-// rem-unit-root-element and lh-rlh-on-root-001: the root element's own
-// font-size and line-height read back from the cascade, whose `rem` and `lh`
-// on the root resolve against the initial values, not from the viewport's box.
+/// rem-unit-root-element and lh-rlh-on-root-001: the root element's own
+/// font-size and line-height read back from the cascade, whose `rem` and `lh`
+/// on the root resolve against the initial values, not from the viewport's box.
 void test_the_root_reads_its_own_font_size_back() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;
@@ -607,9 +611,9 @@ void test_the_root_reads_its_own_font_size_back() {
     CHECK_EQ(logged(page, "root="), std::string{"root=50px|100px|100px|48px|40px"});
 }
 
-// getComputedStyle-border-radius-001 and -003: a corner is a pair of radii and
-// the shorthand puts the horizontal four before a slash and the vertical four
-// after it - no slash when the two lists agree.
+/// getComputedStyle-border-radius-001 and -003: a corner is a pair of radii and
+/// the shorthand puts the horizontal four before a slash and the vertical four
+/// after it, with no slash when the two lists agree.
 void test_border_radius_reassembles_its_corners() {
     using ctbrowser::shell::browser;
     using ctbrowser::shell::browser_options;

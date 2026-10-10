@@ -1,24 +1,28 @@
-// JavaScript's type system, against V8.
+//===- ctbrowser/unittests/js/type_basics.cpp - Type conversion tests -----===//
 //
-// `typeof`, the four abstract conversions (ToBoolean, ToNumber, ToString,
-// ToPrimitive), the `+` operator's double life, and the `==` coercion table -
-// differentially tested against node (V8, the engine Chrome ships) over ~370
-// expressions. As with unittests/js/math_basics.cpp and unittests/js/string_basics.cpp the
-// expectations came out of V8, not out of this engine.
+// JavaScript's type system, checked against node (V8): `typeof`, the four
+// abstract conversions (ToBoolean, ToNumber, ToString, ToPrimitive), the `+`
+// operator's two meanings, and the `==` coercion table. As with
+// math_basics.cpp and string_basics.cpp, the expected values came out of V8,
+// not out of this engine. Section numbers are ECMA-262's.
 //
-// The sweep found 19 differences, and ELEVEN OF THEM WERE ONE DEFECT: ToNumber
-// of an OBJECT did not go through ToPrimitive, so `Number([])` was NaN rather
-// than 0 and every `==` between an object and a primitive answered false.
-// Fixed - the built-ins use `to_number_value` now - and pinned below. Three
-// differences remain and are labelled at the bottom.
+// ToNumber of an object must go through ToPrimitive: without it `Number([])`
+// is NaN instead of 0 and every `==` between an object and a primitive is
+// false. The built-ins use `to_number_value` for this, and the cases below
+// pin it.
 //
 // The coercion tables here are the part of the language that pages rely on
 // without meaning to: `if (x)`, `x + ""`, `x == null` and `+x` are in every
 // bundle, and each is a different conversion with different rules.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
-// A soft lookup can still invoke a throwing getter or proxy trap.
+// The global lookup `typeof` uses on a possibly undeclared name (the
+// get_global_typeof opcode and its AOT helper ct_aot_global_get_soft) must
+// still be marked as throwing, re-entrant and a safepoint: it can run a
+// getter or proxy trap.
 #define CT_OPCODE(name, a, b, c, writes_a, allocates, may_throw, may_reenter, is_safepoint, ...)   \
     static_assert(ctbrowser::script::op::name != ctbrowser::script::op::get_global_typeof ||       \
                   (writes_a && may_throw && may_reenter && is_safepoint));
@@ -31,7 +35,7 @@
 
 int main() {
     // --- typeof --------------------------------------------------------------
-    // `typeof null` is "object" and always will be - it is the oldest bug in
+    // `typeof null` is "object" and always will be: it is the oldest bug in
     // the language and pages branch on it.
     js_expect("typeof undefined", "undefined");
     js_expect("typeof null", "object");
@@ -44,7 +48,7 @@ int main() {
     js_expect("typeof ({})", "object");
     js_expect("typeof (function(){})", "function");
     js_expect("typeof Symbol(\"s\")", "symbol");
-    // typeof is the ONE operator that does not throw on an undeclared name -
+    // typeof is the one operator that does not throw on an undeclared name,
     // which is why `typeof x === "undefined"` is the guard every bundle uses.
     js_expect("typeof undeclaredThing", "undefined");
     js_expect("typeof (undeclaredThing)", "undefined");
@@ -72,7 +76,7 @@ int main() {
                   "17");
     }
     // Reading one is an unresolvable reference: ReferenceError, catchable
-    // (6.2.5.5). A declared global holding undefined is NOT one.
+    // (6.2.5.5). A declared global holding undefined is not one.
     js_expect("(function () { try { undeclaredThing; return 'read'; }"
               " catch (e) { return e.constructor.name; } })()",
               "ReferenceError");
@@ -82,10 +86,11 @@ int main() {
               " catch (e) { return 'threw'; } })()",
               "read");
     // The global object is the global environment's object record, so a
-    // name inherited by globalThis resolves - `toString` is Object.prototype's.
+    // name inherited by globalThis resolves: `toString` is Object.prototype's.
     js_expect("typeof toString", "function");
     js_expect("(function () { globalThis.lateGlobal = 3; return lateGlobal; })()", "3");
-    // ...and `delete` reaches the binding (clause 17: every global is configurable).
+    // ...and `delete` removes it: a property added to globalThis is an ordinary
+    // configurable property, so the name stops resolving.
     js_expect("(function () { globalThis.gone = 3; delete globalThis.gone; return typeof gone + "
               "',' + ('gone' in globalThis); })()",
               "undefined,false");
@@ -93,7 +98,7 @@ int main() {
     js_expect("typeof void 0", "undefined");
 
     // --- ToBoolean -----------------------------------------------------------
-    // Exactly seven falsy values, and everything else is true - including "0",
+    // Exactly seven falsy values, and everything else is true, including "0",
     // "false", [] and {}, which is what surprises people.
     for (const char * falsy : {"undefined", "null", "false", "0", "-0", "NaN", "\"\""}) {
         js_expect(std::string{"Boolean("} + falsy + ")", "false");
@@ -106,7 +111,7 @@ int main() {
 
     // --- ToNumber ------------------------------------------------------------
     js_expect("Number(undefined)", "NaN");
-    js_expect("Number(null)", "0"); // null is 0, undefined is NaN - they differ here
+    js_expect("Number(null)", "0"); // null is 0, undefined is NaN.
     js_expect("Number(true)", "1");
     js_expect("Number(false)", "0");
     js_expect("Number(\"\")", "0");
@@ -123,18 +128,18 @@ int main() {
     js_expect("String(null)", "null");
     js_expect("String(true)", "true");
     js_expect("String(0)", "0");
-    js_expect("String(-0)", "0"); // the sign is not shown
+    js_expect("String(-0)", "0"); // The sign is not shown.
     js_expect("String(NaN)", "NaN");
     js_expect("String([])", "");
     js_expect("String([1])", "1");
     js_expect("String([1,2])", "1,2");
-    js_expect("String([1,[2,[3]]])", "1,2,3"); // join is recursive
-    js_expect("String([null])", "");           // null and undefined join as empty
+    js_expect("String([1,[2,[3]]])", "1,2,3"); // Join is recursive.
+    js_expect("String([null])", "");           // null and undefined join as empty.
     js_expect("String([undefined])", "");
     js_expect("String({})", "[object Object]");
 
     // --- the + operator, which is two operators -----------------------------
-    // If either side is a string after ToPrimitive it CONCATENATES; otherwise
+    // If either side is a string after ToPrimitive it concatenates; otherwise
     // it adds. That single rule explains every surprising line below.
     js_expect("1 + 1", "2");
     js_expect("1 + \"1\"", "11");
@@ -146,31 +151,31 @@ int main() {
     js_expect("\"\" + null", "null");
     js_expect("\"\" + undefined", "undefined");
     js_expect("[] + []", "");
-    js_expect("[1] + [2]", "12"); // both join to strings, so this concatenates
+    js_expect("[1] + [2]", "12"); // Both join to strings, so this concatenates.
     // The other arithmetic operators have no string mode, so they coerce.
     js_expect("\"3\" - 1", "2");
     js_expect("\"3\" * \"2\"", "6");
     js_expect("\"6\" / \"2\"", "3");
-    js_expect("1 + +\"2\"", "3"); // the unary + a minifier writes to force a number
+    js_expect("1 + +\"2\"", "3"); // The unary + a minifier writes to force a number.
 
     // --- == against === ------------------------------------------------------
     // `==` coerces and `===` does not. The rows below are the ones bundles
     // actually depend on.
     js_expect("null == undefined", "true");
     js_expect("null === undefined", "false");
-    js_expect("null == 0", "false"); // null is ONLY loosely equal to undefined
+    js_expect("null == 0", "false"); // null is only loosely equal to undefined.
     js_expect("null == false", "false");
     js_expect("undefined == 0", "false");
     js_expect("0 == \"\"", "true");
     js_expect("0 == \"0\"", "true");
-    js_expect("\"\" == \"0\"", "false"); // two strings never coerce
+    js_expect("\"\" == \"0\"", "false"); // Two strings never coerce.
     js_expect("0 == false", "true");
     js_expect("1 == true", "true");
     js_expect("2 == true", "false");
     js_expect("\"1\" == 1", "true");
     js_expect("NaN == NaN", "false");
     js_expect("NaN === NaN", "false");
-    js_expect("0 === -0", "true"); // === cannot tell the zeros apart
+    js_expect("0 === -0", "true"); // === cannot tell the zeros apart.
     js_expect("1 === 1", "true");
     js_expect("\"a\" === \"a\"", "true");
 
@@ -179,15 +184,15 @@ int main() {
     js_expect("-1/0", "-Infinity");
     js_expect("0/0", "NaN");
     js_expect("NaN !== NaN", "true");
-    js_expect("0.1 + 0.2 === 0.3", "false"); // binary floating point, as everywhere
+    js_expect("0.1 + 0.2 === 0.3", "false"); // Binary floating point, as everywhere.
     js_expect("Number.isInteger(1)", "true");
     js_expect("Number.isInteger(1.5)", "false");
     js_expect("Number.isNaN(NaN)", "true");
-    js_expect("Number.isNaN(\"NaN\")", "false"); // isNaN COERCES, Number.isNaN does not
+    js_expect("Number.isNaN(\"NaN\")", "false"); // isNaN coerces, Number.isNaN does not.
     js_expect("isNaN(\"NaN\")", "true");
     js_expect("Number.MAX_SAFE_INTEGER", "9007199254740991");
     js_expect("Number.EPSILON > 0", "true");
-    js_expect("parseInt(\"08\")", "8"); // not octal, despite the leading zero
+    js_expect("parseInt(\"08\")", "8"); // Not octal, despite the leading zero.
     js_expect("parseInt(\"10\", 2)", "2");
     js_expect("parseFloat(\".5\")", "0.5");
 
@@ -195,7 +200,7 @@ int main() {
     js_expect("null ?? \"d\"", "d");
     js_expect("undefined ?? \"d\"", "d");
     js_expect("0 ?? \"d\"", "0");   // ?? only catches null and undefined...
-    js_expect("\"\" ?? \"d\"", ""); // ...unlike ||, which catches every falsy value
+    js_expect("\"\" ?? \"d\"", ""); // ...unlike ||, which catches every falsy value.
     js_expect("0 || \"d\"", "d");
     js_expect("\"\" || \"d\"", "d");
     js_expect("1 && 2", "2");
@@ -206,7 +211,7 @@ int main() {
     js_expect("[] instanceof Array", "true");
     js_expect("({}) instanceof Object", "true");
     js_expect("(function(){}) instanceof Function", "true");
-    js_expect("\"a\" instanceof String", "false"); // a primitive is not an instance
+    js_expect("\"a\" instanceof String", "false"); // A primitive is not an instance.
     js_expect("Array.isArray([])", "true");
     js_expect("Array.isArray({})", "false");
     js_expect("[].constructor === Array", "true");
@@ -226,55 +231,50 @@ int main() {
     js_expect("(new Date(0)) instanceof Date", "true");
 
     // --- ToNumber of an object, which goes through ToPrimitive ---------------
-    // These were the sweep's biggest cluster: `context::to_number` is static
-    // and cannot re-enter the VM to call `valueOf`, so it answered NaN for
-    // every object - which made `Number([])` NaN and every `==` between an
-    // object and a primitive false. The built-ins use `to_number_value` now.
+    // `context::to_number` is static and cannot call back into the VM to run
+    // `valueOf`, so built-ins must use `to_number_value` for objects.
     js_expect("Number([])", "0");
     js_expect("Number([1])", "1");
     js_expect("Number({valueOf:function(){return 7}})", "7");
     js_expect("Math.abs([])", "0");
     js_expect("Math.abs([-2.5])", "2.5");
     js_expect("Math.max([1],[2])", "2");
-    // And `==` retries after ToPrimitive - 7.2.15 steps 10 and 11.
+    // And `==` retries after ToPrimitive (7.2.15 steps 10 and 11).
     js_expect("0 == []", "true");
     js_expect("\"\" == []", "true");
     js_expect("false == []", "true");
     js_expect("1 == [1]", "true");
     js_expect("\"1\" == [1]", "true");
     js_expect("\"abc\" == [\"abc\"]", "true");
-    // Two OBJECTS still compare by identity, and a string is on the heap here
-    // too - which is why "both on the heap" was the wrong test for that.
+    // Two objects compare by identity. Strings are heap values in this engine
+    // too, so `==` cannot use "both operands are heap values" as its identity
+    // test.
     js_expect("[] == []", "false");
     js_expect("({}) == ({})", "false");
     js_expect("null == []", "false");
     js_expect("0 == {}", "false");
     js_expect("NaN == [NaN]", "false");
-    // A leading 0x is hexadecimal when no radix is given, 19.2.5 step 8.
+    // A leading 0x is hexadecimal when no radix is given (19.2.5 step 8).
     js_expect("parseInt(\"0x10\")", "16");
     js_expect("parseInt(\"0xFF\")", "255");
     js_expect("parseInt(\"-0x10\")", "-16");
-    js_expect("parseInt(\"0x10\", 10)", "0"); // an explicit radix wins
+    js_expect("parseInt(\"0x10\", 10)", "0"); // An explicit radix wins.
 
     // --- Object.is: === plus the two questions it cannot answer ---------------
     js_expect("typeof Object.is", "function");
-    js_expect("Object.is(0,-0)", "false");   // === says true
-    js_expect("Object.is(NaN,NaN)", "true"); // === says false
+    js_expect("Object.is(0,-0)", "false");   // === says true.
+    js_expect("Object.is(NaN,NaN)", "true"); // === says false.
     // And String(sym) describes rather than exposing the internal key.
     js_expect("String(Symbol(\"s\"))", "Symbol(s)");
 
-    // --- A FUNCTION STRINGIFIES TO ITS SOURCE --------------------------------
-    //
-    // `String((function(){}))` was pinned here as KNOWN WRONG and read
-    // "function" - the bare word, for EVERY function, so two different ones
-    // stringified alike. `to_string` short-circuited on is_callable() before
-    // ToPrimitive could reach `Function.prototype.toString`, which has returned
-    // the real source text since `function_proto` gained its span. The
-    // shortcut was not standing in for a missing answer; it was hiding one.
+    // --- a function stringifies to its source --------------------------------
+    // ToString of a function goes through ToPrimitive to
+    // Function.prototype.toString, so it yields the source text, not a fixed
+    // word shared by every function.
     js_expect("String(function(){})", "function(){}");
     js_expect("String(function foo(a){ return a; })", "function foo(a){ return a; }");
     js_expect("'' + ((a, b) => a + b)", "(a, b) => a + b");
-    // ONE ANSWER FOR BOTH SPELLINGS, which is the property that matters: a
+    // One answer for both spellings, which is the property that matters: a
     // library reading its own source takes whichever is shorter to write.
     js_expect("(function(){var f = function named(){ return 1; };"
               "return String(f) === f.toString();})()",

@@ -1,42 +1,33 @@
-// The CSSOM object model - `document.styleSheets` and everything under it.
+//===- ctbrowser/unittests/unit/cssom/rules.cpp - CSSOM rule list tests ---===//
 //
-// EVERY STRING COMPARED HERE IS A STRING `css/cssom` COMPARES. The suite's
+// The CSSOM rules under `document.styleSheets`: CSSRuleList, CSSStyleRule, the
+// grouping and media rules and their MediaLists, every rule type a sheet
+// carries, and where a rule may be inserted. The sheet objects themselves are
+// tested in sheets.cpp; `logged` comes from probe.hpp.
+//
+// Every string compared here is one WPT `css/cssom` compares. Its
 // `CSSRuleList.html`, `CSSStyleSheet.html` and `CSSStyleRule.html` assert
-// `cssText` and `selectorText` byte for byte, so the interesting question is
-// never "did a rule come back" but "did it come back spelled the way the
-// specification spells it". That is why this file is not more of
-// `../css/values.cpp`: that one asks what a VALUE is worth, this one asks what the
-// object model SERIALISES to.
+// `cssText` and `selectorText` byte for byte, so the question is never "did a
+// rule come back" but "did it come back spelled the way the specification
+// spells it". That is how this file differs from `../css/values.cpp`, which
+// asks what a value is worth rather than what the object model serialises to.
 //
-// The serialisation is CANONICAL rather than the author's bytes, and the two
-// cases that prove it are here: a rule written across two indented lines comes
-// back as one line, and a selector written `[type=checkbox]` comes back
-// `[type="checkbox"]`. Neither is reachable from the source text - a `raw_rule`
-// records no source span at all - and both are what a browser answers.
+// The serialisation is canonical rather than the author's bytes, and two cases
+// here prove it: a rule written across two indented lines comes back as one
+// line, and a selector written `[type=checkbox]` comes back
+// `[type="checkbox"]`. Neither is reachable from the source text, since a
+// `raw_rule` records no source span.
 //
-// THE THREE THINGS THIS CANNOT TEST, said here rather than discovered:
+// What this file does not cover:
 //
-//   * the cascade does not observe insertRule. `set_author_styles_hook` is the
-//     slot for that and the browser does not fill it yet, so the last case
-//     below asserts the TEXT the hook would be handed rather than a pixel.
-//   * `styleElement.sheet` needs one call in `install_element_views`, and
-//     `document.styleSheets` needs one in `dom_bindings::install`. Both are in
-//     files the CSSOM rung does not own; without them these cases fail with
-//     "undefined", which is the honest way for a missing wire to report.
-//   * an at-rule whose block this engine does not model keeps the author's
-//     bytes. `@namespace` and `@import` have no block at all and nothing to
-//     reconstruct a prelude from, so `cssText` is the source text and says so.
-//     Every at-rule whose block IS rules or IS declarations serialises like any
-//     other rule; `test_every_rule_a_sheet_carries` asserts which is which.
+//   * Whether the cascade restyles after insertRule. sheets.cpp asserts the
+//     CSS text that `set_author_styles_hook` receives.
+//   * Blockless at-rules (`@namespace`, `@import`) keep the author's prelude
+//     except for the URL, which is re-serialised; every at-rule with a rule or
+//     declaration block serialises canonically.
+//     `test_every_rule_a_sheet_carries` asserts which is which.
 //
-// This file is the RULES: CSSRuleList, CSSStyleRule, the grouping and media
-// rules and their MediaLists, every rule type a sheet carries and where one may
-// be inserted. The sheet objects, and the `set_author_styles_hook` case the
-// paragraph above calls "the last case below", are sheets.cpp.
-//
-// One of two files carved out of unittests/unit/cssom.cpp on 2026-09-07, when it
-// passed 1,000 lines. Every case is verbatim and in the order it had; `logged`,
-// which both need, is in probe.hpp beside this.
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -62,9 +53,9 @@ namespace {
 
 void test_the_list_and_the_rules() {
     browser page{browser_options{400, 200}};
-    // INDENTED, ACROSS TWO LINES, exactly as `css/cssom/CSSRuleList.html`
-    // writes it - so a serialisation made of the author's bytes gets this
-    // wrong and a canonical one gets it right.
+    // Indented and across two lines, exactly as `css/cssom/CSSRuleList.html`
+    // writes it, so a serialisation made of the author's bytes gets this wrong
+    // and a canonical one gets it right.
     page.load_html(R"(<html><head>
     <style>
         body { width: 50%; }
@@ -141,8 +132,8 @@ void test_a_style_rule() {
     CHECK_EQ(logged(page, "css="), std::string{"css=input[type=\"checkbox\"]:checked ~ label "
                                                "{ color: red; margin: 10px; }"});
     CHECK_EQ(logged(page, "parent="), std::string{"parent=null,true"});
-    // An INDEX names a property, not a value - CSSOM 6.7.1 - and a shorthand
-    // is stored as its longhands, so `margin` is four of the five.
+    // An index names a property, not a value (CSSOM 6.7.1), and a shorthand is
+    // stored as its longhands, so `margin` is four of the five.
     CHECK_EQ(logged(page, "style="), std::string{"style=red,10px,5,color,margin-top"});
     CHECK_EQ(logged(page, "same="), std::string{"same=true"});
     CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
@@ -210,17 +201,17 @@ void test_insert_and_delete() {
     CHECK_EQ(logged(page, "none="), std::string{"none=TypeError"});
     CHECK_EQ(logged(page, "empty="), std::string{"empty=0,div { }"});
     CHECK_EQ(logged(page, "added="), std::string{"added=-1,undefined { }"});
-    // One rule means ONE rule: text with a second one after the first is a
-    // syntax error rather than a silent truncation.
+    // insertRule takes exactly one rule: text with a second one after the
+    // first is a syntax error rather than a silent truncation.
     CHECK_EQ(logged(page, "two="), std::string{"two=SyntaxError"});
 }
 
-// A SELECTOR IS PARSED, NOT PROBED. `css/cssom/CSSStyleRule-set-selectorText.html`
-// spends nineteen of its subtests on selectors that are not selectors, and the
-// rule for all of them is one line of CSSOM 6.4.2: if the parse fails, do
-// nothing. What that test also demands is the OTHER half - a selector this
-// engine cannot MATCH is not a failure, and it must come back spelled the way
-// the author wrote it rather than as the `*` an empty compound serialises to.
+/// Assigning `selectorText` parses the selector rather than probing it.
+/// `css/cssom/CSSStyleRule-set-selectorText.html` spends nineteen subtests on
+/// invalid selectors, and CSSOM 6.4.2 says: if the parse fails, do nothing.
+/// The other half: a selector this engine cannot match is not a failure, and
+/// it must come back spelled the way the author wrote it, not as the `*` an
+/// empty compound serialises to.
 void test_selector_text_is_parsed_and_escaped() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style id=s>.style0 { color: red }</style></head><body><script>
@@ -252,17 +243,17 @@ void test_selector_text_is_parsed_and_escaped() {
     CHECK_EQ(logged(page, "not="), std::string{"not=div:not(:active)"});
     CHECK_EQ(logged(page, "nth="), std::string{"nth=:nth-child(n+5)"});
     CHECK_EQ(logged(page, "pseudo="), std::string{"pseudo=::before"});
-    // The tokenizer DECODES an escape, so the name that reaches the compiled
-    // selector is `0zonk` - and an identifier may not begin with a digit, so
-    // serialising it back without the escape produces a selector that is not
-    // one. CSSOM §2.1 escapes the digit numerically, trailing space and all.
+    // The tokenizer decodes an escape, so the name that reaches the compiled
+    // selector is `0zonk`. An identifier may not begin with a digit, so
+    // serialising it back without the escape would produce an invalid
+    // selector; CSSOM §2.1 escapes the digit numerically, trailing space and all.
     CHECK_EQ(logged(page, "esc="), std::string{"esc=[\\30 zonk]"});
 }
 
-// insertRule/deleteRule ON A GROUP. The same pair of methods CSSStyleSheet has
-// and a different list - `css/cssom/serialize-media-rule.html` builds every one
-// of its fixtures this way, and `CSSGroupingRule-insertRule.html` asserts all
-// four of the ways it can refuse.
+/// insertRule/deleteRule on a grouping rule: the same pair of methods
+/// CSSStyleSheet has, over a different list. `css/cssom/serialize-media-rule.html`
+/// builds every one of its fixtures this way, and
+/// `CSSGroupingRule-insertRule.html` asserts all four ways it can refuse.
 void test_a_grouping_rule_inserts_and_deletes() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style id=s></style></head><body><script>
@@ -315,7 +306,7 @@ void test_a_grouping_rule_inserts_and_deletes() {
     CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true,true"});
     CHECK_EQ(logged(page, "range="), std::string{"range=IndexSizeError,2"});
     CHECK_EQ(logged(page, "bad="), std::string{"bad=SyntaxError"});
-    // `@import` and `@namespace` are TOP-LEVEL rules, so a grouping rule refuses
+    // `@import` and `@namespace` are top-level rules, so a grouping rule refuses
     // them with a HierarchyRequestError rather than a SyntaxError.
     CHECK_EQ(logged(page, "import="), std::string{"import=HierarchyRequestError"});
     CHECK_EQ(logged(page, "refused="),
@@ -326,11 +317,11 @@ void test_a_grouping_rule_inserts_and_deletes() {
              std::string{"gone=1,@media print {\n  #foo { z-index: 23; float: left; }\n}"});
 }
 
-// THE MEDIA QUERY LIST, SERIALISED FROM THE AUTHOR'S TEXT. Every string here is
-// one `css/cssom/serialize-media-rule.html` compares byte for byte, and the two
-// that look like typos are not: `@media  {` really does carry two spaces when
-// the query list is empty, and a grouping rule really is the one multi-line
-// serialisation in the CSSOM.
+/// The media query list, serialised from the author's text. Every string here
+/// is one `css/cssom/serialize-media-rule.html` compares byte for byte. Two
+/// look like typos but are not: `@media  {` carries two spaces when the query
+/// list is empty, and a grouping rule is the one multi-line serialisation in
+/// the CSSOM.
 void test_media_rules_and_their_lists() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style id=s></style></head><body><script>
@@ -362,13 +353,13 @@ void test_media_rules_and_their_lists() {
     </script></body></html>)");
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "n="), std::string{"n=4"});
-    // `all and <features>` drops the `all`; a NEGATED one keeps it, because
+    // `all and <features>` drops the `all`; a negated one keeps it, because
     // dropping it there would invert the query.
     CHECK_EQ(logged(page, "c0="), std::string{"c0=(color)"});
     CHECK_EQ(logged(page, "t0="), std::string{"t0=@media (color) {\n  #a { color: red; }\n}"});
     CHECK_EQ(logged(page, "t1="), std::string{"t1=@media  {\n}"});
     CHECK_EQ(logged(page, "t2="), std::string{"t2=@media not all and (color) {\n}"});
-    // A feature written twice is KEPT twice: de-duplicating is an open CSSWG
+    // A feature written twice is kept twice: de-duplicating is an open CSSWG
     // issue and the suite asserts the author's list survives.
     CHECK_EQ(logged(page, "t3="),
              std::string{"t3=@media screen and (max-width: 23px) and (max-width: 45px) {\n}"});
@@ -380,9 +371,9 @@ void test_media_rules_and_their_lists() {
     CHECK_EQ(logged(page, "emptied="), std::string{"emptied=@media  {\n  #a { color: red; }\n}"});
 }
 
-// A SHEET HAS A MediaList TOO, and it is the same interface over the same kind
-// of list - `css/cssom/medialist-interfaces-001.html` drives the `<style>`'s
-// `media` attribute through exactly these four steps.
+/// A sheet has a MediaList too: the same interface over the same kind of list.
+/// `css/cssom/medialist-interfaces-001.html` drives the `<style>`'s `media`
+/// attribute through exactly these four steps.
 void test_the_media_list_of_a_sheet() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style id=s media=all>.a { color: red }</style></head>
@@ -401,28 +392,19 @@ void test_the_media_list_of_a_sheet() {
     CHECK_EQ(logged(page, "m0="), std::string{"m0=all,1"});
     CHECK_EQ(logged(page, "m1="), std::string{"m1=all, screen"});
     CHECK_EQ(logged(page, "m2="), std::string{"m2=screen"});
-    // A feature NAME folds and a media type folds; a feature's VALUE does not,
-    // being a string, a url() or a number with a unit rather than an identifier.
+    // A feature name and a media type are case-folded; a feature's value is
+    // not, being a string, a url() or a number with a unit rather than an
+    // identifier.
     CHECK_EQ(logged(page, "m3="), std::string{"m3=print, screen and (min-width: 10px),true"});
 }
 
-// EVERY RULE THE AUTHOR WROTE, AND ITS TYPE.
-//
-// The CSSOM was built from `style::css::parse_stylesheet`, whose `stylesheet`
-// models the three shapes the CASCADE needs - a qualified rule, `@media`, a
-// `@font-face` - and discards every other at-rule outright. So an `@import`, an
-// `@namespace`, a `@page` or a `@keyframes` was not a rule with less in it, it
-// was absent, and the damage was not the missing rule: `cssRules[0]` was the
-// WRONG rule and every index after it was off by one.
-// `css/cssom/cssom-ruleTypeAndOrder.html` asserts exactly that indexing over
-// seven sheets, and `rule-restrictions.html` asserts two of the types by number.
-//
-// A qualified rule with an EMPTY block was dropped by the same front end, which
-// this file used to record as a deviation. It is not one any more: the sheet is
-// split into rules by a byte scanner and each span goes through the same
-// `parse_one_rule` that `insertRule` uses, and that function already split at
-// the brace for exactly this reason. `@media all { * {} }` is the setup of
-// every fixture in `css/cssom/CSSGroupingRule-*.html`.
+/// Every rule the author wrote appears in cssRules, in order, with its type,
+/// including at-rules the cascade ignores (`@import`, `@namespace`, `@page`,
+/// `@keyframes`) and style rules with an empty block. Dropping one would shift
+/// every later index: `css/cssom/cssom-ruleTypeAndOrder.html` asserts that
+/// indexing over seven sheets, `rule-restrictions.html` asserts two of the
+/// types by number, and `@media all { * {} }` is the setup of every fixture in
+/// `css/cssom/CSSGroupingRule-*.html`.
 void test_every_rule_a_sheet_carries() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -451,18 +433,14 @@ void test_every_rule_a_sheet_carries() {
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "count="), std::string{"count=6"});
     // CSSRule.NAMESPACE_RULE, IMPORT_RULE, PAGE_RULE, STYLE_RULE, MEDIA_RULE
-    // and KEYFRAMES_RULE - in the order the author wrote them.
+    // and KEYFRAMES_RULE, in the order the author wrote them.
     CHECK_EQ(logged(page, "types="), std::string{"types=10,3,6,1,4,7"});
-    // AN @namespace's URI IS SERIALIZED AS A URL, whichever of the two forms
-    // the author wrote it in - CSSOM says "serialize a URL", and
-    // `css/cssom/CSSNamespaceRule.html` asserts `@namespace svg
-    // url("http://servo");` for a `url()` prelude and the identical shape for a
-    // quoted one. This asserted the author's bytes back, which is what an
-    // at-rule with no block does for everything EXCEPT its URL.
+    // An @namespace's URI is serialised as `url("...")` whichever form the
+    // author wrote (CSSOM: "serialize a URL"; `css/cssom/CSSNamespaceRule.html`).
     CHECK_EQ(logged(page, "ns="),
              std::string{"ns=@namespace svg url(\"http://www.w3.org/2000/svg\");"});
     CHECK_EQ(logged(page, "import="), std::string{"import=@import url(\"main.css\");"});
-    // `@page`'s block IS declarations, so it serialises like any other block,
+    // `@page`'s block is declarations, so it serialises like any other block,
     // and its prelude is the page selector.
     CHECK_EQ(logged(page, "page="), std::string{"page=@page :left { margin: 1px; }"});
     CHECK_EQ(logged(page, "empty="), std::string{"empty=div { }"});
@@ -473,18 +451,12 @@ void test_every_rule_a_sheet_carries() {
     CHECK_EQ(logged(page, "is="), std::string{"is=true,true,true"});
 }
 
-// THE PIECES OF A PRELUDE, AND THE `.style` OF EVERY RULE THAT HAS ONE.
-//
-// `.style` lived on CSSStyleRule alone, and CSSOM gives one to five rules.
-// `css/cssom/property-accessors.html` reaches straight for
-// `document.styleSheets[0].cssRules[0].style` where rule zero is a `@font-face`
-// and all nine of its subtests died on `getPropertyValue is undefined`, before
-// they had asked anything about a property.
-//
-// `@import` and `@namespace` have no block, so their prelude IS the rule and
-// the interface reports its pieces one at a time. Neither can be answered from
-// the author's bytes: `url(a.css)` and `"a.css"` are the same URL and CSSOM
-// serialises both as `url("a.css")`.
+/// The prelude pieces of blockless at-rules, and `.style` on every rule type
+/// that has one (CSSOM gives it to five, including `@font-face` and `@page`;
+/// `css/cssom/property-accessors.html` reads it from a `@font-face`).
+/// `@import` and `@namespace` have no block, so the interface reports their
+/// prelude's pieces one at a time, and they serialise their URL canonically:
+/// `url(a.css)` and `"a.css"` both become `url("a.css")`.
 void test_the_at_rules_that_are_all_prelude() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -519,11 +491,11 @@ void test_the_at_rules_that_are_all_prelude() {
     CHECK(page.script_error().empty());
     CHECK_EQ(logged(page, "ns="), std::string{"ns=svg|http://servo|"
                                               "@namespace svg url(\"http://servo\");"});
-    // A DEFAULT namespace has no prefix, and CSSOM reports that as the empty
+    // A default namespace has no prefix, and CSSOM reports that as the empty
     // string rather than as null.
     CHECK_EQ(logged(page, "default="), std::string{"default=|@namespace url(\"http://servo1\");"});
-    // `styleSheet` is a sheet of its own - fetched through the registry, and
-    // empty when the fetch found nothing; cssom_imports covers its contents.
+    // `styleSheet` is a sheet of its own, fetched through the registry and
+    // empty when the fetch found nothing; imports.cpp covers its contents.
     CHECK_EQ(logged(page, "import="),
              std::string{"import=a.css|@import url(\"a.css\");|null|[object CSSStyleSheet]"});
     CHECK_EQ(logged(page, "supports="),
@@ -531,29 +503,20 @@ void test_the_at_rules_that_are_all_prelude() {
                          "@import url(\"b.css\") supports((display: flex) or (display: block)) "
                          "screen;"});
     CHECK_EQ(logged(page, "face="), std::string{"face=Foo|1"});
-    // A pseudo-page is lowercased and a page NAME keeps the author's case.
+    // A pseudo-page is lowercased and a page name keeps the author's case.
     CHECK_EQ(logged(page, "page="), std::string{"page=:left|1px"});
     CHECK_EQ(logged(page, "renamed="), std::string{"renamed=named:first"});
     CHECK_EQ(logged(page, "refused="), std::string{"refused=named:first"});
     CHECK_EQ(logged(page, "bogus="), std::string{"bogus=named:first"});
 }
 
-// WHAT MAY PRECEDE WHAT, and the index that was never given.
-//
-// CSSOM 6.3.3 steps 4 and 5 answer two different questions. Step 4 is about the
-// POSITION - an `@import` may only go where everything before it is another
-// `@import`, a `@namespace` may also follow those, and everything else may only
-// go after all of them. Step 5 is about the WHOLE LIST: a `@namespace` may not
-// be added to a sheet that already has a style rule in it at all, wherever the
-// insertion point is, because it would change what the existing selectors mean.
-// `css/cssom/at-namespace.html` is one assertion of exactly that, and
-// `delete-namespace-rule-when-child-rule-exists.html` is its mirror.
-//
-// And `insertRule(text)` and `insertRule(text, undefined)` are the SAME CALL.
-// `index` is an optional unsigned long defaulting to 0, and Web IDL says an
-// `undefined` passed for one means the default was not supplied - it is not
-// `ToNumber(undefined)`, which is NaN and was answering IndexSizeError for a
-// perfectly ordinary insertion.
+/// Where a rule may be inserted (CSSOM 6.3.3 steps 4 and 5). Step 4 checks the
+/// position: an `@import` may only follow other `@import`s, a `@namespace` may
+/// also follow those, and everything else goes after all of them. Step 5
+/// checks the whole list: a `@namespace` may not be added, or removed, while
+/// the sheet has a style rule, because that would change what existing
+/// selectors mean. `css/cssom/at-namespace.html` and
+/// `delete-namespace-rule-when-child-rule-exists.html` test the two directions.
 void test_where_a_rule_may_be_inserted() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -586,6 +549,9 @@ void test_where_a_rule_may_be_inserted() {
     CHECK_EQ(logged(page, "order="), std::string{"order=3,10,1"});
 }
 
+/// `insertRule(text)` and `insertRule(text, undefined)` are the same call: the
+/// index is an optional unsigned long defaulting to 0, and Web IDL treats an
+/// explicit `undefined` as "not supplied", not as ToNumber(undefined) = NaN.
 void test_an_omitted_index_is_zero() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>
@@ -606,16 +572,12 @@ void test_an_omitted_index_is_zero() {
     CHECK_EQ(logged(page, "group="), std::string{"group=2"});
 }
 
-// A MEDIUM IS ONE QUERY, AND DELETING ONE DELETES ALL OF THEM.
-//
-// Three separate readings of CSSOM 6.5's three-line methods, each of which the
-// suite has a file for. `appendMedium` parses A media query, singular, so a
-// comma-separated argument parses to null and the call is a no-op rather than
-// two appends or one query called `screen, print`. `deleteMedium` removes EVERY
-// query that matches, because a list may hold the same one twice and removing
-// the first leaves behind the one the page just asked to be rid of. And its
-// argument is REQUIRED, so calling it with none is a TypeError and not a
-// NotFoundError about the empty string.
+/// Three readings of CSSOM 6.5's MediaList methods, each with its own WPT file.
+/// `appendMedium` parses a single media query, so a comma-separated argument
+/// parses to null and the call is a no-op rather than two appends or one query
+/// called `screen, print`. `deleteMedium` removes every matching query, since
+/// a list may hold the same one twice. Its argument is required, so calling it
+/// with none is a TypeError, not a NotFoundError about the empty string.
 void test_the_three_readings_of_a_media_list() {
     browser page{browser_options{400, 200}};
     page.load_html(R"(<html><head><style>

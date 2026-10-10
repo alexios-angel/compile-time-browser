@@ -1,29 +1,34 @@
-// The Bootstrap fixtures, pinned. ctbrowser against its own recorded answer.
+//===- unittests/unit/bootstrap_layout.cpp - Bootstrap layout baselines ---===//
 //
-// THE OTHER HALF OF THE PARITY HARNESS, and the split is the design.
-// tools/check/css-parity.py compares against Chrome, needs Playwright and a
-// browser download, and is deliberately not a ctest - docs/build.md: "a
-// browser-versus-browser diff should be read, not silently failed." That leaves
-// nothing catching a REGRESSION automatically, which is this file.
+// The Bootstrap fixtures, pinned: ctbrowser checked against its own recorded
+// answer.
 //
-// It generates ctbrowser's own side of exactly the same table, from exactly the
-// same script (tools/check/css-dump.js) and the same property list
+// This is one half of the CSS parity harness. tools/check/css-parity.py
+// compares against Chrome, needs Playwright and a browser download, and is
+// deliberately not a ctest (docs/build.md: "a browser-versus-browser diff
+// should be read, not silently failed"). This file is what catches a
+// regression automatically.
+//
+// It generates ctbrowser's side of the same table, from the same script
+// (tools/check/css-dump.js) and the same property list
 // (tools/check/css-parity-props.txt), and byte-compares
 // test/baseline/bootstrap-*.txt. No Chrome, no Playwright, no SDL, no window -
-// so it runs on the devbox, which is where the gate actually is.
+// so it runs as an ordinary ctest wherever the suite runs, including the remote
+// build machine.
 //
-// The relationship between the two halves is the point: this baseline needs no
-// Chrome, and what the Chrome comparison gives you is the knowledge that the
-// baseline is RIGHT. Recording a wrong answer is exactly what this file is for
-// when a rung lands - the numbers move, you read the diff, and the diff names the
-// element and the property. A .ppm cannot tell you that.
+// The two halves work together: the Chrome comparison shows that a baseline is
+// right, and this test shows that it has not changed. When a layout change
+// moves the numbers, regenerate, read the diff (it names the element and the
+// property), and check the new values against Chrome. An image diff could not
+// say which element moved.
 //
 //   REGOLDEN=1 ctest --preset default -R bootstrap_layout
-//   git diff test/baseline/            # AND READ IT
+//   git diff test/baseline/            # and read it
 //
-// A regenerated baseline accepted without being read is the text equivalent of
-// the empty-button render, which is the reason CLAUDE.md shouts about opening the
-// image.
+// Never accept a regenerated baseline without reading the diff: a wrong answer
+// recorded as golden passes forever.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -45,18 +50,21 @@ using ctbrowser::shell::browser_options;
 
 namespace {
 
-// The viewport css-parity.py uses, and for the same reason: Bootstrap's
-// breakpoints are 576/768/992/1200, and 1024 sits 32px inside `lg`, clear of a
-// boundary. A fixture that straddled one would turn a rounding difference into a
-// two-hundred-pixel layout difference.
+/// The viewport css-parity.py uses, and for the same reason: Bootstrap's
+/// breakpoints are 576/768/992/1200, and 1024 sits 32px inside `lg`, clear of a
+/// boundary. A fixture that straddled one would turn a rounding difference into
+/// a two-hundred-pixel layout difference.
 constexpr int viewport_width = 1024;
 constexpr int viewport_height = 768;
 
+/// Fixture names: examples/pages/bootstrap-<name>.html and
+/// test/baseline/bootstrap-<name>.txt.
 constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
                                          "components", "position", "kitchen"};
 
-// One fixture's table, as ctbrowser sees it. `props` is the text of
-// css-parity-props.txt, handed to the dump as data.
+/// One fixture's table, as ctbrowser sees it. `props` is the text of
+/// css-parity-props.txt, handed to the dump as data. Returns an empty string
+/// and sets `why` on failure.
 [[nodiscard]] std::string table_for(std::string_view name, const std::string & props,
                                     std::string & why) {
     const std::filesystem::path page =
@@ -68,13 +76,13 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     }
 
     browser page_browser{browser_options{viewport_width, viewport_height}};
-    // WHERE `../../vendor/bootstrap/bootstrap.css` RESOLVES FROM. The asset
+    // Where `../../vendor/bootstrap/bootstrap.css` resolves from. The asset
     // registry probes ".", then the base path, then two levels above it
     // (shell/page/assets.hpp), and the test's working directory is the source
     // root - so without this the fixture's own stylesheet does not load and every
     // number in the baseline is the unstyled one.
     page_browser.assets().set_base_path("examples/pages");
-    // UNCONFINED, explicitly: `../../vendor/` climbs out of the base path, which
+    // Unconfined, explicitly: `../../vendor/` climbs out of the base path, which
     // a confined registry refuses. Trusted in-tree fixture - never do this for
     // a page from the network.
     page_browser.assets().set_confine(false);
@@ -87,7 +95,7 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     // geometry comes off the fragment tree and getComputedStyle reads the box
     // tree, and neither exists until one has.
     page_browser.frame();
-    // The dump, LOADED into the fixture rather than listed by it: the fixture is
+    // The dump is loaded into the fixture rather than listed by it: the fixture is
     // shared with css-parity.py, which runs the same file its own way.
     // `../tools/`: see main().
     const auto engine = ctbrowser_test::make_engine(page_browser);
@@ -103,15 +111,16 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     // because a reply crosses a wire. COMPACT asks for the one-line-per-element
     // form the baselines are in.
     std::string table = engine->call("css_dump_table", {props, "1", "0", "1000000", "1"});
-    // THE `#head` LINE IS KEPT, on purpose. css-parity.py consumes and strips it,
+    // The `#head` line is kept on purpose. css-parity.py consumes and strips it,
     // because for a cross-engine diff it is a precondition rather than data. Here
-    // it IS data: it records the viewport, the clientWidth and the element count
+    // it is data: it records the viewport, the clientWidth and the element count
     // the rest of the table was measured at, so a baseline cannot be read out of
     // context and a change in any of the three shows up as line 1 rather than as
-    // every line. It is also the line that will catch the clientWidth-versus-
-    // layout-width inconsistency in docs/plans/bootstrap.md the moment S7 fixes it.
+    // every line. It also records clientWidth next to the layout width, so a fix
+    // for the known mismatch between the two (see docs/plans/bootstrap.md)
+    // shows up here as a one-line change.
     //
-    // And so every table OPENS with it. Any other answer is the engine's
+    // So every valid table opens with it. Any other answer is the engine's
     // "threw: ..." or "<no answer>", and must never reach a baseline under
     // REGOLDEN=1.
     if (!table.starts_with("#head ")) {
@@ -121,6 +130,8 @@ constexpr std::string_view fixtures[] = {"box",        "type",     "grid",
     return table;
 }
 
+/// Compares one fixture's table with its baseline, or rewrites the baseline
+/// when `regolden` is set. Every failure increments ctbrowser_test_failures.
 void run_fixture(std::string_view name, const std::string & props, bool regolden) {
     const std::filesystem::path baseline =
         std::filesystem::path{"test/baseline"} / ("bootstrap-" + std::string{name} + ".txt");
@@ -151,7 +162,7 @@ void run_fixture(std::string_view name, const std::string & props, bool regolden
     }
     if (want == table) { return; }
 
-    // NAME THE FIRST DIFFERING LINE. The whole reason this is a text baseline and
+    // Name the first differing line. The whole reason this is a text baseline and
     // not an image is that it can say which element and which property moved;
     // printing "the tables differ" would throw that away.
     ++ctbrowser_test_failures;
@@ -178,19 +189,15 @@ void run_fixture(std::string_view name, const std::string & props, bool regolden
 } // namespace
 
 int main() {
-    // `../tools/`, NOT `tools/`. ctest runs this with WORKING_DIRECTORY =
-    // PROJECT_SOURCE_DIR, which is the ctbrowser PROJECT directory since the
-    // monorepo split - and tools/ stayed at the REPOSITORY root, one level up,
-    // because it drives both projects. css-dump.js is reached the same way, by
-    // the engine's load() in table_for().
+    // `../tools/`, not `tools/`. ctest runs this with WORKING_DIRECTORY =
+    // PROJECT_SOURCE_DIR, which is the ctbrowser project directory, and tools/
+    // is at the repository root one level up because it drives both projects.
+    // css-dump.js is reached the same way, by the engine's load() in
+    // table_for().
     //
-    // AND THE MISSING-FILE PATH HAS TO FAIL. It used to printf "FAIL ..." and
-    // then REPORT, which returns `failures == 0 ? 0 : 1` - and a raw printf
-    // increments nothing, so a missing input EXITED ZERO. This test then passed
-    // while comparing nothing at all, which is precisely what it exists to
-    // prevent, and it is how the monorepo move briefly disabled the whole
-    // Bootstrap ratchet without turning a single test red. ++failures first.
-    // A missing css-dump.js fails every fixture, through run_fixture's ++failures.
+    // A missing input must count as a failure: REPORT exits nonzero only when
+    // ctbrowser_test_failures is nonzero, so a bare printf("FAIL ...") would
+    // pass. A missing css-dump.js fails every fixture through run_fixture.
     const std::string props = read_file("../tools/check/css-parity-props.txt");
     if (props.empty()) {
         std::printf("FAIL no tools/check/css-parity-props.txt - "

@@ -1,11 +1,19 @@
+//===- constructors.cpp - Constructor tests ---------------------*- C++ -*-===//
+//
+// VM tests for calling and constructing functions: `this` binding through
+// call/apply/bind, derived-class constructors and `super()`, and classes that
+// extend built-ins.
+//
+//===----------------------------------------------------------------------===//
+
 #include "constructors.hpp"
 
 #include "../expect.hpp"
 
-// OrdinaryCallBindThis through call/apply/bind: a sloppy function's `this`
-// is the global object for null/undefined and a wrapper for a primitive; a
-// strict one takes the value as given. And `new bound()` constructs the
-// target with the bound arguments in front (10.4.1.2).
+/// OrdinaryCallBindThis through call/apply/bind: a sloppy function's `this`
+/// is the global object for null/undefined and a wrapper for a primitive; a
+/// strict one takes the value as given. `new bound()` constructs the target
+/// with the bound arguments in front (ECMA-262 10.4.1.2).
 void test_call_bind_this() {
     for (const char * expression :
          {"new globalThis(1)", "new globalThis(...[1])", "new ({})(...[1])", "new (0)(...[1])"}) {
@@ -74,9 +82,9 @@ void test_call_bind_this() {
                   "class B extends A { constructor(v) { (() => super(...[v]))(); } }"
                   "const C = B.bind(null, 9); return new C().v + ',' + new B(8).v;",
                   "9,8");
-    // 10.4.1.3: a bound function's [[Prototype]] is the target's, and its
-    // length follows 20.2.3.2 step 7 - an infinite target length stays
-    // infinite, a fractional one truncates, less the bound arguments.
+    // ECMA-262 10.4.1.3: a bound function's [[Prototype]] is the target's,
+    // and its length follows ECMA-262 20.2.3.2 step 7: the target's length,
+    // truncated (an infinite one stays infinite), less the bound arguments.
     expect_result("function f() {} class A {} class B extends A {}"
                   " return [Object.getPrototypeOf(f.bind()) === Function.prototype,"
                   " Object.getPrototypeOf(B.bind()) === A].join();",
@@ -102,12 +110,13 @@ void test_call_bind_this() {
                   "length,name");
 }
 
-// A DERIVED CLASS'S CONSTRUCTOR binds `this` only when `super()` returns
-// (10.2.1.3): `this` before it, a return without it, and a second `super()`
-// are ReferenceErrors; a returned primitive is the TypeError; a returned
-// object replaces the instance. An arrow inside the constructor shares the
-// binding. Tracked by a hidden local the compiler keeps - see
-// frame::derived_flag - so a plain function or a base class pays nothing.
+/// A derived class's constructor binds `this` only when `super()` returns
+/// (ECMA-262 10.2.1.3): `this` before it, a return without it, and a second
+/// `super()` are ReferenceErrors; a returned primitive is a TypeError; a
+/// returned object replaces the instance. An arrow inside the constructor
+/// shares the binding. The binding state is a hidden local the compiler keeps
+/// (compiler_impl::derived_flag()), so a plain function or a base class pays
+/// nothing.
 void test_derived_constructors() {
     expect_result("class A {} class B extends A { constructor() { super(); this.x = 1; } }"
                   "return new B().x;",
@@ -245,14 +254,11 @@ void test_derived_constructors() {
                   "ab");
 }
 
-// A BUILT-IN THAT MAKES ITS OWN OBJECT CAN BE EXTENDED. `class A extends
-// Array` reaches Array through super() with the instance [[Construct]] made;
-// Array answers an array of its own, which takes the instance's prototype
-// (array_object::prototype) and becomes `this`. Until 2026-09-17 the native
-// parent's answer was dropped and `new A()` was a plain object that was never
-// an array: `length` undefined, `Array.isArray` false, every method a
-// TypeError. The typed arrays are the same shape, and Object's `super()`
-// keeps the instance.
+/// A built-in that makes its own object can be extended. `class A extends
+/// Array` reaches Array through super(); Array returns an array of its own,
+/// which takes the instance's prototype (array_object::prototype) and becomes
+/// `this`. Typed arrays work the same way, and Object's super() keeps the
+/// instance.
 void test_builtin_subclasses() {
     expect_result("class A extends Array {} const a = new A(3);"
                   "return a.length + ',' + Array.isArray(a) + ',' + (a instanceof A) + ',' +"

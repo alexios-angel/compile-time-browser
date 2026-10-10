@@ -1,11 +1,15 @@
-// THE FRAGMENT SERIALISERS as a page reads them back: HTML 13.3 for an HTML
-// document - an element that serialises as void writes no children and has
-// an empty innerHTML, a raw-text element's innerHTML is unescaped, an
-// attribute is named by its NAMESPACE, a <template> serialises its contents,
-// a PI is `<?target data?>` - and the XML serialisation for an element of an
-// XML document, `xmlns` and all. Plus the one thing that made every
-// template test fail: `div.innerHTML = "<template>..."` must carry the
-// template's contents across, and `template.innerHTML = ...` fills them.
+//===- unittests/unit/serialize_fragments.cpp - Fragment serialisers ------===//
+//
+// The fragment serialisers as a page reads them back. HTML 13.3 for an HTML
+// document: an element that serialises as void writes no children and has an
+// empty innerHTML, a raw-text element's innerHTML is unescaped, an attribute
+// is named by its namespace, a <template> serialises its contents, and a PI
+// is `<?target data?>`. The XML serialisation for an element of an XML
+// document, `xmlns` and all. Also `div.innerHTML = "<template>..."` must carry
+// the template's contents across, and `template.innerHTML = ...` fills them;
+// every template test depends on that.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>

@@ -1,14 +1,14 @@
-// EVENT DISPATCH: an event travelling its whole path, `new EventTarget()`, the
+//===- ctbrowser/unittests/unit/event/dispatch.cpp - event dispatch tests -===//
+//
+// Event dispatch: an event travelling its whole path, `new EventTarget()`, the
 // event interface hierarchy, what `dispatchEvent` refuses and what a listener
 // is called with, `passive`, `once` and `capture`, the `on...` handler
-// properties, and bubbling with `preventDefault`. The listener-invocation
-// RULES dom/events was getting wrong one at a time are in listeners.cpp.
+// properties, bubbling with `preventDefault`, shadow-tree paths and
+// AbortSignal. The finer listener-invocation rules are tested in listeners.cpp.
 //
-// One of eight files carved out of unittests/unit/bindings_basics.cpp on
-// 2026-09-07, when it had reached 3,365 lines. Every case is verbatim and in
-// the order it had; the helpers more than one of the eight needs are in
-// chrome_probe.hpp beside this, and `find_id` is test/support/dom_probe.hpp's.
-
+// Shared helpers such as `log_of` live in ../chrome_probe.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/app/app.hpp>
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -39,13 +39,9 @@ using ctbrowser_test::log_of;
 
 namespace {
 
-// An event travelling its whole path, which is the part that was missing.
-//
-// Dispatch used to be three lines: fire the global bucket, walk the ancestors,
-// fire the global bucket again. Nothing carried `currentTarget`, nothing carried
-// `eventPhase`, `stopPropagation` was a no-op, the document and the window were
-// one indistinguishable bucket, and nothing a page CONSTRUCTED could be
-// dispatched at all. Every one of those is asserted here.
+/// An event's whole path: capture from the window down, the target, bubble back
+/// up, with correct currentTarget and eventPhase, stopPropagation,
+/// stopImmediatePropagation, and dispatch of page-constructed events.
 void test_events_travel_the_whole_path() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=outer><div id=inner></div></div><script>
@@ -133,10 +129,9 @@ void test_events_travel_the_whole_path() {
     check(log[8] == "kinds=true,true,2,3", "Event identity and the phase constants: " + log[8]);
 }
 
-// `new EventTarget()` - a listener list with no node under it, and the three
-// methods a subclass inherits. Also the DOM's duplicate rule, which applies
-// everywhere and was implemented nowhere: registering the same
-// (type, callback, capture) twice must do nothing.
+/// `new EventTarget()`: a listener list with no node under it, and the three
+/// methods a subclass inherits. Also the DOM's duplicate rule: registering the
+/// same (type, callback, capture) twice must do nothing.
 void test_a_standalone_event_target() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><script>
@@ -181,18 +176,15 @@ void test_a_standalone_event_target() {
     check(log[3] == "sub=9,true", "a subclass inherits the three methods: " + log[3]);
 }
 
-// THE EVENT INTERFACES, and the four things that have to be true of each one.
-//
-// There were two - `Event` and `CustomEvent` - and every other spelling was
-// undefined, so `new MouseEvent('click')` threw. That is not a corner: a
-// constructor is the ONLY way a page can synthesise an event, and a page that
-// wants to drive its own UI has nothing else to build one with.
-//
-// The subclass case at the bottom is the one that decides the shape of the
-// whole file: a constructor that allocates its own object leaves `super()`'s
-// caller holding an instance nothing was written to, so every property the
-// subclass inherits reads undefined. Every constructor here initialises its
-// RECEIVER instead, which is also what makes `new` and `super()` one path.
+/// The event interfaces (MouseEvent, KeyboardEvent, WheelEvent and the rest):
+/// their init dictionaries, defaults, prototype chain and errors. A constructor
+/// is the only way a page can synthesise an event to drive its own UI.
+///
+/// The subclass case at the end matters most: a constructor that allocated its
+/// own object would leave `super()`'s caller holding an instance nothing was
+/// written to, so every inherited property would read undefined. Every event
+/// constructor initialises its receiver instead, so `new` and `super()` share
+/// one path.
 void test_the_event_interface_hierarchy() {
     browser page{browser_options{200, 150}};
     page.load_html(R"(<html><body><script>
@@ -260,21 +252,11 @@ void test_the_event_interface_hierarchy() {
           "a page can subclass an event interface: " + log[8]);
 }
 
-// WHAT dispatchEvent REFUSES, AND WHAT A LISTENER IS CALLED WITH.
-//
-// Three things a page can see, and all three were silently wrong.
-//
-// `dispatchEvent` used to accept anything: an event still travelling, an event
-// `document.createEvent` had never been given a type, `null`. Each is an
-// InvalidStateError or a TypeError in the specification and each was a quiet
-// success here, which is the worst answer - the page believes it dispatched.
-//
-// A listener used to be called with `this` UNDEFINED, so
-// `el.addEventListener('click', function () { this.classList.add('on') })` -
-// which is how a great deal of shipped code is written - went nowhere at all.
-// And an OBJECT with a `handleEvent` method is a listener too: EventListener is
-// a callback interface, and the method is looked up at DISPATCH time, so an
-// object that grows one after registering still works.
+/// dispatchEvent throws for an event that is already being dispatched or was
+/// never initialised. A listener function is called with `this` set to the
+/// current target. A listener object's `handleEvent` is looked up on every
+/// dispatch, so a method added after registration still runs. Also covers
+/// window.event, a window handler property, and listener `signal`s.
 void test_dispatch_refuses_and_binds_this() {
     browser page{browser_options{200, 150}};
     page.load_html(R"(<html><body><div id=t></div><script>
@@ -332,8 +314,8 @@ void test_dispatch_refuses_and_binds_this() {
     check(page.script_error().empty(), "the dispatch script ran: " + page.script_error());
     const auto & log = log_of(page);
     check(log.size() == 4, "every line was logged");
-    // 11 is InvalidStateError's legacy code, and the constructor test is the
-    // one an ECMAScript Error cannot pass - see bindings/exceptions.cpp.
+    // 11 is InvalidStateError's legacy code. The constructor check fails for an
+    // ordinary ECMAScript Error (see lib/Shell/bindings/exceptions.cpp).
     check(log[0] == "refuse=InvalidStateError:11:true|InvalidStateError",
           "an uninitialised event and a re-entered one are both refused: " + log[0]);
     check(log[1] == "this=true;obj;true;obj;lookups=2",
@@ -346,20 +328,11 @@ void test_dispatch_refuses_and_binds_this() {
           "an aborted signal adds nothing and a null one throws: " + log[3]);
 }
 
-// `{passive: true}` IS ENFORCED, AND A THROWING LISTENER IS REPORTED.
-//
-// Passive is a promise not to call preventDefault, and the DOM does not take it
-// on trust: the canceled flag is not set while a passive listener runs. It is a
-// scrolling optimisation everywhere it is used - a compositor cannot start a
-// scroll until it knows the page will not refuse it - so an engine that lets a
-// passive listener cancel has removed the entire point of the option.
-//
-// The second half is the other end of a gap wpt.md already records at load
-// time: a listener that threw reached `callback_error()`, which is an EMBEDDER
-// channel, and the PAGE was told nothing - no `error` event, no `window.onerror`.
-// Worse, the VM's failure flag stayed up for the rest of the dispatch, so every
-// LATER listener for the same event was silently declined. One listener
-// throwing stopped all the others.
+/// A passive listener cannot cancel: preventDefault and `returnValue = false`
+/// are ignored while it runs. (Passive exists so a compositor can start a
+/// scroll without waiting to learn whether the page will cancel it.) A listener
+/// that throws is reported to the page as an `error` event and through
+/// window.onerror, and later listeners for the same event still run.
 void test_passive_listeners_and_a_throwing_one() {
     browser page{browser_options{200, 150}};
     page.load_html(R"(<html><body><script>
@@ -408,9 +381,9 @@ void test_passive_listeners_and_a_throwing_one() {
         t.dispatchEvent(new Event('boom'));
         console.log('fault=' + reports + 'after=' + after);
       </script></body></html>)");
-    // EMPTY because the page HANDLED it: preventDefault on an error event is
-    // how a page says so, and the embedder channel is the console, which a
-    // handled exception does not reach.
+    // Empty because the page handled the error: preventDefault on an error
+    // event is how a page says so, and a handled exception does not reach the
+    // embedder's script_error() channel.
     check(page.script_error().empty(),
           "a handled fault stays off the embedder channel: " + page.script_error());
     const auto & log = log_of(page);
@@ -423,13 +396,8 @@ void test_passive_listeners_and_a_throwing_one() {
           "a throwing listener is reported and does not stop the next one: " + log[3]);
 }
 
-// `once` AND `capture` ON A LISTENER.
-//
-// Both were accepted and ignored. `once` meant a listener a page registered to
-// run exactly once ran on every event - a one-shot "has the user interacted
-// yet" handler kept firing. `capture` meant a listener that asked to see an
-// event BEFORE its target saw it ran after instead, which is the entire reason
-// to pass the flag.
+/// `once` runs a listener for one event only. `capture` runs it during the
+/// capture phase, before the target's own listeners.
 void test_listener_options() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body style="margin:0">
@@ -474,6 +442,7 @@ void test_listener_options() {
           "a `once` listener fires exactly once: " + line);
 }
 
+/// A click is dispatched for a press and release on the same element only.
 void test_click_dispatch() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>#a { width: 200px; height: 100px }</style></head>
@@ -485,7 +454,7 @@ void test_click_dispatch() {
     page.frame();
     check(log_of(page).empty(), "nothing fired yet");
 
-    // A click is a press and a release on the same element - which is what
+    // A click is a press and a release on the same element, which is what
     // makes dragging off a button cancel it.
     (void)page.handle(input_event::mouse_down_at(20, 20));
     (void)page.handle(input_event::mouse_up_at(20, 20));
@@ -498,12 +467,8 @@ void test_click_dispatch() {
     check(log_of(page).size() == 1, "releasing off the element does not click it");
 }
 
-// `el.onclick = fn` - THE OTHER HALF OF THE EVENT API, and it did nothing.
-//
-// Assigning a handler stored a function on the wrapper that nothing ever looked
-// at, so a page written the older way fired no callbacks and reported no
-// problem. p5.js needs it on its own load path: loadImage sets img.onload and
-// img.onerror and awaits a promise those two settle.
+/// Event handler properties (`el.onclick = fn`). p5.js depends on them:
+/// loadImage sets img.onload and img.onerror.
 void test_handler_properties() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>#a { width: 200px; height: 100px }</style></head>
@@ -520,13 +485,13 @@ void test_handler_properties() {
     check(log.size() == 2, "both the listener and the handler property fired");
     if (log.size() == 2) {
         // `this` is the element, which is what a handler written this way
-        // reads - and the handler was set FIRST, so it runs first (its
+        // reads, and the handler was set first, so it runs first (its
         // listener was registered then; HTML 8.1.8.1).
         check(log[0] == "handler click true" && log[1] == "listener",
               "the handler runs with the event and the element as `this`");
     }
 
-    // ASSIGNING OVER ONE REPLACES IT - that is the whole difference from
+    // Assigning over a handler replaces it: that is the difference from
     // addEventListener, and a page that reassigns in a loop relies on it.
     (void)page.run_script("a.onclick = function () { console.log('replaced'); };");
     (void)page.handle(input_event::mouse_down_at(20, 20));
@@ -539,7 +504,7 @@ void test_handler_properties() {
     (void)page.handle(input_event::mouse_up_at(20, 20));
     check(log_of(page).size() == 5, "and null removes it, leaving the listener");
 
-    // THE HANDLER'S PLACE IN THE LIST is where it was first set (HTML
+    // The handler's place in the listener list is where it was first set (HTML
     // 8.1.8.1): assigned before a listener it runs before it, set to null and
     // back it moves to the end, and a content attribute counts from the
     // setAttribute (event-handler-spec-example.window.js).
@@ -562,6 +527,7 @@ void test_handler_properties() {
           "the handler listener keeps its registration order: " + log_of(page).back());
 }
 
+/// A real click bubbles from the target to the document, in order.
 void test_events_bubble_and_can_be_prevented() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><head><style>#outer { width: 300px; height: 200px }</style></head>
@@ -588,8 +554,8 @@ void test_events_bubble_and_can_be_prevented() {
 
 void test_a_made_documents_nodes_have_a_path_that_ends_at_it() {
     // dom/events/Event-dispatch-bubbles-true.html, "In DOMImplementation
-    // .createHTMLDocument()": the path is doc, html, body, target and back -
-    // and NOT the page's window, which is no ancestor of another document.
+    // .createHTMLDocument()": the path is doc, html, body, target and back,
+    // and not the page's window, which is no ancestor of another document.
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><script>
     var d = document.implementation.createHTMLDocument('x');
@@ -607,12 +573,12 @@ void test_a_made_documents_nodes_have_a_path_that_ends_at_it() {
           "the made document's path: " + (log.empty() ? std::string{} : log[0]));
 }
 
-// THE EVENT PATH ACROSS A SHADOW BOUNDARY, DOM 2.9 dispatch step 5: a
-// non-composed event stops only at the TARGET's own shadow root, so one at a
-// light child slotted into a tree travels through the slot and out again; a
-// listener outside a closed tree does not see its slot or root in
-// composedPath(); and the path ends at the step the relatedTarget retargets
-// to, with the targets cleared when the target is still inside the tree.
+/// The event path across a shadow boundary (DOM 2.9 dispatch step 5): a
+/// non-composed event stops only at the target's own shadow root, so one fired
+/// at a light child slotted into a tree travels through the slot and out
+/// again; a listener outside a closed tree does not see its slot or root in
+/// composedPath(); and the path ends at the step the relatedTarget retargets
+/// to, with the targets cleared when the target is still inside the tree.
 void test_the_event_path_across_a_shadow_boundary() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body><div id=host><span id=light></span></div><script>
@@ -653,10 +619,11 @@ void test_the_event_path_across_a_shadow_boundary() {
 
 } // namespace
 
-// AbortSignal IS AN EVENT TARGET (DOM 3.2): aborting fires `abort` at it once,
-// with the reason given or an AbortError, and the statics - `abort()` already
-// aborted and silent, `timeout()` a TimeoutError on the page's own timer, and
-// `any()` following its sources - answer the shapes a page checks.
+/// AbortSignal is an event target (DOM 3.2): aborting fires `abort` at it once,
+/// with the given reason or an AbortError. The statics behave as pages expect:
+/// `abort()` returns an already-aborted signal without firing, `timeout()`
+/// aborts with a TimeoutError on the page's own timer, and `any()` follows its
+/// sources.
 void test_abort_signal() {
     browser page{browser_options{300, 200}};
     page.load_html(R"(<html><body><script>
@@ -698,10 +665,10 @@ void test_abort_signal() {
               log_of(page).back());
 }
 
-// AN INLINE HANDLER'S SCOPE CHAIN (HTML 8.1.8.1 step 10) ENCLOSES THE
-// FUNCTION: `event` is the handler's own parameter, not the element's or the
-// window's `event` property, and a Window's `onerror` gets the five
-// (event, source, lineno, colno, error).
+/// An inline handler's scope chain (HTML 8.1.8.1 step 10) encloses the
+/// function: `event` is the handler's own parameter, not the element's or the
+/// window's `event` property, and a Window's `onerror` gets the five
+/// parameters (event, source, lineno, colno, error).
 void test_inline_handler_scope() {
     browser page{browser_options{400, 300}};
     page.load_html(R"(<html><body onerror="log += typeof event + ',' + typeof source + ',' +

@@ -1,41 +1,35 @@
-// Array.prototype, over a receiver that is not an Array - and the seven
-// methods that were simply absent.
+//===- ctbrowser/unittests/js/array/generics.cpp - Generic Array methods --===//
 //
-// EVERY Array.prototype method is specified generic: `this` is ToObject'd and
+// Array.prototype methods called on receivers that are not Arrays, plus the
+// mutating methods, Array.from/of, species and named properties on arrays.
+//
+// Every Array.prototype method is generic: `this` goes through ToObject and is
 // then read through [[Get]] with string index keys, so
-// `Array.prototype.reduce.call({length: 2, 0: 'a', 1: 'b'}, f)` is ordinary
-// JavaScript. Every one of them here opened with `detail::this_array`, which
-// answers nullptr for anything that is not an array_object, and then returned a
-// default - so all of it did nothing, quietly. Counted over test262 at the
-// pinned hash (docs/test262.md), that shape is 91 of `reduce`'s 260 files, 89
-// of `reduceRight`'s and about 580 across the nine iteration methods.
+// `Array.prototype.reduce.call({length: 2, 0: 'a', 1: 'b'}, f)` must work.
 //
-// THIS FILE IS THE REGRESSION NET, not that suite: test262 is opt-in
-// (-DCTBROWSER_TEST262=ON), needs a 273 MB corpus that is deliberately not in
-// the repository, and takes five minutes. The expected values are node's,
-// checked against V8.
+// This file is the regression net, not test262: that suite is opt-in
+// (-DCTBROWSER_TEST262=ON), needs a 273 MB corpus kept outside the repository,
+// and takes minutes. The expected values are node's. Bare section numbers are
+// ECMA-262.
 //
-// Three deviations are asserted here as they ARE rather than as the
-// specification has them, because each is a property of this engine's array
-// representation rather than a bug in these methods:
+// One deviation is asserted as it is rather than as the specification has it,
+// because it is a property of this engine's array representation: a real
+// Array is iterated to `items.size()`, not to its `length` property.
+// array_object records an index it refused to materialise in `sparse` and
+// raises `length` over it, so one assignment can make `length` four billion,
+// and a loop to it would hang. array_object's own comment names this.
 //
-//   * a real Array is iterated to `items.size()` and not to its `length`
-//     property, because array_object records an index it refused to
-//     materialise in `sparse` and raises `length` over it - so one assignment
-//     can make `length` four billion, and a loop to it is a hang rather than an
-//     answer. array_object's own comment names that deviation.
-//   * `delete a[0]` LEAVES A HOLE since 2026-09-12 (array_object::element_attrs
-//     records it beside a placeholder slot); the hole cases below were written
-//     over a plain object before that and stay there, where HasProperty means
-//     the same thing.
-//   * the copying methods build a plain Array whatever they were called on;
-//     there is no ArraySpeciesCreate and no `Symbol.species`.
+// The hole cases use a plain object as the receiver. A real Array also keeps
+// a hole after `delete a[0]` (array_object::element_attrs), so for
+// HasProperty the two behave the same.
+//
+//===----------------------------------------------------------------------===//
 
 #include "js_expect.hpp"
 
 int main() {
     // ================================================================
-    // 1. A PLAIN OBJECT AS THE RECEIVER
+    // 1. A plain object as the receiver
     // ================================================================
     js_expect("Array.prototype.join.call({length: 3, 0: 'a', 1: 'b', 2: 'c'}, '-')", "a-b-c");
     js_expect("Array.prototype.indexOf.call({length: 3, 0: 'a', 1: 'b', 2: 'c'}, 'b')", "1");
@@ -67,8 +61,8 @@ int main() {
     js_expect("(function () { return Array.prototype.join.call(arguments, '-'); })(1, 2, 3)",
               "1-2-3");
 
-    // A HOLE IS SKIPPED by the iteration methods and READ AS undefined by
-    // `find` and `includes` - the one difference between 23.1.3.15 and
+    // A hole is skipped by the iteration methods and read as undefined by
+    // `find` and `includes`: the one difference between 23.1.3.15 and
     // 23.1.3.9 that a hole can show.
     js_expect("(function () { var n = 0; Array.prototype.forEach.call({length: 3, 1: 'x'},"
               " function () { n++; }); return n; })()",
@@ -80,7 +74,7 @@ int main() {
     js_expect("Array.prototype.indexOf.call({length: 2, 0: 1}, undefined)", "-1");
 
     // ================================================================
-    // 2. `thisArg`, WHICH WAS ACCEPTED AND DROPPED
+    // 2. `thisArg` is passed to the callback as `this`
     // ================================================================
     js_expect("[1, 2].map(function (x) { return x + this.n; }, {n: 10}).join(',')", "11,12");
     js_expect("[1, 2].filter(function (x) { return x === this.n; }, {n: 2}).join(',')", "2");
@@ -94,11 +88,10 @@ int main() {
               "10");
 
     // ================================================================
-    // 3. THE TypeErrors THAT WERE SILENCE
+    // 3. TypeErrors
     // ================================================================
-    // A non-callable callback, and a `this` of null or undefined. Each used to
-    // return a default and do nothing; 141 of built-ins/Array's failures were
-    // "Expected a TypeError to be thrown but no exception was thrown at all".
+    // A non-callable callback, and a `this` of null or undefined, throw rather
+    // than return a default.
     js_expect("(function () { try { [1].forEach(undefined); return 'no'; }"
               " catch (e) { return e.name; } })()",
               "TypeError");
@@ -110,8 +103,8 @@ int main() {
     js_expect("(function () { try { Array.prototype.join.call(undefined); return 'no'; }"
               " catch (e) { return e.name; } })()",
               "TypeError");
-    // Reduce of an empty array with no initial value. It answered `undefined`,
-    // which is the one thing a fold is written to rely on not happening.
+    // Reduce of an empty array with no initial value is a TypeError, not
+    // `undefined`.
     js_expect("(function () { try { [].reduce(function (a, b) { return a + b; }); return 'no'; }"
               " catch (e) { return e.name; } })()",
               "TypeError");
@@ -119,7 +112,7 @@ int main() {
               " catch (e) { return e.name; } })()",
               "TypeError");
     js_expect("[].reduce(function (a, b) { return a + b; }, 7)", "7");
-    // A comparator that is neither a function nor undefined, checked BEFORE
+    // A comparator that is neither a function nor undefined, checked before
     // the receiver is read (23.1.3.30 step 1).
     js_expect("(function () { try { [3, 1].sort(null); return 'no'; }"
               " catch (e) { return e.name; } })()",
@@ -127,7 +120,7 @@ int main() {
     js_expect("[3, 1].sort(undefined).join(',')", "1,3");
 
     // ================================================================
-    // 4. `fromIndex`, WHICH BOTH SEARCHES ACCEPTED AND NEITHER READ
+    // 4. `fromIndex` in indexOf and includes
     // ================================================================
     js_expect("[1, 2, 1].indexOf(1, 1)", "2");
     js_expect("[1, 2, 1].indexOf(1, -1)", "2");
@@ -144,10 +137,10 @@ int main() {
     js_expect("[NaN].indexOf(NaN)", "-1");
 
     // ================================================================
-    // 5. SEPARATORS AND ENDS THAT ARE `undefined`
+    // 5. Separators and ends that are `undefined`
     // ================================================================
     // An absent argument and an explicit `undefined` are the same thing, and
-    // testing the argument COUNT gets that wrong.
+    // testing the argument count gets that wrong.
     js_expect("[1, 2].join(undefined)", "1,2");
     js_expect("[1, 2].join(null)", "1null2");
     js_expect("[1, 2, 3].fill(0, 1, undefined).join(',')", "1,0,0");
@@ -158,11 +151,9 @@ int main() {
     js_expect("[1, 2, 3].fill(0, -2).join(',')", "1,0,0");
 
     // ================================================================
-    // 6. THE SEVEN METHODS THAT DID NOT EXIST
+    // 6. lastIndexOf, reduceRight, copyWithin, with, toReversed, toSorted,
+    //    toSpliced and toLocaleString
     // ================================================================
-    // Each read "TypeError: X is undefined, not a function", which is the
-    // largest failure bucket test262 reports for this engine after the early
-    // errors it cannot check at all.
     js_expect("typeof [].lastIndexOf + ',' + typeof [].reduceRight + ',' + typeof [].copyWithin"
               " + ',' + typeof []['with'] + ',' + typeof [].toReversed + ',' + typeof [].toSorted"
               " + ',' + typeof [].toSpliced + ',' + typeof [].toLocaleString",
@@ -175,9 +166,9 @@ int main() {
     js_expect("[1, 2, 3, 4, 5].copyWithin(1, 0).join(',')", "1,1,2,3,4");
     js_expect("[1, 2, 3].copyWithin(0, 1) === undefined", "false");
 
-    // SPELLED AS A KEY. `with` is a reserved word, and `[].with(...)` is legal
-    // member access only if the parser lets a keyword be a property name -
-    // which is a question about ctjs, not about whether the method is here.
+    // `with` is spelled as a computed key: it is a reserved word, and
+    // `[].with(...)` tests whether the parser accepts a keyword as a property
+    // name, not whether the method exists.
     js_expect("[1, 2, 3]['with'](1, 9).join(',')", "1,9,3");
     js_expect("[1, 2, 3]['with'](-1, 9).join(',')", "1,2,9");
     js_expect("(function () { var a = [1, 2, 3]; a['with'](0, 9); return a.join(','); })()",
@@ -215,13 +206,13 @@ int main() {
               "X,1");
 
     // ================================================================
-    // 7. SORT: undefined LAST, AND NEVER COMPARED
+    // 7. Sort: undefined last, and never compared
     // ================================================================
     // 23.1.3.30 moves every undefined to the end without asking the comparator
-    // about one. The default path used to run it through ToString, where
-    // "undefined" sorts between "u" and "v".
+    // about one. The default comparison must not run it through ToString,
+    // where "undefined" would sort between "u" and "v".
     js_expect("['z', undefined, 'a'].sort().join(',')", "a,z,");
-    // The COUNT of comparator calls is a merge sort's business; what the
+    // The count of comparator calls is a merge sort's business; what the
     // specification fixes is that none of them is handed an undefined.
     js_expect("(function () { var saw = false; [1, undefined, 2].sort(function (a, b) {"
               " if (a === undefined || b === undefined) { saw = true; } return a - b; });"
@@ -234,15 +225,15 @@ int main() {
     js_expect("['b', 'a', 'c'].sort(function (a, b) { return a - b; }).join(',')", "b,a,c");
 
     // ================================================================
-    // 8. String.raw AND THE String STATICS
+    // 8. String.raw and the String statics
     // ================================================================
     js_expect("String.raw({raw: ['a', 'b', 'c']}, 1, 2)", "a1b2c");
     js_expect("String.raw({raw: ['a', 'b', 'c']}, 1)", "a1bc");
     js_expect("String.raw({raw: []})", "");
     js_expect("String.raw({raw: ['only']}, 'ignored')", "only");
     js_expect("String.raw.length", "1");
-    // 22.1.2.2 step 2c: a code point must be an integer in [0, 0x10FFFF].
-    // to_uint32 wrapped instead, so -1 produced the encoding of 0xFFFFFFFF.
+    // 22.1.2.2 step 2c: a code point must be an integer in [0, 0x10FFFF]; -1
+    // is a RangeError, not wrapped to 0xFFFFFFFF.
     js_expect("(function () { try { String.fromCodePoint(-1); return 'no'; }"
               " catch (e) { return e.name; } })()",
               "RangeError");
@@ -252,23 +243,20 @@ int main() {
     js_expect("String.fromCodePoint(65, 66)", "AB");
 
     // ================================================================
-    // 9. THE METHODS THAT MUTATE, OVER A RECEIVER THAT IS NOT AN ARRAY
+    // 9. The methods that mutate, over a receiver that is not an Array
     // ================================================================
     // push, pop, shift, unshift, splice, concat, reverse, sort, flat and
-    // flatMap are specified exactly as generic as the eighteen that read, and
-    // every one of them opened with `detail::this_array` too. The difference is
-    // that these WRITE: the algorithm is a sequence of [[Set]] and [[Delete]]
-    // calls in a fixed order, ending with Set(O, "length", n, true), and it is
-    // the length write-back and the deleted slot that a test can see.
-    //
-    // Expected values are node's.
+    // flatMap are as generic as the methods that only read. The difference is
+    // that these write: the algorithm is a sequence of [[Set]] and [[Delete]]
+    // calls in a fixed order, ending with Set(O, "length", n, true), and the
+    // length write-back and the deleted slots are what a test can see.
 
     // --- push (23.1.3.23): the elements land, and `length` is written back ---
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " var n = Array.prototype.push.call(o, 'c');"
               " return n + ':' + o.length + ':' + o[2]; })()",
               "3:3:c");
-    // AN ABSENT `length` IS ZERO, not "not an array-like": ToLength(undefined)
+    // An absent `length` is zero, not "not an array-like": ToLength(undefined)
     // is 0, so the first push lands at index 0 and defines `length` as 1.
     js_expect("(function () { var o = {}; var n = Array.prototype.push.call(o, -1);"
               " return n + ':' + o.length + ':' + o[0]; })()",
@@ -276,8 +264,8 @@ int main() {
     js_expect("(function () { var o = {length: null}; Array.prototype.push.call(o, -7);"
               " return o.length + ':' + o[0]; })()",
               "1:-7");
-    // 2^53-1 IS A TypeError AND `length` ITSELF IS A CLAMP. Both are step 5 of
-    // 23.1.3.23 and they disagree on purpose: pushing nothing onto a receiver
+    // Pushing past 2^53-1 is a TypeError, and `length` itself is clamped. Both
+    // are step 5 of 23.1.3.23 and they differ on purpose: pushing nothing onto a receiver
     // claiming an impossible length succeeds and repairs the length.
     js_expect("(function () { var o = {length: Infinity}; Array.prototype.push.call(o);"
               " return o.length; })()",
@@ -287,30 +275,30 @@ int main() {
               " catch (e) { return e.name; } })()",
               "TypeError");
 
-    // --- pop (23.1.3.22): the slot is DELETED, not left holding its value ---
+    // --- pop (23.1.3.22): the slot is deleted, not left holding its value ---
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " var v = Array.prototype.pop.call(o);"
               " return v + ':' + o.length + ':' + (1 in o); })()",
               "b:1:false");
-    // An empty receiver still writes `length` back - step 3a - which is what
+    // An empty receiver still writes `length` back (step 3a), which is what
     // turns a `length` of NaN into 0.
     js_expect("(function () { var o = {length: NaN};"
               " var v = Array.prototype.pop.call(o);"
               " return (v === undefined) + ':' + o.length; })()",
               "true:0");
 
-    // --- shift (23.1.3.25): everything moves DOWN and the top is deleted -----
+    // --- shift (23.1.3.25): everything moves down and the top is deleted -----
     js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
               " var v = Array.prototype.shift.call(o);"
               " return v + ':' + o.length + ':' + o[0] + o[1] + ':' + (2 in o); })()",
               "a:2:bc:false");
-    // A HOLE MOVING DOWN DELETES WHAT IT LANDS ON rather than filling it with
+    // A hole moving down deletes what it lands on rather than filling it with
     // undefined, which is the whole of step 6c.ii of the algorithm.
     js_expect("(function () { var o = {length: 3, 0: 'a', 2: 'c'};"
               " Array.prototype.shift.call(o); return (0 in o) + ':' + o[1]; })()",
               "false:c");
 
-    // --- unshift (23.1.3.32): everything moves UP, from the top down ---------
+    // --- unshift (23.1.3.32): everything moves up, from the top down ---------
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " var n = Array.prototype.unshift.call(o, 'z');"
               " return n + ':' + o.length + ':' + o[0] + o[1] + o[2]; })()",
@@ -325,15 +313,15 @@ int main() {
               " var r = Array.prototype.splice.call(o, 1, 1);"
               " return r.join('') + ':' + o.length + ':' + o[0] + o[1] + ':' + (2 in o); })()",
               "b:2:ac:false");
-    // GROWING WALKS THE TAIL BACKWARDS, so an overlapping move never overwrites
+    // Growing walks the tail backwards, so an overlapping move never overwrites
     // a source before it has been read.
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " Array.prototype.splice.call(o, 1, 0, 'x', 'y');"
               " return o.length + ':' + o[0] + o[1] + o[2] + o[3]; })()",
               "4:axyb");
-    // `splice()` WITH NO ARGUMENT AT ALL DELETES NOTHING - step 6 - and only
-    // `splice(i)` deletes to the end. Testing the argument count for both read
-    // the no-argument call as "delete everything from index 0".
+    // `splice()` with no argument at all deletes nothing (step 6), and only
+    // `splice(i)` deletes to the end; the two need different argument-count
+    // checks.
     js_expect("[1, 2, 3].splice().length", "0");
     js_expect("(function () { var a = [1, 2, 3]; a.splice(); return a.join(','); })()", "1,2,3");
     js_expect("[1, 2, 3].splice(1).join(',')", "2,3");
@@ -341,10 +329,10 @@ int main() {
     js_expect("(function () { var a = [1, 2, 3]; a.splice(1, Infinity); return a.join(','); })()",
               "1");
 
-    // --- concat (23.1.3.1): the RECEIVER spreads only if it IS an array ------
+    // --- concat (23.1.3.1): the receiver spreads only if it is an array ------
     // ...or says it is: IsConcatSpreadable reads @@isConcatSpreadable first
     // and IsArray (through a Proxy) otherwise, so an array-like receiver is
-    // ONE element of the result unless it carries the symbol.
+    // one element of the result unless it carries the symbol.
     js_expect("(function () { var o = {length: 2, 0: 'a', 1: 'b'};"
               " var r = Array.prototype.concat.call(o, 1, [2, 3]);"
               " return r.length + ':' + (r[0] === o) + ':' + r[1] + r[2] + r[3]; })()",
@@ -381,7 +369,7 @@ int main() {
     js_expect("(function () { var o = {length: 3, 0: 'a', 1: 'b', 2: 'c'};"
               " Array.prototype.reverse.call(o); return o[0] + o[1] + o[2]; })()",
               "cba");
-    // A HOLE OPPOSITE AN ELEMENT DELETES THE FAR SIDE rather than filling it,
+    // A hole opposite an element deletes the far side rather than filling it,
     // which is the only thing separating reverse from read-all-write-back.
     js_expect("(function () { var o = {length: 2, 1: 'b'};"
               " Array.prototype.reverse.call(o); return o[0] + ':' + (1 in o); })()",
@@ -393,7 +381,7 @@ int main() {
               " Array.prototype.sort.call(o, function (x, y) { return x - y; });"
               " return o[0] + ',' + o[1] + ',' + o[2]; })()",
               "1,2,3");
-    // SortIndexedProperties SKIPS THE HOLES and the vacated tail is deleted, so
+    // SortIndexedProperties skips the holes and the vacated tail is deleted, so
     // a hole ends up after everything - including after an undefined.
     js_expect("(function () { var o = {length: 3, 0: 'b', 2: 'a'};"
               " Array.prototype.sort.call(o); return o[0] + o[1] + ':' + (2 in o); })()",
@@ -403,12 +391,12 @@ int main() {
     js_expect("Array.prototype.flat.call({length: 1, 0: [1]}).join(',')", "1");
     js_expect("Array.prototype.flat.call({length: undefined, 0: [1]}).length", "0");
     // The depth goes through ToIntegerOrInfinity: an explicit `undefined` is
-    // the DEFAULT of 1, a string or an object is 0.
+    // the default of 1, a string or an object is 0.
     js_expect("[1, [2]].flat(undefined).join(',')", "1,2");
     js_expect("[1, [2]].flat('TestString').length", "2");
     js_expect("[1, [2]].flat(0).length", "2");
     js_expect("[1, [2, [3]]].flat(Infinity).join(',')", "1,2,3");
-    // Only a real Array flattens - an array-LIKE element is one element.
+    // Only a real Array flattens; an array-like element is one element.
     js_expect("[1, {length: 1, 0: 2}].flat().length", "2");
     js_expect("[1, 2].flatMap(function (x) { return [x, x * this.n]; }, {n: 10}).join(',')",
               "1,10,2,20");
@@ -419,7 +407,7 @@ int main() {
         "(function () { try { [1].flatMap(7); return 'no'; } catch (e) { return e.name; } })()",
         "TypeError");
 
-    // --- A NULLISH RECEIVER IS A TypeError, not a silent default ------------
+    // --- A nullish receiver is a TypeError, not a silent default ------------
     js_expect("(function () { try { Array.prototype.push.call(null, 1); return 'no'; }"
               " catch (e) { return e.name; } })()",
               "TypeError");
@@ -451,8 +439,8 @@ int main() {
               " return 'no'; } catch (e) { return e.name; } })()",
               "TypeError");
 
-    // A STRING RECEIVER CANNOT BE MUTATED. Every Set in these algorithms
-    // carries Throw=true, so this is a TypeError in sloppy mode as well -
+    // A string receiver cannot be mutated. Every Set in these algorithms
+    // carries Throw=true, so this is a TypeError in sloppy mode as well,
     // unlike a bare `s[0] = 'x'`, which is silently discarded.
     js_expect("(function () { try { Array.prototype.push.call('abc', 1); return 'no'; }"
               " catch (e) { return e.name; } })()",
@@ -460,7 +448,7 @@ int main() {
     js_expect("(function () { try { Array.prototype.shift.call(''); return 'no'; }"
               " catch (e) { return e.name; } })()",
               "TypeError");
-    // ...and a FROZEN array cannot either, for the same reason.
+    // ...and a frozen array cannot either, for the same reason.
     js_expect("(function () { var a = []; Object.freeze(a);"
               " try { a.push(); return 'no'; } catch (e) { return e.name; } })()",
               "TypeError");
@@ -471,8 +459,8 @@ int main() {
               " try { a.pop(); return 'no'; } catch (e) { return e.name; } })()",
               "TypeError");
 
-    // --- ORDER OF OPERATIONS, which is what a Proxy or an accessor counts ---
-    // `length` is read ONCE, before anything is written, and written ONCE,
+    // --- Order of operations, which is what a Proxy or an accessor counts ---
+    // `length` is read once, before anything is written, and written once,
     // after everything is. A method that re-read it per iteration would see a
     // second `get` here, and one that wrote each element through `length`
     // would see a second `set`.
@@ -489,8 +477,8 @@ int main() {
               "   set length(v) { log.push('set ' + v); } };"
               " Array.prototype.splice.call(o); return log.join('|'); })()",
               "get|set 0");
-    // The element is READ BEFORE THE SLOT IS DELETED, and the length written
-    // after both - 23.1.3.22 steps 4c, 4d, 4e in that order.
+    // The element is read before the slot is deleted, and the length written
+    // after both: 23.1.3.22 steps 4c, 4d, 4e in that order.
     js_expect("(function () { var log = [];"
               " var o = {0: 'a',"
               "   get length() { log.push('get length'); return 1; },"
@@ -499,7 +487,7 @@ int main() {
               " return v + ':' + log.join('|') + ':' + (0 in o); })()",
               "a:get length|set length 0:false");
 
-    // --- THE FAST PATH IS STILL THE FAST PATH -------------------------------
+    // --- The fast path is still the fast path -------------------------------
     // A real Array takes the vector operation, and the generic walk must not
     // have changed a single answer on one.
     js_expect("(function () { var a = [1, 2, 3]; a.push(4); a.unshift(0); return a.join(','); })()",
@@ -514,7 +502,7 @@ int main() {
               " return a.join(','); })()",
               "1,x,y,3");
 
-    // --- THE OWN `length` AND `name` OF EACH OF THEM ------------------------
+    // --- The own `length` and `name` of each of them ------------------------
     // Clause 17 and 10.2.5: the specified arity as `length`, the property key
     // as `name`, both { writable: false, enumerable: false, configurable: true }.
     js_expect("[].push.length + ',' + [].pop.length + ',' + [].shift.length + ','"
@@ -529,9 +517,9 @@ int main() {
               "false,false,true");
 
     // ================================================================
-    // NAMED OWN PROPERTIES ON AN ARRAY (array_object::named). `a.foo = 1` was
-    // dropped and `a.foo` read the prototype; test262 sets
-    // `x.getClass = Object.prototype.toString` on an array 83 times.
+    // 10. Named own properties on an array (array_object::named): `a.foo = 1`
+    //     is an own property, not a write dropped in favour of the prototype.
+    //     test262 often sets `x.getClass = Object.prototype.toString` on one.
     // ================================================================
     js_expect("(function(){var a=[1,2];a.foo='x';return a.foo+'/'+a.length+'/'+('foo' in a);})()",
               "x/2/true");
@@ -574,8 +562,8 @@ int main() {
     js_expect("(function(){var a=[7,8];a['1']=9;var s='';for(var i in a){s+=a[i];}return "
               "s+'/'+a[1]+'/'+a.length;})()",
               "79/9/2");
-    // (`Object.keys` here lists the padded holes too - a known array_object
-    // deviation, not this change's.)
+    // Known deviation: array_object pads the skipped indices, so `Object.keys`
+    // here would also list the holes.
     js_expect("(function(){var a=[];a['2']=1;return a.length+'/'+a[2];})()", "3/1");
     // for-in over a function sees its enumerable own properties.
     js_expect(
@@ -583,9 +571,9 @@ int main() {
         "a");
 
     // ================================================================
-    // 11b. A PRIMITIVE RECEIVER IS BOXED (ToObject, step 1 of every method):
-    //      a Boolean wrapper takes a `length` and answers 0, a String
-    //      wrapper's indices refuse (10.4.3), and reads see the characters
+    // 11. A primitive receiver is boxed (ToObject, step 1 of every method): a
+    //     Boolean wrapper takes a `length` and answers 0, a String wrapper's
+    //     indices refuse writes (10.4.3), and reads see the characters.
     // ================================================================
     js_expect("Array.prototype.push.call(true)", "0");
     js_expect("Array.prototype.push.call(false, 1)", "1");
@@ -607,7 +595,7 @@ int main() {
     js_expect("(function(){var a=[];try{a.length=1.5;}catch(e){return e.name;}})()", "RangeError");
 
     // ================================================================
-    // 12. Array.from AND Array.of, 23.1.2.1 / 23.1.2.3 (since 2026-09-12)
+    // 12. Array.from and Array.of (23.1.2.1, 23.1.2.3)
     // ================================================================
     // The iterator protocol, with the mapper's index and thisArg.
     js_expect("Array.from((function*(){yield 1;yield 2;})()).join()", "1,2");
@@ -621,7 +609,7 @@ int main() {
     js_expect("Array.from([1], 'nope')", "THREW");
     js_expect("Array.from({[Symbol.iterator]: 1})", "THREW");
     js_expect("Array.from({get [Symbol.iterator]() { throw new Error('x'); }})", "THREW");
-    // A CONSTRUCTOR `this`: built through it, elements landed with
+    // A constructor `this`: the result is built through it, elements landed with
     // CreateDataPropertyOrThrow, `length` set last.
     js_expect("(function(){function C(n){this.n=n;}var r=Array.of.call(C,7,8);"
               "return (r instanceof C)+','+r.n+','+r[1]+','+r.length;})()",
@@ -645,7 +633,7 @@ int main() {
     js_expect("(function(){function C(){}Object.defineProperty(C.prototype,'length',"
               "{set:function(){throw new Error('len');}});Array.of.call(C);})()",
               "THREW");
-    // An abrupt mapper CLOSES the iterator before the throw reaches the page.
+    // An abrupt mapper closes the iterator before the throw reaches the page.
     js_expect("(function(){var closed=false;var it={[Symbol.iterator](){return {"
               "next(){return {value:1,done:false};},return(){closed=true;return {};}};}};"
               "try{Array.from(it,function(){throw new Error('m');});}catch(e){}"
@@ -695,8 +683,8 @@ int main() {
               "a.constructor[Symbol.species] = parseInt; return a.map(x => x); })()",
               "THREW");
     js_expect("(function(){ var a = [1]; a.constructor = 1; return a.map(x => x); })()", "THREW");
-    // CreateDataPropertyOrThrow DEFINES over a non-writable slot on the species
-    // object; a revoked proxy receiver throws ONCE (the length read) and the
+    // CreateDataPropertyOrThrow defines over a non-writable slot on the species
+    // object; a revoked proxy receiver throws once (the length read) and the
     // method stops; a typed array is not an Array for species or isArray.
     js_expect("(function(){ var a = [1, 2]; a.constructor = {}; a.constructor[Symbol.species] = "
               "function () { Object.defineProperty(this, '0', {value: 'x', writable: false, "

@@ -1,8 +1,12 @@
-// HTML 4.10's forms against html/semantics/forms: the select and option
+//===- ctbrowser/unittests/unit/forms/wpt.cpp - Form tests from WPT -------===//
+//
+// HTML 4.10's forms against WPT's html/semantics/forms: the select and option
 // model, form.elements and its named access, the labels, constraint
 // validation, the input types' numbers, the selection API, and FormData.
-// One expression against a fresh page, and whatever it logged - the
-// pattern of unit/dom/nodes_wpt.cpp.
+// Each case evaluates one expression against a fresh page and compares what
+// it logged, the pattern of unit/dom/nodes_wpt.cpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -29,6 +33,8 @@ constexpr const char * page_html = R"(<!DOCTYPE html>
 <input id=outside form=f name=outside value=z><input type=hidden id=hid value=q>
 </body></html>)";
 
+/// Checks that `expression` evaluates to `expected` on a fresh copy of
+/// `page_html`.
 void is(const std::string & expression, const std::string & expected) {
     ctbrowser_test::is_in(page_html, expression, expected);
 }
@@ -54,7 +60,7 @@ void test_select_options_and_selectedness() {
        " s.value = 'b'; o.push(s.selectedIndex, s.options[1].selected);"
        " return o.join(); })()",
        "2,false,c,-1,true,a,1,a,1,true");
-    // reset-form.html's precondition: the FIRST read after `value =` is one
+    // reset-form.html's precondition: the first read after `value =` is one
     // option's selectedness, with nothing else having reconciled the store.
     is("(function () { var s = document.getElementById('s'); s.value = 'c';"
        " return [s.options[2].selected, s.options[1].selected].join(); })()",
@@ -192,7 +198,8 @@ void test_input_numbers_and_dates() {
        " h.willValidate, h.indeterminate]; h.value = 'w'; h.indeterminate = true;"
        " o.push(h.value, h.getAttribute('value'), h.indeterminate); return o.join(); })()",
        "q,,,false,false,w,w,true");
-    // A 30-digit year is an invalid value, not signed-overflow UB (INT-004).
+    // A 30-digit year is an invalid value, not signed-overflow UB in the year
+    // parser.
     is("(function () { var d = document.createElement('input'); d.type = 'date'; d.value = "
        "'"
        "123456789012345678901234567890-01-01'; return d.value === '' && isNaN(d.valueAsNumber); "
@@ -282,7 +289,7 @@ void test_form_data_and_submission() {
        "1,hello,1,b");
 }
 
-// A BUTTON'S ACTIVATION BEHAVIOUR submits and resets through the same algorithm
+// A button's activation behaviour submits and resets through the same algorithm
 // requestSubmit() and reset() run: form-submission-algorithm.html's SubmitEvent
 // carrying the button, input-type-change-submit.html's text field made a
 // submit button by its own click listener, button-click-submits-with-
@@ -305,8 +312,9 @@ void test_activation_submits_and_resets() {
        " return seen.join(); })()",
        "true:btn,true:t,z");
     // clicking-interactive-content.html: a <textarea> has no activation
-    // behaviour, so its click's activation target is the <label> around it,
-    // whose click at the textarea came back to the label - for ever.
+    // behaviour, so its click's activation target is the <label> around it;
+    // the label must not then click the textarea again, which would loop for
+    // ever.
     is("(function () { var l = document.createElement('label');"
        " var t = l.appendChild(document.createElement('textarea'));"
        " document.body.appendChild(l); var n = 0;"
@@ -340,11 +348,11 @@ void test_output_and_textarea() {
 // --- the form owner, HTML 4.10.17.3 ----------------------------------------------------
 
 void test_form_owner_attribute() {
-    // form_attribute.html: `form=""` names nothing; a DISCONNECTED control's
-    // `form` attribute names nothing either - its owner is its nearest form
-    // ancestor (4.10.18.3 step 4 is for a connected one), so a non-form with
-    // the id earlier in a detached tree changes nothing; connected, the
-    // non-form with the id earlier wins nothing.
+    // form_attribute.html: `form=""` names nothing. A disconnected control's
+    // `form` attribute is ignored and its owner is its nearest form ancestor
+    // (4.10.18.3 step 4 applies only when connected), so an earlier non-form
+    // with the same id changes nothing. Once connected, the id resolves to
+    // that non-form first, so the owner is null.
     is("(function () { var f = document.getElementById('f'); var b = "
        "document.createElement('button');"
        " f.appendChild(b); var o = [b.form === f]; b.setAttribute('form', ''); o.push(b.form);"
@@ -441,7 +449,7 @@ void test_value_sanitization_and_type_change() {
        "InvalidStateError,true,1e3,true,10,15,2014-01-01T11:11,true,foo bar,true");
 }
 
-// --- round nine: barred validity, groups, selection seeding, FACE ----------------------
+// --- barred validity, radio groups, selection seeding, custom elements ----------------
 
 void test_barred_validity_groups_and_selection() {
     // form-validation-validity-*.html: a barred control keeps its flags; only

@@ -1,4 +1,10 @@
-// ctbrowser.dom: the document, its nodes and its read view.
+//===- ctbrowser/unittests/unit/dom/basics.cpp - DOM tree tests -----------===//
+//
+// Unit tests for ctbrowser::document: creating and reparenting nodes, the
+// read view, attributes with and without namespaces, the document version
+// counter, and what parse_html builds (including the parser's form pointer).
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
 
@@ -24,9 +30,9 @@ void test_create_and_read() {
         CHECK(r.contains(a));
         CHECK(r.kind(a).value() == node_kind::element);
         CHECK(r.tag(a).value() == div);
-        CHECK(!r.parent(a)); // created detached
+        CHECK(!r.parent(a)); // Created detached.
         CHECK(r.children(a).empty());
-        CHECK(r.attributes(a).empty()); // and allocation-free while empty
+        CHECK(r.attributes(a).empty()); // And allocation-free while empty.
     }
     CHECK(doc.append_child(doc.root(), a).has_value());
     {
@@ -52,8 +58,8 @@ void test_errors_are_values_not_crashes() {
     CHECK(doc.set_attribute(text, atoms.intern("id"), "x").error() == dom_error::not_an_element);
 }
 
-// Reparenting a node beneath its own descendant must be refused, or the tree
-// stops being a tree and every traversal in the engine loops forever.
+/// Reparenting a node beneath its own descendant must be refused, or the tree
+/// stops being a tree and every traversal in the engine loops forever.
 void test_cycles_are_refused() {
     atom_table atoms;
     document doc{atoms};
@@ -70,15 +76,15 @@ void test_cycles_are_refused() {
     CHECK(doc.append_child(leaf, outer).error() == dom_error::would_cycle);
     CHECK(doc.append_child(outer, outer).error() == dom_error::would_cycle);
 
-    // and the tree is intact afterwards
+    // The tree is intact afterwards.
     const auto r = doc.read();
     CHECK(r.parent(outer) == doc.root());
     CHECK(r.parent(inner) == outer);
     CHECK(r.parent(leaf) == inner);
 }
 
-// Appending a node that already has a parent MOVES it - it must not end up in
-// two child lists at once.
+/// Appending a node that already has a parent moves it: it must not end up in
+/// two child lists at once.
 void test_append_moves() {
     atom_table atoms;
     document doc{atoms};
@@ -93,8 +99,8 @@ void test_append_moves() {
     CHECK(doc.append_child(second, child).has_value());
 
     const auto r = doc.read();
-    CHECK(r.children(first).empty());        // gone from the old parent
-    CHECK_EQ(r.children(second).size(), 1u); // present in the new one, exactly once
+    CHECK(r.children(first).empty());        // Gone from the old parent.
+    CHECK_EQ(r.children(second).size(), 1u); // Present in the new one, exactly once.
     CHECK(r.parent(child) == second);
 }
 
@@ -116,7 +122,7 @@ void test_insert_before() {
         CHECK_EQ(children.size(), 4u);
         CHECK(children[1] == inserted);
     }
-    // an absent anchor appends, rather than failing
+    // An absent anchor appends rather than failing.
     const node_id appended = doc.create_element(li);
     CHECK(doc.insert_before(doc.root(), appended, node_id{7, 7}).has_value());
     const auto r = doc.read();
@@ -139,7 +145,7 @@ void test_attributes_and_text() {
         CHECK(r.has_attribute(n, cls));
         CHECK_EQ(r.attributes(n).size(), 2u);
     }
-    CHECK(doc.set_attribute(n, id, "other").has_value()); // overwrite, not append
+    CHECK(doc.set_attribute(n, id, "other").has_value()); // Overwrite, not append.
     {
         const auto r = doc.read();
         CHECK_EQ(r.attributes(n).size(), 2u);
@@ -150,7 +156,7 @@ void test_attributes_and_text() {
         const auto r = doc.read();
         CHECK(!r.has_attribute(n, id));
         CHECK_EQ(r.attributes(n).size(), 1u);
-        CHECK_EQ(r.attribute_value(n, id), std::string_view{}); // absent reads empty
+        CHECK_EQ(r.attribute_value(n, id), std::string_view{}); // Absent reads empty.
     }
 
     const node_id t = doc.create_text("hello");
@@ -159,11 +165,11 @@ void test_attributes_and_text() {
     CHECK_EQ(doc.read().text(t), std::string_view{"goodbye"});
 }
 
-// AN ATTRIBUTE HAS A NAMESPACE, and the two lookups over it are different
-// questions: `getAttribute` matches the QUALIFIED name irrespective of
-// namespace and answers the first such attribute, `getAttributeNS` matches
-// (namespace, local name) and the prefix takes no part in it. Everything below
-// is DOM 4.9 without a browser anywhere near it.
+/// An attribute has a namespace, and the two lookups over it ask different
+/// questions: `getAttribute` matches the qualified name in any namespace and
+/// answers the first such attribute, while `getAttributeNS` matches (namespace,
+/// local name) and ignores the prefix. This is DOM 4.9 tested on the document
+/// alone, with no browser or script involved.
 void test_attribute_namespaces() {
     atom_table atoms;
     document doc{atoms};
@@ -172,14 +178,14 @@ void test_attribute_namespaces() {
     const atom foo = atoms.intern("foo");
     const atom bar = atoms.intern("bar");
 
-    // The same local name in three namespaces is THREE attributes.
+    // The same local name in three namespaces is three separate attributes.
     CHECK(doc.set_attribute(n, x, "none").has_value());
     CHECK(doc.set_attribute_ns(n, foo, x, "first").has_value());
     CHECK(doc.set_attribute_ns(n, bar, x, "second").has_value());
     {
         const auto r = doc.read();
         CHECK_EQ(r.attributes(n).size(), 3u);
-        // ...and the qualified lookup answers the FIRST of them.
+        // The qualified lookup answers the first of them.
         CHECK_EQ(r.attribute_value(n, x), std::string_view{"none"});
         CHECK(r.find_attribute_ns(n, "", "x") != nullptr);
         CHECK_EQ(r.find_attribute_ns(n, "foo", "x")->value, std::string{"first"});
@@ -189,7 +195,7 @@ void test_attribute_namespaces() {
         CHECK(!r.has_attribute_ns(n, "", "y"));
     }
     // A namespaced write finds the one it already has rather than adding a
-    // fourth, and the qualified write changes the FIRST, whatever namespace
+    // fourth, and the qualified write changes the first, whatever namespace
     // that one is in.
     CHECK(doc.set_attribute_ns(n, foo, x, "changed").has_value());
     CHECK(doc.set_attribute(n, x, "also changed").has_value());
@@ -222,9 +228,10 @@ void test_attribute_namespaces() {
     CHECK_EQ(doc.version(), settled);
 }
 
-// The prefix is NOT part of an attribute's identity, and it is not stored
-// either - see attribute_local_name. These are the four cases that derivation
-// has to get right.
+/// The prefix is not part of an attribute's identity, and it is not stored
+/// separately either: attribute_prefix and attribute_local_name derive both
+/// from the qualified name. These are the four cases that derivation has to get
+/// right.
 void test_attribute_prefixes() {
     atom_table atoms;
     document doc{atoms};
@@ -233,7 +240,7 @@ void test_attribute_prefixes() {
 
     // A prefixed name in a namespace splits at the first colon...
     CHECK(doc.set_attribute_ns(n, ns, atoms.intern("foo:bar"), "1").has_value());
-    // ...and setting the SAME (namespace, local name) through another prefix
+    // Setting the same (namespace, local name) through another prefix
     // changes the value and keeps the qualified name it already had.
     CHECK(doc.set_attribute_ns(n, ns, atoms.intern("quux:bar"), "2").has_value());
     {
@@ -244,18 +251,18 @@ void test_attribute_prefixes() {
         CHECK_EQ(held.value, std::string{"2"});
         CHECK_EQ(attribute_prefix(atoms, held), std::string_view{"foo"});
         CHECK_EQ(attribute_local_name(atoms, held), std::string_view{"bar"});
-        // The qualified lookup wants the WHOLE name; the local one alone finds
+        // The qualified lookup wants the whole name; the local one alone finds
         // nothing.
         CHECK(r.has_attribute(n, atoms.intern("foo:bar")));
         CHECK(!r.has_attribute(n, atoms.intern("bar")));
     }
-    // removeAttributeNS TAKES A LOCAL NAME - handing it the qualified one
-    // matches nothing, which is the whole of Element-removeAttributeNS.html.
+    // removeAttributeNS takes a local name: handing it the qualified one
+    // matches nothing, which is all of WPT's Element-removeAttributeNS.html.
     CHECK(doc.remove_attribute_ns(n, "http://example.com/", "foo:bar").has_value());
     CHECK_EQ(doc.read().attributes(n).size(), 1u);
     CHECK(doc.remove_attribute_ns(n, "http://example.com/", "bar").has_value());
     CHECK(doc.read().attributes(n).empty());
-    // A COLON WITH NO NAMESPACE IS NOT A PREFIX. `setAttribute("pre:fix", …)`
+    // A colon with no namespace is not a prefix. `setAttribute("pre:fix", …)`
     // has local name "pre:fix" and no prefix at all, because a prefix without a
     // namespace is a NamespaceError and can never have been stored.
     const node_id other = doc.create_element(atoms.intern("div"));
@@ -270,8 +277,8 @@ void test_attribute_prefixes() {
     }
 }
 
-// "Adjust foreign attributes": the parse path, where an SVG `xlink:href` gets a
-// namespace and the same spelling on an HTML element does not.
+/// "Adjust foreign attributes": the parse path, where an SVG `xlink:href` gets a
+/// namespace and the same spelling on an HTML element does not.
 void test_parsed_foreign_attributes() {
     atom_table atoms;
     document doc{atoms};
@@ -325,7 +332,7 @@ void test_parse_html() {
     CHECK(static_cast<bool>(parsed.root));
 
     const auto r = doc.read();
-    // walk to the div, wherever the parser hung it
+    // Walk to the div, wherever the parser put it.
     node_id found{};
     const atom div = atoms.intern("div");
     const auto walk = [&](auto && self, node_id at) -> void {
@@ -342,23 +349,23 @@ void test_parse_html() {
         CHECK_EQ(r.attribute_value(found, atoms.intern("class")), std::string_view{"wrap"});
     }
 
-    // the whole tree should be reachable and consistent
+    // The whole tree should be reachable and consistent.
     std::size_t elements = 0;
     const auto count = [&](auto && self, node_id at) -> void {
         if (r.kind(at).value_or(node_kind::text) == node_kind::element) { ++elements; }
         for (const node_id c : r.children(at)) {
-            CHECK(r.parent(c) == at); // parent and child lists agree
+            CHECK(r.parent(c) == at); // Parent and child lists agree.
             self(self, c);
         }
     };
     count(count, r.root());
-    CHECK(elements >= 5); // div, h1, ul, li, li at minimum
+    CHECK(elements >= 5); // div, h1, ul, li, li at minimum.
 }
 
-// THE FORM ELEMENT POINTER (HTML 13.2.6.1 step 12): a form inside a table is
-// popped as soon as it is inserted, and the controls after it are still its
-// own - until a removal separates them or their `form` attribute changes
-// (form_owner_and_table.html, form_owner_and_table_3.html).
+/// The parser's form element pointer (HTML 13.2.6.1 step 12): a form inside a
+/// table is popped as soon as it is inserted, yet the controls after it still
+/// belong to it until a removal separates them or their `form` attribute
+/// changes (WPT form_owner_and_table.html, form_owner_and_table_3.html).
 void test_the_parser_associates_controls_with_the_form_pointer() {
     atom_table atoms;
     document doc{atoms};
@@ -379,15 +386,15 @@ void test_the_parser_associates_controls_with_the_form_pointer() {
     const auto owner = [&](std::string_view id) { return doc.read().parser_form(by_id(id)); };
     CHECK(static_cast<bool>(form));
     CHECK(owner("i") == form);
-    CHECK(!owner("a"));        // a listed element with a `form` attribute
-    CHECK(owner("g") == form); // form-associated, though not listed
-    CHECK(owner("k") == form); // the second <form> was ignored: the pointer was set
+    CHECK(!owner("a"));        // A listed element with a `form` attribute.
+    CHECK(owner("g") == form); // Form-associated, though not listed.
+    CHECK(owner("k") == form); // The second <form> was ignored: the pointer was set.
     // The table moves with both inside it: still one tree, still associated.
     const node_id table = doc.read().parent(form);
     CHECK(doc.remove_child(table).has_value());
     CHECK(doc.append_child(by_id("d"), table).has_value());
     CHECK(owner("i") == form);
-    // The `form` content attribute resets the owner - in no namespace only.
+    // The `form` content attribute resets the owner, but only in no namespace.
     CHECK(doc.set_attribute_ns(by_id("n"), atoms.intern("urn:x"), atoms.intern("form"), "v")
               .has_value());
     CHECK(owner("n") == form);

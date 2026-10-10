@@ -1,21 +1,26 @@
-// ctbrowser.layout: sizing - box-sizing (CSS UI 3 §3.1), the intrinsic sizing
-// keywords (CSS Sizing 3 §5) and calc-size() (CSS Values 5 §10.2).
+//===- ctbrowser/unittests/unit/layout/sizing.cpp - Sizing layout tests ---===//
 //
-// The claim under test is one rule applied everywhere: a stated size names the
-// content box unless `box-sizing: border-box`, a keyword names one of the box's
-// own content sizes, and a calc-size() is a linear function of whichever of
-// those its basis names - measured in the box-sizing box and answered in it,
-// then turned into a border box like every other size. Every formatting
-// context asks the same two helpers (border_box_size and calc_over_content),
-// which is why one file can assert the rule for blocks, flex items and
-// absolutely positioned boxes alike.
+// Sizing: box-sizing (CSS UI 3 §3.1), the intrinsic sizing keywords (CSS
+// Sizing 3 §5) and calc-size() (CSS Values 5 §10.2).
+//
+// The rule under test applies everywhere: a stated size names the content box
+// unless `box-sizing: border-box`, a keyword names one of the box's own
+// content sizes, and a calc-size() is a linear function of whichever of those
+// its basis names, measured in the box-sizing box and answered in it, then
+// turned into a border box like every other size. Every formatting context
+// asks the same two helpers (border_box_size and calc_over_content), which is
+// why one file can assert the rule for blocks, flex items and absolutely
+// positioned boxes alike.
 //
 // Text is measured with monospace_measure: one character is `font_size * 0.6`.
+//
+//===----------------------------------------------------------------------===//
 
 #include "fixture.hpp"
 
 namespace {
 
+/// A fixture plus its laid-out fragment tree, with lookups by element id.
 struct laid_out {
     fixture f;
     fragment out;
@@ -26,6 +31,8 @@ struct laid_out {
         out = eng.run(f.root, viewport);
     }
     [[nodiscard]] const fragment * at(std::string_view id) { return out.find(f.find_id(id)); }
+    /// The border box of element \p id in page coordinates (fragment bounds are
+    /// relative to the parent fragment, so this sums the offsets on the way down).
     [[nodiscard]] rect abs(std::string_view id) {
         const node_id want = f.find_id(id);
         rect found{};
@@ -48,7 +55,7 @@ constexpr std::string_view reset = "body { margin: 0; padding: 0 } ";
 
 void test_calc_size_parses_as_a_function_of_its_basis() {
     // The cascade's own spelling, with the calculation simplified and `size`
-    // multiplied on the left (style/css/calc/simplify.cpp).
+    // multiplied on the left (lib/Style/css/calc/simplify.cpp).
     const length over_auto = parse_length("calc-size(auto, 23px + (0.6 * size))");
     check(over_auto.u == unit::auto_ && !over_auto.is_auto() && over_auto.is_intrinsic(),
           "calc-size(auto, ...) is not auto: the auto size is its input");
@@ -245,7 +252,7 @@ void test_calc_size_height_runs_over_the_content_height() {
     if (hi != nullptr) { expect_near(hi->bounds.height, 20, "max-height over min-content"); }
     // A percentage of an indefinite height is zero here, as Chrome answers.
     if (any != nullptr) { expect_near(any->bounds.height, 0, "any: a percentage of nothing"); }
-    // A calc-size() over an intrinsic keyword is NOT a definite height for a
+    // A calc-size() over an intrinsic keyword is not a definite height for a
     // percentage child (calc-size-height's last test).
     laid_out u;
     u.run("<html><body><div id=t><div id=k><div id=g></div></div></div></body></html>",
@@ -283,7 +290,7 @@ void test_flex_basis_content_and_calc_size() {
     expect_near(width_with("flex-basis: calc-size(auto, size * 1.6 + 23px)"), 223,
                 "auto defers to the 125px width, then the calculation");
     // (Plus 20 so the answer clears the automatic minimum, which is the 125px
-    // width: the specified size suggestion, §4.5.)
+    // width: the specified size suggestion, CSS Flexbox 1 §4.5.)
     expect_near(width_with("flex-basis: calc-size(min-content, size / 2 + 20px)"), 140,
                 "min-content halved");
     expect_near(width_with("flex-basis: calc-size(any, 31%)"), 155, "any is a percentage");

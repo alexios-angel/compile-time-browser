@@ -1,8 +1,12 @@
+//===- insertion_steps.cpp - Radio and option insertion tests ---*- C++ -*-===//
+//
 // The insertion and attribute change steps of radio buttons and options
-// (bindings/element/control_methods/form_writes.cpp): the last checked radio
-// of a group wins, joining a group by a type or name change unchecks the
-// others, a clean option follows its `selected` attribute, and an inserted
-// selected option deselects the rest of a single select.
+// (lib/Shell/bindings/element/control_methods/form_writes.cpp): the last
+// checked radio of a group wins, joining a group by a type or name change
+// unchecks the others, a clean option follows its `selected` attribute, and an
+// inserted selected option deselects the rest of a single select.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -30,7 +34,7 @@ void test_radios() {
 <input id=t name=n checked></body>)",
                           "(t.type = 'radio', [r.checked, t.checked].join())", "false,true");
     // Into a detached, formless tree two checked radios stay checked; into a
-    // detached FORM the second one's new form owner unchecks the first.
+    // detached form the second one's new form owner unchecks the first.
     ctbrowser_test::is_in(
         "<!DOCTYPE html><body></body>",
         "(function () { function r() { var i = document.createElement('input');"
@@ -82,7 +86,8 @@ void test_options() {
         "(s.options[1].removeAttribute('selected'), s.selectedIndex)", "0");
 }
 
-// UAF-021: clicking a radio BELOW the checked one in a big group. The toggle's
+// Regression for a use-after-free: clicking a radio below the checked one in a
+// big group. The toggle's
 // walk creates the state of every radio it has not seen, which rehashes the
 // store - and the clicked radio's own state, looked up before the walk, must
 // not be written through a reference the rehash moved.
