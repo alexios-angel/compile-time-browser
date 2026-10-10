@@ -108,6 +108,53 @@ bool materializeHostPrimitives(mlir::ModuleOp module, const HostContract & contr
     return true;
 }
 
+/// Marks each function bound to one of `names` as a string entry: the embedder
+/// calls it from outside the script, after the script has run, with every
+/// declared parameter a String. The function becomes public, so the solver
+/// treats its callers as unknown, and carries `ctnative.string_entry` set to
+/// the global's name: TypeInference::setToEntryState reads it to type those
+/// parameters, and the emitter names the C++ function after it. Returns the
+/// error for a name that is not one global bound once to one function.
+std::optional<std::string> markStringEntries(mlir::ModuleOp module,
+                                             llvm::ArrayRef<std::string> names) {
+    auto rows = module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
+    if (!rows) { return "string-entries needs --ctjs-resolve-globals to have run first"; }
+    for (const std::string & name : names) {
+        if (!admission::isCIdentifier(name) || admission::isReservedInCpp(name) || name == "main") {
+            return "string entry `" + name + "` cannot be a C++ function name";
+        }
+        ctjs::FuncOp fn;
+        for (mlir::Attribute row : rows) {
+            auto fields = llvm::dyn_cast<mlir::DictionaryAttr>(row);
+            if (!fields) { continue; }
+            auto bound = fields.getAs<mlir::StringAttr>("name");
+            auto resolved = fields.getAs<mlir::FlatSymbolRefAttr>("resolved");
+            if (bound && resolved && bound.getValue() == name) {
+                fn = module.lookupSymbol<ctjs::FuncOp>(resolved);
+            }
+        }
+        if (!fn) {
+            return "string entry `" + name +
+                   "` is not a global bound once to a function in this program";
+        }
+        // Every other function's C++ name is its mangled symbol, which ends in
+        // the importer's index; refuse the one spelling that could collide.
+        for (auto other : module.getOps<ctjs::FuncOp>()) {
+            if (other != fn && cIdentifier(other.getSymName()) == name) {
+                return "string entry `" + name + "` collides with function " +
+                       other.getSymName().str();
+            }
+        }
+        if (auto earlier = fn->getAttrOfType<mlir::StringAttr>("ctnative.string_entry")) {
+            return "string entries `" + earlier.str() + "` and `" + name +
+                   "` name the same function";
+        }
+        fn.setPublic();
+        fn->setAttr("ctnative.string_entry", mlir::StringAttr::get(module.getContext(), name));
+    }
+    return std::nullopt;
+}
+
 /// The private-clone protocol that every host preparation follows. The module
 /// is never mutated speculatively: `prepare` works on a clone under a copy of
 /// the contract, refreshing its fingerprint whenever it reproves a step of its
@@ -186,6 +233,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             auto parsed = parseHostContract((*buffer)->getBuffer());
             if (!parsed) { return fail(llvm::toString(parsed.takeError())); }
             hostContract = std::move(*parsed);
+        }
+        if (!stringEntries.empty()) {
+            if (hostContract) {
+                return fail("string-entries cannot be combined with host-manifest");
+            }
+            if (auto error = markStringEntries(module, stringEntries)) { return fail(*error); }
         }
         const auto normalizeOwnedSource = [](mlir::ModuleOp candidate) {
             closureLifter local{candidate};
@@ -643,9 +696,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             }
         }
         for (ctjs::FuncOp fn : accepted) {
-            lower.names[fn.getSymName()] = !admittedDOM && !domData && isScriptEntry(fn)
-                                               ? "main"
-                                               : cIdentifier(fn.getSymName());
+            // A string entry is named after the global the embedder calls;
+            // markStringEntries checked that C++ can spell it.
+            const auto entry = fn->getAttrOfType<mlir::StringAttr>("ctnative.string_entry");
+            lower.names[fn.getSymName()] = !admittedDOM && !domData && isScriptEntry(fn) ? "main"
+                                           : entry ? entry.str()
+                                                   : cIdentifier(fn.getSymName());
         }
 
         // The global census, over the whole accepted set and before any

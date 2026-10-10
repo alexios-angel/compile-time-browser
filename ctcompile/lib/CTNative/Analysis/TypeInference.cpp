@@ -396,18 +396,26 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
                       : domEntry_ && domEntry_->isCallbackParameter(value)
                           ? mlir::Type(StrType::get(value.getContext(), StrEncoding::UTF8))
                           : mlir::Type(BoxedType::get(value.getContext()));
-    if (domEntry_) {
-        if (const auto parameter = domEntry_->intrinsicParameter(value)) {
-            switch (*parameter) {
-            case HostIntrinsicParameter::boolean: type = BoolType::get(value.getContext()); break;
-            case HostIntrinsicParameter::number:
-                type = NumType::getDouble(value.getContext());
-                break;
-            case HostIntrinsicParameter::string:
-                type = StrType::get(value.getContext(), StrEncoding::UTF8);
-                break;
-            case HostIntrinsicParameter::symbol: type = SymbolType::get(value.getContext()); break;
-            }
+    std::optional<HostIntrinsicParameter> parameter;
+    if (domEntry_) { parameter = domEntry_->intrinsicParameter(value); }
+    // A declared parameter of a function the embedder calls with Strings
+    // (--ctnative-lower-to-emitc string-entries). The first three block
+    // arguments are the implicit receiver, new.target and callee.
+    if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        argument && argument.getArgNumber() >= 3 && argument.getOwner()->isEntryBlock()) {
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp());
+        if (fn && fn->hasAttr("ctnative.string_entry")) {
+            parameter = HostIntrinsicParameter::string;
+        }
+    }
+    if (parameter) {
+        switch (*parameter) {
+        case HostIntrinsicParameter::boolean: type = BoolType::get(value.getContext()); break;
+        case HostIntrinsicParameter::number: type = NumType::getDouble(value.getContext()); break;
+        case HostIntrinsicParameter::string:
+            type = StrType::get(value.getContext(), StrEncoding::UTF8);
+            break;
+        case HostIntrinsicParameter::symbol: type = SymbolType::get(value.getContext()); break;
         }
     }
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));

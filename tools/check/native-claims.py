@@ -59,7 +59,7 @@ Usage:
                    [--json <out.json>] [--top <n>] [--min-claimed <n>]
                    [--min-resolved <n>] [--min-direct <n>]
                    [--min-lifted-direct <n>] [--no-default-optimizations]
-                   [--timeout <seconds>]
+                   [--lower-options <options>] [--timeout <seconds>]
 
 Negative proofs, which show the check can fail (combine one with
 --expect-failure; ctcompile/test/cmake/Native.cmake does so):
@@ -200,7 +200,8 @@ def run(argv: argparse.Namespace) -> dict:
             argv.opt,
             "--ctjs-lift-to-scf",
             "--ctnative-lower-to-emitc=report=true"
-            + (" optimize=false" if argv.no_default_optimizations else ""),
+            + (" optimize=false" if argv.no_default_optimizations else "")
+            + (" " + argv.lower_options if argv.lower_options else ""),
         ],
         input=closed.stdout,
         capture_output=True,
@@ -345,6 +346,11 @@ def main() -> None:
         help="measure admission without default precomputation and reachability pruning",
     )
     parser.add_argument(
+        "--lower-options",
+        help="more --ctnative-lower-to-emitc options, space-separated, such as "
+        "string-entries=NAME for a function the embedder calls with String arguments",
+    )
+    parser.add_argument(
         "--min-claimed",
         type=int,
         help="fail if fewer functions are claimed than this - the floor against silent narrowing",
@@ -417,6 +423,8 @@ def main() -> None:
             child_argv += ["--json", argv.json]
         if argv.no_default_optimizations:
             child_argv.append("--no-default-optimizations")
+        if argv.lower_options:
+            child_argv.append(f"--lower-options={argv.lower_options}")
         if argv.min_claimed is not None:
             child_argv += ["--min-claimed", str(argv.min_claimed)]
         if argv.min_resolved is not None:
