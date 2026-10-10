@@ -27,7 +27,7 @@ with it.
   first box in `tools/devbox-settings.json` that no validation round has marked,
   starts the box if it is stopped, and runs COMMAND with `DEVBOX_HOST` set (and
   `{box}` in COMMAND replaced by the ssh alias). `status` shows each box's power,
-  busy slots and round marker. Slot 0 of a box is the same lock file the plain
+  busy slots and round marker. A box with several slots can set `build_jobs`, exported as `CT_BUILD_JOBS` so concurrent builds share its cores. Slot 0 of a box is the same lock file the plain
   `flock /tmp/ctbrowser-devbox-*.lock` commands take, so both ways share it. The
   settings file is machine-local and gitignored; copy
   `tools/devbox-settings.example.json` to create it.

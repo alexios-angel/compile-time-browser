@@ -3,7 +3,8 @@
 
 The boxes, their locks and how to start them are in tools/devbox-settings.json,
 which is machine-local and gitignored: copy devbox-settings.example.json to
-start. A box runs up to `slots` jobs at once, each under a flock(2) lock: slot 0
+start. A box runs up to `slots` jobs at once (each build limited to the box's
+`build_jobs` when set, through CT_BUILD_JOBS), each under a flock(2) lock: slot 0
 is the box's `lock` file itself, the one the agents' `flock
 /tmp/ctbrowser-devbox-*.lock ...` commands take, so jobs started either way
 share it, and slot N is that path with `.N` appended.
@@ -110,6 +111,10 @@ def run(settings, args):
         command = [part.replace("{box}", box["name"]) for part in args.command]
         print(f"devbox-pool: {box['name']}: {' '.join(command)}", file=sys.stderr)
         env = dict(os.environ, DEVBOX_HOST=box["name"])
+        # A box shared by several slots gives each job's build a share of the
+        # cores (tools/remote-build.sh's -j); an explicit CT_BUILD_JOBS wins.
+        if "build_jobs" in box:
+            env.setdefault("CT_BUILD_JOBS", str(box["build_jobs"]))
         return subprocess.run(command, check=False, env=env).returncode
     finally:
         if marker:
