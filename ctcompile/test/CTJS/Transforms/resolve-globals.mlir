@@ -66,6 +66,11 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-binding.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERMETHODWRITE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSTORED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-cell.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-return.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-cell-overwritten.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERCELLLEAK
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-return-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERRETURNSTORED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-return-value.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERRETURNVALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERARGS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSURPLUS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/self-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=SELFWRITE
@@ -475,6 +480,21 @@
 // ENTERMETHODWRITE: ctjs.global_escapes = ["the global object is written through (ctjs.set_property{{[^"]*}}"]
 // ENTERSTORED: ctjs.global_escapes = ["the global object escapes into ctjs.set_property{{[^"]*}}"]
 
+// --- Bindings and returns ---------------------------------------------------------
+//
+// A binding that holds the window is followed to every read of it, here the
+// one inside the closure that captured it, and a return of the window to the
+// result of every call of a function whose callers are all in sight
+// (ENTERNAMED above, enter-cell.js and enter-return.js). Writing another value
+// into the binding keeps its reads watched, so one passed to an unknown callee
+// is still refused; a returned window stored into an object is refused; and a
+// return is refused outright when the function is also used as a value,
+// because a caller out of sight would receive the window.
+//
+// ENTERCELLLEAK: ctjs.global_escapes = ["the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
+// ENTERRETURNSTORED: ctjs.global_escapes = ["the global object escapes into ctjs.set_property{{[^"]*}}"]
+// ENTERRETURNVALUE: ctjs.global_escapes = ["the global object escapes into ctjs.return{{[^"]*}} - `host${{[0-9]+}}` is also used as a value by ctjs.call{{[^"]*}}"]
+
 // --- Positive: a cycle terminates -------------------------------------------------
 //
 // `ping` and `pong` hand the global object to each other. Entering a callee
@@ -865,6 +885,53 @@ var z = add(1, 2);
 function add(a, b) { return a + b; }
 var box = {};
 box.held = window;
+var z = add(1, 2);
+
+//--- enter-cell.js
+function add(a, b) { return a + b; }
+var width = (function () {
+    var w = window;
+    function see() { return w.innerWidth; }
+    return see();
+})();
+var z = add(1, 2);
+
+//--- enter-return.js
+function add(a, b) { return a + b; }
+var width = (function () {
+    function host() { return window; }
+    function use() { return host().innerWidth; }
+    return use();
+})();
+var z = add(1, 2);
+
+//--- enter-cell-overwritten.js
+function add(a, b) { return a + b; }
+(function () {
+    var w = window;
+    function leak() { someHost(w); }
+    w = {};
+    leak();
+})();
+var z = add(1, 2);
+
+//--- enter-return-stored.js
+function add(a, b) { return a + b; }
+(function () {
+    function host() { return window; }
+    function use() { var box = {}; box.held = host(); return box; }
+    use();
+})();
+var z = add(1, 2);
+
+//--- enter-return-value.js
+function add(a, b) { return a + b; }
+var keep = [];
+var width = (function () {
+    function host() { return window; }
+    keep.push(host);
+    return host().innerWidth;
+})();
 var z = add(1, 2);
 
 //--- enter-cycle.js

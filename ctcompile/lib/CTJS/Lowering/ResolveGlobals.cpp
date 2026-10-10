@@ -67,8 +67,11 @@
 //     literal), continues the walk at the callee's parameter instead of
 //     counting as an escape. As the receiver of a method read off itself, the
 //     global object may meet a host method NativeRealm.h lists as inert
-//     (`window.scrollTo(0, 0)`), unless the program rebinds that name. Every
-//     refusal is collected into `ctjs.global_escapes`. A write through the
+//     (`window.scrollTo(0, 0)`), unless the program rebinds that name. A
+//     value stored in a binding is followed to every read of the binding,
+//     including captured reads in other functions, and a returned value to
+//     the result of every call of its function when binding_names sees all of
+//     them. Every refusal is collected into `ctjs.global_escapes`. A write through the
 //     global object under a constant key refuses only that name (as clause 6
 //     does for a refused body's stores); a computed key, `__proto__`, a
 //     delete, an accessor, set_proto and copy_props still refuse every name.
@@ -299,13 +302,14 @@ template <class Op> Op originOp(mlir::Value value) {
 /// Used only where the walk follows a watched value into a call, so it widens
 /// nothing else: callers this names do not get their receivers watched.
 struct binding_names {
+    mlir::ModuleOp module;
     const census & world;
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<CreateClosureOp, 1>> creators;
     llvm::DenseMap<mlir::Operation *, std::optional<llvm::SmallVector<mlir::Value>>> readsMemo;
     llvm::DenseMap<mlir::Operation *, mlir::Value> valueMemo;
     llvm::DenseMap<mlir::Operation *, bool> frozenMemo;
 
-    explicit binding_names(mlir::ModuleOp module, const census & of) : world(of) {
+    explicit binding_names(mlir::ModuleOp in, const census & of) : module(in), world(of) {
         module.walk([&](CreateClosureOp made) {
             if (FuncOp target =
                     world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()))) {
@@ -476,6 +480,64 @@ struct binding_names {
         }
         frozenMemo[object.getOperation()] = answer;
         return answer;
+    }
+
+    /// Collects in `results` the result of every call through `value`, a
+    /// value of `fn`'s closure, following it into the bindings that hold it.
+    /// Returns the operation that uses it any other way, or null.
+    mlir::Operation * calledOnly(mlir::Value value, FuncOp fn,
+                                 llvm::SmallVectorImpl<mlir::Value> & results,
+                                 llvm::DenseSet<mlir::Value> & seen) {
+        if (!seen.insert(value).second) { return nullptr; }
+        auto uses = registerFlowUses(value);
+        if (!uses) { return value.getDefiningOp() ? value.getDefiningOp() : fn.getOperation(); }
+        for (mlir::OpOperand * use : *uses) {
+            mlir::Operation * user = use->getOwner();
+            if (auto call = mlir::dyn_cast<CallOp>(user); call && use->getOperandNumber() == 0) {
+                results.push_back(call.getResult());
+                continue;
+            }
+            if (auto direct = mlir::dyn_cast<CallDirectOp>(user);
+                direct && use->getOperandNumber() == 2 && direct.getCallee() == fn.getSymName()) {
+                continue; // Its result is collected with the symbol uses.
+            }
+            if (mlir::isa<RootOp>(user)) { continue; }
+            CreateCellOp cell = mlir::dyn_cast<CreateCellOp>(user);
+            if (auto write = mlir::dyn_cast<CellSetOp>(user);
+                write && use->getOperandNumber() == 1) {
+                cell = originOp<CreateCellOp>(write.getCell());
+            }
+            llvm::SmallVector<mlir::Value> writes;
+            const auto reads = cell ? access(cell, writes) : std::nullopt;
+            if (!reads) { return user; }
+            for (mlir::Value read : *reads) {
+                if (mlir::Operation * other = calledOnly(read, fn, results, seen)) { return other; }
+            }
+        }
+        return nullptr;
+    }
+
+    /// The results of every call of `fn`, or why some caller is out of sight.
+    std::optional<std::string> callResults(FuncOp fn,
+                                           llvm::SmallVectorImpl<mlir::Value> & results) {
+        if (functionIndex(fn) == 0u) { return std::string{"the script hands it to the host"}; }
+        if (auto uses = mlir::SymbolTable::getSymbolUses(fn.getOperation(), module)) {
+            for (const mlir::SymbolTable::SymbolUse & use : *uses) {
+                auto direct = mlir::dyn_cast<CallDirectOp>(use.getUser());
+                if (!direct || direct.getCallee() != fn.getSymName()) {
+                    return "`" + fn.getSymName().str() + "` is named by " + describe(use.getUser());
+                }
+                results.push_back(direct.getResult());
+            }
+        }
+        llvm::DenseSet<mlir::Value> seen;
+        for (CreateClosureOp made : creators.lookup(fn.getOperation())) {
+            if (mlir::Operation * other = calledOnly(made.getResult(), fn, results, seen)) {
+                return "`" + fn.getSymName().str() + "` is also used as a value by " +
+                       describe(other);
+            }
+        }
+        return std::nullopt;
     }
 
     /// The function calling `callee` enters, or null.
@@ -885,6 +947,45 @@ std::optional<std::string> dynamic_global_writes(
                               direct.getArgs().size(), use.getOperandNumber(), op, kind)) {
                     escape(*refusal);
                 }
+                continue;
+            }
+            // Held in a binding: every read of the binding, in this frame or
+            // in a closure that captured it, may be the value. Writing
+            // something else into it too only adds values; the reads stay
+            // watched.
+            CreateCellOp holder;
+            if (mlir::isa<CreateCellOp>(op)) {
+                holder = mlir::cast<CreateCellOp>(op);
+            } else if (auto write = mlir::dyn_cast<CellSetOp>(op);
+                       write && use.getOperandNumber() == 1) {
+                holder = originOp<CreateCellOp>(write.getCell());
+            } else if (auto write = mlir::dyn_cast<StoreUpvalueOp>(op);
+                       write && use.getOperandNumber() == 1) {
+                auto function = op->getParentOfType<FuncOp>();
+                holder = function ? names.slotCell(function, write.getIndex()) : CreateCellOp{};
+            }
+            if (holder || mlir::isa<CreateCellOp, CellSetOp, StoreUpvalueOp>(op)) {
+                llvm::SmallVector<mlir::Value> writes;
+                const auto reads = holder ? names.access(holder, writes) : std::nullopt;
+                if (!reads) {
+                    escape(name_of(kind) + " escapes into " + describe(op) +
+                           " - a binding this walk cannot follow");
+                    continue;
+                }
+                for (mlir::Value read : *reads) { mark(read, kind); }
+                continue;
+            }
+            // Returned: the result of every call of the function may be the
+            // value, when every caller is in sight.
+            if (mlir::isa<ReturnOp>(op)) {
+                FuncOp function = op->getParentOfType<FuncOp>();
+                llvm::SmallVector<mlir::Value> results;
+                if (const auto why = function ? names.callResults(function, results)
+                                              : std::optional<std::string>{"no function"}) {
+                    escape(name_of(kind) + " escapes into " + describe(op) + " - " + *why);
+                    continue;
+                }
+                for (mlir::Value result : results) { mark(result, kind); }
                 continue;
             }
             // Stored, captured, returned, thrown, constructed with, spread, or
