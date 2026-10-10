@@ -67,6 +67,8 @@ struct component_value {
     std::uint32_t end_token = 0;
     std::uint32_t first_child = 0; // Index into stylesheet::values; 0 = none.
     std::uint32_t child_count = 0;
+    [[nodiscard]] friend bool operator==(const component_value &,
+                                         const component_value &) = default;
 };
 
 /// One declaration, `prop: value` or `--custom: <anything>`.
@@ -83,6 +85,8 @@ struct raw_declaration {
     std::int32_t order = 0;
     bool important = false;
     bool custom = false; // `--x`, whose value is never parsed or validated.
+    [[nodiscard]] friend bool operator==(const raw_declaration &,
+                                         const raw_declaration &) = default;
 };
 
 /// One qualified rule: a selector list and a declaration block.
@@ -103,6 +107,7 @@ struct raw_rule {
     std::uint32_t scope = 0;
     /// Which `@container`: 0 is none, k is stylesheet::containers[k - 1].
     std::uint32_t container = 0;
+    [[nodiscard]] friend bool operator==(const raw_rule &, const raw_rule &) = default;
 };
 
 /// One `@scope (<start>) to (<end>)` block (CSS Cascade 6 §3). The roots and
@@ -124,6 +129,7 @@ struct scope_block {
     std::uint32_t first_limit = 0;
     std::uint32_t limit_count = 0;
     std::uint64_t implicit_root = 0;
+    [[nodiscard]] friend bool operator==(const scope_block &, const scope_block &) = default;
 };
 
 /// The private at-rule that names an implicit scope's root; see scope_block.
@@ -135,6 +141,7 @@ inline constexpr std::string_view scope_root_at_rule = "-ctbrowser-scope-root";
 struct font_face {
     std::uint32_t first_declaration = 0;
     std::uint32_t declaration_count = 0;
+    [[nodiscard]] friend bool operator==(const font_face &, const font_face &) = default;
 };
 
 /// One @property or @function rule, collected like @font-face (descriptors are
@@ -147,6 +154,7 @@ struct at_rule_block {
     std::uint32_t prelude_count = 0;
     std::uint32_t first_declaration = 0;
     std::uint32_t declaration_count = 0;
+    [[nodiscard]] friend bool operator==(const at_rule_block &, const at_rule_block &) = default;
 };
 
 /// One `@namespace` rule. An empty prefix means the default namespace (CSS has
@@ -154,6 +162,8 @@ struct at_rule_block {
 struct namespace_declaration {
     std::string prefix;
     std::string uri;
+    [[nodiscard]] friend bool operator==(const namespace_declaration &,
+                                         const namespace_declaration &) = default;
 };
 
 /// One `@import` from the sheet's leading run (CSS Cascade 5 §5). The parser
@@ -184,6 +194,8 @@ struct import_statement {
     bool scoped = false;
     std::size_t begin = 0; // The byte span of the whole statement in the input,
     std::size_t end = 0;   // from `@import` through its `;` inclusive.
+    [[nodiscard]] friend bool operator==(const import_statement &,
+                                         const import_statement &) = default;
 };
 
 /// A parsed stylesheet. It owns every byte every view into it points to.
@@ -297,6 +309,8 @@ struct stylesheet {
         if (s.limit_count == 0) { return {}; }
         return std::span<const compiled_selector>{selectors}.subspan(s.first_limit, s.limit_count);
     }
+    /// Every field, so a compiled sheet can be checked against the parse.
+    [[nodiscard]] friend bool operator==(const stylesheet &, const stylesheet &) = default;
 };
 
 } // namespace ctbrowser::style::css

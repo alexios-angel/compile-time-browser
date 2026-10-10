@@ -1,4 +1,5 @@
 target_sources(ctbrowser-style PRIVATE
+  compiled.cpp
   keyframes.cpp
   media.cpp
   parser.cpp
