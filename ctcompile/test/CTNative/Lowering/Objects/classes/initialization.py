@@ -8,6 +8,8 @@ lower completely and run natively with Node's result; fixtures in
 PREPARED_ONLY prepare but native lowering must still refuse them.
 """
 
+import sys
+
 from CTNative.Lowering.Objects.classes.initialization_inputs import *
 
 from CTNative.harness import native_args, without_intrinsic
@@ -500,6 +502,44 @@ def check_record_map_inputs(args, prepared):
                 )
 
 
+def untrusted_change(args, name, optimize, raw, native, functions, expected):
+    """Lower the unprepared import of `name` and return None when it keeps its
+    named refusal boundary, else one line saying what changed: the lowering
+    failed, or how many functions became native and whether the complete
+    program ran with Node's result."""
+    label = f"{name}/{optimize}/untrusted"
+    try:
+        run(
+            [
+                args.opt,
+                str(raw),
+                "--ctjs-resolve-globals",
+                "--ctjs-lift-to-scf",
+                f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                "-o",
+                str(native),
+            ]
+        )
+    except RuntimeError as error:
+        return f"CHANGED {label}: lowering failed: {str(error).splitlines()[0]}"
+    text = native.read_text()
+    try:
+        check_refusal(label, text, functions)
+        return None
+    except RuntimeError:
+        pass
+    native_count = len(NATIVE.findall(text))
+    refused = len(FUNCTION.findall(text))
+    shape = f"{native_count}/{functions} native, {refused} refused"
+    if refused or "emitc.func @main(" not in text:
+        return f"CHANGED {label}: partial ({shape})"
+    try:
+        check_executable(args, f"{name}.{optimize}.untrusted", native, expected)
+        return f"CHANGED {label}: complete ({shape}), runs with a={expected}"
+    except Exception as error:
+        return f"CHANGED {label}: complete ({shape}), run failed: {str(error).splitlines()[0]}"
+
+
 def main():
     args = native_args(__doc__, "fixtures")
     vendor = Path(__file__).resolve().parents[6] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
@@ -604,6 +644,9 @@ def main():
     preparation_refusals = 0
     checked = prepared_refusals = 0
     cutoffs = {}
+    # Fixtures whose untrusted lowering no longer keeps the refusal boundary,
+    # collected across the whole run and reported together at the end.
+    untrusted_changes = []
     for name, (node_expected, reference_expected) in OBSERVATIONS.items():
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
@@ -1368,18 +1411,11 @@ def main():
             preparation_refusals += 2
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
-            run(
-                [
-                    args.opt,
-                    str(raw),
-                    "--ctjs-resolve-globals",
-                    "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
-                    "-o",
-                    str(native),
-                ]
-            )
-            check_refusal(f"{name}/{optimize}/untrusted", native.read_text(), functions)
+            change = untrusted_change(args, name, optimize, raw, native, functions, node_expected)
+            if change:
+                print(change, file=sys.stderr, flush=True)
+                untrusted_changes.append(change)
+                continue
             if name == "helper-global-alias":
                 check_mutable_helper(native.read_text())
             refusals += 1
@@ -1450,6 +1486,11 @@ def main():
                     prepared_refusals += 1
                 else:
                     checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+    if untrusted_changes:
+        raise RuntimeError(
+            f"{len(untrusted_changes)} untrusted lowering(s) changed:\n"
+            + "\n".join(untrusted_changes)
+        )
     plain_checked, plain_refused = check_constructed_methods(args)
     print(
         f"class initialization controls: {len(OBSERVATIONS)} source observations, "
