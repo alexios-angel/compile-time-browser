@@ -124,6 +124,9 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         case VectorCall::sort:
             if (arrays.contains(call.getReceiver())) { mark(op, "sort"); }
             break;
+        case VectorCall::includes:
+            if (arrays.contains(call.getReceiver())) { mark(op, "includes"); }
+            break;
         case VectorCall::callback:
             if (arrays.contains(call.getReceiver())) {
                 mark(op, "callback");
@@ -330,6 +333,12 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(callValue(b, where, carrierType(context, carrier::string),
                        "ctnative::Array.prototype.join.call",
                        mlir::ValueRange{place(call.getReceiver()), separator}));
+        return true;
+    }
+    if (kind == "includes") {
+        swap(callValue(b, where, o->getResult(0).getType(),
+                       "ctnative::Array.prototype.includes.call",
+                       mlir::ValueRange{place(call.getReceiver()), call.getArgs()[0]}));
         return true;
     }
     if (kind == "sort") {

@@ -378,6 +378,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         const mlir::Type stored = element(members);
         return VecType::get(c, stored ? stored : stringType(c));
     }
+    case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
     case VectorCall::callback: return arrayCallbackType(op, operands, pending);
     case VectorCall::regexp:
     case VectorCall::none: return {};

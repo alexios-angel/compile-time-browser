@@ -238,6 +238,8 @@ public:
         split,
         splitSpace,
         regexp,
+        /// `a.includes(x)` on an array of Strings.
+        includes,
         /// A callback method closure lifting specialised
         /// (Inference/ArrayCallbacks.cpp).
         callback

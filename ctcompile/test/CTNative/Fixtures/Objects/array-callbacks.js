@@ -2,7 +2,8 @@
 // specialised for its one call and passed to the runtime as
 // std::bind_front(callback, captures...): filter, map with the index, some,
 // every with the array, find, reduce with an initial value, forEach, and
-// callbacks that capture a Number, a String and another array. Arrays stay
+// callbacks that capture a Number, a String and another array, which one
+// reads with includes as Bootstrap's collapse does. Arrays stay
 // inside functions; every global is a scalar compared with the interpreter.
 function words() {
     return ['btn', 'card', 'nav', 'dropdown'];
@@ -63,7 +64,7 @@ function without() {
     var excluded = ['nav', 'card'];
     return words()
         .filter(function (s) {
-            return excluded.length > 1 && s.length > 3;
+            return !excluded.includes(s);
         })
         .join('+');
 }

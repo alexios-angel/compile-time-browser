@@ -153,6 +153,14 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::includes:
+        if (!array(call.getReceiver()) ||
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
+            return std::nullopt;
+        }
+        return isString(call.getArgs()[0]) ||
+               self.refuse("includes on an array of Strings is given " +
+                           printed(self.typeOf(call.getArgs()[0])) + ", not a String");
     case VectorCall::callback: return arrayCallbackOperation(self, call);
     case VectorCall::regexp:
         // Plumbing returned above; every other RegExp literal is refused here.

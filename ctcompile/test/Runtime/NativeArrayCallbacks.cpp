@@ -272,6 +272,16 @@ void test_bound_functions_take_the_arguments_they_declare() {
     CHECK(Array.prototype.reduce.call(v, std::bind_front(count_in, lent), num(0)).value() == 18);
 }
 
+void test_includes_compares_strings() {
+    const std::vector<js_string> v{js_string{"nav"}, js_string{"card"}};
+    CHECK(static_cast<bool>(Array.prototype.includes.call(v, js_string{"card"})));
+    CHECK(!static_cast<bool>(Array.prototype.includes.call(v, js_string{"car"})));
+    const std::span<const js_string> lent{v};
+    CHECK(static_cast<bool>(Array.prototype.includes.call(lent, js_string{"nav"})));
+    CHECK(!static_cast<bool>(
+        Array.prototype.includes.call(std::span<const js_string>{}, js_string{""})));
+}
+
 } // namespace
 
 int main() {
@@ -286,5 +296,6 @@ int main() {
     test_reduce_threads_the_accumulator();
     test_borrowed_arrays_answer_as_owned_ones();
     test_bound_functions_take_the_arguments_they_declare();
+    test_includes_compares_strings();
     REPORT("native_array_callbacks");
 }
