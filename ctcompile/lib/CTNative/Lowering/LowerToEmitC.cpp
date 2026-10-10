@@ -764,7 +764,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // to nothing; it is not a program global.
                         if (isVectorCallPlumbing(load)) { return; }
                         // Nor is the global `undefined`, which is a constant.
-                        if (TypeInference::isUndefinedGlobal(load)) { return; }
+                        if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();
                     }
                     if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {

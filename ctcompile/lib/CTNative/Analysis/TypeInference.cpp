@@ -783,7 +783,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // subscribes this load to every store's operand, so a store whose type
     // widens later re-visits the load.
     std::optional<mlir::Type> global;
-    if (isUndefinedGlobal(op)) {
+    // Only on the ordinary closed-source path: a host contract's owner and DOM
+    // proofs settle `undefined` themselves (materializeHostPrimitives).
+    if (!ownedRoots_ && !domEntry_ && isUndefinedGlobal(op)) {
         global = absentType(c);
     } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
         const auto stores = globalStores_.find(load.getName());
