@@ -10,7 +10,7 @@
 # RUN: python3 %S/tuple-arrays.py --translate ctjs-translate --opt ctjs-opt --js %S/tuple-arrays.js --out %t/tuple-arrays.emitc.mlir
 # RUN: ctjs-translate --mlir-to-cpp %t/tuple-arrays.emitc.mlir | FileCheck %s
 # RUN: %compilation_unit --module %t/tuple-arrays.emitc.mlir --js %S/tuple-arrays.js --work %t --name tuple_arrays --core-build %build
-# RUN: not %compilation_unit --module %t/tuple-arrays.emitc.mlir --js %S/tuple-arrays.js --work %t --name tuple_arrays_off_by_one --core-build %build --mutate count 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: not %compilation_unit --module %t/tuple-arrays.emitc.mlir --js %S/tuple-arrays.js --work %t --name tuple_arrays_off_by_one --core-build %build --mutate width 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
 # RUN: %compile_clean --module %t/tuple-arrays.emitc.mlir --work %t --name tuple_arrays
 
 # CHECK-DAG: std::vector<std::pair<ctnative::js_string, ctnative::number_string>>
@@ -18,4 +18,4 @@
 # CHECK-DAG: ctnative::vec_element(
 # CHECK-DAG: std::get<0>(
 # CHECK-DAG: std::get<1>(
-# OFF-BY-ONE: global 'count' differs
+# OFF-BY-ONE: global 'width' differs

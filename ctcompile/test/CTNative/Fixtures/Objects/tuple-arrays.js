@@ -24,5 +24,5 @@ function names() {
     return out;
 }
 var table = rows();
-var count = names().length;
+var width = names().length;
 var joined = names();
