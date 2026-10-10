@@ -39,6 +39,99 @@ POSITIVES.update(
     }
 )
 
+# Fixtures whose unprepared import now lowers to a complete native program:
+# class lowering handles their classes without
+# --ctnative-specialize-class-initialization. Each listed mode must lower
+# completely and print Node's value; every other fixture and mode keeps its
+# refusal boundary. The optimized-only entries need optimization first: it
+# removes an uncalled helper, or folds a dead arm (an untaken receiver read or
+# an unknown call behind a constant test) that their preparation still
+# refuses.
+UNTRUSTED_NATIVE = {
+    **dict.fromkeys(
+        (
+            "class-map-record-alias-method-read",
+            "class-map-record-alias-method-write",
+            "class-map-record-alias-method-overwrite-delete",
+            "class-map-record-alias-method-distinct",
+            "class-map-record-shared-owner",
+            "class-map-record-owner-method-write",
+            "class-map-record-reinsert-aliases",
+            "class-map-record-direct",
+            "class-map-record-overwrite",
+            "class-map-record-delete",
+            "class-map-record-clear",
+            "class-map-record-payloads",
+            "class-map-record-alias-write",
+            "class-map-record-alias-method",
+            "class-map-optional-key-tags",
+            "class-map-optional-key-missing",
+            "class-map-optional-key-booleans",
+            "class-map-optional-key-nan",
+            "class-map-optional-key-signed-zero",
+            "class-map-direct-string-keys",
+            "class-map-distinct-string-keys",
+            "class-map-direct",
+            "class-map-shared",
+            "class-map-distinct",
+            "class-map-method-loop",
+            "nested-helper-constructor",
+            "nested-helper-method",
+            "nested-helper-chain",
+            "nested-helper-shared",
+            "nested-helper-diamond",
+            "nested-helper-order",
+            "captured-helper-method",
+            "captured-helper-constructor",
+            "captured-helper-order",
+            "local-holder-method",
+            "local-holder-arrow",
+            "local-holder-branches",
+            "local-holder-order",
+            "local-holder-receiver",
+            "local-helper-arguments",
+            "local-helper-branches",
+            "local-helper-order",
+            "local-helper-values",
+            "empty",
+            "number",
+            "method",
+            "method-arguments",
+            "method-branches",
+            "method-loop",
+            "method-dispatch",
+            "method-increment-dispatch",
+            "method-decrement-dispatch",
+            "constructor-branch",
+            "method-empty",
+            "method-chain",
+            "method-chain-empty",
+            "method-chain-effects",
+            "method-chain-order",
+            "method-chain-cycle",
+            "method-constructor-call",
+            "method-constructor-order",
+            "method-constructor-chain",
+            "method-constructor-constant",
+            "method-captured",
+            "primitive-capture-loop",
+        ),
+        (False, True),
+    ),
+    **dict.fromkeys(
+        (
+            "nested-helper-receiver",
+            "nested-helper-effect",
+            "bootstrap-r",
+            "method-branch-ambient",
+            "helper-decided-uncalled",
+            "helper-decided-nested-uncalled",
+            "helper-decided-live-result",
+        ),
+        (True,),
+    ),
+}
+
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
 CONFLICT_OBSERVATIONS = {
@@ -503,10 +596,12 @@ def check_record_map_inputs(args, prepared):
 
 
 def untrusted_change(args, name, optimize, raw, native, functions, expected):
-    """Lower the unprepared import of `name` and return None when it keeps its
-    named refusal boundary, else one line saying what changed: the lowering
-    failed, or how many functions became native and whether the complete
-    program ran with Node's result."""
+    """Lower the unprepared import of `name` and return None when it does what
+    UNTRUSTED_NATIVE says (a complete native program printing Node's value, or
+    else a named refusal boundary), else one line saying what changed: the
+    lowering failed, or how many functions became native and whether the
+    complete program ran with Node's result."""
+    listed = optimize in UNTRUSTED_NATIVE.get(name, ())
     label = f"{name}/{optimize}/untrusted"
     try:
         run(
@@ -525,7 +620,7 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected):
     text = native.read_text()
     try:
         check_refusal(label, text, functions)
-        return None
+        return f"CHANGED {label}: listed native but kept its refusal boundary" if listed else None
     except RuntimeError:
         pass
     native_count = len(NATIVE.findall(text))
@@ -535,7 +630,7 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected):
         return f"CHANGED {label}: partial ({shape})"
     try:
         check_executable(args, f"{name}.{optimize}.untrusted", native, expected)
-        return f"CHANGED {label}: complete ({shape}), runs with a={expected}"
+        return None if listed else f"CHANGED {label}: complete ({shape}), runs with a={expected}"
     except Exception as error:
         return f"CHANGED {label}: complete ({shape}), run failed: {str(error).splitlines()[0]}"
 

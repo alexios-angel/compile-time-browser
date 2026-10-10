@@ -750,9 +750,11 @@ OBSERVATIONS = {
     "method-captured-class-ambient": (7, 7),
     "method-dynamic": (7, 7),
     "method-return-object": (9, 9),
-    "helper-override": (0, 1),
-    "helper-late": (0, 1),
-    "helper-global-alias": (0, 1),
+    # The VM keeps its class helpers internal, so a page's replacement of
+    # `__ctbrowser_class_defined` is never called, as in Node.
+    "helper-override": (0, 0),
+    "helper-late": (0, 0),
+    "helper-global-alias": (0, 0),
     "prototype-late": (9, 9),
     "prototype-alias": (11, 11),
     "field-initializer": (7, 7),
