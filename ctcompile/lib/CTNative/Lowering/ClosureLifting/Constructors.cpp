@@ -99,6 +99,8 @@ std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     ctjs::CreateClosureOp c) {
     prototypeFields proof;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
+        // A proved class's setup lowers to nothing (Classes.cpp).
+        if (use.getOwner()->hasAttr(kNativeClassSetup)) { continue; }
         if (llvm::isa<ctjs::ConstructOp>(use.getOwner())) {
             if (!isSelfConstruct(use, c)) { return std::nullopt; }
             continue;
@@ -116,6 +118,7 @@ std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     llvm::StringSet<> keys;
     for (mlir::OpOperand & use : literal.getResult().getUses()) {
         if (use.getOwner() == proof.attachment && use.getOperandNumber() == 2) { continue; }
+        if (use.getOwner()->hasAttr(kNativeClassSetup)) { continue; }
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
         if (!set || use.getOperandNumber() != 0 || set->getBlock() != c->getBlock() ||
             !llvm::isa_and_nonnull<ctjs::ConstantOp, ctjs::CreateClosureOp>(
@@ -254,6 +257,7 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
         if (prototype && user == prototype->attachment) { continue; }
+        if (user->hasAttr(kNativeClassSetup)) { continue; }
         if (!isSelfConstruct(use, c)) {
             return ("it is used as a constructor and also reaches `" +
                     user->getName().getStringRef() +

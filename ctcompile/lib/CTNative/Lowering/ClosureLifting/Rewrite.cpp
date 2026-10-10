@@ -32,8 +32,14 @@ liftReport closureLifter::run() {
     indexAndNewTargets();
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
-    // closures no longer capture them.
-    if (!staticsDone) { makeRunOnceCellsStatic(out); }
+    // closures no longer capture them. Boxes holding a function wait for a
+    // second round: once the data they capture is static, bindLocalFunctions
+    // can often bind them, which turns calls through them into direct calls;
+    // a static variable would keep every such call indirect.
+    if (!staticsDone) {
+        makeRunOnceCellsStatic(out, /*functions=*/false);
+        makeRunOnceCellsStatic(out, /*functions=*/true);
+    }
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides
@@ -439,6 +445,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // alias group the receiver mark creates. Non-method fields of an
             // immutable prototype are copied onto it.
             auto instance = ctjs::CreateObjectOp::create(at, built.getLoc(), valueType);
+            // An instance of a JavaScript class is spelled after the class.
+            if (jsClasses.count(only.getOperation())) {
+                instance->setAttr(kNativeClassName,
+                                  mlir::StringAttr::get(context, classNameOf(target)));
+            }
             if (prototype) {
                 for (ctjs::SetPropertyOp field : prototype->fields) {
                     // Methods become direct calls with no runtime field. Their
@@ -467,6 +478,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             built.erase();
             ++out.calls;
             ++out.constructors;
+        }
+        // A class's setup goes first: its edges name the prototype and the
+        // constructor, and the class helper call names the constructor.
+        if (auto cls = jsClasses.find(only.getOperation()); cls != jsClasses.end()) {
+            eraseClassSetup(cls->second);
         }
         if (prototype) {
             auto literal = prototype->attachment.getValue().getDefiningOp<ctjs::CreateObjectOp>();

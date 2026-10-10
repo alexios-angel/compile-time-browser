@@ -750,9 +750,11 @@ OBSERVATIONS = {
     "method-captured-class-ambient": (7, 7),
     "method-dynamic": (7, 7),
     "method-return-object": (9, 9),
-    "helper-override": (0, 1),
-    "helper-late": (0, 1),
-    "helper-global-alias": (0, 1),
+    # The VM keeps its class helpers internal, so a page's replacement of
+    # `__ctbrowser_class_defined` is never called, as in Node.
+    "helper-override": (0, 0),
+    "helper-late": (0, 0),
+    "helper-global-alias": (0, 0),
     "prototype-late": (9, 9),
     "prototype-alias": (11, 11),
     "field-initializer": (7, 7),
@@ -1742,13 +1744,18 @@ def check_executable(args, name, native, expected):
         cpp = run([args.translate, "--mlir-to-cpp", str(module)]).stdout
         if any(token in cpp for token in ("ctbrowser::", '"prototype"', '"__home"')):
             raise RuntimeError(f"{name}: native class retained runtime or prototype storage")
+        # The record classes the module emits: shape families are `ctn_...`,
+        # and a JavaScript class keeps its own name (`Item`).
+        records = "|".join(
+            ["ctn_\\w+", *sorted(set(re.findall(r"^\s*(?:struct|class) (\w+)\b", cpp, re.M)))]
+        )
         if name.startswith(
             ("class-map-record-", "class-map-inherited-leaf-", "class-map-inherited-base-")
         ) and (
-            not re.search(r"map_storage<std::string, ctn_\w+(?:<[^>]+>)? \*>", cpp)
+            not re.search(rf"map_storage<std::string, (?:{records})(?:<[^>]+>)? \*>", cpp)
             or "ctnative::map_get_present(" not in cpp
             or "std::make_shared<ctnative::identity_object>" in cpp
-            or re.search(r"std::shared_ptr<ctn_", cpp)
+            or re.search(rf"std::shared_ptr<(?:{records})\b", cpp)
         ):
             raise RuntimeError(f"{name}: retained Map did not borrow concrete stack records")
         file = args.work / f"{name}.{layout}.cpp"

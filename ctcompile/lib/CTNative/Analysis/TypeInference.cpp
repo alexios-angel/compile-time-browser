@@ -295,6 +295,23 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         return joined;
     };
     const auto typeOf = [](const TypeLattice * lattice) { return lattice->getValue().getType(); };
+    // The element types lowered this way: Strings and tuples.
+    const auto lowered = [](mlir::Type type) {
+        return llvm::isa_and_nonnull<StrType, TupleType>(type);
+    };
+    if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op); array && isTupleLiteral(array)) {
+        // One type per position, each the type of what that position holds.
+        llvm::SmallVector<mlir::Type, 2> positions;
+        for (mlir::Value part : tupleParts(array.getResult())) {
+            const mlir::Type held = joinLattices(op, part, mlir::Type{});
+            if (!held) {
+                pending = true;
+                return {};
+            }
+            positions.push_back(held);
+        }
+        return TupleType::get(c, positions);
+    }
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op)) {
         const auto members = elementVectorAliases(array.getResult());
         if (members.empty()) { return {}; }
@@ -309,32 +326,47 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
             pending = true;
             return {};
         }
-        // Only Strings are lowered this way yet. Any other element type keeps
-        // the dense proof's type, or none, and with it that proof's refusal.
-        if (!llvm::isa<StrType>(stored)) { return {}; }
+        // Only Strings and tuples are lowered this way yet. Any other element
+        // type keeps the dense proof's type, or none, and with it that proof's
+        // refusal.
+        if (!lowered(stored)) { return {}; }
         return VecType::get(c, stored);
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+        // `t[k]` on a tuple at a constant position is that position's type.
+        if (auto tuple = llvm::dyn_cast_or_null<TupleType>(typeOf(operands[0]))) {
+            const int64_t position = constantIndex(read.getKey());
+            return position >= 0 && position < static_cast<int64_t>(tuple.getElements().size())
+                       ? tuple.getElements()[static_cast<size_t>(position)]
+                       : mlir::Type{};
+        }
         auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(operands[0]));
-        if (!vector || !llvm::isa<StrType>(vector.getElementType()) ||
+        if (!vector || !lowered(vector.getElementType()) ||
             elementVectorAliases(read.getObject()).empty()) {
             return {};
         }
         const llvm::StringRef key = ctjs::constantKey(read.getKey());
         if (key == "length") { return doubleType(c); }
-        // An index past the end, a fraction or a negative reads undefined.
+        // An index proved in bounds reads the element; otherwise one past
+        // the end, a fraction or a negative reads undefined.
         if (key.empty() && isProvedNumeric(operands[1])) {
-            return meet(absentType(c), vector.getElementType());
+            return isBoundedIndexRead(op) ? vector.getElementType()
+                                          : meet(absentType(c), vector.getElementType());
         }
         return {};
     }
-    // push, join and sort answer only on a proved vector of Strings.
+    // push answers on a proved element vector, join and sort only on one of
+    // Strings.
     const auto ofStrings = [&](const TypeLattice * lattice) {
         auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(lattice));
         return vector && llvm::isa<StrType>(vector.getElementType());
     };
+    const auto ofElements = [&](const TypeLattice * lattice) {
+        auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(lattice));
+        return vector && lowered(vector.getElementType());
+    };
     switch (vectorCallOf(op)) {
-    case VectorCall::push: return ofStrings(operands[1]) ? doubleType(c) : mlir::Type{};
+    case VectorCall::push: return ofElements(operands[1]) ? doubleType(c) : mlir::Type{};
     case VectorCall::join: return ofStrings(operands[1]) ? stringType(c) : mlir::Type{};
     // `a.sort()` is `a`.
     case VectorCall::sort: return ofStrings(operands[1]) ? typeOf(operands[1]) : mlir::Type{};

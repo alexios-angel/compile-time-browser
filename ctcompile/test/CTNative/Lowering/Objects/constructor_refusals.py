@@ -32,7 +32,7 @@ OBSERVATIONS = {
     "alias-mutation": 11,
     "helper-mutation": 13,
     "prototype-replacement": 79,
-    "mutable-class-helper": 1,
+    "mutable-class-helper": 0,
     "new-target": 7,
     "constructor-argument": 7,
     "arrow-constructor": None,
@@ -106,10 +106,14 @@ def check_native(args, source, name, expected):
 
 
 def check_mutable_helper(text):
-    """Assert that `text` still calls __ctbrowser_class_defined through a global load."""
+    """Assert that `text` still calls the class-definition helper through its global load.
+
+    The VM's helper is engine-internal; the importer gives it the IR name
+    __ctbrowser_class_defined, beside the script's own (marked) global of that name.
+    """
     loaded = re.search(r'(%\w+) = ctjs.load_global "__ctbrowser_class_defined"', text)
     if loaded is None or not re.search(r"ctjs.call " + re.escape(loaded[1]) + r"\(", text):
-        raise RuntimeError("the mutable class-definition hook lost its ordinary global call")
+        raise RuntimeError("the class-definition helper lost its global call")
 
 
 def main():
@@ -126,9 +130,6 @@ def main():
     checked = 0
     for name, expected in observations.items():
         source = args.fixtures / f"{name}.js"
-        # Node has no __ctbrowser_class_defined hook, so mutable-class-helper
-        # prints 0 there and its real value only in the reference interpreter.
-        node_expected = 0 if name == "mutable-class-helper" else expected
         throws = name == "arrow-constructor"
         node = run([args.node, "-e", NODE, str(source)], success=not throws)
         reference = run([args.reference, str(source)], success=not throws)
@@ -136,7 +137,7 @@ def main():
             for oracle, result in (("Node", node), ("interpreter", reference)):
                 if "TypeError" not in result.stderr or result.stdout:
                     raise RuntimeError(f"{name}: {oracle} did not throw TypeError")
-        elif node.stdout != f"a={node_expected}\n" or node.stderr:
+        elif node.stdout != f"a={expected}\n" or node.stderr:
             raise RuntimeError(f"{name}: Node observation changed\n{node.stdout}{node.stderr}")
         elif reference.stdout != f"a={expected}\n":
             raise RuntimeError(

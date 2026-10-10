@@ -1,0 +1,24 @@
+# Differential test of tuple-arrays.js: rows of [name, value] become
+# std::vector<std::pair<ctnative::js_string, ctnative::number_string>>, read
+# with ctnative::vec_element (the loop bounds each read by the array's
+# length) and std::get. The C++ is compiled against public Core, checked for
+# interpreter symbols with nm, run, and every global compared with the
+# interpreter's (compilation-unit.py). The `not ... --mutate table
+# --mutate-as string` line prefixes the printed String `table` and requires
+# the comparison to fail naming it. A numeric off-by-one on `width` would be
+# vacuous here, because main reads `width` above the point where the numeric
+# mutation is inserted. compile-clean.py checks a warning-free build on both
+# toolchains.
+
+# RUN: python3 %S/tuple-arrays.py --translate ctjs-translate --opt ctjs-opt --js %S/tuple-arrays.js --out %t/tuple-arrays.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/tuple-arrays.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/tuple-arrays.emitc.mlir --js %S/tuple-arrays.js --work %t --name tuple_arrays --core-build %build
+# RUN: not %compilation_unit --module %t/tuple-arrays.emitc.mlir --js %S/tuple-arrays.js --work %t --name tuple_arrays_off_by_one --core-build %build --mutate table --mutate-as string 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# RUN: %compile_clean --module %t/tuple-arrays.emitc.mlir --work %t --name tuple_arrays
+
+# CHECK-DAG: std::vector<std::pair<ctnative::js_string, ctnative::number_string>>
+# CHECK-DAG: std::pair<ctnative::js_string, ctnative::number_string>(
+# CHECK-DAG: ctnative::vec_element(
+# CHECK-DAG: std::get<0>(
+# CHECK-DAG: std::get<1>(
+# OFF-BY-ONE: global 'table' differs

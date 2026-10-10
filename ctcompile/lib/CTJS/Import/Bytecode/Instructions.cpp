@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "OperatorTables.h"
+#include "ctcompile/CTJS/Import/EngineGlobals.h"
 
 #include "llvm/ADT/Sequence.h"
 
@@ -213,14 +214,26 @@ void importInstruction(function_importer & state, mlir::Block * entry, std::size
     case op::get_global:
     case op::get_global_typeof:
         if (const std::string * name = state.name_at(at, in.code, in.bx())) {
-            set(in.a,
-                ctjs::LoadGlobalOp::create(into, where, value_type, into.getStringAttr(*name),
-                                           into.getBoolAttr(in.code == op::get_global_typeof)));
+            // An engine helper (`%class_defined`) takes its IR name; the
+            // script's own use of that IR name is marked as not the helper
+            // (EngineGlobals.h).
+            const llvm::StringRef helper = ctjs::engineHelperIRName(*name);
+            auto load = ctjs::LoadGlobalOp::create(
+                into, where, value_type, into.getStringAttr(helper.empty() ? *name : helper),
+                into.getBoolAttr(in.code == op::get_global_typeof));
+            if (helper.empty() && !ctjs::engineHelperVMName(*name).empty()) {
+                load->setAttr(ctjs::kEngineReservedUse, into.getUnitAttr());
+            }
+            set(in.a, load);
         }
         break;
     case op::set_global:
         if (const std::string * name = state.name_at(at, in.code, in.bx())) {
-            ctjs::StoreGlobalOp::create(into, where, into.getStringAttr(*name), reg(in.a));
+            auto store =
+                ctjs::StoreGlobalOp::create(into, where, into.getStringAttr(*name), reg(in.a));
+            if (!ctjs::engineHelperVMName(*name).empty()) {
+                store->setAttr(ctjs::kEngineReservedUse, into.getUnitAttr());
+            }
         }
         break;
     case op::get_prop:
