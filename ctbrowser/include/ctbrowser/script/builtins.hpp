@@ -43,7 +43,7 @@ inline constexpr std::string_view promise_reject_name = "__ctbrowser_reject";
 /// (15.7.14) gives a method, an accessor, `prototype` and `constructor`.
 /// op::set_prop has no attribute operand and a new opcode is an ABI change, so
 /// this is one native call rather than one per method.
-inline constexpr std::string_view class_defined_name = "__ctbrowser_class_defined";
+inline constexpr std::string_view class_defined_name = "%class_defined";
 /// GetIterator(obj, async) for `for await`: the object's @@asyncIterator, or
 /// its @@iterator wrapped so that every `next()` returns a promise of the
 /// record (CreateAsyncFromSyncIterator, 27.1.6.1). The loop itself is bytecode:
@@ -131,7 +131,7 @@ inline constexpr std::string_view set_function_name_name = "__ctbrowser_set_func
 /// of a Super Reference (6.2.5.6). That is [[Set]] on the home object's
 /// prototype with `this` as the receiver, so a setter up there runs on `this`
 /// and a data property lands on `this`. A refusal is strict code's TypeError.
-inline constexpr std::string_view super_set_name = "__ctbrowser_super_set";
+inline constexpr std::string_view super_set_name = "%super_set";
 
 /// Installs the standard library into a context.
 ///
