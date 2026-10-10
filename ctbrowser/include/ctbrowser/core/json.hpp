@@ -36,4 +36,11 @@ struct json_value::member {
 /// recurses on the call stack with no depth limit of its own.
 [[nodiscard]] std::expected<json_value, std::size_t> parse_json(std::string_view text);
 
+/// QuoteJSONString (ECMA-262 25.5.2.3), appended to `out`. Uses the spec's short escapes
+/// (\b, \f, \n, ...) so output matches other engines byte for byte; other C0
+/// controls become \u00XX. Bytes at or above 0x80 pass through unescaped, as
+/// other engines do (strings here are UTF-8, and so is JSON); lone surrogates
+/// are escaped as \uXXXX.
+void quote_json(std::string_view text, std::string & out);
+
 } // namespace ctbrowser

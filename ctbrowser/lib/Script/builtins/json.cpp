@@ -20,55 +20,6 @@ namespace {
 /// JSON.rawJSON's objects carry.
 constexpr std::string_view raw_json_slot = CTBROWSER_PRIVATE_KEY("IsRawJSON");
 
-/// QuoteJSONString (25.5.2.3), appended to `out`. Uses the spec's short escapes
-/// (\b, \f, \n, ...) so output matches other engines byte for byte; other C0
-/// controls become \u00XX. Bytes at or above 0x80 pass through unescaped, as
-/// other engines do (strings here are UTF-8, and so is JSON); lone surrogates
-/// are escaped as \uXXXX.
-void quote_json(std::string_view text, std::string & out) {
-    out += '"';
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        const char c = text[i];
-        // 25.5.2.3 QuoteJSONString step 2.b: a lone surrogate is escaped as
-        // \uXXXX (well-formed JSON.stringify). The text is WTF-8, so one is the
-        // three bytes ED A0..BF xx; a pair's halves arrive as one four-byte
-        // scalar and never take this arm.
-        if (static_cast<unsigned char>(c) == 0xED && i + 2 < text.size() &&
-            static_cast<unsigned char>(text[i + 1]) >= 0xA0) {
-            const unsigned cp = ((static_cast<unsigned char>(c) & 0x0Fu) << 12) |
-                                ((static_cast<unsigned char>(text[i + 1]) & 0x3Fu) << 6) |
-                                (static_cast<unsigned char>(text[i + 2]) & 0x3Fu);
-            static constexpr char hex[] = "0123456789abcdef";
-            out += "\\u";
-            out += hex[(cp >> 12) & 0xF];
-            out += hex[(cp >> 8) & 0xF];
-            out += hex[(cp >> 4) & 0xF];
-            out += hex[cp & 0xF];
-            i += 2;
-            continue;
-        }
-        switch (c) {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\b': out += "\\b"; break;
-        case '\f': out += "\\f"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default:
-            if (static_cast<unsigned char>(c) < 0x20) {
-                static constexpr char hex[] = "0123456789abcdef";
-                out += "\\u00";
-                out += hex[(static_cast<unsigned char>(c) >> 4) & 0xF];
-                out += hex[static_cast<unsigned char>(c) & 0xF];
-            } else {
-                out += c;
-            }
-        }
-    }
-    out += '"';
-}
-
 /// The JSON.stringify serialiser state (25.5.2): indent, gap, replacer,
 /// property list and the stack used to reject cyclic structures with a
 /// TypeError.
