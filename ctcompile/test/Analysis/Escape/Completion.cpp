@@ -1,12 +1,14 @@
-// PHASE 55A'S TABLE, ONE CELL AT A TIME - the post-pass rows: control flow
-// and completion, the dead/unvisited accounting, R1, R4, the closure hole,
-// the DEFAULT RULE, and region captures.
+//===- Completion.cpp - Escape-analysis rows for control flow -------------===//
 //
-// One of four executables carved out of a 2,763-line test/EscapeAnalysis.cpp on
-// 2026-09-08. The row harness they share - `row`, `kPrologue`, `check`, the
-// role and verdict printers - is EscapeAnalysisHarness.h beside this; the rows
-// themselves are verbatim, in their original order, and every one is still
-// run. Registered one target each in test/cmake/Analysis.cmake.
+// Escape-analysis row tests for control flow and completion: returns and
+// throws, loops and handler edges, dead/unvisited accounting, the `arguments`
+// placement rule, suspension, closures and cells as external values, the
+// default rule for unannotated ops, and captures inside regions. Each row is a
+// small CTJS function body and the verdict the analysis must give. The shared
+// harness (`row`, `kPrologue`, `check`) is in Harness.h; the target is
+// registered in this directory's CMakeLists.txt.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Harness.h"
 
@@ -20,7 +22,7 @@ int main() {
     context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<CTNativeDialect>();
-    // For the DEFAULT-RULE rows: an operation from no dialect at all has no
+    // For the default-rule rows: an operation from no dialect at all has no
     // interface and is not a branch, which is exactly the case the rule is for.
     context.allowUnregisteredDialects();
 
@@ -31,7 +33,7 @@ int main() {
 
     const std::vector<row> rows = {
         // ===================================================================
-        // CONTROL FLOW AND COMPLETION - the post-pass rows
+        // Control flow and completion: the post-pass rows
         // ===================================================================
         {.what = "return SINK(returned) - the result-less terminator the post-pass exists for",
          .body = S + "  ctjs.return %s\n",
@@ -73,10 +75,10 @@ int main() {
          .expected = "{external}",
          .alias = true},
 
-        // --- THE LOOP ROW: a site carried round a back edge through block
-        // arguments stays confined; the same site returned from inside the
-        // loop's exit is returned. Both depend on DeadCodeAnalysis and
-        // SparseConstantPropagation being loaded, as TypeClaims.cpp records.
+        // --- Loop rows: a site carried round a back edge through block
+        // arguments stays confined; the same site returned from the loop exit
+        // escapes. Both need DeadCodeAnalysis and SparseConstantPropagation
+        // loaded, or the solver never visits past the first branch.
         {.what = "a site carried round a loop through block arguments stays confined",
          .body = S +
                  "  cf.br ^loop(%s : !ctjs.value)\n"
@@ -104,7 +106,7 @@ int main() {
                  R,
          .expected = "escapes:stored_global"},
         // A global owner is separate from confinement. Joining a local site
-        // with an external value must retain BOTH facts: publication still
+        // with an external value must retain both facts: publication still
         // sinks the site, and the joined value cannot become local-only.
         {.what = "an external alternative does not erase a local site's global escape",
          .body = S +
@@ -137,12 +139,12 @@ int main() {
                  R,
          .expected = "escapes:stored_global"},
 
-        // --- THE ctjs.check HANDLER-OPERAND ROW: the handler edge carries a
+        // --- The ctjs.check handler-operand row: the handler edge carries a
         // register snapshot into the pad's block arguments, and a site in it
         // returned from the pad is returned.
         // push_handler must pass the pad's argument too (the verifier checks
-        // arity); it passes a PARAMETER, so only ctjs.check's edge carries the
-        // site - which is what the row isolates.
+        // arity); it passes a parameter, so only ctjs.check's edge carries the
+        // site, which is what the row isolates.
         {.what = "ctjs.check's handler operands carry into the pad (BranchOpInterface)",
          .body = S +
                  "  ctjs.push_handler ^body catch ^pad(%p : !ctjs.value)\n"
@@ -170,7 +172,7 @@ int main() {
          .roles = "~ctjs.push_handler carry"},
 
         // ===================================================================
-        // THE ACCOUNTING - dead blocks, unvisited sites, unvisited operands
+        // Accounting: dead blocks, unvisited sites, unvisited operands
         // ===================================================================
         {.what = "a site in a dead block is dropped and counted, never claimed",
          .body = S + R + "^dead:\n  %d = ctjs.create_object\n  ctjs.return %d\n",
@@ -200,7 +202,8 @@ int main() {
          .withAnalysis = false},
 
         // ===================================================================
-        // R1 - arguments, per-site, with the placement guard
+        // `arguments` objects: make_arguments/gather_rest must sit in the entry
+        // block before any site, or the whole function is arguments_late.
         // ===================================================================
         {.what = "make_arguments in the prologue: sites confined, function flagged",
          .body = "  %a = ctjs.make_arguments\n" + S + R,
@@ -227,7 +230,8 @@ int main() {
          .capturesAllArguments = true},
 
         // ===================================================================
-        // R4 - suspend, whole function
+        // Suspension: an await or yield anywhere refuses every site in the
+        // function.
         // ===================================================================
         {.what = "suspend refuses the whole function: a site it never touches escapes",
          .body = S + "  %r = ctjs.suspend await %p\n" + R,
@@ -244,7 +248,7 @@ int main() {
          .completeStorage = false},
 
         // ===================================================================
-        // THE CLOSURE HOLE - no untracked allocation ever enters an alias set
+        // The closure hole: no untracked allocation ever enters an alias set
         // ===================================================================
         {.what = "a closure is external, never a site (o.cpp:590 -> c.cpp:502)",
          .body = "  %f = ctjs.create_closure %callee[0] this %p {check}\n" + R,
@@ -278,7 +282,7 @@ int main() {
          .alias = true},
 
         // ===================================================================
-        // THE DEFAULT RULE - an operation with no annotation sinks
+        // The default rule: an operation with no annotation sinks
         // ===================================================================
         {.what = "DEFAULT RULE: an unannotated operation sinks its value operand as unknown_op",
          .body = S + "  \"test.unknown\"(%s) : (!ctjs.value) -> ()\n" + R,

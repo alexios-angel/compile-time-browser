@@ -1,51 +1,49 @@
-// THE TYPE ORACLE - ctcompile Phase 54B.
+//===- ctcompile/test/Analysis/Types/Oracle.cpp - Type and escape oracle --===//
 //
-// The native backend (plan part 24) compiles a function to statically typed
-// C++ only where it can PROVE the function is in the static subset, and every
-// later phase consumes that proof. So the question that has to be answerable
-// before any of them is written is: is the inference RIGHT, or merely
-// plausible?
+// The type oracle driver: records the run-time type of every (function,
+// register) the interpreter sees, so a static type inference can be checked
+// against what actually happened instead of argued about.
 //
-// The interpreter already knows. It has every value's real type at run time and
-// it has been running the three corpora for months. So record what it sees, per
-// (function, register), and any claim an analysis makes can be checked against
-// reality instead of argued about.
+// The native backend compiles a function to statically typed C++ only where it
+// can prove the function is in the static subset, so the inference must be
+// right, not merely plausible. The interpreter knows every value's real type at
+// run time, which makes it the reference.
 //
-// THIS FILE IS THE DRIVER AND THE PROOF THE INSTRUMENT WORKS. Three jobs:
+// This file is both the driver and the proof that the instrument works. It has
+// three jobs:
 //
-//   1. A FIXTURE WITH HAND-COMPUTED COUNTERS. `oracle_probe`'s numbers below
-//      were worked out on paper before the recorder was run, and the test
-//      asserts them exactly. A recorder validated only on a corpus is a
-//      recorder whose bugs are invisible, because nobody can say what the
-//      right answer was.
+//   1. A fixture with hand-computed counters. The numbers for `oracle_probe`
+//      below were worked out on paper before the recorder was run, and the
+//      test asserts them exactly. A recorder validated only on a corpus has
+//      invisible bugs, because nobody can say what the right answer was.
 //
-//   2. A SECOND IMPLEMENTATION OF THE CHECKER. `tools/check/type-oracle.py`
-//      reads the recording FILE; the code here walks the recorder IN MEMORY.
-//      check-type-oracle.cmake runs both and compares every number. Two
-//      independent implementations agreeing is a much stronger statement than
-//      one implementation agreeing with itself, and it is the only thing that
-//      can catch a bug in the file format - which sits between them.
+//   2. A second implementation of the checker. tools/check/type-oracle.py
+//      reads the recording file; the code here walks the recorder in memory.
+//      The lit test Analysis/Types/oracle-checker.test runs both and compares
+//      every number. Two independent implementations agreeing is a much
+//      stronger statement than one agreeing with itself, and it is the only
+//      thing that can catch a bug in the file format between them.
 //
-//   3. RECORDING A CORPUS. `--page` runs a real HTML page through the whole
+//   3. Recording a corpus. `--page` runs a real HTML page through the whole
 //      engine with a recorder installed; `--script` runs a bare bundle against
 //      a context with builtins and no DOM.
 //
-// WHY THE STUB INFERENCES. Phase 54A does not exist, so there is nothing real
-// to check. Two fakes stand in, and running them is the experiment:
+// Two stub inferences calibrate the checker, so a number reported for the real
+// inference (test/Analysis/Types/Inference) means something:
 //
-//   all-i32     deliberately WRONG. It must produce violations and name them.
+//   all-i32     deliberately wrong. It must produce violations and name them.
 //               A checker that has never caught anything is not known to work.
 //   all-boxed   deliberately trivial and sound by construction. It must
-//               produce ZERO violations and ZERO precision.
+//               produce zero violations and zero precision.
 //
-// Those two runs are what makes the numbers on a real inference mean anything.
+// The same three jobs exist for the escape oracle, under `--escape`: a second
+// probe with hand-computed made/confined/escaped counts per site, a second
+// in-memory checker mirroring tools/check/escape-oracle.py, and two stubs:
+// `all-confined` (wrong, must be caught and named) and `all-escapes` (sound,
+// zero precision). One recorder writes one file; the escape half rides in the
+// same recording, header version 2.
 //
-// AND SINCE PHASE 55O THE SAME THREE JOBS FOR THE ESCAPE ORACLE, under
-// `--escape`: a second probe with hand-computed made/confined/escaped counts
-// per site, a second in-memory checker mirroring tools/check/escape-oracle.py,
-// and two stubs - `all-confined` (wrong, must be caught and NAMED) and
-// `all-escapes` (sound, zero precision). One recorder, one file: the escape
-// half rides in the same recording, header version 2.
+//===----------------------------------------------------------------------===//
 #include "Oracle/Fixtures.h"
 #include <ctbrowser.hpp>
 
@@ -88,23 +86,22 @@ template <typename T> void check_eq(T got, T want, const char * what) {
     }
 }
 
-// --- THE FIXTURE -------------------------------------------------------------
+// --- The fixture -------------------------------------------------------------
 //
-// Every number this test asserts is derivable from these fourteen lines without
-// knowing anything about the register allocator, which is the point: the
-// assertions are about PARAMETER registers and about entry counts, and
-// parameters land in r0.. by the calling convention (context::invoke in
-// vm/call/invoke.cpp fills
-// registers[base + i] from the argument span before the first instruction
-// runs). Nothing here depends on where the compiler happened to put a
-// temporary, so a change to the allocator cannot silently rewrite the expected
-// answer.
+// Every number this test asserts is derivable from the fixture program
+// (oracle_probe in Oracle/Fixtures.h) without knowing anything about the
+// register allocator: the assertions are about parameter registers and entry
+// counts, and parameters land in r0.. by the calling convention (context::invoke
+// in ctbrowser/lib/Script/vm/call/invoke.cpp fills registers[base + i] from the
+// argument span before the first instruction runs). Nothing here depends on
+// where the compiler put a temporary, so a change to the allocator cannot
+// silently rewrite the expected answer.
 
 // The hand-computed expectations, written down before the recorder ran.
 //
-// `ident` is entered TEN times and its r0 holds, in order: 1, a string, null,
+// `ident` is entered ten times and its r0 holds, in order: 1, a string, null,
 // undefined, true, -0, NaN, Infinity, 3000000000, 0.5. So r0's kind set is
-// number|string|null|undefined|boolean - five bits - and its number shape has
+// number|string|null|undefined|boolean (five bits), and its number shape has
 // every one of the five ways a JS number fails to be an i32:
 //
 //   0.5           fractional
@@ -114,14 +111,14 @@ template <typename T> void check_eq(T got, T want, const char * what) {
 //   0/0           NaN
 //   1/0           infinite
 //
-// `two` is entered TWICE. Its r0 holds 1 then 1.5 - a number, fractional and
-// nothing else. Its r1 holds 2 then 2 - a number with NO not-i32 flag at all,
-// which is the only register in the fixture an honest inference could call an
+// `two` is entered twice. Its r0 holds 1 then 1.5: a number, fractional and
+// nothing else. Its r1 holds 2 then 2: a number with no not-i32 flag at all.
+// That is the only register in the fixture an honest inference could call an
 // i32, and therefore the one that separates a checker that measures from a
 // checker that always says no.
 //
-// `never_called` is never called. Its registers have NO observation, and that
-// is not the same as having been observed to hold anything.
+// `never_called` is never called. Its registers have no observation, which is
+// not the same as having been observed to hold anything.
 constexpr std::uint64_t ident_entries = 10;
 constexpr std::uint64_t two_entries = 2;
 
@@ -132,12 +129,12 @@ constexpr std::uint64_t two_entries = 2;
     return nullptr;
 }
 
-// --- THE CHECKER, AGAIN ------------------------------------------------------
-//
-// A second implementation of tools/check/type-oracle.py, over the recorder's
-// own memory rather than over the file it writes. check-type-oracle.cmake runs
-// both and compares. Kept deliberately short and deliberately not shared: two
-// implementations that share their arithmetic are one implementation.
+// --- The checker, again ------------------------------------------------------
+
+/// A second implementation of tools/check/type-oracle.py, over the recorder's
+/// own memory rather than over the file it writes. Analysis/Types/oracle-checker.test
+/// runs both and compares. Deliberately short and not shared: two
+/// implementations that share their arithmetic are one implementation.
 struct tally {
     std::uint64_t observed = 0;
     std::uint64_t unobserved = 0;
@@ -145,9 +142,9 @@ struct tally {
     std::uint64_t beat_boxed = 0;
 };
 
-// Is a claim of "this register is an i32" consistent with what was seen?
-// Only if the register held numbers and NOTHING else, and every number in it
-// was an i32-shaped one.
+/// Whether a claim of "this register is an i32" is consistent with what was
+/// seen: only if the register held numbers and nothing else, and every number
+/// in it was i32-shaped.
 [[nodiscard]] bool i32_covers(const register_observation & obs) {
     return obs.kinds == ctbrowser::script::obs_number &&
            (obs.numbers & ctbrowser::script::num_not_i32) == 0;
@@ -195,11 +192,12 @@ void report(const char * which, const tally & t) {
 // --- the self-test -----------------------------------------------------------
 
 int self_test(const char * out_path) {
-    // 69 OF 95, counted from bytecode_opcodes.def's own writes_a column rather
-    // than written down. If a new opcode arrives this number changes and the
-    // change should be deliberate: a definer the recorder does not know about
-    // is a register whose type it silently never sees. The 95th, define_data,
-    // stores into the literal in a and defines no register (writes_a 0).
+    // 69 of the 95 opcodes define a register, counted from bytecode_opcodes.def's
+    // own writes_a column rather than written down. A new opcode changes this
+    // number, and the change should be deliberate: a definer the recorder does
+    // not know about is a register whose type it silently never sees. The
+    // 95th, define_data, stores into the literal in a and defines no register
+    // (writes_a 0).
     static_assert(ctbrowser::script::opcode_count == 95,
                   "the opcode count moved - re-derive the writer count below");
     static_assert(ctbrowser::script::opcode_writer_count == 69,
@@ -259,7 +257,7 @@ int self_test(const char * out_path) {
                  "two r0 saw 1 and 1.5, so fractional and nothing else");
         check_eq(two->regs[1].defs, two_entries, "two r1 defined once per call");
         check_eq(two->regs[1].kinds, ctbrowser::script::obs_number, "two r1 is only ever a number");
-        // THE REGISTER THAT MAKES THE PRECISION NUMBER MEAN SOMETHING. If the
+        // This register makes the precision number mean something. If the
         // checker cannot say `i32` about this one it cannot say it about
         // anything, and "zero soundness violations" would be the trivial
         // consequence of never claiming anything.
@@ -268,32 +266,28 @@ int self_test(const char * out_path) {
         check(i32_covers(two->regs[1]), "two r1 is a register `i32` honestly covers");
     }
 
-    // NEVER EXECUTED IS NOT `ANY TYPE`. Every register of a function nothing
+    // Never executed is not `any type`. Every register of a function nothing
     // called must be absent from the observations, not present and empty.
     for (const register_observation & obs : never->regs) {
         check(!obs.observed(), "never_called's registers have no observation");
     }
     check(!never->regs.empty(), "never_called has registers to be unobserved");
 
-    // --- THE `expect_pc` GUARD, WHICH THIS IS THE ONLY TEST OF ---------------
+    // --- The `expect_pc` guard (this is its only test) -----------------------
     //
     // An instruction that threw did not write its destination, so the deferred
     // flush must not observe it. The recorder enforces that by requiring that
-    // the next instruction executed in the frame is the one AFTER the def, and
-    // `catching_caller` above is written to violate it: the callee throws, the
-    // caller resumes at its handler rather than at the instruction after the
-    // call, and the register the call would have written was never written.
+    // the next instruction executed in the frame is the one after the def, and
+    // `catching_caller` (Oracle/Fixtures.h) is written to violate it: the callee
+    // throws, the caller resumes at its handler rather than at the instruction
+    // after the call, and the register the call would have written was never
+    // written.
     //
-    // WHAT THIS ACTUALLY CATCHES, said honestly, because it is less than it
-    // looks. Deleting the guard changes the `dropped` counter to zero and the
-    // affected registers' `defs` from one to two - and changes NO observed type
-    // set, here or on the bootstrap corpus (41 drops, identical types either
-    // way). The reason is structural: a stale register holds a value that
-    // register legitimately held EARLIER, so re-observing it re-adds a type the
-    // set already has. The guard is still right - a def that did not happen is
-    // not an observation - but the case where it would change an answer is one
-    // no fixture in this file reaches, and pretending otherwise would be the
-    // kind of claim this project keeps finding to be false.
+    // What this catches is narrower than it looks: deleting the guard changes
+    // the `dropped` counter to zero and the affected registers' `defs` from one
+    // to two, but no observed type set (here or on the bootstrap corpus), since
+    // a stale register holds a value it legitimately held earlier. The guard
+    // is still right: a def that did not happen is not an observation.
     check(rec.dropped_defs() > 0, "the throwing fixture reached the expect_pc guard");
     if (const function_observation * caller = find(rec, "catching_caller"); caller != nullptr) {
         for (const register_observation & obs : caller->regs) {
@@ -307,7 +301,7 @@ int self_test(const char * out_path) {
     report("all-i32", wrong);
     report("all-boxed", trivial);
 
-    // THE DELIBERATELY WRONG ONE MUST BE CAUGHT. `ident` r0 alone held five
+    // The deliberately wrong stub must be caught. `ident` r0 alone held five
     // different kinds; a claim of `i32` over it is a defect and the tool has to
     // say so. If this is ever zero the checker has stopped checking.
     check(wrong.violations > 0, "all-i32 is caught");
@@ -335,14 +329,15 @@ int self_test(const char * out_path) {
 }
 
 // =============================================================================
-// THE ESCAPE ORACLE - Phase 55O.
+// Escape oracle: records whether each allocated object is still reachable from
+// a root when the function that made it returns or throws.
 // =============================================================================
 
-// --- THE FRAME-END TABLE HAS THE SHAPE THE ORACLE WAS BUILT AGAINST -----------
+// --- The frame-end table has the shape the oracle was built against ---------
 //
-// FrameEnds.def lists every path that truncates `frames_`. Nine rows, three of
-// them hooked - `ret`, `unwind`, and the explicit AOT return. A new path added to the VM
-// without a row here is exactly the hole the table exists to make visible, so
+// FrameEnds.def lists every path that truncates `frames_`: nine rows, three of
+// them hooked (`ret`, `unwind`, and the explicit AOT return). A new VM path
+// without a row there is exactly the hole the table exists to make visible, so
 // this is asserted rather than trusted; if the count moves, decide whether the
 // new path is a hook or an UNCHECKED reason and add the row.
 namespace frame_ends {
@@ -374,18 +369,17 @@ static_assert(std::string_view{table[0].name} == "ret" &&
               "the two interpreted hooks lead the table");
 } // namespace frame_ends
 
-// --- THE PROBE ---------------------------------------------------------------
+// --- The probe ---------------------------------------------------------------
 //
-// EVERY NUMBER BELOW WAS COMPUTED FROM THE JAVASCRIPT BEFORE THE RECORDER RAN,
-// and each is derivable without knowing the register allocator: the question
-// is only "is the object still reachable from a root when the function that
-// made it returns or throws", which is a fact about the program. That is what
-// makes a recorder bug VISIBLE - a recorder validated only on a corpus is a
-// recorder whose bugs nobody can name, because nobody can say what the right
-// answer was.
+// Every expected number in self_test_escape was computed from the JavaScript
+// (escape_probe in Oracle/Fixtures.h) before the recorder ran, and each is
+// derivable without knowing the register allocator: the question is only "is
+// the object still reachable from a root when the function that made it returns
+// or throws", which is a fact about the program. That is what makes a recorder
+// bug visible.
 
-// The kind-summed tally of one function's sites, which is what the rows above
-// are stated in terms of.
+/// The kind-summed tally of one function's sites, which is what the expected
+/// rows in self_test_escape are stated in terms of.
 struct kind_sum {
     std::size_t sites = 0;
     std::uint64_t made = 0;
@@ -419,8 +413,8 @@ struct kind_sum {
     return fns.size();
 }
 
-// One hand-computed row: function, kind, sites, made/confined/escaped, and the
-// one route every escape took (or none).
+/// Checks one hand-computed row: function, kind, sites, made/confined/escaped,
+/// and the one route every escape took (or none).
 void expect_row(const type_recorder & rec, const std::vector<std::vector<site_observation>> & all,
                 const char * fn, heap_kind kind, std::size_t sites, std::uint64_t made,
                 std::uint64_t confined, std::uint64_t escaped, const char * route) {
@@ -445,11 +439,11 @@ void expect_row(const type_recorder & rec, const std::vector<std::vector<site_ob
     }
 }
 
-// --- THE CHECKER, AGAIN - the escape verdict table, in memory -----------------
-//
-// The second implementation of tools/check/escape-oracle.py, over the
-// recorder's memory rather than the file. Same rule as the type half: short,
-// and deliberately not shared.
+// --- The checker, again: the escape verdict table, in memory ----------------
+
+/// The second implementation of tools/check/escape-oracle.py, over the
+/// recorder's memory rather than the file. Same rule as the type half: short,
+/// and deliberately not shared.
 struct escape_tally {
     std::uint64_t claimed = 0;
     std::uint64_t observed = 0;
@@ -551,9 +545,9 @@ void report_escape(const char * which, const escape_tally & t) {
         static_cast<unsigned long long>(t.mismatch));
 }
 
-// One run of the probe, with or without a recorder. What the CONTEXT saw is
-// returned too, because "the oracle never collects and never sweeps" is a
-// claim about the context, not about the recording.
+/// One run of the probe, with or without a recorder. What the context saw is
+/// returned too, because "the oracle never collects and never sweeps" is a
+/// claim about the context, not about the recording.
 struct probe_run {
     bool ok = false;
     std::size_t collections = 0;
@@ -608,14 +602,14 @@ int self_test_escape(const char * out_path) {
     const probe_run b = run_probe(&bounded, 0, false);
     if (!b.ok) { return 1; }
 
-    // THE ORACLE NEVER COLLECTS AND NEVER SWEEPS. Same collection count and
-    // the same live-object count as the run that had no recorder: it marked,
-    // it looked, it unmarked, and it freed nothing.
+    // The oracle never collects and never sweeps: the collection count and the
+    // live-object count match the run that had no recorder. It marked, it
+    // looked, it unmarked, and it freed nothing.
     check_eq(b.collections, baseline.collections, "collections() unchanged by the oracle");
     check_eq(b.live_objects, baseline.live_objects, "live_objects() unchanged - nothing was swept");
 
-    // A RECORDER THAT RECORDS NOTHING LOOKS LIKE A PROGRAM THAT ALLOCATES
-    // NOTHING, so every counter that proves a hook fired is asserted.
+    // A recorder that records nothing looks like a program that allocates
+    // nothing, so every counter that proves a hook fired is asserted.
     check(bounded.pops() > 0, "ret's hook fired (pops)");
     check(bounded.unwinds() > 0, "unwind_to_handler's hook fired (unwinds) - `thrower` throws");
     check(bounded.checks() > 0, "frames were adjudicated (checks)");
@@ -627,9 +621,8 @@ int self_test_escape(const char * out_path) {
 
     const std::vector<std::vector<site_observation>> all = bounded.all_sites();
 
-    // --- THE HAND-COMPUTED TABLE ----------------------------------------------
-    //                        fn              kind                  sites made confined escaped
-    //                        route
+    // --- The hand-computed table ----------------------------------------------
+    // Columns: function, kind, sites, made, confined, escaped, route.
     expect_row(bounded, all, "mk", heap_kind::object, 1, 1, 1, 0, nullptr);
     expect_row(bounded, all, "arr", heap_kind::array, 1, 1, 1, 0, nullptr);
     expect_row(bounded, all, "ret", heap_kind::object, 1, 1, 0, 1, "temporaries");
@@ -663,7 +656,7 @@ int self_test_escape(const char * out_path) {
         const std::size_t i = index_of(bounded, quiet);
         check(i < all.size() && all[i].empty(), (std::string{quiet} + " has no sites").c_str());
     }
-    // NEVER ENTERED IS NOT "CONFINED". `never_called` has a static site and no
+    // Never entered is not "confined". `never_called` has a static site and no
     // observation, and the two must be told apart.
     {
         const std::size_t i = index_of(bounded, "never_called");
@@ -675,13 +668,13 @@ int self_test_escape(const char * out_path) {
         }
     }
 
-    // --- THE DEAD-WINDOW EXCLUSION IS LOAD-BEARING: the --unbounded A/B ------
+    // --- The dead-window exclusion matters: the --unbounded A/B --------------
     //
     // The unbounded walk includes the ending frame's own register window, so
-    // it must report a SUPERSET of escapes. And it changes exactly the rows the
+    // it must report a superset of escapes. And it changes exactly the rows the
     // exclusion exists for: `transit` (its object is still in a dead register)
-    // and `holds_across` (its `kept` is, too). That both flip is the proof the
-    // bound is what makes "confined" sayable at all.
+    // and `holds_across` (its `kept` is, too). That both flip proves the bound
+    // is what makes "confined" sayable at all.
     type_recorder unbounded;
     const probe_run u = run_probe(&unbounded, 0, true);
     if (!u.ok) { return 1; }
@@ -700,7 +693,7 @@ int self_test_escape(const char * out_path) {
     expect_row(unbounded, all_u, "glob", heap_kind::object, 1, 1, 0, 1, "globals");
     expect_row(unbounded, all_u, "fills", heap_kind::object, 1, 1, 0, 1, "registers");
 
-    // --- THE BUDGET: over budget is UNCHECKED, never confined ---------------
+    // --- The budget: over budget is UNCHECKED, never confined ---------------
     type_recorder budgeted;
     const probe_run g = run_probe(&budgeted, 1, false);
     if (!g.ok) { return 1; }
@@ -720,7 +713,7 @@ int self_test_escape(const char * out_path) {
                  "the budget changes what is checked, not what pops");
     }
 
-    // --- THE TWO STUBS --------------------------------------------------------
+    // --- The two stubs --------------------------------------------------------
     const escape_tally wrong = check_escape_stub(bounded, all, true);
     const escape_tally trivial = check_escape_stub(bounded, all, false);
     report_escape("all-confined", wrong);
@@ -762,7 +755,8 @@ int self_test_escape(const char * out_path) {
 
 // --- corpus recording --------------------------------------------------------
 
-// The escape half's knobs for a corpus recording - see type_record.hpp.
+/// The escape half's knobs for a corpus recording (see type_record.hpp), set
+/// from --escape-budget and --unbounded.
 std::uint64_t g_escape_budget = 0;
 bool g_unbounded = false;
 
@@ -792,9 +786,10 @@ int record_page(const std::string & html_path, const std::string & assets, int f
     }
     type_recorder rec;
     configure(rec);
-    // BEFORE THE BROWSER IS BUILT. `shell::browser` makes its own context and
-    // never hands it out, and a context picks the active recorder up when it is
-    // constructed - so the order of these two lines is the whole mechanism.
+    // Install the recorder before the browser is built. `shell::browser` makes
+    // its own context and never hands it out, and a context picks the active
+    // recorder up when it is constructed, so the order here is the whole
+    // mechanism.
     ctbrowser::script::set_active_type_recorder(&rec);
     {
         ctbrowser::browser page{ctbrowser::browser_options{800, 600}};
@@ -805,13 +800,11 @@ int record_page(const std::string & html_path, const std::string & assets, int f
             std::fprintf(stderr, "type-oracle: %s reported %s\n", html_path.c_str(),
                          page.script_error().c_str());
         }
-        // SCRIPTS THE PAGE DOES NOT LOAD ITSELF. bootstrap.bundle.js is
-        // vendored and no example page runs it - bootstrap-components.html says
-        // so in its own comment, because a component that needs JS to be
-        // visible cannot be compared against Chrome. That makes the markup a
-        // perfect fixture and leaves the bundle unexecuted, so the recording
-        // driver supplies it here rather than a near-duplicate page being
-        // checked in to run it.
+        // Scripts the page does not load itself. bootstrap.bundle.js is
+        // vendored but no example page runs it (bootstrap-components.html says
+        // why: a component that needs JS to be visible cannot be compared
+        // against Chrome). So the recording driver supplies the bundle here
+        // rather than a near-duplicate page being checked in to run it.
         for (const std::string & js : extra_js) {
             const std::string source = read_file(js);
             if (source.empty()) {
@@ -824,9 +817,9 @@ int record_page(const std::string & html_path, const std::string & assets, int f
                              page.script_error().c_str());
             }
         }
-        // A FIXED CLOCK, for the same reason every other harness here uses one:
+        // A fixed clock, for the same reason every other harness here uses one:
         // `Math.random` is seeded and deterministic, so a recording is
-        // reproducible only as long as nothing else in the run is not.
+        // reproducible only if nothing else in the run varies either.
         for (int i = 0; i < frames; ++i) {
             page.tick(16.0);
             (void)page.frame();

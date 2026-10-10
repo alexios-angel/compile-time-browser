@@ -1,3 +1,12 @@
+//===- Main.cpp - Type inference unit rows --------------------------------===//
+//
+// The test driver: the single-operation rows (literals, operators, globals,
+// object shapes, carried cells, dense arrays, array overwrites, invoke
+// completions), then the larger checks declared in Tests.h. Each row states one
+// JavaScript fact and the ctnative type inference must give for it.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 #include "check.hpp"
@@ -25,10 +34,10 @@ int main() {
          "!ctnative.num<i32>"},
         {"1.5 is not an int32", std::string{"  %r = ctjs.constant "} + kOneAndAHalf + " {check}\n",
          "!ctnative.num<f64>"},
-        // THE ROW MOST LIKELY TO BE GOT WRONG. -0 is integral and inside int32,
-        // and `Object.is(-0, 0)` is false, so calling it an int32 loses a
-        // difference JavaScript can see. type-oracle.py agrees by counting
-        // NUM_NEGATIVE_ZERO as not-an-i32.
+        // The row most likely to be got wrong: -0 is integral and inside
+        // int32, but `Object.is(-0, 0)` is false, so calling it an int32 loses
+        // a difference JavaScript can see. tools/check/type-oracle.py agrees by
+        // counting NUM_NEGATIVE_ZERO as not-an-i32.
         {"-0 is integral and in range and is still NOT an int32",
          std::string{"  %r = ctjs.constant "} + kNegativeZero + " {check}\n", "!ctnative.num<f64>"},
         {"2**31 is one past the int32 maximum",
@@ -56,7 +65,7 @@ int main() {
         {"ToNumber is a double", "  %r = ctjs.convert to_number %p {check}\n",
          "!ctnative.num<f64>"},
 
-        // --- THE NEGATIVE ROWS, which are why the table exists --------------
+        // --- The negative rows, which are why the table exists --------------
         {"`|` on unknown operands could be BigInt and must NOT claim i32",
          "  %r = ctjs.binary bitor %p, %q {check}\n", "!ctnative.boxed"},
         {"`-` on unknown operands could be BigInt", "  %r = ctjs.binary sub %p, %q {check}\n",
@@ -67,7 +76,7 @@ int main() {
          "  %r = ctjs.binary add %p, %q {check}\n", "!ctnative.boxed"},
         {"generic `+` on one unknown operand stays boxed even beside a number",
          five + "  %r = ctjs.binary add %a, %p {check}\n", "!ctnative.boxed"},
-        // --- and the two halves of `+` that ARE provable ---------------------
+        // --- The two cases of `+` that are provable ---------------------------
         {"generic `+` on two numbers is a double", five + "  %r = ctjs.binary add %a, %b {check}\n",
          "!ctnative.num<f64>"},
         {"generic `+` on a number and undefined is a double (NaN, but a number)",
@@ -117,11 +126,11 @@ int main() {
          "  %r = ctjs.binary add %value, %q {check}\n",
          "!ctnative.boxed"},
 
-        // --- A SECOND BLOCK, which the single-block rows above cannot test --
+        // --- A second block, which the single-block rows above cannot test --
         //
         // Every other row lives in the entry block, and the entry block is
-        // live by fiat. This one puts the checked op behind a branch so the
-        // solver has to decide the successor is live - which it cannot do
+        // live by definition. This one puts the checked op behind a branch so
+        // the solver has to decide the successor is live, which it cannot do
         // without SparseConstantPropagation loaded. Without it this row reads
         // `<uninitialized>`.
         {"a value behind a branch is still visited",
@@ -133,10 +142,10 @@ int main() {
          "^no:\n",
          "!ctnative.str<utf8>"},
 
-        // --- THE CLOSED WORLD FOR GLOBALS (part 24 Phase 62½-A) -------------
+        // --- Globals in a closed module --------------------------------------
         //
         // A load of a global is the join of every store of that name in the
-        // module. Three rows: a stored number is a number; a name nothing
+        // module, plus undefined. A stored number is a number; a name nothing
         // stores is boxed (it is a builtin or undeclared); and the mere
         // presence of a `globalThis` load anywhere makes every global boxed,
         // because the table may then be written by a path this rule cannot
@@ -160,12 +169,12 @@ int main() {
                 "  %r = ctjs.load_global \"g\" {check}\n",
          "!ctnative.boxed"},
 
-        // --- THE LIFT'S POISON IS THE IDENTITY --------------------------------
+        // --- ub.poison from the SCF lift is the join identity -----------------
         //
         // --ctjs-lift-to-scf yields ub.poison for a loop-carried value on the
         // path that leaves the loop. Joined with a number it must stay that
-        // number; typed boxed it would absorb, and every `for` loop would be
-        // refused by the native lowering - which is how this row was found.
+        // number; typed boxed it would absorb, and the native lowering would
+        // refuse every `for` loop.
         {"a number joined with the lift's poison is still that number",
          five + "  %t = ctjs.truthy %p\n"
                 "  %z = ub.poison : !ctjs.value\n"
@@ -176,21 +185,20 @@ int main() {
                 "  } {check}\n",
          "!ctnative.num<i32>"},
 
-        // --- THE CLOSED SHAPE (part 24 Phase 56A) ----------------------------
+        // --- Object literals with a closed shape -----------------------------
         //
         // An object literal used only through constant keys: a read of a key
         // is the join of its stores, from undefined. Any other use opens the
         // shape and every read is boxed.
         //
-        // AND THE undefined SEED IS DROPPED WHERE A STORE DOMINATES THE READ -
-        // part 24 Phase 59 slice 2 step 3, the field half. "Nothing orders the
-        // read after a store" is a statement about fields in general and false
-        // of a particular read that a `ctjs.set_property` of the same key, on
-        // the same value, in the same `ctjs.func`, properly dominates. The next
-        // three rows are that rule and its two negatives, and the negatives are
-        // the load-bearing half: narrowing a value that CAN be undefined is a
-        // WRONG ANSWER rather than a refusal, because a global is printed as
-        // `%.17g` of a double and undefined-as-NaN spells `nan` there.
+        // A field read normally includes `undefined`, because nothing
+        // guarantees a store ran first. That `undefined` is dropped when a
+        // `ctjs.set_property` of the same key on the same object, in the same
+        // `ctjs.func`, properly dominates the read. The next three rows test
+        // that rule and its two negatives. The negatives matter most:
+        // narrowing a value that can be undefined gives a wrong answer, not a
+        // refusal, because a global is printed with `%.17g` and
+        // undefined-as-NaN prints `nan`.
         {"a closed object's field reads as its store where the store dominates the read",
          five + "  %o = ctjs.create_object\n"
                 "  %k = ctjs.constant #ctjs.string<\"x\">\n"
@@ -220,20 +228,20 @@ int main() {
          "  %k = ctjs.constant #ctjs.string<\"x\">\n"
          "  %r = ctjs.get_property %o[%k] {check}\n",
          "!ctnative.opt<!ctnative.bottom>"},
-        // --- THE CARRIED CELL (part 24 Phase 59 slice 2, steps 2 and 3) ------
+        // --- Cells carried across a closure lift -----------------------------
         //
         // The closure lift makes a shared binding a frame-scope variable and
         // marks the `ctjs.create_cell` `ctnative.carried`; its type is then the
-        // join over the box's INITIAL and every value ever assigned to it,
-        // because a read on a path that reached no assignment loads what the
-        // variable was built with. `compiler_impl::predeclare_locals` builds it
-        // with `undefined`, so a hoisted `var` is `opt<num>`.
+        // join over the box's initial value and every value ever assigned to
+        // it, because a read on a path that reached no assignment loads what
+        // the variable was built with. `compiler_impl::predeclare_locals`
+        // builds it with `undefined`, so a hoisted `var` is `opt<num>`.
         //
-        // AND `ctnative.assigned_before_read` IS THE LIFT SAYING THERE IS NO
-        // SUCH PATH. It is written only when one `ctjs.cell_set` properly
-        // dominates every read of the binding - every `ctjs.cell_get` here, and
-        // every CALL of every closure that captured it, which is a question
-        // about operations the lift erases and so cannot be asked in this file.
+        // `ctnative.assigned_before_read` is the lift saying there is no such
+        // path. It is written only when one `ctjs.cell_set` properly dominates
+        // every read of the binding: every `ctjs.cell_get` here, and every call
+        // of every closure that captured it, which is a question about
+        // operations the lift erases and so cannot be asked in this file.
         // These two rows are the contract between the two translation units:
         // the attribute is spelled once, in TypeInference.h, and its whole
         // observable effect is the difference between them.
@@ -265,22 +273,22 @@ int main() {
                 "  %r = ctjs.get_property %o[%k] {check}\n",
          "!ctnative.boxed"},
 
-        // --- THE DENSE ARRAY (part 24 Phase 57A) -----------------------------
+        // --- Dense array literals --------------------------------------------
         //
-        // WHY THESE ROWS EXIST AT ALL. The emitter hardcodes `vector<double>`
-        // and PrintDeduced::isDeducible excludes both `emitc.call_opaque` and
-        // `emitc.variable`, so nothing downstream ever prints the element type
-        // - a join that widened wrongly would still lower, still compile and
-        // still agree with the interpreter on the fixture. The element type is
-        // observable HERE and in the oracle corpus, and nowhere else.
+        // These rows exist because nothing downstream prints the element type:
+        // the emitter hardcodes `vector<double>`, and PrintDeduced::isDeducible
+        // excludes both `emitc.call_opaque` and `emitc.variable`. A join that
+        // widened wrongly would still lower, still compile and still agree
+        // with the interpreter on the fixture. The element type is observable
+        // here and in the oracle corpus, and nowhere else.
         {"a dense array literal is a vector of the join of its appends, from undefined",
          ints + "  %arr = ctjs.create_array [] {check}\n"
                 "  ctjs.append %i1 to %arr\n"
                 "  ctjs.append %i2 to %arr\n",
          "!ctnative.vec<!ctnative.opt<!ctnative.num<i32>>>"},
-        // TWO WIDTHS MERGE, THEY DO NOT UNION. Stage 53G normalises `num<i32>`
-        // and `num<f64>` into the wider number, so `[1, 2.5]` is a
-        // vector<double> and not a vector of a two-alternative variant.
+        // Two numeric widths merge rather than forming a union: the join of
+        // `num<i32>` and `num<f64>` is `num<f64>`, so `[1, 2.5]` is a
+        // vector<double>, not a vector of a two-alternative variant.
         {"two numeric widths in one array are the wider number, not a union",
          ints + "  %h = ctjs.constant " + kOneAndAHalf +
              "\n"
@@ -296,7 +304,7 @@ int main() {
                 "  ctjs.append %i1 to %arr\n"
                 "  %r = ctjs.get_property %arr[%i1] {check}\n",
          "!ctnative.opt<!ctnative.num<i32>>"},
-        // `length` IS NEVER UNDEFINED and is never an i32 either: an array's
+        // `length` is never undefined and never an i32 either: an array's
         // length is a uint32, which does not fit one, and nothing here proves
         // this array is short.
         {"`length` on a dense array is a number, and an f64 rather than an i32",
@@ -306,28 +314,28 @@ int main() {
                 "  %r = ctjs.get_property %arr[%k] {check}\n",
          "!ctnative.num<f64>"},
 
-        // --- AND THE FOUR NEGATIVE ROWS, which are why the rule is a proof ---
+        // --- The four negative rows, which are why the rule is a proof -------
         //
-        // An index STORE is the sparsity route part 24 Stage 57A names by
-        // hand: `a[100] = 1` gives `length` 101 with one element. It opens the
-        // site, so the literal and every read of it are boxed.
+        // An index store can make an array sparse: `a[100] = 1` gives `length`
+        // 101 with one element. So a store opens the site, and the literal and
+        // every read of it are boxed.
         {"an index store opens the site: a[100] = 1 makes it sparse",
          ints + "  %arr = ctjs.create_array []\n"
                 "  ctjs.append %i1 to %arr\n"
                 "  ctjs.set_property %arr[%i1], %i2\n"
                 "  %r = ctjs.get_property %arr[%i1] {check}\n",
          "!ctnative.boxed"},
-        // A KEY NOTHING PROVED A NUMBER READS A PROPERTY, NOT AN ELEMENT:
-        // `a["push"]` is a function. The site is still dense - a read is a
-        // read - so only the key check stands between this and a claim of
+        // A key nothing proved a number reads a property, not an element:
+        // `a["push"]` is a function. The site is still dense (a read is a
+        // read), so only the key check stands between this and a claim of
         // `opt<num<i32>>` for a function.
         //
-        // THIS ROW IS THE ONLY GATE ON THAT GUARD, and the oracle is not, which
-        // was measured: a claim is per REGISTER, the bytecode puts the array
-        // literal and the read in one slot, and the join over the two is
-        // `boxed` whatever the read claims. Deleting the guard turns this row
-        // red with `!ctnative.opt<!ctnative.num<i32>>` and leaves every corpus
-        // in check-type-claims.cmake green.
+        // This row is the only test of that guard; the corpus oracle cannot
+        // catch it. Claims are per bytecode register, and the array literal
+        // and the read share one register, so their join is `boxed` whatever
+        // the read claims. Deleting the guard turns this row red with
+        // `!ctnative.opt<!ctnative.num<i32>>` and leaves
+        // ctcompile-test-type-claims green.
         {"a key nothing proved a number reads a property, and is boxed",
          ints + "  %arr = ctjs.create_array []\n"
                 "  ctjs.append %i1 to %arr\n"
@@ -345,7 +353,7 @@ int main() {
                 "  ctjs.store_global \"g\", %arr\n",
          "!ctnative.boxed"},
 
-        // --- and the positive halves of the same operators ------------------
+        // --- The positive halves of the same operators ----------------------
         {"`|` on two numbers is an int32", five + "  %r = ctjs.binary bitor %a, %b {check}\n",
          "!ctnative.num<i32>"},
         {"`-` on two numbers is a double", five + "  %r = ctjs.binary sub %a, %b {check}\n",
@@ -358,9 +366,10 @@ int main() {
 
     for (const row & r : rows) { check(context, r); }
 
-    // The complete contents proof needs a known return; the generic row helper
-    // returns opaque %p. Keep old array controls unchanged and build these whole
-    // functions with a definite scalar return instead.
+    // These rows test reads of known array contents, which needs a function
+    // with a definite return value; the generic row helper returns the opaque
+    // %p. So each row here spells a whole function returning %a, and the
+    // single-op array rows above stay as they are.
     const std::string overwritePrefix = prologue() + five +
                                         "  %zero = ctjs.constant #ctjs.number<0>\n"
                                         "  %arr = ctjs.create_array [%a]\n";
@@ -428,7 +437,7 @@ int main() {
          overwritePrefix +
              "  ctjs.append %b to %arr\n"
              "  %length = ctjs.constant #ctjs.string<\"length\">\n"
-             "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
+             "  %one = ctjs.constant #ctjs.number<4607182418800017408>\n" // 1.0
              "  ctjs.set_property %arr[%length], %one\n" +
              overwriteRead,
          "!ctnative.num<i32>", true},
@@ -468,7 +477,7 @@ int main() {
             ctcompile::ctjs::SetPropertyOp store;
             module->walk([&](ctcompile::ctjs::SetPropertyOp found) { store = found; });
             const mlir::Value key = store.getKey();
-            store->setOperand(1, store.getValue()); // 5, outside the one-element array
+            store->setOperand(1, store.getValue()); // 5, outside the one-element array.
             check(*module, "a changed index discards the earlier density proof", "!ctnative.boxed");
             store->setOperand(1, key);
             check(*module, "restoring an own index rebuilds density from current IR",
@@ -486,9 +495,10 @@ int main() {
     checkStaleFieldEffects(context);
     checkSavedScalarGlobalTypes(context);
 
-    // The call result is not a thrown payload, and catch state is not a
-    // post-call assignment. Query the actual continuation argument, keeping
-    // unrelated normal-return typing out of the payload observations.
+    // Rows for `ctjs.invoke`. The call result is not a thrown payload, and
+    // catch state is not a post-call assignment. Each row queries the actual
+    // continuation argument, keeping unrelated normal-return typing out of the
+    // payload observations. A 4096-op helper body exhausts the work bound.
     const std::string joined = R"mlir(
   ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
                             %callee: !ctjs.value, %condition: !ctjs.value,
@@ -554,6 +564,7 @@ int main() {
     std::string parameterCompletion = numericCompletion;
     parameterCompletion.replace(parameterCompletion.find("ctjs.return %normal"), 19,
                                 "ctjs.return %argument");
+    // %other below is the IEEE-754 bit pattern of -0.0.
     const std::string joinedParameterCompletion = R"mlir(
   ctjs.func private @helper(%receiver: !ctjs.value, %new_target: !ctjs.value,
                             %callee: !ctjs.value, %condition: !ctjs.value,
@@ -654,9 +665,10 @@ int main() {
     };
     for (const row & r : normalInvocationRows) { check(context, r); }
 
-    // Every solve must inspect the same live helper again. Retain a forged
-    // nothrow marker while changing its return and adding a global mutation;
-    // neither the old completion query nor the marker may authorize the next.
+    // Every solve must inspect the live helper again. Keep a forged nothrow
+    // marker while changing the helper's return and adding a global store;
+    // neither an earlier completion query nor the marker may justify the next
+    // answer.
     {
         auto module = mlir::parseSourceString<mlir::ModuleOp>(
             invokeModule(numericCompletion, "%returned", true), &context);
@@ -681,11 +693,10 @@ int main() {
         }
     }
 
-    // AND ONE MODULE THAT MUST NOT PARSE. `ctjs.binary_static sub` names a
-    // kind context::binary_op_static has no arm for - it answers undefined -
-    // so an inference claiming f64 for it would be wrong, and the fix is not
-    // a narrower claim but a verifier that refuses the IR. This is the
-    // refutation Phase 54A's adversarial review raised, kept as a test.
+    // One module that must not parse. `ctjs.binary_static sub` names a kind
+    // context::binary_op_static has no case for (it would answer undefined), so
+    // inferring f64 for it would be wrong. The fix is a verifier that rejects
+    // the IR, and this checks it does.
     {
         const std::string text =
             prologue() + "  %r = ctjs.binary_static sub %p, %q\n" + "  ctjs.return %r\n}\n";

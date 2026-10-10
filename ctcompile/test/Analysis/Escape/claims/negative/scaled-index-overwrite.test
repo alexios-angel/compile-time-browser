@@ -1,7 +1,7 @@
 // RUN: split-file %s %t
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negative-scaled-index-overwrite
 // RUN: FileCheck %s < %t/escape-claims-negative-scaled-index-overwrite.claims
-
+// Each loop clears slots via index `c + i * k`, k < 0; child is confined only if all are cleared.
 // CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined

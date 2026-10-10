@@ -1,31 +1,33 @@
-// ctcompile - an application directory in, an executable out.
+//===- ctcompile/tools/ctcompile/ctcompile.cpp - Application packager -----===//
+//
+// ctcompile: an application directory in, an executable out.
 //
 //     ctcompile app/ -o myapp        then ./myapp
 //
-// WHAT IT ACTUALLY DOES, stated plainly because the word "compiler" invites a
-// bigger claim than this earns today. It loads the page once with the engine
-// that will run it, compiles every classic <script> to a program image, packs
-// the page, its resources and those images into one bundle, and appends that
-// bundle to a copy of a fixed launcher. The result is a single executable that
-// starts WITHOUT PARSING ITS OWN JAVASCRIPT.
+// What it does, stated plainly because the word "compiler" suggests more: it
+// loads the page once with the engine that will run it, compiles every classic
+// <script> to a program image, packs the page, its resources and those images
+// into one bundle, and appends that bundle to a copy of a fixed launcher. The
+// result is a single executable that starts without parsing its own
+// JavaScript.
 //
-// THAT IS THE WHOLE OF THE WIN AND IT IS MOST OF THE WIN. About forty percent
-// of a page load is reading JavaScript and 1.4% is executing it, so removing
-// the parse takes p5-basic.html from 69.65 ms to 19.93 - measured, in
-// docs/baseline/page-load.json. What it does NOT do is generate native code:
-// the bytecode still runs on the interpreter, and profiling the remainder
-// (docs/baseline/page-load-profile.json) puts that at 17.4% of what is left.
-// The MLIR and EmitC backends in Phases 7 through 12A are that 17.4%, and they
-// are not here.
+// That is the main speed-up: about 40% of a page load is reading JavaScript and
+// 1.4% is executing it, so removing the parse takes p5-basic.html from
+// 69.65 ms to 19.93 ms (measured; see ctcompile/docs/baseline/page-load.json).
+// It does not generate native code: the bytecode still runs on the
+// interpreter, which profiling (ctcompile/docs/baseline/page-load-profile.json)
+// puts at 17.4% of the remaining time. Removing that cost is the job of the
+// MLIR/EmitC native backends, which this tool does not use.
 //
-// IT ASKS THE ENGINE WHAT THE APPLICATION IS rather than working it out. Which
-// scripts a page compiles and which resources it reaches for are decided by
-// rules that live in the browser, and a packager holding a second copy of them
-// is a packager free to drift - which shows up as an application that quietly
-// compiles from source and is merely slow. So the page is LOADED, and then
-// asked.
+// It asks the engine what the application is rather than working it out.
+// Which scripts a page compiles and which resources it requests are decided by
+// rules in the browser; a packager with its own copy of them could drift, and
+// the application would then silently compile from source and merely be slow.
+// So the page is loaded, and then asked.
 //
-// The running plan is ctcompile/docs/plans/ctcompile.md.
+// The plan for this tool is ctcompile/docs/plans/ctcompile.md.
+//
+//===----------------------------------------------------------------------===//
 #include <ctcompile/Support/Manifest.hpp>
 #include <ctcompile/Support/Measure.hpp>
 #include <ctcompile/Support/Version.hpp>
@@ -53,6 +55,7 @@ namespace {
 using llvm::opt::DefaultVis;
 using llvm::opt::HelpHidden;
 
+/// Option IDs generated from Options.td.
 enum OptionID {
     OPT_INVALID,
 #define OPTION(...) LLVM_MAKE_OPT_ID(__VA_ARGS__),
@@ -73,6 +76,7 @@ constexpr llvm::opt::OptTable::Info option_info[] = {
 #undef OPTION
 };
 
+/// The command-line option table generated from Options.td.
 class Options : public llvm::opt::GenericOptTable {
 public:
     Options() : GenericOptTable(OptionStrTable, OptionPrefixesTable, option_info) {
@@ -83,7 +87,7 @@ public:
 
 } // namespace
 
-// A string's bytes, as a bundle entry stores them.
+/// A string's bytes, as a bundle entry stores them.
 std::vector<std::byte> bytes_of(std::string_view text) {
     const std::span<const std::byte> bytes = std::as_bytes(std::span{text});
     return {bytes.begin(), bytes.end()};
@@ -91,6 +95,8 @@ std::vector<std::byte> bytes_of(std::string_view text) {
 
 using ctcompile::read_file;
 
+/// Writes `bytes` to `path` atomically; prints the error and returns false on
+/// failure.
 bool write_file(const std::filesystem::path & path, std::span<const std::byte> bytes) {
     // LLVM writes a sibling temporary and renames only after a successful write.
     // An absolute path keeps a literal output named "-" from selecting stdout.
@@ -106,6 +112,8 @@ bool write_file(const std::filesystem::path & path, std::span<const std::byte> b
     return true;
 }
 
+/// Whether two paths name the same file, including through symlinks and hard
+/// links; used to stop the outputs from overwriting an input.
 bool same_file(const std::filesystem::path & left, const std::filesystem::path & right) {
     if (std::filesystem::weakly_canonical(std::filesystem::absolute(left)) ==
         std::filesystem::weakly_canonical(std::filesystem::absolute(right))) {
@@ -115,12 +123,15 @@ bool same_file(const std::filesystem::path & left, const std::filesystem::path &
     return std::filesystem::equivalent(left, right, error);
 }
 
-// ASK THE ENGINE WHAT THIS APPLICATION IS, rather than working it out here.
-// The page is loaded once, headless, by the same browser that will run it -
-// and then it is asked two questions only it can answer: which scripts it
-// compiles, and which resources it went looking for. A packager that
-// re-derived either would be keeping a second copy of a rule that lives in
-// the engine, free to drift from the one that decides at run time.
+/// What loading the page reported: the scripts it compiles, its module
+/// scripts, the resources it requested (with their bytes), any load error,
+/// the font directory used, and how many frames the probe ran.
+///
+/// The page is loaded once, headless, by the same browser that will run it,
+/// and then asked the two questions only it can answer: which scripts it
+/// compiles, and which resources it requested. A packager that re-derived
+/// either would keep a second copy of an engine rule, free to drift from the
+/// one that decides at run time.
 struct probed_page {
     std::vector<std::string> scripts;
     std::vector<std::string> modules;
@@ -131,6 +142,8 @@ struct probed_page {
     std::size_t ticks = 0;
 };
 
+/// Loads the application's entry page in a headless browser and records what
+/// it needs (see probed_page).
 probed_page probe_page(const llvm::opt::InputArgList & options, const std::filesystem::path & entry,
                        const std::string & html) {
     probed_page page;
@@ -138,41 +151,34 @@ probed_page probe_page(const llvm::opt::InputArgList & options, const std::files
     // The page's own directory, so `<script src>` and an `<img src>` resolve
     // exactly as they do when the page is opened from there.
     probe.assets().set_base_path(entry.parent_path());
-    // UNCONFINED: the developer's own page, packaged from their tree - the
-    // corpus reaches `../../vendor/`. The bundle it produces is sealed.
+    // Unconfined: this is the developer's own page, packaged from their tree,
+    // and the corpus reaches `../../vendor/`. The bundle it produces is sealed.
     probe.assets().set_confine(false);
 
-    // REAL FONTS, BEFORE THE PAGE LOADS, exactly as run_app does it.
+    // Load the real fonts before the page, as run_app does. The vendored faces
+    // are served through the asset registry, and a packaged application's
+    // registry is sealed, so faces not requested here would be missing at run
+    // time and the app would silently fall back to the bitmap font. Requesting
+    // them now puts them in requested(), and the loop below packs them.
     //
-    // Not a detail, and it was found by comparing renders: the vendored
-    // faces are loaded THROUGH the asset registry, and a packaged
-    // application's registry is sealed - so an application packaged without
-    // them silently drops to the built-in bitmap font. It exits 0, it
-    // renders, and it just looks worse, which is the failure this whole
-    // tool is built to refuse. Asking here puts the faces in `requested()`
-    // and the loop below packs them like any other resource.
-    //
-    // The DIRECTORY is recorded in the bundle because it is part of the
-    // name: the registry key is "<dir>/Tinos-Regular.ttf", so a run that
-    // resolved a different directory would ask for a name nothing carries.
+    // The directory is recorded because it is part of each face's registry key
+    // ("<dir>/Tinos-Regular.ttf").
     page.font_directory = options.hasArg(OPT_fonts) ? options.getLastArgValue(OPT_fonts).str()
                                                     : ctbrowser::browser::default_font_directory();
     page.real_fonts = probe.use_real_fonts(page.font_directory);
 
     probe.load_html(html);
 
-    // AND THEN LET IT RUN, because a load is not when a page asks for its
-    // resources. `fetch` and an `img.src =` assignment QUEUE the request and
-    // it is drained from `tick`; p5 loads in `preload` and Phaser in the
-    // first game step, both inside a callback. Asking straight after
-    // load_html sees the markup's resources and NOTHING a script wanted -
-    // which is every sprite, atlas and level in the applications this is
-    // for, packaged as a warning-free success and broken at run time.
+    // Then let the page run, because loading is not when a page asks for its
+    // resources. `fetch` and an `img.src =` assignment queue the request, which
+    // `tick` drains; p5 loads in `preload` and Phaser in the first game step,
+    // both inside a callback. Asking straight after load_html would see only
+    // the markup's resources and miss every sprite, atlas and level the
+    // scripts request, and the package would be broken at run time.
     //
-    // UNTIL IT STOPS ASKING, rather than for a fixed number of frames: a
-    // count is a guess about someone else's loading screen. Sixty frames is
-    // a ceiling on a page that asks for something new forever, not a
-    // target - a static page settles on the second one.
+    // Run until it stops asking rather than for a fixed number of frames.
+    // Sixty frames is a ceiling for a page that asks for something new
+    // forever, not a target; a static page settles on the second frame.
     constexpr std::size_t frame_ceiling = 60;
     std::size_t asked_for = probe.assets().requested().size();
     for (; page.ticks < frame_ceiling; ++page.ticks) {
@@ -186,18 +192,14 @@ probed_page probe_page(const llvm::opt::InputArgList & options, const std::files
     page.modules = probe.module_sources();
     page.page_error = probe.script_error();
 
-    // THE RESOURCES, THROUGH THE REGISTRY THAT ANSWERED THE PAGE. This used
-    // to build a fresh `asset_registry{}` with no base path, which probes
-    // the working directory and two levels above it - a DIFFERENT rule from
-    // the one the page was answered by, and the header of assets.hpp spends
-    // a paragraph explaining that a packager must not keep a second copy of
-    // it. It could resolve a name from ctcompile's own build tree that the
-    // page resolved from the application, and ship those bytes under the
-    // right name with nothing printed.
+    // Load resource bytes through the same registry that served the page, so
+    // names resolve exactly as they did at load time. A fresh registry would
+    // use a different lookup rule (see the header of
+    // ctbrowser/shell/page/assets.hpp) and could package the wrong file under
+    // the right name.
     //
-    // The names are COPIED first: `load` records what it was asked for, so
-    // iterating the live list while calling it is iterating a vector that
-    // can grow underneath.
+    // Copy the names first: load() appends to requested(), so iterating the
+    // live list while loading could invalidate the iterator.
     const std::vector<std::string> wanted = probe.assets().requested();
     for (const std::string & name : wanted) {
         page.resources.emplace_back(name, probe.assets().load(name));
@@ -205,10 +207,10 @@ probed_page probe_page(const llvm::opt::InputArgList & options, const std::files
     return page;
 }
 
-// The launcher to build the executable from: --launcher, else ctrun BESIDE
-// THIS COMPILER, which is where a build puts them both, found through
-// /proc/self/exe rather than argv[0] so it still works when ctcompile was
-// reached through the PATH or a symlink. Empty when neither is known.
+/// The launcher to build the executable from: --launcher, else ctrun beside
+/// this compiler, which is where a build puts them both. It is found through
+/// /proc/self/exe rather than argv[0], so it still works when ctcompile was
+/// reached through the PATH or a symlink. Empty when neither is known.
 std::filesystem::path resolve_launcher(const llvm::opt::InputArgList & options) {
     std::filesystem::path launcher{options.getLastArgValue(OPT_launcher).str()};
     if (launcher.empty()) {
@@ -265,8 +267,8 @@ int main(int argc, char ** argv) try {
         return 2;
     }
 
-    // A directory that is not there is worth saying so about now, rather than
-    // in whichever phase first opens it.
+    // Report a missing directory now, rather than in whichever step first
+    // opens it.
     const std::filesystem::path application{application_arg->getValue()};
     if (!std::filesystem::is_directory(application)) {
         std::cerr << "ctcompile: " << application << " is not a directory\n";
@@ -312,22 +314,15 @@ int main(int argc, char ** argv) try {
     auto [scripts, modules, resources, page_error, font_directory, real_fonts, ticks] =
         probe_page(options, entry, html);
 
-    // A PAGE THAT ALREADY FAILED IS NOT PACKAGED. The sharpest case is a
-    // `<script src>` that did not resolve: the engine records it and then
-    // carries on with that script simply ABSENT, so every later count is clean
-    // and the application would ship missing its library. Refusing here is the
-    // only place that catches it.
     if (verbose) {
         std::cerr << "ctcompile:   probe  settled after " << ticks << " frame(s), "
                   << resources.size() << " resource(s) asked for\n";
     }
 
-    // MODULE SCRIPTS CANNOT BE COMPILED AHEAD OF TIME YET, and shipping the
-    // application anyway is the silent failure this tool exists to avoid: there
-    // is no image path into `load_module`, so it would parse all of its
-    // JavaScript at every start while every count here reads a truthful zero.
-    // Better to say so than to package something whose only defect is that it
-    // is exactly as slow as it was before.
+    // Module scripts cannot be compiled ahead of time yet: there is no image
+    // path into `load_module`, so a packaged application would still parse all
+    // of its JavaScript at every start while every count here reads zero.
+    // Refuse rather than ship something no faster than before.
     if (!modules.empty()) {
         std::cerr << "ctcompile: " << entry << " has " << modules.size()
                   << " module script(s) (<script type=\"module\">), which cannot be compiled "
@@ -335,6 +330,10 @@ int main(int argc, char ** argv) try {
         return 1;
     }
 
+    // A page that already failed is not packaged. The main case is a
+    // `<script src>` that did not resolve: the engine records the error and
+    // carries on with that script absent, so every later count looks clean and
+    // the application would ship without its library.
     if (!page_error.empty()) {
         std::cerr << "ctcompile: " << entry << " does not load cleanly, so it is not packaged:\n"
                   << "           " << page_error << '\n';
@@ -343,9 +342,9 @@ int main(int argc, char ** argv) try {
 
     bundle.entries.push_back({ctbrowser::shell::bundle_kind::html, {}, bytes_of(html)});
 
-    // THE RESOURCES, UNDER THE NAMES THE DOCUMENT USED. p5-basic.html asks for
-    // `../../vendor/p5/p5.js`, which is not a path relative to the application
-    // directory and is not something a packager could invent.
+    // The resources, under the names the document used. p5-basic.html asks
+    // for `../../vendor/p5/p5.js`, which is not a path relative to the
+    // application directory and not something a packager could invent.
     ctcompile::manifest record;
     record.compiler_version = ctcompile::version_string();
     record.engine = ctcompile::engine_summary();
@@ -357,10 +356,10 @@ int main(int argc, char ** argv) try {
     std::size_t assets_packed = 0;
     for (auto & [name, bytes] : resources) {
         if (bytes.empty()) {
-            // A NAME THE PAGE ASKED FOR AND NOTHING ANSWERED. It got nothing
-            // during this load too, so the page already tolerates it - but a
-            // packaged application is SEALED and will not look on disk, so this
-            // is the last chance anyone hears about it.
+            // A name the page asked for that nothing answered. It got nothing
+            // during this load either, so the page already tolerates it, but a
+            // packaged application is sealed and will not look on disk, so
+            // this is the last chance to report it.
             std::cerr << "ctcompile: warning: " << name
                       << " was asked for and nothing answered; the packaged application will not "
                          "find it either\n";
@@ -374,8 +373,7 @@ int main(int argc, char ** argv) try {
         bundle.entries.push_back({ctbrowser::shell::bundle_kind::asset, name, std::move(bytes)});
     }
 
-    // AND THE SCRIPTS, COMPILED. This is the whole point: reading JavaScript is
-    // about forty percent of a page load, and an image removes it.
+    // The scripts, compiled to program images.
     for (const std::string & text : scripts) {
         const auto compiled = ctbrowser::script::compiler::compile(text);
         if (!compiled.ok) {
@@ -400,16 +398,13 @@ int main(int argc, char ** argv) try {
     }
 
     if (real_fonts) {
-        // THE FACES GO IN UNDER A NAME OF OUR OWN, not the build machine's.
-        //
-        // The registry key for a face is "<directory>/Tinos-Regular.ttf", and
-        // the directory that FOUND them is wherever this compiler was told to
-        // look - typically an absolute path into somebody's checkout. Shipping
-        // that as the name works, because the launcher is told the same
-        // directory, but it bakes a build path into every application and makes
-        // the bundle's keys depend on the machine that built it. Renaming to a
-        // fixed `fonts/` is a prefix substitution on names the ENGINE produced,
-        // not a second implementation of how a face is named.
+        // Store the faces under a fixed `fonts/` prefix, not the build
+        // machine's directory. The registry key for a face is
+        // "<directory>/Tinos-Regular.ttf", and the directory that found them is
+        // typically an absolute path into somebody's checkout; shipping that
+        // would bake a build path into every application. The rename is a
+        // prefix substitution on names the engine produced, not a second
+        // implementation of how a face is named.
         const std::string from = font_directory + "/";
         const auto rename = [&](std::string & name) {
             if (name.rfind(from, 0) == 0) { name = "fonts/" + name.substr(from.size()); }
@@ -423,28 +418,27 @@ int main(int argc, char ** argv) try {
         bundle.entries.push_back(
             {ctbrowser::shell::bundle_kind::meta, "font_path", bytes_of(font_directory)});
     } else {
-        // NOT BEHIND --verbose. An application that renders with the built-in
-        // bitmap font because the faces were not found where this looked is an
-        // application that exits 0 and just looks worse, which is the failure
-        // this tool exists to refuse. Say it every time, and say where to put
-        // them.
+        // Always printed, not only with --verbose: an application that falls
+        // back to the bitmap font exits 0 and just looks worse, so say it
+        // every time and say how to fix it.
         std::cerr << "ctcompile: warning: no fonts were found in \"" << font_directory
                   << "\", so the application will render with the built-in bitmap font"
                      " - name the directory with --fonts\n";
     }
     bundle.entries.push_back(
         {ctbrowser::shell::bundle_kind::meta, "title", bytes_of(entry.stem().string())});
-    // OFF UNLESS ASKED: a shipped application ignores CTBROWSER_TEST_FRAMES and
-    // the rest, which would otherwise let a player uncap or speed it up.
+    // Off unless asked: a shipped application ignores CTBROWSER_TEST_FRAMES and
+    // the other test overrides, which would otherwise let a player uncap or
+    // speed it up.
     if (options.hasArg(OPT_allow_env_overrides)) {
         bundle.entries.push_back(
             {ctbrowser::shell::bundle_kind::meta, "env_overrides", bytes_of("1")});
     }
 
-    // THE MANIFEST GOES IN THE BUNDLE, so a packaged application can always say
-    // what it is without the directory it was built from. `bundle_bytes` is the
-    // one number it cannot hold - writing the manifest is what changes it - so
-    // it stays 0 in the copy inside and is filled in for the copy on disk.
+    // The manifest goes in the bundle, so a packaged application can always say
+    // what it is without the directory it was built from. `bundle_bytes` is
+    // the one field it cannot hold (adding the manifest changes it), so it
+    // stays 0 in the copy inside and is filled in for the copy on disk.
     {
         const std::string json = ctcompile::to_json(record);
         bundle.entries.push_back({ctbrowser::shell::bundle_kind::meta, "manifest", bytes_of(json)});
@@ -456,14 +450,14 @@ int main(int argc, char ** argv) try {
         return 1;
     }
 
-    // AN EXECUTABLE, NOT A BUNDLE, unless the caller asks for the bundle alone.
+    // An executable, not a bundle, unless the caller asks for the bundle alone.
     //
-    // NOTHING IS GENERATED AND NOTHING IS COMPILED HERE. `ctrun` is a fixed
-    // launcher this project builds like any other tool, and a packaged
-    // application is a byte-for-byte copy of it with the bundle stuck on the end
-    // and a trailer saying where that starts. A linked ELF does not care what
-    // follows its last section - so the machine that RUNS the result needs no
-    // toolchain, and this needs no linker.
+    // Nothing is generated or compiled here. `ctrun` is a fixed launcher this
+    // project builds like any other tool, and a packaged application is a
+    // byte-for-byte copy of it with the bundle appended and a trailer saying
+    // where that starts. A linked ELF ignores what follows its last section,
+    // so the machine that runs the result needs no toolchain and this needs no
+    // linker.
     std::vector<std::byte> written = bytes;
     if (!bundle_only) {
         const std::filesystem::path launcher = resolve_launcher(options);
@@ -484,10 +478,9 @@ int main(int argc, char ** argv) try {
     }
 
     if (!write_file(out, written)) { return 1; }
-    // AND THE MANIFEST BESIDE IT, when asked. `bundle_bytes` is filled in only
-    // here, because it is the size of the file that was just written and the
-    // copy inside the bundle cannot know it - writing the manifest is what
-    // changes it.
+    // The manifest beside it, when asked. `bundle_bytes` is filled in only here,
+    // because it is the size of the file just written, which the copy inside
+    // the bundle cannot know.
     if (options.hasArg(OPT_manifest)) {
         record.bundle_bytes = written.size();
         const std::string manifest = ctcompile::to_json(record);

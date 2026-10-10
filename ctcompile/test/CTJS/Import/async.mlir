@@ -1,26 +1,26 @@
-// WHERE ASYNC SPLITS IN TWO, asserted from both sides in one file.
+// Where async splits in two, asserted from both sides in one file.
 //
 // An async function wraps normal returns and catches throws in a rejection
 // fence even when it contains no `await`. Neither operation is a
-// suspension - the frame is never lifted and nothing is saved - so it lowers
+// suspension (the frame is never lifted and nothing is saved), so it lowers
 // like any other runtime call, and an async function with no `await` is fully
 // AOT-eligible.
 //
 // An `await` on a pending promise is a different animal: the interpreter lifts
 // the whole frame out of the register stack into a coroutine_object and puts it
 // back later, and a compiled body is a C++ stack frame with no register window
-// to copy. Phase 14 owns that decision; until it is made the importer refuses
-// the function with a reason that SAYS so, rather than falling through to
-// "no CTJS operation for this opcode yet" - which reads as a work item and is
-// not one.
+// to copy. How to compile a suspension is not designed yet, so the importer
+// refuses the function with a reason that says so, rather than falling
+// through to the generic "no CTJS operation for this opcode yet", which reads
+// as a missing feature.
 //
-// BOTH HALVES IN ONE FILE ON PURPOSE. Asserting only the refusal would pass
+// Both halves are in one file on purpose. Asserting only the refusal would pass
 // just as well if wrap_promise were refused too; asserting only the lowering
 // would pass if the refusal message had rotted. The pair is what pins the line
 // between them.
 //
-// TWO RUN LINES RATHER THAN ONE, because the two facts are in opposite ends of
-// the output: `ctjs.skipped` is a MODULE attribute and prints on the module's
+// Two RUN lines rather than one, because the two facts are at opposite ends of
+// the output: `ctjs.skipped` is a module attribute and prints on the module's
 // own line, above every function, so a single ordered sequence of CHECKs
 // covering both would be asserting the printer's layout instead of the
 // importer's behaviour.
@@ -29,11 +29,11 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=REFUSED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s 2>/dev/null | ctjs-opt --ctjs-lower-to-emitc | FileCheck %s --check-prefix=EMITTED
 
-// THE COMPILABLE HALF.
+// The compilable half.
 async function settles(a) { return a + 1; }
 
-// AND THE HALF THAT IS A DESIGN DECISION. It produces NO ctjs.func at all -
-// "never emit partially correct AOT code".
+// And the half that cannot be compiled yet. It produces no ctjs.func at all:
+// partially correct AOT code is never emitted.
 async function waits(p) { return await p; }
 
 // Every operator table must reach the shared per-instruction caught edge.

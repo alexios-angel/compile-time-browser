@@ -1,18 +1,24 @@
-// PHASE 55A'S HALF OF THE ESCAPE ORACLE: the static claim per allocation site,
-// in the format tools/check/escape-oracle.py reads.
+//===- Claims.cpp - Static escape claims per allocation site --------------===//
 //
-// TypeClaims.cpp's shape, for the same reasons it has that shape: the
-// interpreter's recording (TypeOracle.cpp --escape) and this file never meet
-// until the checker compares them; this links MLIR and no recorder, that links
-// the recorder and no MLIR. See 25-escape-analysis.md §3.4.
+// The static half of the escape oracle: for each allocation site, what escape
+// analysis claims (confined, or escapes with a reason), written in the format
+// tools/check/escape-oracle.py compares against the interpreter's recording.
 //
-// A SITE IS AN ALLOCATING OPERATION IN A LIVE BLOCK, keyed by the bytecode pc
-// the importer already put in its location - `NameLoc "program:<id>:<fn>:<at>"`
-// inside a FusedLoc - so no importer change was needed to join a claim to an
-// observation. A site in a block DeadCodeAnalysis proved dead is dropped; a
-// site in a live block the solver never visited is claimed `escapes:unvisited`
-// and COUNTED, and check-escape-claims.cmake gates that count at zero, exactly
-// as TypeClaims.cpp does for values.
+// Built like ctcompile/test/Analysis/Types/Claims.cpp: the interpreter's
+// recording (ctcompile/test/Analysis/Types/Oracle.cpp --script) and this file
+// meet only in the checker, so this links MLIR and no recorder, and the
+// recorder links no MLIR. claims/check.py drives all three.
+//
+// A site is an allocating operation in a live block, keyed by the bytecode pc
+// the importer already put in its location (`NameLoc
+// "program:<id>:<fn>:<at>"` inside a FusedLoc), so no importer change was
+// needed to join a claim to an observation. A site in a block DeadCodeAnalysis
+// proved dead is dropped; a site in a live block the solver never visited is
+// claimed `escapes:unvisited` and counted, and claims/check.py fails when that
+// count is not zero, as the type claims check does for values.
+//
+//===----------------------------------------------------------------------===//
+
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Import/BytecodeImport.hpp"
@@ -43,10 +49,11 @@ namespace {
 
 using namespace ctcompile::ctnative;
 
-// The kind the recorder tags an allocation with, per site op. Only the two
-// tracked kinds ever claim `confined`; the others are BOXED-SITEs the checker
-// reports as IMPRECISE rather than UNCLAIMED, which is what turns Phase 59's
-// backlog into a number.
+/// The kind the recorder tags an allocation with, per site op, or null for an
+/// op that does not allocate. Only create_object and create_array, the tracked
+/// sites, can claim `confined`; the others are boxed sites, which the checker
+/// reports as IMPRECISE rather than UNCLAIMED so the untracked allocations show
+/// up as a count.
 const char * kindOf(mlir::Operation * op) {
     if (llvm::isa<ctcompile::ctjs::CreateObjectOp>(op)) { return "obj"; }
     if (llvm::isa<ctcompile::ctjs::CreateArrayOp, ctcompile::ctjs::GatherRestOp,
@@ -98,7 +105,9 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    // All three, and none optional - TypeInference.h says why.
+    // All three are required: without DeadCodeAnalysis and
+    // SparseConstantPropagation the solver visits nothing past the first
+    // branch, so every later site would read as unvisited (TypeInference.h).
     mlir::DataFlowSolver solver;
     solver.load<mlir::dataflow::DeadCodeAnalysis>();
     solver.load<mlir::dataflow::SparseConstantPropagation>();
@@ -180,7 +189,7 @@ int main(int argc, char ** argv) {
         ++functions;
         std::optional<unsigned> functionIndex;
 
-        // THE FUNCTION INDEX is the importer's own naming: every ctjs.func is
+        // The function index is the importer's own naming: every ctjs.func is
         // `@<name>$<index>`, the same index the recorder writes as `fn <index>`.
         {
             const llvm::StringRef name = fn.getSymName();
@@ -298,7 +307,7 @@ int main(int argc, char ** argv) {
                 ++otherFirstSites;
             }
         }
-        // Count FIRST WITNESSES, not complete ownership graphs. In particular,
+        // Count first witnesses, not complete ownership graphs. In particular,
         // a confined argument array can expose its children to a spread callee.
         // Keep this diagnostic separate from the oracle's retention claims.
         for (const auto & [site, verdict] : verdicts.sites) {
@@ -374,14 +383,13 @@ int main(int argc, char ** argv) {
                 std::string verdict;
                 EscapeReason boxedReason = EscapeReason::Confined;
                 if (isBoxedSite(&op, boxedReason)) {
-                    // A BOXED-SITE: an allocating op the MVP does not track
+                    // An allocating op escape analysis does not track
                     // (closures, cells, the runtime's own arrays). Its reason
-                    // rides on the op's ODS Res<> decorator, so the checker
-                    // files it as IMPRECISE by that reason - the backlog, as a
-                    // number - rather than as UNCLAIMED.
+                    // comes from the op's ODS Res<> decorator, and the checker
+                    // files it as IMPRECISE by that reason, not UNCLAIMED.
                     verdict = std::string{"escapes:"} + stringifyEscapeReason(boxedReason).str();
                 } else if (found == verdicts.sites.end()) {
-                    // A TRACKED site the post-pass never saw is one the solver
+                    // A tracked site the post-pass never saw is one the solver
                     // never visited: boxed, and counted by computeVerdicts.
                     verdict = std::string{"escapes:"} +
                               stringifyEscapeReason(EscapeReason::Unvisited).str();

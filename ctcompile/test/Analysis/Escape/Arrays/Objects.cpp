@@ -1,11 +1,22 @@
+//===- Objects.cpp - Object deletion and copy tests -----------------------===//
+//
+// Contents and retention rows for plain objects: property deletion
+// (ctjs.delete_property, ctjs.delete_named) and own-property copies
+// (ctjs.copy_props), plus live IR edits that must override forged
+// completion markers.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks rows that delete properties from a plain object.
 void checkObjectDeletions(mlir::MLIRContext & context) {
-    // Each preserved source starts with an ordinary-object assignment. Until
-    // an own-data proof excludes inherited setters, neither deletion nor a
-    // later mutation can discharge its child or publish the old graph records.
+    // Every fixture starts with `o[key] = x` on a plain object. The analysis
+    // cannot yet prove that no inherited setter runs on that write, so it
+    // refuses there: no deletion or later mutation may release `x` or report
+    // the object graph from before the write.
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %key = ctjs.constant #ctjs.string<\"child\"> {storage_test_id = \"key\"}\n"
@@ -298,6 +309,8 @@ void checkObjectDeletions(mlir::MLIRContext & context) {
     };
     for (const deletion_row & expected : rows) { run(expected); }
 
+    // Keys are bounded at 256 bytes and `__proto__` is never an own data key
+    // (EscapeAnalysis/Primitives.cpp), so 257 'k's and `__proto__` are refused.
     const std::vector<std::pair<std::string, bool>> keys = {
         {"\"\"", true},
         {"\"0\"", true},
@@ -311,8 +324,9 @@ void checkObjectDeletions(mlir::MLIRContext & context) {
     };
     for (const auto & [key, supported] : keys) {
         for (bool isNamed : {false, true}) {
-            // Keep both historical deletion-key shapes. The shared initial
-            // object write refuses before either form of deletion is reached.
+            // Test both deletion ops (ctjs.delete_property with a constant key
+            // and ctjs.delete_named) on each key; the initial write refuses
+            // before either is reached.
             const std::string prefix = values + "  %fixed = ctjs.constant #ctjs.string<" + key +
                                        ">\n" +
                                        (supported ? "  ctjs.set_property %o[%fixed], %y\n" : "");
@@ -422,9 +436,12 @@ void checkObjectDeletions(mlir::MLIRContext & context) {
                 rows.size(), keys.size() * 2, budgets);
 }
 
+/// Checks rows that copy own properties between plain objects with
+/// ctjs.copy_props.
 void checkObjectCopies(mlir::MLIRContext & context) {
-    // The source initializer may call an inherited setter. Copy and mutation
-    // cases keep their original IR but stop before any own fields are proved.
+    // The write that initialises the source object `s` may call an inherited
+    // setter, so every copy and mutation case is refused at that write, before
+    // any own field is proved.
     struct copy_row {
         contents_row contents;
         const char * discharged = "";
@@ -432,6 +449,7 @@ void checkObjectCopies(mlir::MLIRContext & context) {
     };
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
+        // 4607182418800017408 is the IEEE-754 bit pattern of 1.0.
         "  %one = ctjs.constant #ctjs.number<4607182418800017408> "
         "{storage_test_id = \"one\"}\n"
         "  %key = ctjs.constant #ctjs.string<\"child\">\n"
@@ -780,6 +798,7 @@ void checkObjectCopies(mlir::MLIRContext & context) {
     };
     for (const copy_row & expected : rows) { run(expected); }
 
+    // Same key limits as checkObjectDeletions: at most 256 bytes, no `__proto__`.
     const std::vector<std::pair<std::string, bool>> keys = {
         {"\"\"", true},
         {"\"0\"", true},
@@ -803,8 +822,8 @@ void checkObjectCopies(mlir::MLIRContext & context) {
                           .exit = supported ? "t -> {t,x,y}" : ""}});
     }
 
-    // Wide copies remain refused at the initial object write; later fields
-    // cannot supply authority for that earlier assignment.
+    // 32 extra fields and two copies: still refused at the first object write,
+    // because proving later fields says nothing about that earlier one.
     std::string wide = values;
     std::string wideCopies = "ctjs.copy_props:s[child] -> t=x";
     for (unsigned i = 0; i != 32; ++i) {

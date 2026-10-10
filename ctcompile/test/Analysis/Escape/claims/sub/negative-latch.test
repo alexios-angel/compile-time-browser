@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name sub-negative-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-sub-negative-latch.claims
 
-// Original subtraction stays subtraction. Negative Numbers and bounded canonical
-// negative Strings establish increasing induction without changing original keys.
+// `i -= -1` stays a subtraction. Negative numbers and in-range negative numeric strings still
+// prove that the index increases, without changing the array keys it reads.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.binary sub
 // IMPORT-LABEL: ctjs.func @returned$

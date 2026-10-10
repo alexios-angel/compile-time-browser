@@ -1,7 +1,19 @@
+//===- MutationRefusals.cpp - Edited loop fixtures --------------*- C++ -*-===//
+//
+// Array-contents cases that edit the structured scf.while loop fixtures one
+// operation at a time.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {
 
+/// Adds cases that edit the loop fixtures from setup() one operation at a
+/// time. reject() cases must be refused with the given ArrayContentsFailure;
+/// rows cases must be accepted with the listed array contents, element reads
+/// and returned value. The second half covers loops that index the array %a
+/// directly instead of a loop-carried %base alias.
 void StructuredCases::mutationRefusals() {
     reject("an opaque structured backedge cannot reuse a prior exact Number",
            replace(original, "scf.yield %base, %step, %read", "scf.yield %base, %p, %read"));
@@ -1662,6 +1674,8 @@ void StructuredCases::mutationRefusals() {
            replace(replace(original, "%base[%i]", "%base[%last]"), "scf.yield %base, %step, %read",
                    "scf.yield %base, %step, %p"),
            ArrayContentsFailure::UnknownIndex);
+    // A while loop that indexes %a directly, from 0 while index < a.length,
+    // and returns the last element read. The cases below edit this loop.
     const std::string directLoop =
         "  %finalIndex, %result = scf.while (%index = %zero, %saved = %zero) : "
         "(!ctjs.value, !ctjs.value) -> (!ctjs.value, !ctjs.value) {\n"

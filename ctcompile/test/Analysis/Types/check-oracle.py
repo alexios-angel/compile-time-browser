@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""TWO IMPLEMENTATIONS OF AN ORACLE'S CHECKER, COMPARED - Phase 54B, and 55O
-for the escape half.
+"""Cross-check the C++ and Python implementations of the oracle checkers.
 
 `Oracle.cpp` walks the recorder in memory and runs the verdict table over stub
-inferences; tools/check/{type,escape}-oracle.py parses the recording FILE and
+inferences; tools/check/{type,escape}-oracle.py parses the recording file and
 runs the same table. Neither is a transcription of the other and they share no
 arithmetic. This runs both over the same fixture and makes the C++ side's
-counters the Python side's EXPECTATIONS, so a disagreement is a failure rather
-than two numbers nobody compared. THE FILE FORMAT IS WHAT SITS BETWEEN THEM: a
+counters the Python side's expectations, so a disagreement is a failure rather
+than two numbers nobody compared. The file format sits between them: a
 recorder bug shows up in both and would agree with itself; a writer or parser
-bug shows up in exactly one.
+bug shows up in exactly one. `--escape` checks the escape oracle instead of the
+type oracle.
 
-Both halves guard the vacuous pass: the deliberately wrong inference must have
-been caught, in a recording that observed something and left something
+Both halves guard against a vacuous pass: the deliberately wrong inference must
+have been caught, in a recording that observed something and left something
 unobserved; the trivial inference must be sound and useless; and the checker
-must NAME a site, because a count that cannot say where is a number, not a bug
-report.
+must name a site, because a count that cannot say where is not a bug report.
 """
 
 import argparse
@@ -34,6 +33,7 @@ ESCAPE_FIELDS = (
 
 
 def main():
+    """Run the self-test executable, then the Python checker against its counters."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", required=True, help="ctcompile-test-type-oracle")
     parser.add_argument("--script", required=True, help="tools/check/*-oracle.py")
@@ -46,8 +46,7 @@ def main():
     checker = [sys.executable, args.script, "--recording", args.recording, "--name", "selftest"]
 
     if not args.escape:
-        # Anchored, because this file exists because two numbers that were
-        # never compared looked like agreement.
+        # Require the tally line; a missing tally must fail, not read as agreement.
         tally = re.search(TYPE_TALLY, out)
         if not tally:
             sys.exit(f"the executable did not report an all-i32 tally:\n{out}")
@@ -109,8 +108,8 @@ def main():
             "the recorder's coordinates disagree with its own inventory: "
             f"{confined['mismatch']} kind mismatch(es)"
         )
-    # THE BOUNDED WALK IS THE ONE THAT MAKES "CONFINED" SAYABLE: unbounded must
-    # have reported strictly more.
+    # The bounded walk is what makes "confined" sayable, so the unbounded walk
+    # must have reported strictly more escapes.
     walk = re.search(r"escaped bounded ([0-9]+) unbounded ([0-9]+)", out)
     if not walk:
         sys.exit(f"the executable did not report the bounded/unbounded A/B:\n{out}")
@@ -130,8 +129,8 @@ def main():
     wrong = run(checker + ["--infer", "all-confined", "--max-report", "0"] + expectations(confined))
     # Every violation is printed (--max-report 0) because the first ten are
     # the top level's closures, named `<script>`; and one hand-computed
-    # violation is required BY NAME - `ret`'s object literal, the in-flight
-    # return value - so "names a site" means the right one.
+    # violation is required by name (`ret`'s object literal, the in-flight
+    # return value), so "names a site" means the right one.
     if not re.search(
         r"VIOLATION program [0-9a-f]+ function [0-9]+ \([A-Za-z_-]+\) pc [0-9]+", wrong.stdout
     ):

@@ -1,9 +1,41 @@
+//===- InvariantReads.cpp - Invariant-index array reads -------------------===//
+//
+// Array-contents escape rows whose writes go through indices built from
+// loop-invariant values.
+//
+// `#ctjs.number<N>` holds the IEEE-754 bit pattern of a double. Values used here:
+// 0 = 0.0, 9223372036854775808 = -0.0, 4598175219545276416 = 0.25,
+// 4602678819172646912 = 0.5, 4606281698874543309 = 0.9,
+// 4607182418800017408 = 1.0, 4608308318706860032 = 1.25,
+// 4611235658464650854 = 1.9, 4611686018427387904 = 2.0,
+// 4613712638259704627 = 2.9, 4613937818241073152 = 3.0,
+// 4615964438073389875 = 3.9, 4629700416936869888 = 32.0,
+// 13830554455654793216 = -1.0, 13833932155375321088 = -1.75,
+// 13834607695319426662 = -1.9, 13835058055282163712 = -2.0,
+// 13837309855095848960 = -3.0, 13839336474928165683 = -3.9,
+// 4751297606871678976 = 2^32 - 2, 4751297606873776128 = 2^32 - 1,
+// 4751297606874300416 = 2^32 - 0.75, 4751297606875873280 = 2^32,
+// 4751297606876135424 = 2^32 + 0.25, 4751297606876816998 = 2^32 + 0.9,
+// 4751297606878914150 = 2^32 + 2.9, 4845873199050653696 = 2^53,
+// 9094988921128908188 = 1e300, 18318360957983683996 = -1e300,
+// 9218868437227405311 = largest finite double, 9218868437227405312 = +Infinity,
+// 18442240474082181120 = -Infinity, 9221120237041090560 = NaN.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 #include "llvm/ADT/StringSet.h"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
 
+/// Array-contents escape cases where a loop writes through an index derived
+/// from loop-invariant values: lookup tables of Number, String or BigInt keys,
+/// invariant arithmetic and bitwise conversions on the induction variable,
+/// held string lengths, and nested invariant operations. Each `run` states the
+/// proven array contents, the element reads and the ownership of the returned
+/// value. Each `reject` edits an accepted body in a way the proof must refuse.
 void InductionCases::invariantReads() {
+    // ---- Number key tables: writes through `keys[i % 2]` prove actual own writes. ----
     const auto tablePrefix =
         replace(prefix, "  %a = ctjs.create_array [%one, %two, %three] {storage_test_id = \"a\"}\n",
                 "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
@@ -106,6 +138,7 @@ void InductionCases::invariantReads() {
     reject("a changing carried table cannot borrow its initial allocation",
            replace(carriedTable, "^header(%base, %step, %added, %tableBody",
                    "^header(%base, %step, %added, %base"));
+    // ---- String key tables: canonical numeric Strings name own indices. ----
     const auto stringTable = replace(
         replace(tableIndex, "  %keys =",
                 "  %textZero = ctjs.constant #ctjs.string<\"0\"> {storage_test_id = \"textZero\"}\n"
@@ -208,6 +241,7 @@ void InductionCases::invariantReads() {
     reject("String table aliases retain the same exact allocation in the write census",
            replace(stringTableAlias,
                    "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
+    // ---- Converted keys: unary plus over table reads keeps original read identity. ----
     const auto convertedTable =
         replace(stringTable, "  ctjs.set_property %base[%slot]",
                 "  %converted = ctjs.unary plus %slot\n  ctjs.set_property %base[%converted]");
@@ -299,6 +333,7 @@ void InductionCases::invariantReads() {
                    source);
         }
     }
+    // ---- Radix-prefixed String keys (0x, 0o, 0b) convert only at numeric use. ----
     const auto radixTable =
         replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0x0\">"),
                 "#ctjs.string<\"2\">", "#ctjs.string<\"0X2\">");
@@ -356,6 +391,7 @@ void InductionCases::invariantReads() {
             "radix table mutations remain visible before and after each original read",
             replace(radixTable, before, "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    // ---- Decimal point and exponent String spellings. ----
     const auto exponentTable =
         replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.0\">"),
                 "#ctjs.string<\"2\">", "#ctjs.string<\"20e-1\">");
@@ -439,6 +475,7 @@ void InductionCases::invariantReads() {
     reject("decimal conversion keeps the independent receiver reload gap",
            replace(replace(selectedConvertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.0\">"),
                    "#ctjs.string<\"2\">", "#ctjs.string<\"1e0\">"));
+    // ---- Fractional keys: bitwise operands truncate without changing stored values. ----
     const auto fractionalTable =
         replace(replace(replace(convertedTable, "#ctjs.string<\"0\">", "#ctjs.string<\"0.9\">"),
                         "#ctjs.string<\"2\">", "#ctjs.string<\"2.9\">"),
@@ -577,6 +614,7 @@ void InductionCases::invariantReads() {
                replace(fractionalTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    // ---- Fractional Number tables, complement and negation of table operands. ----
     const auto numberFractionalTable = replace(
         replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.number<4606281698874543309>"),
         "#ctjs.string<\"2.9\">", "#ctjs.number<4613712638259704627>");
@@ -686,6 +724,7 @@ void InductionCases::invariantReads() {
     }
     reject("Number fractional properties retain their exact original key",
            replace(numberFractionalTable, "%base[%converted]", "%base[%slot]"));
+    // ---- Arithmetic applied after a table read (sub, add, mul, div, mod, pow). ----
     const auto afterReadTable =
         replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                 "  %number = ctjs.unary plus %slot\n"
@@ -729,6 +768,7 @@ void InductionCases::invariantReads() {
            replace(afterSubHalf, "%base[%converted]", "%base[%number]"));
     reject("fractional subtraction bits do not prove an exact arithmetic Number",
            replace(afterSubHalf, "binary_static bitor %number, %zero", "binary add %number, %one"));
+    // ---- Exact integral arithmetic results used directly as own indices. ----
     const auto arithmeticOwnIndex =
         replace(replace(replace(replace(afterSubHalf, "4602678819172646912", "4598175219545276416"),
                                 "4606281698874543309", "4598175219545276416"),
@@ -1219,6 +1259,7 @@ void InductionCases::invariantReads() {
                replace(afterSubAddModPow, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    // ---- Power after a read, and unit (+-1) power bases. ----
     const auto afterReadPower =
         replace(numberFractionalTable, "  %converted = ctjs.binary_static bitor %slot, %zero",
                 "  %power = ctjs.binary pow %slot, %one\n"
@@ -1415,6 +1456,7 @@ void InductionCases::invariantReads() {
         "x");
     reject("negated sum snapshots cannot invent nonnegative property writes",
            replace(negatedAdd, "binary add %negative, %three", "binary add %negative, %zero"));
+    // ---- Chains of arithmetic snapshots; provenance stops after 64 operations. ----
     std::string subtractions = "  %original = ctjs.constant #ctjs.number<4606281698874543309>\n";
     std::string additions = subtractions;
     std::string multiplications = subtractions;
@@ -1585,6 +1627,7 @@ void InductionCases::invariantReads() {
                replace(numberFractionalTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    // ---- Unary plus over Number table operands, masks and shift counts. ----
     const auto plusNumberTable =
         replace(replace(numberFractionalTable,
                         "  %textZero = ctjs.constant #ctjs.number<4606281698874543309>",
@@ -1716,6 +1759,7 @@ void InductionCases::invariantReads() {
     reject(
         "nested unary Number bitwise proof does not supply fractional arithmetic facts",
         replace(nestedNumberTable, "binary_static bitor %slot, %zero", "binary sub %slot, %zero"));
+    // ---- Unary chains over Number sources; provenance stops after 64 operations. ----
     const auto unaryChainTable = [&](unsigned length, const std::string & kind) {
         auto source = plusNumberTable;
         for (const std::string suffix : {"Zero", "Two"}) {
@@ -1871,6 +1915,7 @@ void InductionCases::invariantReads() {
                replace(unaryStringTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
     }
+    // ---- Wide finite Numbers (beyond 2^32) wrap only at bitwise consumers. ----
     const auto wideNumberTable =
         replace(replace(numberFractionalTable, "#ctjs.number<4606281698874543309>",
                         "#ctjs.number<4751297606876816998>"),
@@ -1886,7 +1931,8 @@ void InductionCases::invariantReads() {
              .exit = "a -> {a}"},
             "x");
     }
-    // 2^53 and its next representable Number still have distinct uint32 images.
+    // 4845873199050653696 and ...697 are 2^53 and 2^53 + 2 (the next representable
+    // Number); their uint32 images still differ.
     run({.what = "wide Number conversion uses represented doubles across the precision boundary",
          .body = replace(replace(wideNumberTable, "4751297606876816998", "4845873199050653696"),
                          "4751297606878914150", "4845873199050653697"),
@@ -1985,6 +2031,7 @@ void InductionCases::invariantReads() {
              .reads = "keys[0]=textZero; keys[1]=textTwo; keys[0]=textZero",
              .exit = "a -> {a}"},
             "x");
+        // ---- Nonfinite Number operands (Infinity, NaN). ----
     }
     const auto nonfiniteNumberTable =
         replace(numberFractionalTable, "4606281698874543309", "9218868437227405312");
@@ -2069,6 +2116,7 @@ void InductionCases::invariantReads() {
         reject("nonfinite conversion preserves table mutations before and after reads",
                replace(nonfiniteNumberTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
+        // ---- Decimal Strings that overflow to Infinity convert to zero bits. ----
     }
     const auto overflowStringTable =
         replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"1e999\">");
@@ -2171,6 +2219,7 @@ void InductionCases::invariantReads() {
         reject("overflow conversion preserves table mutations before and after reads",
                replace(overflowStringTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
+        // ---- "Infinity" and "NaN" String tokens. ----
     }
     const auto nonfiniteStringTable =
         replace(overflowStringTable, "#ctjs.string<\"1e999\">", "#ctjs.string<\"Infinity\">");
@@ -2243,6 +2292,7 @@ void InductionCases::invariantReads() {
         reject("nonfinite String conversion preserves table mutations before and after reads",
                replace(nonfiniteStringTable, before,
                        "  ctjs.set_property %keys[%one], %textZero\n" + before));
+        // ---- Wide finite String operands. ----
     }
     const auto wideStringTable =
         replace(replace(fractionalTable, "#ctjs.string<\"0.9\">", "#ctjs.string<\"4294967296.9\">"),
@@ -2337,6 +2387,7 @@ void InductionCases::invariantReads() {
                 "  %converted = ctjs.unary plus %slot\n  ctjs.set_property %base[%converted]");
     reject("converted table aliases keep their exact allocation in the write census",
            replace(convertedTableAlias,
+                   // ---- Numeric binary operations over table operands. ----
                    "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
     const auto binaryTable = replace(convertedTable, "unary plus %slot", "binary sub %slot, %zero");
     for (const std::string expression :
@@ -2460,6 +2511,7 @@ void InductionCases::invariantReads() {
     }
     reject("binary table aliases retain exact allocation in the complete write census",
            replace(replace(convertedTableAlias, "unary plus %slot", "binary sub %slot, %zero"),
+                   // ---- BigInt table keys. ----
                    "  %step =", "  ctjs.set_property %alias[%one], %textZero\n  %step ="));
     const auto bigintTable =
         replace(replace(stringTable, "#ctjs.string<\"0\">", "#ctjs.bigint<\"0\">"),
@@ -2527,6 +2579,7 @@ void InductionCases::invariantReads() {
     for (const std::string point : {"  %pick =", "  %step ="}) {
         reject("BigInt table mutation remains visible before and after lookup",
                replace(bigintTable, point, "  ctjs.set_property %keys[%one], %textZero\n" + point));
+        // ---- Reloading the array or key from an invariant source. ----
     }
     const auto reloaded = replace(
         replace(savedChild, "  %step =", "  %unit = ctjs.get_property %base[%zero]\n  %step ="),
@@ -2647,6 +2700,7 @@ void InductionCases::invariantReads() {
     reject("an own-length reload must preserve the final-index bound",
            replace(lengthReload, "  %unit = ctjs.binary sub %size, %one",
                    "  %max = ctjs.constant #ctjs.number<4751297606873776128>\n"
+                   // ---- ASCII String length as an invariant Number stride. ----
                    "  %unit = ctjs.binary add %size, %max"));
     const auto stringLength =
         replace(replace(savedChild, "  %step =",
@@ -2716,6 +2770,7 @@ void InductionCases::invariantReads() {
                    "  %unit =", "  ctjs.set_property %base[%character], %one\n  %unit ="));
     reject(
         "an indexed digit String cannot become a Number key for another String",
+        // ---- Saved digit-String keys across own-array overwrites. ----
         replace(stringIndex, "ctjs.unary plus %character", "ctjs.get_property %text[%character]"));
     const std::string digitKey = prefix + "  %x = ctjs.create_object {storage_test_id = \"x\"}\n"
                                           "  ctjs.set_property %a[%zero], %x\n"
@@ -2771,6 +2826,7 @@ void InductionCases::invariantReads() {
                          "  %unit =", "  ctjs.set_property %base[%zero], %one\n  %unit ="),
          .arrays = "a:[one,x]",
          .reads = "a[0]=one; a[1]=x",
+         // ---- Held ASCII length snapshots. ----
          .exit = "x -> {x}"});
     const auto heldStringLength =
         replace(replace(computedUnitChild, makeUnit,
@@ -2935,6 +2991,7 @@ void InductionCases::invariantReads() {
              .reads = "a[0]=one; a[1]=x",
              .exit = "zero -> {}"},
             "x");
+        // ---- Dynamic (non-static) Add strides. ----
     }
     const auto dynamic = replace(original, "binary_static add %i, %one", "binary add %i, %one");
     for (const std::string constant : {"#ctjs.string<\"1\">", "#ctjs.bigint<\"1\">",
@@ -2945,6 +3002,7 @@ void InductionCases::invariantReads() {
     reject("dynamic Add cannot concatenate its String initialization",
            replace(dynamic, "#ctjs.number<0>", "#ctjs.string<\"0\">"));
     reject("a dynamic subtract latch cannot borrow the Add proof",
+           // ---- Invariant products as strides. ----
            replace(dynamic, "binary add %i, %one", "binary sub %i, %one"));
     const auto invariantProduct = replace(carriedUnit, "  %step = ctjs.binary_static add %i, %d",
                                           "  %product = ctjs.binary mul %d, %one\n"
@@ -3073,6 +3131,7 @@ void InductionCases::invariantReads() {
            replace(replace(invariantProduct, "mul %d, %one", "add %d, %one"), makeUnit,
                    "  %unit = ctjs.constant #ctjs.number<4751297606873776128>\n"));
     reject("invariant subtraction cannot certify a zero stride",
+           // ---- Invariant bitwise strides. ----
            replace(invariantProduct, "mul %d, %one", "sub %d, %d"));
     const auto invariantBits =
         replace(invariantProduct, "binary mul %d, %one", "binary_static bitand %d, %one");
@@ -3173,6 +3232,7 @@ void InductionCases::invariantReads() {
         "bitwise conversion cannot change an original String property's key",
         replace(replace(invariantBits, makeUnit, "  %unit = ctjs.constant #ctjs.string<\"-1\">\n"),
                 "%base[%i]", "%base[%d]"),
+        // ---- Invariant power strides. ----
         ArrayContentsFailure::UnknownIndex);
     const auto invariantPower = replace(invariantProduct, "mul %d, %one", "pow %d, %one");
     for (const auto & source :
@@ -3249,6 +3309,7 @@ void InductionCases::invariantReads() {
              .arrays = "a:[one,two,three]",
              .reads = unary == "bitnot" ? "a[0]=one; a[2]=three" : "a[0]=one; a[1]=two; a[2]=three",
              .exit = "added -> {}"});
+        // ---- Nested invariant operations up to the 64-level operand depth. ----
     }
     const auto nested = replace(savedChild, "  %step = ctjs.binary_static add %i, %one",
                                 "  %inner = ctjs.unary plus %one\n"
@@ -3308,7 +3369,8 @@ void InductionCases::invariantReads() {
         if (depth != 62 && depth != 63) { continue; }
         const auto body = replace(nested, "  %inner = ctjs.unary plus %one\n",
                                   chain + "  %inner = ctjs.unary plus " + previous + "\n");
-        // The inner conversion and outer multiply add two more layers.
+        // With the inner conversion and the outer multiply, 62 unary layers reach the
+        // 64-level operand depth limit exactly; 63 layers exceed it.
         if (depth == 63) {
             reject("deep invariant induction stops at its stack ceiling", body);
         } else {

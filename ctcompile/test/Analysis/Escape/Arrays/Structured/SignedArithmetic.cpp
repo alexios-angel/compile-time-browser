@@ -1,3 +1,11 @@
+//===- SignedArithmetic.cpp - Signed index cases ----------------*- C++ -*-===//
+//
+// Structured-array cases for indices computed with signed arithmetic (bitnot,
+// neg, div, mod, pow) inside scf.if and scf.for regions. Each rows entry is
+// an accepted case with the expected array contents, reads and exit sets;
+// each reject() is a mutation that must fail.
+//
+//===----------------------------------------------------------------------===//
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {

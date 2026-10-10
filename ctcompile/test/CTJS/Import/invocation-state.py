@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Pin importer call snapshots while source throwing calls remain refused."""
+"""Check the register state saved at each call inside a try/catch.
+
+For each fixture in invocation-state.mlir, verifies (in the raw, resolved,
+lifted and lowered IR) that every call's unwind edge carries the registers as
+they were before the call and its normal edge carries the call's result, and
+that native lowering still refuses the function because a call may throw
+inside a try. Node and the reference interpreter supply the expected globals.
+"""
 
 import re
 import struct
@@ -9,6 +16,8 @@ from CTNative.Lowering.Exceptions import exceptions
 
 SSA = re.compile(r"%[\w.$-]+")
 EDGE = re.compile(r"\^(\w+)\(([^)]*)\)")
+# Fixture name -> (number of source functions, expected global values from the
+# reference run, value of the catch's `mark` register before each call).
 CASES = {
     "assignment": (3, {"caught42": 42, "normal20": 20}, [10]),
     "sequential": (3, {"caught52": 52, "normal20": 20}, [0, ("call", 0)]),
@@ -33,6 +42,7 @@ def require(condition, message):
 
 
 def guarded_body(text):
+    """Return the IR text of the single `guarded` function in `text`."""
     functions = re.split(r"(?=^  ctjs\.func\b)", text, flags=re.M)
     found = [
         body for body in functions if re.match(r"  ctjs\.func (?:private )?@guarded\$\d+\(", body)
@@ -153,6 +163,7 @@ def snapshots(text):
 
 
 def check_state(text, name, before):
+    """Check the calls of `guarded` in `text` against the fixture's expectations; return them."""
     calls, events = snapshots(text)
     require([call["before"] for call in calls] == before, name + ": wrong pre-call mark")
     if name == "receiver":

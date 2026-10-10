@@ -2,7 +2,7 @@
 // RUN: python3 %S/../../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-string-snapshot
 // RUN: FileCheck %s < %t/escape-claims-invariant-string-snapshot.claims
 
-// Saved digit Strings are canonical own-array keys, not Number facts.
+// A saved one-digit string is an own-array key ('0' names element 0), not a Number.
 // CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined

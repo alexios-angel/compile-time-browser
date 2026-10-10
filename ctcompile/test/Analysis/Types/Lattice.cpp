@@ -1,41 +1,42 @@
-// THE ctnative TYPE LATTICE, AND THE FIRST DECLARED DIVERGENCE.
+//===- ctcompile/test/Analysis/Types/Lattice.cpp - ctnative lattice test --===//
 //
-// Part 24's gate for Phase 53: "the lattice has a unit test with a hand-written
-// meet table". The table is `kMeetTable` below and it is written by hand on
-// purpose - it is the one place in this phase where the expected answer is
-// stated independently of the code that computes it.
+// Unit test for the ctnative type lattice and for its string-length agreement
+// with the interpreter.
 //
-// A TABLE ALONE IS NOT ENOUGH, and the reason is the shape of the bug part 24
-// is worried about: "two places computing 'what type is this' differently is
-// how a transpiler produces a program that is right on Tuesday." A table checks
-// the cases somebody thought of. What makes `meet` usable as the confluence
-// operator of a dataflow analysis is that it is a LATTICE JOIN - idempotent,
-// commutative, associative, with `bottom` as its identity and `boxed`
-// absorbing - and those are properties, not cases. So the table is checked, and
-// then all four laws are checked exhaustively over a sample of the type
-// universe; associativity alone is 33^3 = 35937 triples. The mutation counts
-// below were measured on the original 21-type sample (9261 triples).
+// The meet table, `kMeetTable` below, is written by hand on purpose: it is the
+// one place where the expected answer is stated independently of the code that
+// computes it.
 //
-// THE TWO HALVES CATCH DIFFERENT THINGS, and that was measured rather than
-// hoped for. Three guards in CTNativeLattice.cpp were removed one at a time and
-// the suite re-run:
+// A table alone is not enough: a table checks only the cases somebody thought
+// of. What makes `meet` usable as the confluence operator of a dataflow
+// analysis is that it is a lattice join (idempotent, commutative, associative,
+// with `bottom` as its identity and `boxed` absorbing), and those are
+// properties, not cases. So the table is checked, and then all four laws are
+// checked exhaustively over a sample of the type universe; associativity alone
+// is 33^3 = 35937 triples. The mutation counts below were measured on an
+// earlier 21-type sample (9261 triples).
 //
-//   the `opt` hoist in collect()   -> SIX TABLE ROWS red, 0 of 9261 triples.
+// The two halves catch different things, which was measured by removing three
+// guards in CTNativeLattice.cpp one at a time and re-running the suite:
+//
+//   the `opt` hoist in collect()   -> six table rows red, 0 of 9261 triples.
 //                                     An opaque `opt` alternative satisfies
 //                                     every law; what it loses is the canonical
 //                                     form, which only the table states.
-//   the re-sort after the merge    -> 4 of 9261 triples red, TABLE ALL GREEN.
+//   the re-sort after the merge    -> 4 of 9261 triples red, table all green.
 //                                     Two spellings of one type, reachable only
 //                                     through a three-way bracketing.
 //   the variant cap                -> one cap check red, both halves green.
 //
 // Neither half would have been enough on its own.
 //
-// AND THE DIVERGENCE IS PINNED AGAINST THE RUNNING INTERPRETER, never against a
-// number written down here. `stringLengthPinnedToInterpreter` compiles and runs
-// three lines of JavaScript in the real VM and asks IT what `"\u{1F600}".length`
-// is. Part 24 §A.2: "Every phase's gate is a comparison against the
-// interpreter."
+// The string-length check is pinned against the running interpreter, never
+// against a number written down here: the `.length` block in main() compiles
+// and runs two lines of JavaScript in the real VM and asks it what
+// "\u{1F600}".length is.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctcompile/CTNative/IR/CTNativeDialect.h>
 #include <ctcompile/CTNative/IR/CTNativeLattice.h>
 #include <ctcompile/CTNative/IR/CTNativeTypes.h>
@@ -70,6 +71,7 @@ namespace {
 
 int checks = 0;
 
+/// Counts one check and prints \p what if \p ok is false.
 void check(const char * what, bool ok) {
     ++checks;
     if (!ok) {
@@ -78,6 +80,7 @@ void check(const char * what, bool ok) {
     }
 }
 
+/// Prints \p type as MLIR text, or "<null>" for a null type.
 std::string show(Type type) {
     if (!type) { return "<null>"; }
     std::string buffer;
@@ -86,9 +89,9 @@ std::string show(Type type) {
     return buffer;
 }
 
-// THE TYPE UNIVERSE, AS TEXT. Spelled the way a person writes it in a .mlir
-// file rather than built with get() calls, so the table below reads as a table
-// and so that every line of it also exercises the generated parser.
+/// Parses one type from text. Types are spelled the way a person writes them
+/// in a .mlir file rather than built with get() calls, so the table below reads
+/// as a table and every line of it also exercises the generated parser.
 Type parse(mlir::MLIRContext & context, std::string_view text) {
     Type parsed = mlir::parseType(llvm::StringRef(text.data(), text.size()), &context);
     if (!parsed) {
@@ -101,9 +104,9 @@ Type parse(mlir::MLIRContext & context, std::string_view text) {
 // The hand-written meet table
 //===--------------------------------------------------------------------===//
 //
-// Read as: meeting `a` with `b` gives `expected`. Every row is an assertion
-// about the LATTICE, not about the implementation, and each carries the reason
-// it is that answer and not another.
+/// One row of the meet table: meeting `a` with `b` gives `expected`. Every row
+/// is an assertion about the lattice, not about the implementation, and `why`
+/// gives the reason it is that answer and not another.
 struct MeetRow {
     const char * a;
     const char * b;
@@ -356,8 +359,9 @@ const char * const kSampleTypes[] = {
 // The divergence pin
 //===--------------------------------------------------------------------===//
 //
-// How many code units the UTF-8 bytes `utf8` occupy under `encoding` - which is
-// what `.length` answers for a string in that representation.
+/// Returns how many code units the UTF-8 bytes \p utf8 occupy under
+/// \p encoding, which is what `.length` answers for a string in that
+/// representation.
 std::size_t codeUnitsIn(StrEncoding encoding, std::string_view utf8) {
     if (encoding == StrEncoding::UTF8) { return utf8.size(); }
     std::size_t units = 0;
@@ -371,8 +375,8 @@ std::size_t codeUnitsIn(StrEncoding encoding, std::string_view utf8) {
         } else if (lead >= 0xC0) {
             width = 2;
         }
-        // A supplementary code point - one that needs four UTF-8 bytes - is a
-        // SURROGATE PAIR in UTF-16 and therefore two code units. That is the
+        // A supplementary code point (one that needs four UTF-8 bytes) is a
+        // surrogate pair in UTF-16 and therefore two code units. That is the
         // whole of the "\u{1F600}".length disagreement, in one line.
         units += (width == 4) ? 2u : 1u;
         at += width;
@@ -403,9 +407,8 @@ int main() {
                         "            because  %s\n",
                         row.a, row.b, row.expected, show(got).c_str(), row.why);
         }
-        // AND THE OTHER WAY ROUND, on every row, because a table checked in one
-        // direction is a table that would not have noticed an unstable
-        // alternative order.
+        // Check every row the other way round as well: a table checked in one
+        // direction would not notice an unstable alternative order.
         ++checks;
         if (meet(b, a) != expected) {
             ++ctbrowser_test_failures;
@@ -437,7 +440,7 @@ int main() {
         if (meet(a, bottom) != a) { ++lawFailures; }
         if (meet(boxed, a) != boxed) { ++lawFailures; }
         if (meet(a, boxed) != boxed) { ++lawFailures; }
-        // A null Type is ABSENT, not bottom - the documented seedless fold.
+        // A null Type is absent, not bottom: the documented seedless fold.
         if (meet(Type(), a) != a) { ++lawFailures; }
     }
     check("idempotent, bottom is the identity, boxed absorbs, null is absent", lawFailures == 0);
@@ -460,13 +463,13 @@ int main() {
     }
     check("commutative over the whole sample", commuteFailures == 0);
 
-    // ASSOCIATIVITY IS THE EXPENSIVE ONE AND THE ONE WORTH HAVING, and what it
-    // actually guards is the SECOND sortAndUnique in CTNativeLattice.cpp's
-    // finishUnion - the one that looks redundant. The merge loop replaces
+    // Associativity is the expensive law and the one worth having. What it
+    // actually guards is the second sortAndUnique in CTNativeLattice.cpp's
+    // finishUnion, the one that looks redundant. The merge loop replaces
     // members in place, so a list sorted before it is not sorted after it;
     // delete that call and `meet(set<bool>, meet(owned<bool>, shared<bool>))`
     // answers `variant<set, shared>` where the other bracketing answers
-    // `variant<shared, set>`. Four of the original sample's 9261 triples went
+    // `variant<shared, set>`. Four of the 21-type sample's 9261 triples went
     // red while every table row stayed green, which is why both exist.
     int associateFailures = 0;
     int triples = 0;
@@ -487,8 +490,8 @@ int main() {
             }
         }
     }
-    // ASSERT THE COUNTER, NEVER THE OUTPUT: a loop that ran zero triples would
-    // report zero failures and look identical to a passing one.
+    // Assert the counter, not only the failure count: a loop that ran zero
+    // triples would report zero failures and look identical to a passing one.
     check("the associativity sweep covered every triple",
           triples == int(sample.size() * sample.size() * sample.size()));
     check("associative over the whole sample", associateFailures == 0);
@@ -496,10 +499,11 @@ int main() {
 
     // --- the variant cap ----------------------------------------------------
     //
-    // FIVE MUTUALLY UNMERGEABLE TYPES. bool, a number, a string, a vector and a
+    // Five mutually unmergeable types: bool, a number, a string, a vector and a
     // set share no family with each other, so nothing collapses them and the
     // union really does reach five. Past the cap the answer is json, which is
-    // what keeps the lattice finite-height and Phase 54's analysis terminating.
+    // what keeps the lattice finite-height and the dataflow analysis that uses
+    // it terminating.
     {
         const Type five[] = {
             parse(context, "!ctnative.bool"),
@@ -521,15 +525,17 @@ int main() {
               llvm::isa<ctcompile::ctnative::JsonType>(fifth));
     }
 
-    // --- ND-1: `.length`, pinned to the interpreter -----------------------
+    // --- `.length`, pinned to the interpreter -----------------------------
     //
-    // NOTHING HERE IS WRITTEN DOWN TWICE. The fixture hands back the string's
-    // BYTES and the engine's answer for `.length`, and the assertions are
-    // between those two, the native runtime's count and `kDefaultStringEncoding`.
-    // A number in this block would be a constant that could go stale silently,
-    // which is the failure GC/Roots.cpp records at the other end of the pipeline.
-    // The engine counts UTF-16 code units over WTF-8 storage since 2b710a0d2,
-    // which closed ND-1: the native carrier stays utf8 and counts units too.
+    // This was divergence ND-1 in ctcompile/docs/native-divergences.md, now
+    // closed. Nothing here is written down twice: the fixture hands back the
+    // string's bytes and the engine's answer for `.length`, and the assertions
+    // compare those two, the native runtime's count and
+    // `kDefaultStringEncoding`. A number in this block would be a constant that
+    // could go stale silently, the failure test/Runtime/GC/Roots.cpp records at
+    // the other end of the pipeline. The engine stores strings as WTF-8 but counts UTF-16
+    // code units, and the native carrier stays UTF-8 and counts code units the
+    // same way.
     {
         const std::string fixture = "var S = \"\\uD83D\\uDE00\";\n"
                                     "var L = S.length;\n";
@@ -545,16 +551,16 @@ int main() {
                 const std::string bytes = cx.to_string(cx.global("S"));
                 const std::string length = cx.to_string(cx.global("L"));
 
-                // THE PIN. Whatever `.length` answers in this engine, the
-                // native runtime's String length has to answer the SAME -
-                // otherwise every native-compiled `.length` on a non-ASCII
+                // The pin: whatever `.length` answers in this engine, the
+                // native runtime's string length has to answer the same.
+                // Otherwise every native-compiled `.length` on a non-ASCII
                 // string disagrees with the differential harness's own oracle.
                 check("ctnative::string_length answers .length the way the "
                       "interpreter does",
                       std::to_string(::ctnative::string_length(bytes)) == length);
 
-                // AND WHAT IT ANSWERS: ECMA-262 counts UTF-16 code units and
-                // answers 2, over bytes that number 4, so a byte count is caught.
+                // ECMA-262 counts UTF-16 code units and answers 2, over bytes
+                // that number 4, so a byte count is caught.
                 check("ECMA-262's answer for \"\\u{1F600}\".length is 2 code units",
                       codeUnitsIn(StrEncoding::UTF16, bytes) == 2);
                 check("this engine answers in code units, not its stored bytes",
@@ -571,12 +577,12 @@ int main() {
     // The C++ carrier, which the encoding parameter exists to choose
     //===----------------------------------------------------------------===//
     //
-    // Part 24 Stage 53D Step 4. The encoding parameter is only worth carrying
-    // if something downstream reads it, and what reads it is the emitter
-    // asking "what C++ type is this". A `str<utf16>` carried in a
-    // `std::string` would answer `.length` in BYTES - which is precisely the
-    // bug the parameter was added to prevent - so the two travel together and
-    // `cppCarrier()` is the single place that says which goes with which.
+    // The encoding parameter is only worth carrying if something downstream
+    // reads it, and what reads it is the emitter asking "what C++ type is
+    // this". A `str<utf16>` carried in a `std::string` would answer `.length`
+    // in bytes, precisely the bug the parameter was added to prevent, so the
+    // two travel together and `cppCarrier()` is the single place that says
+    // which goes with which.
     {
         using ctcompile::ctnative::StrType;
         using ctcompile::ctnative::StrViewType;
@@ -588,19 +594,19 @@ int main() {
               StrViewType::get(&context, StrEncoding::UTF8).cppCarrier() == "std::string_view");
         check("strview<utf16> is carried by std::u16string_view",
               StrViewType::get(&context, StrEncoding::UTF16).cppCarrier() == "std::u16string_view");
-        // AND THE TIE TO THE STORAGE ABOVE. The default encoding is the
-        // engine's utf8, so the carrier a fresh string gets is std::string,
-        // whose `.length` is ctnative::string_length rather than size(). If
-        // kDefaultStringEncoding flips, THIS line changes with it - which is
-        // the point of deriving it rather than writing "std::string" twice.
+        // The tie to the storage above: the default encoding is the engine's
+        // utf8, so the carrier a fresh string gets is std::string, whose
+        // `.length` is ctnative::string_length rather than size(). If
+        // kDefaultStringEncoding flips, this line changes with it, which is the
+        // point of deriving it rather than writing "std::string" twice.
         check("the default encoding's carrier is std::string while the engine is utf8",
               StrType::get(&context, kDefaultStringEncoding).cppCarrier() == "std::string");
     }
 
-    // ASSERT THE COUNTER. A test that silently stopped running most of itself
-    // exits 0 and looks exactly like a passing one; this is the number to
-    // update when a case is added, and the reason it is here rather than a
-    // lower bound is that a lower bound would not notice a case being deleted.
+    // Assert the counter. A test that silently stopped running most of itself
+    // exits 0 and looks exactly like a passing one. Update this number when a
+    // case is added; it is exact rather than a lower bound because a lower
+    // bound would not notice a case being deleted.
     // 61 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
     const int expectedChecks = 141;

@@ -1,6 +1,6 @@
-// Target prerequisite for throwing source callees. Catch slots contain the
-// pre-call register state; a call result is published only on normal return.
-// This fixture does not relax source recovery or its live effect admission.
+// Calls that may throw inside ctnative.cpp_try: the handler sees variables as
+// they were before the call, and a call's result is assigned only on normal
+// return. Emitter-only: it does not make the lowering accept more callees.
 // RUN: split-file %s %t
 // RUN: ctjs-translate --mlir-to-cpp %t/valid.mlir > %t/explicit.cpp
 // RUN: ctjs-opt %t/valid.mlir --ctnative-print-deduced --mlir-print-debuginfo -o %t/deduced.mlir

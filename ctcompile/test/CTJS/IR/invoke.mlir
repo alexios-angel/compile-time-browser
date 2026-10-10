@@ -1,6 +1,6 @@
 // The call's result flows only to normal completion. The exceptional edge
 // carries the explicit pre-call register snapshot plus an implicit payload.
-// This IR prerequisite does not enable source recovery or native lowering.
+// This file checks only the op's syntax (round trip) and its verifier.
 // RUN: split-file %s %t
 // RUN: ctjs-opt %t/roundtrip.mlir | ctjs-opt | FileCheck %s --check-prefix=ROUNDTRIP
 // RUN: not ctjs-opt %t/body-work.mlir 2>&1 | FileCheck %s --check-prefix=INVALID-0

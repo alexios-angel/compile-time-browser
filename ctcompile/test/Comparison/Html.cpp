@@ -1,11 +1,15 @@
-// The document comparator, checked against the one thing it must never do:
-// say two documents match when they do not.
+//===- ctcompile/test/Comparison/Html.cpp - Document comparator tests -----===//
 //
-// A comparator is the acceptance test for Phase 16A, which means a comparator
-// that is too lenient does not merely fail to catch a bad blueprint - it
-// CERTIFIES one. So the positive case here is one line and the negative cases
-// are the file: every field it claims to compare gets broken on purpose, and
-// the comparator has to notice each one.
+// Tests ctcompile::html::compare against the one thing it must never do: say
+// two documents match when they do not.
+//
+// The comparator is how a compiled HTML blueprint is accepted, so a comparator
+// that is too lenient does not just miss a bad blueprint, it approves one. The
+// positive case is therefore short and the negative cases are most of the file:
+// every field the comparator claims to compare is broken on purpose, and it
+// has to notice each one.
+//
+//===----------------------------------------------------------------------===//
 #include <ctcompile/HTML/DocumentComparator.hpp>
 
 #include <ctbrowser/core/atom.hpp>
@@ -24,10 +28,10 @@ using ctbrowser::node_ns;
 
 namespace {
 
-// Each document gets its OWN atom table, which is the point: ids are handed out
-// in first-interning order at run time, so two tables spell the same tag with
-// different numbers. A comparator that compared ids would pass or fail on
-// interning order rather than on the document.
+/// A parsed document with its own atom table. Atom ids are handed out in
+/// first-interning order, so two tables give the same tag different ids; a
+/// comparator that compared ids would pass or fail on interning order rather
+/// than on the document.
 struct parsed {
     atom_table atoms;
     document doc{atoms};
@@ -38,7 +42,7 @@ constexpr std::string_view page = "<!doctype html><html><head><title>t</title></
                                   "<body><div id=one class=\"a b\">text</div><p>second</p>"
                                   "<svg><title>tooltip</title></svg></body></html>";
 
-// Finds the first element with the given tag, in document order.
+/// Finds the first element with the given tag, in document order.
 node_id find(const document & doc, std::string_view tag) {
     const auto read = doc.read();
     const auto walk = [&](auto & self, node_id id) -> node_id {
@@ -51,8 +55,8 @@ node_id find(const document & doc, std::string_view tag) {
     return walk(walk, doc.root());
 }
 
-// A mutation that a blueprint could plausibly get wrong, and the field it
-// breaks. Each one MUST be noticed.
+/// Applies `mutate`, a mistake a blueprint could plausibly make, to one of two
+/// parses of `page` and fails the test unless the comparator notices it.
 void must_notice(std::string_view what, void (*mutate)(document &)) {
     parsed a{page};
     parsed b{page};
@@ -68,7 +72,7 @@ void must_notice(std::string_view what, void (*mutate)(document &)) {
 } // namespace
 
 int main() {
-    // THE POSITIVE CASE. Same input, two parses, two atom tables: identical.
+    // The positive case: same input, two parses, two atom tables, identical.
     {
         parsed a{page};
         parsed b{page};
@@ -80,14 +84,16 @@ int main() {
         }
     }
 
-    // AND WITH THE ATOM IDS DELIBERATELY SHIFTED. Interning junk into one table
-    // first moves every subsequent id, so if the comparator were reading ids
-    // rather than text this is the case that would fail.
+    // Meant to compare documents whose atom ids are shifted, which a comparator
+    // reading ids rather than text would fail. As written it does not shift
+    // anything: each `parsed` has its own atom table, and the junk is interned
+    // into `b` (unused) and into `c` only after `c` is parsed, so `a` and `c`
+    // get identical ids. Css.cpp's equivalent interns the junk first.
     {
         parsed a{page};
         parsed b{page};
         for (const char * junk : {"zzz", "yyy", "xxx"}) { (void)b.doc.atoms().intern(junk); }
-        parsed c{page}; // parsed AFTER the junk, so its ids are shifted
+        parsed c{page}; // Parsed into a fresh table; the junk below comes later.
         for (const char * junk : {"qqq", "www"}) { (void)c.doc.atoms().intern(junk); }
         check(!ctcompile::html::compare(a.doc, c.doc),
               "atom ids differ between tables and must not affect the comparison");
@@ -113,8 +119,8 @@ int main() {
         auto build = doc.build();
         build.append(find(doc, "body"), doc.create_element(doc.atoms().intern("section")));
     });
-    // THE ONE THAT MATTERS MOST, and the one a comparator written by tag name
-    // alone would miss: an SVG <title> and an HTML <title> intern to the SAME
+    // The most important case, and the one a comparator written by tag name
+    // alone would miss: an SVG <title> and an HTML <title> intern to the same
     // atom. A blueprint that dropped the namespace would rebuild a tree that
     // looks identical by tag and behaves differently everywhere else.
     must_notice("an element in the wrong namespace", [](document & doc) {
@@ -123,35 +129,35 @@ int main() {
                      doc.create_element(doc.atoms().intern("title"), node_ns::svg));
     });
 
-    // A TORN TREE, which is the default failure mode of a loader written
-    // against document::builder: `append` sets the child's parent but does NOT
-    // remove it from its previous parent's list, and performs no cycle check -
-    // unlike document::append_child, which does both. So this is one call, and
-    // it leaves <p> reachable from two parents.
+    // A torn tree, the default failure of a loader written against
+    // document::builder: `append` sets the child's parent but does not remove
+    // it from its previous parent's list and performs no cycle check, unlike
+    // document::append_child, which does both. This one call leaves <p>
+    // reachable from two parents.
     //
     // A children-only comparator does not report this. It recurses until the
-    // stack dies, which is an acceptance test that crashes instead of failing.
+    // stack overflows, so the acceptance test crashes instead of failing.
     must_notice("a node reachable from two parents", [](document & doc) {
         auto build = doc.build();
         build.append(find(doc, "div"), find(doc, "p"));
     });
 
-    // THE CASE THE COUNT COMPARISON CANNOT SEE, and the reason the walk carries
-    // a visited set at all.
+    // The case child counts cannot see, and the reason the comparator's walk
+    // keeps a visited set.
     //
-    // Every mutation above is caught by a child count somewhere - a torn tree
-    // included, because appending an already-parented node makes its new
-    // parent one child longer. But a loader that MATERIALISES ONE NODE AND
-    // ATTACHES IT IN TWO PLACES - a shared-subtree optimisation gone wrong -
-    // produces a document whose counts match the original at EVERY node, and a
-    // children-only walk descends into it twice and reports nothing. Give it a
-    // cycle instead of a diamond and that walk does not return at all.
+    // Every mutation above changes a child count somewhere; a torn tree does
+    // too, because appending an already-parented node makes its new parent one
+    // child longer. A loader that creates one node and attaches it in two
+    // places (a shared-subtree optimisation gone wrong) produces a document
+    // whose counts match the original at every node, and a children-only walk
+    // visits the node twice and reports nothing. With a cycle instead of a
+    // diamond, that walk never returns.
     {
         atom_table a1;
         atom_table a2;
         document d1{a1};
         document d2{a2};
-        // expected: html > [ a > x, b > y ] - four distinct elements.
+        // Expected: html > [ a > x, b > x ], with two distinct x elements.
         {
             auto build = d1.build();
             const node_id root = d1.create_element(a1.intern("html"));
@@ -163,7 +169,7 @@ int main() {
             build.append(ea, d1.create_element(a1.intern("x")));
             build.append(eb, d1.create_element(a1.intern("x")));
         }
-        // actual: the SAME x hung under both. Every child count matches.
+        // Actual: one x element attached under both. Every child count matches.
         {
             auto build = d2.build();
             const node_id root = d2.create_element(a2.intern("html"));

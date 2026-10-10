@@ -2,9 +2,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/source.js 2>/dev/null | ctjs-opt | FileCheck %s
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js 2>/dev/null | ctjs-opt | FileCheck %s --check-prefix=REFUSED
 
-// Source reference mode survives register forwarding. The first three hard
-// reads below can have the same LoadGlobal-to-TypeOf graph as a direct typeof;
-// neither a sole TypeOf user nor bytecode adjacency grants a soft lookup.
+// Only `typeof` applied directly to an identifier (parenthesised or not) may read
+// a missing global without throwing (typeof_lookup = true). Comma expressions,
+// aliases and conditionals are ordinary reads, even when their IR looks like a direct typeof.
 
 //--- source.js
 function direct() { return typeof missingDirect; }

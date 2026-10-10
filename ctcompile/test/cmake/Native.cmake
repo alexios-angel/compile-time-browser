@@ -1,35 +1,37 @@
-# === PHASE 62½-D: the native gate ===
+# === Native-target tests: build-side support for the lit checks ===
 #
-# THE TEST THAT DEFINES "NATIVE" - part 24 §1.2 and Phase 62½-D - is a lit
-# test since 2026-09-15: CTNative/Checks/compilation-unit.py (emit, compile
-# standalone, nm, run, compare), driven by the RUN lines in each fixture's
-# .test or hand-written .emitc.mlir. What CMake still owns is what needs the
-# BUILD: the interpreter reference, the two VM-linked negative controls, the
-# nm and the clean-compile toolchains lit is told about (Lit.cmake), and the
-# pipeline modules every fixture .test reads out of the build tree.
+# "Native" means a program that compiles and runs with no ctbrowser engine
+# linked in. The lit check CTNative/Checks/compilation-unit.py tests exactly
+# that (emit C++, compile standalone, nm for engine symbols, run, compare with
+# the interpreter), driven by RUN lines in each fixture's .test or hand-written
+# .emitc.mlir. CMake owns only what needs the build: the interpreter reference
+# binary, the VM-linked negative controls, the nm and the clean-compile
+# toolchains passed to lit (Lit.cmake), and the pipeline modules the fixture
+# .test files read from the build tree.
 #
-# THE REFERENCE NEEDS NO MLIR. It is the interpreter's opinion of a JavaScript
-# file, built wherever the type oracle is: the answer side of the gate should
-# not depend on the compiler side existing, and a lowering author wants it on a
-# box with no LLVM too.
+# The reference needs no MLIR. It is the interpreter's answer for a JavaScript
+# file, built wherever the type oracle is: the answer side of a comparison
+# should not depend on the compiler side existing, and it is useful on a
+# machine with no LLVM too.
 add_executable(ctcompile-test-native-reference)
 # PROGRAM.js or --page PAGE.html, parsed by ctbrowser/tools/support/options.hpp.
 target_link_libraries(ctcompile-test-native-reference PRIVATE ctbrowser::ctbrowser
   ctbrowser-options)
 ctcompile_target(ctcompile-test-native-reference)
 
-# THE RUNTIME HEADER, COMPILED BY THE BUILD. include/ctcompile/CTNative/Runtime/
-# ctnative.hpp is what every native program includes, and nothing else here
-# compiles it under -Werror - a header only generated programs compile is the
-# string literal it replaced. Needs no MLIR, like the reference above; needs
+# The native runtime header, include/ctcompile/CTNative/Runtime/ctnative.hpp,
+# compiled by the build. Every native program includes it, and nothing else
+# compiles it under -Werror; a header that only generated programs compile
+# would break unnoticed. Needs no MLIR, like the reference above; needs
 # ctbrowser for its DOM section.
 ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 
-# A VM-LINKED NEGATIVE CONTROL: <name>-fixture.emitc.mlir's C++, emitted at
-# build time by the same emitter the gate uses, plus one object that reaches the
-# interpreter, linked against the engine - it must FAIL the symbol check. THE
-# GATE'S OWN FLAGS, not ctcompile_target's: this is the same text under the same
-# compile the gate performs, plus one object and one library.
+# A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
+# build time by the same emitter the native check uses, plus one object that
+# reaches the interpreter, linked against the engine; it must fail the
+# no-engine-symbols check. It uses the native check's own compile flags, not
+# ctcompile_target's, so it differs from a native build only by that object
+# and library.
 function(ctcompile_vm_linked_control name module)
   set(_cpp "${CMAKE_CURRENT_BINARY_DIR}/${name}-fixture.generated.cpp")
   add_custom_command(
@@ -46,9 +48,10 @@ function(ctcompile_vm_linked_control name module)
 endfunction()
 
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
-  # nm, the one CMake found beside the compiler at configure time (llvm-nm for
-  # the pinned clang). A missing one is said out loud rather than skipped: this
-  # gate IS the definition of native, and a suite without it is green on nothing.
+  # nm is the one CMake found beside the compiler at configure time (llvm-nm
+  # for clang). A missing nm is a configure error rather than a skip: the
+  # no-engine-symbols check is what defines native, and the suite without it
+  # would pass while testing nothing.
   set(_native_nm "${CMAKE_NM}")
   if(NOT _native_nm)
     find_program(_native_nm NAMES llvm-nm nm)
@@ -57,27 +60,28 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
     message(FATAL_ERROR "ctcompile: no nm found - the Phase 62½-D native gate cannot run, and it IS the definition of native")
   endif()
 
-  # NEGATIVE PROOF 2 (functions.emitc.mlir's VM-LINKED RUN line): this binary
-  # is the fixture's program in every respect but the one that matters.
+  # Negative control for the VM-LINKED RUN line in functions.emitc.mlir: the
+  # fixture's program linked against the engine, so the no-engine-symbols check
+  # must fail on it.
   ctcompile_vm_linked_control(native
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.emitc.mlir")
 endif()
 
-# === PHASE 62½-C+D: JavaScript through the native pipeline and the gate ===
+# === JavaScript fixtures through the native pipeline ===
 #
-# The programs that go all the way. pipeline.cmake runs the closed world, the
+# CTNative/Checks/pipeline.cmake runs the closed-world analysis, the closure
 # lift and the lowering over a JavaScript file and refuses to write a module
-# while any function carries a diagnostic; the fixture's .test then compiles
+# while any function carries a diagnostic. The fixture's .test then compiles
 # the module with no ctbrowser library, runs it, and compares every numeric
-# global with the interpreter (and its deduced twin, the two-toolchain clean
-# compile and the printing gate - see CTNative/Fixtures/*/*.test). One
-# function, one line per program: the module, its printing-policy twin and
-# the pin mutation are built here because lit cannot, and
-# docs/refactor-goldens.md measures a refactor against the same files.
+# global with the interpreter (plus the deduced-type variant, the
+# two-toolchain clean compile and the printing check; see
+# CTNative/Fixtures/*/*.test). The module, its printing-policy variant and the
+# pin mutation are built here because lit cannot build, and
+# docs/refactor-goldens.md compares a refactor against the same files.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
-  # PHASE 63 STEP 7: the generated file compiles clean on BOTH toolchains the
-  # plan names (compile-clean.py). Two compilers are required, not "whatever
-  # is found": a gate that silently drops a compiler passes vacuously.
+  # compile-clean.py checks that generated C++ compiles warning-free under both
+  # g++ and clang++. Both are required: a check that silently skips a missing
+  # compiler would pass without testing it.
   find_program(CTCOMPILE_CLEAN_GXX NAMES g++-13 g++)
   find_program(CTCOMPILE_CLEAN_CLANGXX NAMES clang++-18 clang++)
   if(NOT CTCOMPILE_CLEAN_GXX OR NOT CTCOMPILE_CLEAN_CLANGXX)
@@ -110,9 +114,9 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
               -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
       DEPENDS "${js}" "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake" ctjs-translate ctjs-opt
       COMMENT "Lowering ${name} through the native pipeline")
-    # PHASE 62½-E: the same module with the printing policy applied, and with
-    # the pass's mutation - one pin turned wrong, which print-deduced.py shows
-    # fails the build naming the JavaScript site.
+    # The same module with --ctnative-print-deduced applied, plus a mutated copy
+    # with one deduced type pin made wrong; print-deduced.py checks that the
+    # mutated copy fails and names the JavaScript source site.
     set(_deduced "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.deduced.emitc.mlir")
     set(_mutated "${CMAKE_CURRENT_BINARY_DIR}/${name}.pipeline.mutated.emitc.mlir")
     add_custom_command(
@@ -130,10 +134,12 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   endfunction()
 endif()
 
-# ONE FIXTURE, BOTH GATES: the native pipeline over CTNative/Fixtures/<rel>,
-# its remaining arguments forwarded as pipeline options, and with CLAIMS the
-# four census floors. The two gates have different preconditions (claims also
-# needs Python3), so each is checked on its own. See NativeFixtures.cmake.
+# Registers one fixture, CTNative/Fixtures/<rel>: always the native pipeline
+# (remaining arguments are pipeline options), and with CLAIMS <claimed>
+# <resolved> <direct> <lifted> also the native-claims census. The two need
+# different tools (the census also needs Python3), so each is added only when
+# its helper function exists. Most fixtures are registered in
+# NativeFixtures.cmake.
 function(ctcompile_native_fixture name rel)
   cmake_parse_arguments(_fx "" "" "CLAIMS" ${ARGN})
   set(_js "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/${rel}")
@@ -145,15 +151,16 @@ function(ctcompile_native_fixture name rel)
   endif()
 endfunction()
 
-# numbers and booleans, no functions
+# Numbers and booleans, no functions.
 ctcompile_native_fixture(numeric ControlFlow/globals.js)
-# the gate's own eight functions: recursion, loops, a boolean predicate
+# Eight functions: recursion, loops, a boolean predicate.
 ctcompile_native_fixture(functions ControlFlow/functions.js)
-# Phase 56: object literals with closed shapes, on the stack
+# Object literals with closed shapes, lowered to stack structs.
 ctcompile_native_fixture(structs Objects/struct.js)
-# Phase 57A: dense, uniformly numeric array literals, as std::vector<double>
+# Dense, uniformly numeric array literals, as std::vector<double>.
 ctcompile_native_fixture(arrays Objects/array.js)
-# Current own-contents evidence permits only bounded local Number overwrites.
+# Array contents evidence currently admits only bounded local Number
+# overwrites.
 ctcompile_native_fixture(array_overwrite Objects/array/overwrite.js)
 ctcompile_native_fixture(array_overwrite_unoptimized Objects/array/overwrite.js NO_DEFAULT_OPTIMIZATIONS)
 ctcompile_native_fixture(array_read_overwrite Objects/array/read-overwrite.js)
@@ -163,122 +170,63 @@ ctcompile_native_fixture(array_shrink_unoptimized Objects/array/shrink.js NO_DEF
 ctcompile_native_fixture(array_overwrite_loop Objects/array/overwrite-loop.js)
 ctcompile_native_fixture(array_overwrite_loop_unoptimized Objects/array/overwrite-loop.js NO_DEFAULT_OPTIMIZATIONS)
 
-# === PHASE 63 STEPS 2 AND 3: the claimed set, per corpus ===
+# === Native claims census, per corpus ===
 # ============================================================================
-# Part 24 Phase 63 Step 2 asks for per-function selection WITH A REASON and
-# says of the refusals "that list is the roadmap"; Step 3 asks how many
-# functions the backend claims. tools/check/native-claims.py runs the native
-# pipeline over one program and sorts every function into claimed, refused
-# (with the reason it carries) or never imported, then asserts two things the
-# other gates cannot see:
+# tools/check/native-claims.py runs the native pipeline over one program and
+# sorts every function into claimed, refused (with its reason) or never
+# imported. It fails when:
 #
-#   * every function not claimed carries a `ctnative.not_native` reason. One
-#     left behind WITHOUT a diagnostic is the silent drop part 24 SS2 forbids,
-#     and no fixture gate would notice, because fixtures are programs the
-#     compiler already handles.
-#   * the run is not vacuous - a corpus that failed to parse would otherwise
-#     report "0 refused".
+#   * a function that is not claimed carries no `ctnative.not_native` reason.
+#     That is a silent drop, which no fixture test would notice, because
+#     fixtures hold only programs the compiler already handles;
+#   * the run is vacuous, e.g. a corpus that failed to parse and so reports
+#     "0 refused";
+#   * a count falls below its --min-* floor. Floors guard against silent
+#     narrowing: a change that refuses functions that used to be claimed fails
+#     here while every fixture stays green. Raise a floor in the commit that
+#     earns it.
 #
-# --min-claimed is a FLOOR AGAINST SILENT NARROWING, set at the number
-# measured on 2026-09-02 (073ea1f). A change that refuses functions it used to
-# claim fails here while every fixture stays green. Raising a floor belongs in
-# the same commit that earns it.
+# The refusal reasons it prints are the list of what to implement next. The
+# corpora are the ones the type and escape oracles use; the two large bundles
+# take about eight seconds and 1.5 GB each.
 #
-# The corpora are the four Phase 54B and 55O already use. The two large
-# bundles take about eight seconds and 1.5 GB each; that is the price of
-# measuring the roadmap on real code rather than on the fixture.
-#
-# AND THE CEILING, WHICH THE THREE BUCKETS COULD NOT SEE. Two closed-world
-# rules landed sound and far too coarse and took every global on every real
-# corpus with them - bootstrap 0 of 37, p5 0 of 101, phaser 0 of 72, and not
-# one ctjs.call_direct anywhere. This check did not move, because the
-# functions that stopped being reachable were the ones that take a parameter
-# and those were never claimed. It now reads --ctjs-resolve-globals' own
-# counters, and prints the per-name refusal reasons as the roadmap for them.
+# Besides `claimed`, it reads --ctjs-resolve-globals' own counters, because a
+# closed-world rule that is too coarse can drop every resolved global without
+# changing the claimed count (the functions that become unreachable are often
+# ones that were never claimed).
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Python3_EXECUTABLE)
-  # THE BROWSER DRIVERS - CTNative/Browser/*.py and Ownership/data_session.py
-  # - are lit tests beside their sources since 2026-09-15, like the seventeen
-  # drivers that already were. The one thing they need that lit cannot find is
-  # the compiler for the DOM's public API, which needs C++23 std::expected -
-  # unavailable in the older Clang/libstdc++ pair the standalone scalar tests
-  # use - so it is chosen here and handed to lit.cfg.py as %dom_clang.
+  # The browser drivers (CTNative/Browser/*.py, Ownership/data_session.py) are
+  # lit tests. They need a compiler for the DOM's public API, which uses C++23
+  # std::expected and so cannot use the older Clang/libstdc++ pair the
+  # standalone scalar tests use. It is chosen here and passed to lit.cfg.py as
+  # %dom_clang.
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(_native_dom_clang ${CMAKE_CXX_COMPILER})
   else()
     find_program(_native_dom_clang NAMES clang++-23 clang++
                  HINTS ${CTBROWSER_MONOREPO_ROOT}/tools/clang-std-embed/bin REQUIRED)
   endif()
-  # `resolved` and `direct` are floors under the closed world. They are 0 on
-  # the three real corpora, and THE REASON WRITTEN HERE WAS WRONG. It said all
-  # three are open programs - "bootstrap's UMD header passes `globalThis`/
-  # `self` into the factory it calls, p5 constructs `Function`, phaser calls
-  # `eval` with a computed string" - and named clause 5 as the ceiling. Clause
-  # 5 is not the ceiling on any of them. Disabling it OUTRIGHT (returning
-  # nullopt from dynamic_global_writes, 2026-09-03) leaves all three at 0
-  # resolved and 0 ctjs.call_direct, with the rows reading:
+  # What each floor passed to ctcompile_add_native_claims measures (argument
+  # order: claimed, resolved, direct, lifted):
+  #   claimed  - functions the native backend admits;
+  #   resolved - globals the closed-world census binds to one definition. It is
+  #              0 on the vendor bundles: a bundle hands its factory's result to
+  #              one window property and declares no global names, so there is
+  #              nothing to bind;
+  #   direct   - ctjs.call sites --ctjs-resolve-globals rewrote to
+  #              ctjs.call_direct, including calls whose callee is a
+  #              ctjs.create_closure result, which need no global name;
+  #   lifted   - ctjs.call_direct sites created by the closure lift inside
+  #              --ctnative-lower-to-emitc, which the resolver's count cannot
+  #              see.
+  # A zero floor still matters: when the count rises, raising the floor is a
+  # visible change in the commit that earns it. A rising `direct` or `lifted`
+  # does not imply a rising `claimed`: naming a callee comes before admission,
+  # and the callee can still be refused for its own reasons, which the census
+  # prints.
   #
-  #   bootstrap  37 of 37  never stored in this program - a host binding
-  #   p5         96 of 101 the same, 4 bound outside the hoisting prologue,
-  #                        1 bound to something other than a closure
-  #   phaser     72 of 72  never stored in this program - a host binding
-  #
-  # A BUNDLE DECLARES NOTHING AT GLOBAL SCOPE. Each of these hands a factory's
-  # result to one property of the window, so there is no global NAME for the
-  # census to bind and `resolved` is 0 by clause 1 whatever clause 5 says. The
-  # escape reasons these rows carried were decorations on a refusal clauses 1-3
-  # make anyway. That does not relax clause 5 - the window proxy's `set` trap
-  # really does define_global (the "set" window_trap in Shell/bindings/window/window.cpp) - it says
-  # clause 5 is not where a vendor bundle is lost.
-  #
-  # THAT OTHER HALF OF known_callee() IS NOW TAKEN, and `direct` is no longer 0
-  # on any of them: --ctjs-resolve-globals rewrites a ctjs.call whose callee is
-  # a ctjs.create_closure result, which needs no global name and therefore no
-  # clause of the per-name census. Measured 2026-09-03: bootstrap 0 -> 21, p5
-  # 0 -> 41, phaser 0 -> 48, of 21 / 42 / 50 such sites (the shortfall is the
-  # arity and new.target guards, which are load-bearing).
-  #
-  # AND `claimed` DID NOT MOVE - 4, 37 and 43 before and after. Naming a callee
-  # is upstream of admission, not admission: the functions those calls reach are
-  # refused for their own reasons, which the census below prints. Said here
-  # because a floor that rises while the number it exists for does not is
-  # exactly the kind of green gate this file has been burned by.
-  #
-  # THE FOURTH FLOOR IS `lifted`, AND IT EXISTS BECAUSE THIS CHECK WAS BLIND.
-  # --ctnative-lower-to-emitc's closure lift ALSO makes ctjs.call_direct - 3 on
-  # bootstrap, 47 on p5, 3 on phaser - and always did. Counting only the
-  # resolver's stage is what let "not one ctjs.call_direct emitted anywhere" be
-  # written above about a pipeline that was emitting them.
-  #
-  # A zero floor still bites the day one of them earns a number: raising it is
-  # then a visible act in the commit that earns it.
-  #
-  # PHASE 59 SLICE 1b MOVED NONE OF THESE EITHER, measured 2026-09-03 before
-  # and after in one build directory: claimed 4 / 37 / 43, resolved 0 / 0 / 0,
-  # direct 21 / 41 / 48, lifted 3 / 47 / 3 on bootstrap / p5 / phaser -
-  # identical to the number. The slice carries a capture filled from the
-  # enclosing closure only once the enclosing function has lifted, and the
-  # refusal now spells the chain out to whatever stopped that. Walked closure
-  # by closure over the callees a ctjs.call_direct reaches: bootstrap's 19 are
-  # 3 lifted and 16 whose chain ends in a cell written EXACTLY ONCE from a
-  # constant undefined - the hoisted `var`/`const` shape CTNative/Lowering/Closures/refusals.mlir
-  # pinned as HOISTED.
-  #
-  # THAT LEVER WAS PULLED - PART 24 PHASE 59 SLICE 2 STEP 1 - AND THE CLAIMED
-  # COUNT DID NOT MOVE. The single dominating write took the reassigned-capture
-  # refusal from 715 to 13 on phaser, 81 to 15 on p5 and 16 to 4 on bootstrap,
-  # and the LIFT widened with it: `lifted` went 3 -> 46 on phaser and 47 -> 82
-  # on p5, which is why those two floors below are raised and bootstrap's is
-  # not. `claimed` stayed at 4, 37 and 43. A lifted capture is a parameter that
-  # still needs a native carrier, and in a bundle those bindings are objects and
-  # functions - so what the corpora are refused for NOW is where they were
-  # always going to end up: on phaser, "it is stored into something that is not
-  # an object literal made here" 316 -> 744, "it is passed as an argument"
-  # 13 -> 136, "a method field of an object whose shape is not closed"
-  # 236 -> 356. Those three are the next lever, not another clause about cells.
-  # Owning UTF-8 strings (2026-09-05) raise admission to 19 / 39 / 43.
-  # Resolver and lift counts stay unchanged; native-strings.md records the
-  # measured scope, and the floors below now protect the additional functions.
-  # native-claims.py over one corpus; ARGN are its remaining options.
+  # Registers native_claims_<name>: native-claims.py over one corpus, with ARGN
+  # as its remaining options.
   function(ctcompile_add_native_claims_negative name js)
     add_test(NAME ctcompile_native_claims_${name}
              COMMAND ${Python3_EXECUTABLE}
@@ -289,10 +237,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
                      --name ${name}
                      ${ARGN})
   endfunction()
-  # Preserve historical admission floors independently of removing dead
-  # helpers: the floors are measured with --no-default-optimizations. BOTH also
-  # registers default_<name>, which measures ordinary lowering and keeps pruned
-  # functions in the source denominator.
+  # Registers native_claims_<name> with --no-default-optimizations, so dead-code
+  # pruning cannot lower the counts the floors protect. BOTH also registers
+  # default_<name> with ordinary optimisation, which checks that pruned
+  # functions are still counted in the source total.
   function(ctcompile_add_native_claims name js floor resolved direct lifted)
     cmake_parse_arguments(_claims "BOTH" "" "" ${ARGN})
     set(_floors --min-claimed ${floor} --min-resolved ${resolved} --min-direct ${direct}
@@ -304,17 +252,14 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
         --json ${CMAKE_CURRENT_BINARY_DIR}/native-claims-default_${name}.json ${_floors})
     endif()
   endfunction()
-  # THE FIXTURE IS THE VACUITY CHECK: 9 of 9, so a run that reports nothing
-  # claimed anywhere is not mistaken for a clean sheet.
+  # The fixture is the vacuity check: 9 of 9 claimed, so a run that claims
+  # nothing anywhere is not mistaken for a clean result.
   ctcompile_add_native_claims(fixture "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js" 9 8 16 0 BOTH)
-  # TWO CLOSED PROGRAMS, ADDED BECAUSE THE FLOORS ABOVE ARE NOT ENOUGH.
-  # differential.js and launcher.js are already compiled through the EmitC
-  # backend by the blocks further up this file, so they cost nothing to fetch
-  # and they are the only corpora here whose globals actually resolve: 56 of 72
-  # and 9 of 10. A closed-world clause widened by one term takes those to zero
-  # and this fails, which is precisely what did NOT happen when two of them
-  # were - the three vendor bundles were already at zero and had nothing left
-  # to lose.
+  # Two closed programs whose globals do resolve (56 of 72 and 9 of 10), unlike
+  # the vendor bundles, which resolve none. They guard the `resolved` floor: a
+  # closed-world rule widened by one term drops these to zero and fails here.
+  # Both are already compiled through the EmitC backend by CoreAndBoxed.cmake
+  # and Runtime.cmake.
   ctcompile_add_native_claims(differential "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Differential/differential.js" 2 56 10 0)
   ctcompile_add_native_claims(launcher "${CMAKE_CURRENT_SOURCE_DIR}/Runtime/Launcher/application.js" 0 9 9 0)
   ctcompile_add_native_claims(bootstrap
@@ -323,29 +268,30 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt AND Pytho
   ctcompile_add_native_claims(phaser
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/phaser/phaser.js" 45 0 48 283 BOTH)
 
-  # BOTH TEETH, PROVED. Each runs the same check as a child and passes only
-  # when that child failed for the stated reason - not ctest's WILL_FAIL,
-  # which a crash or a missing corpus would satisfy just as well.
-  # 1: the floor bites. The fixture claims 9 of 9; a floor of 10 must fail.
+  # Negative controls for the claims check. Each runs it as a child and passes
+  # only when the child fails with the stated message, unlike ctest's
+  # WILL_FAIL, which a crash or a missing corpus would also satisfy.
+  # 1: The claimed floor works. The fixture claims 9 of 9; a floor of 10 must
+  # fail.
   ctcompile_add_native_claims_negative(floor_bites
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --min-claimed 10 "--expect-failure=the native tier NARROWED")
-  # 2: a function left behind with no diagnostic is caught. One refusal reason
-  # is deleted from the lowered module, and the check must name the count.
+  # 2: A function left with no diagnostic is caught. One refusal reason is
+  # deleted from the lowered module, and the check must report the count.
   ctcompile_add_native_claims_negative(silent_drop_caught
     "${CTBROWSER_MONOREPO_ROOT}/ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
     --mutate-drop-one-reason "--expect-failure=were dropped silently")
-  # 3: the CLOSED-WORLD floor bites too. The fixture resolves 8 globals; a
-  # floor of 9 must fail, and with the message that names the closed world
-  # rather than the claimed set - the two are different numbers and a check
-  # that confused them would have missed the regression this floor exists for.
+  # 3: The closed-world floor works too. The fixture resolves 8 globals; a floor
+  # of 9 must fail with the message about the closed world rather than the
+  # claimed set, since the two are different numbers.
   ctcompile_add_native_claims_negative(resolved_floor_bites
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --min-claimed 9 --min-resolved 9 --min-direct 16
     "--expect-failure=the CLOSED WORLD NARROWED")
-  # 4: and the pass cannot report a rewrite it did not make. Every
-  # ctjs.call_direct is renamed before counting, so the remark says 16 and the
-  # IR holds none.
+  # 4: The pass cannot report a rewrite it did not make. Every ctjs.call_direct
+  # is renamed before counting, so the remark says 16 and the IR holds none.
+  # 5 (pruned_counter_agrees): the reported pruned-function count must add up
+  # to the source total.
   ctcompile_add_native_claims_negative(call_direct_counter_agrees
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/ControlFlow/functions.js"
     --mutate-drop-call-direct

@@ -1,12 +1,13 @@
-// PHASE 55A'S TABLE, ONE CELL AT A TIME - the storage-evidence rows: direct
-// storage targets, the all-write census, direct load evidence and the
-// provenance closure; plus the live read-evidence mutation check.
+//===- Storage.cpp - Escape-analysis rows for storage evidence ------------===//
 //
-// One of four executables carved out of a 2,763-line test/EscapeAnalysis.cpp on
-// 2026-09-08. The row harness they share - `row`, `kPrologue`, `check`, the
-// role and verdict printers - is EscapeAnalysisHarness.h beside this; the rows
-// themselves are verbatim, in their original order, and every one is still
-// run. Registered one target each in test/cmake/Analysis.cmake.
+// Escape-analysis rows for storage evidence: direct storage targets, the
+// census of every write into a container, direct load evidence and the
+// provenance closure over loaded values, plus a check that read evidence is
+// recomputed after the IR is mutated. The shared row harness (`row`,
+// `kPrologue`, `check`) is in Harness.h; the target is registered in
+// CMakeLists.txt beside this file.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Harness.h"
 
@@ -16,6 +17,11 @@ using namespace ctcompile::test::escape;
 
 namespace {
 
+/// Mutates a property read's base operand twice (to the second array, then to
+/// a parameter) and checks that the direct load evidence and provenance follow
+/// the live base each time, without weakening the stored child's verdict.
+/// Also checks that every provenance work budget short of the full one reports
+/// non-convergence.
 void checkReadEvidenceMutation(mlir::MLIRContext & context) {
     const row r{.what = "read candidates are recomputed from the live base after mutation",
                 .body = "  %child = ctjs.create_object\n"
@@ -114,7 +120,8 @@ int main() {
     context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<CTNativeDialect>();
-    // For the DEFAULT-RULE rows: an operation from no dialect at all has no
+    // The same setup as the other row files. The default-rule rows in
+    // Completion.cpp need it: an operation from no dialect at all has no
     // interface and is not a branch, which is exactly the case the rule is for.
     context.allowUnregisteredDialects();
 
@@ -123,7 +130,7 @@ int main() {
     const std::string R = "  ctjs.return %p\n";
 
     const std::vector<row> rows = {
-        // DIRECT STORAGE TARGETS ARE DIAGNOSTICS, not contents proofs. The
+        // Direct storage targets are diagnostics, not contents proofs. The
         // original Stored verdict remains even when every target is confined.
         {.what = "a fixed property store identifies its exposed object target",
          .body = S +
@@ -277,7 +284,7 @@ int main() {
          .storageTarget = "<uninitialized>",
          .storageWitnessPosition = 1},
 
-        // ALL-WRITE EVIDENCE: a first witness cannot describe later writes or
+        // All-write evidence: a first witness cannot describe later writes or
         // the external/primitive values stored into a local target. The
         // complete marker describes this census, never a confinement proof.
         {.what = "a prior call escape does not hide later local and external writes",

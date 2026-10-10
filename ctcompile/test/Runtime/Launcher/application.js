@@ -1,29 +1,29 @@
-// THE APPLICATION THE LAUNCHER TEST COMPILES AND RUNS.
+// The application the launcher test (Application.cpp) compiles and runs.
 //
 // Every other fixture here is a set of bodies a driver calls one at a time.
-// This one is a PROGRAM: its top level does the work, and the answer is the
+// This one is a program: its top level does the work, and the answer is the
 // transcript it leaves in `OUT`. That difference is the point of the test -
 // nothing installs an entry by hand, nothing calls a body by name, and the only
 // thing that decides whether a compiled body runs is whether it was installed
 // on the right `function_proto` before the program did.
 //
-// EVERY FUNCTION HERE SHOULD LOWER, including the top level, because the strict
-// arm of the test refuses to start when any `function_proto` is left without a
-// compiled entry. That is what makes this file a constraint rather than a
-// sample: adding a construct the backend refuses turns the strict arm red, and
-// the message names the function.
+// Every function here must lower, including the top level, because the strict
+// build of the test refuses to start when any `function_proto` is left without
+// a compiled entry. That makes this file a constraint rather than a sample:
+// adding a construct the backend refuses makes the strict build fail, and the
+// message names the function.
 //
-// IT IS DELIBERATELY NOT A CORRECTNESS TEST. Differential.cpp separates the
-// lowerings and this does not try to - what it asks is whether a whole program,
-// entered once from C++ and running compiled bodies from there down, produces
-// the same bytes as the same program interpreted.
+// It is deliberately not a correctness test. Runtime/Differential separates
+// the lowerings and this does not try to - what it asks is whether a whole
+// program, entered once from C++ and running compiled bodies from there down,
+// produces the same bytes as the same program interpreted.
 var OUT = "";
 
 function emit(line) {
     OUT = OUT + line + "\n";
 }
 
-// A CONSTRUCTOR AND ITS INSTANCES, so `new` and property writes are on the
+// A constructor and its instances, so `new` and property writes are on the
 // path rather than only calls.
 function Ship(x, y) {
     this.x = x;
@@ -41,7 +41,7 @@ function clampTo(v, lo, hi) {
     return v;
 }
 
-// A CALL CHAIN THREE DEEP, which is what makes the AOT -> AOT transition
+// A call chain three deep, which is what makes the AOT -> AOT transition
 // counter mean something: a program whose every compiled body is entered from
 // the interpreter never crosses it.
 function stepShip(s, dx, wide) {
@@ -69,7 +69,7 @@ function advance(wave, dx, wide) {
     return moved;
 }
 
-// A CLOSURE OVER A CAPTURED CELL. The score has to survive between frames, so a
+// A closure over a captured cell. The score has to survive between frames, so a
 // body that copied the binding instead of capturing it answers the same number
 // six times and this transcript says so.
 function scorer(base) {

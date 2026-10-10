@@ -1,19 +1,18 @@
-// ctjs-translate - the CTJS translation driver.
+//===- ctjs-translate.cpp - CTJS translation driver -----------------------===//
 //
-// TWO TRANSLATIONS, and the second one is the reason the first is testable.
+// An mlir-translate driver that registers three imports and one export:
 //
-//   --ctbrowser-js-to-ctjs        JavaScript source -> CTJS MLIR
+//   --ctbrowser-js-to-ctjs        JavaScript classic-script source -> CTJS MLIR
+//   --ctbrowser-module-to-ctjs    JavaScript ES-module source -> CTJS MLIR
 //   --ctbrowser-bytecode-to-ctjs  a serialized program image -> CTJS MLIR
+//   --mlir-to-cpp                 EmitC MLIR -> C++ (the forked upstream emitter)
 //
-// The plan's deliverable names only the image form. The SOURCE form is added
-// because a lit test then reads as one file - the JavaScript in, the expected
-// IR beside it - where the image form would need a binary fixture built by
-// another tool and regenerated whenever the image format moves. Both go through
-// exactly the same importer; the only difference is where the program comes
-// from.
+// All three imports go through the same importer and differ only in where the
+// program comes from. The source forms exist so a lit test can keep the
+// JavaScript input and the expected IR in one file instead of needing a binary
+// image fixture that must be regenerated whenever the image format changes.
 //
-// The other two the deliverable names - CTJS to EmitC, EmitC to C++ - are Phase
-// 10A and 10B and are still absent rather than stubbed.
+//===----------------------------------------------------------------------===//
 #include <ctcompile/CTJS/Import/BytecodeImport.hpp>
 #include <ctcompile/Support/MLIRContextSetup.hpp>
 #include <ctcompile/Target/Cpp/CppEmitter.h>
@@ -36,15 +35,15 @@
 
 namespace {
 
-// WHAT WAS SKIPPED, ON THE MODULE. Three surfaces, one set of facts: a
-// diagnostic per skipped function so a person sees it, this attribute so a lit
-// test can assert it and Phase 15's manifest can consume it, and the
-// import_result vector for a library caller.
-//
-// A SKIPPED FUNCTION EMITS NO ctjs.func AT ALL. "Never emit partially correct
-// AOT code" is the invariant, and a module that silently contains fewer
-// functions than the program had is exactly the failure this attribute exists
-// to make loud.
+/// Records the functions the importer could not compile, in three places: a
+/// warning per function for a person, the module's `ctjs.skipped` attribute
+/// for lit tests and later passes (such as --ctjs-resolve-globals), and
+/// import_result::skipped for library callers.
+///
+/// A skipped function emits no ctjs.func at all. The invariant is "never emit
+/// partially correct AOT code", and a module that silently holds fewer
+/// functions than the program had is exactly what this attribute makes
+/// visible.
 void record_skipped(mlir::ModuleOp module,
                     const std::vector<ctcompile::js::unsupported_opcode> & skipped) {
     if (skipped.empty()) { return; }
@@ -61,27 +60,25 @@ void record_skipped(mlir::ModuleOp module,
                 "offset", builder.getI32IntegerAttr(static_cast<std::int32_t>(one.bc_offset))),
             builder.getNamedAttr("opcode", builder.getStringAttr(one.opcode)),
             builder.getNamedAttr("reason", builder.getStringAttr(one.reason)),
-            // AND WHAT THE DROPPED BODY CAN STILL DO TO THE GLOBALS TABLE.
-            // `stores` is the exact set of names its `op::set_global`s name -
-            // recoverable from the bytecode without lowering a line of it -
-            // and `opaque` is non-empty when that set does not bound the body.
-            // --ctjs-resolve-globals refuses those NAMES rather than every
-            // name in the program, which is the difference between 0 and 72
-            // resolved globals on phaser.
+            // What the dropped body can still do to the globals table.
+            // `stores` is the exact set of names its `op::set_global`s write,
+            // recoverable from the bytecode without lowering it, and `opaque`
+            // is non-empty when that set does not bound the body.
+            // --ctjs-resolve-globals then refuses only those names rather than
+            // every name in the program (on phaser, the difference between 0
+            // and 72 resolved globals).
             //
-            // BOTH ARE ALWAYS WRITTEN, empty or not. A row whose summary is
-            // missing is a row from a translator that did not compute one, and
-            // the pass treats an absent key as opaque - so writing the empty
-            // string here rather than nothing is what says "computed, and it
-            // found nothing".
+            // Both are always written, empty or not. The pass treats an absent
+            // key as opaque (a translator that did not compute a summary), so
+            // writing the empty value says "computed, and found nothing".
             builder.getNamedAttr("stores", builder.getStrArrayAttr(std::vector<llvm::StringRef>(
                                                one.stores.begin(), one.stores.end()))),
             builder.getNamedAttr("opaque", builder.getStringAttr(one.opaque)),
         }));
-        // ON A LOCATION, NOT ON THE MODULE. `module.emitWarning()` attaches the
-        // module as the diagnostic's current operation, so every warning prints
-        // the entire module underneath it - which for a real program is
-        // thousands of lines per skipped function.
+        // Attached to a location, not to the module: `module.emitWarning()`
+        // makes the module the diagnostic's current operation, so every
+        // warning would print the entire module beneath it, thousands of lines
+        // per skipped function for a real program.
         mlir::emitWarning(mlir::UnknownLoc::get(context))
             << "function " << one.function_index << " is not compiled: " << one.reason << " ("
             << one.opcode << " at " << one.bc_offset << ")";
@@ -89,20 +86,18 @@ void record_skipped(mlir::ModuleOp module,
     module->setAttr("ctjs.skipped", builder.getArrayAttr(rows));
 }
 
-// THE IMPORTED MODULE with its refusals recorded on it, or null.
+/// Returns the imported module with its refusals recorded on it, or null.
 mlir::OwningOpRef<mlir::Operation *> adopt(ctcompile::js::import_result imported) {
     if (!imported.module) { return {}; }
     record_skipped(*imported.module, imported.skipped);
     return mlir::OwningOpRef<mlir::Operation *>(imported.module.release().getOperation());
 }
 
-// WHICH KIND OF SCRIPT THE TEXT IS, and it is not a detail. A classic script's
-// top-level `var` is a GLOBAL and a module's is a local of a scope of its own -
-// but the difference that matters here is that compile_program emits
-// op::load_import, op::bind_export and op::load_namespace from its module arm
-// and from NOWHERE ELSE. Until this parameter existed, no fixture in
-// ctcompile/test/ could contain one of those three at all, so no lowering for
-// them could be shown to compute anything.
+/// Compiles JavaScript source as a classic script or an ES module and imports
+/// it. The kind matters beyond scoping (a classic script's top-level `var` is
+/// a global, a module's is local): compile_program emits op::load_import,
+/// op::bind_export and op::load_namespace only for modules, so a fixture needs
+/// the module form to contain them.
 mlir::OwningOpRef<mlir::Operation *> import_source(llvm::StringRef text, llvm::StringRef name,
                                                    mlir::MLIRContext * context,
                                                    ctbrowser::script::script_kind kind) {
@@ -118,7 +113,7 @@ mlir::OwningOpRef<mlir::Operation *> import_source(llvm::StringRef text, llvm::S
 
 mlir::OwningOpRef<mlir::Operation *> import_image(llvm::StringRef bytes, llvm::StringRef name,
                                                   mlir::MLIRContext * context) {
-    // A SPAN OVER THE BUFFER'S OWN BYTES, copied nowhere. StringRef is NUL-safe,
+    // A span over the buffer's own bytes, with no copy. StringRef is NUL-safe,
     // which matters because an image is arbitrary binary.
     const std::span<const std::byte> raw{reinterpret_cast<const std::byte *>(bytes.data()),
                                          bytes.size()};
@@ -131,22 +126,21 @@ mlir::OwningOpRef<mlir::Operation *> import_image(llvm::StringRef bytes, llvm::S
     return adopt(ctcompile::js::import_program(loaded.value, name, context));
 }
 
-// REGISTERED FROM main, NOT BY A STATIC IN A LIBRARY. A static
-// TranslateToMLIRRegistration living in a static archive is dropped by the
-// linker unless somebody references it, and the symptom is a driver that builds
-// and simply does not have the flag.
+/// Registers the translations. Called from main rather than done by a static
+/// in a library: the linker drops a static TranslateToMLIRRegistration in a
+/// static archive unless something references it, and the driver then builds
+/// but lacks the flag.
 void register_translations() {
-    // THE DIALECT REGISTRY IS THE THIRD ARGUMENT AND IT IS NOT OPTIONAL IN
-    // PRACTICE. Without it the context the callback receives has no ctjs
-    // dialect loaded, and the first ValueType::get(context) crashes inside the
-    // importer - a stack trace that names the importer and says nothing about
-    // registration.
+    // The dialect registry, the third argument, is required in practice.
+    // Without it the context the callback receives has no ctjs dialect
+    // loaded, and the first ValueType::get(context) crashes inside the
+    // importer with a stack trace that says nothing about registration.
     const auto dialects = [](mlir::DialectRegistry & registry) {
         ctcompile::registerCTCompileDialects(registry);
     };
-    // THE SOURCE-MANAGER FORM, for the input's name: it becomes the program id
-    // and the file slot of every location, so a diagnostic or a Stage 53F pin
-    // reads `fixture.js:12:5` rather than a placeholder.
+    // The source-manager form, to get the input's name: it becomes the
+    // program id and the file of every location, so diagnostics and
+    // location-checking tests read `fixture.js:12:5` rather than a placeholder.
     const auto from_text = [](ctbrowser::script::script_kind kind) {
         return [kind](const std::shared_ptr<llvm::SourceMgr> & sources,
                       mlir::MLIRContext * context) {
@@ -157,11 +151,11 @@ void register_translations() {
     static mlir::TranslateToMLIRRegistration from_source(
         "ctbrowser-js-to-ctjs", "compile JavaScript source and import it as CTJS MLIR",
         from_text(ctbrowser::script::script_kind::classic), dialects);
-    // A SEPARATE FLAG RATHER THAN AN OPTION ON THE ONE ABOVE. mlir-translate's
-    // registrations are selected BY FLAG, and a translation whose behaviour
-    // depends on a second unrelated option is one a pipeline can get wrong
-    // silently - the module would compile as a classic script, every `import`
-    // would be a syntax error, and the failure would read as a bad fixture.
+    // A separate flag rather than an option on the one above. mlir-translate
+    // selects registrations by flag, and a translation whose behaviour depends
+    // on a second option is easy to get wrong silently: the module would be
+    // compiled as a classic script, every `import` would be a syntax error,
+    // and the failure would look like a bad fixture.
     static mlir::TranslateToMLIRRegistration from_module(
         "ctbrowser-module-to-ctjs",
         "compile JavaScript source AS AN ES MODULE and import it as CTJS MLIR",
@@ -178,17 +172,16 @@ void register_translations() {
 
 int main(int argc, char ** argv) {
     register_translations();
-    // AND THE FORKED C++ EMITTER, under upstream's own `-mlir-to-cpp` name.
+    // The forked C++ emitter, under upstream's own `-mlir-to-cpp` name.
     //
-    // HERE RATHER THAN IN A DRIVER OF ITS OWN. An mlir-translate binary hosts
-    // every translation it is given - that is what the tool IS - and a second
-    // executable would have to be added to the lit suite's DEPENDS to be built
-    // before the tests that call it. This one already is.
+    // It is registered here rather than in a driver of its own: an
+    // mlir-translate binary hosts every translation it is given, and a second
+    // executable would also have to be added to the lit suite's DEPENDS.
     //
-    // It is what makes ctcompile/test/Target/Cpp/upstream/ work: those 35 files
-    // are upstream's, verbatim, and their RUN lines say `mlir-translate
+    // This makes ctcompile/test/Target/Cpp/upstream/ work: those 35 tests are
+    // upstream's, verbatim, and their RUN lines say `mlir-translate
     // -mlir-to-cpp`. A lit.local.cfg beside them points `mlir-translate` at
-    // this binary, and nothing in a vendored test is edited.
+    // this binary, so no vendored test is edited.
     ctcompile::cpp::registerToCppTranslation();
     return mlir::failed(mlir::mlirTranslateMain(argc, argv, "CTJS translation driver\n")) ? 1 : 0;
 }

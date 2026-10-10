@@ -1,3 +1,10 @@
+//===- Harness.cpp - Array-contents test harness ----------------*- C++ -*-===//
+//
+// Shared checks for the array-contents tests: run computeArrayContents and the
+// array-retention refinement of computeVerdicts on one fixture, compare them
+// with the row's expectations, and check every smaller work budget.
+//
+//===----------------------------------------------------------------------===//
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
@@ -13,6 +20,8 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
         fail(r, "the contents fixture's legacy solver did not converge");
         return;
     }
+    // Budget 0: verdicts without array-retention refinement, compared after the
+    // contents query to show it changed nothing.
     const EscapeVerdicts before = computeVerdicts(solver, function, 0);
     const ArrayContentsEvidence contents = computeArrayContents(function);
     const bool complete = expected.failure == ArrayContentsFailure::None;
@@ -161,9 +170,9 @@ void checkArrayContents(mlir::ModuleOp module, const contents_row & expected) {
         }
     }
 
-    // Every incomplete prefix includes the final graph traversal, not merely
-    // the read scan. Even a cutoff after the last successful read publishes no
-    // evidence. The exact completion/refusal budget reproduces the full query.
+    // Every incomplete prefix includes the final graph traversal, not only the
+    // read scan, so even a cutoff after the last successful read publishes no
+    // evidence. The exact completion or refusal budget reproduces the full query.
     for (std::size_t budget = 0; budget < contents.work; ++budget) {
         const ArrayContentsEvidence partial = computeArrayContents(function, budget);
         if (partial.complete || partial.failure != ArrayContentsFailure::WorkLimit ||
@@ -249,6 +258,8 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
         return text;
     };
     const std::string beforeIR = ir();
+    // Budget 0 does no array-retention work, so `original` holds the unrefined
+    // verdicts that `refined` is compared against.
     const EscapeVerdicts original = computeVerdicts(solver, function, 0);
     const EscapeVerdicts refined = computeVerdicts(solver, function);
     if (refined.arrayRetentionComplete != expected.complete) {
@@ -299,7 +310,8 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
                    after.position != 0 || !refined.arrayRetentionComplete) {
             fail(r, "the consumer changed a verdict outside complete retention");
         } else if (verdict.reason == EscapeReason::Stored || storedCapture) {
-            // This counter remains about retained contents, not private receivers.
+            // Only Stored-escape sites count toward confinedStoredSites; sites
+            // confined only as a receiver or nested origin are listed separately.
             discharged.push_back(contentsLabel(site));
         } else if (nestedOrigin) {
             nested.push_back(contentsLabel(site));
@@ -330,8 +342,8 @@ std::size_t checkArrayRetention(mlir::ModuleOp module, const retention_row & exp
         fail(r, "the independent retention consumer changed legacy census or gap evidence");
     }
 
-    // Each cutoff is a failed transaction, including the interval after the
-    // independent contents proof finished but before graph/verdict completion.
+    // Each cutoff is a failed transaction, including one after the independent
+    // contents proof finished but before the graph and verdicts were complete.
     for (std::size_t budget = 0; budget < refined.arrayRetentionWork; ++budget) {
         const EscapeVerdicts partial = computeVerdicts(solver, function, budget);
         if (partial.arrayRetentionComplete || partial.confinedStoredSites != 0 ||

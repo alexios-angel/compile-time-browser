@@ -1,3 +1,12 @@
+//===- SavedScalarReads.cpp - Saved scalar read tests -----------*- C++ -*-===//
+//
+// Tests that HostContractAnalysis and OwnedGlobalRoots prove a global that is
+// written exactly once (from published-call results or a Number, Boolean or
+// String literal) and read later as a scalar, record the exact store, load and
+// call dependencies, and refuse every mutated variant.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -208,9 +217,9 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     }
     check(rows == 28, "all independently saved and constant-only scalar source controls ran");
 
-    // Keep the numeric results and arithmetic unchanged, while every key
-    // actual becomes Boolean. The saved load must still prove its own origin
-    // before the third call can join the complete future-call census.
+    // Same program, but the literal %actual (1.0) becomes a Boolean. The saved
+    // global must still prove its own origin before the third call that reads
+    // it can be accepted.
     const std::string numberLiteral =
         "    %actual = ctjs.constant #ctjs.number<4607182418800017408>\n";
     const std::string booleanLiteral = "    %actual = ctjs.constant #ctjs.boolean<false>\n";
@@ -337,6 +346,8 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
     }
     check(rows == 93, "all historical, Boolean and String scalar source controls ran");
 
+    // origin: 0 = published-call sum, 1 = Number literal, 2 = Boolean false,
+    // 3 = Boolean true, 4 = non-empty String, 5 = empty String.
     for (unsigned origin = 0; origin < 6; ++origin) {
         const bool constantOnly = origin != 0;
         const bool booleanOnly = origin == 2 || origin == 3;
@@ -356,6 +367,7 @@ void checkSavedScalarReads(mlir::MLIRContext & context, const std::string & sour
         if (!module) { return; }
         auto contract = requested(*module);
         HostContractAnalysis complete(*module, contract);
+        // 18000 steps is a loose ceiling; a proof needing more is a regression.
         check(complete.proved() && complete.steps() < 18000,
               "complete saved scalar host evidence is bounded");
         if (!complete.proved() || complete.steps() >= 18000) { return; }

@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Compare the escape fixture snapshot and prove the dump does not drop evidence."""
+"""Compares the escape fixture's dump with its snapshot and tests the dump itself.
+
+usage: check-dump.py CHECKER DUMP EXPECTED_DIR
+
+First the dump that CHECKER (tools/check/escape-oracle.py) wrote for the fixture
+must equal the concatenated EXPECTED_DIR/*.txt parts, ignoring blank and `#`
+lines. Then CHECKER is run on a small hand-written recording: the dump must not
+depend on input order, every evidence mutation (a dropped or extra allocation,
+observation or claim) must change the dump, and every duplicate or malformed
+input must be rejected by name.
+"""
 
 import difflib
 from pathlib import Path
@@ -9,6 +19,7 @@ import tempfile
 
 
 def rows(text):
+    """Returns the non-blank, non-`#` lines of `text`, each ending in a newline."""
     return [line + "\n" for line in text.splitlines() if line and not line.startswith("#")]
 
 
@@ -21,8 +32,9 @@ if want != got:
     sys.stderr.writelines(difflib.unified_diff(want, got, str(expected), str(dump)))
     raise SystemExit("escape fixture allocation/observation/claim snapshot changed")
 
-# Independent hand-written recording: one live literal, one implicit Error,
-# and two unobserved literals. Reordering is harmless; losing any row is not.
+# A hand-written recording independent of the fixture: one observed literal, one
+# implicit Error (site 2, which has no claim), and two literals that never run.
+# Reordering its rows must not change the dump; losing any row must.
 recording = """ctbrowser-type-recording 2
 opcodes 95 writers 69
 defs recorded 0 dropped 0 orphan-frames 0
@@ -53,6 +65,7 @@ with tempfile.TemporaryDirectory(prefix="escape-dump-") as directory:
     work = Path(directory)
 
     def run(rec, claim):
+        """Runs the checker on `rec` and `claim`; returns its result and dump."""
         (work / "input.rec").write_text(rec)
         (work / "input.claims").write_text(claim)
         result = subprocess.run(
@@ -84,6 +97,7 @@ with tempfile.TemporaryDirectory(prefix="escape-dump-") as directory:
     implicit_site = next(
         line + "\n" for line in recording.splitlines() if line.startswith("site 2 ")
     )
+    # Each mutation is valid input whose dump must differ from the baseline.
     mutations = [
         ("missing allocation", recording.replace("alloc 1 kind obj\n", ""), claims),
         (
@@ -144,6 +158,7 @@ with tempfile.TemporaryDirectory(prefix="escape-dump-") as directory:
         assert result.returncode == 0, name + ": " + result.stderr
         assert observed != baseline, name + " disappeared from the dump"
 
+    # Each of these inputs must make the checker fail with the case name in stderr.
     rejected = [
         (
             "duplicate allocation",

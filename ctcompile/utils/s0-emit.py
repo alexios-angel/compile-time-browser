@@ -3,17 +3,17 @@
 
     ctcompile/utils/s0-emit.py --functions 4000 --per-tu 250 --ops 40 --out /tmp/s0
 
-THE COMPILE-TIME RISK IS THE ONE EmitC CARRIES AND THE LLVM BACKEND DOES NOT.
-Babylon is 31,905 function_protos in ONE program - every corpus here is a single
-UMD bundle, so there is no per-module split and Phase 10C has to partition over
-functions. If the host compiler takes even 10 ms per function, that is five
-minutes of build for one library.
+Compile time is a risk for the EmitC backend that the LLVM backend does not
+have. Babylon.js is 31,905 functions in one program, and every corpus here is a
+single UMD bundle, so there is no per-module split: the generated C++ has to be
+partitioned into translation units by function. If the host compiler takes even
+10 ms per function, that is five minutes of build for one library.
 
 This emits code shaped like what a backend would produce rather than something
 convenient to generate: registers are `value` locals, the numeric fast path is
 open-coded against the NaN-boxed representation, and the slow path is a call the
-optimiser must not be able to see through. It includes the REAL runtime header,
-because per-translation-unit header cost is most of what a partition trades away.
+optimiser cannot see through. It includes the real runtime header, because
+per-translation-unit header cost is most of what a partition trades away.
 """
 
 import argparse

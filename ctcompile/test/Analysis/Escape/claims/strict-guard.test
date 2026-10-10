@@ -3,9 +3,9 @@
 // RUN: python3 %S/check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name strict-guard
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-strict-guard.claims
 
-// The source comparison keeps its operand order. The complete proof may release
-// a read child only when it is not returned, while an inclusive bound stays
-// conservative even though this particular execution releases its child.
+// The loop guard `array.length > i` keeps its operand order. The child is confined when it
+// is not returned. With the inclusive guard `>=` the analysis stays conservative, even though
+// this particular run never keeps the child.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.compare gt
 // IMPORT-LABEL: ctjs.func @returned$

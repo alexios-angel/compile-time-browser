@@ -1,7 +1,20 @@
+//===- Clear.cpp - Map clear() tests ----------------------------*- C++ -*-===//
+//
+// Tests that OwnedGlobalRoots treats `clear()` on a captured Map as making
+// every key read Undefined until a possibly aliasing write.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
 
+/// Checks OwnedGlobalRoots on a captured Map whose method table includes
+/// `clear`: after clear() every key reads as Undefined until a possibly
+/// aliasing write, across branches, saved values and budget limits; and
+/// edits to the clear call's receiver, arity, spelling or SSA scope must
+/// invalidate the proof. \p prepared selects the prepared (closure-converted)
+/// form of \p source rather than the raw one.
 void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string & source,
                                 bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -15,6 +28,8 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
     const std::string aliasWrite = "    %aliased = ctjs.call %setter(%state, %aliasKey, %value)\n";
     const std::string disjointWrite =
         "    %disjoint = ctjs.call %setter(%state, %numericKey, %value)\n";
+    // 9223372036854775808 is 0x8000000000000000, the bit pattern of -0.0. It is
+    // declared for parity with the sibling Map fixtures and unused here.
     const std::string setup =
         "\n    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
         "    %clearer = ctjs.get_property %state[%clearKey]\n"
@@ -86,6 +101,9 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
             } else if (edge.function == getter) {
                 ++consumers;
                 complete &= edge.arguments.size() == 1;
+                // The getter's actual is operand 4 of the prepared call_direct
+                // (after receiver, new.target, callee and environment) and
+                // operand 2 of the source ctjs.call (after callee and receiver).
                 if (edge.arguments.size() == 1) {
                     complete &=
                         edge.arguments.front().alternatives == returned &&
@@ -213,9 +231,10 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
             true, "a path-independent disjoint key proves the exact cross-arm absence repair");
     check(rows == 29, "all clear admission, saved-value, alias and branch controls ran");
 
-    // Both source and prepared queries recheck SSA dominance independently of
-    // complete-looking reports, even when a misplaced fluent receiver still
-    // exactly matches the method's object operand.
+    // Both source and prepared queries recheck SSA dominance themselves rather
+    // than trusting complete-looking reports, even when a misplaced fluent
+    // receiver (the Map returned by set) still matches the method's object
+    // operand exactly.
     unsigned scopeMutations = 0;
     for (const bool sibling : {false, true}) {
         for (const unsigned kind : {0u, 1u, 2u, 3u}) {
@@ -240,6 +259,8 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
             auto module = parsed(context, replaced(base, "    ctjs.return %loaded", scoped),
                                  "clear dependency scope fixture parses");
             if (!module) { continue; }
+            // Forge "map is empty/absent" attributes on every op: the proof must
+            // still come from the IR, so the scope edits below must be refused.
             mlir::Builder attributes(&context);
             module->walk([&](mlir::Operation * operation) {
                 operation->setAttr("ctnative.map_empty", attributes.getBoolAttr(true));
@@ -305,6 +326,9 @@ void checkCapturedMapClearOwner(mlir::MLIRContext & context, const std::string &
                 edits.push_back({operation, operand, operation->getOperand(operand)});
                 operation->setOperand(operand, value);
             };
+            // Each kind moves one operand out of the scope that dominates it:
+            // 0 a scalar use, 1 the callee, 2 a branch flag, 3 the fluent Map
+            // receiver.
             if (kind == 0) {
                 change(scalarUse, 0, branchLoad.getResult());
             } else if (kind == 1) {

@@ -1,15 +1,10 @@
-# ONE FIXTURE, READ BY BOTH TIERS.
+# Embeds a JavaScript file as a C++ raw string, so a test that both compiles a
+# fixture and runs it in the interpreter uses the exact same source. A
+# hand-copied string can drift, and compiled closures bake in function indices
+# that are only valid for their own program. A raw string needs no escaping;
+# the only forbidden content is the delimiter, which is checked below.
 #
-# The differential test compiles a JavaScript file through the backend AND runs
-# the same source through the interpreter. Transcribing it into a C++ string
-# beside the file is what it did before, and the two drifted in ORDER - which
-# matters far more than it sounds, because a compiled body bakes the function
-# INDEX of every closure it builds and an index means nothing outside the
-# program it was compiled in.
-#
-# A RAW STRING NEEDS NO ESCAPING, which is the whole reason this is three lines
-# rather than an escaper: the content is JavaScript and cannot contain the
-# delimiter below.
+# Required: -DSOURCE= -DOUTPUT=
 cmake_minimum_required(VERSION 3.20)
 file(READ "${SOURCE}" content)
 if(content MATCHES "\\)CTCJS\"")

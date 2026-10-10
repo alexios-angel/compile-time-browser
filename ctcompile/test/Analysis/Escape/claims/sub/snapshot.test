@@ -3,9 +3,9 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name sub-snapshot
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-sub-snapshot.claims
 
-// Exact Number subtraction preserves its negative result through Plus/Neg
-// and source-array mutation. Proved primitive String operands also preserve
-// the Number result; the source object never escapes through their conversion.
+// A negative difference of two numbers keeps its value through unary `+`/`-` and through later
+// changes to the source array. String operands proven primitive give the same number, and
+// converting them never lets the source object escape.
 // IMPORT-LABEL: ctjs.func @subReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.unary plus

@@ -3,7 +3,7 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-bitwise
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-bitwise.claims
 
-// Signed Number bitwise snapshots preserve ToInt32 wrap without coercion facts.
+// Bitwise loop steps (`&`, `|`, `^`, `<<`) keep their exact ToInt32-wrapped signed value.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.binary bitand

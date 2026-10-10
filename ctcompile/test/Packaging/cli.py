@@ -1,4 +1,10 @@
-"""Focused CLI compatibility checks for the three standalone ctcompile tools."""
+"""CLI checks for the three standalone ctcompile tools.
+
+Usage: cli.py COMPILER BASELINE PAGELOAD (paths to the three executables).
+
+Checks option parsing and exit codes, that a failed or refused bundle write
+leaves existing files untouched, and the baseline and page-load tools' output.
+"""
 
 import json
 import os
@@ -12,6 +18,7 @@ env = dict(os.environ, CTBROWSER_FONTS="font8x8", CTBROWSER_NETWORK="0")
 
 
 def run(tool, *args, code=0, cwd=None, **kwargs):
+    """Runs `tool` with `args`, asserts it exits with `code`, and returns stdout."""
     result = subprocess.run(
         [tool, *map(str, args)],
         text=True,
@@ -109,6 +116,8 @@ with tempfile.TemporaryDirectory(prefix="ctcompile cli ") as directory:
         run(compiler, root, "--launcher", launcher, option, launcher, code=2, cwd=root)
         assert launcher.read_bytes() == b"launcher template"
 
+    # Cap output files at 64 bytes and ignore SIGXFSZ so the bundle write fails
+    # part-way; the compiler must keep the old output and leave no temporary file.
     if sys.platform == "linux":
         import resource
         import signal

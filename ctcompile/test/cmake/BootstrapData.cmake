@@ -1,6 +1,7 @@
-# Source-derived Bootstrap Data lifetime/publication probes. These measure
-# interpreter behavior and native coverage separately; successful reference
-# execution does not claim a native Bootstrap executable.
+# Bootstrap Data lifetime and publication probes, derived from the vendored
+# bootstrap.bundle.js. They measure interpreter behavior and native coverage
+# separately: a successful reference run does not mean Bootstrap compiles to a
+# native executable.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
    AND TARGET ctcompile-test-native-reference AND Python3_EXECUTABLE)
   set(_bootstrap_data_probe "${CTBROWSER_MONOREPO_ROOT}/tools/check/bootstrap-data-probe.py")
@@ -28,6 +29,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt
       commonjs_provider_callbacks browser_provider_callbacks browser_this_fallback_provider_callbacks
       commonjs_provider_objects browser_provider_objects browser_this_fallback_provider_objects
       browser_method_replacement browser_table_replacement resource_instances)
+    # A mode is a source mode plus an optional suffix (_publication,
+    # _provider_reads, ...). The suffix selects the bootstrap-host-prefix.py
+    # --follow-* options, and those modes, the replacement modes and
+    # resource_instances also run the program as a script.
     set(_prefix_source_mode "${_mode}")
     set(_prefix_options)
     set(_prefix_script FALSE)
@@ -127,8 +132,8 @@ endif()
 
 if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_unit_test(host-contract LIBS ctcompile::ctnative-lowering MLIRParser)
-  # checkSeededMapResults - the seeded/per-key/joined Map result proofs over the
-  # shared two-method fixture - has been its own executable since 2026-09-08,
-  # when HostContract.cpp reached 1,068 lines. Same fixtures (CTNative/HostContract/Fixtures.h).
+  # The seeded, per-key and joined Map result proofs over the shared two-method
+  # fixture (CTNative/HostContract/SeededMaps/). They share
+  # CTNative/HostContract/Fixtures.h with host-contract.
   ctcompile_unit_test(host-contract-seeded-maps LIBS CTNativeAnalysis MLIRParser)
 endif()

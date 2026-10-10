@@ -1,7 +1,18 @@
+//===- FieldEffects.cpp - Field presence under side effects ---------------===//
+//
+// Checks that object-field presence is re-derived from the IR on each query:
+// mutating an annotated operation (a Map method name, a constructor operand, a
+// prototype write, an accessor, an unknown call moved earlier) must withdraw a
+// previous "field is assigned" answer, and restoring the IR must bring it back.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 
+/// Checks that each IR edit below withdraws field presence for a live module
+/// and a fresh clone alike, and that undoing it restores the proof.
 void checkStaleFieldEffects(mlir::MLIRContext & context) {
     const auto checkBoth = [&](mlir::ModuleOp module, const char * what, bool assigned) {
         const char * expected =
@@ -19,8 +30,8 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         }
     };
 
-    // The unused lookup still executes. Changing its property name cannot
-    // retain the old map_method authority just because no call follows it.
+    // An unused method lookup still executes. Changing its property name must
+    // drop its ctnative.map_method standing even though no call follows it.
     const std::string body = kIdentityMapPrelude + identityFieldStore() + identityMapSet("%put") +
                              identityMapGet() + identityFieldRead("%saved");
     auto unused = mlir::parseSourceString<mlir::ModuleOp>(
@@ -86,8 +97,9 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         }
     }
 
-    // Prototype/accessor mutations elsewhere invalidate the closed scalar
-    // environment even if a later allocation could rebuild a local fact.
+    // A prototype write or accessor definition on another object invalidates
+    // the closed scalar environment, even if a later allocation could rebuild a
+    // local fact. %one is the IEEE-754 bit pattern of 1.0.
     const std::string environmentBody = R"mlir(
   %one = ctjs.constant #ctjs.number<4607182418800017408>
   %nil = ctjs.constant #ctjs.undefined
@@ -199,10 +211,5 @@ void checkStaleFieldEffects(mlir::MLIRContext & context) {
         checkBoth(*source, (std::string{r.what} + " after exact source restoration").c_str(), true);
     }
 }
-
-// Comparison-only identities need their own complete producer/use census.
-// These expectations are attached to source allocations, never inferred from
-// field schema numbers or another comparison operand's type. Preparation may
-// add annotations but must preserve every allocation, scalar write and operand.
 
 } // namespace ctcompile::test::type_inference

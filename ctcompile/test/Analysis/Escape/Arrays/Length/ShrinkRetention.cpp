@@ -1,3 +1,16 @@
+//===- ShrinkRetention.cpp - Array truncation retention tests -------------===//
+//
+// Rows for writes to `a.length` that keep or shrink the array: which children
+// stay retained, how saved lengths and indices behave after the shrink, and
+// that removed elements and extra length reads are each charged to the work
+// budget. Ends by storing the `mutation` row that LiveMutations.cpp edits.
+//
+// `#ctjs.number<N>` is the raw IEEE-754 bit pattern of a double:
+// 4607182418800017408 = 1.0, 4611686018427387904 = 2.0,
+// 9223372036854775808 = -0.0.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::length_detail {
@@ -144,6 +157,8 @@ void LengthCases::shrinkRetention() {
                      "\n  ctjs.return %a\n",
              .failure = ArrayContentsFailure::UnknownIndex});
     }
+    // `a.push(a)` then `a.length = 0`: the self-cycle was recorded before the
+    // shrink, so retention must stay incomplete even though `a` ends empty.
     const contents_row shrinkCycle{
         .what = "truncation does not erase the historical cycle obligation",
         .body = values + "  ctjs.append %a to %a\n" + shrink + "  ctjs.return %a\n",
@@ -159,6 +174,8 @@ void LengthCases::shrinkRetention() {
         fail(row{.what = shrinkCycle.what, .body = shrinkCycle.body, .expected = ""},
              "the historical truncation cycle did not parse");
     }
+    // 32 extra elements removed by the shrink must cost 64 work units: one for
+    // each append and one for each removal.
     contents_row wideShrink = originalShrink;
     std::string removed;
     for (unsigned i = 0; i < 32; ++i) { removed += "  ctjs.append %zero to %a\n"; }
@@ -181,6 +198,8 @@ void LengthCases::shrinkRetention() {
         fail(row{.what = wideShrink.what, .body = wideShrink.body, .expected = ""},
              "the wide dense shrink did not parse");
     }
+    // 32 extra length reads must cost 96 work units: the read, its exact value
+    // and its held snapshot are each charged.
     contents_row wide = branch;
     std::string extra;
     for (unsigned i = 0; i < 32; ++i) {

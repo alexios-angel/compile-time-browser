@@ -1,12 +1,13 @@
-// PHASE 55A'S TABLE, ONE CELL AT A TIME - the sinks-and-carriers rows: the
-// sites, allocation, stores and property access, the operators and the kind
-// switch, and every call position; plus allocationPc's NameLoc parse.
+//===- Sinks.cpp - Escape-analysis rows for sinks and carriers ------------===//
 //
-// One of four executables carved out of a 2,763-line test/EscapeAnalysis.cpp on
-// 2026-09-08. The row harness they share - `row`, `kPrologue`, `check`, the
-// role and verdict printers - is EscapeAnalysisHarness.h beside this; the rows
-// themselves are verbatim, in their original order, and every one is still
-// run. Registered one target each in test/cmake/Analysis.cmake.
+// Escape-analysis unit rows for sinks and carriers: one small CTJS function
+// per operand of each operation (allocation, stores and property access,
+// operators and the kind switch, calls), each checking whether that operand
+// alone makes an object escape, plus a check of allocationPc's NameLoc
+// parsing. The row harness (`row`, `kPrologue`, `check`) is in Harness.h; the
+// target is registered in this directory's CMakeLists.txt.
+//
+//===----------------------------------------------------------------------===//
 
 #include "Harness.h"
 
@@ -20,7 +21,8 @@ int main() {
     context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
     context.getOrLoadDialect<mlir::scf::SCFDialect>();
     context.getOrLoadDialect<CTNativeDialect>();
-    // For the DEFAULT-RULE rows: an operation from no dialect at all has no
+    // The same setup as the other row files. The default-rule rows in
+    // Completion.cpp need it: an operation from no dialect at all has no
     // interface and is not a branch, which is exactly the case the rule is for.
     context.allowUnregisteredDialects();
 
@@ -30,7 +32,7 @@ int main() {
 
     const std::vector<row> rows = {
         // ===================================================================
-        // THE SITES
+        // Sites
         // ===================================================================
         {.what = "an object nothing touches is confined", .body = S + R, .expected = "confined"},
         {.what = "an array nothing touches is confined", .body = A + R, .expected = "confined"},
@@ -48,7 +50,7 @@ int main() {
          .storageTargetVerdicts = "confined"},
 
         // ===================================================================
-        // ALLOCATION - the NEITHER/CARRY positives and the SINK negatives
+        // Allocation: the NEITHER/CARRY positives and the SINK negatives
         // ===================================================================
         {.what = "append: $array NEITHER (o.cpp:161-163 is push_back only)",
          .body = A + "  ctjs.append %p to %s\n" + R,
@@ -108,7 +110,7 @@ int main() {
          .boxed = "not_tracked"},
 
         // ===================================================================
-        // STORES AND PROPERTY ACCESS
+        // Stores and property access
         // ===================================================================
         {.what = "store_global SINK(stored_global): globals_ is the first root (o.cpp:667)",
          .body = S + "  ctjs.store_global \"g\", %s\n" + R,
@@ -240,7 +242,7 @@ int main() {
          .expected = "escapes:stored"},
 
         // ===================================================================
-        // OPERATORS - binary, binary_static, and the kind switch both ways
+        // Operators: binary, binary_static, and the kind switch both ways
         // ===================================================================
         {.what = "binary: $lhs SINK(converted) - ToPrimitive runs valueOf with it as receiver",
          .body = S + "  %b = ctjs.binary add %s, %p\n" + R,
@@ -333,7 +335,7 @@ int main() {
          .expected = "confined"},
 
         // ===================================================================
-        // CALLS - every position a sink, except the two spread arrays
+        // Calls: every position is a sink, except the two spread arrays
         // ===================================================================
         {.what = "call: $callee SINK(passed)",
          .body = S + "  %r = ctjs.call %s(%p)\n" + R,
@@ -350,10 +352,11 @@ int main() {
          .body = "  %r = ctjs.call %p(%q) {check}\n" + R,
          .expected = "{external}",
          .alias = true},
-        // PHASE 62½-A: the resolved form carries ctjs.call's row, all five
-        // positions, and the symbol changes none of them. The callee is @f
-        // itself - the only ctjs.func the harness's module has - so the
-        // symbol-use verifier sees five operands against five block arguments.
+        // ctjs.call_direct (a call whose callee symbol is resolved) has the
+        // same escape effects as ctjs.call on all five operands; the symbol
+        // changes none of them. The callee is @f itself, the only ctjs.func in
+        // the harness module, so the symbol-use verifier sees five operands
+        // against five block arguments.
         {.what = "call_direct: $receiver SINK(passed), like call",
          .body = S + "  %r = ctjs.call_direct @f(%s, %p, %q, %p, %q)\n" + R,
          .expected = "escapes:passed",
@@ -400,7 +403,7 @@ int main() {
         {.what = "construct_spread: $args NEITHER (c.cpp:734-741)",
          .body = A + "  %r = ctjs.construct_spread %p(%s)\n" + R,
          .expected = "confined"},
-        // Spread copies the argument array's CONTENTS into the callee window.
+        // Spread copies the argument array's contents into the callee window.
         // The array may stay confined while one of those contents outlives it;
         // the create_array/append sink must survive the spread's NEITHER row.
         {.what = "call_spread keeps its local argument array confined despite an object element",
@@ -461,8 +464,8 @@ int main() {
 
     for (const row & r : rows) { check(context, r); }
 
-    // allocationPc: the importer's NameLoc inside its FusedLoc, and nothing
-    // else.
+    // allocationPc reads the bytecode pc from the importer's NameLoc inside a
+    // FusedLoc (or a bare NameLoc), and returns nothing for any other location.
     {
         const std::string text =
             std::string{kPrologue} +

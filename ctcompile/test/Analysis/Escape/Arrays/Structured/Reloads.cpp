@@ -1,3 +1,14 @@
+//===- Reloads.cpp - Index reload cases -------------------------*- C++ -*-===//
+//
+// Structured-array cases where a loop reloads an index, divisor, mask or
+// shift count from the array it is writing. Each row starts from a shared
+// MLIR fixture, rewrites it with replace(), and states the expected array
+// contents (.arrays), the read sequence (.reads) and what escapes at exit
+// (.exit); reject() cases must make computeArrayContents give up.
+// Constants are written as #ctjs.number<N>, where N is the IEEE-754 bit
+// pattern of a double (4607182418800017408 is 1.0).
+//
+//===----------------------------------------------------------------------===//
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {
@@ -511,6 +522,8 @@ void StructuredCases::reloads() {
                     "a[5]=mask; a[3]=zero; a[5]=mask; a[4]=zero; a[5]=mask; a[5]=mask"
                   : "a[0]=mask; a[0]=mask; a[0]=mask; a[1]=zero; a[0]=mask; a[2]=zero; "
                     "a[0]=mask; a[3]=zero; a[0]=mask; a[4]=zero; a[0]=mask; a[5]=zero";
+        // Constants below: 2, 3, 5, 2^31, 2^31 - 1 and -(2^32 - 2); the mask is
+        // -2 for bitand and 1 for bitor.
         const auto rounded = replace(
             replace(replace(replace(masked, "  ctjs.append %y to %a\n", ""), "[%x]", contents),
                     "  %a =",
@@ -628,8 +641,9 @@ void StructuredCases::reloads() {
                                         "\n"
                                         "    %bits = ctjs.binary_static " +
                                         kind + " %part, %mask");
-            // The second input starts in the signed band; move it one below
-            // INT32_MIN so the original source crosses the lower discontinuity.
+            // %roundSign is 2^31, so i - 2^31 starts exactly at INT32_MIN. Subtract
+            // 2^31 + 1 instead so the input starts one below INT32_MIN and
+            // crosses the int32 wraparound.
             if (std::string(input) == "ctjs.binary sub %i, %roundSign") {
                 crossing = replace(crossing, "ctjs.binary sub %i, %roundSign",
                                    "ctjs.binary sub %i, %roundBeyond");
@@ -2200,7 +2214,9 @@ void StructuredCases::reloads() {
             computeArrayContents(function, reload ? constantShiftWork + 1024 : 100000);
         if (!reload) { constantShiftWork = complete.work; }
         const auto partial = computeArrayContents(function, 128);
-        // Record all 360 initializer writes as well as the 120 loop stores.
+        // The complete run records all 360 initializer writes plus the 120 loop
+        // stores. The 128-unit run must stop with WorkLimit and return no
+        // partial results.
         if (!complete.complete || complete.writes.size() != 480 ||
             complete.reads.size() != (reload ? 240U : 120U) || partial.complete ||
             partial.failure != ArrayContentsFailure::WorkLimit || partial.work != 128 ||

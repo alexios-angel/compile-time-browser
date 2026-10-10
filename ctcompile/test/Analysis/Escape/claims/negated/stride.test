@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negated-stride
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negated-stride.claims
 
-// The source keeps its computed Neg and Sub. Saved magnitudes retain the
-// original value; canonical String Neg supplies its exact bounded Number result.
+// The source keeps its computed Neg and Sub. A magnitude saved before the loop keeps its value;
+// `-'2'` converts the string to the exact bounded Number -2.
 // IMPORT-LABEL: ctjs.func @released$
 // IMPORT: ctjs.unary neg
 // IMPORT: ctjs.binary sub

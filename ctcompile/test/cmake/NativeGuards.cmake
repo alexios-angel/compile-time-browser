@@ -1,13 +1,14 @@
-# === THE DIFFERENTIAL GATE COMPARES VALUES THAT ARE NOT NUMBERS ===
+# === Native checks over values that are not numbers ===
 #
-# Scalars/values.emitc.mlir is the hand-written EmitC module that is the
-# SPECIFICATION of what the lowering has to emit for a program with a Number,
-# a Boolean, a String, `null` and `undefined` in its globals - including the
-# `ctnative::print_*` helpers. Its RUN lines carry the gate over all five
-# kinds, one negative proof per kind, the vacuous-mutation guard and the
-# two-toolchain clean compile. What lit cannot do is LINK: the symbol check's
-# control for this module is its own C++ plus one object that reaches the
-# interpreter, built here and named on the module's VM-LINKED line.
+# Scalars/values.emitc.mlir is the hand-written EmitC module that specifies
+# what the lowering must emit for a program with a Number, a Boolean, a
+# String, `null` and `undefined` in its globals, including the
+# `ctnative::print_*` helpers. Its RUN lines run the native check over all
+# five kinds, one negative control per kind, the vacuous-mutation guard and
+# the two-toolchain clean compile. What lit cannot do is link: the symbol
+# check's negative control for this module is its own C++ plus one object
+# that reaches the interpreter, built here and named on the module's
+# VM-LINKED line.
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate)
   ctcompile_vm_linked_control(native-values
     "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Fixtures/Scalars/values.emitc.mlir")
@@ -15,8 +16,8 @@ endif()
 
 # The refactor goldens are a manual procedure, not a test: docs/refactor-goldens.md.
 
-# Source invocation recovery is structural only until native admission and
-# emission consume both completions. Keep its original checks available for rollback.
+# Exception-recovery unit test. Source invocation recovery is checked
+# structurally until native admission and emission consume both completions.
 if(CTCOMPILE_ENABLE_MLIR)
   ctcompile_unit_test(exception-recovery
     LIBS ctcompile::ctnative-lowering ctcompile::ctjs-lowering ctcompile::ctjs-import

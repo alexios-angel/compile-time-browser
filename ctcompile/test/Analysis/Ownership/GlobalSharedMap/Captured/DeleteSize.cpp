@@ -1,7 +1,20 @@
+//===- DeleteSize.cpp - Map delete/size tests -------------------*- C++ -*-===//
+//
+// Tests that OwnedGlobalRoots proves exact captured Map sizes after
+// `delete()` and `clear()`, and refuses each variant where it cannot.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
 
+/// Checks the owned-global proof for a captured Map whose methods call
+/// delete/clear and then read `size`: every positive and negative control
+/// variant is run, the proof completes within a bounded step count, every
+/// smaller step budget publishes no partial ownership, and the exact budget
+/// reproduces the full result. \p prepared selects the prepared-environment
+/// form of the fixture.
 void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::string & source,
                                      bool prepared) {
     auto fixture =
@@ -16,6 +29,8 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
         fixture = replaced(fixture, prefix + "%" + actual + ")",
                            prefix + "%" + actual + ", %other, %choice)");
     }
+    // #ctjs.number<N> holds the IEEE-754 bit pattern of the double: -0.0, 1.0,
+    // 1.0 again, 2.0, 3.0, and two NaNs that differ only in payload.
     const std::string setup =
         "    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
         "    %clearer = ctjs.get_property %state[%clearKey]\n"
@@ -194,6 +209,8 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
     variant(program(clear + seed + erase +
                     replaced(selected, "scf.yield %negativeZero", "scf.yield %one")),
             false, "one nonzero selection arm cannot inherit the other arm's post-delete zero");
+    // The analysis tracks at most 64 equal-key candidate writes; a 65th must
+    // refuse rather than claim a smaller size.
     for (unsigned writes : {64u, 65u}) {
         std::string repeated = seed;
         for (unsigned index = 1; index < writes; ++index) {
@@ -204,6 +221,7 @@ void checkCapturedMapDeleteSizeOwner(mlir::MLIRContext & context, const std::str
                 writes == 64 ? "deleting all sixty-four equal candidates proves exact zero"
                              : "deletion cannot revive a census that exceeded its complete limit");
     }
+    // Each control row is counted so a fixture edit that drops a variant fails.
     check(rows == 31, "all independent delete-size owner source controls ran");
 
     const unsigned deletionRows = rows;

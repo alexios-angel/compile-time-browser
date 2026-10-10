@@ -1,3 +1,11 @@
+//===- Finish.cpp - Run the structured contents rows ------------*- C++ -*-===//
+//
+// Parses and checks every structured array-contents row collected by the case
+// groups, then prints the row count and the total analysis work (printed
+// as "budget cutoffs").
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {

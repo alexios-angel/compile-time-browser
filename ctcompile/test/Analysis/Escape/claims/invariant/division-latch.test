@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-division-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-division-latch.claims
 
-// Nested exact quotients/remainders use unchanged original primitive operands.
-// Zero divisors, fractional/zero strides, changing operands and bounds refuse.
+// Strides built from nested exact `/` and `%` over unchanged saved primitives are folded.
+// A zero divisor, a fractional or zero stride, a changing operand or a bad bound is refused.
 // IMPORT-LABEL: ctjs.func @savedQuotient$
 // IMPORT: ctjs.binary div
 // IMPORT: ctjs.binary add

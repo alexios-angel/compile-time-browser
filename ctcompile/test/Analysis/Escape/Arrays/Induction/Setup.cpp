@@ -1,8 +1,17 @@
+//===- Setup.cpp - Induction fixture setup --------------------------------===//
+//
+// Builds the base fixture every induction row edits: a three-element array
+// [1, 2, 3] summed by a counted loop whose header rereads `length`.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
 
 void InductionCases::setup() {
+    // #ctjs.number<N> holds an IEEE-754 bit pattern: 4607182418800017408 is
+    // 1.0, 4611686018427387904 is 2.0 and 4613937818241073152 is 3.0.
     prefix =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
         "  %one = ctjs.constant #ctjs.number<4607182418800017408> {storage_test_id = \"one\"}\n"

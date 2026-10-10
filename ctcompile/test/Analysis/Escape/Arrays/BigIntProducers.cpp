@@ -1,7 +1,18 @@
+//===- BigIntProducers.cpp - Array contents and BigInt results --*- C++ -*-===//
+//
+// Checks that the array-contents analysis treats BigInt results of unary and
+// binary ops as fresh primitives: they carry no object identity, so storing
+// one over an array element releases the old child, and ops that may throw
+// (division by zero, negative exponents) still leave later effects
+// unsupported. 9007199254740993 is 2^53 + 1, a value a double cannot
+// represent exactly.
+//
+//===----------------------------------------------------------------------===//
 #include "Harness.h"
 
 namespace ctcompile::test::escape::arrays {
 
+/// Checks BigInt results of unary negation and bitwise not.
 void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -264,6 +275,10 @@ void checkBigIntUnaryProducers(mlir::MLIRContext & context) {
     }
 }
 
+/// Checks BigInt results of binary arithmetic and bitwise ops, in both the
+/// `ctjs.binary` and `ctjs.binary_static` forms. Afterwards the live IR is
+/// edited in place (operands, constants, and the producer's kind, including the
+/// invalid value 255) and the analysis is rerun after each edit.
 void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
     const std::string values =
         "  %zero = ctjs.constant #ctjs.number<0> {storage_test_id = \"zero\"}\n"
@@ -698,9 +713,9 @@ void checkBigIntBinaryProducers(mlir::MLIRContext & context) {
                                                          static_cast<ctjs::BinaryKind>(255)};
             const auto setKind = [&](ctjs::BinaryKind value) {
                 const auto attribute = ctjs::BinaryKindAttr::get(&context, value);
-                // Preserve the deliberately invalid enum in its typed property.
-                // Generic setAttr validates inherent attributes and can replace
-                // this malformed test value with a null property instead.
+                // Set the typed property directly so the invalid enum (255) is kept:
+                // generic setAttr validates inherent attributes and could replace
+                // this malformed test value with a null property.
                 if (isStatic) {
                     llvm::cast<ctjs::BinaryStaticOp>(producer).setKindAttr(attribute);
                 } else {

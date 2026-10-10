@@ -1,3 +1,13 @@
+//===- Setup.cpp - Shared structured fixtures -------------------*- C++ -*-===//
+//
+// Builds the shared MLIR fixtures and the first rows that check array-contents
+// tracking through scf.if and structured loops. Each row's .arrays, .reads
+// and .exit give the expected facts, with `|` separating the two branches
+// and `;` separating entries.
+// Constants are written as #ctjs.number<N>, where N is the IEEE-754 bit
+// pattern of a double (4607182418800017408 is 1.0).
+//
+//===----------------------------------------------------------------------===//
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::structured_detail {
@@ -290,6 +300,7 @@ void StructuredCases::setup() {
                     .arrays = "a:[x,y]; seed:[]",
                     .reads = "a[0]=x",
                     .exit = "x -> {x}"});
+    // 3.0: a stride that overshoots the array end.
     overshoot = replace(stride, "ctjs.binary add %one, %one",
                         "ctjs.constant #ctjs.number<4613937818241073152>");
     rows.push_back({.what = "a structured overshoot preserves its exact final Number after growth",
@@ -301,6 +312,7 @@ void StructuredCases::setup() {
                     .arrays = "a:[x,y,zero,zero]",
                     .reads = "a[0]=x; a[3]=zero",
                     .exit = "zero -> {}"});
+    // 4294967295.0 (2^32 - 1), the largest array length.
     maxStride = replace(computedUnit, "ctjs.unary plus %one",
                         "ctjs.constant #ctjs.number<4751297606873776128>");
     rows.push_back({.what = "structured induction preserves the maximum exact stride at exit",

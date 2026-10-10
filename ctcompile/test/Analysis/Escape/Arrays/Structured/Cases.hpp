@@ -1,3 +1,10 @@
+//===- Cases.hpp - Structured array-contents cases --------------*- C++ -*-===//
+//
+// Declares StructuredCases, which collects the array-contents rows for
+// structured (scf.if and scf.while) control flow across several .cpp files.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "../Harness.h"
@@ -5,6 +12,10 @@
 
 namespace ctcompile::test::escape::arrays::structured_detail {
 
+/// Accumulates array-contents rows for structured control flow. setup()
+/// builds the shared loop fixtures (the std::string members, edited by the
+/// later case groups with replace()), each case group appends rows, and
+/// finish() parses and checks every row.
 struct StructuredCases {
     mlir::MLIRContext & context;
     explicit StructuredCases(mlir::MLIRContext & input) : context(input) {}
@@ -29,8 +40,10 @@ struct StructuredCases {
     std::string makeNegative{};
     std::string carriedNegative{};
     std::string savedNegative{};
+    /// Total analysis work over all rows, summed and printed by finish().
     std::size_t budgets{};
 
+    /// Adds a row whose fixture the analysis must refuse with failure.
     void reject(const char * what, std::string body,
                 ArrayContentsFailure failure = ArrayContentsFailure::UnsupportedControlFlow);
 

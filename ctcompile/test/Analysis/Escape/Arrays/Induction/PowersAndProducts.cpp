@@ -1,3 +1,19 @@
+//===- PowersAndProducts.cpp - Pow and product strides --------------------===//
+//
+// Induction variables whose stride comes from `pow`, `*`, or unary +/- over
+// constants (Number, Boolean, null, canonical numeric String). Accepted strides
+// must keep the saved array-length snapshot exact; the rest must be rejected.
+//
+// `#ctjs.number<N>` holds the IEEE-754 bit pattern of a double. Values used here:
+// 0 = 0.0, 9223372036854775808 = -0.0, 4602678819172646912 = 0.5,
+// 13826050856027422720 = -0.5, 4607182418800017408 = 1.0,
+// 13830554455654793216 = -1.0, 4751297606873776128 = 2^32 - 1,
+// 13974669643728551936 = -(2^32 - 1), 4751297606875873280 = 2^32,
+// 13974669643730649088 = -2^32, 9218868437227405312 = +Infinity,
+// 18442240474082181120 = -Infinity, 9221120237041090560 = NaN.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {
@@ -39,6 +55,9 @@ void InductionCases::powersAndProducts() {
             "x");
     }
     const auto signedUnitPower = replace(powerChild, "pow %minus, %one", "pow %minus, %magnitude");
+    // 2^32 - 1 and -(2^32 - 1) are the endpoints of the accepted signed exponent
+    // domain. The rejected list below covers String and BigInt exponents, 0.5,
+    // +-2^32, +Infinity, -Infinity and NaN.
     for (const std::string literal :
          {"#ctjs.number<4751297606873776128>", "#ctjs.number<13974669643728551936>"}) {
         run({.what = "negative-one powers preserve parity at both signed domain endpoints",

@@ -1,3 +1,10 @@
+//===- Cases.cpp - Dense array length test driver -------------------------===//
+//
+// LengthCases::run, which parses and checks one row, and checkDenseArrayLength,
+// which runs the row groups defined in the other files of this directory.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::length_detail {
@@ -16,6 +23,10 @@ void LengthCases::run(const contents_row & expected, const char * discharged,
     if (auto module = parse(expected)) {
         check(*module, expected, discharged);
         if (receiverVerdict != nullptr) {
+            // Run the solver directly and check array "a" twice: with a zero
+            // retention work limit computeVerdicts skips the array-retention
+            // refinement, so "a" keeps its original escapes:passed verdict; with
+            // the default limit it must refine to receiverVerdict.
             ctjs::FuncOp function = *module->getOps<ctjs::FuncOp>().begin();
             mlir::DataFlowSolver solver;
             solver.load<mlir::dataflow::DeadCodeAnalysis>();
@@ -48,6 +59,8 @@ void LengthCases::run(const contents_row & expected, const char * discharged,
 
 namespace ctcompile::test::escape::arrays {
 
+/// Runs every dense array `length` group. The order matters: later groups
+/// reuse fragments and rows that earlier groups stored in LengthCases.
 void checkDenseArrayLength(mlir::MLIRContext & context) {
     length_detail::LengthCases cases(context);
     cases.setup();

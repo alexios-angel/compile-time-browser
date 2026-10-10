@@ -3,9 +3,9 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-power-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-power-latch.claims
 
-// Bounded nested powers use unchanged original primitive operands, noncanonical
-// Strings converting exactly. General powers, changing inputs, zero strides and
-// bounds refuse.
+// A stride `base ** exp` (nested too) over unchanged primitives is folded, strings such as
+// '01' converting exactly. General powers, changing operands, a zero stride and an
+// out-of-range index are refused.
 // IMPORT-LABEL: ctjs.func @savedPower$
 // IMPORT: ctjs.binary pow
 // IMPORT: ctjs.binary add

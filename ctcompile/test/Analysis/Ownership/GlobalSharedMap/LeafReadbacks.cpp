@@ -1,3 +1,12 @@
+//===- LeafReadbacks.cpp - Leaf readback ownership tests --------*- C++ -*-===//
+//
+// Tests that a Map setter which saves an object and reads it back (identity
+// compare or field read) gets a complete owner proof, that unsafe variants are
+// refused, that edits to the live IR invalidate the proof, and that the proof
+// fits a bounded step budget.
+//
+//===----------------------------------------------------------------------===//
+
 #include "LeafReadbacks/Helpers.hpp"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -5,6 +14,8 @@ namespace ctcompile::test::owned_global_shared_map {
 void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & source, bool lifted) {
     checkMixedChildReadbacks(context, source, lifted);
     const std::string write = "    %written = ctjs.call %setter(%state, %entryKey, %value)";
+    // #ctjs.number<N> holds IEEE-754 bits: 4607182418800017408 is 1.0 and
+    // 4611686018427387904 is 2.0.
     const std::string field = "    %fieldKey = ctjs.constant #ctjs.string<\"value\">\n"
                               "    %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
                               "    ctjs.set_property %value[%fieldKey], %one\n";
@@ -235,6 +246,7 @@ void checkLeafReadbackOwner(mlir::MLIRContext & context, const std::string & sou
         auto contract = mapContractFor(*module);
         OwnedGlobalRoots query(*module, contract);
         const unsigned completion = query.steps();
+        // 25000 steps is a loose ceiling; a proof needing more is a regression.
         check(query.proved() && completion < 25000, "the complete readback owner proof is bounded");
         if (!query.proved() || completion >= 25000) { continue; }
         checkBudgetsBelow(*module, contract, completion,

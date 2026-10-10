@@ -2,8 +2,8 @@
 // RUN: python3 %S/../../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-string-length
 // RUN: FileCheck %s < %t/escape-claims-invariant-string-length.claims
 
-// Original ASCII literals agree with Script's byte length and JS UTF-16 length.
-// Unknown, computed and non-ASCII strings retain their conservative boundary.
+// `text.length` of an ASCII literal is folded (byte and UTF-16 lengths agree). An unknown,
+// computed or non-ASCII string is not folded, so the conservative result stands.
 // CHECK: escape {{[0-9a-f]+}} 1 {{[0-9]+}} obj confined
 // CHECK: escape {{[0-9a-f]+}} 2 {{[0-9]+}} obj escapes:stored
 // CHECK: escape {{[0-9a-f]+}} 3 {{[0-9]+}} obj confined
@@ -47,7 +47,7 @@ function computedLength() {
     for (var i = 0; i < array.length; i += text.length) saved = array[i];
     return 0;
 }
-// Every latch reads the same literal despite the earlier initial value.
+// changedString: every write stores the same literal 'bb', so the stride stays bounded.
 function changedString() {
     var child = {}, array = [child], text = 'a', saved = 0;
     for (var i = 0; i < array.length; i += text.length) {

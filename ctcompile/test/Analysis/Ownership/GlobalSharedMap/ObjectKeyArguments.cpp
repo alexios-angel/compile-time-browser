@@ -1,3 +1,11 @@
+//===- ObjectKeyArguments.cpp - Object-key argument ownership tests -------===//
+//
+// Tests fresh empty objects passed to a published method as Map keys or
+// payloads: their allocations stay exact, scalar calls gain no object identity,
+// and named, nested or unknown objects are refused.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -23,6 +31,10 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
         const auto & table = *owner.roots().front().methodTable;
         auto getter = module.lookupSymbol<ctjs::FuncOp>("get$3");
         auto entry = module.lookupSymbol<ctjs::FuncOp>("script$0");
+        // The key parameter follows the three implicit arguments (this, new,
+        // callee); the prepared form adds the closure environment before it.
+        // Likewise a call's actual is operand 2 after callee and receiver, and
+        // operand 4 in the prepared `ctjs.call_direct`.
         const auto parameter = getter.getBody().front().getArgument(prepared ? 4 : 3);
         const std::vector<mlir::BlockArgument> formals =
             outerFormal ? std::vector{parameter} : std::vector<mlir::BlockArgument>{};
@@ -151,6 +163,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
         variant(storing, true, "checked empty objects may be retained as Map keys or payloads", 1,
                 key ? 1 : 0, key);
     }
+    // 4607182418800017408 is the bit pattern of the double 1.0.
     const std::string retain = "    %setKey = ctjs.constant #ctjs.string<\"set\">\n"
                                "    %setter = ctjs.get_property %state[%setKey]\n"
                                "    %one = ctjs.constant #ctjs.number<4607182418800017408>\n"
@@ -239,6 +252,7 @@ void checkObjectKeyArguments(mlir::MLIRContext & context, const std::string & so
     check(OwnedGlobalRoots(*module, contract).proved(),
           "restoring the exact actual and source order restores independent ownership");
     const unsigned completion = owner.steps();
+    // 10000 steps is a loose ceiling; a proof needing more is a regression.
     check(completion < 10000, "the object actual ownership proof remains bounded");
     if (completion >= 10000) { return; }
     checkBudgetsBelow(*module, contract, completion,

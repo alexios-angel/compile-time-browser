@@ -1,9 +1,20 @@
+//===- Fixtures.h - Oracle probe programs --------------------- -*- C++ -*-===//
+//
+// The JavaScript programs Oracle.cpp's self-tests run under a recorder. Every
+// expected counter in Oracle.cpp is computed by hand from these sources, so
+// changing a line here means re-deriving the numbers there.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include <string_view>
 
 namespace ctcompile::test::oracle {
 
+/// The type oracle's fixture: `ident` and `two` give hand-computable register
+/// type sets, `never_called` is never entered, and the throwing functions reach
+/// the recorder's `expect_pc` guard.
 inline constexpr std::string_view oracle_probe = R"JS(
 function ident(x) { return x; }
 function two(a, b) { return a + b; }
@@ -52,6 +63,9 @@ throws_before_writing({});
 catching_caller({});
 )JS";
 
+/// The escape oracle's fixture: one small function per escape route (confined,
+/// returned, global, thrown, closure, cycle, ...), each called a known number
+/// of times.
 inline constexpr std::string_view escape_probe = R"JS(
 var G = null;
 var H = [];

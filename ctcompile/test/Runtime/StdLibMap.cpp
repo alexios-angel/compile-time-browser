@@ -1,39 +1,44 @@
-// DOES THE C++ THE NATIVE BACKEND WOULD EMIT COMPUTE WHAT THE INTERPRETER
-// COMPUTES?
+//===- ctcompile/test/Runtime/StdLibMap.cpp - stdlib map checks -*- C++ -*-===//
 //
-// Phase 61 of `ctcompile-plan/24-native-cpp-backend.md`: the specification's
-// §8 table, which maps a JavaScript global onto a C++ or Boost facility. Every
-// row of that table is a semantic claim, and a claim that two functions with
-// similar names compute the same thing is exactly the claim nobody checks.
+// Does the C++ the native backend would emit compute what the interpreter
+// computes?
 //
-// WHY THIS IS NOT ctcompile_differential. That test runs a body twice - once
-// interpreted, once with its compiled entry installed - and compares. It cannot
-// ask this question, because a `Math.abs(x)` compiled by the EmitC backend
-// still CALLS the interpreter's Math.abs through ct_aot_call; both tiers reach
-// the same builtin and agree no matter what this table says. The question here
-// is one step earlier and does not need a backend at all: given the C++
-// expression a native lowering WOULD emit, does it answer what the builtin
-// answers? That is answerable today, and answering it now is what stops the
-// lowering being written against a wrong table.
+// Checks ctcompile/include/ctcompile/StdLib/StdLibMap.def, the table that maps
+// a JavaScript global onto the C++ or Boost facility the native backend would
+// emit for it. Every row of that table is a semantic claim, and a claim that
+// two functions with similar names compute the same thing is exactly the
+// claim nobody checks.
 //
-// THE INTERPRETER IS THE DEFINITION OF CORRECT, which is the dialect's own
-// policy: "when a CTJS operation and the ctbrowser VM disagree, the VM is
+// Why this is not ctcompile_differential: that test runs a body twice - once
+// interpreted, once with its compiled entry installed - and compares. It
+// cannot ask this question, because a `Math.abs(x)` compiled by the EmitC
+// backend still calls the interpreter's Math.abs through ct_aot_call; both
+// sides reach the same builtin and agree no matter what this table says. The
+// question here is one step earlier and does not need a backend at all: given
+// the C++ expression a native lowering would emit, does it answer what the
+// builtin answers? Answering that before the lowering exists stops it being
+// written against a wrong table.
+//
+// The interpreter is the definition of correct, which is the CTJS dialect's
+// own policy: "when a CTJS operation and the ctbrowser VM disagree, the VM is
 // correct by definition." Nothing below writes an expected answer down. Each
-// probe evaluates a JavaScript expression in a real context AND evaluates the
+// probe evaluates a JavaScript expression in a real context and evaluates the
 // proposed C++ beside it, and the two are compared.
 //
-// AND A DISAGREEMENT IS SOMETIMES THE ASSERTION. A row the map classifies
-// `divergent` must DISAGREE, on the witness the map names. That is what makes
+// A disagreement is sometimes the assertion. A row the map classifies
+// `divergent` must disagree, on the witness the map names. That is what makes
 // the refusal list load-bearing rather than decorative: promote Math.round to
-// `exact` without repairing its target and this test goes red; repair the
-// target so std::round is no longer what is emitted, and the witness stops
-// witnessing, and it goes red the other way. A refusal nobody can falsify is a
+// `exact` without repairing its target and this test fails; repair the target
+// so std::round is no longer what is emitted, and the witness stops
+// witnessing, and it fails the other way. A refusal nobody can falsify is a
 // note, not a test.
 //
-// THE INPUTS ARE CHOSEN TO SEPARATE, NOT TO COVER. -0, NaN and the two halfway
+// The inputs are chosen to separate, not to cover. -0, NaN and the two halfway
 // cases do all the work here: they are where a plausible C++ spelling stops
 // agreeing with JavaScript, and an input like `Math.floor(2.5)` would pass
 // against std::floor, std::round, std::trunc and std::nearbyint alike.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -70,12 +75,16 @@ namespace {
 
 // --- the map, read as data ------------------------------------------------
 
+/// What StdLibMap.def says about a row: the target computes the same thing,
+/// computes something different (and names a witness input), or has no
+/// target yet.
 enum class verdict {
     exact,
     divergent,
     refused
 };
 
+/// One StdLibMap.def entry, as data.
 struct row {
     std::string_view name;
     std::string_view js;
@@ -94,8 +103,8 @@ constexpr row map[] = {
 };
 #undef CT_STDLIB_ROW
 
-// THE COUNTS, COMPUTED FROM THE TABLE, so the test asserts a number it did not
-// write down: a row deleted from the .def changes what the test demands.
+// The counts are computed from the table, so the test asserts a number it did
+// not write down: a row deleted from the .def changes what the test demands.
 constexpr int count_of(verdict which) {
     int n = 0;
     for (const row & each : map) { n += each.verdict == which ? 1 : 0; }
@@ -120,12 +129,12 @@ static_assert(std::ranges::all_of(map,
 const double nan_ = std::numeric_limits<double>::quiet_NaN();
 const double inf_ = std::numeric_limits<double>::infinity();
 
-// A NUMBER'S BITS, NOT ITS TEXT, and that is the whole reason this test can see
-// what it is looking for. `String(-0)` is "0" in JavaScript, so a text
-// comparison cannot tell +0 from -0 - and -0 is the answer that separates
-// Math.round from std::round, Math.max from std::max, and Math.sign from
-// copysign. Every NaN is folded to one token because a NaN payload is not
-// observable from JavaScript and the two sides have no reason to agree on it.
+/// A number's bits, not its text, and that is the whole reason this test can
+/// see what it is looking for. `String(-0)` is "0" in JavaScript, so a text
+/// comparison cannot tell +0 from -0 - and -0 is the answer that separates
+/// Math.round from std::round, Math.max from std::max, and Math.sign from
+/// copysign. Every NaN is folded to one token because a NaN payload is not
+/// observable from JavaScript and the two sides have no reason to agree on it.
 std::string number_token(double d) {
     if (std::isnan(d)) { return "NaN"; }
     char out[24] = {};
@@ -134,15 +143,17 @@ std::string number_token(double d) {
     return out;
 }
 
+/// The comparison token for any value: number_token for a number, ToString
+/// otherwise.
 std::string token(context & cx, value v) {
     return v.is_number() ? number_token(v.as_number()) : cx.to_string(v);
 }
 
-// WHAT THE INTERPRETER SAYS. The expression is wrapped so the driver can tell
-// "the answer was undefined" from "the arm never ran" - the same guard
-// Differential.cpp carries, and for the same reason: a probe whose source
-// throws would otherwise read back the PREVIOUS probe's global and report
-// agreement about nothing.
+/// What the interpreter says. The expression is wrapped so the driver can tell
+/// "the answer was undefined" from "the probe never ran" - the same sentinel
+/// Runtime/Differential carries, and for the same reason: a probe whose source
+/// throws would otherwise read back the previous probe's global and report
+/// agreement about nothing.
 std::string interpreted(context & cx, std::string_view expression) {
     const std::string source = "__RAN = 0; __R = (" + std::string(expression) + "); __RAN = 1;";
     const program compiled = ctbrowser::script::compiler::compile(source);
@@ -161,15 +172,15 @@ std::string interpreted(context & cx, std::string_view expression) {
 // probe reads as the pair it is.
 
 struct probe {
-    // The record in StdLibMap.def this probe is evidence about.
+    /// The record in StdLibMap.def this probe is evidence about.
     const char * row;
     const char * js;
     std::string (*native)();
 };
 
-// Math.sign, as the map spells it. Written once here rather than three times
-// below, because the point of the row is that this expression - and not
-// std::copysign - is what has to be emitted.
+/// Math.sign, as the map spells it. Written once here rather than three times
+/// below, because the point of the row is that this expression - and not
+/// std::copysign - is what has to be emitted.
 double js_sign(double x) {
     return x > 0 ? 1.0 : (x < 0 ? -1.0 : x);
 }
@@ -179,7 +190,7 @@ const probe probes[] = {
     {"Math_floor", "Math.floor(-0.5)", [] { return number_token(std::floor(-0.5)); }},
     {"Math_floor", "Math.floor(-0)", [] { return number_token(std::floor(-0.0)); }},
     {"Math_floor", "Math.floor(NaN)", [] { return number_token(std::floor(nan_)); }},
-    // -0, WHICH IS THE ANSWER AND NOT A CURIOSITY: Math.ceil(-0.5) is -0, so a
+    // -0 is the answer, not a curiosity: Math.ceil(-0.5) is -0, so a
     // lowering that normalised zeros would be caught here and nowhere else.
     {"Math_ceil", "Math.ceil(-0.5)", [] { return number_token(std::ceil(-0.5)); }},
     {"Math_ceil", "Math.ceil(4.2)", [] { return number_token(std::ceil(4.2)); }},
@@ -193,13 +204,13 @@ const probe probes[] = {
     {"Math_abs", "Math.abs(-0)", [] { return number_token(std::fabs(-0.0)); }},
     {"Math_abs", "Math.abs(-Infinity)", [] { return number_token(std::fabs(-inf_)); }},
     {"Math_abs", "Math.abs(NaN)", [] { return number_token(std::fabs(nan_)); }},
-    // THE THREE INPUTS THAT SEPARATE THE ROW FROM copysign(1, x): -0 must come
+    // The three inputs that separate the row from copysign(1, x): -0 must come
     // back as -0, NaN as NaN, and only a nonzero input picks up a magnitude.
     {"Math_sign", "Math.sign(-0)", [] { return number_token(js_sign(-0.0)); }},
     {"Math_sign", "Math.sign(NaN)", [] { return number_token(js_sign(nan_)); }},
     {"Math_sign", "Math.sign(-3.5)", [] { return number_token(js_sign(-3.5)); }},
 
-    // --- the transcendentals, exact against the ORACLE ---------------------
+    // --- the transcendentals, exact against the interpreter ----------------
     {"Math_sin", "Math.sin(1)", [] { return number_token(std::sin(1.0)); }},
     {"Math_cos", "Math.cos(1)", [] { return number_token(std::cos(1.0)); }},
     {"Math_tan", "Math.tan(1)", [] { return number_token(std::tan(1.0)); }},
@@ -217,9 +228,9 @@ const probe probes[] = {
     {"Math_LOG10E", "Math.LOG10E", [] { return number_token(std::numbers::log10e); }},
 
     // --- Unicode trim distinguishes both proposed byte-oriented targets ---
-    // The interpreter now agrees with ECMAScript on NBSP and BOM. Keep the
-    // library targets unchanged and pin Boost's locale so the witness does
-    // not depend on the process locale. Every divergent probe must disagree.
+    // The interpreter trims NBSP and BOM as ECMAScript requires; both
+    // byte-oriented targets do not, so each probe must disagree. Boost's locale
+    // is pinned so the result does not depend on the process locale.
     {"String_trim", R"JS("\u00a0x\u00a0".trim())JS",
      [] { return std::string(ctbrowser::trim("\xc2\xa0x\xc2\xa0", ctbrowser::js_whitespace)); }},
     {"String_trim", R"JS("\ufeffx\ufeff".trim())JS",
@@ -237,29 +248,30 @@ const probe probes[] = {
                                             std::locale::classic());
      }},
 
-    // --- and now the rows that must DISAGREE -------------------------------
+    // --- and now the rows that must disagree -------------------------------
     //
-    // THE HEADLINE ROW. std::round rounds a tie away from zero; JavaScript
+    // The headline row. std::round rounds a tie away from zero; JavaScript
     // rounds a tie toward +Infinity. -0.5 and -2.5 are where that shows.
     {"Math_round", "Math.round(-0.5)", [] { return number_token(std::round(-0.5)); }},
     {"Math_round", "Math.round(-2.5)", [] { return number_token(std::round(-2.5)); }},
-    // NaN VANISHES THROUGH `<`, which is what std::min and std::max are written
+    // NaN vanishes through `<`, which is what std::min and std::max are written
     // in terms of, so the NaN never reaches the answer.
     {"Math_min", "Math.min(1, NaN)", [] { return number_token(std::min(1.0, nan_)); }},
-    // AND THE ZERO, WHICH IS THE HALF A NaN TEST WOULD MISS: `-0 < 0` is false,
+    // And the zero, which is the half a NaN test would miss: `-0 < 0` is false,
     // so std::max returns its first argument.
     {"Math_max", "Math.max(-0, 0)", [] { return number_token(std::max(-0.0, 0.0)); }},
     {"Math_pow", "Math.pow(1, NaN)", [] { return number_token(std::pow(1.0, nan_)); }},
-    // ONE ULP, WHICH IS EXACTLY THE SIZE OF ERROR A PRINTED COMPARISON HIDES.
+    // One ulp, which is exactly the size of error a printed comparison hides.
     {"Math_SQRT1_2", "Math.SQRT1_2", [] { return number_token(1.0 / std::numbers::sqrt2); }},
-    // A DIFFERENT STREAM IS A DIFFERENT PICTURE. The engine's is a per-context
-    // xorshift64*; this is the generator a transpiler would reach for.
+    // A different stream is a different picture. The engine's is a per-context
+    // xorshift64*; this is the generator a transpiler would reach for. Dividing
+    // the top 53 bits by 9007199254740992 (2^53) gives a double in [0, 1).
     {"Math_random", "Math.random()",
      [] {
          std::mt19937_64 generator(1uLL);
          return number_token(static_cast<double>(generator() >> 11) / 9007199254740992.0);
      }},
-    // THE FROZEN CLOCK AGAINST THE WALL CLOCK.
+    // The frozen clock against the wall clock.
     {"Date_now", "Date.now()",
      [] {
          return number_token(
@@ -267,7 +279,7 @@ const probe probes[] = {
                                      std::chrono::system_clock::now().time_since_epoch())
                                      .count()));
      }},
-    // SameValueZero AGAINST operator==. A JS Set holds one NaN and one zero;
+    // SameValueZero against operator==. A JS Set holds one NaN and one zero;
     // an unordered_set holds two NaNs (because NaN != NaN) and one zero.
     {"Set_ctor",
      "(function () { var s = new Set(); s.add(NaN); s.add(NaN); s.add(0); s.add(-0); "
@@ -280,7 +292,7 @@ const probe probes[] = {
          set.insert(-0.0);
          return number_token(static_cast<double>(set.size()));
      }},
-    // AND INSERTION ORDER, which is a second and independent refutation: even a
+    // And insertion order, which is a second and independent refutation: even a
     // set whose key equality were repaired would still iterate in the wrong
     // order.
     {"Set_ctor",
@@ -306,14 +318,11 @@ const probe probes[] = {
          table.emplace(-0.0, 4.0);
          return number_token(static_cast<double>(table.size()));
      }},
-    // A REGEX DIALECT THAT IS NOT JAVASCRIPT'S. Backreferences and lookbehind
-    // stopped separating the two on 2026-09-12 (the browser's rx engine grew
-    // both), so the witnesses are constructs that are Perl to Boost and
-    // something else to ECMAScript: `\Z` is end-before-final-newline to Boost
-    // and the identity escape `Z` in a JavaScript pattern; `[[:digit:]]` is a
-    // POSIX class to Boost and, to JavaScript, the class `[:digt` followed by
-    // a literal `]`; `(?i)` is an inline modifier to Boost and, to JavaScript,
-    // not a group at all - and nothing anywhere reports an error.
+    // A regex dialect that is not JavaScript's. Each witness is a construct
+    // Boost reads as Perl syntax and ECMAScript reads differently, and neither
+    // reports an error: `\Z` (end-before-final-newline vs the identity escape
+    // `Z`), `[[:digit:]]` (a POSIX class vs the class `[:digt` followed by a
+    // literal `]`), `(?i)` (an inline modifier vs not a group at all).
     {"RegExp_ctor", R"JS(new RegExp("a\\Z").test("a\n"))JS",
      [] {
          return std::string(
@@ -333,7 +342,7 @@ const probe probes[] = {
     // Boost stores integer -0 as int64 zero before conversion to double.
     {"JSON_parse", "JSON.parse('-0')",
      [] { return number_token(boost::json::parse("-0").to_number<double>()); }},
-    // A DIFFERENT NUMBER FORMATTER, on the most ordinary number there is.
+    // A different number formatter, on the most ordinary number there is.
     {"JSON_stringify", "JSON.stringify(0.1)",
      [] { return boost::json::serialize(boost::json::value(0.1)); }},
     {"JSON_stringify", "JSON.stringify(1e21)",
@@ -355,7 +364,7 @@ int main() {
 
     // ---- every probe names a row, and every row that can be probed is -----
     //
-    // THE COVERAGE NUMBER IS DERIVED FROM THE TABLE, not written down. A row
+    // The coverage number is derived from the table, not written down. A row
     // added to StdLibMap.def with no probe beside it fails here, which is what
     // stops the map growing claims nothing checks - and a `refused` row that
     // acquires a probe fails too, because a refusal with a witness is a
@@ -417,11 +426,11 @@ int main() {
                         which->target.data(), cpp.c_str());
             ++ctbrowser_test_failures;
         } else if (which->verdict == verdict::divergent && same) {
-            // A WITNESS THAT STOPPED WITNESSING IS A FAILURE, not a quiet
+            // A witness that stopped witnessing is a failure, not a quiet
             // success. Either the target was repaired - in which case the row's
             // verdict is stale and this file is the place that says so - or the
-            // probe drifted onto an input that no longer separates them, which
-            // is the vacuous test this project keeps finding.
+            // probe drifted onto an input that no longer separates them, and
+            // the test would pass without testing anything.
             std::printf("%-16s FAILED - the map calls this row DIVERGENT and both answered %s.\n"
                         "    Either %.*s was repaired and the verdict is stale, or the witness "
                         "stopped separating them.\n",
@@ -440,9 +449,8 @@ int main() {
                 CT_STDLIB_ROW_COUNT, CT_STDLIB_EXACT_COUNT, CT_STDLIB_DIVERGENT_COUNT,
                 CT_STDLIB_REFUSED_COUNT, std::size(probes), agreed, diverged);
 
-    // THE REFUSALS, PRINTED. They are the roadmap - part 24 §63 step 2: "every
-    // function the native backend refuses records WHY... That list is the
-    // roadmap." A refusal nobody ever reads is a refusal that gets rediscovered.
+    // Print the refused rows: they are the list of globals the native backend
+    // cannot lower yet.
     std::printf("\nrefused, with no witness available:\n");
     for (const row & each : map) {
         if (each.verdict != verdict::refused) { continue; }

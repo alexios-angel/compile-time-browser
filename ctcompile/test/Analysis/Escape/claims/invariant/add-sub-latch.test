@@ -3,8 +3,8 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name invariant-add-sub-latch
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-invariant-add-sub-latch.claims
 
-// Original invariant Add/Sub uses bounded primitive snapshots. Add never borrows
-// Sub's String conversion; changing inputs and unsafe bounds refuse.
+// Strides `x + c` / `x - c`, x a primitive saved before the loop, are folded to a number.
+// `+` on a string concatenates (never folded); a changing or out-of-range stride is refused.
 // IMPORT-LABEL: ctjs.func @addBoolean$
 // IMPORT: ctjs.binary add
 // IMPORT-LABEL: ctjs.func @addNegative$

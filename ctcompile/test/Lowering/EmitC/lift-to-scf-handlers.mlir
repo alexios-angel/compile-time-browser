@@ -1,59 +1,59 @@
-// WHY try/catch DOES NOT LIFT, WHICH OF THE TWO OPERATIONS IS ACTUALLY IN THE
-// WAY, AND WHAT THE FIX HAS TO PRODUCE.
+// Why try/catch does not lift to structured control flow, which of the two
+// operations is actually in the way, and what a fix has to produce.
 //
-// Stage 45A of ctcompile-plan/22-lexical-cpp-backend.md. Measured on the
-// corpora with --ctjs-lift-to-scf: 41 functions are refused - bootstrap 2,
-// p5 27, phaser 12 - and every one of them reports
+// When this test was written, every function --ctjs-lift-to-scf refused in the
+// benchmark corpora (41 of them: Bootstrap 2, p5.js 27, Phaser 12) reported
+// this, and only this, diagnostic:
 //
 //     'ctjs.push_handler' op transformation does not support terminators with
 //     side effects
 //
-// THAT NUMBER NAMES ONLY HALF THE PROBLEM, and the first function below is why.
-// `checkTransformationPreconditions` walks the region and INTERRUPTS on the
+// That message names only half the problem, and the first function below shows
+// why. `checkTransformationPreconditions` walks the region and stops at the
 // first operation that fails, so a function with a `try` reports whichever of
-// its two offending terminators the walk reached first - and `ctjs.push_handler`
+// its two offending terminators the walk reached first, and `ctjs.push_handler`
 // always precedes the `ctjs.check`s inside its own body. `ctjs.check` is
 // refused for exactly the same reason and never gets to say so.
 //
-// It is the harder half, too. There is ONE push_handler per protected region
-// and one check per FALLIBLE OPERATION inside it, and a check carries the
+// It is also the harder half. There is one push_handler per protected region
+// and one check per fallible operation inside it, and a check carries the
 // register snapshot that makes the handler see the frame as of the throw.
 //
-// THE PRECONDITION IS `isMemoryEffectFree`, and an operation that does not
-// implement MemoryEffectOpInterface at all is not memory-effect-free - the
-// interface's own contract, not a quirk. Neither of ours implements it. So
-// "confirm rather than assume", which the plan asks for, comes out: BOTH are
-// side-effecting as far as the utility is concerned, and neither can simply
-// have the trait removed. `ctjs.check` really does read mutable state - the
-// frame's caught status, which the fallible operation before it just set - so
-// declaring it effect-free would licence CSE to merge two checks taken after
-// two different calls.
+// The precondition is `isMemoryEffectFree`, and an operation that does not
+// implement MemoryEffectOpInterface at all is not memory-effect-free; that is
+// the interface's own contract, not a quirk. Neither of ours implements it, so
+// both count as side-effecting to the utility, and neither can simply have the
+// trait removed. `ctjs.check` really does read mutable state: the frame's
+// caught status, which the fallible operation before it just set. Declaring it
+// effect-free would license CSE to merge two checks taken after two different
+// calls.
 //
-// HOW "NO cf OPERATIONS LEFT" IS ASSERTED, because two obvious spellings of it
-// are assertions that cannot fail, and both were tried here before this line
-// was written.
+// How "no cf operations left" is asserted matters, because the two obvious
+// spellings of it are assertions that cannot fail, and the lift's output is
+// full of `scf.` operations that a careless pattern also matches. Both were
+// tried before the form in the RUN line below:
 //
 //   1. A plain `CHECK-NOT: cf.` covers only the gap between its neighbouring
-//      directives, not the function - and "cf." is a SUBSTRING of "scf.", so it
-//      matches every structured operation the pass just produced. That is the
-//      mistake that once reported this project's structuring rate as 48% when
-//      it was 96.8%.
+//      directives, not the function. And "cf." is a substring of "scf.", so
+//      it matches every structured operation the pass just produced: the
+//      assertion is both too narrow and wrong.
+//
 //   2. `--implicit-check-not=[^s]cf\.` covers the whole input and still cannot
-//      fail: --implicit-check-not takes a FileCheck PATTERN, where a regular
+//      fail: --implicit-check-not takes a FileCheck pattern, where a regular
 //      expression has to be wrapped in `{{...}}`. Bare, it is the literal
 //      nine-character string, which no output contains. Measured: against the
-//      UNLIFTED module - `cf.br` on the second line of it - FileCheck exits 0.
+//      unlifted module (`cf.br` on its second line), FileCheck exits 0.
 //
 // The wrapped form exits 1 on that same input and 0 on the lifted one, which is
 // what makes it an assertion.
 //
 // RUN: ctjs-opt %s --ctjs-lift-to-scf | FileCheck %s --implicit-check-not='{{[^s]cf\.}}'
 
-// --- THE HALF THE CORPUS NUMBER HIDES ---------------------------------------
+// --- The half the corpus number hides ----------------------------------------
 //
 // A `ctjs.check` with no `ctjs.push_handler` anywhere. Nothing in the dialect
-// forbids it - CheckOp::verify asks only that both successors are in this
-// region - and it is refused on its own, by name.
+// forbids it (CheckOp::verify asks only that both successors are in this
+// region), and it is refused on its own, by name.
 //
 // CHECK-LABEL: ctjs.func @check_alone
 // CHECK-SAME: ctjs.not_structured = "'ctjs.check' op{{.*}}side effects{{.*}}"
@@ -69,22 +69,22 @@ ctjs.func @check_alone(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %thrown
 }
 
-// --- AND WHAT THE SPLIT HAS TO PRODUCE --------------------------------------
+// --- What a split has to produce ---------------------------------------------
 //
-// The plan's prescription is to split each offender into a side-effecting
-// NON-terminator plus a pure terminator. This is that shape, written by hand so
+// The proposed fix is to split each offender into a side-effecting
+// non-terminator plus a pure terminator. This is that shape, written by hand so
 // the target can be pinned before the dialect changes: `ctjs.pop_handler`
 // stands in for the side-effecting non-terminator, and `ctjs.truthy` for the
 // "was it caught" read that would replace `ctjs.check`'s status poll.
 //
-// THE PURE TERMINATOR MUST BE `cf.cond_br`, NOT A NEW PURE CTJS TERMINATOR.
-// `mlir::ControlFlowToSCFTransformation` - the interface implementation this
-// pass reuses - builds an `scf.if` from a `cf::CondBranchOp` and an
+// The pure terminator must be `cf.cond_br`, not a new pure CTJS terminator.
+// `mlir::ControlFlowToSCFTransformation`, the interface implementation this
+// pass reuses, builds an `scf.if` from a `cf::CondBranchOp` and an
 // `scf.index_switch` from a `cf::SwitchOp`, and knows no other multi-successor
-// operation. On LLVM 23 that is an explicit precondition,
-// `canConvertMultiSuccessorBranchOp`; on the pinned 22.1.8 the check does not
-// exist yet, so a new pure terminator would pass the preconditions and fail
-// later, inside createStructuredBranchRegionOp, with a worse message.
+// operation; its `canConvertMultiSuccessorBranchOp` precondition rejects any
+// other multi-successor terminator up front. A new pure CTJS terminator would
+// therefore be refused by the lift's preconditions rather than structured, and
+// the pass would gain nothing from it.
 //
 // CHECK-LABEL: ctjs.func @guarded_split
 // CHECK-NOT: ctjs.not_structured
@@ -106,21 +106,21 @@ ctjs.func @guarded_split(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %thrown
 }
 
-// AND WITH THE HANDLER INSIDE A LOOP, which is the case that says something.
+// The same with the handler inside a loop, which is the informative case.
 // The pad is reached from inside a cycle, so the algorithm cannot simply make
-// an `scf.if` of it: it hoists the pad OUT of the loop behind an
+// an `scf.if` of it: it hoists the pad out of the loop behind an
 // `scf.index_switch` fed by an edge multiplexer.
 //
-// THAT MOVES `ctjs.catch_land` PAST THE LOOP EPILOGUE, and it is still correct
-// for one specific reason worth writing down: catch_land READS state the
-// unwinder already wrote into the frame - the ip and the catch register - and
-// that state persists until something clears it. It is not a snapshot of a
-// moment. A structuring that reordered a WRITE like that would not be safe, and
-// `ctjs.pop_handler` is exactly such a write: its balance is a whole-function
-// invariant no verifier can see, so a transformation that ever duplicated one
-// onto two paths would silently take a CALLER's handler. Not observed here -
-// the utility inserts multiplexers rather than duplicating blocks - and worth
-// re-checking on the corpus when the split lands.
+// That moves `ctjs.catch_land` past the loop epilogue, and it is still correct
+// for one specific reason: catch_land reads state the unwinder already wrote
+// into the frame (the ip and the catch register), and that state persists until
+// something clears it; it is not a snapshot of a moment. A structuring that
+// reordered a write like that would not be safe, and `ctjs.pop_handler` is
+// exactly such a write: its balance is a whole-function invariant no verifier
+// can see, so a transformation that ever duplicated one onto two paths would
+// silently take a caller's handler. The utility inserts multiplexers rather
+// than duplicating blocks, so this does not happen here; re-check it if
+// ctjs.check/push_handler are ever split as described above.
 //
 // CHECK-LABEL: ctjs.func @guarded_loop
 // CHECK-NOT: ctjs.not_structured

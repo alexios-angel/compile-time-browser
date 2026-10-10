@@ -1,3 +1,18 @@
+//===- ShrinkArithmetic.cpp - Computed array length write tests -----------===//
+//
+// Length writes whose new value comes from arithmetic (sub, add, mul, div,
+// mod, pow, shifts, bitwise ops, unary +/- and coercions): each case checks
+// whether the analysis proves the result an exact, non-growing length and so
+// tracks which elements are released. The named *Shrink rows are stored in
+// LengthCases so LiveMutations.cpp can edit and re-check them.
+//
+// `#ctjs.number<N>` is the raw IEEE-754 bit pattern of a double:
+// 4607182418800017408 = 1.0, 4611686018427387904 = 2.0,
+// 4613937818241073152 = 3.0, 4751297606873776128 = 2^32 - 1,
+// 9223372036854775808 = -0.0.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 #include "llvm/ADT/StringSet.h"
 
@@ -5,7 +20,7 @@ namespace ctcompile::test::escape::arrays::length_detail {
 
 void LengthCases::shrinkArithmetic() {
     shrink = "  ctjs.set_property %a[%key], %zero\n";
-    // Preserve the exact formerly refused length-write body.
+    // `a.length = 0` must be accepted and release every element.
     run({.what = "a bounded own length write drops the original dense elements",
          .body = values + read + shrink + done,
          .arrays = "a:[]",

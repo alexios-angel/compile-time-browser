@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Exercise live direct-callee payload verification and its finite bounds."""
+"""Test that ctnative.cpp_try's verifier follows direct calls.
+
+A throw in any helper called (directly or transitively) from a protected
+region must have the catch argument's type. The verifier refuses unresolved
+or recursive callees, call chains deeper than 32, and more than 4096 visited
+operations. Run by call-exceptions.mlir, which also compiles and runs the
+wrong-state control this script writes.
+"""
 
 import argparse
 import json
@@ -97,9 +104,10 @@ def main():
     run("depth-33", chain(33), DEPTH)
     work = "".join(f'    %value{index} = emitc.literal "0.0" : f64\n' for index in range(4096))
     run("work-exhausted", module(helper("leaf", work), guard()), WORK)
-    # One live query can reuse a completed callee; repeated calls do not
-    # repeatedly consume the helper body's operations. Proof never survives
-    # a verifier call or a change to a different handler's payload type.
+    # A callee proved once is not walked again within one verification, so 100
+    # calls to a 1024-operation helper fit the 4096-operation budget. That cache
+    # does not outlive the verifier run, and a second handler with a different
+    # catch type checks the callee again.
     reused = "".join(f'    %value{index} = emitc.literal "0.0" : f64\n' for index in range(1024))
     run("repeated-callee", module(helper("leaf", reused), guard(repeats=100)))
     other_guard = guard(kind="i1").replace("@guard", "@other_guard")

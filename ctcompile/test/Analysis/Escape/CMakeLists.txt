@@ -1,3 +1,6 @@
+# Escape-analysis unit-test executables, one per topic. The array and object
+# contents tests live in Arrays/.
+
 ctcompile_test_sources(ctcompile-test-escape-cycle Cycle.cpp)
 
 ctcompile_test_sources(ctcompile-test-escape-analysis-sinks Sinks.cpp Harness.h)

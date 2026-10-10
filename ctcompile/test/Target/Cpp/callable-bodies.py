@@ -116,8 +116,8 @@ def main():
             assert "ctn_bind_classified(" not in marked, marked
             unmarked = function_body(cpp, prefix + "_unmarked")
             assert "ctn_bind_classified(" in unmarked, unmarked
-        # The deferred creation is a named local (v<N> now, ctn_lambda before
-        # source-derived names went), returned by name rather than inlined.
+        # The deferred creation is a named local `v<N>`, returned by name rather
+        # than inlined.
         assert re.search(r"return v\d+;", function_body(cpp, "deferred_literal_marked")), cpp
         source = args.work / f"{label}.cpp"
         source.write_text(cpp + MAIN)
@@ -125,6 +125,8 @@ def main():
             binary = (args.work / f"{label}-{index}").resolve()
             run([compiler, *flags, str(source), "-o", str(binary)])
             run([str(binary)])
+    # A CTCOMPILE_PIN with the wrong type must fail to compile and name the JS
+    # site, and -DCTCOMPILE_NO_TYPE_PINS must turn the pins off.
     before = '"callable-creation.js:4:1", ctnative::ctn_env_string const);'
     after = '"callable-creation.js:4:1", ctnative::ctn_env_inline const);'
     assert emitted["callables"].count(before) == 1

@@ -3,7 +3,7 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name signed-right-shifts
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-signed-right-shifts.claims
 
-// Signed right shifts preserve ToInt32 wrap, masked counts and read-time Numbers.
+// `>>` and `>>>` loop steps: exact ToInt32 wrap, counts masked to 0-31, and early-copied lengths.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.binary shr

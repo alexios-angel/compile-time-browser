@@ -1,5 +1,11 @@
-// Actual boxed EmitC bodies must hand their normalized return to the oracle.
-// Their lifetimes are observable, while compiled_pc still forbids source claims.
+//===- AOTReturnOracle.cpp - Compiled returns reach the oracle --*- C++ -*-===//
+//
+// Checks that compiled (EmitC) function bodies built from aot/return.js report
+// their return value to the escape-analysis recorder, so objects they return
+// are observed as escaping. Their allocations are recorded at compiled_pc and
+// are never attributed to a bytecode allocation site.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/aot/aot.hpp>
 #include <ctbrowser/script/builtins.hpp>
 #include <ctbrowser/script/compile.hpp>
@@ -28,6 +34,9 @@ constexpr std::string_view fixture =
 #include "escape-oracle-aot-return.js.inc"
     ;
 
+/// A hand-written entry standing in for a compiled body that does not report
+/// its return value. For oracleFailure it throws first, to check that a failed
+/// exit records no verdict.
 extern "C" std::int32_t legacy_or_failed(aot::ct_aot_ctx * ctx, const aot::ct_aot_site * site,
                                          const std::uint64_t *, std::uint32_t,
                                          std::uint64_t receiver, std::uint32_t constructing,
@@ -56,6 +65,10 @@ struct counts {
     std::size_t live = 0;
 };
 
+/// Runs the fixture with the generated entries (and legacy_or_failed)
+/// installed, recording into \p recorder when non-null. With \p also_interpret,
+/// oracleReturn is called once more with its AOT entry removed. Returns heap
+/// counts so a recorded run can be compared with an unrecorded one.
 counts run(type_recorder * recorder, bool also_interpret = false) {
     program prog = compiler::compile(fixture);
     check(prog.ok, "the exact generated fixture compiles");
@@ -94,8 +107,9 @@ counts run(type_recorder * recorder, bool also_interpret = false) {
         const value number = cx.call(cx.global("oracleLocal"), {});
         check(number.is_number() && number.as_number() == 42, "the local-only body returns 42");
         // Invoke the real generated ABI without construct()'s temporary root.
-        // Only the normalized return handoff can keep the receiver's child
-        // reachable after its frame is removed. Passing the raw 7 cannot.
+        // oracleCtor returns 7, a primitive, so the constructor result must be
+        // normalized to the receiver; only that normalized handoff keeps the
+        // receiver's child reachable after the frame is removed.
         const value receiver = cx.make_object();
         std::uint64_t constructed = value::undefined().bits();
         if (constructor != nullptr) {
@@ -133,6 +147,8 @@ std::size_t function_index(const type_recorder & recorder, std::string_view name
     return recorder.functions().size();
 }
 
+/// Checks function \p name's single compiled_pc site against the expected
+/// made/escaped/confined/unchecked counts and its compiled return-check count.
 void expect_compiled(const type_recorder & recorder, std::string_view name, std::uint64_t made,
                      std::uint64_t escaped, std::uint64_t confined, std::uint64_t unchecked,
                      std::uint64_t checks) {
@@ -170,6 +186,9 @@ int main(int argc, char ** argv) {
     const counts recorded = run(&recorder);
     check(baseline.collections == recorded.collections && baseline.live == recorded.live,
           "observing generated returns neither collects nor changes the live heap");
+    // Arguments: allocations made, escaped, confined, unchecked, then return
+    // checks run, summed over every call in the recorded run (see aot/return.js;
+    // oracleReturn is called twice).
     expect_compiled(recorder, "oracleReturn", 6, 4, 2, 0, 2);
     expect_compiled(recorder, "oracleLocal", 1, 0, 1, 0, 1);
     expect_compiled(recorder, "oracleCtor", 1, 1, 0, 0, 1);
@@ -177,6 +196,9 @@ int main(int argc, char ** argv) {
     expect_compiled(recorder, "oracleFailure", 1, 0, 0, 1, 0);
     check(recorder.pending_records() == 2, "only legacy and failed exits remain pending");
 
+    // With an escape budget of 1, only the first compiled return is checked;
+    // the rest stay unchecked. The interpreted call made afterwards (run's
+    // also_interpret) is recorded at ordinary bytecode sites.
     type_recorder budgeted;
     budgeted.set_escape_budget(1);
     (void)run(&budgeted, true);

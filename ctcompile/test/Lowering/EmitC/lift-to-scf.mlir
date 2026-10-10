@@ -1,51 +1,51 @@
-// RECOVERING THE LOOPS AND BRANCHES THE BYTECODE THREW AWAY.
+// Recovering the loops and branches the bytecode threw away.
 //
 // The importer emits a CFG because bytecode is jumps, and the C++ that falls
 // out is `goto label9`. --ctjs-lift-to-scf puts the structure back, using
-// upstream's transformCFGToSCF - Bahmann et al.'s reconstruction algorithm,
-// which handles even irreducible control flow by inserting edge multiplexers.
+// upstream's transformCFGToSCF (Bahmann et al.'s reconstruction algorithm,
+// which handles even irreducible control flow by inserting edge multiplexers).
 //
-// WHY THE PASS IS OURS WHEN THE ALGORITHM IS NOT. Upstream ships this as
-// --lift-cf-to-scf, and that pass does `op->walk([](func::FuncOp))` - it
-// matches by TYPE, not by FunctionOpInterface. `ctjs.func` IS a
-// FunctionOpInterface and is NOT a func::FuncOp, so upstream's pass walks the
-// module, matches nothing, reports success and changes nothing. Measured on
-// this very file's first case: twelve cf operations before, twelve after, zero
-// scf. Our pass is that walk and nothing else.
+// The pass is ours even though the algorithm is not. Upstream ships this as
+// --lift-cf-to-scf, and that pass does `op->walk([](func::FuncOp))`: it
+// matches by type, not by FunctionOpInterface. `ctjs.func` is a
+// FunctionOpInterface but not a func::FuncOp, so upstream's pass walks the
+// module, matches nothing, reports success and changes nothing (on this
+// file's first case: twelve cf operations before, twelve after, zero scf).
+// Our pass is that walk over FunctionOpInterface plus the cleanups below.
 //
-// MEASURED ON THE CORPORA, because a structuring pass that only works on
-// hand-written IR is worth nothing:
+// Measured once on the corpora (Bootstrap, p5.js and Phaser), 96-99% of the
+// functions with control flow were structured; the pass's report=true remark
+// re-measures it. A function the lift refuses keeps its CFG and records why in
+// a `ctjs.not_structured` attribute (see @guarded below).
 //
-//   bootstrap   570 functions   273 already straight-line ->  552 structured (96.8%)
-//   p5         4309             2029                       -> 4125 (95.7%)
-//   phaser     7628             4523                       -> 7575 (99.3%)
-//
-// IT IS NOT IN THE COMPILE PIPELINE. The EmitC backend reads a CFG and has no
-// conversion for scf, so running this before it would refuse every function it
-// structured. It is the foundation of the lexical backend and it earns its
-// place by being measurable on its own.
+// The native backend expects this pass to have run: native admission refuses
+// unstructured control flow ("run --ctjs-lift-to-scf first"), and
+// LowerToEmitC leaves the scf ops for upstream --convert-scf-to-emitc. The
+// boxed backend (--ctjs-lower-to-emitc) has no scf lowering and compiles the
+// CFG as imported, so it does not run this pass, and a function the lift
+// refuses still compiles there.
 
 // RUN: ctjs-opt %s --ctjs-lift-to-scf | FileCheck %s
 // RUN: ctjs-opt %s '--ctjs-lift-to-scf=report=true' 2>&1 | FileCheck --check-prefix=REPORT %s
 
-// THE COUNT IS ASSERTED, NOT PRINTED IN A COMMENT. One argument is dropped in
-// this file, %inv in @invariant below, and no other case here has one. It is a
-// remark and not the ODS statistic because Homebrew's release LLVM 23 compiles
-// pass statistics out: --mlir-pass-statistics prints an empty report for every
-// pass in this project, ResolveGlobals' three included. Measured, same knob:
-// native-struct.mlir's program 3 (`acc` in looped and in leaked, and `hi` in
-// switching, which the loop only carries; NOT `acc` in reassigned or in
-// switching, which are real phis, and never `i`, which is assigned inside
-// every one of those loops), native-struct-fixture.js 2 (`acc` and `n` in
-// accumulate), native-fixture.js 1, native-pipeline-fixture.js 0.
+// Exactly one block argument is dropped in this file (%inv in @invariant
+// below), and the count is asserted rather than described. It is a remark
+// rather than an ODS pass statistic because release LLVM builds (Homebrew's
+// LLVM 23 included) compile statistics out: --mlir-pass-statistics prints an
+// empty report for every pass in this project. The same remark on other
+// inputs: native-struct.mlir's program drops 3 (`acc` in looped and in leaked,
+// and `hi` in switching, which the loop only carries; not `acc` in reassigned
+// or in switching, which are real phis, and never `i`, which is assigned
+// inside every one of those loops), native-struct-fixture.js 2 (`acc` and `n`
+// in accumulate), native-fixture.js 1, native-pipeline-fixture.js 0.
 //
 // REPORT: remark: dropped 1 self-carried block argument(s)
 
-// --- A BRANCH BECOMES AN IF -------------------------------------------------
+// --- A branch becomes an if ---------------------------------------------------
 //
 // Both arms return, so the whole diamond collapses into one scf.if yielding a
-// value - which is what makes the emitted C++ an `if/else` with a result
-// rather than two labels and a join.
+// value, which makes the emitted C++ an `if/else` with a result rather than two
+// labels and a join.
 //
 // CHECK-LABEL: ctjs.func @pick
 // CHECK-NOT: cf.cond_br
@@ -64,15 +64,15 @@ ctjs.func @pick(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %y
 }
 
-// --- A BACK EDGE BECOMES A LOOP ---------------------------------------------
+// --- A back edge becomes a loop -----------------------------------------------
 //
 // The shape every `while` compiles to: a header that tests, a body that jumps
 // back. transformCFGToSCF turns it into an scf.while, which is a real loop a
 // C++ compiler can reason about rather than a cycle in a goto graph.
 //
-// SCF.WHILE AND NOT SCF.FOR, and that is not a shortcoming to fix: the trip
-// count is not recoverable from bytecode, because `for` and `while` compile to
-// the same jumps. Claiming a `for` here would be inventing information.
+// It is scf.while and not scf.for, and that is not a shortcoming to fix: the
+// trip count is not recoverable from bytecode, because `for` and `while`
+// compile to the same jumps. Claiming a `for` here would invent information.
 //
 // CHECK-LABEL: ctjs.func @counter
 // CHECK-NOT: cf.br
@@ -91,24 +91,24 @@ ctjs.func @counter(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %k
 }
 
-// --- A VALUE THE LOOP ONLY CARRIES IS NOT CARRIED ---------------------------
+// --- A value the loop only carries is not carried -------------------------------
 //
 // The importer's loop header takes the whole register file, so a variable
 // assigned before the loop and never inside it arrives as an argument fed by
-// itself on the back edge and by the variable on the entry edge - the one
+// itself on the back edge and by the variable on the entry edge: the one
 // shape simplifyRegions' dropRedundantArguments leaves alone, because the two
 // operands differ. Lifted as it stands it becomes an iteration argument of
 // the scf.while, and a result too when it is read after the loop: four values
 // through a loop with one counter. For a number that is a copy; for an object
-// literal it is a refusal, because its shape is no longer closed (part 24
-// Phase 56B, obligation O-3). The pass drops the argument first - a trivial
-// phi, Braun et al. 2013 §3.1 - so the loop carries the counter and its
-// post-loop export and nothing else. Guard recovery now lets the upstream SCF
-// rewrite merge those duplicate counter slots, leaving one loop argument/result.
+// literal it is a refusal, because an object carried through a loop no longer
+// has a fixed shape. The pass drops the argument first (a trivial phi, Braun
+// et al. 2013 §3.1), so the loop carries the counter and its post-loop export
+// and nothing else. The upstream SCF rewrite then merges the duplicate
+// counter slots, leaving one loop argument and result.
 //
-// PROVED LOAD-BEARING: with dropSelfCarriedArguments removed from the pass,
-// the invariant would remain loop-carried. The report above still checks the
-// CFG removal itself; this shape also checks the subsequent SCF cleanup.
+// Without dropSelfCarriedArguments the invariant would stay loop-carried and
+// this case would fail. The REPORT line above covers the argument removal;
+// this case also covers the SCF cleanup that follows.
 //
 // CHECK-LABEL: ctjs.func @invariant
 // CHECK-NOT: cf.br
@@ -130,18 +130,18 @@ ctjs.func @invariant(%receiver: !ctjs.value, %new_target: !ctjs.value,
   ctjs.return %sum
 }
 
-// --- AND WHAT IT REFUSES, WHICH IS RECORDED RATHER THAN FATAL ---------------
+// --- What it refuses, which is recorded rather than fatal ----------------------
 //
-// ctjs.push_handler is a TERMINATOR WITH SIDE EFFECTS - it installs a handler -
+// ctjs.push_handler is a terminator with side effects (it installs a handler),
 // and transformCFGToSCF refuses any region containing one, because it reorders
 // and duplicates terminators freely.
 //
-// A REFUSAL MUST NOT FAIL THE RUN. The utility reports one by emitting a
-// diagnostic, and an emitted error would fail the whole ctjs-opt invocation -
+// A refusal must not fail the run. The utility reports one by emitting a
+// diagnostic, and an emitted error would fail the whole ctjs-opt invocation,
 // so a single try/catch anywhere in a bundle would produce no output at all.
-// The pass swallows the diagnostic and records the reason on the function,
-// where this project's work lists already live. The function keeps its CFG and
-// the CFG backend still compiles it.
+// The pass swallows the diagnostic and records the reason on the function as
+// a `ctjs.not_structured` attribute. The function keeps its CFG and the CFG
+// backend still compiles it.
 //
 // CHECK-LABEL: ctjs.func @guarded
 // CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
@@ -217,10 +217,10 @@ ctjs.func @guarded_property_call(%receiver: !ctjs.value, %new_target: !ctjs.valu
 }
 
 // Local object and iterator-holder allocations keep the importer's register
-// vectors only for a catch that observes its exception: its saved slots are
-// what recovery reads (41c9f87de). A landing whose value reaches only a dead
-// register - an iterator close's suppression - takes the simplification path,
-// because the DOM close normalizer proves that shape argument-free.
+// vectors only for a catch that observes its exception, because exception
+// recovery reads those saved slots. A catch whose value reaches only a dead
+// register (an iterator close that suppresses its exception) takes the
+// simplification path, because normalizing the iterator close proves that shape argument-free.
 // CHECK-LABEL: ctjs.func @guarded_allocation
 // CHECK-SAME: ctjs.not_structured = "{{.*}}side effects{{.*}}"
 // CHECK: %[[OBJECT:[^ ]+]] = ctjs.create_object

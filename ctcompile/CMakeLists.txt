@@ -1,12 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 
-# ctcompile: the whole-application compiler. A SIBLING of ctbrowser, not a tool
-# inside it - the repository is a monorepo and this is the second project in it.
+# ctcompile: the whole-application compiler. A sibling of ctbrowser, not a tool
+# inside it: the repository is a monorepo and this is the second project in it.
 #
-# THE DEPENDENCY RUNS ONE WAY. ctcompile depends on ctbrowser, on LLVM and on
-# MLIR; ctbrowser depends on none of them and must keep building on a machine
-# with no LLVM installed at all. That is Principle 2 and Principle 8, and
-# ctbrowser/CMakeLists.txt checks the second half of it rather than trusting it.
+# The dependency runs one way: ctcompile depends on ctbrowser, LLVM and MLIR;
+# ctbrowser depends on none of them and must keep building with no LLVM
+# installed. ctbrowser/CMakeLists.txt checks that it does not reach for LLVM.
 #
 # Two ways to configure this:
 #
@@ -20,18 +19,10 @@ cmake_minimum_required(VERSION 3.20)
 project(ctcompile
   HOMEPAGE_URL "https://github.com/alexios-angel/compile-time-browser"
   VERSION 0.1.0
-  # C IS ENABLED FOR LLVM'S SAKE, not for ours - not one line of C is compiled
-  # here. find_package(MLIR) pulls in LLVM's FindLibEdit, which probes for
-  # histedit.h with check_include_file, and that writes a .c file and calls
-  # try_compile. With only CXX enabled CMake answers "Unknown extension .c for
-  # file ... try_compile() works only for enabled languages" and CONFIGURE
-  # FAILS OUTRIGHT.
-  #
-  # It was invisible while CTCOMPILE_ENABLE_MLIR defaulted OFF: nobody reached
-  # find_package(MLIR) on a fresh tree, and anyone who had configured by hand
-  # once kept a warm cache. Putting ctcompile into tools/remote-build.sh's gate
-  # turned it into "the documented build command does not work on a fresh
-  # checkout".
+  # C is enabled only for LLVM: find_package(MLIR) pulls in LLVM's FindLibEdit,
+  # which probes histedit.h with check_include_file (a .c try_compile). With only
+  # CXX enabled, configure fails with "try_compile() works only for enabled
+  # languages". No C is compiled here.
   LANGUAGES CXX C)
 set(PROJECT_DESCRIPTION "Ahead-of-time compiler for ctbrowser applications.")
 
@@ -39,10 +30,10 @@ get_filename_component(CTCOMPILE_MONOREPO_ROOT "${PROJECT_SOURCE_DIR}" DIRECTORY
 include(CTest)
 include(GNUInstallDirs)
 
-# THE ENGINE. Inside the monorepo its targets already exist and are used
-# directly; standalone, the installed package is found. Either way what is
-# consumed is the exported target set, never a path into ctbrowser's source
-# tree - which is the whole reason the standalone form is worth supporting.
+# The engine. Inside the monorepo its targets already exist and are used
+# directly; standalone, the installed package is found. Either way only the
+# exported target set is consumed, never a path into ctbrowser's source tree,
+# which is the reason the standalone form is worth supporting.
 if(NOT TARGET ctbrowser::core)
   find_package(ctbrowser CONFIG REQUIRED)
   message(STATUS "ctcompile: standalone against an installed ctbrowser")
@@ -50,38 +41,26 @@ else()
   message(STATUS "ctcompile: building beside ctbrowser in the monorepo")
 endif()
 
-# ctcompile's own warning set, kept SEPARATE from the engine's on purpose.
-#
-# The engine builds with -Werror -Wconversion and that bar does not move.
-# LLVM and MLIR headers, and mlir-tblgen's generated .inc files in particular,
-# do not compile clean under it - so when Phase 7 arrives the answer is to
-# include those headers as SYSTEM and to demote the specific conversions
-# TableGen output triggers HERE, each with a comment saying which construct
-# needs it. What must not happen is the engine's flags being relaxed to
-# accommodate a dependency the engine does not have.
+# ctcompile's own warning set, separate from the engine's. The engine builds
+# with -Werror -Wconversion and that bar does not move. LLVM/MLIR headers and
+# mlir-tblgen's generated .inc files do not compile clean under it, so they are
+# included as SYSTEM (see ctcompile_includes and the MLIR block below) instead
+# of relaxing these flags.
 set(CTCOMPILE_WARNING_OPTIONS -O2 -pedantic -Wall -Wextra -Werror -Wconversion)
 
-# THE TWO INCLUDE ROOTS, source and generated, spelled the same way - a
+# The two include roots, source and generated, spelled the same way: a
 # generated header is included exactly as a hand-written one is.
 function(ctcompile_includes name)
   target_include_directories(${name} PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
-  # AND THE GENERATED HEADERS, reached by their PROJECT path rather than by a
-  # relative one - "Do not #include a generated header by relative path from
-  # another project". mlir_tablegen writes them into the mirror of the source
-  # tree under the binary directory, so the two roots are spelled the same way
-  # and a .inc is included exactly as a hand-written header would be.
+  # The generated headers, reached by their project path rather than a relative
+  # one. mlir_tablegen writes them into a mirror of the source tree under the
+  # binary directory, so a .inc is included exactly as a hand-written header.
   #
-  # SYSTEM, which this file predicted in Phase -1 and Phase 9 collected on:
-  # "mlir-tblgen's generated .inc files in particular do not compile clean under
-  # it - so when Phase 7 arrives the answer is to include those headers as
-  # SYSTEM". The specific construct is an unused `odsOperandsSize` parameter in
-  # every variadic operation's generated adaptor, and an unused `impl` in the
-  # interface Model - both -Wunused-parameter, both in code nobody here writes.
-  #
-  # The alternative was demoting -Wunused-parameter for these targets, which
-  # would have turned it off for the hand-written importer too. The engine's
-  # own bar does not move either way, which is the point.
+  # SYSTEM, because mlir-tblgen's generated code trips -Wunused-parameter (an
+  # unused `odsOperandsSize` in every variadic op's adaptor, an unused `impl` in
+  # interface Models). Marking only the generated root SYSTEM silences that
+  # without turning the warning off for hand-written code.
   target_include_directories(${name} SYSTEM PUBLIC
     $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>)
 endfunction()
@@ -96,10 +75,10 @@ endfunction()
 # Find MLIR first when enabled so LLVM comes from the same installation.
 option(CTCOMPILE_ENABLE_MLIR "Build the MLIR-based compiler pipeline (Phase 7 onwards)" OFF)
 if(CTCOMPILE_ENABLE_MLIR)
-  # MLIR FIRST, THEN LLVM, and the order is not arbitrary: MLIRConfig.cmake
-  # locates the LLVM it was built against and sets LLVM_DIR, so finding LLVM
-  # first can bind a DIFFERENT installation and the two then disagree about
-  # everything from the ABI to the TableGen syntax.
+  # MLIR first, then LLVM: MLIRConfig.cmake locates the LLVM it was built
+  # against and sets LLVM_DIR. Finding LLVM first can bind a different
+  # installation, and the two then disagree about everything from the ABI to
+  # the TableGen syntax.
   find_package(MLIR CONFIG REQUIRED)
 endif()
 find_package(LLVM CONFIG REQUIRED)
@@ -117,26 +96,18 @@ if(NOT LLVM_VERSION_MAJOR EQUAL CTCOMPILE_REQUIRED_LLVM_MAJOR)
 endif()
 
 if(CTCOMPILE_ENABLE_MLIR)
-  # THE FOUND HEADERS COME FIRST. Brew links a formula's headers into
-  # <prefix>/include, which other dependencies put on the search path as a
-  # plain -I - and -I is searched before -isystem, so whatever llvm brew has
-  # linked there shadows the install find_package chose. Measured on
-  # 2026-09-02 with two llvms on the box. BEFORE puts the chosen one first.
-  # SYSTEM, so ctcompile's -Werror -Wconversion does not have to be relaxed to
-  # accommodate a dependency the engine does not have. That trade is spelled
-  # out where CTCOMPILE_WARNING_OPTIONS is set; this is the half of it that
-  # keeps the engine's bar where it is.
+  # The chosen LLVM/MLIR headers come first. Homebrew links a formula's headers
+  # into <prefix>/include, which other dependencies add as a plain -I, and -I is
+  # searched before -isystem, so a second installed LLVM would shadow this one.
+  # BEFORE fixes the order; SYSTEM keeps -Werror -Wconversion off these headers.
   include_directories(BEFORE SYSTEM ${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
 
   message(STATUS "ctcompile: MLIR ${LLVM_PACKAGE_VERSION} at ${MLIR_DIR}")
 
-  # WHERE GENERATED DOCUMENTATION GOES. add_mlir_doc writes under
-  # ${MLIR_BINARY_DIR}/docs, and out of tree that variable is empty - so the
-  # doc target tried to mkdir("/docs") and failed with a permission error that
-  # says nothing about documentation. Pointing it at this build directory is
-  # the whole fix.
-  #
-  # It is never committed, which the policy states outright.
+  # add_mlir_doc writes under ${MLIR_BINARY_DIR}/docs, and out of tree that
+  # variable is empty, so the doc target would try to mkdir("/docs") and fail
+  # with an unrelated-looking permission error. Point it at this build
+  # directory. Generated docs are never committed.
   set(MLIR_BINARY_DIR "${CMAKE_BINARY_DIR}")
 
   list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}" "${LLVM_CMAKE_DIR}")

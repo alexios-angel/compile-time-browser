@@ -1,51 +1,45 @@
-# === THE NATIVE FIXTURES: one JavaScript program per row ===
+# === The native fixtures: one JavaScript program per row ===
 #
-# Every fixture under CTNative/Fixtures/ goes through the same two gates
-# Native.cmake defines:
+# Every fixture under CTNative/Fixtures/ is registered with
+# ctcompile_native_fixture (Native.cmake), which does two things:
 #
-#   * `ctcompile_add_native_pipeline` - the closed world, the lift and the
-#     lowering over the .js, refusing to write a module while any function
-#     carries `ctnative.not_native`; then the Phase 62½-D gate compiles it with
-#     no ctbrowser library, runs it, and compares every global with the
-#     interpreter's own answer, and Step 7's two-toolchain compile follows. THE
-#     GATE IS THE POINT, NOT THE IR: a lift that passes the wrong capture, a
-#     copy where a pointer was meant, or the receiver in the wrong slot produces
-#     a module that verifies, compiles clean under -Werror and prints a wrong
-#     number, and only the interpreter can say so. A trailing global name is
-#     the `_off_by_one` negative proof - it must be one the printing prelude
-#     loads after the first global it prints, and the driver checks that.
-#   * `ctcompile_add_native_claims` - `CLAIMS claimed resolved direct lifted`,
-#     the four MEASURED counts on the day the fixture landed, as floors. A
-#     change that stops lifting one function fails here even if the pipeline
-#     gate were deleted. `lifted` is a fourth number because the lift's own
-#     ctjs.call_direct are made inside --ctnative-lower-to-emitc, where the
-#     resolver's `direct` count cannot see them - reading one stage and
-#     reporting the total is what made three vendor bundles read as 0 for a
-#     rewrite that was happening.
+#   * builds the native module (ctcompile_add_native_pipeline): the
+#     closed-world analysis, closure lifting and lowering over the .js. No
+#     module is written while any function carries `ctnative.not_native`.
+#   * with CLAIMS, adds ctcompile_add_native_claims: the four counts claimed,
+#     resolved, direct and lifted, measured when the fixture landed, as
+#     floors. A change that stops lifting a function fails here even if the
+#     run check is skipped. `lifted` is separate because the lift's own
+#     ctjs.call_direct ops are made inside --ctnative-lower-to-emitc, where the
+#     resolver's `direct` count cannot see them.
 #
-# THE REFUSALS ARE NOT HERE, and cannot be: pipeline.cmake writes no module
-# while a function carries a diagnostic, and a refusal is contagious in both
-# directions. They are one program apiece, under split-file, in
-# CTNative/Lowering/{Closures,Objects}/*-refusals.mlir and
-# CTNative/Lowering/Admission/divergence-refusals.mlir. What each fixture is a
-# witness for, and the numbers it was measured against, are in its own header.
+# Running the program is the fixture's lit .test beside its .js
+# (CTNative/Fixtures/<Group>/<name>.test): it compiles the module without any
+# ctbrowser library, builds it with GCC and Clang, runs it, and compares every
+# global with the interpreter's answer, plus an off-by-one negative control,
+# the deduced-type variant and the printing check. That run is what matters: a
+# wrong capture, a copy where a pointer was meant, or the receiver in the wrong
+# slot still verifies and compiles cleanly under -Werror, and only the
+# interpreter comparison catches it.
 #
-# SINCE 2026-09-15 THE GATES THEMSELVES ARE LIT: the fixture's .test beside its
-# .js (CTNative/Fixtures/<Group>/<name>.test) runs the compilation unit, its
-# off-by-one negative proof, the deduced twin, both clean compiles and the
-# printing gate over the modules this function has the build write. Only the
-# module and the census floors are registered here.
-#
-# `ctcompile_native_fixture` (Native.cmake) registers both.
+# Refusals are not here and cannot be: pipeline.cmake writes no module while a
+# function carries a diagnostic, and one refusal spreads to its callers and
+# callees. They are one program apiece, under split-file, in
+# CTNative/Lowering/Closures/refusals.mlir,
+# CTNative/Lowering/Objects/constructor-refusals.mlir and
+# CTNative/Lowering/Admission/divergence-refusals.mlir. Each fixture's own
+# header says what it demonstrates and the numbers it was measured against.
 
-# Phase 63 Step 5: the EMITTED half of docs/native-divergences.md - `**` and
-# its guard, `%` as fmod, -0, undefined as NaN, an out-of-range index as NaN.
+# The divergences from docs/native-divergences.md that the emitter handles:
+# `**` and its guard, `%` as fmod, -0, undefined as NaN, and an out-of-range
+# index as NaN.
 ctcompile_native_fixture(divergence Scalars/divergence.js)
-# ND-8: fractional Number keys name properties, integral ones (and -0) elements.
+# Divergence ND-8 (docs/native-divergences.md): fractional Number keys name
+# properties; integral ones (and -0) name elements.
 ctcompile_native_fixture(index_truncation Objects/index-truncation.js)
 
-# Phase 59 slice 1: closures carried by lifting. Twenty functions claimed: the
-# top level, nine that make a closure, and ten closures.
+# Closures converted by lifting. Twenty functions claimed: the top level, nine
+# that make a closure, and ten closures.
 ctcompile_native_fixture(closures Closures/closure.js CLAIMS 20 9 23 17)
 # The receiver is a parameter: sixteen claimed - the top level, seven that
 # build a method table, eight methods.
@@ -55,22 +49,22 @@ ctcompile_native_fixture(receivers Objects/receiver.js CLAIMS 16 7 8 10)
 ctcompile_native_fixture(object_arguments Objects/argument.js CLAIMS 16 7 15 9)
 # `new` builds a struct in the frame; every call here is the lift's own.
 ctcompile_native_fixture(constructors Objects/constructor.js CLAIMS 14 6 7 8)
-# Slice 1b: a capture filled from the enclosing closure (`enclosing_indices`).
+# A capture filled from the enclosing closure (`enclosing_indices`).
 ctcompile_native_fixture(nested_closures Closures/nested-closure.js CLAIMS 27 8 33 27)
 
-# AND THE TWO FIGURES THE COMMENTS CITE (219 of bootstrap's 1,023 capture
-# operands are the placeholder that carries an index) are a gate too:
+# The capture counts the comments cite (219 of bootstrap's 1,023 capture
+# operands are the placeholder that carries an index) are checked by
 # CTNative/Checks/capture-census.test.
 
-# Slice 2 step 1: a binding with one dominating write - 18 of 18 claimed, 7
-# resolved, 21 direct from the resolver, 14 from the lift.
+# A captured binding with one dominating write: 18 of 18 claimed, 7 resolved,
+# 21 direct from the resolver, 14 from the lift.
 ctcompile_native_fixture(hoisted_captures Closures/hoisted-capture.js CLAIMS 18 7 21 14)
-# Step 2: a shared mutable cell, by pointer - 25 of 25, 10, 28 and 20.
+# A shared mutable cell, by pointer: 25 of 25, 10, 28 and 20.
 ctcompile_native_fixture(shared_cells Closures/shared-cell.js CLAIMS 25 10 28 20)
-# Step 4: a local binding that holds a function - 28 of 28, 8, 16 and 23 (13
-# of those written by this step, in a frame where the closure is not in scope).
+# A local binding that holds a function: 28 of 28, 8, 16 and 23 (13 of the
+# lifted calls are in a frame where the closure is not in scope).
 ctcompile_native_fixture(local_functions Closures/local-function.js CLAIMS 28 8 16 23)
-# Step 5: a binding named from two frames in; seven programs, seven answers.
+# A binding named from two frames away; seven programs, seven answers.
 ctcompile_native_fixture(deep_bindings Closures/deep-binding.js CLAIMS 44 9 29 37)
 ctcompile_native_fixture(callbacks Closures/callback.js CLAIMS 21 2 13 33)
 ctcompile_native_fixture(strings Scalars/string.js CLAIMS 17 12 28 11)

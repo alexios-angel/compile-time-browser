@@ -1,7 +1,20 @@
+//===- LiveMutations.cpp - Live IR edits to array length fixtures ---------===//
+//
+// Edits the IR of earlier `length` rows in place (operands, constant keys and
+// operator kinds) and checks that each verdict is recomputed from the live IR,
+// not taken from forged ctnative.array_* markers or from a solver that ran
+// before the edit. Number constants are raw IEEE-754 bit patterns; each edit
+// below names the value it sets.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::length_detail {
 
+/// Checks three groups of fixtures under live edits: the `-length` mutation
+/// row, the `a[length - 1] = 0` row and every computed length-write row. Each
+/// group forges "complete" markers and runs a solver once, before any edit.
 void LengthCases::liveMutations() {
     liveStates = 0;
     if (auto module = parse(mutation)) {
@@ -96,9 +109,9 @@ void LengthCases::liveMutations() {
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::NumberAttr::get(&context, 0));
         inspect(ArrayContentsFailure::MissingElement);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL)); // 0.5
         inspect(ArrayContentsFailure::UnknownIndex);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL)); // NaN
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::BigIntAttr::get(&context, "1"));
         inspect(ArrayContentsFailure::UnknownIndex);
@@ -120,9 +133,9 @@ void LengthCases::liveMutations() {
         inspect(ArrayContentsFailure::None);
         literal.setValueAttr(ctjs::StringAttr::get(&context, "01"));
         inspect(ArrayContentsFailure::None);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL)); // 2^32 - 1
         inspect(ArrayContentsFailure::None);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606875873280ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606875873280ULL)); // 2^32
         inspect(ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(offset);
         binary->setOperand(0, lhs);
@@ -159,6 +172,9 @@ void LengthCases::liveMutations() {
         const auto shiftKind = shift ? shift.getKindAttr() : ctjs::BinaryKindAttr{};
         auto unary = value.getDefiningOp<ctjs::UnaryOp>();
         const auto unaryKind = unary ? unary.getKindAttr() : ctjs::UnaryKindAttr{};
+        // The constant to edit: the right operand of a binary or shift, the operand
+        // of a unary, or the stored value itself; for a held `length - (1 + 0)`
+        // offset it is the offset's left operand.
         auto literal = (shift    ? shift.getRhs()
                         : binary ? binary.getRhs()
                         : unary  ? unary.getOperand()
@@ -205,7 +221,7 @@ void LengthCases::liveMutations() {
             ++liveStates;
         };
         inspect(ArrayContentsFailure::None);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4611686018427387904ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4611686018427387904ULL)); // 2.0
         inspect((binary && binary.getKind() == ctjs::BinaryKind::Sub) ||
                         (unary && unary.getKind() == ctjs::UnaryKind::Neg)
                     ? ArrayContentsFailure::UnknownIndex
@@ -215,13 +231,13 @@ void LengthCases::liveMutations() {
                                     binary.getKind() == ctjs::BinaryKind::Mod))
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::MissingElement);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 4602678819172646912ULL)); // 0.5
         inspect(shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL));
-        // A negative Sub offset, including saved Add, proves growth, never holes or release.
-        // A nonzero negative divisor keeps these zero results exact.
-        // A signed mask or shift count also keeps the original zero result.
-        // Negating the original -1 retains the full unit-length array.
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 13830554455654793216ULL)); // -1.0
+        // Literal -1.0: subtracting it (directly or through a held `-1 + 0` offset)
+        // grows the array (MissingElement); dividing, taking a remainder, masking
+        // or shifting by it keeps the original zero result; negating it yields 1,
+        // which retains the unit-length array.
         const bool negatedUnit = unary && unary.getKind() == ctjs::UnaryKind::Neg;
         inspect(binary && binary.getKind() == ctjs::BinaryKind::Sub
                     ? ArrayContentsFailure::MissingElement
@@ -235,7 +251,7 @@ void LengthCases::liveMutations() {
                     ? ArrayContentsFailure::None
                     : ArrayContentsFailure::UnknownIndex,
                 negatedUnit);
-        literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL));
+        literal.setValueAttr(ctjs::NumberAttr::get(&context, 9221120237041090560ULL)); // NaN
         inspect(shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
         literal.setValueAttr(ctjs::StringAttr::get(&context, binary ? "0.5" : "0"));
         inspect(unary || shift ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
@@ -262,15 +278,17 @@ void LengthCases::liveMutations() {
             if (shiftKind.getValue() == ctjs::BinaryKind::Shl) {
                 auto input = lhs.getDefiningOp<ctjs::ConstantOp>();
                 const mlir::Attribute originalInput = input.getValue();
-                input.setValueAttr(ctjs::NumberAttr::get(&context, 4607182418800017408ULL));
+                input.setValueAttr(ctjs::NumberAttr::get(&context, 4607182418800017408ULL)); // 1.0
                 inspect(ArrayContentsFailure::MissingElement);
+                // 31.0.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4629418941960159232ULL));
                 inspect(ArrayContentsFailure::UnknownIndex);
-                input.setValueAttr(ctjs::NumberAttr::get(&context, 4611686018427387904ULL));
+                input.setValueAttr(ctjs::NumberAttr::get(&context, 4611686018427387904ULL)); // 2.0
                 inspect(ArrayContentsFailure::None);
+                // 32.0.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4629700416936869888ULL));
                 inspect(ArrayContentsFailure::MissingElement);
-                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL));
+                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL)); // 2^31
                 inspect(ArrayContentsFailure::UnknownIndex);
                 literal.setValueAttr(original);
                 inspect(ArrayContentsFailure::None);
@@ -280,12 +298,15 @@ void LengthCases::liveMutations() {
             if (shiftKind.getValue() == ctjs::BinaryKind::Shr) {
                 auto input = lhs.getDefiningOp<ctjs::ConstantOp>();
                 const mlir::Attribute originalInput = input.getValue();
+                // 2^31 - 1.
                 input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007244308480ULL));
                 inspect(ArrayContentsFailure::MissingElement);
+                // 31.0.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4629418941960159232ULL));
                 inspect(ArrayContentsFailure::None);
-                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL));
+                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL)); // 2^31
                 inspect(ArrayContentsFailure::UnknownIndex);
+                // 2^32 - 1.
                 input.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
                 inspect(ArrayContentsFailure::UnknownIndex);
                 input.setValueAttr(originalInput);
@@ -295,13 +316,17 @@ void LengthCases::liveMutations() {
             if (shiftKind.getValue() == ctjs::BinaryKind::BitAnd) {
                 auto input = lhs.getDefiningOp<ctjs::ConstantOp>();
                 const mlir::Attribute originalInput = input.getValue();
-                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL));
+                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL)); // 2^31
                 inspect(ArrayContentsFailure::None);
+                // 2^31.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL));
                 inspect(ArrayContentsFailure::UnknownIndex);
+                // 2^32 - 1.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
                 inspect(ArrayContentsFailure::UnknownIndex);
+                // 2^32 - 1.
                 input.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
+                // 2^31 - 1.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007244308480ULL));
                 inspect(ArrayContentsFailure::MissingElement);
                 input.setValueAttr(originalInput);
@@ -313,13 +338,16 @@ void LengthCases::liveMutations() {
                 const bool isXor = shiftKind.getValue() == ctjs::BinaryKind::BitXor;
                 auto input = lhs.getDefiningOp<ctjs::ConstantOp>();
                 const mlir::Attribute originalInput = input.getValue();
-                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL));
+                input.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL)); // 2^31
                 inspect(ArrayContentsFailure::UnknownIndex);
+                // 2^31.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4746794007248502784ULL));
                 inspect(isXor ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
+                // 2^32 - 1.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
                 inspect(isXor ? ArrayContentsFailure::MissingElement
                               : ArrayContentsFailure::UnknownIndex);
+                // 2^32 - 1.
                 input.setValueAttr(ctjs::NumberAttr::get(&context, 4751297606873776128ULL));
                 inspect(isXor ? ArrayContentsFailure::None : ArrayContentsFailure::UnknownIndex);
                 input.setValueAttr(originalInput);
@@ -336,6 +364,7 @@ void LengthCases::liveMutations() {
                 binaryKind.getValue() == ctjs::BinaryKind::Mod) {
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 0));
                 inspect(ArrayContentsFailure::UnknownIndex);
+                // -0.0.
                 literal.setValueAttr(ctjs::NumberAttr::get(&context, 9223372036854775808ULL));
                 inspect(ArrayContentsFailure::UnknownIndex);
                 literal.setValueAttr(original);

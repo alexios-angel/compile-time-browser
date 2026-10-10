@@ -1,24 +1,24 @@
-// THE BOOTSTRAP CORPUS, DRIVEN - Phase 54B's recording input.
+// Drives the vendored Bootstrap bundle so the type oracle has something to
+// record.
 //
-// `ctbrowser/vendor/bootstrap/bootstrap.bundle.js` is vendored and NO example
+// `ctbrowser/vendor/bootstrap/bootstrap.bundle.js` is vendored, but no example
 // page runs it. bootstrap-components.html says why in its own comment: a
 // component that needs JavaScript to be visible cannot be compared against
 // Chrome, so every fixture is forced open with a class and no script runs. That
-// makes the markup an excellent DOM for the bundle and leaves the bundle itself
-// unexecuted - which for a type recording means a corpus with an empty answer.
+// leaves the bundle unexecuted, which for a type recording is an empty answer.
 //
-// So this executes it. Run after the bundle, by
+// So this script executes it. Run it after the bundle:
 //
 //   type-oracle --page .../bootstrap-components.html \
 //               --js .../vendor/bootstrap/bootstrap.bundle.js \
-//               --js .../ctcompile/test/type-oracle-bootstrap.js --out rec
+//               --js .../ctcompile/test/Analysis/Types/bootstrap-driver.js \
+//               --out rec
 //
-// EVERY CALL IS WRAPPED. A component that refuses on this engine must not stop
-// the ones after it: the recording is of whatever DID run, and an early throw
+// Every call is wrapped. A component that fails on this engine must not stop
+// the ones after it: the recording is of whatever did run, and an early throw
 // turns a corpus into a sample of its first component. `__oracleProbe` is left
-// on the global so a caller can see how far it got - a driver that silently ran
-// nothing and a driver that ran everything both record, and only one of them
-// means anything.
+// on the global so a caller can see how far it got, because a driver that ran
+// nothing and one that ran everything both produce a recording.
 (function () {
     var log = [];
 
@@ -40,7 +40,7 @@
         return;
     }
 
-    // THE STATIC SURFACE FIRST. Every component class reads its own NAME and
+    // The static surface first. Every component class reads its own NAME and
     // VERSION off the base class through the prototype chain, so this alone
     // executes the class hierarchy the bundle spent most of its lines building.
     attempt("statics", function () {
@@ -56,9 +56,9 @@
     var host = document.createElement("div");
     document.body.appendChild(host);
 
-    // AND THEN THE INSTANCES, each one constructed, shown and hidden. show()
-    // and hide() are where the interesting arithmetic is - transitions,
-    // getBoundingClientRect, the backdrop's z-index - and a constructor alone
+    // Then the instances, each one constructed, shown and hidden. show()
+    // and hide() are where the interesting arithmetic is (transitions,
+    // getBoundingClientRect, the backdrop's z-index), and a constructor alone
     // executes almost none of it.
     attempt("Button", function () {
         new bootstrap.Button(button || host).toggle();

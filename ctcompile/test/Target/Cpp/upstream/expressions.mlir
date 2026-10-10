@@ -1,11 +1,11 @@
-// UPSTREAM 22's FILE, WITH TWO CHANGES THE LLVM 23 BUMP FORCED. The two
-// `emitc.apply` functions are gone (23 deleted the op and these tests with
-// it), and `parentheses_for_low_precedence` carries 23's expectation: 23's
-// dialect no longer inlines a single-use emitc.expression into a return, and
-// this project's forked emitter follows the dialect. The file is NOT 23's,
-// because 23's adds expression forms (a subscript and a load inside an
-// expression, among others) the fork does not print yet - that refresh is
-// fork work, not the bump (ctcompile/docs/LLVMUpgrade.md).
+// Copied from LLVM 22's mlir/test/Target/Cpp/expressions.mlir, with two
+// changes for LLVM 23: the `emitc.apply` functions are removed (LLVM 23
+// deleted the op), and `parentheses_for_low_precedence` expects LLVM 23's
+// output, because the dialect no longer inlines a single-use
+// emitc.expression into a return and this project's forked emitter follows
+// it. The rest of LLVM 23's version is not taken yet: it adds expression
+// forms (subscripts, loads) the fork cannot print. See
+// ctcompile/docs/LLVMUpgrade.md.
 // RUN: mlir-translate -mlir-to-cpp %s | FileCheck %s -check-prefix=CPP-DEFAULT
 // RUN: mlir-translate -mlir-to-cpp -declare-variables-at-top %s | FileCheck %s -check-prefix=CPP-DECLTOP
 

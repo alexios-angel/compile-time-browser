@@ -1,3 +1,19 @@
+//===- SignedArithmetic.cpp - Signed arithmetic strides -------------------===//
+//
+// Array-contents rows for loop induction variables whose stride or offset
+// is a signed arithmetic result (Sub, Add of a negative, Div, Mod, and
+// primitive or String operands). `run` rows must prove the listed reads and
+// returned children; `reject` rows must be refused.
+//
+// `#ctjs.number<N>` holds the IEEE-754 bit pattern of a double. Values used here:
+// 4611686018427387904 = 2.0, 4602678819172646912 = 0.5,
+// 13830554455654793216 = -1.0, 9223372036854775808 = -0.0,
+// 4751297606873776128 = 2^32 - 1, 13974669643728551936 = -(2^32 - 1),
+// 4751297606875873280 = 2^32, 9218868437227405312 = +Infinity,
+// 9221120237041090560 = NaN.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Cases.hpp"
 
 namespace ctcompile::test::escape::arrays::induction_detail {

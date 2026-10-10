@@ -1,3 +1,14 @@
+//===- SharedMap.cpp - Shared captured-Map ownership tests ------*- C++ -*-===//
+//
+// checkSharedMap: tests that OwnedGlobalRoots proves one shared owner for a Map
+// captured by several closures (get/put/has methods published on one table).
+// Each case runs on the source form and on the prepared form, then checks that
+// edits to the IR invalidate the fingerprint, that forged attributes are ignored,
+// and that every budget below the completion step count refuses. It also drives
+// the other check* functions declared in Tests.h.
+//
+//===----------------------------------------------------------------------===//
+
 #include "SharedMap/Helpers.hpp"
 
 namespace ctcompile::test::owned_global_shared_map {
@@ -10,6 +21,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                       "    %putKey = ctjs.constant #ctjs.string<\"put\">\n"
                       "    ctjs.set_property %table[%putKey], %putter\n"
                       "    ctjs.return %table");
+    // Add a put$4 method that stores 1.0 (bits 4607182418800017408) under "x".
     source = replaced(source, "\n}\n", R"MLIR(
   ctjs.func private @put$4(%this: !ctjs.value, %new: !ctjs.value, %callee: !ctjs.value) -> !ctjs.value attributes {upvalue_count = 1 : i32} {
     %state = ctjs.load_upvalue %callee[0]
@@ -37,6 +49,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
         }
         return text;
     };
+    // Rewrites a fixture into the form closure conversion produces: the Map
+    // cell is removed, each method receives the Map as an explicit `%state`
+    // parameter instead of loading upvalue 0, and every `ctjs.call` of a method
+    // becomes `ctjs.call_direct` with the environment loaded from the closure.
     const auto prepare = [&](std::string text) {
         text =
             replaced(text, "ctjs.call %factory(%u)", "ctjs.call_direct @make$2(%u, %u, %factory)");
@@ -160,6 +176,7 @@ void checkSharedMap(mlir::MLIRContext & context) {
                   "all actual calls carry the same full family and their own lifted argument");
         }
         const unsigned completion = query.steps();
+        // 10000 steps is a loose ceiling; a proof needing more is a regression.
         check(completion < 10000, "shared Map source proof is bounded");
         if (completion < 10000) {
             checkBudgetsBelow(
@@ -174,6 +191,8 @@ void checkSharedMap(mlir::MLIRContext & context) {
               "shared ownership rederives its family despite forged report attributes");
         auto mutation = capture.calls.front();
         const auto originalValue = mutation.getArgs().back();
+        // Operand 3 of the Map `set` call is the stored value; point it at the
+        // receiver so the sibling body changes.
         mutation->setOperand(3, mutation.getReceiver());
         OwnedGlobalRoots stale(*module, contract);
         check(!stale.proved() && stale.reason().contains("fingerprint") && empty(*module, stale),
@@ -429,6 +448,10 @@ void checkSharedMap(mlir::MLIRContext & context) {
                                "    %priorGetter = ctjs.get_property %owned[%key]\n"
                                "    %prior = ctjs.call %priorGetter(%owned)\n"
                                "    %putResult = ctjs.call %putter(%owned, %prior)");
+    // Each `seeded` value selects one producer shape for the argument passed
+    // to put (named in the label below): 0 plain result, 1 seeded Map entry,
+    // 2 per-key result, 3 disjoint delete, 4 possible alias, 5 repeated alias,
+    // 6 nullable result, 7 nullable alias, 8 saved nullable result.
     for (const unsigned seeded : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
         for (const bool lifted : {false, true}) {
             auto sourceResult = fromResult;

@@ -1,7 +1,20 @@
+//===- ZeroSize.cpp - Zero Map size tests -----------------------*- C++ -*-===//
+//
+// Tests that OwnedGlobalRoots proves a captured Map's `size` is exactly 0
+// right after `clear()`.
+//
+//===----------------------------------------------------------------------===//
+
 #include "../Tests.h"
 
 namespace ctcompile::test::owned_global_shared_map {
 
+/// Exact-zero proofs for a captured Map's `size`: a size read after `clear()`
+/// is exactly 0 and may be used as a key that is disjoint from later inserts.
+/// Each variant edits the fixture text and states whether the proof must hold.
+/// The second loop checks that every smaller work budget withholds the proof
+/// and that a moved size read invalidates the old fingerprint. \p prepared
+/// selects the prepared form of \p source.
 void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::string & source,
                                    bool prepared) {
     using Alternatives = ctcompile::ctnative::PrimitiveAlternatives;
@@ -20,6 +33,7 @@ void checkCapturedMapZeroSizeOwner(mlir::MLIRContext & context, const std::strin
     const std::string size = "    %zero = ctjs.get_property %state[%sizeKey]\n";
     const std::string grow = "    %grown = ctjs.call %setter(%state, %one, %value)\n";
     const std::string read = "    %loaded = ctjs.call %reader(%state, %zero)\n";
+    // Bit patterns: 4607182418800017408 is 1.0 and 9223372036854775808 is -0.0.
     const std::string setup =
         "    %clearKey = ctjs.constant #ctjs.string<\"clear\">\n"
         "    %clearer = ctjs.get_property %state[%clearKey]\n"

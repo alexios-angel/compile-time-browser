@@ -3,7 +3,7 @@
 // RUN: python3 %S/../check.py --oracle ctcompile-test-type-oracle --claims ctcompile-test-escape-claims --script %{monorepo}/tools/check/escape-oracle.py --corpus %t/source.js --work %t --name negative-add
 // RUN: FileCheck %s --check-prefix=CLAIM < %t/escape-claims-negative-add.claims
 
-// Negative sums preserve source snapshots and sign; String Add supplies no Number fact.
+// Sums of negatives saved before the loop keep value and sign; `+` with a string is no number.
 // IMPORT-LABEL: ctjs.func @snapshotReleased$
 // IMPORT: ctjs.binary sub
 // IMPORT: ctjs.set_property

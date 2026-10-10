@@ -1,9 +1,21 @@
+//===- MapDeletePresence.cpp - Map size tracking across delete() ----------===//
+//
+// Tests that type inference tracks a Map's `size` exactly across `delete`, so
+// that a later `get` of the saved size can be proved present.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Tests.h"
 
 namespace ctcompile::test::type_inference {
 
+/// Checks which deletes provably leave a Map with 0 or 1 entries
+/// (SameValueZero key equality, -0 and +0, distinct NaN encodings, structured
+/// branches) and which must leave its size unknown.
 void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
     using namespace ctcompile;
+    // Number constants are IEEE-754 bit patterns: 1.0, 1.0, 2.0, 3.0, +0.0,
+    // -0.0, and two NaNs with different payload bits.
     const std::string prelude = R"mlir(
   %one = ctjs.constant #ctjs.number<4607182418800017408>
   %anotherOne = ctjs.constant #ctjs.number<4607182418800017408>
@@ -391,8 +403,9 @@ void checkMapDeleteSizePresence(mlir::MLIRContext & context) {
                 fail("{}: delete-size presence fixture did not parse", r.what);
                 continue;
             }
-            // A homogeneous local Number read retains its optional public
-            // type; the later mixed store independently requests presence.
+            // A read from a Map holding only Numbers keeps its optional type;
+            // the appended Boolean store makes the read mixed, which requests a
+            // presence proof.
             verify(*module, r.what, mixed && r.present, mixed, r.supported);
         }
     }
