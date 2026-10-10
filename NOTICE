@@ -153,9 +153,11 @@ there is no alternative: Boost.URL has been compiled-only since 1.87, its
 discontinued". The engine had two hand-written URL parsers that disagreed
 with each other, and RFC 3986 is not worth hand-rolling a third time.
 
-Boost.ProgramOptions is LINKED too, since 2026-10-09, but only by the TEST
-programs that take command-line arguments, which parse them through
-ctbrowser/test/support/options.hpp. The engine never links it.
+Boost.ProgramOptions is LINKED too, since 2026-10-09, by the command-line
+tools - ctbrowse, ctdrive, ct262 and ctrun, so every packaged application,
+which is a copy of ctrun - and by the test programs that take arguments. All
+of them parse argv through ctbrowser/tools/support/options.hpp. The engine
+library never links it.
 
 The restriction was never a preference - it was about the `windows` /
 `windows-fetch` presets, which cross-compile with llvm-mingw, where a

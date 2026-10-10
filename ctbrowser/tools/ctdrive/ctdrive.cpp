@@ -21,6 +21,7 @@
 
 #include <ctbrowser.hpp>
 
+#include "options.hpp"
 #include "wpt_handlers.hpp"
 
 // PLAIN SOCKETS. This used Asio, and the engine's dependency on it is gone -
@@ -38,9 +39,9 @@
 #include <unistd.h>
 #endif
 // Header-only Boost.JSON: this include belongs in exactly ONE translation unit
-// and brings the implementation with it. Compiled Boost is not available here -
-// a cross build gets an isolated include directory and links Boost::headers and
-// nothing else - so this is the only way to have a real parser.
+// and brings the implementation with it. The cross sysroot's compiled Boost is
+// Boost.URL and Boost.ProgramOptions only (tools/mingw/build-boost-mingw.sh), so
+// this is how a real parser comes without building a third library for it.
 #include <boost/json/src.hpp>
 
 #include <algorithm>
@@ -493,9 +494,11 @@ private:
 } // namespace
 
 int main(int argc, char ** argv) {
+    namespace po = boost::program_options;
     std::string path;
     std::string query; // `?file=x` or `#frag`, appended to the page's address
     unsigned short port = 0;
+    std::vector<int> size; // --size W H
     ctbrowser::app_options options;
     options.title = "ctdrive";
     // SOLID, not blinking. Two shots of the same page must not differ by
@@ -510,42 +513,38 @@ int main(int argc, char ** argv) {
     // engine (shadow-dom/focus-navigation/focus-navigation-slots.html).
     options.idle_wait_ms = 2;
 
-    for (int i = 1; i < argc; ++i) {
-        const std::string_view arg{argv[i]};
-        if (arg == "--size" && i + 2 < argc) {
-            options.width = std::atoi(argv[++i]);
-            options.height = std::atoi(argv[++i]);
-        } else if (arg == "--port" && i + 1 < argc) {
-            port = static_cast<unsigned short>(std::atoi(argv[++i]));
-        } else if (arg == "--query" && i + 1 < argc) {
-            // THE QUERY STRING A VARIANT IS: WPT runs `html5lib_write.html?file=
-            // adoption01` as one test per `<meta name=variant>`, and the page
-            // reads which through `location.search`. A file has no query, so
-            // the address gets one here.
-            query = argv[++i];
-        } else if (arg == "--fixed-dt" && i + 1 < argc) {
-            // For a replay that has to come out the same every time. A live
-            // session wants real time and leaves this alone.
-            options.fixed_dt = std::atof(argv[++i]);
-        } else if (!arg.starts_with("--")) {
-            path = arg;
-        }
-    }
-
-    if (path.empty()) {
-        std::printf("usage: ctdrive <page.html> --port N [--size W H] [--fixed-dt SECONDS] "
-                    "[--query ?x=y]\n"
-                    "\n"
-                    "Prints `listening on 127.0.0.1:N token T`; a client sends T\n"
-                    "as its first line, then one JSON object per line:\n"
-                    "  {\"cmd\":\"click\",\"x\":120,\"y\":200}   move/down/up/click\n"
-                    "  {\"cmd\":\"key\",\"code\":\"Tab\"}        + shift, ctrl\n"
-                    "  {\"cmd\":\"type\",\"text\":\"hello\"}\n"
-                    "  {\"cmd\":\"wheel\",\"notches\":-3}        + x,y to aim it, notches_x\n"
-                    "  {\"cmd\":\"touch\",\"phase\":\"start\"}   + x,y; move, end\n"
-                    "  {\"cmd\":\"shot\",\"path\":\"out.ppm\"}      or out.png\n"
-                    "  {\"cmd\":\"eval\",\"script\":\"...\"}     info, resize, quit\n");
-        return 2;
+    po::options_description cli{
+        "usage: ctdrive <page.html> --port N [--size W H] [--fixed-dt SECONDS] "
+        "[--query ?x=y]\n"
+        "\n"
+        "Prints `listening on 127.0.0.1:N token T`; a client sends T\n"
+        "as its first line, then one JSON object per line:\n"
+        "  {\"cmd\":\"click\",\"x\":120,\"y\":200}   move/down/up/click\n"
+        "  {\"cmd\":\"key\",\"code\":\"Tab\"}        + shift, ctrl\n"
+        "  {\"cmd\":\"type\",\"text\":\"hello\"}\n"
+        "  {\"cmd\":\"wheel\",\"notches\":-3}        + x,y to aim it, notches_x\n"
+        "  {\"cmd\":\"touch\",\"phase\":\"start\"}   + x,y; move, end\n"
+        "  {\"cmd\":\"shot\",\"path\":\"out.ppm\"}      or out.png\n"
+        "  {\"cmd\":\"eval\",\"script\":\"...\"}     info, resize, quit"};
+    auto add = cli.add_options();
+    add("page", po::value(&path)->required(), "the HTML file to open");
+    add("port", po::value(&port)->default_value(port),
+        "the port to listen on, on 127.0.0.1; 0 lets the OS choose");
+    add("size", new ctbrowser_cli::exactly<int>(&size, 2), "the window's width and height");
+    // For a replay that has to come out the same every time. A live
+    // session wants real time and leaves this alone.
+    add("fixed-dt", po::value(&options.fixed_dt), "pretend every frame took exactly SECONDS");
+    // THE QUERY STRING A VARIANT IS: WPT runs `html5lib_write.html?file=
+    // adoption01` as one test per `<meta name=variant>`, and the page
+    // reads which through `location.search`. A file has no query, so
+    // the address gets one here.
+    add("query", po::value(&query), "a query string or fragment for the page's address");
+    po::positional_options_description positional;
+    positional.add("page", 1);
+    if (!ctbrowser_cli::parse_options(argc, argv, cli, positional)) { return 2; }
+    if (!size.empty()) {
+        options.width = size[0];
+        options.height = size[1];
     }
 
     session control{port};

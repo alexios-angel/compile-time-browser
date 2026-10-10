@@ -4,9 +4,8 @@
 # regression should be READ rather than silently failed. Build and run by hand;
 # docs/performance.md is the method.
 ctbrowser_bench(bench_script)
-# `--csv`, parsed by test/support/options.hpp.
-target_link_libraries(ctbrowser-test-bench_script PRIVATE ctbrowser-test-support
-  Boost::program_options)
+# `--csv`, parsed by tools/support/options.hpp.
+target_link_libraries(ctbrowser-test-bench_script PRIVATE ctbrowser-options)
 ctbrowser_bench(bench_style)
 # ctcss is not an engine dependency. Only this opt-in benchmark includes it,
 # as the previous implementation on the other side of the timing comparison.

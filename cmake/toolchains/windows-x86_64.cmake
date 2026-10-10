@@ -14,8 +14,8 @@
 #   Boost      $BOOST_INC, ~/projects/boost-inc - an ISOLATED directory holding
 #              boost/ only; a symlink to the host's boost/ inside an otherwise
 #              empty directory is enough. The COMPILED libraries (Boost.URL, and
-#              Boost.ProgramOptions for the tests) come from the mingw sysroot,
-#              built by tools/mingw/build-boost-mingw.sh.
+#              Boost.ProgramOptions for the tools and tests) come from the mingw
+#              sysroot, built by tools/mingw/build-boost-mingw.sh.
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
@@ -69,9 +69,8 @@ endif()
 
 # --- Boost: the isolated include dir. There is no BoostConfig for the cross
 # target, and there does not need to be - the engine links Boost::headers and
-# Boost::url, so ctbrowser/cmake/dependencies.cmake builds both targets from this
-# path, and ctbrowser/cmake/modules/CTTest.cmake builds the tests'
-# Boost::program_options from it the same way.
+# Boost::url, and the tools and tests Boost::program_options, so
+# ctbrowser/cmake/dependencies.cmake builds all three targets from this path.
 set(_ctb_boost_roots "$ENV{BOOST_INC}" "$ENV{HOME}/projects/boost-inc")
 foreach(_root IN LISTS _ctb_boost_roots)
   if(_root AND EXISTS "${_root}/boost/version.hpp")

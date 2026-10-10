@@ -28,7 +28,8 @@ Requirements:
   headers and `mlir-tblgen`; other LLVM major versions are refused at configure.
 - ctbrowser dependencies: Boost 1.88+ with Boost.URL, libcurl, libpng/zlib,
   libjpeg-turbo, simdutf, and mimalloc (or `-DCTBROWSER_USE_MIMALLOC=OFF`).
-  The tests also need Boost.ProgramOptions.
+  ctbrowser's tools, `ctrun` among them, and the tests also need
+  Boost.ProgramOptions.
 - SDL3 for a windowed launcher; without it the launcher runs headlessly.
   SDL3_ttf enables outline fonts, and plutosvg/plutovg enable SVG rendering.
   [tools/Brewfile](../tools/Brewfile) records the development dependencies.

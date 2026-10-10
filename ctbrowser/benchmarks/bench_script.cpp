@@ -150,7 +150,7 @@ int main(int argc, char ** argv) {
     bool csv = false;
     po::options_description options{"usage: ctbrowser-test-bench_script [--csv]"};
     options.add_options()("csv", po::bool_switch(&csv), "one row per workload, for scripting");
-    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options)) { return 2; }
 
     if (csv) {
         std::printf("workload,compile_ms,run_ms,run_share\n");

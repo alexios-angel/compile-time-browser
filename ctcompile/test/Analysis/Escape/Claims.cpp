@@ -69,7 +69,7 @@ int main(int argc, char ** argv) {
     auto add = options.add_options();
     add("script", po::value(&script)->required(), "the corpus to import and analyse");
     add("out", po::value(&out)->required(), "where to write one claim per allocation site");
-    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options)) { return 2; }
 
     std::ifstream in{script, std::ios::binary};
     if (!in) {

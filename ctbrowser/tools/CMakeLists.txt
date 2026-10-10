@@ -12,6 +12,15 @@
 if(NOT DEFINED CMAKE_RUNTIME_OUTPUT_DIRECTORY)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 endif()
+
+# THE COMMAND-LINE HELPER: support/options.hpp, which these tools and the test
+# programs that take arguments (here and in ctcompile) parse argv through. Linking
+# this target brings the header and Boost::program_options, found beside
+# Boost.URL in cmake/dependencies.cmake.
+add_library(ctbrowser-options INTERFACE)
+target_include_directories(ctbrowser-options INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/support")
+target_sources(ctbrowser-options INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/support/options.hpp")
+target_link_libraries(ctbrowser-options INTERFACE Boost::program_options)
 # Directory names must not collide with the executables kept in this directory.
 add_subdirectory(ctbrowse ctbrowse-build)
 add_subdirectory(ctdrive ctdrive-build)

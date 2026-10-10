@@ -78,7 +78,7 @@ int main(int argc, char ** argv) {
                           "also write the two bundles the launcher must refuse into OUT_DIR");
     po::positional_options_description positional;
     positional.add("out-dir", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
 
     // ---- the round trip -------------------------------------------------
     app_bundle made;

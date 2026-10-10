@@ -118,7 +118,7 @@ int main(int argc, char ** argv) {
         "the corpus to import and run the inference over");
     add("out", po::value(&out)->required(), "where to write one claim per register");
     add("dump", po::value(&dump), "print function N's slot map to stderr");
-    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options)) { return 2; }
 
     std::ifstream in{script, std::ios::binary};
     if (!in) {

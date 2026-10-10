@@ -911,7 +911,7 @@ int main(int argc, char ** argv) {
         "recording option: frame ends adjudicated per function, 0 = unlimited");
     add("unbounded", po::bool_switch(&g_unbounded),
         "recording option: walk the dead register window too; a superset of escapes");
-    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options)) { return 2; }
 
     if (!page.empty() || !script.empty()) {
         if (out.empty()) {

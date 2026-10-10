@@ -8,5 +8,4 @@ target_sources(ctbrowser-test-support INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/js_expect.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/ratchet.hpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/api_pawl.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/options.hpp"
 )

@@ -97,8 +97,9 @@ with it.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL and Boost.ProgramOptions
   for the llvm-mingw target into the cross sysroot. Boost.URL is the one COMPILED
   Boost library the engine links (it cannot be header-only); Boost.ProgramOptions
-  is linked only by the tests that take arguments, since 2026-10-09. The Windows
-  presets need this run once, and again on a sysroot built before that date.
+  is linked by the tools in `ctbrowser/tools` and the tests that take arguments,
+  since 2026-10-09. The Windows presets need this run once, and again on a
+  sysroot built before that date.
   See `docs/build.md` for what else was considered and turned down.
 - `tools/corpus/ratchet.py` — ONE driver for every corpus ratchet and API surface,
   `ratchet.py <corpus> ratchet|api [--advance]` for p5, phaser, babylon, webgl2

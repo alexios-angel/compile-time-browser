@@ -21,8 +21,9 @@ current limits.
 You'll need CMake 3.23 or later, Ninja, and a C++23 compiler. The engine depends
 on Boost 1.88 or later with Boost.URL, libcurl, libpng/zlib, libjpeg-turbo,
 simdutf, and mimalloc. Use `-DCTBROWSER_USE_MIMALLOC=OFF` to use the system
-allocator instead. The tests also need Boost.ProgramOptions.
-[tools/Brewfile](tools/Brewfile) lists the development packages.
+allocator instead. The command-line tools and the tests also need
+Boost.ProgramOptions. [tools/Brewfile](tools/Brewfile) lists the development
+packages.
 
 ctcompile requires LLVM 23, including its headers, libraries and `llvm-tblgen`,
 even when the native pipeline is disabled. The tested version is 23.1.0.

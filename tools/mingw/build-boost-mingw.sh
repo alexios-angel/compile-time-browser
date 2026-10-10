@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Build the COMPILED Boost libraries for the llvm-mingw target: Boost.URL, which
-# the engine LINKS, and Boost.ProgramOptions, which only the test programs that
-# take arguments link.
+# the engine LINKS, and Boost.ProgramOptions, which the tools in ctbrowser/tools
+# and the test programs that take arguments link.
 #
 # WHY THIS EXISTS AT ALL. Boost was header-only here until 2026-07-31, precisely
 # so there would be nothing to cross-compile. Boost.URL ended that: it has been
 # compiled-only since 1.87 - `boost/url/src.hpp` hard-errors, "src.hpp is
 # discontinued" - so there is no header-only way to have it, and RFC 3986 is not
 # something to keep hand-rolling. Boost.ProgramOptions followed on 2026-10-09,
-# for the tests' command lines (ctbrowser/test/support/options.hpp). See NOTICE
-# and ctbrowser/docs/build.md.
+# for the tools' and tests' command lines (ctbrowser/tools/support/options.hpp).
+# See NOTICE and ctbrowser/docs/build.md.
 #
 # NOT b2, AND THAT IS THE POINT. Boost's own build system would want a toolset
 # definition for llvm-mingw and a Boost source tree to run from. Both libraries

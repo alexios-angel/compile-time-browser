@@ -129,8 +129,8 @@ Boost libraries have been allowed here since 2026-07-31.
 > `docs/HANDOFF.md`, "LLVM command lines and lookup tables, 2026-09-20 UTC", has
 > the change. Boost.ProgramOptions came back on 2026-10-09 for a different job:
 > it parses the command lines of the TEST programs that take arguments, here and
-> in ctbrowser (`ctbrowser/test/support/options.hpp`), and the tools still use
-> LLVM's parsing.
+> in ctbrowser, and of ctbrowser's tools (`ctbrowser/tools/support/options.hpp`).
+> ctcompile's own tools still use LLVM's parsing.
 
 ### LLVM is pinned at 22, not the plan's 20
 

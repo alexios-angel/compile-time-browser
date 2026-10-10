@@ -11,35 +11,35 @@
 
 #include <ctbrowser.hpp>
 
+#include "options.hpp"
+
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
-#include <string_view>
+#include <vector>
 
 int main(int argc, char ** argv) {
+    namespace po = boost::program_options;
     std::string path;
+    std::vector<int> size; // --size W H
     ctbrowser::app_options options;
 
-    for (int i = 1; i < argc; ++i) {
-        const std::string_view arg{argv[i]};
-        if (arg == "--size" && i + 2 < argc) {
-            options.width = std::atoi(argv[++i]);
-            options.height = std::atoi(argv[++i]);
-        } else if (arg == "--frames" && i + 1 < argc) {
-            options.max_frames = std::atoi(argv[++i]);
-        } else if (arg == "--shot" && i + 1 < argc) {
-            options.screenshot_path = argv[++i];
-        } else if (!arg.starts_with("--")) {
-            path = arg;
-        }
-    }
-
-    if (path.empty()) {
-        std::printf("usage: ctbrowse <page.html> [--size W H] [--frames N] [--shot out.ppm]\n");
-        return 2;
+    po::options_description cli{
+        "usage: ctbrowse <page.html> [--size W H] [--frames N] [--shot out.ppm]"};
+    auto add = cli.add_options();
+    add("page", po::value(&path)->required(), "the HTML file to open");
+    add("size", new ctbrowser_cli::exactly<int>(&size, 2), "the window's width and height");
+    add("frames", po::value(&options.max_frames), "stop after N frames, at a fixed timestep");
+    add("shot", po::value(&options.screenshot_path),
+        "with --frames, write the last frame to this PPM file");
+    po::positional_options_description positional;
+    positional.add("page", 1);
+    if (!ctbrowser_cli::parse_options(argc, argv, cli, positional)) { return 2; }
+    if (!size.empty()) {
+        options.width = size[0];
+        options.height = size[1];
     }
     // Report a page's script error rather than rendering a silently broken
     // page. A browser that says nothing when the script failed is the single

@@ -100,7 +100,8 @@ Boost.URL's sources (66 at Boost 1.90, 19 at 1.92) with the llvm-mingw compiler
 into `tools/llvm-mingw/x86_64-w64-mingw32/lib/libboost_url.a`, beside the static
 SDL3, SDL3_ttf and plutosvg already living there. Since 2026-10-09 it also
 compiles Boost.ProgramOptions into `libboost_program_options.a` in the same
-directory, for the tests that take arguments (see "Taken since" below).
+directory, for the tools and the tests that take arguments (see "Taken since"
+below).
 **No b2** - Boost's build system is not involved, because the sources are
 self-contained C++ whose only dependencies are header-only Boost. The script
 reads the tag out of the Boost headers it builds against, so a library built
@@ -241,17 +242,19 @@ turned down rather than overlooked:
   verbatim). FNV walks a string a byte at a time; this is the same argument
   `core/containers.hpp` already makes for preferring `boost::hash` to
   `std::hash`, applied where nobody had.
-* **Boost.ProgramOptions** (2026-10-09) — the command lines of the TEST programs
-  that take arguments. `ctbrowser/test/support/options.hpp` is the one place they
-  parse argv, so a command line that does not fit is a usage error naming the
-  reason and the options, never a run with a default nobody asked for. It is
-  COMPILED and found for the tests only: `ctbrowser/cmake/modules/CTTest.cmake`
-  asks for `find_package(Boost 1.88 REQUIRED CONFIG COMPONENTS program_options)`,
-  and on the cross build takes `libboost_program_options.a` from the mingw sysroot
-  beside `libboost_url.a`, which `tools/mingw/build-boost-mingw.sh` builds. **The
-  engine does not link it**, so it adds no `CTBROWSER_CONFIG_DEPS` entry either;
-  `p5_ratchet`, `script_gc` and `bench_script` link it, and so do the ctcompile
-  tests that take arguments.
+* **Boost.ProgramOptions** (2026-10-09) — the command lines of the tools in
+  `ctbrowser/tools` and of the TEST programs that take arguments.
+  `ctbrowser/tools/support/options.hpp` is the one place they parse argv, so a
+  command line that does not fit is a usage error naming the reason and the
+  options, never a run with a default nobody asked for; the `ctbrowser-options`
+  target brings the header and the library. It is COMPILED, and found beside
+  Boost.URL in `cmake/dependencies.cmake` (`COMPONENTS url program_options`); the
+  cross build takes `libboost_program_options.a` from the mingw sysroot beside
+  `libboost_url.a`, which `tools/mingw/build-boost-mingw.sh` builds. **The engine
+  library does not link it**, so it adds no `CTBROWSER_CONFIG_DEPS` entry either.
+  `ctbrowse`, `ctdrive`, `ct262` and `ctrun` link it - so every packaged
+  application, a copy of `ctrun`, carries it - and so do `p5_ratchet`,
+  `script_gc`, `bench_script` and the ctcompile tests that take arguments.
 
 ### Rejected AGAIN, on a measurement (2026-08-08)
 

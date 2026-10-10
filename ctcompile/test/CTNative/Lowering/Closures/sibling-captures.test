@@ -191,7 +191,7 @@ int main(int argc, char ** argv) {
     options.add_options()("source", po::value(&path)->required(), "the script the table came from");
     po::positional_options_description positional;
     positional.add("source", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
     std::ifstream input(path);
     const std::string source{std::istreambuf_iterator<char>(input), {}};
     auto program = ctbrowser::script::compiler::compile(source);
@@ -220,7 +220,7 @@ run(
         cxx,
         *FLAGS,
         "-I" + str(build.parent / "ctcompile/include"),
-        "-I" + str(build.parent / "ctbrowser/test/support"),
+        "-I" + str(build.parent / "ctbrowser/tools/support"),
         *includes,
         "-isystem",
         str(boost_libdir.parent / "include"),

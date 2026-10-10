@@ -91,7 +91,7 @@ int main(int argc, char ** argv) {
                           "the source bootstrap-host-prefix.py wrote beside this wrapper");
     po::positional_options_description positional;
     positional.add("program", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
     std::ifstream input(path, std::ios::binary);
     const std::string source{std::istreambuf_iterator<char>(input),
                              std::istreambuf_iterator<char>()};

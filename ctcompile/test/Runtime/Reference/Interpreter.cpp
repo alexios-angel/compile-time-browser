@@ -152,7 +152,7 @@ int main(int argc, char ** argv) {
     add("program", po::value(&path), "run PROGRAM.js, print the globals it created or changed");
     po::positional_options_description positional;
     positional.add("program", 1);
-    const auto args = ctbrowser_test::parse_options(argc, argv, options, positional);
+    const auto args = ctbrowser_cli::parse_options(argc, argv, options, positional);
     if (!args) { return 2; }
     const bool page = args->count("page") != 0;
     if (page == (args->count("program") != 0)) {

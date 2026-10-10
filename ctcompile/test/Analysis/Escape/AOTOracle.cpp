@@ -211,7 +211,7 @@ int main(int argc, char ** argv) {
     std::optional<std::string> out;
     po::options_description options{"usage: ctcompile-test-escape-oracle-aot [--out RECORDING]"};
     options.add_options()("out", po::value(&out), "also write the recording to RECORDING");
-    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options)) { return 2; }
     const run_counts baseline = run(nullptr);
     type_recorder recorder;
     const run_counts recorded = run(&recorder);

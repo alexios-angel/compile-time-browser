@@ -23,7 +23,7 @@ if(CTCOMPILE_ENABLE_MLIR)
     # Guards.cpp parses its fixtures itself; the lowering library no longer
     # carries MLIRParser for it (its PDL patterns were the only parser user).
     MLIRParser
-    # Main.cpp's fixture argument, parsed by ctbrowser/test/support/options.hpp.
-    Boost::program_options
+    # Main.cpp's fixture argument, parsed by ctbrowser/tools/support/options.hpp.
+    ctbrowser-options
     ARGS "${CMAKE_CURRENT_SOURCE_DIR}/CTJS/Import/invocation-state.mlir")
 endif()

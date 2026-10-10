@@ -20,8 +20,8 @@
 # THE SELF-TEST ALONE, always registered. Its numbers are hand-computed - see
 # the fixture's comment in TypeOracle.cpp - so it fails with a name rather than
 # with a diff. Its modes and recording options are parsed by
-# ctbrowser/test/support/options.hpp.
-ctcompile_unit_test(type-oracle LIBS ctbrowser::ctbrowser Boost::program_options)
+# ctbrowser/tools/support/options.hpp.
+ctcompile_unit_test(type-oracle LIBS ctbrowser::ctbrowser ctbrowser-options)
 
 # THE TWO-IMPLEMENTATION COMPARISON - TypeOracle.cpp walking the recorder in
 # memory against tools/check/type-oracle.py parsing the file it writes, one's
@@ -63,10 +63,10 @@ endif()
 # it actually reaches, which is an eighth of the bundle.
 if(CTCOMPILE_ENABLE_MLIR AND Python3_Interpreter_FOUND)
   add_executable(ctcompile-test-type-claims)
-  # --script, --out and --dump, parsed by ctbrowser/test/support/options.hpp.
+  # --script, --out and --dump, parsed by ctbrowser/tools/support/options.hpp.
   target_link_libraries(ctcompile-test-type-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
-            MLIRIR MLIRAnalysis ctbrowser::ctbrowser Boost::program_options)
+            MLIRIR MLIRAnalysis ctbrowser::ctbrowser ctbrowser-options)
   ctcompile_target(ctcompile-test-type-claims)
 
   # FOUR CORPORA - the fixture, bootstrap behind its driver, p5 and phaser -
@@ -163,10 +163,10 @@ endif()
 # need and which lands separately.
 if(CTCOMPILE_ENABLE_MLIR)
   add_executable(ctcompile-test-escape-claims)
-  # --script and --out, parsed by ctbrowser/test/support/options.hpp.
+  # --script and --out, parsed by ctbrowser/tools/support/options.hpp.
   target_link_libraries(ctcompile-test-escape-claims
     PRIVATE CTNativeAnalysis CTNativeDialect CTJSDialect ctcompile::ctjs-import
-            MLIRIR MLIRAnalysis ctbrowser::ctbrowser Boost::program_options)
+            MLIRIR MLIRAnalysis ctbrowser::ctbrowser ctbrowser-options)
   ctcompile_target(ctcompile-test-escape-claims)
 endif()
 # === PHASE 55O: escape oracle ===
@@ -199,9 +199,9 @@ add_test(NAME ctcompile_escape_oracle COMMAND ctcompile-test-type-oracle --escap
 # A compiled frame's ip contains a catch-pad id, never a bytecode coordinate.
 # Real AOT entries cover return, caught throw and mixed AOT/VM unwind without
 # allowing their uninstrumented allocations to join native escape claims.
-# [--out RECORDING], parsed by ctbrowser/test/support/options.hpp - as is the
+# [--out RECORDING], parsed by ctbrowser/tools/support/options.hpp - as is the
 # return oracle's below.
-ctcompile_unit_test(escape-oracle-aot LIBS ctbrowser::ctbrowser Boost::program_options)
+ctcompile_unit_test(escape-oracle-aot LIBS ctbrowser::ctbrowser ctbrowser-options)
 # Both AOT recordings through the Python checker: Analysis/Escape/aot-oracle.test.
 
 # Observe the real boxed emitter's normalized return value, retaining the
@@ -213,7 +213,7 @@ if(TARGET ctjs-translate AND TARGET ctjs-opt AND MLIR_TRANSLATE_EXE)
                        ENTRIES oracleReturn oracleLocal oracleCtor)
   ctcompile_boxed_test(escape-oracle-aot-return escape-oracle-aot-return.generated.cpp
                        EMBED escape-oracle-aot-return.js.inc
-                       LIBS ctbrowser::ctbrowser Boost::program_options)
+                       LIBS ctbrowser::ctbrowser ctbrowser-options)
 endif()
 
 # A slot census is usable only after its entire bounded proof completes.

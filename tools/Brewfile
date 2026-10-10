@@ -22,8 +22,8 @@ brew "boost"          # Boost.URL - COMPILED, not header-only, since 1.87. One
                       # formula rather than apt's split libboost-dev /
                       # libboost-url-dev, which is how a box ended up with the
                       # first and not the second. Boost.ProgramOptions, which the
-                      # tests that take arguments link, comes from the same
-                      # formula and is compiled too.
+                      # tools and the tests that take arguments link, comes from
+                      # the same formula and is compiled too.
 brew "libpng"         # PNG, decoded inside the SDL-free engine
 brew "jpeg-turbo"     # JPEG, likewise. apt's 2.1.5 predates the tj3_* API;
                       # brew's is 3.x. The decoder is written to the 2.x

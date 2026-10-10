@@ -522,7 +522,7 @@ int main(int argc, char ** argv) {
     add("bundle", po::value(&bundle), "measure BUNDLE.js and report: no pawl, no recorded file");
     po::positional_options_description positional;
     positional.add("bundle", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
 
     if (!functions.empty()) {
         const std::string source = read_file("vendor/p5/p5.js");

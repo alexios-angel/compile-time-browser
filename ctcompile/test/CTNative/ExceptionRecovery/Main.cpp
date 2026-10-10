@@ -14,7 +14,7 @@ int main(int argc, char ** argv) {
                           "the lit file whose //--- NAME.js sections are the sources");
     po::positional_options_description positional;
     positional.add("fixture", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 1; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 1; }
     auto file = llvm::MemoryBuffer::getFile(fixture);
     if (!file) { return 1; }
     mlir::MLIRContext context;

@@ -16,11 +16,6 @@ if(CTBROWSER_CPPTRACE AND CTBROWSER_CPPTRACE_INCLUDE)
   # the static/mingw dependency chain lives in CTTest.cmake if that changes.
   link_libraries("${CTBROWSER_CPPTRACE}")
 endif()
-# Boost::program_options, for the tests here that take arguments, normally comes
-# from CTTest.cmake; a configure with CTBROWSER_BUILD_TESTS=OFF never ran it.
-if(NOT TARGET Boost::program_options)
-  find_package(Boost 1.88 REQUIRED CONFIG COMPONENTS program_options)
-endif()
 
 # A TEST EXECUTABLE AND ITS TEST: ctcompile-test-<name> linked against LIBS and
 # registered as ctcompile_<name, `-` spelled `_`>, run with ARGS. Its sources

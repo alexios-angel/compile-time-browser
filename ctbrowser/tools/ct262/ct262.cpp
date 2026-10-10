@@ -46,6 +46,8 @@
 // not parse. 3 is never a test result.
 #include <ctbrowser.hpp>
 
+#include "options.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -526,43 +528,30 @@ private:
     std::string resolution_;
 };
 
-struct options {
-    std::vector<std::filesystem::path> preludes;
-    std::filesystem::path test;
-    bool strict = false;
-    bool module = false;
-};
-
-[[nodiscard]] bool parse_arguments(int argc, char ** argv, options & out) {
-    for (int i = 1; i < argc; ++i) {
-        const std::string_view arg{argv[i]};
-        if (arg == "--prelude" && i + 1 < argc) {
-            out.preludes.emplace_back(argv[++i]);
-        } else if (arg == "--strict") {
-            out.strict = true;
-        } else if (arg == "--module") {
-            out.module = true;
-        } else if (!arg.starts_with("--")) {
-            out.test = std::filesystem::path{arg};
-        } else {
-            return false;
-        }
-    }
-    return !out.test.empty();
-}
-
 } // namespace
 
 int main(int argc, char ** argv) {
-    options opts;
-    if (!parse_arguments(argc, argv, opts)) {
-        std::fprintf(stderr, "usage: ct262 [--prelude <harness.js>]... [--strict] [--module]"
-                             " <test.js>\n"
-                             "  runs ONE test262 file in a fresh realm. Exit 0 ran to completion,"
-                             " 1 did not,\n"
-                             "  3 the host failed. tools/check/test262.py is what drives it.\n");
-        return 3;
-    }
+    namespace po = boost::program_options;
+    // STRINGS, NOT PATHS. Boost would read a std::filesystem::path through
+    // lexical_cast and so through std::quoted: a path with a space in it is
+    // refused, and one wrapped in quotes loses them.
+    std::vector<std::string> preludes;
+    std::string test;
+    bool strict = false;
+    bool as_module = false;
+    po::options_description options{
+        "usage: ct262 [--prelude <harness.js>]... [--strict] [--module] <test.js>\n"
+        "  runs ONE test262 file in a fresh realm. Exit 0 ran to completion, 1 did not,\n"
+        "  3 the host failed. tools/check/test262.py is what drives it"};
+    auto add = options.add_options();
+    add("prelude", po::value(&preludes),
+        "a harness file, run as global code before the test; repeatable, run in the order given");
+    add("strict", po::bool_switch(&strict), "prepend \"use strict\"; to the test");
+    add("module", po::bool_switch(&as_module), "run the test as an ES module; --strict is ignored");
+    add("test", po::value(&test)->required(), "the test262 file to run");
+    po::positional_options_description positional;
+    positional.add("test", 1);
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 3; }
 
     context cx;
     ctbrowser::script::install_builtins(cx);
@@ -576,11 +565,11 @@ int main(int argc, char ** argv) {
     // from a harness file whose parse fails, so every `negative: {phase: parse}`
     // test would be scored on the whole blob. Compiling them separately makes a
     // harness failure exit 3 - a host error, never a test result.
-    for (const std::filesystem::path & prelude : opts.preludes) {
+    for (const std::string & prelude : preludes) {
         bool ok = false;
         const std::string source = read_file(prelude, ok);
         if (!ok) {
-            host_error("cannot read harness file " + prelude.string());
+            host_error("cannot read harness file " + prelude);
             return 3;
         }
         // OWNED BY THE CONTEXT, not by this loop. A harness file's whole
@@ -595,12 +584,12 @@ int main(int argc, char ** argv) {
         const program & compiled =
             cx.own_program(ctbrowser::script::compiler::compile_script(source));
         if (!compiled.ok) {
-            host_error(prelude.string() + ": " + compiled.error);
+            host_error(prelude + ": " + compiled.error);
             return 3;
         }
         const run_result ran = cx.run(compiled);
         if (!ran.ok) {
-            host_error(prelude.string() + ": " + ran.error);
+            host_error(prelude + ": " + ran.error);
             return 3;
         }
     }
@@ -617,10 +606,10 @@ int main(int argc, char ** argv) {
     cx.set_module_evaluator([&loader](context &, ctbrowser::script::module_record & record) {
         return loader.evaluate(std::filesystem::path{record.specifier}).ok;
     });
-    cx.set_module_loader([&loader, &opts](context & c, const std::string & specifier,
+    cx.set_module_loader([&loader, &test](context & c, const std::string & specifier,
                                           const std::string & referrer) {
         const std::filesystem::path base = referrer.empty()
-                                               ? opts.test.parent_path()
+                                               ? std::filesystem::path{test}.parent_path()
                                                : std::filesystem::path{referrer}.parent_path();
         const std::filesystem::path target = base / specifier;
         loader.instantiate(target);
@@ -650,18 +639,17 @@ int main(int argc, char ** argv) {
         return c.make_promise(c.module_namespace(found->second), false);
     });
 
-    if (opts.module) {
+    if (as_module) {
         // `--strict` is not applied: a module is strict code by definition, and
         // the suite never sets both.
-        loader.instantiate(opts.test);
+        loader.instantiate(test);
         if (loader.failed()) {
             // A DEPENDENCY THAT DOES NOT PARSE fails the graph while it loads,
             // which is the suite's "resolution" phase (instn-resolve-err-
             // syntax-*.js); only the test file's own syntax error is "parse".
             const program & bad = loader.compile_error();
             if (is_parse_error(bad.error) &&
-                loader.failed_key() !=
-                    std::filesystem::weakly_canonical(opts.test).generic_string()) {
+                loader.failed_key() != std::filesystem::weakly_canonical(test).generic_string()) {
                 report("resolution", "SyntaxError", "SyntaxError", bad.error);
             } else {
                 report_compile_failure(bad);
@@ -674,7 +662,7 @@ int main(int argc, char ** argv) {
             report("resolution", "SyntaxError", "SyntaxError", loader.resolution_error());
             return 1;
         }
-        const run_result ran = loader.evaluate(opts.test);
+        const run_result ran = loader.evaluate(test);
         if (!ran.ok) {
             report_run_failure(cx, "runtime", ran);
             return 1;
@@ -683,14 +671,14 @@ int main(int argc, char ** argv) {
     }
 
     bool ok = false;
-    std::string source = read_file(opts.test, ok);
+    std::string source = read_file(test, ok);
     if (!ok) {
-        host_error("cannot read " + opts.test.string());
+        host_error("cannot read " + test);
         return 3;
     }
     // The suite's own transformation, character for character: the directive,
     // a semicolon and a newline, before anything else the metadata asks for.
-    if (opts.strict) { source = "\"use strict\";\n" + source; }
+    if (strict) { source = "\"use strict\";\n" + source; }
 
     // A TEST IS A Script (16.1), so compile_script: a top-level `return` or
     // `new.target` is the SyntaxError the suite expects, where compile() takes

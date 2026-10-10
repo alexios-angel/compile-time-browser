@@ -462,7 +462,7 @@ int main(int argc, char ** argv) {
     options.add_options()("only", po::value(&only), "run only the cases whose name contains NAME");
     po::positional_options_description positional;
     positional.add("only", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
     const auto run = [&](std::string_view name, void (*body)()) {
         if (only.empty() || name.find(only) != std::string_view::npos) { body(); }
     };

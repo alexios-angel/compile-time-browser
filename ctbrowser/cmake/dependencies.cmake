@@ -24,6 +24,10 @@
 # discontinued" - so there is no header-only way to have it. The rule is lifted
 # for libraries worth the cost, and Boost.URL is the first. See NOTICE.
 #
+# Boost.ProgramOptions is the second (2026-10-09), and the ENGINE does not link
+# it: tools/support/options.hpp is how the tools and the test programs that take
+# arguments read argv, through the ctbrowser-options target in tools/.
+#
 # STILL EXCLUDED: Boost.Context, Coroutine and Fiber. Those are what actually
 # broke the cross build, and nothing here needs them.
 #
@@ -50,6 +54,20 @@ if(CTBROWSER_BOOST_INCLUDE_DIR)
       IMPORTED_LOCATION "${CTBROWSER_BOOST_URL_LIBRARY}"
       INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
   endif()
+  find_library(CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY
+    NAMES boost_program_options libboost_program_options)
+  if(NOT CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY)
+    message(FATAL_ERROR
+      "ctbrowser: no libboost_program_options for this target, and the tools and the tests "
+      "that take arguments need it. tools/mingw/build-boost-mingw.sh builds it into the mingw "
+      "sysroot.")
+  endif()
+  if(NOT TARGET Boost::program_options)
+    add_library(Boost::program_options UNKNOWN IMPORTED)
+    set_target_properties(Boost::program_options PROPERTIES
+      IMPORTED_LOCATION "${CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY}"
+      INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
+  endif()
   # THE CROSS PATH HAS NO VERSION TO CHECK, so it checks for the header that
   # moved the floor instead. Without this a sysroot Boost older than 1.88 fails
   # inside program_image/write.cpp with "boost/hash2/xxhash.hpp: No such file", which
@@ -67,8 +85,12 @@ else()
   # its xxhash_64. The floor said 1.80 and had been nominal for some time -
   # Boost.URL, which the line beside it requires as a COMPONENT, did not exist
   # until 1.81 - so this is the first version the build could actually use.
-  find_package(Boost 1.88 REQUIRED CONFIG COMPONENTS url)
+  find_package(Boost 1.88 REQUIRED CONFIG COMPONENTS url program_options)
 endif()
+# GLOBAL, because this file runs in lib/'s scope and an imported target is seen
+# only there and below - but ctbrowser-options, which links it, is in tools/, and
+# the tests and ctcompile that link that are further away still.
+set_target_properties(Boost::program_options PROPERTIES IMPORTED_GLOBAL TRUE)
 
 find_package(Threads REQUIRED)
 

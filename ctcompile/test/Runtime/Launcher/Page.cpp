@@ -53,9 +53,9 @@ using ctbrowser::script::transition;
 
 namespace {
 
-// The first element with this id, in document order. Six lines, kept here:
-// options.hpp is the only header this file takes from ctbrowser/test/support,
-// though every ctcompile test has shared that shelf's check.hpp since 2026-09-15.
+// The first element with this id, in document order. Six lines, kept here: this
+// file takes nothing from ctbrowser/test/support, though every ctcompile test has
+// shared that shelf's check.hpp since 2026-09-15.
 [[nodiscard]] ctbrowser::node_id find_id(ctbrowser::browser & page, std::string_view want) {
     const auto txn = page.doc().read();
     const ctbrowser::atom key = page.atoms().intern("id");
@@ -90,7 +90,7 @@ int main(int argc, char ** argv) {
                           "where the canvas is written, as a PPM");
     po::positional_options_description positional;
     positional.add("canvas-output", 1);
-    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+    if (!ctbrowser_cli::parse_options(argc, argv, options, positional)) { return 2; }
 
     const std::filesystem::path page_path{CTCOMPILE_LAUNCHER_PAGE};
     std::string html;

@@ -61,11 +61,25 @@
 # does not start the application, which is what it used to do with any argument.
 # RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy %t/app --info | python3 -m json.tool | FileCheck %s --check-prefix=INFO
 # INFO: "entry": "index.html"
+# --help answers the same way. EVERY OTHER ARGUMENT IS IGNORED, never refused:
+# an application cannot take arguments of its own yet, so none may stop it
+# starting - a stray flag and a bare word must still run it.
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy %t/app --help | FileCheck %s --check-prefix=HELP
+# HELP: packaged by ctcompile
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 %t/app --not-a-flag stray
 #
 # ---- the blinded arms -------------------------------------------------------
 # RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctrun
 # RUN: not env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_TEST_FRAMES=2 CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctrun %S/app/index.html 2>&1 | FileCheck %s --check-prefix=NOT-A-BUNDLE
 # NOT-A-BUNDLE: not a ctbrowser application bundle
+#
+# ---- ctbrowse's own flags ---------------------------------------------------
+# --size, --frames and --shot, which the renders below set through the
+# CTBROWSER_* variables instead: the screenshot is the window's size.
+# RUN: env SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy CTBROWSER_NETWORK=0 CTBROWSER_FONTS=font8x8 ctbrowse %S/app/index.html --size 320 240 --frames 2 --shot %t/flags.ppm
+# RUN: head -c 15 %t/flags.ppm | FileCheck %s --check-prefix=FLAGS
+# FLAGS: P6
+# FLAGS-NEXT: 320 240
 #
 # ---- and it must look the SAME as the page it came from ---------------------
 # THE CHECK THAT CAUGHT THE FONTS. A packaged application is sealed - it answers
