@@ -1,8 +1,10 @@
 //===- NativeRealm.h - Globals a native program's realm provides -*- C++ -*-===//
 //
-// The global names the realm of a native program provides: the JavaScript
+// The global names the realm of a native program provides (the JavaScript
 // standard library the script VM installs, and the browser host's window
-// names. --ctjs-resolve-globals uses it to decide that a name is absent.
+// names), and the host methods that leave the globals table alone.
+// --ctjs-resolve-globals uses the first to decide that a name is absent and
+// the second to let the global object be the receiver of such a method.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,5 +30,17 @@ namespace ctcompile::ctjs {
 /// from a fresh realm, plus every window name the ctbrowser host installs and
 /// the common web platform names, plus every `on*` event handler attribute.
 [[nodiscard]] bool nativeRealmProvides(llvm::StringRef name);
+
+/// Whether calling the host method `name` with the global object as its
+/// receiver leaves the globals table alone: it stores no global and compiles no
+/// source. `window.getComputedStyle(el)` and `window.scrollTo(0, 0)` are such
+/// calls. A listener that addEventListener registers runs later as a host
+/// callback, whose receiver --ctjs-resolve-globals does not follow for any
+/// host callback.
+///
+/// The answer errs toward "unknown": a method missing here only keeps the call
+/// an escape. setTimeout and setInterval are not here, because a string
+/// argument is compiled as source.
+[[nodiscard]] bool nativeHostMethodKeepsGlobals(llvm::StringRef name);
 
 } // namespace ctcompile::ctjs

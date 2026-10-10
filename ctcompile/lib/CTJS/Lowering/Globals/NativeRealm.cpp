@@ -120,4 +120,22 @@ bool nativeRealmProvides(llvm::StringRef name) {
     return handler || standard.contains(name) || host.contains(name);
 }
 
+bool nativeHostMethodKeepsGlobals(llvm::StringRef name) {
+    static const llvm::StringSet<> inert = {"addEventListener",
+                                            "removeEventListener",
+                                            "getComputedStyle",
+                                            "getSelection",
+                                            "matchMedia",
+                                            "scroll",
+                                            "scrollTo",
+                                            "scrollBy",
+                                            "requestAnimationFrame",
+                                            "cancelAnimationFrame",
+                                            "clearTimeout",
+                                            "clearInterval",
+                                            "atob",
+                                            "btoa"};
+    return inert.contains(name);
+}
+
 } // namespace ctcompile::ctjs

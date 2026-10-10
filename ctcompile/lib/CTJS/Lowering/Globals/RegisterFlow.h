@@ -38,4 +38,10 @@ std::optional<llvm::SmallVector<mlir::OpOperand *>> registerFlowUses(mlir::Value
 bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSteps = 4096,
                            unsigned * steps = nullptr);
 
+/// The one value \p value always comes from, followed backward through block
+/// arguments, or null when two incoming definitions differ, an entry-block or
+/// unreachable argument is reached, or \p maxSteps runs out. A value that is
+/// not a non-entry block argument is its own origin.
+mlir::Value registerFlowOrigin(mlir::Value value, unsigned maxSteps = 4096);
+
 } // namespace ctcompile::ctjs::globals_detail

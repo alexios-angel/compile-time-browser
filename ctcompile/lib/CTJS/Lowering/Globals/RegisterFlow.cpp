@@ -86,4 +86,34 @@ bool registerFlowHasOrigin(mlir::Value value, mlir::Value source, unsigned maxSt
     return foundSource;
 }
 
+mlir::Value registerFlowOrigin(mlir::Value value, unsigned maxSteps) {
+    work budget(maxSteps, nullptr);
+    llvm::SmallVector<mlir::Value> pending{value};
+    llvm::DenseSet<mlir::Value> seen;
+    mlir::Value origin;
+    while (!pending.empty()) {
+        if (!budget.spend()) { return {}; }
+        value = pending.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        if (!argument || argument.getOwner()->isEntryBlock()) {
+            if (origin && origin != value) { return {}; }
+            origin = value;
+            continue;
+        }
+        mlir::Block & block = *argument.getOwner();
+        if (block.hasNoPredecessors()) { return {}; }
+        for (auto pred = block.pred_begin(), end = block.pred_end(); pred != end; ++pred) {
+            if (!budget.spend()) { return {}; }
+            auto branch = llvm::dyn_cast<mlir::BranchOpInterface>((*pred)->getTerminator());
+            if (!branch) { return {}; }
+            auto operands = branch.getSuccessorOperands(pred.getSuccessorIndex());
+            unsigned index = argument.getArgNumber();
+            if (index >= operands.size() || operands.isOperandProduced(index)) { return {}; }
+            pending.push_back(operands[index]);
+        }
+    }
+    return origin;
+}
+
 } // namespace ctcompile::ctjs::globals_detail

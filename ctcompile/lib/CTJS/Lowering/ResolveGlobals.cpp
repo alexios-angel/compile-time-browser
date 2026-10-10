@@ -62,8 +62,13 @@
 //     (hands_back_the_global_object()), so `window.getComputedStyle(el)` is
 //     harmless.
 //
-//     A call whose callee known_callee() can prove continues the walk at the
-//     callee's parameter instead of counting as an escape. A write through the
+//     A call whose callee known_callee() can prove, or that binding_names
+//     resolves (a local function binding, or a method of a frozen object
+//     literal), continues the walk at the callee's parameter instead of
+//     counting as an escape. As the receiver of a method read off itself, the
+//     global object may meet a host method NativeRealm.h lists as inert
+//     (`window.scrollTo(0, 0)`), unless the program rebinds that name. Every
+//     refusal is collected into `ctjs.global_escapes`. A write through the
 //     global object under a constant key refuses only that name (as clause 6
 //     does for a refused body's stores); a computed key, `__proto__`, a
 //     delete, an accessor, set_proto and copy_props still refuse every name.
@@ -138,6 +143,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <cassert>
 #include <cstdint>
@@ -268,6 +274,237 @@ bool enters_arrow(const census & world, mlir::Value callee) {
     return made && made.getEnclosingThis().getDefiningOp<ConstantOp>() == nullptr;
 }
 
+/// The operation of type `Op` that `value` always comes from (through block
+/// arguments), or null.
+template <class Op> Op originOp(mlir::Value value) {
+    const mlir::Value origin = registerFlowOrigin(value);
+    return origin ? origin.getDefiningOp<Op>() : Op{};
+}
+
+/// Names the function behind callees known_callee() does not know, for the
+/// clause 5 walk only: a local function binding (`function f() {}` inside a
+/// body, called as `f(x)` here or from a nested closure), and a method of a
+/// frozen object literal (`P.on(x)` where `const P = { on(t) {...} }`).
+///
+/// A binding is a ctjs.create_cell. Every value it can hold is its initial, a
+/// ctjs.cell_set of it, or a ctjs.store_upvalue in a function that captured it;
+/// every read is a ctjs.cell_get or such a function's ctjs.load_upvalue. The
+/// binding names a function when all of those values are one closure, apart
+/// from an undefined initial (a call before the declaration runs throws). An
+/// object literal is frozen when it is only built by its own define_own
+/// stores, read with a key, and held by bindings whose every read is also only
+/// read with a key: nothing can replace a method then, and the object reaches
+/// no code that could.
+///
+/// Used only where the walk follows a watched value into a call, so it widens
+/// nothing else: callers this names do not get their receivers watched.
+struct binding_names {
+    const census & world;
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<CreateClosureOp, 1>> creators;
+    llvm::DenseMap<mlir::Operation *, std::optional<llvm::SmallVector<mlir::Value>>> readsMemo;
+    llvm::DenseMap<mlir::Operation *, mlir::Value> valueMemo;
+    llvm::DenseMap<mlir::Operation *, bool> frozenMemo;
+
+    explicit binding_names(mlir::ModuleOp module, const census & of) : world(of) {
+        module.walk([&](CreateClosureOp made) {
+            if (FuncOp target =
+                    world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()))) {
+                creators[target.getOperation()].push_back(made);
+            }
+        });
+    }
+
+    /// The binding cell a function's capture slot holds, or null.
+    CreateCellOp slotCell(FuncOp function, std::int64_t slot, unsigned depth = 0) {
+        const auto made = creators.lookup(function.getOperation());
+        if (made.size() != 1 || slot < 0 || depth > 64) { return {}; }
+        CreateClosureOp closure = made.front();
+        if (static_cast<std::size_t>(slot) >= closure.getUpvalues().size()) { return {}; }
+        if (const mlir::DenseI32ArrayAttr indices = closure.getEnclosingIndicesAttr()) {
+            if (const std::int32_t from = indices[static_cast<std::size_t>(slot)]; from >= 0) {
+                auto outer = closure->getParentOfType<FuncOp>();
+                return outer ? slotCell(outer, from, depth + 1) : CreateCellOp{};
+            }
+        }
+        return originOp<CreateCellOp>(closure.getUpvalues()[static_cast<std::size_t>(slot)]);
+    }
+
+    /// Collects every read and written value of `cell` through the function
+    /// that captured it at `slot` (and the closures it hands the slot on to).
+    /// False when something else touches the slot or a creator is ambiguous.
+    bool slotAccess(CreateClosureOp made, std::size_t slot,
+                    llvm::SmallVectorImpl<mlir::Value> & reads,
+                    llvm::SmallVectorImpl<mlir::Value> & writes,
+                    llvm::DenseSet<std::pair<mlir::Operation *, std::size_t>> & seen) {
+        if (!seen.insert({made.getOperation(), slot}).second) { return true; }
+        FuncOp target = world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
+        if (!target || creators.lookup(target.getOperation()).size() != 1) { return false; }
+        bool complete = true;
+        target.getBody().walk([&](mlir::Operation * op) {
+            if (auto read = mlir::dyn_cast<LoadUpvalueOp>(op);
+                read && static_cast<std::size_t>(read.getIndex()) == slot) {
+                reads.push_back(read.getResult());
+            } else if (auto write = mlir::dyn_cast<StoreUpvalueOp>(op);
+                       write && static_cast<std::size_t>(write.getIndex()) == slot) {
+                writes.push_back(write.getValue());
+            } else if (auto nested = mlir::dyn_cast<CreateClosureOp>(op)) {
+                if (const mlir::DenseI32ArrayAttr indices = nested.getEnclosingIndicesAttr()) {
+                    for (auto [at, from] : llvm::enumerate(indices.asArrayRef())) {
+                        if (from == static_cast<std::int32_t>(slot)) {
+                            complete &= slotAccess(nested, at, reads, writes, seen);
+                        }
+                    }
+                }
+            }
+        });
+        return complete;
+    }
+
+    /// Every value `cell` can be read as, or nullopt when its accesses are not
+    /// all reads, writes and captures. `writes` receives what it can hold.
+    std::optional<llvm::SmallVector<mlir::Value>> access(
+        CreateCellOp cell, llvm::SmallVectorImpl<mlir::Value> & writes) {
+        llvm::SmallVector<mlir::Value> reads;
+        writes.push_back(cell.getInitial());
+        auto uses = registerFlowUses(cell.getResult());
+        if (!uses) { return std::nullopt; }
+        llvm::DenseSet<std::pair<mlir::Operation *, std::size_t>> seen;
+        for (mlir::OpOperand * use : *uses) {
+            mlir::Operation * user = use->getOwner();
+            if (auto read = mlir::dyn_cast<CellGetOp>(user)) {
+                reads.push_back(read.getResult());
+            } else if (auto write = mlir::dyn_cast<CellSetOp>(user);
+                       write && use->getOperandNumber() == 0) {
+                writes.push_back(write.getValue());
+            } else if (auto made = mlir::dyn_cast<CreateClosureOp>(user)) {
+                const std::size_t first = made->getNumOperands() - made.getUpvalues().size();
+                if (use->getOperandNumber() < first ||
+                    !slotAccess(made, use->getOperandNumber() - first, reads, writes, seen)) {
+                    return std::nullopt;
+                }
+            } else if (!mlir::isa<RootOp>(user)) {
+                return std::nullopt;
+            }
+        }
+        return reads;
+    }
+
+    /// The one value `cell` holds once written (an undefined initial aside),
+    /// or null.
+    mlir::Value heldValue(CreateCellOp cell) {
+        if (auto found = valueMemo.find(cell.getOperation()); found != valueMemo.end()) {
+            return found->second;
+        }
+        valueMemo[cell.getOperation()] = {}; // A cycle answers "unknown".
+        llvm::SmallVector<mlir::Value> writes;
+        mlir::Value held;
+        if (access(cell, writes)) {
+            for (mlir::Value write : writes) {
+                const mlir::Value origin = registerFlowOrigin(write);
+                if (origin && isUndefinedConstant(origin)) { continue; }
+                if (!origin || (held && held != origin)) {
+                    held = {};
+                    break;
+                }
+                held = origin;
+            }
+        }
+        valueMemo[cell.getOperation()] = held;
+        return held;
+    }
+
+    /// What `value` is, seen through register flow and binding reads.
+    mlir::Value resolve(mlir::Value value, unsigned depth = 0) {
+        value = registerFlowOrigin(value);
+        if (!value || depth > 64) { return {}; }
+        if (auto read = value.getDefiningOp<CellGetOp>()) {
+            auto cell = originOp<CreateCellOp>(read.getCell());
+            const mlir::Value held = cell ? heldValue(cell) : mlir::Value{};
+            return held ? resolve(held, depth + 1) : mlir::Value{};
+        }
+        if (auto read = value.getDefiningOp<LoadUpvalueOp>()) {
+            auto function = read->getParentOfType<FuncOp>();
+            CreateCellOp cell = function ? slotCell(function, read.getIndex()) : CreateCellOp{};
+            const mlir::Value held = cell ? heldValue(cell) : mlir::Value{};
+            return held ? resolve(held, depth + 1) : mlir::Value{};
+        }
+        return value;
+    }
+
+    /// Whether every use of `value` reads a property of it with any key.
+    static bool onlyRead(mlir::Value value) {
+        auto uses = registerFlowUses(value);
+        return uses && llvm::all_of(*uses, [](mlir::OpOperand * use) {
+                   return (mlir::isa<GetPropertyOp>(use->getOwner()) &&
+                           use->getOperandNumber() == 0) ||
+                          mlir::isa<RootOp>(use->getOwner());
+               });
+    }
+
+    /// Whether `object` is a frozen literal (see the struct comment).
+    bool frozen(CreateObjectOp object) {
+        if (auto found = frozenMemo.find(object.getOperation()); found != frozenMemo.end()) {
+            return found->second;
+        }
+        bool answer = true;
+        llvm::StringSet<> keys;
+        auto uses = registerFlowUses(object.getResult());
+        if (!uses) { answer = false; }
+        for (mlir::OpOperand * use : uses ? *uses : llvm::SmallVector<mlir::OpOperand *>{}) {
+            mlir::Operation * user = use->getOwner();
+            if (mlir::isa<GetPropertyOp, RootOp>(user) && use->getOperandNumber() == 0) {
+                continue;
+            }
+            if (auto set = mlir::dyn_cast<SetPropertyOp>(user);
+                set && use->getOperandNumber() == 0 && set->hasAttr(defineOwnMarker)) {
+                const llvm::StringRef key = constantKey(set.getKey());
+                if (!key.empty() && key != "__proto__" && keys.insert(key).second) { continue; }
+            }
+            CreateCellOp cell = mlir::dyn_cast<CreateCellOp>(user);
+            if (auto write = mlir::dyn_cast<CellSetOp>(user);
+                write && use->getOperandNumber() == 1) {
+                cell = originOp<CreateCellOp>(write.getCell());
+            }
+            llvm::SmallVector<mlir::Value> writes;
+            const auto reads = cell ? access(cell, writes) : std::nullopt;
+            if (reads && heldValue(cell) == object.getResult() &&
+                llvm::all_of(*reads, [](mlir::Value read) { return onlyRead(read); })) {
+                continue;
+            }
+            answer = false;
+            break;
+        }
+        frozenMemo[object.getOperation()] = answer;
+        return answer;
+    }
+
+    /// The function calling `callee` enters, or null.
+    FuncOp callee(mlir::Value value) {
+        const mlir::Value resolved = resolve(value);
+        if (!resolved) { return {}; }
+        if (auto made = resolved.getDefiningOp<CreateClosureOp>()) {
+            return world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
+        }
+        auto method = resolved.getDefiningOp<GetPropertyOp>();
+        const llvm::StringRef key = method ? constantKey(method.getKey()) : llvm::StringRef{};
+        if (key.empty()) { return {}; }
+        const mlir::Value holder = resolve(method.getObject());
+        auto object = holder ? holder.getDefiningOp<CreateObjectOp>() : CreateObjectOp{};
+        if (!object || !frozen(object)) { return {}; }
+        for (mlir::OpOperand * use : *registerFlowUses(object.getResult())) {
+            auto set = mlir::dyn_cast<SetPropertyOp>(use->getOwner());
+            if (set && use->getOperandNumber() == 0 && constantKey(set.getKey()) == key) {
+                auto made = resolve(set.getValue());
+                auto closure = made ? made.getDefiningOp<CreateClosureOp>() : CreateClosureOp{};
+                return closure ? world.by_index.lookup(
+                                     static_cast<std::uint32_t>(closure.getFunction()))
+                               : FuncOp{};
+            }
+        }
+        return {};
+    }
+};
+
 /// Whether padding a short call would be visible to the callee's `arguments`.
 ///
 /// The rewrite fills a call that passes fewer arguments than the callee
@@ -374,7 +611,8 @@ struct bound_write {
 /// name.
 std::optional<std::string> dynamic_global_writes(
     mlir::ModuleOp module, const census & world,
-    llvm::MapVector<mlir::StringAttr, bound_write> & bound_through) {
+    llvm::MapVector<mlir::StringAttr, bound_write> & bound_through,
+    llvm::SmallVectorImpl<std::string> & every) {
     std::optional<std::string> reason;
     // Computed once: it is a question about the whole module, and
     // may_be_function() is asked once per `.constructor` read.
@@ -394,7 +632,10 @@ std::optional<std::string> dynamic_global_writes(
     // A body the importer refused is invisible here, so its stores cannot be
     // counted. Only an `opaque` summary (see clause 6) refuses the whole
     // module; other refused bodies refuse just the names they store.
-    if (world.opaque_skip) { return world.opaque_skip; }
+    if (world.opaque_skip) {
+        every.push_back(*world.opaque_skip);
+        return world.opaque_skip;
+    }
 
     // The global object needs no name to be `this`. A classic script's top
     // level runs with it as the receiver (run.cpp selects the realm's global
@@ -475,7 +716,10 @@ std::optional<std::string> dynamic_global_writes(
         }
         return mlir::WalkResult::advance();
     });
-    if (reason) { return reason; }
+    if (reason) {
+        every.push_back(*reason);
+        return reason;
+    }
 
     // Enters a known callee at one argument position, or returns why not. The
     // position is already in the callee's entry-block order: receiver,
@@ -503,6 +747,13 @@ std::optional<std::string> dynamic_global_writes(
         mark(entry.getArgument(parameter), kind);
         return std::nullopt;
     };
+
+    // Every refusal is collected, not only the first, so that a module with
+    // several reports them all (`ctjs.global_escapes`); the first is the
+    // verdict. A value that escapes is not followed further.
+    const auto escape = [&](std::string why) { every.push_back(std::move(why)); };
+    llvm::SmallVector<std::pair<mlir::StringAttr, mlir::Operation *>> inert;
+    binding_names names(module, world);
 
     // Forward SSA reachability from the watched values. A read through one
     // may yield another value that may be it (`window.window`), so reads
@@ -552,7 +803,8 @@ std::optional<std::string> dynamic_global_writes(
                 // is being converted to a string, or stored into somebody
                 // else's object, and either way it leaves this walk's sight.
                 if (use.getOperandNumber() != 0) {
-                    return name_of(kind) + " escapes into " + describe(op);
+                    escape(name_of(kind) + " escapes into " + describe(op));
+                    continue;
                 }
                 const llvm::StringRef key = constantKey(set.getKey());
                 if (kind != watched::compiler && !key.empty() && key != "__proto__") {
@@ -560,11 +812,13 @@ std::optional<std::string> dynamic_global_writes(
                         {mlir::StringAttr::get(module.getContext(), key), {describe(op), kind}});
                     continue;
                 }
-                return name_of(kind) + " is written through (" + describe(op) + ")";
+                escape(name_of(kind) + " is written through (" + describe(op) + ")");
+                continue;
             }
             if (mlir::isa<DeletePropertyOp, DeleteNamedOp, DefineAccessorOp, SetProtoOp,
                           CopyPropsOp>(op)) {
-                return name_of(kind) + " is written through (" + describe(op) + ")";
+                escape(name_of(kind) + " is written through (" + describe(op) + ")");
+                continue;
             }
             // An arrow's lexical `this`. The VM reads $enclosing_this only for
             // an arrow (make_closure's captured_this), and the arrow reads it
@@ -574,9 +828,10 @@ std::optional<std::string> dynamic_global_writes(
                 FuncOp arrow =
                     world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
                 if (!arrow || !implicitEntry(arrow)) {
-                    return name_of(kind) +
+                    escape(name_of(kind) +
                            " is captured by an arrow whose body was not imported (" + describe(op) +
-                           ")";
+                           ")");
+                    continue;
                 }
                 mark(arrow.getBody().front().getArgument(0), kind);
                 continue;
@@ -586,17 +841,37 @@ std::optional<std::string> dynamic_global_writes(
                 // names no body, and this is also where `seed.constructor(src)`
                 // is refused.
                 if (use.getOperandNumber() == 0) {
-                    return name_of(kind) + " escapes into " + describe(op);
+                    escape(name_of(kind) + " escapes into " + describe(op));
+                    continue;
+                }
+                // The receiver of a host method read off the same value
+                // (`window.getComputedStyle(el)`): the global object, or
+                // something that is not it, in which case `this` is not the
+                // global object either. A method on the inert list leaves the
+                // globals table alone, unless the program has rebound that
+                // name (checked once the walk ends, against every binding).
+                if (use.getOperandNumber() == 1) {
+                    auto read = originOp<GetPropertyOp>(call.getCallee());
+                    const llvm::StringRef key = read ? constantKey(read.getKey()) : "";
+                    const mlir::Value receiver = registerFlowOrigin(call.getReceiver());
+                    if (kind != watched::compiler && read &&
+                        (read.getObject() == call.getReceiver() ||
+                         (receiver && registerFlowOrigin(read.getObject()) == receiver)) &&
+                        nativeHostMethodKeepsGlobals(key)) {
+                        inert.push_back({mlir::StringAttr::get(module.getContext(), key), op});
+                        continue;
+                    }
                 }
                 // ctjs.call is (callee, receiver, args...) and the entry block
                 // is (receiver, new.target, callee, parameters...) - the same
                 // remapping ctjs.call_direct is built from.
                 const unsigned parameter =
                     use.getOperandNumber() == 1 ? 0u : use.getOperandNumber() + 1u;
+                FuncOp target = known_callee(world, call.getCallee());
+                if (!target) { target = names.callee(call.getCallee()); }
                 if (const std::optional<std::string> refusal =
-                        enter(known_callee(world, call.getCallee()), call.getArgs().size(),
-                              parameter, op, kind)) {
-                    return refusal;
+                        enter(target, call.getArgs().size(), parameter, op, kind)) {
+                    escape(*refusal);
                 }
                 continue;
             }
@@ -608,7 +883,7 @@ std::optional<std::string> dynamic_global_writes(
                         enter(mlir::SymbolTable::lookupNearestSymbolFrom<FuncOp>(
                                   direct, direct.getCalleeAttr()),
                               direct.getArgs().size(), use.getOperandNumber(), op, kind)) {
-                    return refusal;
+                    escape(*refusal);
                 }
                 continue;
             }
@@ -616,10 +891,19 @@ std::optional<std::string> dynamic_global_writes(
             // an operation this walk does not know: the value is out of sight
             // and anything may write through it - or compile through it - from
             // here on.
-            return name_of(kind) + " escapes into " + describe(op);
+            escape(name_of(kind) + " escapes into " + describe(op));
         }
     }
-    return std::nullopt;
+    for (const auto & [key, at] : inert) {
+        const auto row = world.bindings.find(key);
+        if (bound_through.contains(key) ||
+            (row != world.bindings.end() && !row->second.stores.empty())) {
+            escape("the global object is the receiver of `" + key.str() +
+                   "`, which this program rebinds (" + describe(at) + ")");
+        }
+    }
+    if (every.empty()) { return std::nullopt; }
+    return every.front();
 }
 
 /// Clause 4's second half: \p function's own closure, as its body sees it,
@@ -679,8 +963,17 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // binds; each is refused like a second ctjs.store_global would refuse
         // it, and refuses nothing else.
         llvm::MapVector<mlir::StringAttr, bound_write> bound_through;
+        llvm::SmallVector<std::string> escapes;
         const std::optional<std::string> dynamic =
-            dynamic_global_writes(module, world, bound_through);
+            dynamic_global_writes(module, world, bound_through, escapes);
+        // Every clause 5 refusal, for a reader deciding what to widen next;
+        // the rows below carry only the first.
+        if (escapes.empty()) {
+            module->removeAttr("ctjs.global_escapes");
+        } else {
+            module->setAttr("ctjs.global_escapes",
+                            builder.getStrArrayAttr(llvm::to_vector_of<llvm::StringRef>(escapes)));
+        }
         // A name bound only that way has neither a load nor a store, so it has
         // no census row yet; add one so its refusal is reported.
         // Skipped when the module is refused outright: those names would carry

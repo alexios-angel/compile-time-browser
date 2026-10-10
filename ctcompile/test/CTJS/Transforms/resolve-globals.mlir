@@ -60,6 +60,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-computed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERCOMPUTED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-unknown.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERUNKNOWN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-cycle.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERCYCLE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-inert.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERINERT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-rebound.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERREBOUND
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-binding.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERNAMED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-method-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERMETHODWRITE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-stored.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSTORED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-arguments.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERARGS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/enter-surplus.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=ENTERSURPLUS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/self-write.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=SELFWRITE
@@ -430,14 +436,44 @@
 
 // --- Negative: an unknown callee still bails ----------------------------------------
 //
-// `window.scrollTo(0, 0)` passes the window as the receiver of a call whose
-// callee is a property read, a native this module does not hold. This shape
-// is the first escape in bootstrap.bundle.js, and no amount of following
-// makes a body that is not here visible.
+// `someHost(window)` passes the window to a call whose callee is a name the
+// program never binds, a native this module does not hold, and no amount of
+// following makes a body that is not here visible. Every refusal is also
+// listed in `ctjs.global_escapes`.
 //
 // ENTERUNKNOWN-NOT: call_direct
-// ENTERUNKNOWN: ctjs.globals = [
+// ENTERUNKNOWN: ctjs.global_escapes = ["the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"]
+// ENTERUNKNOWN-SAME: ctjs.globals = [
 // ENTERUNKNOWN-SAME: reason = "the global object escapes into a call whose callee this module does not name (ctjs.call{{[^"]*}}"
+
+// --- Positive: an inert host method on the window ---------------------------------
+//
+// `window.scrollTo(0, 0)` and `window.getComputedStyle(el)` were the first
+// escapes in bootstrap.bundle.js. The callee is read off the receiver itself,
+// so it is the host's method whenever the receiver is the window, and a method
+// NativeRealm.h lists as inert stores no global.
+//
+// ENTERINERT-NOT: ctjs.global_escapes
+// ENTERINERT: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+
+// --- Negative: the same method after the program rebinds it ---------------------
+//
+// ENTERREBOUND: ctjs.global_escapes = ["the global object is the receiver of `scrollTo`, which this program rebinds (ctjs.call{{[^"]*}}"]
+
+// --- Positive: a function this module names, by binding or by frozen literal ------
+//
+// The window goes to a method of an object literal nothing writes after it is
+// built (`tools.see(window)`), and to a local function reached through the
+// binding a nested closure captured (`see(window)` inside `run`). Both bodies
+// are followed into, and only read a property of it.
+//
+// ENTERNAMED-NOT: ctjs.global_escapes
+// ENTERNAMED: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
+
+// --- Negatives: what a named body does with it still counts ----------------------
+//
+// ENTERMETHODWRITE: ctjs.global_escapes = ["the global object is written through (ctjs.set_property{{[^"]*}}"]
+// ENTERSTORED: ctjs.global_escapes = ["the global object escapes into ctjs.set_property{{[^"]*}}"]
 
 // --- Positive: a cycle terminates -------------------------------------------------
 //
@@ -784,9 +820,51 @@ var z = add(1, 2);
 
 //--- enter-unknown.js
 function add(a, b) { return a + b; }
-// The window as the receiver of a call whose callee is a property read. This
-// is the shape of the first escape in bootstrap.bundle.js.
+// The window passed to a callee the program never binds.
+someHost(window);
+var z = add(1, 2);
+
+//--- enter-inert.js
+function add(a, b) { return a + b; }
 window.scrollTo(0, 0);
+var style = window.getComputedStyle(document.body);
+var z = add(1, 2);
+
+//--- enter-rebound.js
+function add(a, b) { return a + b; }
+window.scrollTo = function () { return 0; };
+window.scrollTo(0, 0);
+var z = add(1, 2);
+
+//--- enter-method.js
+function add(a, b) { return a + b; }
+var width = (function () {
+    var tools = { see: function (w) { return w.innerWidth; } };
+    return tools.see(window);
+})();
+var z = add(1, 2);
+
+//--- enter-binding.js
+function add(a, b) { return a + b; }
+var width = (function () {
+    function see(w) { return w.innerWidth; }
+    function run() { return see(window); }
+    return run();
+})();
+var z = add(1, 2);
+
+//--- enter-method-write.js
+function add(a, b) { return a + b; }
+(function () {
+    var tools = { put: function (w, k) { w[k] = 1; } };
+    tools.put(window, "x");
+})();
+var z = add(1, 2);
+
+//--- enter-stored.js
+function add(a, b) { return a + b; }
+var box = {};
+box.held = window;
 var z = add(1, 2);
 
 //--- enter-cycle.js
