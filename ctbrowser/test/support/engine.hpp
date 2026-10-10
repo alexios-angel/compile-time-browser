@@ -15,10 +15,11 @@
 // Until ctcompile provides that engine, selecting it fails loudly instead of
 // quietly running the VM.
 //
-// Not covered yet: loading the page, ticking frames, reading pixels and
-// dispatching input still go through ctbrowser::shell::browser, which links
-// the VM. A native run needs a native host for those too; its shape is left
-// to the compiler work rather than guessed at here.
+// A test built with CTBROWSER_TEST_NATIVE defined links no VM: its page is a
+// page::static_page and its engine is native_engine.hpp's, which calls what
+// ctcompile compiled from the test's scripts. That build is registered as
+// `<name>.native` beside `<name>` and checks the same baselines. Without the
+// definition the page is a shell::browser and the engine is the interpreter.
 //
 //===----------------------------------------------------------------------===//
 #pragma once
@@ -30,9 +31,13 @@
 #include <string>
 #include <string_view>
 
-#include <ctbrowser.hpp>
-
 #include "check.hpp"
+
+#ifdef CTBROWSER_TEST_NATIVE
+#include <ctbrowser/page/static_page.hpp>
+#else
+#include <ctbrowser.hpp>
+#endif
 
 namespace ctbrowser_test {
 
@@ -77,6 +82,8 @@ public:
     }
     return out + "\"";
 }
+
+#ifndef CTBROWSER_TEST_NATIVE
 
 /// The interpreter engine. The call runs inside the page and its answer comes
 /// back on the console, the one channel both engines will share. The console
@@ -123,17 +130,24 @@ private:
     ctbrowser::browser & page_;
 };
 
-/// Returns the engine CTBROWSER_TEST_ENGINE names: unset or "vm" is the
-/// interpreter. "native" has no implementation yet, and anything else is a
-/// typo; both end the test with a FAIL rather than measure the wrong engine.
+/// Returns the interpreter when CTBROWSER_TEST_ENGINE is unset or "vm". This
+/// executable has no native engine: "native" means the test should have been
+/// run as `<name>.native`, and anything else is a typo; both end the test with
+/// a FAIL rather than measure the wrong engine.
 [[nodiscard]] inline std::unique_ptr<engine> make_engine(ctbrowser::browser & page) {
     const char * chosen = std::getenv("CTBROWSER_TEST_ENGINE");
     const std::string_view kind = chosen == nullptr ? "vm" : chosen;
     if (kind.empty() || kind == "vm") { return std::make_unique<vm_engine>(page); }
-    std::printf("FAIL CTBROWSER_TEST_ENGINE=%s: no such engine in this test yet (the native "
-                "engine comes from ctcompile; see tools/check/check-workload.py)\n",
+    std::printf("FAIL CTBROWSER_TEST_ENGINE=%s: this executable links the interpreter only; "
+                "the native build of this test is `<name>.native`\n",
                 chosen);
     std::exit(1);
 }
 
+#endif
+
 } // namespace ctbrowser_test
+
+#ifdef CTBROWSER_TEST_NATIVE
+#include "native_engine.hpp"
+#endif
