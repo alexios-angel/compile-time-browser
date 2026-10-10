@@ -150,6 +150,40 @@ carrier carrierOf(mlir::Type type) {
     return carrier::none;
 }
 
+bool isStringArray(mlir::Value v, mlir::Type type) {
+    return carrierOf(type) == carrier::stringVector &&
+           !TypeInference::elementVectorAliases(v).empty();
+}
+
+bool isVectorCallPlumbing(mlir::Operation * o) {
+    using VectorCall = TypeInference::VectorCall;
+    const auto onlyUse = [](mlir::Value value) -> mlir::OpOperand * {
+        return value.hasOneUse() ? &*value.getUses().begin() : nullptr;
+    };
+    if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o)) {
+        mlir::OpOperand * use = onlyUse(read.getResult());
+        const VectorCall kind =
+            use ? TypeInference::vectorCallOf(use->getOwner()) : VectorCall::none;
+        return use && use->getOperandNumber() == 0 && kind != VectorCall::none &&
+               kind != VectorCall::regexp;
+    }
+    // The RegExp call is plumbing only as split(/\s+/)'s separator.
+    const auto separatesWhitespace = [&](mlir::Operation * call) {
+        if (TypeInference::vectorCallOf(call) != VectorCall::regexp) { return false; }
+        mlir::OpOperand * use = onlyUse(call->getResult(0));
+        return use && use->getOperandNumber() == 2 &&
+               TypeInference::vectorCallOf(use->getOwner()) == VectorCall::splitSpace;
+    };
+    if (llvm::isa_and_nonnull<ctjs::CallOp>(o)) { return separatesWhitespace(o); }
+    if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
+        return load.getName() == "__ctbrowser_regexp" && !load.getResult().use_empty() &&
+               llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
+                   return use.getOperandNumber() == 0 && separatesWhitespace(use.getOwner());
+               });
+    }
+    return false;
+}
+
 bool isScalarCarrier(carrier value) {
     return value == carrier::number || value == carrier::boolean || value == carrier::nullable;
 }

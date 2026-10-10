@@ -46,6 +46,8 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <string>
+
 namespace ctcompile::ctnative {
 
 class OwnedGlobalRoots;
@@ -223,6 +225,40 @@ public:
     /// recomputed from the current IR; no annotation grants ownership.
     static llvm::SmallVector<mlir::Value, 4> denseVectorAliases(mlir::Value array);
 
+    /// A call the native runtime implements on a String or on a vector of one
+    /// proved element type (Analysis/Inference/Vectors.cpp):
+    /// `a.push(x)`, `a.join()` or `a.join(s)`, `a.sort()`, `s.split(t)` with
+    /// any one argument, `s.split(/\s+/)`, and the RegExp literal factory
+    /// call that builds a split's separator.
+    enum class VectorCall {
+        none,
+        push,
+        join,
+        sort,
+        split,
+        splitSpace,
+        regexp
+    };
+    static VectorCall vectorCallOf(mlir::Operation * op);
+
+    /// The values that name one array lowered to `std::vector<T>` for a
+    /// proved element type T: its owners (array literals and split results),
+    /// `a.sort()` results, and the values that borrow it through `scf`
+    /// control flow. Allowed uses are appends while it is built, index and
+    /// `length` reads, and push, join and sort. An owner carried through
+    /// `scf` must be in the entry block; one used only in its own region may
+    /// be anywhere. Empty when any origin or use is outside that, with the
+    /// reason in `why`. Always recomputed from the current IR.
+    static llvm::SmallVector<mlir::Value, 4> elementVectorAliases(mlir::Value array,
+                                                                  std::string * why = nullptr);
+    /// Everything stored into the array `members` names: literal elements,
+    /// appends and pushed values. A split result's Strings are not listed;
+    /// splitsAString says whether there is one.
+    static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
+        llvm::ArrayRef<mlir::Value> members);
+    /// Whether one owner in `members` is a split result.
+    static bool splitsAString(llvm::ArrayRef<mlir::Value> members);
+
     /// A value that names a shared binding the closure lift made a
     /// frame-local variable: the `ctjs.create_cell` it marked
     /// `ctnative.carried`, or an entry-block argument its
@@ -311,6 +347,13 @@ private:
     llvm::DenseMap<int64_t, llvm::SmallVector<std::pair<mlir::Value, mlir::Type>, 4>> mapKeys_;
     llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value, 4>> mapValues_;
     mlir::Type mapTypeOf(mlir::Operation * op, mlir::Value map);
+
+    /// The type of `op` when it builds, reads or calls a method of an element
+    /// vector (elementVectorAliases), or calls split on a String; null when it
+    /// does none of these. Sets `pending` when the answer has to wait for a
+    /// stored value's lattice.
+    mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+                                 bool & pending);
 
     /// The element type of a dense array: the join over everything appended or
     /// stored into it, from `undefined`. `op` is the operation asking, so every

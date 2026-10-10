@@ -86,6 +86,9 @@ enum class carrier {
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
+/// An array of Strings the element-vector proof owns (Runtime/Array.hpp), as
+/// opposed to the raw std::string snapshots above.
+inline constexpr llvm::StringLiteral kStringArrayType = "std::vector<ctnative::js_string>";
 inline constexpr llvm::StringLiteral kStringType = "ctnative::js_string";
 inline constexpr llvm::StringLiteral kRawStringType = "std::string";
 inline constexpr llvm::StringLiteral kNumberType = "ctnative::js_num";
@@ -213,6 +216,14 @@ inline bool primitiveOrAbsent(mlir::Type type) {
     return isPrimitive(type) || onlyAbsent(type);
 }
 carrier carrierOf(mlir::Type type);
+/// Whether `v`, whose proved type is `type`, is an array of Strings that
+/// lowers to kStringArrayType: a vector-of-String carrier whose group the
+/// element-vector proof (TypeInference::elementVectorAliases) accepts.
+bool isStringArray(mlir::Value v, mlir::Type type);
+/// Whether `o` lowers to nothing because it only names a vector call: the
+/// method read that is its callee, or the RegExp literal (its factory load,
+/// the factory call) that is `split(/\s+/)`'s separator.
+bool isVectorCallPlumbing(mlir::Operation * o);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
 llvm::StringRef mixedMapKeySpelling(mlir::Type type);

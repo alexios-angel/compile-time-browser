@@ -9,6 +9,8 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Calls.cpp
   ScalarConversions.cpp
   Types.cpp
+  Vectors.cpp
+  Vectors.h
   Operations.cpp
   Maps.cpp
   Functions.cpp

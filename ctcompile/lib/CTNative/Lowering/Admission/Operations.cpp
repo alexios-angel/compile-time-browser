@@ -15,6 +15,106 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+namespace {
+
+/// Admits an operation on an array of Strings (isStringArray), a vector call
+/// on one, or split on a String; nullopt when `o` is none of these.
+std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) {
+    using namespace ctjs;
+    using VectorCall = TypeInference::VectorCall;
+    const auto isString = [&](mlir::Value v) {
+        return carrierOf(self.typeOf(v)) == carrier::string;
+    };
+    const auto array = [&](mlir::Value v) { return isStringArray(v, self.typeOf(v)); };
+    if (isVectorCallPlumbing(o)) { return true; }
+    if (auto literal = llvm::dyn_cast<CreateArrayOp>(o)) {
+        if (array(literal.getResult())) {
+            for (mlir::Value element : literal.getElements()) {
+                if (!isString(element)) {
+                    return self.refuse("an array of Strings given an element of type " +
+                                       printed(self.typeOf(element)));
+                }
+            }
+            return true;
+        }
+        if (TypeInference::isDenseVectorSite(literal.getResult())) { return std::nullopt; }
+        // The element-vector proof accepts the uses but the elements are not
+        // all Strings, and the dense numeric proof does not take it.
+        std::string why;
+        if (!TypeInference::elementVectorAliases(literal.getResult(), &why).empty()) {
+            auto vector = llvm::dyn_cast_or_null<VecType>(self.typeOf(literal.getResult()));
+            return self.refuse("an array whose elements are " +
+                               printed(vector ? vector.getElementType() : mlir::Type{}) +
+                               ", not Strings");
+        }
+        // An array the code calls push, join or sort on is meant as an array
+        // of Strings, so the element-vector proof's reason is the one to give.
+        const bool calledAsArray = llvm::any_of(literal->getUsers(), [](mlir::Operation * user) {
+            auto read = llvm::dyn_cast<GetPropertyOp>(user);
+            const llvm::StringRef key = read ? constantKey(read.getKey()) : llvm::StringRef{};
+            return key == "push" || key == "join" || key == "sort";
+        });
+        if (calledAsArray) { return self.refuse("an array of Strings: " + why); }
+        return std::nullopt;
+    }
+    if (auto append = llvm::dyn_cast<AppendOp>(o); append && array(append.getArray())) {
+        return isString(append.getElement()) ||
+               self.refuse("an array of Strings appended a " +
+                           printed(self.typeOf(append.getElement())));
+    }
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o); read && array(read.getObject())) {
+        const llvm::StringRef key = constantKey(read.getKey());
+        if (key == "length") { return true; }
+        if (key.empty()) { return self.numeric(read.getKey(), "array index"); }
+        return self.refuse(
+            ("an array of Strings read through the named property `" + key + "`").str());
+    }
+    if (auto load = llvm::dyn_cast<LoadGlobalOp>(o);
+        load && load.getName() == "__ctbrowser_regexp") {
+        // Plumbing returned above; every other RegExp literal is refused here.
+        return self.refuse("a regular expression literal - only `text.split(/\\s+/)` is native");
+    }
+    auto call = llvm::dyn_cast<CallOp>(o);
+    if (!call) { return std::nullopt; }
+    switch (TypeInference::vectorCallOf(call)) {
+    case VectorCall::push:
+        if (!array(call.getReceiver())) { return std::nullopt; }
+        return isString(call.getArgs()[0]) || self.refuse("an array of Strings pushed a " +
+                                                          printed(self.typeOf(call.getArgs()[0])));
+    case VectorCall::join:
+        if (!array(call.getReceiver())) { return std::nullopt; }
+        return call.getArgs().empty() || isString(call.getArgs()[0]) ||
+               self.refuse("join's separator is " + printed(self.typeOf(call.getArgs()[0])) +
+                           ", not a String");
+    case VectorCall::sort:
+        return array(call.getReceiver()) ? std::optional<bool>{true} : std::nullopt;
+    case VectorCall::split:
+    case VectorCall::splitSpace: {
+        if (!isString(call.getReceiver())) { return std::nullopt; }
+        if (TypeInference::vectorCallOf(call) == VectorCall::split &&
+            !isString(call.getArgs()[0])) {
+            return self.refuse("split's separator is " + printed(self.typeOf(call.getArgs()[0])) +
+                               ", not a String");
+        }
+        // The pieces are an array of Strings only while every use of them is
+        // one the element-vector proof accepts.
+        std::string why;
+        if (TypeInference::elementVectorAliases(call.getResult(), &why).empty()) {
+            return self.refuse("the result of split is " + why);
+        }
+        return array(call.getResult()) ||
+               self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
+    }
+    case VectorCall::regexp:
+        // Plumbing returned above; every other RegExp literal is refused here.
+        return self.refuse("a regular expression literal - only `text.split(/\\s+/)` is native");
+    case VectorCall::none: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 bool admission::ownedTableField(ctjs::SetPropertyOp store) {
     const auto * slot = ownedTableSlots ? ownedTableSlots->lookup(store) : nullptr;
     auto table = llvm::dyn_cast_or_null<MethodTableType>(typeOf(store.getValue()));
@@ -33,6 +133,7 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
         auto object = edge->object;
