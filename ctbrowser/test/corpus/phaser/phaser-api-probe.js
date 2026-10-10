@@ -30,7 +30,7 @@
 // what the NEXT probe sees, and a harness whose failures contaminate each other
 // reports a work queue that is partly fiction.
 
-// Probe groups are loaded first by phaser_api.cpp.
+// Probe groups are loaded first by phaser_api.html.
 
 // A PROBE MAY NOT HANG THE REPORT. One that awaits something which never
 // settles used to leave `__out` empty forever, and the harness could then say

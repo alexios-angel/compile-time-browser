@@ -21,19 +21,20 @@
 // golden reproducible - so the claim worth making is that input CHANGES the
 // outcome, which is exactly what a comparison of the two runs says and what a
 // hardcoded x would not.
+//
+// ITS QUESTIONS ARE FUNCTIONS IN phaser_invaders.js, called through
+// support/engine.hpp. The page is the example's, so they are run into it
+// rather than listed in it.
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
-#include <string_view>
-#include <vector>
 
 #include <ctbrowser.hpp>
 
 #include "check.hpp"
-#include "ratchet.hpp"
-
-using ctbrowser_test::ask;
+#include "engine.hpp"
 
 namespace {
 
@@ -41,19 +42,29 @@ using ctbrowser::input_event;
 using ctbrowser::shell::browser;
 using ctbrowser::shell::browser_options;
 
+// The page, with its bundle read from disk, and this test's functions run into
+// it once it has loaded.
+[[nodiscard]] std::unique_ptr<ctbrowser_test::engine> open_page(browser & page,
+                                                                const std::string & html) {
+    // The page asks for `../../vendor/phaser/phaser.js`, which resolves from
+    // its own directory, examples/pages/.
+    page.assets().set_base_path("examples/pages");
+    // UNCONFINED, explicitly: `../../vendor/` climbs out of the base path, which
+    // a confined registry refuses. Trusted in-tree fixture - never do this for
+    // a page from the network.
+    page.assets().set_confine(false);
+    page.load_html(html);
+    auto engine = ctbrowser_test::make_engine(page);
+    const std::string loaded = engine->load("test/corpus/phaser/phaser_invaders.js");
+    check(loaded.empty(), "test/corpus/phaser/phaser_invaders.js runs in the page: " + loaded);
+    return engine;
+}
+
 // One run of the page: boot it, then tick `frames` times with `hold` held down
 // the whole way (or nothing held when it is empty). Answers the ship's x.
-[[nodiscard]] std::string run(const std::string & html, const std::string & bundle,
-                              const char * hold, int frames) {
+[[nodiscard]] std::string run(const std::string & html, const char * hold, int frames) {
     browser page{browser_options{320, 240}};
-    // The page asks for `../../vendor/phaser/phaser.js`, which is what it resolves to from
-    // examples/pages/ - registered under that exact name so the load is
-    // hermetic and no path outside the registry is touched.
-    page.assets().add(
-        "../../vendor/phaser/phaser.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
-                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
-    page.load_html(html);
+    const auto engine = open_page(page, html);
     // Boot: the three base64 textures have to settle before create() runs.
     for (int i = 0; i < 20; ++i) { page.tick(16); }
 
@@ -61,7 +72,7 @@ using ctbrowser::shell::browser_options;
     for (int i = 0; i < frames; ++i) { page.tick(16); }
     if (hold != nullptr) { (void)page.handle(input_event::key_release(hold)); }
 
-    return ask(page, "window.__game.scene.scenes[0].player.x");
+    return engine->call("phaser_invaders_ship_x");
 }
 
 // AND DOES IT PLAY? Moving the ship is one claim; a game running its whole loop
@@ -73,19 +84,14 @@ using ctbrowser::shell::browser_options;
 // This is the assertion that would notice the loop dying halfway: a scene whose
 // update() throws after frame 200 still passes every other test in this tree,
 // because they all stop before it.
-[[nodiscard]] std::string play(const std::string & html, const std::string & bundle, int frames) {
+[[nodiscard]] std::string play(const std::string & html, int frames) {
     browser page{browser_options{320, 240}};
-    page.assets().add(
-        "../../vendor/phaser/phaser.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
-                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
-    page.load_html(html);
+    const auto engine = open_page(page, html);
     for (int i = 0; i < frames; ++i) { page.tick(16); }
     // The script error too, because a callback that throws is cleared and the
     // page carries on looking healthy - which is exactly how this page hid an
     // undefined method for an afternoon.
-    const std::string state = ask(page, "(function () { var s = window.__game.scene.scenes[0];"
-                                        "return s.score + ',' + s.lives + ',' + s.over; })()");
+    const std::string state = engine->call("phaser_invaders_state");
     return state + "|" + page.script_error();
 }
 
@@ -98,29 +104,20 @@ using ctbrowser::shell::browser_options;
 // A teardown that half-works looks fine for a frame and then leaks - stale
 // bodies still in the physics world, a display list holding destroyed objects -
 // so the assertions are on the state being FRESH, not merely present.
-[[nodiscard]] std::string restart(const std::string & html, const std::string & bundle) {
+[[nodiscard]] std::string restart(const std::string & html) {
     browser page{browser_options{320, 240}};
-    page.assets().add(
-        "../../vendor/phaser/phaser.js",
-        std::vector<std::byte>{reinterpret_cast<const std::byte *>(bundle.data()),
-                               reinterpret_cast<const std::byte *>(bundle.data() + bundle.size())});
-    page.load_html(html);
+    const auto engine = open_page(page, html);
     // Long enough that the scene is thoroughly dirty: the score has moved, the
     // formation has thinned, and bullets and bombs are in flight.
     for (int i = 0; i < 300; ++i) { page.tick(16); }
-    const std::string before =
-        ask(page, "(function () { var s = window.__game.scene.scenes[0];"
-                  "return s.score + '/' + s.invaders.getChildren().length; })()");
+    const std::string before = engine->call("phaser_invaders_dirty");
 
-    (void)page.run_script("window.__game.scene.scenes[0].scene.restart();");
+    (void)engine->call("phaser_invaders_restart");
     // Three frames, not thirty: the formation is whole until a bullet reaches
     // it, and this is asking what create() built rather than what play did to
     // it afterwards.
     for (int i = 0; i < 3; ++i) { page.tick(16); }
-    const std::string after =
-        ask(page, "(function () { var s = window.__game.scene.scenes[0];"
-                  "return s.score + '/' + s.invaders.getChildren().length + '/' + s.lives"
-                  " + '/' + s.over + '/' + s.bullets.getChildren().length; })()");
+    const std::string after = engine->call("phaser_invaders_fresh");
     return before + " -> " + after + " |" + page.script_error();
 }
 
@@ -128,8 +125,7 @@ using ctbrowser::shell::browser_options;
 
 int main() {
     const std::string html = read_file("examples/pages/phaser-invaders.html");
-    const std::string bundle = read_file("vendor/phaser/phaser.js");
-    if (html.empty() || bundle.empty()) {
+    if (html.empty() || read_file("vendor/phaser/phaser.js").empty()) {
         std::printf("FAIL examples/pages/phaser-invaders.html or the bundle is missing\n");
         ++ctbrowser_test_failures;
         REPORT("phaser_invaders");
@@ -142,9 +138,9 @@ int main() {
         REPORT("phaser_invaders");
     }
 
-    const std::string drifted = run(html, bundle, nullptr, 40);
-    const std::string pushed_left = run(html, bundle, "ArrowLeft", 40);
-    const std::string pushed_right = run(html, bundle, "ArrowRight", 40);
+    const std::string drifted = run(html, nullptr, 40);
+    const std::string pushed_left = run(html, "ArrowLeft", 40);
+    const std::string pushed_right = run(html, "ArrowRight", 40);
     std::printf("     ship x after 40 frames: scripted %s, ArrowLeft %s, ArrowRight %s\n",
                 drifted.c_str(), pushed_left.c_str(), pushed_right.c_str());
 
@@ -175,7 +171,7 @@ int main() {
           "the two directions land far apart: " + std::to_string(right - left) + " px");
 
     // --- and it plays on its own -------------------------------------------
-    const std::string played = play(html, bundle, 700);
+    const std::string played = play(html, 700);
     std::printf("     after 700 frames: score,lives,over = %s\n", played.c_str());
     const std::size_t bar = played.find('|');
     const std::string state = played.substr(0, bar);
@@ -199,7 +195,7 @@ int main() {
     check(lives >= 0, "lives never went negative: " + std::to_string(lives));
 
     // --- and it can be restarted -------------------------------------------
-    const std::string cycled = restart(html, bundle);
+    const std::string cycled = restart(html);
     std::printf("     restart: %s\n", cycled.c_str());
     const std::size_t split = cycled.find(" |");
     const std::string states = cycled.substr(0, split);
