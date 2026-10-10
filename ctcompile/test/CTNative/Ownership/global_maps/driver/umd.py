@@ -374,11 +374,12 @@ def check_umd(args, node, reference, compilers, nm):
     # by every realm and is never derived, so its contract entry is still
     # required.
     #
-    # A computed write through the global object before the wrapper is a
-    # dynamic global write: any name may be bound by then, so absence is not
-    # derived and the absent_bindings entry is required again. The full
-    # contract must still prove that program, so its refusal without the
-    # entry is about absence and nothing else.
+    # No variant here keeps absence underived while the full contract still
+    # proves the program: a `var` declaration of an absent name is refused by
+    # the contract itself, and a computed write through the global object
+    # before the wrapper leaves the host-prefix pass an unproved host binding.
+    # CTJS/Transforms/absent-globals.mlir covers the fold staying off for a
+    # dynamic write (dynamic.js, window.js).
     raw = args.work / "umd-browser.raw.mlir"
     if 'ctjs.load_global "exports" {typeof_lookup = true}' not in raw.read_text():
         raise RuntimeError("the raw UMD import lost its `typeof exports` load")
@@ -405,15 +406,15 @@ def check_umd(args, node, reference, compilers, nm):
         the host-prefix output, or the lifted IR when that pass refuses it."""
         lifted = lift(name, text)
         manifest = umd_contract(args, lifted, name, values)
-        _, specialized_mutant, result = specialize_prefix(
-            args.opt,
-            lifted,
-            json.loads(manifest.read_text()),
-            args.work / f"{name}-prefix",
-            success=False,
-            options=boundary.FOLLOW + " follow-provider-objects=true",
-        )
-        if result.returncode != 0:
+        try:
+            _, specialized_mutant, _ = specialize_prefix(
+                args.opt,
+                lifted,
+                json.loads(manifest.read_text()),
+                args.work / f"{name}-prefix",
+                options=boundary.FOLLOW + " follow-provider-objects=true",
+            )
+        except RuntimeError:
             return lifted, manifest
         return specialized_mutant, umd_contract(args, specialized_mutant, name, values)
 
@@ -436,13 +437,6 @@ def check_umd(args, node, reference, compilers, nm):
         unprinted.write_text(text)
         host.run([args.opt, str(unprinted), "-o", str(subject)])
         mutants[name] = (subject, umd_contract(args, subject, f"umd-{name}", values), reason)
-    dynamic_source = 'var traceKey = "traceDynamic";\nglobalThis[traceKey] = 0;\n' + source
-    try:
-        dynamic = prepare_umd(args, "umd-dynamic-write", dynamic_source)[2]
-        dynamic_config = umd_contract(args, dynamic, "umd-dynamic-write", values)
-    except Exception as error:
-        dynamic = None
-        mismatches.append(f"umd-dynamic-write: preparation failed: {error}")
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         flags = options + " host-max-steps=1000000"
         for field, admitted in (("absent_bindings", True), ("undefined_bindings", False)):
@@ -456,20 +450,6 @@ def check_umd(args, node, reference, compilers, nm):
             mismatches.append(
                 expect(subject, f"umd-{policy}-{name}", manifest, flags, False, reason)
             )
-        if not dynamic:
-            continue
-        name = f"umd-{policy}-dynamic-write"
-        mismatches.append(expect(dynamic, name, dynamic_config, flags, True))
-        mismatches.append(
-            expect(
-                dynamic,
-                name + "-missing-absent_bindings",
-                without(dynamic_config, "absent_bindings", name + "-missing-absent_bindings"),
-                flags,
-                False,
-                "unproved host binding `exports`",
-            )
-        )
     # Every variant runs before any fails, so one run reports all of them.
     mismatches = [mismatch for mismatch in mismatches if mismatch]
     if mismatches:
