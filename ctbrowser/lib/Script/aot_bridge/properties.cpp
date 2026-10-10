@@ -55,7 +55,7 @@ std::uint64_t ct_aot_new_array(ct_aot_frame * f, std::uint32_t reserve_hint) {
 // ct_aot_iterable_values. VM_CASE(iterable) is one line -
 // `reg(in.a) = spread_values(reg(in.b))` - and spread_values is ALREADY a
 // named member (iterable_values plus the spread's own TypeError for a
-// nullish or non-string primitive source), so there is nothing to extract
+// source with nothing to iterate), so there is nothing to extract
 // and no way for the two tiers to drift.
 //
 // DELEGATED WHOLESALE, INCLUDING THE ROW'S CORRECTION (1). That correction

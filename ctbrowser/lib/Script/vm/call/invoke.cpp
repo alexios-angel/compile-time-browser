@@ -382,10 +382,10 @@ value context::spread_values(value v) {
                                      " is not iterable");
         return make_array();
     }
-    return iterable_values(v);
+    return iterable_values(v, true);
 }
 
-value context::iterable_values(value v) {
+value context::iterable_values(value v, bool spread) {
     // Already an array: hand it straight back, so the common case allocates
     // nothing. Callers must not mutate what they get.
     if (v.is_array()) { return v; }
@@ -548,6 +548,11 @@ value context::iterable_values(value v) {
         }
         return out;
     }
+    // NOTHING TO ITERATE: no library slot, no @@iterator, no `length`. A
+    // library caller takes that as an empty list; a SPREAD is GetIterator's
+    // TypeError (7.4.3), the one for-of's open already throws for the same
+    // object - `[...{}]` was silently empty.
+    if (spread) { throw_error("TypeError", std::string{type_of(v)} + " is not iterable"); }
     return make_array();
 }
 
