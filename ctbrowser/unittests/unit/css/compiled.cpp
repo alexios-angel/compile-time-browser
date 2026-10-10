@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace css = ctbrowser::style::css;
 
@@ -65,7 +66,7 @@ namespace {
 /// through a fresh table.
 void expect_round_trip(std::string_view label, const css::stylesheet & sheet,
                        ctbrowser::atom_table & atoms) {
-    const css::compiled_sheet_data data = css::compile(sheet, atoms);
+    css::compiled_sheet_data data = css::compile(sheet, atoms);
     const css::stylesheet back = css::materialize(data.view(), atoms);
     if (const std::string where = first_difference(sheet, back); !where.empty()) {
         std::printf("FAIL %s: the rebuilt sheet differs at %s\n", std::string{label}.c_str(),
@@ -77,10 +78,28 @@ void expect_round_trip(std::string_view label, const css::stylesheet & sheet,
     // one: the atoms' ids differ in between, and only their text may matter.
     ctbrowser::atom_table fresh;
     const css::stylesheet elsewhere = css::materialize(data.view(), fresh);
-    const css::compiled_sheet_data again = css::compile(elsewhere, fresh);
+    css::compiled_sheet_data again = css::compile(elsewhere, fresh);
     const css::stylesheet home = css::materialize(again.view(), atoms);
     if (const std::string where = first_difference(sheet, home); !where.empty()) {
         std::printf("FAIL %s: through a fresh atom table the sheet differs at %s\n",
+                    std::string{label}.c_str(), where.c_str());
+        ++ctbrowser_test_failures;
+    }
+    // With the pool and the strings cut into 7-byte chunks, as a generated
+    // file cuts a long block: offsets count across the joined chunks.
+    const auto chunks_of = [](std::string_view text) {
+        std::vector<std::string_view> out;
+        for (std::size_t at = 0; at < text.size(); at += 7) { out.push_back(text.substr(at, 7)); }
+        return out;
+    };
+    css::compiled_sheet chunked = data.view();
+    const std::vector<std::string_view> pool = chunks_of(data.pool);
+    const std::vector<std::string_view> strings = chunks_of(data.strings);
+    chunked.pool = pool;
+    chunked.strings = strings;
+    if (const std::string where = first_difference(sheet, css::materialize(chunked, atoms));
+        !where.empty()) {
+        std::printf("FAIL %s: from chunked text the sheet differs at %s\n",
                     std::string{label}.c_str(), where.c_str());
         ++ctbrowser_test_failures;
     }
@@ -165,7 +184,7 @@ void test_bootstrap_round_trips() {
     expect_round_trip("bootstrap.css", sheet, atoms);
     // The compiled form shares each name: Bootstrap's thousands of selectors
     // name a few hundred classes.
-    const css::compiled_sheet_data data = css::compile(sheet, atoms);
+    css::compiled_sheet_data data = css::compile(sheet, atoms);
     std::printf("  bootstrap: %zu bytes of names for %zu selectors, %zu tokens\n",
                 data.strings.size(), data.selectors.size(), data.tokens.size());
     CHECK(data.selector_count == sheet.selectors.size());
@@ -178,8 +197,12 @@ void test_token_streams_round_trip() {
                                         "body{a:b}",
                                         ""}) {
         const css::token_stream stream = css::tokenize(text);
-        const css::token_stream back = css::materialize(
-            css::compiled_tokens{stream.pool, stream.tokens, stream.source_length});
+        // In two chunks, split mid-pool.
+        const std::string_view pool = stream.pool;
+        const std::string_view halves[] = {pool.substr(0, pool.size() / 2),
+                                           pool.substr(pool.size() / 2)};
+        const css::token_stream back =
+            css::materialize(css::compiled_tokens{halves, stream.tokens, stream.source_length});
         check(back == stream, "token stream of [" + std::string{text} + "] round-trips");
     }
 }
@@ -190,7 +213,8 @@ constexpr css::css_token div_tokens[] = {
     {css::token_type::ident, 0, 0, 0, 3, 0},
     {css::token_type::eof, 0, 0, 3, 0, 0},
 };
-constexpr css::compiled_tokens compiled_div{"div", div_tokens, 3};
+constexpr std::string_view div_pool[] = {"d", "iv"};
+constexpr css::compiled_tokens compiled_div{div_pool, div_tokens, 3};
 static_assert(compiled_div.tokens.size() == 2);
 constexpr css::compiled_text red_text{0, 3};
 constexpr css::compiled_media_query print_query{css::media_type::print, false, false, red_text};

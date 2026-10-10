@@ -143,6 +143,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/Lit.cmake")
 # Local source ownership; target options and generated fixtures are configured above.
 add_subdirectory(Analysis)
 add_subdirectory(CTJS)
+add_subdirectory(CSS)
 add_subdirectory(CTNative)
 add_subdirectory(Comparison)
 add_subdirectory(Core)

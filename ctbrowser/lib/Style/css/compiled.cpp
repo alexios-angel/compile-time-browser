@@ -20,6 +20,16 @@ namespace ctbrowser::style::css {
 
 namespace {
 
+/// The chunks of a text_chunks joined into one string.
+[[nodiscard]] std::string joined(text_chunks chunks) {
+    std::size_t size = 0;
+    for (const std::string_view chunk : chunks) { size += chunk.size(); }
+    std::string out;
+    out.reserve(size);
+    for (const std::string_view chunk : chunks) { out += chunk; }
+    return out;
+}
+
 template <class T> [[nodiscard]] std::uint32_t size32(const std::vector<T> & v) {
     return static_cast<std::uint32_t>(v.size());
 }
@@ -192,11 +202,12 @@ private:
 /// Rebuilds a stylesheet from a compiled_sheet.
 class rebuilder {
 public:
-    rebuilder(const compiled_sheet & sheet, atom_table & atoms) : sheet_(sheet), atoms_(atoms) {}
+    rebuilder(const compiled_sheet & sheet, atom_table & atoms)
+        : sheet_(sheet), atoms_(atoms), strings_(joined(sheet.strings)) {}
 
     stylesheet run() const {
         stylesheet out;
-        out.pool = std::string{sheet_.pool};
+        out.pool = joined(sheet_.pool);
         out.prefixes_checked = sheet_.prefixes_checked;
         out.forgiving = sheet_.forgiving;
         out.source_length = sheet_.source_length;
@@ -278,7 +289,7 @@ private:
         return table.subspan(r.first, r.count);
     }
     [[nodiscard]] std::string_view view(compiled_text t) const {
-        return sheet_.strings.substr(t.offset, t.length);
+        return std::string_view{strings_}.substr(t.offset, t.length);
     }
     [[nodiscard]] std::string string(compiled_text t) const { return std::string{view(t)}; }
     [[nodiscard]] atom intern(compiled_text t) const { return atoms_.intern(view(t)); }
@@ -353,14 +364,17 @@ private:
 
     const compiled_sheet & sheet_;
     atom_table & atoms_;
+    std::string strings_; // sheet_.strings joined: every compiled_text indexes it.
 };
 
 } // namespace
 
-compiled_sheet compiled_sheet_data::view() const noexcept {
+compiled_sheet compiled_sheet_data::view() noexcept {
+    pool_chunk_ = pool;
+    strings_chunk_ = strings;
     compiled_sheet out;
-    out.pool = pool;
-    out.strings = strings;
+    out.pool = text_chunks{&pool_chunk_, 1};
+    out.strings = text_chunks{&strings_chunk_, 1};
     out.prefixes_checked = prefixes_checked;
     out.forgiving = forgiving;
     out.source_length = source_length;
@@ -403,7 +417,7 @@ stylesheet materialize(const compiled_sheet & sheet, atom_table & atoms) {
 
 token_stream materialize(const compiled_tokens & tokens) {
     token_stream out;
-    out.pool = std::string{tokens.pool};
+    out.pool = joined(tokens.pool);
     out.tokens.assign(tokens.tokens.begin(), tokens.tokens.end());
     out.source_length = tokens.source_length;
     return out;
