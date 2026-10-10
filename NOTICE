@@ -153,13 +153,18 @@ there is no alternative: Boost.URL has been compiled-only since 1.87, its
 discontinued". The engine had two hand-written URL parsers that disagreed
 with each other, and RFC 3986 is not worth hand-rolling a third time.
 
+Boost.ProgramOptions is LINKED too, since 2026-10-09, but only by the TEST
+programs that take command-line arguments, which parse them through
+ctbrowser/test/support/options.hpp. The engine never links it.
+
 The restriction was never a preference - it was about the `windows` /
 `windows-fetch` presets, which cross-compile with llvm-mingw, where a
 header-only Boost needs no machinery and a compiled one must be built for
 every target. That cost is now paid deliberately and in one place:
-tools/mingw/build-boost-mingw.sh compiles Boost.URL's 66 sources with the cross
-compiler into the mingw sysroot, beside the static SDL3 already there. It
-does not use b2, so no Boost build system is involved.
+tools/mingw/build-boost-mingw.sh compiles the sources of Boost.URL and
+Boost.ProgramOptions with the cross compiler into the mingw sysroot, beside
+the static SDL3 already there. It does not use b2, so no Boost build system is
+involved.
 
 Boost.Context (and therefore Boost.Coroutine2 and Boost.Fiber) is per-ABI
 assembly and MUST STILL NOT be introduced. Lifting the rule for a library

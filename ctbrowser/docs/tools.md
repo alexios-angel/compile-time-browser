@@ -94,9 +94,11 @@ with it.
     new stages.
   - **Proofs.** `fixture` is a hidden workload that must be DONE, proving the
     checker can say so, and `--self-test` checks the engine without a build.
-- `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL for the llvm-mingw target
-  into the cross sysroot. Boost.URL is the one COMPILED Boost library the engine
-  links (it cannot be header-only), so the Windows presets need this run once.
+- `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL and Boost.ProgramOptions
+  for the llvm-mingw target into the cross sysroot. Boost.URL is the one COMPILED
+  Boost library the engine links (it cannot be header-only); Boost.ProgramOptions
+  is linked only by the tests that take arguments, since 2026-10-09. The Windows
+  presets need this run once, and again on a sysroot built before that date.
   See `docs/build.md` for what else was considered and turned down.
 - `tools/corpus/ratchet.py` — ONE driver for every corpus ratchet and API surface,
   `ratchet.py <corpus> ratchet|api [--advance]` for p5, phaser, babylon, webgl2

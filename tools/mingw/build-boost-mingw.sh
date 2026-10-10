@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
-# Build the Boost libraries the engine LINKS, for the llvm-mingw target.
+# Build the COMPILED Boost libraries for the llvm-mingw target: Boost.URL, which
+# the engine LINKS, and Boost.ProgramOptions, which only the test programs that
+# take arguments link.
 #
 # WHY THIS EXISTS AT ALL. Boost was header-only here until 2026-07-31, precisely
 # so there would be nothing to cross-compile. Boost.URL ended that: it has been
 # compiled-only since 1.87 - `boost/url/src.hpp` hard-errors, "src.hpp is
 # discontinued" - so there is no header-only way to have it, and RFC 3986 is not
-# something to keep hand-rolling. See NOTICE and ctbrowser/docs/build.md.
+# something to keep hand-rolling. Boost.ProgramOptions followed on 2026-10-09,
+# for the tests' command lines (ctbrowser/test/support/options.hpp). See NOTICE
+# and ctbrowser/docs/build.md.
 #
 # NOT b2, AND THAT IS THE POINT. Boost's own build system would want a toolset
-# definition for llvm-mingw and a Boost source tree to run from. Boost.URL is 27
-# self-contained .cpp files whose only dependencies are header-only Boost, so
-# compiling them directly with the cross compiler is both smaller and far easier
-# to see. Nothing here knows what a Jamfile is.
+# definition for llvm-mingw and a Boost source tree to run from. Both libraries
+# are self-contained .cpp files whose only dependencies are header-only Boost (66
+# for Boost.URL at 1.90, 19 at 1.92 once upstream folded most of it into headers;
+# 11 for Boost.ProgramOptions), so compiling them directly with the cross
+# compiler is both smaller and far easier to see. Nothing here knows what a
+# Jamfile is.
 #
 # The result lands in the mingw sysroot beside the static SDL3, SDL3_ttf and
 # plutosvg that are already there - that sysroot is gitignored and populated
@@ -70,62 +76,80 @@ fi
 # --- the sources, PINNED TO THE VERSION THE HEADERS ARE ---------------------
 # A library built from one release against another release's headers is a
 # silent-mismatch bug of exactly the kind this repository keeps finding, so the
-# tag is read out of version.hpp rather than assumed.
+# tag is read out of version.hpp rather than assumed, and every library below is
+# cloned at that one tag.
 version="$(sed -n 's/^#define BOOST_LIB_VERSION "\(.*\)"/\1/p' "$boost_inc/boost/version.hpp")"
 tag="boost-${version//_/.}.0"
-src="$HOME/projects/boost-url-src"
-if [ "${1:-}" = "--clean" ]; then rm -rf "$src"; fi
-if [ ! -d "$src" ]; then
-    echo "build-boost-mingw: fetching Boost.URL $tag"
-    git clone --depth 1 --branch "$tag" https://github.com/boostorg/url.git "$src"
-fi
+clean="${1:-}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-echo "build-boost-mingw: compiling Boost.URL $tag for $target"
-# C++17: Boost.URL's own floor. The ENGINE is C++23 and links this happily -
-# they meet at the ABI, and building third-party code at our language level buys
-# nothing and risks deprecation noise.
-#
-# BOOST_URL_SOURCE builds the definitions rather than declaring them imported;
-# BOOST_ALL_NO_LIB stops the auto-linker naming a library MSVC would look for.
-#
-# RECURSIVE, and that is not a detail. `src/*.cpp` finds 27 files; the library is
-# 66, with the rest under src/detail, src/grammar and src/rfc. Building only the
-# top level produced an archive that LOOKED fine - 27 objects, ar was happy - and
-# failed at link with undefined url_impl symbols. `llvm-nm` showed them undefined
-# inside the archive itself, which is the tell.
-#
-# OBJECT NAMES COME FROM THE PATH, not the basename: src/error.cpp and
-# src/rfc/detail/error.cpp would otherwise be the same .o, and the second would
-# silently replace the first.
-mapfile -t sources < <(find "$src/src" -name '*.cpp' | sort)
-echo "  ${#sources[@]} sources"
-pids=()
-for source in "${sources[@]}"; do
-    object="$work/$(realpath --relative-to="$src/src" "$source" | tr '/' '_' | sed 's/\.cpp$/.o/')"
-    "$mingw/bin/$target-clang++" -std=gnu++17 -O2 -DNDEBUG \
-        -DBOOST_URL_SOURCE -DBOOST_URL_STATIC_LINK -DBOOST_ALL_NO_LIB \
-        -isystem "$boost_inc" -isystem "$src/include" \
-        -c "$source" -o "$object" &
-    pids+=("$!")
-done
-# EVERY exit code checked. The first version of this loop was `... & done; wait`,
-# which discards them - a failed compile would have been archived around in
-# silence and shown up as a link error somewhere else entirely.
-failed=0
-for pid in "${pids[@]}"; do
-    wait "$pid" || failed=1
-done
-if [ "$failed" -ne 0 ]; then
-    echo "build-boost-mingw: a source failed to compile - see above" >&2
-    exit 1
-fi
-
 install_dir="$mingw/$target/lib"
 mkdir -p "$install_dir"
-"$mingw/bin/llvm-ar" rcs "$install_dir/libboost_url.a" "$work"/*.o
-echo "build-boost-mingw: wrote $install_dir/libboost_url.a"
-"$mingw/bin/llvm-ar" t "$install_dir/libboost_url.a" | wc -l | xargs echo "  objects:"
-ls -la "$install_dir/libboost_url.a"
+
+# build_library <boostorg repository> <its -D flags>...: clone the repository at
+# $tag into $HOME/projects/boost-<repository>-src unless it is already there
+# (--clean fetches it again), compile every source under its src/ and archive
+# them as libboost_<repository>.a in the sysroot.
+build_library() {
+    local lib="$1"
+    shift
+    local src="$HOME/projects/boost-$lib-src" objects="$work/$lib"
+    if [ "$clean" = "--clean" ]; then rm -rf "$src"; fi
+    if [ ! -d "$src" ]; then
+        echo "build-boost-mingw: fetching boostorg/$lib $tag"
+        git clone --depth 1 --branch "$tag" "https://github.com/boostorg/$lib.git" "$src"
+    fi
+    mkdir -p "$objects"
+
+    echo "build-boost-mingw: compiling boostorg/$lib $tag for $target"
+    # C++17, above both libraries' own floor (C++11). The ENGINE and its tests are
+    # C++23 and link these happily - they meet at the ABI, and building third-party
+    # code at our language level buys nothing and risks deprecation noise.
+    #
+    # BOOST_ALL_NO_LIB stops the auto-linker naming a library MSVC would look for.
+    #
+    # RECURSIVE, and that is not a detail. Boost.URL's `src/*.cpp` finds 27 files;
+    # the library is 66, with the rest under src/detail, src/grammar and src/rfc.
+    # Building only the top level produced an archive that LOOKED fine - 27
+    # objects, ar was happy - and failed at link with undefined url_impl symbols.
+    # `llvm-nm` showed them undefined inside the archive itself, which is the tell.
+    #
+    # OBJECT NAMES COME FROM THE PATH, not the basename: src/error.cpp and
+    # src/rfc/detail/error.cpp would otherwise be the same .o, and the second would
+    # silently replace the first.
+    local sources source object pid failed=0 pids=()
+    mapfile -t sources < <(find "$src/src" -name '*.cpp' | sort)
+    echo "  ${#sources[@]} sources"
+    for source in "${sources[@]}"; do
+        object="$(realpath --relative-to="$src/src" "$source" | tr '/' '_' | sed 's/\.cpp$/.o/')"
+        "$mingw/bin/$target-clang++" -std=gnu++17 -O2 -DNDEBUG \
+            "$@" -DBOOST_ALL_NO_LIB \
+            -isystem "$boost_inc" -isystem "$src/include" \
+            -c "$source" -o "$objects/$object" &
+        pids+=("$!")
+    done
+    # EVERY exit code checked. The first version of this loop was `... & done; wait`,
+    # which discards them - a failed compile would have been archived around in
+    # silence and shown up as a link error somewhere else entirely.
+    for pid in "${pids[@]}"; do
+        wait "$pid" || failed=1
+    done
+    if [ "$failed" -ne 0 ]; then
+        echo "build-boost-mingw: a source failed to compile - see above" >&2
+        exit 1
+    fi
+
+    local archive="$install_dir/libboost_$lib.a"
+    "$mingw/bin/llvm-ar" rcs "$archive" "$objects"/*.o
+    echo "build-boost-mingw: wrote $archive"
+    "$mingw/bin/llvm-ar" t "$archive" | wc -l | xargs echo "  objects:"
+    ls -la "$archive"
+}
+
+# BOOST_URL_SOURCE builds the definitions rather than declaring them imported,
+# and BOOST_PROGRAM_OPTIONS_SOURCE likewise; the _STATIC_LINK beside each is what
+# the library's own CMake defines for a static build.
+build_library url -DBOOST_URL_SOURCE -DBOOST_URL_STATIC_LINK
+build_library program_options -DBOOST_PROGRAM_OPTIONS_SOURCE -DBOOST_PROGRAM_OPTIONS_STATIC_LINK

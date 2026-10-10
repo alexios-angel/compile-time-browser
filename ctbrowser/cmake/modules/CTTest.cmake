@@ -29,6 +29,28 @@ if(NOT CTBROWSER_CPPTRACE OR NOT CTBROWSER_CPPTRACE_INCLUDE)
                  "brew install cpptrace, or tools/mingw/build-libs-mingw.sh for the cross build.")
 endif()
 
+# BOOST.PROGRAMOPTIONS, for the tests that take command-line arguments - here
+# and in ctcompile/test, which is configured below this directory and sees the
+# target. test/support/options.hpp is the one place they parse argv. REQUIRED,
+# unlike cpptrace: without it those tests cannot be built at all. Compiled, so
+# the cross build takes it from the mingw sysroot exactly as it takes Boost.URL
+# (cmake/dependencies.cmake), and the engine itself never links it.
+if(CTBROWSER_BOOST_INCLUDE_DIR)
+  find_library(CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY
+    NAMES boost_program_options libboost_program_options)
+  if(NOT CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY)
+    message(FATAL_ERROR
+      "ctbrowser: no libboost_program_options for this target, and the tests that take "
+      "arguments need it. tools/mingw/build-boost-mingw.sh builds it into the mingw sysroot.")
+  endif()
+  add_library(Boost::program_options UNKNOWN IMPORTED)
+  set_target_properties(Boost::program_options PROPERTIES
+    IMPORTED_LOCATION "${CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
+else()
+  find_package(Boost 1.88 REQUIRED CONFIG COMPONENTS program_options)
+endif()
+
 # `ctbrowser_test(<bucket>/<name>)`. The argument is a PATH and everything
 # derived from it is the BASENAME - the target, and more importantly the ctest
 # name. `ctest -R vm_` has to keep working: it is in docs/build.md's

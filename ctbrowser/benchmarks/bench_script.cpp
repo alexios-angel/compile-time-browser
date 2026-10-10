@@ -31,10 +31,11 @@
 
 #include <ctbrowser/script/script.hpp>
 
+#include "options.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <string>
 #include <vector>
 
@@ -145,7 +146,11 @@ struct timing {
 } // namespace
 
 int main(int argc, char ** argv) {
-    const bool csv = argc > 1 && std::strcmp(argv[1], "--csv") == 0;
+    namespace po = boost::program_options;
+    bool csv = false;
+    po::options_description options{"usage: ctbrowser-test-bench_script [--csv]"};
+    options.add_options()("csv", po::bool_switch(&csv), "one row per workload, for scripting");
+    if (!ctbrowser_test::parse_options(argc, argv, options)) { return 2; }
 
     if (csv) {
         std::printf("workload,compile_ms,run_ms,run_share\n");

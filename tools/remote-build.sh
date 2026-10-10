@@ -155,9 +155,10 @@ if [ "${1:-}" = windows ]; then
   # `windows`, not `windows-fetch`: that preset no longer exists and this line
   # had gone stale, so the windows path failed at the first command with
   # "No such preset". The cross build also needs compiled libraries in the
-  # mingw sysroot that the box does not ship - Boost.URL, zlib, libpng,
-  # libjpeg-turbo, mimalloc, simdutf and cpptrace - so the two builder scripts
-  # run first. Both are idempotent and skip what is already installed.
+  # mingw sysroot that the box does not ship - Boost.URL, Boost.ProgramOptions,
+  # zlib, libpng, libjpeg-turbo, mimalloc, simdutf and cpptrace - so the two
+  # builder scripts run first. Both are idempotent and skip what is already
+  # installed.
   # THE ISOLATED BOOST INCLUDE DIR the cross toolchain wants. It is one
   # symlink: cmake/toolchains/windows-x86_64.cmake puts this on the cross
   # compile's -isystem path, so it must hold boost/ AND NOTHING ELSE - pointing

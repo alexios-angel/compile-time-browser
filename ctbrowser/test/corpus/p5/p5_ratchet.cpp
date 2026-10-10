@@ -31,6 +31,7 @@
 
 #include "check.hpp"
 #include "engine.hpp"
+#include "options.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -509,15 +510,28 @@ int main(int argc, char ** argv) {
     // one. The index is useless without this: it is a position in a table
     // nothing outside the compiler can see. With it, a trace out of 4.5 MB of
     // minified-ish JavaScript points at the exact lines to read.
-    if (argc > 2 && std::string{argv[1]} == "--source") {
+    namespace po = boost::program_options;
+    std::vector<std::size_t> functions;
+    std::string sketch;
+    std::string bundle;
+    po::options_description options{
+        "usage: ctbrowser-test-p5_ratchet [BUNDLE.js | --sketch FILE | --source N...]"};
+    auto add = options.add_options();
+    add("source", po::value(&functions)->multitoken(), "print the source of compiled function N");
+    add("sketch", po::value(&sketch), "load p5 as a page, run FILE against it, print its alerts");
+    add("bundle", po::value(&bundle), "measure BUNDLE.js and report: no pawl, no recorded file");
+    po::positional_options_description positional;
+    positional.add("bundle", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
+
+    if (!functions.empty()) {
         const std::string source = read_file("vendor/p5/p5.js");
         const ctbrowser::script::program prog = ctbrowser::script::compiler::compile(source);
         if (!prog.ok) {
             std::printf("compile failed: %s\n", prog.error.c_str());
             return 1;
         }
-        for (int i = 2; i < argc; ++i) {
-            const auto which = static_cast<std::size_t>(std::atoi(argv[i]));
+        for (const std::size_t which : functions) {
             if (which >= prog.functions.size()) {
                 std::printf("fn#%zu: out of range, %zu functions\n", which, prog.functions.size());
                 continue;
@@ -536,7 +550,7 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
-    if (argc > 2 && std::string{argv[1]} == "--sketch") {
+    if (!sketch.empty()) {
         const std::string bundle = read_file("vendor/p5/p5.js");
         ctbrowser::shell::browser page{ctbrowser::shell::browser_options{400, 400}};
         const auto engine = ctbrowser_test::make_engine(page);
@@ -564,7 +578,7 @@ int main(int argc, char ** argv) {
         // The probe is a file no page lists, so it is LOADED into this one, and
         // what it alerts is read back off the page afterwards, in order.
         const std::size_t before = page.alerts().size();
-        const std::string ran = engine->load(argv[2]);
+        const std::string ran = engine->load(sketch);
         // More frames than the ladder runs: a probe usually wants to see what
         // the loop settles into, not what it does on its first tick.
         for (int frame = 0; frame < 30; ++frame) { page.tick(16); }
@@ -575,8 +589,8 @@ int main(int argc, char ** argv) {
         return 0;
     }
 
-    const bool bisecting = argc > 1;
-    const std::string path = bisecting ? argv[1] : "vendor/p5/p5.js";
+    const bool bisecting = !bundle.empty();
+    const std::string path = bisecting ? bundle : "vendor/p5/p5.js";
 
     const std::string source = read_file(path);
     std::printf("     %s: %zu bytes\n", path.c_str(), source.size());

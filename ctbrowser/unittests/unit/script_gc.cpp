@@ -20,6 +20,7 @@
 #include <ctbrowser/script/script.hpp>
 
 #include "check.hpp"
+#include "options.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <span>
@@ -455,7 +456,13 @@ void test_a_concatenating_loop_collects_its_strings() {
 }
 
 int main(int argc, char ** argv) {
-    const std::string_view only = argc > 1 ? std::string_view{argv[1]} : std::string_view{};
+    namespace po = boost::program_options;
+    std::string only;
+    po::options_description options{"usage: ctbrowser-test-script_gc [NAME]"};
+    options.add_options()("only", po::value(&only), "run only the cases whose name contains NAME");
+    po::positional_options_description positional;
+    positional.add("only", 1);
+    if (!ctbrowser_test::parse_options(argc, argv, options, positional)) { return 2; }
     const auto run = [&](std::string_view name, void (*body)()) {
         if (only.empty() || name.find(only) != std::string_view::npos) { body(); }
     };

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the CMake-built libraries the Windows cross build links, for the
 # llvm-mingw target: zlib, libpng, libjpeg-turbo, mimalloc, simdutf and cpptrace.
-# (Boost.URL is not CMake and has its own tools/mingw/build-boost-mingw.sh.)
+# (Boost.URL and Boost.ProgramOptions are not built with CMake here; they have
+# their own tools/mingw/build-boost-mingw.sh.)
 #
 # Until 2026-09-15 these were four scripts - image-libs, mimalloc, simdutf and
 # cpptrace - each a copy of the same probe/clone/configure/install skeleton with
@@ -26,8 +27,9 @@
 #
 # STATIC, because that is what makes an application a single .exe rather than a
 # folder with DLLs in it - the same reason the SDL3 in that sysroot is static.
-# The result lands in the mingw sysroot beside SDL3, SDL3_ttf, plutosvg and
-# libboost_url. That sysroot is gitignored and populated out-of-band.
+# The result lands in the mingw sysroot beside SDL3, SDL3_ttf, plutosvg,
+# libboost_url and libboost_program_options. That sysroot is gitignored and
+# populated out-of-band.
 #
 #   tools/mingw/build-libs-mingw.sh [--clean]
 #

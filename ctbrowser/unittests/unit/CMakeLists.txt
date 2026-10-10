@@ -7,6 +7,10 @@ endforeach()
 
 add_subdirectory(css_values)
 
+# The one unit test with a command line - a case-name filter - parsed by
+# test/support/options.hpp.
+target_link_libraries(ctbrowser-test-script_gc PRIVATE Boost::program_options)
+
 # navigation drives run_app, which initialises SDL - and SDL reaches libdbus,
 # whose own lock order TSan reports as an inversion; its offscreen video driver
 # initialises EGL without releasing it, which LeakSanitizer reports. Both
