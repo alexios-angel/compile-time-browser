@@ -645,7 +645,8 @@ def main():
     checked = prepared_refusals = 0
     cutoffs = {}
     # Fixtures whose untrusted lowering no longer keeps the refusal boundary,
-    # collected across the whole run and reported together at the end.
+    # or whose interpreter observation changed, collected across the whole run
+    # and reported together at the end.
     untrusted_changes = []
     for name, (node_expected, reference_expected) in OBSERVATIONS.items():
         source = args.fixtures / f"{name}.js"
@@ -661,9 +662,15 @@ def main():
         if name == "class-map-record-nested-conditional-dead-escape":
             reference_output += "retained=undefined\n"
         if reference_expected is not None and reference.stdout != reference_output:
-            raise RuntimeError(
-                f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
+            # Reported with the untrusted changes; the rest of this fixture's
+            # checks assume the old observation.
+            change = (
+                f"CHANGED {name}: interpreter prints {reference.stdout.strip()!r},"
+                f" expected {reference_output.strip()!r}"
             )
+            print(change, file=sys.stderr, flush=True)
+            untrusted_changes.append(change)
+            continue
         raw = args.work / f"{name}.raw.mlir"
         imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         text = raw.read_text()
@@ -1488,7 +1495,7 @@ def main():
                     checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
     if untrusted_changes:
         raise RuntimeError(
-            f"{len(untrusted_changes)} untrusted lowering(s) changed:\n"
+            f"{len(untrusted_changes)} class fixture result(s) changed:\n"
             + "\n".join(untrusted_changes)
         )
     plain_checked, plain_refused = check_constructed_methods(args)
