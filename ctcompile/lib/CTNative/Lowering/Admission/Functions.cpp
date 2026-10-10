@@ -9,6 +9,7 @@
 
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "Admission.h"
+#include "ctcompile/CTJS/Import/EngineGlobals.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -30,6 +31,21 @@ std::string receiverLiftRefusal(ctjs::FuncOp fn) {
         return mlir::WalkResult::interrupt();
     });
     return why;
+}
+/// The engine helper's IR name `op` uses as the script's own global or
+/// constant property key, or empty. The importer gives the VM's class helpers
+/// those names (EngineGlobals.h), so a script's own binding of one would read
+/// as the helper; it is refused rather than renamed.
+llvm::StringRef engineReservedName(mlir::Operation * op) {
+    if (op->hasAttr(ctjs::kEngineReservedUse)) {
+        if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) { return load.getName(); }
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) { return store.getName(); }
+    }
+    mlir::Value key;
+    if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) { key = get.getKey(); }
+    if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) { key = set.getKey(); }
+    const llvm::StringRef name = key ? ctjs::constantKey(key) : llvm::StringRef{};
+    return ctjs::engineHelperVMName(name).empty() ? llvm::StringRef{} : name;
 }
 } // namespace
 
@@ -162,6 +178,10 @@ bool admission::function(ctjs::FuncOp fn) {
     fn.getBody().walk([&](mlir::Operation * o) {
         if (!ok) { return; }
         if (o == fn.getOperation()) { return; }
+        if (const llvm::StringRef reserved = engineReservedName(o); !reserved.empty()) {
+            ok = refuse(("uses the engine-reserved name `" + reserved + "`").str());
+            return;
+        }
         ok = op(o);
         if (!ok) { return; }
         // A result that lowers to nothing needs no carrier: lowersToNothing's

@@ -18,6 +18,13 @@ namespace ctcompile::ctnative::lowering_detail {
 /// the values that name such an array so retype() can spell them.
 llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn);
 
+/// Fixes the function boundary for element arrays, after retype and before
+/// SCF borrowing: an argument becomes a std::span of the caller's array, a
+/// returned array is moved out, and a call's returned array is moved into a
+/// local that owns it.
+void passElementArrays(lowering & lower, ctjs::FuncOp fn,
+                       const llvm::DenseSet<mlir::Value> & arrays);
+
 /// Replaces one operation planStringArrays marked; false for any other.
 bool replaceStringArray(lowering & lower, mlir::Operation * o);
 

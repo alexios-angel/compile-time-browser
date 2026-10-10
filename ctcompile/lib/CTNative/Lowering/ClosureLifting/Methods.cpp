@@ -883,6 +883,8 @@ std::optional<std::string> closureLifter::whyNotLiftableMethod(ctjs::CreateClosu
     // stores and nothing else. methodClosures says at least one store is a
     // method store; this checks every use is one.
     for (mlir::OpOperand & use : c.getResult().getUses()) {
+        // A class method's `__home` edge is class setup (Classes.cpp).
+        if (use.getOwner()->hasAttr(kNativeClassSetup)) { continue; }
         auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
         if (!set || use.getOperandNumber() != 2) {
             return "it is a method field that is also used as a value elsewhere - Phase 59 "

@@ -93,6 +93,9 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
     llvm::DenseSet<mlir::Value> seen{array};
     llvm::SmallVector<mlir::Operation *> owners;
     bool borrowed = false;
+    // A parameter is a read-only borrow of the caller's array: nothing here
+    // may write it, return it or mix it with an array this function owns.
+    bool parameter = false, writes = false, returned = false;
     std::size_t work = 0;
     const auto add = [&](mlir::Value value) {
         if (seen.insert(value).second) { members.push_back(value); }
@@ -120,12 +123,15 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             return fail("an array that crosses into another function");
         }
         mlir::Operation * definition = member.getDefiningOp();
-        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(member)) {
+        // Operands 0-2 of a function are the receiver, new.target and callee;
+        // a declared parameter comes after them.
+        auto entryArgument = llvm::dyn_cast<mlir::BlockArgument>(member);
+        if (entryArgument && function && entryArgument.getOwner() == &function.getBody().front() &&
+            entryArgument.getArgNumber() >= 3) {
+            parameter = true;
+        } else if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(member)) {
             auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(argument.getOwner()->getParentOp());
-            if (!loop) {
-                return fail("an array passed as a parameter (not native for arrays of Strings "
-                            "yet)");
-            }
+            if (!loop) { return fail("an array carried by a block argument that is not a loop's"); }
             if (&loop.getBefore() == argument.getOwner()->getParent()) {
                 before(loop, argument.getArgNumber());
             } else {
@@ -138,7 +144,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
             add(selected.thenYield().getOperand(index));
             add(selected.elseYield().getOperand(index));
-        } else if (llvm::isa<ctjs::CreateArrayOp>(definition)) {
+        } else if (llvm::isa<ctjs::CreateArrayOp, ctjs::CallDirectOp>(definition)) {
+            // A literal, or the array a direct call returned by value.
             owners.push_back(definition);
         } else if (const VectorCall made = vectorCallOf(definition);
                    made == VectorCall::split || made == VectorCall::splitSpace) {
@@ -153,7 +160,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             return fail("an array created inside a branch or a loop whose variable is carried "
                         "out of it - its storage has to be one frame slot");
         } else {
-            return fail("an array that is not a literal, a split result or a sort of one");
+            return fail("an array that is not a literal, a split result, a sort of one, a "
+                        "parameter or a call result");
         }
         for (mlir::OpOperand & use : member.getUses()) {
             if (++work > 65536) { return fail("an array whose alias group is too large to check"); }
@@ -206,6 +214,7 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                     }
                     auto * call = *read.getResult().getUsers().begin();
                     const VectorCall kind = vectorCallOf(call);
+                    writes |= kind == VectorCall::push || kind == VectorCall::sort;
                     if (kind == VectorCall::none ||
                         llvm::cast<ctjs::CallOp>(call).getReceiver() != member) {
                         return fail(("an array whose method `" + key +
@@ -227,13 +236,16 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                 }
                 return fail("an array passed to a call the native runtime does not implement");
             }
-            if (llvm::isa<ctjs::CallDirectOp>(user)) {
-                return fail("an array passed as an argument (not native for arrays of Strings "
-                            "yet)");
+            // An argument is borrowed by the callee, whose own proof makes the
+            // parameter read-only; a refused callee refuses this caller too.
+            if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                call && use.getOperandNumber() >= 3) {
+                continue;
             }
+            // Returned by value: the owner is moved out as the function ends.
             if (llvm::isa<ctjs::ReturnOp>(user)) {
-                return fail("an array returned from a function (not native for arrays of "
-                            "Strings yet)");
+                returned = true;
+                continue;
             }
             if (llvm::isa<ctjs::SetPropertyOp>(user)) {
                 return fail("an array written through an index or its `length`");
@@ -241,10 +253,16 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             return fail(("an array that reaches `" + user->getName().getStringRef() + "`").str());
         }
     }
+    if (parameter && (!owners.empty() || writes || returned)) {
+        return fail(!owners.empty() ? "a parameter array mixed with an array this function owns"
+                    : writes        ? "a parameter array the function pushes to or sorts - a "
+                                      "parameter is a read-only borrow"
+                                    : "a parameter array returned from the function");
+    }
     // A value carried through scf control flow is the address of its owner, so
     // the owner has to live in the function's entry block. An array used only
     // inside the region that made it needs no such slot.
-    if (borrowed) {
+    if (borrowed && !parameter) {
         if (!function) { return fail("an array outside a function"); }
         for (mlir::Operation * owner : owners) {
             if (owner->getBlock() != &function.getBody().front()) {
@@ -369,6 +387,15 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
         return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
     }
     return false;
+}
+
+bool TypeInference::elementVectorParameter(llvm::ArrayRef<mlir::Value> members) {
+    return llvm::any_of(members, [](mlir::Value member) {
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(member);
+        return argument && argument.getOwner()->isEntryBlock() &&
+               llvm::isa<ctjs::FuncOp>(argument.getOwner()->getParentOp()) &&
+               argument.getArgNumber() >= 3;
+    });
 }
 
 } // namespace ctcompile::ctnative

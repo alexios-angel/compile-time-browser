@@ -210,6 +210,12 @@ template <bool Record> value context::run_loop_impl(std::size_t stop_depth) {
             // The running frame's realm: one load, no search, since a frame is
             // never pushed without one (call_frame::realm).
             const string_flat_map<value> & globals = vm_frame->realm->globals;
+            // An engine helper never comes from the globals table, where a
+            // script's `globalThis['%class_defined']` could have put one.
+            if (internal_global(vm_proto->names[in.bx()])) [[unlikely]] {
+                reg(in.a) = global_or_named(vm_proto->names[in.bx()], true);
+                break;
+            }
             const auto it = globals.find(vm_proto->names[in.bx()]);
             if (it != globals.end()) {
                 reg(in.a) = it->second;

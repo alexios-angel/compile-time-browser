@@ -33,6 +33,7 @@ realm_record & context::create_realm() {
     realms_.push_back(std::make_unique<realm_record>());
     realm_record & made = *realms_.back();
     made.globals = realm_template_;
+    made.internals = realm_template_internals_;
     made.builtin = realm_template_builtin_;
     made.platform_prototypes = realm_template_platform_prototypes_;
     // The page's intrinsics, shared: they are the ones the template's bindings
@@ -78,6 +79,7 @@ realm_record * context::realm_of(value global) const noexcept {
 
 void context::set_realm_template(const string_flat_map<value> & globals) {
     realm_template_ = globals;
+    realm_template_internals_ = current_realm().internals;
     realm_template_builtin_ = current_realm().builtin;
     realm_template_platform_prototypes_ = current_realm().platform_prototypes;
 }

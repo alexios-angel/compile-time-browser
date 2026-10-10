@@ -9,6 +9,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=LOOP
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/regexp.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REGEXP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/paramwrite.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PARAMWRITE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/spaces.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=SPACES --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 // LOOP: ctjs.func private @lastRow$1
@@ -25,6 +26,22 @@
 // LLVM ERROR, not a refusal). Both functions are native now.
 // SPACES-DAG: emitc.func @words_1(
 // SPACES-DAG: emitc.func @main(
+
+// A parameter is a read-only borrow of the caller's array: a callee that
+// pushes to it is refused with the proof's reason, and its caller with it.
+// PARAMWRITE: ctjs.func private @addTo$1
+// PARAMWRITE-SAME: ctnative.not_native = "an element array: a parameter array the function pushes to or sorts - a parameter is a read-only borrow"
+
+//--- paramwrite.js
+function addTo(list) {
+    list.push('x');
+    return list.length;
+}
+function caller() {
+    var words = ['q'];
+    return addTo(words);
+}
+var count = caller();
 
 //--- spaces.js
 function words(text) {

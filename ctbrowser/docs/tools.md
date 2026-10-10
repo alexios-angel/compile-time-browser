@@ -31,6 +31,15 @@ Each of these scripts finds the repository by counting directories up from its
 own file, so a script that moves between these folders needs that count changed
 with it.
 
+- `tools/devbox-pool.py` — **runs a command on whichever build box is free.**
+  `run [--box NAME] [--round] [--wait] -- COMMAND` takes a free job slot on the
+  first box in `tools/devbox-settings.json` that no validation round has marked,
+  starts the box if it is stopped, and runs COMMAND with `DEVBOX_HOST` set (and
+  `{box}` in COMMAND replaced by the ssh alias). `status` shows each box's power,
+  busy slots and round marker. A box with several slots can set `build_jobs`, exported as `CT_BUILD_JOBS` so concurrent builds share its cores. Slot 0 of a box is the same lock file the plain
+  `flock /tmp/ctbrowser-devbox-*.lock` commands take, so both ways share it. The
+  settings file is machine-local and gitignored; copy
+  `tools/devbox-settings.example.json` to create it.
 - `tools/gen/gen-assets.py` — regenerates `examples/assets/` (sprites.bmp, blip.wav)
   deterministically, so no foreign binary is committed.
 - `tools/check/compare.py` — drives ctbrowser AND Chrome/Firefox through the same

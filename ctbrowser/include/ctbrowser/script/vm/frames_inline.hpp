@@ -143,6 +143,7 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
     for (const auto & realm : realms_) {
         visit(root_label::globals, realm->global_this);
         for (const auto & [name, v] : realm->globals) { visit(root_label::globals, v); }
+        for (const auto & [name, v] : realm->internals) { visit(root_label::globals, v); }
         for (const auto & [name, v] : realm->platform_prototypes) { visit(root_label::globals, v); }
         // The prototype tables hold every builtin method. Nothing else
         // references them, so without this the standard library would be
@@ -160,6 +161,7 @@ inline auto context::each_root(std::size_t register_limit, std::size_t frame_lim
         visit(root_label::prototypes, intrinsics.throw_type_error);
     }
     for (const auto & [name, v] : realm_template_) { visit(root_label::globals, v); }
+    for (const auto & [name, v] : realm_template_internals_) { visit(root_label::globals, v); }
     for (const auto & [name, v] : realm_template_platform_prototypes_) {
         visit(root_label::globals, v);
     }

@@ -83,8 +83,22 @@ struct realm_intrinsics {
 /// does not see is the page's own `var`s. A ShadowRealm's intrinsics are its
 /// own: the builtins are installed again inside it (builtins'
 /// create_intrinsic_realm).
+/// Whether `name` spells an engine-internal helper the compiler calls (the
+/// class helpers: `%class_defined` and the rest). No JavaScript identifier
+/// starts with `%`, so no script can name one with get_global or set_global,
+/// and the helpers live in realm_record::internals, which no write a script
+/// makes reaches. A page assigning `__ctbrowser_class_defined` or writing
+/// `globalThis['%class_defined']` creates an ordinary global, as in any other
+/// engine, and its classes behave exactly as before.
+[[nodiscard]] constexpr bool internal_global(std::string_view name) noexcept {
+    return !name.empty() && name.front() == '%';
+}
+
 struct realm_record {
     string_flat_map<value> globals;
+    /// The engine-internal helpers (internal_global names), apart from the
+    /// globals table so a script cannot replace or read them.
+    string_flat_map<value> internals;
     /// The names a script declared (`var`, and a block function's Annex B var):
     /// enumerable and not configurable, so `delete` refuses them (16.1.7
     /// CreateGlobalVarBinding).
@@ -442,11 +456,11 @@ inline constexpr std::string_view private_home_key = CTBROWSER_PRIVATE_KEY("Priv
 /// `(C, P, C.prototype)` checks P is null or a constructor and P.prototype an
 /// object or null (each a TypeError otherwise), then chains C.prototype to
 /// P.prototype and C itself to P (or to Function.prototype for null).
-inline constexpr std::string_view class_heritage_name = "__ctbrowser_class_heritage";
+inline constexpr std::string_view class_heritage_name = "%class_heritage";
 /// `super.x` / `super[k]` read (13.3.7.3, 6.2.5.5 GetValue of a Super
 /// Reference): `(base, key, this)` is base.[[Get]](key, this), so a getter on
 /// the parent runs with the method's own receiver, not with the parent.
-inline constexpr std::string_view super_get_name = "__ctbrowser_super_get";
+inline constexpr std::string_view super_get_name = "%super_get";
 /// A direct `eval(src)` written in a function's parameter expressions:
 /// `(src, name...)` is `eval` (the intrinsic; anything else the name is bound
 /// to is simply called) with the one rule of 19.2.1.3
@@ -479,14 +493,14 @@ inline constexpr std::string_view delete_ref_name = "__ctbrowser_delete";
 /// `Object.preventExtensions(this)` or a returned object is what the derived
 /// fields meet. The compiler emits it after every `super(...)`; a base class's
 /// fields still run at construct entry (context::run_field_initialisers).
-inline constexpr std::string_view init_fields_name = "__ctbrowser_init_fields";
+inline constexpr std::string_view init_fields_name = "%init_fields";
 /// `super(...)` returned `(result)`: BindThisValue (10.2.1.3) with what the
 /// parent constructor answered. The object it returned (a "return override")
 /// replaces the instance as `this` for the rest of the derived constructor,
 /// and a derived constructor's implicit return hands back `this`, so `new`
 /// evaluates to it. The compiler emits it right after every super call,
 /// before the fields.
-inline constexpr std::string_view bind_this_name = "__ctbrowser_bind_this";
+inline constexpr std::string_view bind_this_name = "%bind_this";
 /// `using` / `await using` (explicit resource management, 9.13), as five
 /// hidden natives the compiler calls around a protected region; see
 /// compile/statements/using.cpp for the lowering and

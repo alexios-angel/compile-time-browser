@@ -38,6 +38,8 @@ void includeArrayHeader(mlir::ModuleOp module) {
     mlir::OpBuilder b(module.getContext());
     b.setInsertionPointToStart(module.getBody());
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kArrayHeader), mlir::UnitAttr{});
+    // std::span lends an element array to a callee.
+    ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr("span"), b.getUnitAttr());
 }
 
 } // namespace
@@ -125,6 +127,71 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         }
     });
     return arrays;
+}
+
+void passElementArrays(lowering & lower, ctjs::FuncOp fn,
+                       const llvm::DenseSet<mlir::Value> & arrays) {
+    if (arrays.empty()) { return; }
+    includeArrayHeader(fn->getParentOfType<mlir::ModuleOp>());
+    const auto isSpan = [](mlir::Value v) {
+        auto opaque = llvm::dyn_cast<ec::OpaqueType>(v.getType());
+        return opaque && opaque.getValue().starts_with("std::span<");
+    };
+    // Everything is collected first: the rewrites below insert operations.
+    llvm::SmallVector<ctjs::CallDirectOp> calls;
+    llvm::SmallVector<ctjs::ReturnOp> returns;
+    fn.getBody().walk([&](ctjs::CallDirectOp call) { calls.push_back(call); });
+    fn.getBody().walk([&](ctjs::ReturnOp ret) { returns.push_back(ret); });
+    // A call result moved into a local below is that local from then on: a
+    // later call may lend it and a return may move it.
+    llvm::DenseMap<mlir::Value, mlir::Value> owners;
+    const auto owner = [&](mlir::Value v) {
+        const auto found = owners.find(v);
+        return found == owners.end() ? v : found->second;
+    };
+    const auto isArray = [&](mlir::Value v) {
+        return arrays.contains(v) || llvm::is_contained(llvm::make_second_range(owners), v);
+    };
+    for (ctjs::CallDirectOp call : calls) {
+        mlir::OpBuilder at(call);
+        // Operands 0-2 are the implicit arguments; the rest are lent as spans.
+        for (unsigned i = 3; i < call->getNumOperands(); ++i) {
+            mlir::Value argument = call->getOperand(i);
+            if (!isArray(argument) || isSpan(argument)) { continue; }
+            // The lattice still knows the source value's type (a local's comes
+            // from the call result it holds): only operations are replaced
+            // after this, never values.
+            mlir::Value source = argument;
+            for (const auto & [result, local] : owners) {
+                if (local == argument) { source = result; }
+            }
+            const std::string span = elementSpanSpelling(lower.typeOf(source));
+            call->setOperand(i, callValue(at, call.getLoc(),
+                                          ec::OpaqueType::get(fn.getContext(), span), span,
+                                          lowering::cellPlace(at, call.getLoc(), argument)));
+        }
+        // A returned array lands in a local that owns it from here on.
+        if (call->getNumResults() == 1 && arrays.contains(call->getResult(0)) &&
+            !isSpan(call->getResult(0))) {
+            mlir::Value result = call->getResult(0);
+            at.setInsertionPointAfter(call);
+            auto local =
+                ec::VariableOp::create(at, call.getLoc(), ec::LValueType::get(result.getType()),
+                                       ec::OpaqueAttr::get(fn.getContext(), ""));
+            auto assign = ec::AssignOp::create(at, call.getLoc(), local, result);
+            result.replaceAllUsesExcept(local, assign);
+            owners[result] = local;
+        }
+    }
+    for (ctjs::ReturnOp ret : returns) {
+        mlir::Value value = owner(ret.getValue());
+        if (!isArray(value) || isSpan(value)) { continue; }
+        mlir::OpBuilder at(ret);
+        mlir::Value place = lowering::cellPlace(at, ret.getLoc(), value);
+        auto vector = llvm::cast<ec::LValueType>(place.getType()).getValueType();
+        // The owner ends with the function, so its contents move out.
+        ret->setOperand(0, callValue(at, ret.getLoc(), vector, "std::move", place));
+    }
 }
 
 bool replaceStringArray(lowering & lower, mlir::Operation * o) {
