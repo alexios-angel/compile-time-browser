@@ -406,6 +406,11 @@ FILTER_REFUSALS.update(
 for name in (
     "class_filter_direct_numeric_equality",
     "class_filter_repeated_numeric_equality",
+    # The instance's element field is written and never read: since
+    # 3f7edfa54 the field census drops it, keeping its value producer.
+    "class_filter_parameter_unused_field",
+    "class_filter_parameter_branch_unused_field",
+    "class_filter_parameter_numeric_equality",
 ):
     FILTER_CASES[name] = (FILTER_REFUSALS.pop(name), "1000")
 FILTER_IDENTITIES = ["Object", "Array", "String"]
