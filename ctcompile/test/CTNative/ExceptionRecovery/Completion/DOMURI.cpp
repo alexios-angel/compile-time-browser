@@ -3010,7 +3010,10 @@ static void testObservedIteratorRecovery(mlir::MLIRContext & context) {
                 originalCalls.push_back(call);
             }
         });
-        check(originalCalls.size() == 4 && checks == 33,
+        // 27 since a2e5dbed3: `return 1` pops the try's handler before op::ret,
+        // and the importer gives the unreachable code after it the handlers its
+        // code-order walk has there - none - so that code has no status edges.
+        check(originalCalls.size() == 4 && checks == 27,
               "original iterator keeps four checked calls and every non-call check");
         auto recovered = recoverPrimitiveExceptionRegion(function, 100000,
                                                          ExceptionRecoveryMode::CheckedInvocations);
