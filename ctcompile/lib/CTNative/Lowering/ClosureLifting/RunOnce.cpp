@@ -228,26 +228,34 @@ std::optional<std::string> closureLifter::whyNotRunOnce(
     return std::nullopt;
 }
 
-/// The ids (kTrialClosure) of the closures a lift of a copy of `module` leaves
-/// unlifted: the closures this lift would refuse as it stands.
-llvm::DenseSet<int64_t> closureLifter::trialRefusals() {
+/// Lifts a copy of `module` as it stands and reports, by walk-order id, the
+/// closures that lift leaves unlifted (kTrialClosure) and the boxes it binds
+/// as local functions (kTrialCell).
+closureLifter::trialOutcome closureLifter::trialLift() {
+    mlir::Builder builder(context);
     int64_t next = 0;
     module.walk([&](ctjs::CreateClosureOp made) {
-        made->setAttr(kTrialClosure, mlir::Builder(context).getI64IntegerAttr(next++));
+        made->setAttr(kTrialClosure, builder.getI64IntegerAttr(next++));
+    });
+    next = 0;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        cell->setAttr(kTrialCell, builder.getI64IntegerAttr(next++));
     });
     mlir::OwningOpRef<mlir::ModuleOp> copy(module.clone());
     module.walk([&](ctjs::CreateClosureOp made) { made->removeAttr(kTrialClosure); });
+    module.walk([&](ctjs::CreateCellOp cell) { cell->removeAttr(kTrialCell); });
     closureLifter trial{*copy};
     trial.staticsDone = true;
     (void)trial.run();
-    llvm::DenseSet<int64_t> refused;
+    trialOutcome outcome;
     copy->walk([&](ctjs::CreateClosureOp made) {
         auto id = made->getAttrOfType<mlir::IntegerAttr>(kTrialClosure);
         if (id && !made->hasAttr(kNativeLifted) && !isDeclarationClosure(made)) {
-            refused.insert(id.getInt());
+            outcome.refused.insert(id.getInt());
         }
     });
-    return refused;
+    outcome.bound = std::move(trial.boundTrialCells);
+    return outcome;
 }
 
 /// Turns the captured bindings of run-once functions that a closure the lift
@@ -345,19 +353,25 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out) {
     }
     if (plans.empty()) { return false; }
     // Keep the bindings some closure over them would otherwise be refused
-    // for; a binding whose closures all lift stays as the lift leaves it.
-    const llvm::DenseSet<int64_t> refused = trialRefusals();
+    // for; a binding whose closures all lift stays as the lift leaves it. A
+    // binding the lift turns into direct calls (bindLocalFunctions: `function
+    // f() {}` called by name) also stays: a static variable would be read by
+    // name, so every call through it would stay an indirect call.
+    const trialOutcome trial = trialLift();
     llvm::DenseMap<mlir::Operation *, int64_t> idOf;
     {
         int64_t next = 0;
         module.walk([&](ctjs::CreateClosureOp made) { idOf[made.getOperation()] = next++; });
+        next = 0;
+        module.walk([&](ctjs::CreateCellOp cell) { idOf[cell.getOperation()] = next++; });
     }
     llvm::erase_if(plans, [&](const plan & p) {
+        ctjs::CreateCellOp cell = p.cell;
+        if (trial.bound.contains(idOf.lookup(cell.getOperation()))) { return true; }
         const bool needed = llvm::any_of(p.slots, [&](auto entry) {
-            return refused.contains(idOf.lookup(entry.first.getOperation()));
+            return trial.refused.contains(idOf.lookup(entry.first.getOperation()));
         });
         if (!needed) { return true; }
-        ctjs::CreateCellOp cell = p.cell;
         auto owner = cell->getParentOfType<ctjs::FuncOp>();
         if (!owner) { return true; }
         if (!once.contains(owner.getOperation())) {

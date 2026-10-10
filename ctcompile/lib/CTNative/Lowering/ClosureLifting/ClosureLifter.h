@@ -583,7 +583,22 @@ struct closureLifter {
     /// lift of RunOnce.cpp; removed again before that function returns.
     static constexpr llvm::StringLiteral kTrialClosure = "ctnative.trial_closure";
 
-    llvm::DenseSet<int64_t> trialRefusals();
+    /// The same for each ctjs.create_cell, so that the trial can say which
+    /// boxes bindLocalFunctions turned into direct calls.
+    static constexpr llvm::StringLiteral kTrialCell = "ctnative.trial_cell";
+
+    /// What a trial lift of a copy of the module did: the closures it left
+    /// unlifted and the boxes it bound as local functions, by trial id.
+    struct trialOutcome {
+        llvm::DenseSet<int64_t> refused;
+        llvm::DenseSet<int64_t> bound;
+    };
+
+    trialOutcome trialLift();
+
+    /// The kTrialCell ids of the boxes bindLocalFunctions bound, filled when
+    /// this lifter is a trial.
+    llvm::DenseSet<int64_t> boundTrialCells;
 
     bool makeRunOnceCellsStatic(liftReport & out);
 
