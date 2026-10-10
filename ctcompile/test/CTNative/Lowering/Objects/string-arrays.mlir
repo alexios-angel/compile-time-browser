@@ -9,6 +9,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=LOOP
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/regexp.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=REGEXP
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/spaces.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false | FileCheck %s --check-prefix=SPACES --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 
 // LOOP: ctjs.func private @lastRow$1
 // LOOP-SAME: ctnative.not_native = "an array of Strings: an array
@@ -16,6 +17,20 @@
 // MIXED-SAME: ctnative.not_native = "an array whose elements are {{.*}}, not Strings"
 // REGEXP: ctjs.func private @commas$1
 // REGEXP-SAME: ctnative.not_native = "a regular expression literal - only `text.split(/\\s+/)` is native"
+
+// split(/\s+/) in a helper the top level calls. The RegExp literal's factory
+// load lowers to nothing; the global census once counted it as a global
+// read but never stored and refused the top level after the call graph was
+// closed, which left the helper lowered with a caller still naming it (an
+// LLVM ERROR, not a refusal). Both functions are native now.
+// SPACES-DAG: emitc.func @words_1(
+// SPACES-DAG: emitc.func @main(
+
+//--- spaces.js
+function words(text) {
+    return text.split(/\s+/).join('.');
+}
+var joined = words('a  b');
 
 //--- loop.js
 function lastRow() {
