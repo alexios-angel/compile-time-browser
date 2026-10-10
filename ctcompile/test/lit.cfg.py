@@ -17,8 +17,9 @@ config.suffixes = [".mlir", ".td", ".test"]
 # on input that never comes, a fixed point that does not converge) would
 # otherwise hold the whole run forever; this reports it as TIMEOUT, which fails
 # the run. lit enforces the limit through psutil, which the lit environment
-# must have (~/.lit-venv/bin/pip install psutil); without it lit stops at once
-# with that instruction rather than running without the limit.
+# must have (pyproject.toml's test group installs it beside lit); without it
+# lit stops at once with that instruction rather than running without the
+# limit.
 lit_config.maxIndividualTestTime = 3600
 config.excludes = ["Inputs"]
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)

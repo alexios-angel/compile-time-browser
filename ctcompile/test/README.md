@@ -70,7 +70,7 @@ For a native DOM assignment change, build `ctjs-opt`, `ctjs-translate`,
 then run only that lit case on the devbox under the same lock:
 
 ```bash
-~/.lit-venv/bin/lit -sv projects/compile-time-browser/build/ctcompile/test \
+projects/compile-time-browser/.venv/bin/lit -sv projects/compile-time-browser/build/ctcompile/test \
   --filter='^ctcompile :: CTNative/Browser/dom/assignment[.]test$'
 ```
 
@@ -80,4 +80,5 @@ the change; a selection that runs zero tests is not a pass. Full lit runs throug
 `ctcompile_lit` or `check-ctcompile` require an explicit user request. The full
 lit CTest allows an hour, and so does each lit case: `lit.cfg.py` sets the limit,
 and a case that runs past it reports TIMEOUT and fails the run. lit needs `psutil`
-in its environment to enforce that (`~/.lit-venv/bin/pip install psutil`).
+in its environment to enforce that; pyproject.toml's `test` group installs it
+beside lit (`uv sync --group test`, which `tools/remote-build.sh` runs on the box).

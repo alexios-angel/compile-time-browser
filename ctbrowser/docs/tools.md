@@ -2,7 +2,7 @@
 
 Everything in `tools/`, by job. `format.sh` (clang-format for the C++, `ruff
 format` for the Python - `pyproject.toml` at the root is ruff's whole
-configuration, `tools/Brewfile` pins it - and js-beautify for the hand-written JS, HTML and
+configuration, `uv.lock` pins it - and js-beautify for the hand-written JS, HTML and
 CSS - `.jsbeautifyrc` at the root, the npm package since brew's Python port
 has no html-beautify; `ctbrowser/test/`, `ctcompile/test/` and `vendor/` are
 test data and stay byte-exact), `remote-build.sh` and
@@ -17,6 +17,15 @@ points; the rest are foldered:
 **`tools/remote-build.sh` is the whole verification gate.** There is no CI - the
 GitHub workflow was deleted on 2026-08-08 - so nothing checks formatting or runs
 the suite unless a person does.
+
+**Python dependencies come from uv.** The scripts here use the standard library
+alone, except for lit (ctcompile's lit suite), Playwright and Pillow
+(`compare.py`, `css-parity.py`) and ruff (`format.sh`). Those are dependency
+groups in `pyproject.toml` at the root - `test`, `compare` and `dev` - pinned by
+`uv.lock` and installed into `/.venv` by `uv sync --group <name>` (`dev` is
+synced by default). `remote-build.sh` syncs `test` on the build box, and
+`compare.py setup` syncs `compare` and fetches the browsers. After changing a
+group, run `uv lock` and commit `uv.lock` with it.
 
 Each of these scripts finds the repository by counting directories up from its
 own file, so a script that moves between these folders needs that count changed
