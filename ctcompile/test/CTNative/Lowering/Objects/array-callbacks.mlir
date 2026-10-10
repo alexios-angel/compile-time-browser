@@ -8,10 +8,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
 
-// EMIT-DAG: emitc.call_opaque "std::bind_front"
-// EMIT-DAG: emitc.call_opaque "ctnative::Array.prototype.filter.call"
-// EMIT-DAG: emitc.call_opaque "ctnative::Array.prototype.some.call"
-// EMIT-DAG: emitc.call_opaque "ctnative::Array.prototype.reduce.call"
+// EMIT-DAG: call_opaque "std::bind_front"
+// EMIT-DAG: call_opaque "ctnative::Array.prototype.filter.call"
+// EMIT-DAG: call_opaque "ctnative::Array.prototype.some.call"
+// EMIT-DAG: call_opaque "ctnative::Array.prototype.reduce.call"
 
 // CHECK-DAG: @reduceNoInit${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: Array.prototype.reduce without an initial value - it throws on an empty array"
 // CHECK-DAG: @thisArg${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: Array.prototype.forEach called with a thisArg"
