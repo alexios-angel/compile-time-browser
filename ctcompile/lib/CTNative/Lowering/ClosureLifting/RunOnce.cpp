@@ -10,10 +10,10 @@
 // whose captures were all static cells then has none, and lifts or escapes as
 // an ordinary function.
 //
-// It is a fallback. closureLifter::run() calls it once the lift has settled,
-// and only for the boxes the lift left behind (they carry kNativeCellReason,
-// which refuses their function), so a program the lift already lowers does not
-// change.
+// It is a fallback. closureLifter::run() calls it before the lift, and it
+// keeps only the bindings that a closure the lift would refuse captures; a
+// trial lift of a copy of the module says which closures those are. A program
+// the lift already lowers therefore does not change.
 //
 // The temporal dead zone needs nothing here: the bytecode compiler spells it as
 // a hidden `@tdz:<name>` boolean binding and an explicit check before each
@@ -228,12 +228,39 @@ std::optional<std::string> closureLifter::whyNotRunOnce(
     return std::nullopt;
 }
 
-/// Turns the boxes the lift left in run-once functions into static cells (see
-/// the file header). Returns whether it changed the module.
+/// The ids (kTrialClosure) of the closures a lift of a copy of `module` leaves
+/// unlifted: the closures this lift would refuse as it stands.
+llvm::DenseSet<int64_t> closureLifter::trialRefusals() {
+    int64_t next = 0;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        made->setAttr(kTrialClosure, mlir::Builder(context).getI64IntegerAttr(next++));
+    });
+    mlir::OwningOpRef<mlir::ModuleOp> copy(module.clone());
+    module.walk([&](ctjs::CreateClosureOp made) { made->removeAttr(kTrialClosure); });
+    closureLifter trial{*copy};
+    trial.staticsDone = true;
+    (void)trial.run();
+    llvm::DenseSet<int64_t> refused;
+    copy->walk([&](ctjs::CreateClosureOp made) {
+        auto id = made->getAttrOfType<mlir::IntegerAttr>(kTrialClosure);
+        if (id && !made->hasAttr(kNativeLifted) && !isDeclarationClosure(made)) {
+            refused.insert(id.getInt());
+        }
+    });
+    return refused;
+}
+
+/// Turns the captured bindings of run-once functions that a closure the lift
+/// would refuse reaches into static cells (see the file header). Returns
+/// whether it changed the module. It runs before the lift, so that lift sees
+/// those closures without the captures; which closures it would refuse is
+/// what a trial lift of a copy of the module answers.
 bool closureLifter::makeRunOnceCellsStatic(liftReport & out) {
     llvm::SmallVector<ctjs::CreateCellOp> boxes;
     module.walk([&](ctjs::CreateCellOp cell) {
-        if (cell->hasAttr(kNativeCellReason) && !cell->hasAttr(kNativeStaticCell)) {
+        if (cell->hasAttr(kNativeStaticCell)) { return; }
+        if (llvm::any_of(cell.getResult().getUses(),
+                         [](mlir::OpOperand & use) { return classify(use) == cellUse::capture; })) {
             boxes.push_back(cell);
         }
     });
@@ -281,18 +308,6 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out) {
     };
     llvm::SmallVector<plan> plans;
     for (ctjs::CreateCellOp cell : boxes) {
-        auto owner = cell->getParentOfType<ctjs::FuncOp>();
-        if (!owner) { continue; }
-        if (!once.contains(owner.getOperation())) {
-            owner->setAttr(kNativeNotRunOnce,
-                           mlir::StringAttr::get(context, notOnce.lookup(owner.getOperation())));
-            continue;
-        }
-        if (auto why = whyRepeats(cell, owner)) {
-            owner->setAttr(kNativeNotRunOnce,
-                           mlir::StringAttr::get(context, "a binding it boxes " + *why));
-            continue;
-        }
         plan p{cell, {}};
         bool usable = true;
         for (mlir::OpOperand & use : cell.getResult().getUses()) {
@@ -328,6 +343,35 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out) {
         }
         if (usable) { plans.push_back(std::move(p)); }
     }
+    if (plans.empty()) { return false; }
+    // Keep the bindings some closure over them would otherwise be refused
+    // for; a binding whose closures all lift stays as the lift leaves it.
+    const llvm::DenseSet<int64_t> refused = trialRefusals();
+    llvm::DenseMap<mlir::Operation *, int64_t> idOf;
+    {
+        int64_t next = 0;
+        module.walk([&](ctjs::CreateClosureOp made) { idOf[made.getOperation()] = next++; });
+    }
+    llvm::erase_if(plans, [&](const plan & p) {
+        const bool needed = llvm::any_of(p.slots, [&](auto entry) {
+            return refused.contains(idOf.lookup(entry.first.getOperation()));
+        });
+        if (!needed) { return true; }
+        ctjs::CreateCellOp cell = p.cell;
+        auto owner = cell->getParentOfType<ctjs::FuncOp>();
+        if (!owner) { return true; }
+        if (!once.contains(owner.getOperation())) {
+            owner->setAttr(kNativeNotRunOnce,
+                           mlir::StringAttr::get(context, notOnce.lookup(owner.getOperation())));
+            return true;
+        }
+        if (auto why = whyRepeats(cell, owner)) {
+            owner->setAttr(kNativeNotRunOnce,
+                           mlir::StringAttr::get(context, "a binding it boxes " + *why));
+            return true;
+        }
+        return false;
+    });
     if (plans.empty()) { return false; }
 
     // Rewrite: name the variable, give each reader a reference cell, and

@@ -2,11 +2,12 @@
 //
 // A bundle wraps its module in a function the page calls once: an IIFE, or a
 // UMD wrapper that calls its factory. Every binding the factory boxes then
-// exists once, so when the closure lift leaves such a box behind (here: a
-// returned arrow that writes the binding, which needs an owning shared cell),
-// ClosureLifting/RunOnce.cpp makes it a namespace-scope variable, the closures
-// over it read and write that variable by name, and the lift runs again with
-// those captures gone.
+// exists once. When a closure over such a binding would be refused (here: a
+// returned arrow that writes the binding, which needs an owning shared cell,
+// as a trial lift of a copy of the module finds), ClosureLifting/RunOnce.cpp
+// makes the binding a namespace-scope variable before the lift, and the
+// closures over it read and write that variable by name instead of capturing
+// it.
 //
 // The positives lower completely, print the same `r` as Node and the
 // interpreter with both compilers, and name the variable after the binding.

@@ -579,6 +579,12 @@ struct closureLifter {
         const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp>> &
             creators);
 
+    /// Marks each ctjs.create_closure with its walk-order id for the trial
+    /// lift of RunOnce.cpp; removed again before that function returns.
+    static constexpr llvm::StringLiteral kTrialClosure = "ctnative.trial_closure";
+
+    llvm::DenseSet<int64_t> trialRefusals();
+
     bool makeRunOnceCellsStatic(liftReport & out);
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);

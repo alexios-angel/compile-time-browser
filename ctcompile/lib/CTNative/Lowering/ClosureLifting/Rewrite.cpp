@@ -30,6 +30,10 @@ liftReport closureLifter::run() {
     // before them would describe operations that no longer exist.
     // indexAndNewTargets() supplies the two census walks they need.
     indexAndNewTargets();
+    // Bindings of functions that run once, which a closure the lift would
+    // refuse captures, become static variables first (RunOnce.cpp), so those
+    // closures no longer capture them.
+    if (!staticsDone) { makeRunOnceCellsStatic(out); }
     specializeCallbacks(out);
     if (!allowSiblingCaptures && bindLocalFunctions(out, true)) {
         // Erasing a sibling's callable binding is valid only when both sides
@@ -39,6 +43,7 @@ liftReport closureLifter::run() {
         mlir::OwningOpRef<mlir::ModuleOp> prepared(module.clone());
         closureLifter trial{*prepared, censusOn};
         trial.allowSiblingCaptures = true;
+        trial.staticsDone = true; // The static rewrite above is already in the clone.
         liftReport result = trial.run();
         const bool complete =
             llvm::all_of(trial.siblingBindingTargets, [&](mlir::Operation * target) {
@@ -239,23 +244,6 @@ liftReport closureLifter::run() {
         }
     }
     unboxCells(out);
-    // The boxes left now refuse their functions. Those of a function that runs
-    // once can become static variables, after which the closures over them
-    // may lift, so the lift runs once more on the result. The verdicts of this
-    // run are cleared first: they describe captures that no longer exist.
-    if (!staticsDone && makeRunOnceCellsStatic(out)) {
-        module.walk([](mlir::Operation * op) {
-            op->removeAttr(kNativeClosureReason);
-            op->removeAttr(kNativeMethodRefusal);
-            op->removeAttr(kNativeCellReason);
-        });
-        closureLifter again{module, censusOn};
-        again.staticsDone = true;
-        liftReport second = again.run();
-        second.add(out);
-        *this = std::move(again);
-        return second;
-    }
     return out;
 }
 
