@@ -2151,6 +2151,13 @@ module {
              std::pair{conditionalIgnoredRead, true},
              std::pair{conditionalBranchRead, true},
              std::pair{conditionalArgumentRead, true},
+             // An unread local record of the read is inert: preparation drops
+             // it, and the read keeps only its original write use.
+             std::pair{replaced(conditionalArgumentRead, "    %secondEffect =",
+                                "    %record = ctjs.create_object\n"
+                                "    ctjs.set_property %record[%name], %afterPresent\n"
+                                "    %secondEffect ="),
+                       true},
              std::pair{conditionalBranchSelector, true},
              std::pair{conditionalIgnoredSelector, true},
              std::pair{conditionalTwoReads, true},
@@ -2940,10 +2947,6 @@ module {
           replaced(conditionalArgumentRead,
                    "ctjs.call %secondMethod(%element, %secondName, %afterPresent)",
                    "ctjs.call %secondMethod(%element, %afterPresent, %afterPresent)"),
-          replaced(conditionalArgumentRead, "    %secondEffect =",
-                   "    %record = ctjs.create_object\n"
-                   "    ctjs.set_property %record[%name], %afterPresent\n"
-                   "    %secondEffect ="),
           replaced(conditionalArgumentRead, "    %secondEffect =",
                    "    ctjs.store_global \"leaked\", %afterReadMethod\n"
                    "    %secondEffect ="),
