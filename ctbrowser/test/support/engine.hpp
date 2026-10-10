@@ -27,11 +27,18 @@
 
 #include <ctbrowser.hpp>
 
+#include "check.hpp"
+
 namespace ctbrowser_test {
 
 class engine {
 public:
     virtual ~engine() = default;
+    // Run one of the test's script FILES in the page, as a classic script: its
+    // top-level code runs and its functions become globals. For a page that
+    // must stay as it is (a fixture other tools load too); a page the test owns
+    // lists its scripts itself. Empty on success, otherwise the error.
+    [[nodiscard]] virtual std::string load(const std::string & path) = 0;
     // Call a global function of the page's scripts with string arguments. The
     // answer is String(result), or "threw: <message>" when the call throws.
     [[nodiscard]] virtual std::string call(std::string_view function,
@@ -70,6 +77,14 @@ public:
 class vm_engine final : public engine {
 public:
     explicit vm_engine(ctbrowser::browser & page) : page_{page} {}
+
+    [[nodiscard]] std::string load(const std::string & path) override {
+        const std::string source = read_file(path);
+        if (source.empty()) { return "cannot read " + path; }
+        if (page_.run_script(source)) { return {}; }
+        const std::string & error = page_.script_error();
+        return error.empty() ? path + " did not run" : error;
+    }
 
     [[nodiscard]] std::string call(std::string_view function,
                                    std::initializer_list<std::string_view> args = {}) override {
