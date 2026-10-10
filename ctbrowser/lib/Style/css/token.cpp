@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Style/css/token.cpp - CSS tokenizer ------------------===//
+//
+// The CSS Syntax Level 3 tokenizer: §3.3 input preprocessing and the §4.3
+// consume-a-token algorithms, producing a token_stream whose tokens point into
+// one shared text pool.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/style/css/token.hpp>
 
 #include <charconv>
@@ -8,9 +15,7 @@
 
 #include <ctbrowser/core/algorithms.hpp>
 
-// CSS Syntax Level 3 §4.3, the consume-a-token algorithms.
-//
-// THE POOL IS BUILT IN TWO HALVES AND CONCATENATED ONCE. The first half is the
+// The pool is built in two halves and concatenated once. The first half is the
 // §3.3-preprocessed input, so every unescaped token's text is a slice of it and
 // every offset is stable. The second half is decoded escapes: `\26` and `\:` have
 // text that appears nowhere in the source, so it is appended to a `decoded`
@@ -32,7 +37,7 @@ constexpr char32_t replacement_character = 0xFFFD;
 constexpr char32_t max_code_point = 0x10FFFF;
 
 [[nodiscard]] constexpr bool is_newline(char c) noexcept {
-    return c == '\n'; // preprocessing has already folded \r\n, \r and \f
+    return c == '\n'; // Preprocessing has already folded \r\n, \r and \f.
 }
 [[nodiscard]] constexpr bool is_whitespace(char c) noexcept {
     return c == '\n' || c == '\t' || c == ' ';
@@ -40,10 +45,10 @@ constexpr char32_t max_code_point = 0x10FFFF;
 [[nodiscard]] constexpr bool is_digit(char c) noexcept {
     return c >= '0' && c <= '9';
 }
-// §4.3.8, and NOT `\` followed by anything: a backslash at the end of a line does
+// §4.3.8, and not `\` followed by anything: a backslash at the end of a line does
 // not escape it, which is what makes an unterminated string recoverable.
 [[nodiscard]] constexpr bool is_valid_escape(std::string_view s, std::size_t at) noexcept {
-    // A backslash at EOF IS a valid escape (§4.3.8: only a newline after it is
+    // A backslash at EOF is a valid escape (§4.3.8: only a newline after it is
     // not), and consumes to U+FFFD.
     return at < s.size() && s[at] == '\\' && (at + 1 >= s.size() || !is_newline(s[at + 1]));
 }
@@ -79,7 +84,7 @@ void append_code_point(std::string & out, char32_t cp) {
         } else if (static_cast<unsigned char>(c) == 0xED && at + 2 < css.size() &&
                    static_cast<unsigned char>(css[at + 1]) >= 0xA0 &&
                    static_cast<unsigned char>(css[at + 1]) <= 0xBF) {
-            // A SURROGATE CODE POINT, as a JS string with a lone surrogate
+            // A surrogate code point, as a JS string with a lone surrogate
             // arrives in WTF-8: §3.3 replaces it with U+FFFD.
             append_code_point(out, replacement_character);
             at += 2;
@@ -104,8 +109,8 @@ public:
         css_token end;
         end.text = static_cast<std::uint32_t>(s_.size());
         out.tokens.push_back(end);
-        // input THEN decoded, which is what makes the offsets already written
-        // into the escaped tokens correct.
+        // The input, then the decoded escapes: that order is what makes the
+        // offsets already written into the escaped tokens correct.
         out.pool.reserve(s_.size() + decoded_.size());
         out.pool.assign(s_);
         out.pool += decoded_;
@@ -119,8 +124,8 @@ private:
     }
 
     // §4.3.2, and it runs between tokens rather than as a pre-pass: a comment is
-    // not a token, but it IS a boundary - `a/**/b` is two idents, and stripping
-    // comments up front made it one.
+    // not a token, but it is a boundary - `a/**/b` is two idents, which
+    // stripping comments up front would merge into one.
     void skip_comments() {
         while (at_ + 1 < s_.size() && s_[at_] == '/' && s_[at_ + 1] == '*') {
             const std::size_t close = s_.find("*/", at_ + 2);
@@ -185,8 +190,8 @@ private:
         case '#':
             if (is_name(peek(1)) || is_valid_escape(s_, at_ + 1)) {
                 const std::size_t start = at_;
-                ++at_; // the '#'
-                // ID-LIKE OR NOT is decided BEFORE the name is consumed, from the
+                ++at_; // The '#'.
+                // Whether it is ID-like is decided before the name is consumed, from the
                 // characters that follow: `#fff` is a colour and `#f0f0f0` is a
                 // colour, but `#nav` is a selector, and only the first character
                 // run can tell them apart.
@@ -211,13 +216,13 @@ private:
         case '@':
             if (starts_ident(at_ + 1)) {
                 const std::size_t start = at_;
-                ++at_; // the '@'
+                ++at_; // The '@'.
                 return consume_name_token(token_type::at_keyword, start);
             }
             return simple(token_type::delim, 1);
         case '\\':
             if (is_valid_escape(s_, at_)) { return consume_ident_like(); }
-            return simple(token_type::delim, 1); // a parse error, and a delim
+            return simple(token_type::delim, 1); // A parse error, and a delim.
         default: break;
         }
         if (is_digit(c)) { return consume_numeric(); }
@@ -227,7 +232,7 @@ private:
 
     // §4.3.7. Returns the decoded code point; `at_` is left after the escape.
     [[nodiscard]] char32_t consume_escape() {
-        ++at_; // the backslash
+        ++at_; // The backslash.
         if (at_ >= s_.size()) { return replacement_character; }
         const char c = s_[at_];
         if (hex_value(c) < 0) {
@@ -244,7 +249,7 @@ private:
             }
             at_ = start + width;
             verbatim_ = s_.substr(start, width);
-            return 0; // signals "use verbatim_"
+            return 0; // Signals "use verbatim_".
         }
         char32_t value = 0;
         int digits = 0;
@@ -253,8 +258,8 @@ private:
             ++at_;
             ++digits;
         }
-        // ONE trailing whitespace is part of the escape, so `\26 B` is `&B` and
-        // not `& B`.
+        // Exactly one trailing whitespace is part of the escape, so `\26 B` is
+        // `&B` and not `& B`.
         if (at_ < s_.size() && is_whitespace(s_[at_])) { ++at_; }
         return value == 0 ? replacement_character : value;
     }
@@ -280,7 +285,7 @@ private:
         // The slow path: rebuild the whole token - prefix included, so `#a\:b`
         // keeps its `#` - into the tail.
         const std::size_t out_start = decoded_.size();
-        decoded_.append(s_.substr(start, at_ - start)); // the sigil, if any
+        decoded_.append(s_.substr(start, at_ - start)); // The sigil, if any.
         while (at_ < s_.size()) {
             if (is_valid_escape(s_, at_)) {
                 verbatim_ = {};
@@ -303,9 +308,9 @@ private:
         return t;
     }
 
-    // §4.3.4. A newline inside a string makes a bad_string, and the newline is
-    // NOT consumed - it belongs to whatever follows, which is what lets the rest
-    // of the sheet parse.
+    // §4.3.5 (consume a string token). A newline inside a string makes a
+    // bad_string, and the newline is not consumed - it belongs to whatever
+    // follows, which is what lets the rest of the sheet parse.
     [[nodiscard]] css_token consume_string(char quote) {
         const std::size_t start = at_;
         ++at_;
@@ -327,7 +332,7 @@ private:
                 t.length = static_cast<std::uint32_t>(at_ - start);
                 return t;
             }
-            // The closing quote, or EOF - which §4.3.4 says is a parse error and
+            // The closing quote, or EOF - which §4.3.5 says is a parse error and
             // a normal string token, not a bad one...
             css_token t;
             t.type = token_type::string;
@@ -340,7 +345,7 @@ private:
             // ...whose value is everything to the end, with no quote there to
             // strip: rebuilt into the tail, closed, so value_of() does not eat
             // its last character - `[charset="utf-8` is `utf-8`
-            // (missing-right-token).
+            // (WPT missing-right-token).
             at_ = s_.size();
             const std::size_t out_start = decoded_.size();
             decoded_.append(s_.substr(start));
@@ -349,14 +354,14 @@ private:
             t.length = static_cast<std::uint32_t>(decoded_.size() - out_start);
             return t;
         }
-        // Escapes present: rebuild into the tail, KEEPING the quotes so
+        // Escapes present: rebuild into the tail, keeping the quotes so
         // value_of() can strip them uniformly.
         const std::size_t out_start = decoded_.size();
         decoded_ += quote;
         while (at_ < s_.size() && s_[at_] != quote && !is_newline(s_[at_])) {
             if (s_[at_] == '\\') {
                 if (at_ + 1 < s_.size() && is_newline(s_[at_ + 1])) {
-                    at_ += 2; // an escaped newline is a line continuation
+                    at_ += 2; // An escaped newline is a line continuation.
                     continue;
                 }
                 verbatim_ = {};
@@ -423,7 +428,7 @@ private:
         const std::size_t number_end = at_;
         if (starts_ident(at_)) {
             css_token t = consume_name_token(token_type::dimension, start);
-            // A dimension built through the slow path has been REBUILT into the
+            // A dimension built through the slow path has been rebuilt into the
             // tail, so the unit length is measured against the rebuilt text.
             t.number = value;
             if (integer) { t.flags |= flag_integer; }
@@ -449,9 +454,10 @@ private:
         return t;
     }
 
-    // §4.3.5. `url(` with an unquoted body is its own token, because the body is
-    // not a string and not an ident - it is "everything to the `)`", which is why
-    // `url(a b.png)` is a BAD url and `url("a b.png")` is a function and a string.
+    // §4.3.6 (consume a url token). `url(` with an unquoted body is its own
+    // token, because the body is not a string and not an ident - it is
+    // "everything to the `)`", which is why `url(a b.png)` is a bad url and
+    // `url("a b.png")` is a function and a string.
     [[nodiscard]] css_token consume_url(std::size_t start) {
         while (at_ < s_.size() && is_whitespace(s_[at_])) { ++at_; }
         const std::size_t body = at_;
@@ -496,7 +502,7 @@ private:
             t.length = static_cast<std::uint32_t>(at_ - start);
             return t;
         }
-        if (at_ < s_.size()) { ++at_; } // the ')'
+        if (at_ < s_.size()) { ++at_; } // The ')'.
         css_token t;
         t.type = token_type::url;
         if (!escaped) {
@@ -535,7 +541,7 @@ private:
         const std::size_t start = at_;
         css_token name = consume_name_token(token_type::ident, start);
         if (peek() != '(') { return name; }
-        // ASCII case-insensitive, and measured on the token's VALUE so an escaped
+        // ASCII case-insensitive, and measured on the token's value so an escaped
         // spelling like `u\rl(` is recognised too.
         std::string_view text =
             name.length == 0 ? std::string_view{}
@@ -543,11 +549,11 @@ private:
                 ? std::string_view{decoded_}.substr(name.text - s_.size(), name.length)
                 : s_.substr(name.text, name.length);
         const bool is_url = ascii_iequals(text, "url");
-        ++at_; // the '('
+        ++at_; // The '('.
         if (is_url) {
             std::size_t look = at_;
             while (look < s_.size() && is_whitespace(s_[look])) { ++look; }
-            // A QUOTED body is a function plus a string, per §4.3.4, so
+            // A quoted body is a function plus a string, per §4.3.4, so
             // `url("a.png")` and `url(a.png)` come out as different token shapes
             // on purpose - the first has a real string in it.
             if (look >= s_.size() || (s_[look] != '"' && s_[look] != '\'')) {
@@ -555,13 +561,13 @@ private:
             }
         }
         name.type = token_type::function;
-        name.length = static_cast<std::uint32_t>(name.length + 1); // include the '('
+        name.length = static_cast<std::uint32_t>(name.length + 1); // Include the '('.
         return name;
     }
 
     std::string_view s_;
     std::string decoded_;
-    std::string_view verbatim_; // set by consume_escape for the non-hex case
+    std::string_view verbatim_; // Set by consume_escape for the non-hex case.
     std::size_t at_ = 0;
 };
 

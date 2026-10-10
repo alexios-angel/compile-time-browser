@@ -1,9 +1,9 @@
-# ctbrowser.layout - styled elements -> placed geometry.
+# ctbrowser-layout: styled elements to placed geometry.
 #
 # Consumes a styled box tree and produces an immutable fragment tree. Depends
-# on core (scheduler, geometry), dom (read_txn) and style (computed styles) -
-# but NOT the other way round: nothing upstream knows layout exists, which is
-# what keeps the pipeline acyclic.
+# on core (scheduler, geometry), dom (read_txn) and style (computed styles),
+# but not the other way round: nothing upstream knows layout exists, which
+# keeps the pipeline acyclic.
 add_library(ctbrowser-layout)
 target_sources(ctbrowser-layout PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_sources(ctbrowser-layout PRIVATE

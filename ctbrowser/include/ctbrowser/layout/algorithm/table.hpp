@@ -1,54 +1,45 @@
+//===- table.hpp - Table formatting context ------------------- -*- C++ -*-===//
+//
+// The table formatting context: table_flow sizes columns from their cells and
+// places rows of cells on that grid.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include <ctbrowser/layout/algorithm/block.hpp>
 
 namespace ctbrowser::layout {
 
-// --- table formatting context ---------------------------------------------
-//
-// The third formatting context, and the one the LayoutAlgorithm concept was
-// written for: a table cannot be laid out as blocks because a cell's width is
-// not its own business. Every cell in a column shares that column's width, so
-// the whole table has to be MEASURED before any of it can be placed - which is
-// exactly the split `measure` and `arrange` make.
-//
-// AUTO layout, like the previous engine's: each column takes the widest natural content in it,
-// and the table shrinks to the sum. A stated `width` scales the columns
-// proportionally rather than being ignored.
-//
-// The DOM shape is <table><tr><td>, with <thead>/<tbody>/<tfoot> transparent -
-// the tree builder inserts them, and a page that writes them means the same
-// thing as one that does not.
+/// The table formatting context. A table cannot be laid out as blocks because
+/// a cell's width is not its own: every cell in a column shares that column's
+/// width, so the whole table has to be measured before any of it can be
+/// placed, which is the split `measure` and `arrange` make.
+///
+/// Uses automatic table layout: each column takes the widest max-content width
+/// of its cells, and the table shrinks to the sum. A stated `width` scales the
+/// columns proportionally.
+///
+/// The DOM shape is <table><tr><td>, with <thead>/<tbody>/<tfoot> transparent:
+/// the tree builder inserts them, and a page that writes them means the same
+/// thing as one that does not.
 struct table_flow {
-    // THE GAP BETWEEN CELLS, AND AROUND THEM - `border-spacing`, and zero under
-    // `border-collapse: collapse`.
-    //
-    // This was a hardcoded 2px, along with a second hardcoded 2px of padding
-    // inside every cell, and both were wrong in a way that shows: Bootstrap's
-    // Reboot collapses every table's borders, so a striped table drew a sliver of
-    // the table's own background between every pair of cells and a sliver of
-    // white down each side of one. The padding constant was worse than
-    // superfluous - a cell's CSS padding was applied INSIDE it as well, so every
-    // cell was inset twice.
-    // NOT MODELLED: merging the two borders that meet at a shared edge. Under
-    // `border-collapse: collapse` CSS 2.1 §17.6.2 resolves the pair to ONE border
-    // drawn once; here each cell paints its own, so a shared edge comes out twice
-    // the width. Measured against Chrome on the kitchen fixture: the colour and
-    // the outer edges agree exactly - (222,226,230) at x=37 and x=572 in both -
-    // and the interior separators are 2px where Chrome's are 1px.
-    //
-    // Overlapping the cells by a border width was tried and is a DIFFERENT model
-    // from Chrome's: Chrome's cells abut exactly (37.00 + 193.45 = 230.45, the
-    // next cell's x) and split the shared border between them, so overlapping
-    // gave 1px separators and moved the table's right edge 2px. Real conflict
-    // resolution is the rung; a second wrong model is not an improvement on the
-    // first.
+    /// Returns the gap between cells and around them: `border-spacing`, or zero
+    /// under `border-collapse: collapse` (Bootstrap's Reboot collapses every
+    /// table, so a nonzero gap would show the table background between cells).
+    ///
+    /// Not modelled: collapsing the two borders that meet at a shared edge (CSS
+    /// 2.1 §17.6.2). Each cell paints its own border, so interior separators are
+    /// twice as wide as Chrome's (2px vs 1px on
+    /// examples/pages/bootstrap-kitchen.html); outer edges and colours match.
+    /// Overlapping cells by a border width is not the fix: Chrome's cells abut
+    /// and split the shared border, so only real border-conflict resolution
+    /// would match.
     [[nodiscard]] static float spacing_of(const box_node & table, const constraints & c) {
         if (table.collapse_borders) { return 0; }
         return std::max(0.0f, table.border_spacing.resolve(c.available_width, table.font_size));
     }
 
-    // Rows, flattened through any section elements.
+    /// Rows, flattened through any section elements.
     [[nodiscard]] static std::vector<const box_node *> rows_of(const box_node & table) {
         std::vector<const box_node *> out;
         const auto walk = [&out](auto && self, const box_node & at) -> void {
@@ -64,11 +55,10 @@ struct table_flow {
         return out;
     }
 
-    // What each column WANTS: the widest cell in it, as a BORDER box.
-    //
-    // outer_intrinsic rather than measure_box, because a column has to hold the
-    // cell's padding and border as well as its text - which is the same question
-    // a block asks about its children, asked here of a column.
+    /// What each column wants: the widest cell in it, as a border box.
+    ///
+    /// Uses outer_intrinsic rather than measure_box, because a column has to
+    /// hold the cell's padding and border as well as its text.
     [[nodiscard]] static std::vector<float> column_widths(const box_node & table,
                                                           const constraints & c,
                                                           const measure_text_fn & measure_text) {
@@ -103,9 +93,9 @@ struct table_flow {
 
         float natural = spacing;
         for (const float w : widths) { natural += w + spacing; }
-        // A stated width SCALES the columns rather than being ignored, which is
-        // what `<table width=600>` and `table { width: 100% }` mean. The spacing
-        // is not scaled with them - it is a fixed length, not a share.
+        // A stated width scales the columns, which is what `<table width=600>`
+        // and `table { width: 100% }` mean. The spacing is not scaled with
+        // them: it is a fixed length, not a share.
         if (!b.width.is_auto()) {
             const float wanted = b.width.resolve(c.available_width, b.font_size);
             const float gaps = spacing * static_cast<float>(widths.size() + 1);
@@ -123,9 +113,9 @@ struct table_flow {
         out.source = b.source;
         float y = edges.content_top() + spacing;
 
-        // THE CAPTION, above the grid and as wide as it. It is a child of the
-        // table that is neither a row nor a row group, so a table that only
-        // looked for rows never laid it out at all - it simply vanished.
+        // The caption, above the grid and as wide as it. It is a child of the
+        // table that is neither a row nor a row group, so rows_of skips it and
+        // it is placed here.
         for (const box_node & child : b.children) {
             if (child.tag != "caption") { continue; }
             fragment caption =
@@ -146,16 +136,11 @@ struct table_flow {
             for (const box_node & cell : row->children) {
                 if (!cell.is_cell()) { continue; }
                 const float column_width = column < widths.size() ? widths[column] : 0;
-                // THE COLUMN'S WIDTH IS THE CELL'S BORDER BOX, handed down as a
-                // forced width - the same channel a flex item's main size uses,
-                // and for the same reason: the size was decided by something
-                // other than the box's own `width`, and its content has to wrap
-                // to it before its height is known.
-                //
-                // Its own padding and border are then applied INSIDE by whatever
-                // formatting context it runs, which is where they belong and why
-                // there is no longer a constant here. Through layout_box because
-                // a `<td class="d-flex">` is a flex container.
+                // The column width is passed as the cell's forced border-box width
+                // (as a flex item's main size is), so its content wraps to it
+                // before its height is known. The cell's own padding and border
+                // apply inside it. layout_box, not block_flow, because a cell can
+                // be a flex container (`<td class="d-flex">`).
                 fragment placed =
                     layout_box(cell, constraints{natural, 0, cell.font_size, column_width, true},
                                measure_text);

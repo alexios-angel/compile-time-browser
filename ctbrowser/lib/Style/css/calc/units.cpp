@@ -1,6 +1,10 @@
-// calc() - the unit table: every unit the specification names, which of them
-// convert by a constant, one dimension in its family's canonical unit, and the
-// pixel bases every relative length goes through.
+//===- units.cpp - Unit conversion for calc() ----------------- -*- C++ -*-===//
+//
+// The unit table for calc(): every unit the specification names, which of
+// them convert by a constant, one dimension in its type's canonical unit, and
+// the pixel bases every relative length goes through.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -10,13 +14,13 @@ using namespace detail;
 
 namespace {
 
-// --- the unit table ------------------------------------------------------
+// --- The unit table ----------------------------------------------------------
 //
-// EVERY UNIT THE SPECIFICATION NAMES, whether or not this engine can resolve it,
-// because "I have no basis for `cqw`" and "`cqw` is not a unit" are different
-// answers and only the second may delete a declaration. A known unit with no
-// basis makes the expression `unresolved` - well formed, no answer here - which
-// is the same third outcome `min(10px, 5%)` already used.
+// Every unit the specification names, whether or not this engine can resolve
+// it, because "there is no basis for `cqw`" and "`cqw` is not a unit" are
+// different answers, and only the second may delete a declaration. A known
+// unit with no basis makes the expression `unresolved` (well formed, no answer
+// here), the same outcome `min(10px, 5%)` gets.
 constexpr std::string_view known_units[] = {
     // <length>, CSS Values 4 §6
     "em", "rem", "ex", "rex", "ch", "rch", "cap", "rcap", "ic", "ric", "lh", "rlh", "vw", "vh",
@@ -26,9 +30,9 @@ constexpr std::string_view known_units[] = {
     // <angle>, <time>, <frequency>, <resolution>, <flex>
     "deg", "grad", "rad", "turn", "s", "ms", "hz", "khz", "dpi", "dpcm", "dppx", "x", "fr"};
 
-// The one token of a single-value length, or nullptr if the text is not exactly
-// one value. `12px 4px` is a shorthand and answering with its first component
-// would be a quiet wrong answer.
+/// The one token of a single-value length, or nullptr if the text is not
+/// exactly one value. `12px 4px` is a shorthand, and answering with its first
+/// component would be a quiet wrong answer.
 [[nodiscard]] const css_token * lone_value(const token_stream & tokens) {
     std::size_t at = 0;
     while (tokens.tokens[at].type == token_type::whitespace) { ++at; }
@@ -51,10 +55,10 @@ namespace detail {
     return false;
 }
 
-// THE UNITS WHOSE VALUE IS THE SAME EVERYWHERE. An absolute length, an angle, a
-// time, a frequency and a resolution all convert to their canonical unit by a
-// constant; `em`, `vw`, `lh`, `cqw`, `fr` and `%` do not, and a SPECIFIED value
-// is written before any of their bases exist.
+/// Whether `unit` has the same value everywhere. An absolute length, an angle,
+/// a time, a frequency and a resolution all convert to their canonical unit by
+/// a constant; `em`, `vw`, `lh`, `cqw`, `fr` and `%` do not, and a specified
+/// value is computed before any of their bases exist.
 [[nodiscard]] bool context_free_unit(std::string_view unit) noexcept {
     static constexpr std::string_view units[] = {"px",  "cm",   "mm",   "q",    "in", "pt", "pc",
                                                  "deg", "grad", "rad",  "turn", "s",  "ms", "hz",
@@ -65,12 +69,12 @@ namespace detail {
     return false;
 }
 
-// One dimension in its family's canonical unit. `nullopt` means this file has no
-// basis for it; `is_known_unit` is what tells that from a typo.
+/// One dimension in its type's canonical unit. `nullopt` means this file has
+/// no basis for it; `is_known_unit` tells that apart from a typo.
 [[nodiscard]] std::optional<term> canonical_term(double value, std::string_view unit,
                                                  const length_context & ctx) {
     term out;
-    // The four families with a fixed conversion. CSS Values 4 §6.4-§6.7: the
+    // The four types with a fixed conversion. CSS Values 4 §6.4-§6.7: the
     // canonical units are deg, s, Hz and dppx, and every member converts by a
     // constant, so there is nothing context-dependent about any of them.
     struct fixed {
@@ -91,10 +95,10 @@ namespace detail {
         {"x", numeric_type::resolution, 1.0},
         {"dpi", numeric_type::resolution, 1.0 / 96.0},
         {"dpcm", numeric_type::resolution, 2.54 / 96.0},
-        // `fr` converts to itself and to nothing else. It is here for its TYPE,
+        // `fr` converts to itself and to nothing else. It is here for its type,
         // not for a basis: what a flex is worth is a grid track sizing question
-        // and no expression can answer it, but `1fr + 1fr` is 2fr and `1px +
-        // 1fr` is a type error, and both need the family named.
+        // no expression can answer, but `1fr + 1fr` is 2fr and `1px + 1fr` is
+        // a type error, and both need the type named.
         {"fr", numeric_type::flex, 1.0},
     };
     for (const fixed & one : table) {
@@ -104,13 +108,13 @@ namespace detail {
             return out;
         }
     }
-    // A length goes through the one function that owns the pixel bases, so there
-    // is exactly one place `rem` and `vw` are defined. IN DOUBLE, like every
-    // other term: `mod(18vw, 5vw)` folded at float precision came out
-    // `30.720005px` against the `30.72px` a plain `3vw` prints
-    // (round-mod-rem-computed), because two bases rounded to 24 bits and then
-    // subtracted three times over do not cancel. The cascade's `folded()` folds
-    // a plain `1cm` through this same function, so the two paths agree.
+    // A length goes through the one function that owns the pixel bases, so
+    // `rem` and `vw` are defined in exactly one place. It computes in double,
+    // like every other term: at float precision `mod(18vw, 5vw)` gives
+    // `30.720005px` where a plain `3vw` gives `30.72px` (WPT
+    // round-mod-rem-computed), because two bases rounded to 24 bits and then
+    // subtracted three times do not cancel. The cascade's `folded()` folds a
+    // plain `1cm` through this same function, so the two paths agree.
     if (const std::optional<double> px = unit_to_px(value, unit, ctx)) {
         out.set_type(numeric_type::length);
         out.value = *px;
@@ -119,16 +123,15 @@ namespace detail {
     return std::nullopt;
 }
 
-// ONE DIMENSION WITH NO BASES AVAILABLE, which is what a SPECIFIED value is
-// written against. A unit whose value is the same everywhere folds into its
-// family's canonical unit exactly as it always did; one that needs a font size,
-// a viewport or a container becomes a term of its OWN, keyed by the unit the
-// author wrote. `nullopt` for a typo, which is a syntax error at any stage.
-//
-// `fr` is here rather than in `context_free_unit` because the two questions
-// differ: a flex converts to nothing and never will, so `calc(1fr + 1fr)` may
-// not be FOLDED against a basis - but it is still two terms of one unit and
-// `calc(2fr)` is their sum.
+/// One dimension with no bases available, as a specified value is computed. A
+/// unit whose value is the same everywhere folds into its type's canonical
+/// unit; one that needs a font size, a viewport or a container becomes a term
+/// of its own, keyed by the unit the author wrote. `nullopt` for an unknown
+/// unit, which is a syntax error at any stage.
+///
+/// `fr` is handled here rather than in `context_free_unit` because a flex
+/// converts to nothing, so `calc(1fr + 1fr)` may not be folded against a basis,
+/// but it is still two terms of one unit and `calc(2fr)` is their sum.
 [[nodiscard]] std::optional<term> symbolic_term(double value, std::string_view unit) {
     if (context_free_unit(unit)) {
         const std::optional<term> fixed = canonical_term(value, unit, length_context{});
@@ -159,14 +162,14 @@ std::string_view canonical_unit(numeric_type type) noexcept {
 }
 
 std::optional<double> unit_to_px(double value, std::string_view unit, const length_context & ctx) {
-    if (unit.empty()) { return value; } // a plain number in a calc term
+    if (unit.empty()) { return value; } // A plain number in a calc term.
     if (ascii_iequals(unit, "px")) { return value; }
     if (ascii_iequals(unit, "em")) { return value * ctx.font_size; }
     if (ascii_iequals(unit, "rem")) { return value * ctx.root_font_size; }
     // `ch` is the advance of `0`, which the context carries when the shell
     // injected a measurement (engine::set_text_measure) and otherwise CSS's
     // own fallback of half an em. `ex` needs an x-height no backend here
-    // exposes and takes the fallback always. Bootstrap uses neither.
+    // exposes, so it always takes the fallback.
     if (ascii_iequals(unit, "ch")) {
         return value * (ctx.zero_advance > 0.0f ? ctx.zero_advance : ctx.font_size / 2);
     }
@@ -177,22 +180,22 @@ std::optional<double> unit_to_px(double value, std::string_view unit, const leng
     if (ascii_iequals(unit, "ex")) { return value * ctx.font_size / 2; }
     if (ascii_iequals(unit, "rex")) { return value * ctx.root_font_size / 2; }
     // `cap` is the cap height, and where that cannot be determined CSS Values 4
-    // §6.1.1 says the font's ASCENT is used - which is 0.8em, layout's own
+    // §6.1.1 says the font's ascent is used, which is 0.8em, layout's own
     // fallback ascent (layout/values.hpp). No backend here exposes either.
     if (ascii_iequals(unit, "cap")) { return value * ctx.font_size * 0.8; }
     if (ascii_iequals(unit, "rcap")) { return value * ctx.root_font_size * 0.8; }
     // `ic` is the advance of the CJK water ideograph, and CSS's own fallback
     // for a font without one is 1em. `lh` and `rlh` are the line heights the
-    // context carries - see length_context.
+    // context carries (see length_context).
     if (ascii_iequals(unit, "ic")) { return value * ctx.font_size; }
     if (ascii_iequals(unit, "ric")) { return value * ctx.root_font_size; }
     if (ascii_iequals(unit, "lh")) { return value * ctx.line_height; }
     if (ascii_iequals(unit, "rlh")) { return value * ctx.root_line_height; }
-    // THE VIEWPORT UNITS, all six spellings of each axis. There is no dynamic
+    // The viewport units, all six spellings of each axis. There is no dynamic
     // toolbar here, so the small, large, dynamic and default viewports are one
-    // and the same. `vi` is the inline axis - the width in a horizontal
-    // writing mode and the height in a vertical one (`ctx.vertical`) - and
-    // `vb` the other. viewport-units-compute asks for all twenty-four.
+    // and the same. `vi` is the inline axis (the width in a horizontal writing
+    // mode, the height in a vertical one, per `ctx.vertical`) and `vb` the
+    // other. WPT viewport-units-compute tests all twenty-four.
     const auto viewport_axis = [&](std::string_view suffix) -> std::optional<double> {
         const double w = ctx.viewport_width;
         const double h = ctx.viewport_height;
@@ -216,8 +219,8 @@ std::optional<double> unit_to_px(double value, std::string_view unit, const leng
             return value * *axis / 100.0;
         }
     }
-    // THE CONTAINER QUERY UNITS, CSS Conditional 5 §4: a hundredth of the
-    // query container's content box on the axis - "if no eligible query
+    // The container query units (CSS Conditional 5 §4): a hundredth of the
+    // query container's content box on the axis. "If no eligible query
     // container is available, then use the small viewport size for that
     // axis", so `sign(0cqi / 1px)` is 0, not a value waiting for layout.
     if (unit.size() >= 3 && (unit[0] == 'c' || unit[0] == 'C') &&
@@ -247,8 +250,8 @@ std::optional<double> unit_to_px(double value, std::string_view unit, const leng
 } // namespace detail
 
 std::optional<float> length_text_to_px(std::string_view text, const length_context & ctx) {
-    // Tokenized rather than scanned, so `1.5e1px` and an escaped unit behave the
-    // same here as they do everywhere else in the front end.
+    // Tokenized rather than scanned, so `1.5e1px` and an escaped unit behave
+    // the same here as they do everywhere else in the front end.
     const token_stream tokens = tokenize(text);
     const css_token * tok = lone_value(tokens);
     if (tok == nullptr) { return std::nullopt; }
@@ -259,6 +262,8 @@ std::optional<float> length_text_to_px(std::string_view text, const length_conte
     return static_cast<float>(*px);
 }
 
+// Folds a single dimension (`1in`) to its canonical unit (`96px`); nullopt for
+// anything else or a dimension without an answer here.
 std::optional<std::string> canonical_dimension_text(std::string_view text,
                                                     const length_context & ctx) {
     const token_stream tokens = tokenize(text);

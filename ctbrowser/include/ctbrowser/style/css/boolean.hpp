@@ -1,3 +1,18 @@
+//===- boolean.hpp - Boolean condition grammar ------------------*- C++ -*-===//
+//
+// `<boolean-expr[ test ]>`, CSS Values 5 §boolean-expr: the one grammar behind
+// `@media`'s conditions, `@supports`, `@container` and `if()`. An expression is
+// groups joined by all-`and` or all-`or` (mixing the two without parentheses is
+// a syntax error), or `not` one group. A group is a test, a parenthesised
+// expression, or a `<general-enclosed>` nothing here can read.
+//
+// Evaluation is three-valued. A test this engine cannot decide (an unmodelled
+// media feature, a range over two different types) is unknown; `not` leaves
+// unknown unknown, `and` and `or` propagate it, and it counts as false only for
+// the whole condition. Treating unknown as false one level too early would make
+// `not (unknown)` true, the mistake the spec's three values exist to prevent.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -7,27 +22,16 @@
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/style/css/token.hpp>
 
-// `<boolean-expr[ test ]>`, CSS Values 5 §boolean-expr: the one grammar behind
-// `@media`'s conditions, `@supports`, `@container` and `if()`. Groups joined by
-// all-`and` or all-`or` - mixing the two without parentheses is a syntax error
-// - or `not` one group, where a group is a test, a parenthesised expression,
-// or a `<general-enclosed>` nothing here can read.
-//
-// THREE-VALUED. A test this engine cannot decide - an unmodelled media feature,
-// a range over two different types - is UNKNOWN, which `not` leaves unknown,
-// `and` and `or` propagate the obvious way, and which counts as false only once
-// the whole condition is asked. Reading unknown as false one level too early
-// turns `not (unknown)` true, which is exactly the mistake the spec's three
-// values exist to prevent.
-
 namespace ctbrowser::style::css {
 
+/// A three-valued truth: yes, no, or unknown (undecidable here).
 enum class truth : std::uint8_t {
     no,
     yes,
     unknown
 };
 
+/// Three-valued `not`, `and` and `or` (Kleene logic).
 [[nodiscard]] constexpr truth negate(truth t) noexcept {
     return t == truth::unknown ? t : (t == truth::yes ? truth::no : truth::yes);
 }
@@ -42,8 +46,8 @@ enum class truth : std::uint8_t {
     return truth::unknown;
 }
 
-// The index one past the block that opens at `open`, or the eof token if it
-// never closes - EOF closes every open block, CSS Syntax 3 §5.4.9.
+/// The index one past the block that opens at `open`, or the eof token if it
+/// never closes (EOF closes every open block, CSS Syntax 3 §5.4.9).
 [[nodiscard]] inline std::size_t end_of_block(const token_stream & s, std::size_t open) {
     int depth = 0;
     for (std::size_t i = open; i < s.tokens.size(); ++i) {
@@ -61,29 +65,33 @@ enum class truth : std::uint8_t {
     return s.tokens.size() - 1;
 }
 
+/// Whether token `i` is the delim `c`.
 [[nodiscard]] inline bool is_delim_text(const token_stream & s, std::size_t i, char c) {
     return i < s.tokens.size() && s.tokens[i].type == token_type::delim &&
            s.text_of(s.tokens[i]) == std::string_view{&c, 1};
 }
 
+/// Whether token `i` is an identifier equal to `want`, ASCII case-insensitively.
 [[nodiscard]] inline bool is_ident_named(const token_stream & s, std::size_t i,
                                          std::string_view want) {
     return i < s.tokens.size() && s.tokens[i].type == token_type::ident &&
            ascii_iequals(s.text_of(s.tokens[i]), want);
 }
 
-// `test` is asked with a function token's name and the token range of its
-// argument list, and answers unknown for a function it does not know;
-// `enclosed` is asked about a parenthesised group that is not itself an
-// expression, which for an if() condition is a `<general-enclosed>` and for a
-// style or media query is where the features are.
+/// Parses and evaluates a `<boolean-expr>` over a token range.
+///
+/// `test` is called with a function token's name and the token range of its
+/// argument list, and answers unknown for a function it does not know.
+/// `enclosed` is called for a parenthesised group that is not itself an
+/// expression: for an if() condition that is a `<general-enclosed>`, for a
+/// style or media query it is where the features are.
 template <typename Test, typename Enclosed> class boolean_parser {
 public:
     boolean_parser(const token_stream & s, const Test & test, const Enclosed & enclosed)
         : s_(s), test_(test), enclosed_(enclosed) {}
 
-    // The tokens [i, end) as one expression, which must consume all of them.
-    // nullopt is a PARSE failure, which the caller decides the meaning of.
+    /// Evaluates the tokens [i, end) as one expression, which must consume all
+    /// of them. nullopt is a parse failure; the caller decides what it means.
     [[nodiscard]] std::optional<truth> expression(std::size_t i, std::size_t end) {
         std::optional<truth> result;
         skip_ws(i, end);
@@ -124,7 +132,7 @@ private:
         while (i < end && s_.tokens[i].type == token_type::whitespace) { ++i; }
     }
 
-    // One group, `i` left one past it.
+    // Evaluates one group and leaves `i` one past it.
     [[nodiscard]] std::optional<truth> group(std::size_t & i, std::size_t end) {
         skip_ws(i, end);
         if (i >= end) { return std::nullopt; }
@@ -155,6 +163,7 @@ private:
     const Enclosed & enclosed_;
 };
 
+/// Evaluates tokens [from, to) as one `<boolean-expr>`; see boolean_parser.
 template <typename Test, typename Enclosed>
 [[nodiscard]] std::optional<truth> boolean_expression(const token_stream & s, std::size_t from,
                                                       std::size_t to, const Test & test,

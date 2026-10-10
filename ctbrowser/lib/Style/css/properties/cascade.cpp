@@ -1,5 +1,10 @@
+//===- cascade.cpp - Shorthand expansion for the cascade ------------------===//
+//
 // Computed-value shorthand expansion. The cascade substitutes variables first;
 // this module borrows that value while CSSOM owns its canonicalized longhands.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/style/css/properties.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -9,22 +14,24 @@
 namespace ctbrowser::style::css {
 namespace {
 
-// A shorthand's parts, up to `limit`. The splitting itself is
-// core/algorithms.hpp's, because paint needs the same rule with commas.
+/// A shorthand's parts, up to `limit`. The splitting itself is
+/// core/algorithms.hpp's, because paint needs the same rule with commas.
 [[nodiscard]] std::vector<std::string_view> value_parts(std::string_view value, std::size_t limit) {
     std::vector<std::string_view> parts = split_top_level(value, " \t\n\r\f");
     if (parts.size() > limit) { parts.resize(limit); }
     return parts;
 }
 
-// Is this part of a `border` shorthand a STYLE keyword? The `border` grammar is
-// `<width> || <style> || <color>` in ANY order, so its parts are classified by
-// what they are rather than by where they sit - unlike the side lists, which are
-// positional.
+/// Whether this part of a `border` shorthand is a style keyword. The `border`
+/// grammar is `<width> || <style> || <color>` in any order, so its parts are
+/// classified by what they are rather than by where they sit - unlike the side
+/// lists, which are positional.
 [[nodiscard]] bool is_border_style(std::string_view part) {
     return ascii_iequals_any(part, {"none", "hidden", "dotted", "dashed", "solid", "double",
                                     "groove", "ridge", "inset", "outset"});
 }
+/// Whether this part of a `border` shorthand looks like a width: a width
+/// keyword or something starting like a number.
 [[nodiscard]] bool is_border_width(std::string_view part) {
     if (ascii_iequals(part, "thin") || ascii_iequals(part, "medium") ||
         ascii_iequals(part, "thick")) {
@@ -34,7 +41,9 @@ namespace {
                              (part.front() >= '0' && part.front() <= '9'));
 }
 
-// Names are shared with CSSOM; only the value storage/validation differs.
+/// Pairs a positional shorthand's longhand names with its parts, expanded by
+/// the usual top/right/bottom/left rule. The longhand names come from
+/// longhands_of, shared with CSSOM.
 [[nodiscard]] std::vector<std::pair<std::string_view, std::string_view>> positional(
     std::string_view property, std::span<const std::string_view> parts) {
     const auto names = longhands_of(property);
@@ -93,11 +102,11 @@ std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_short
         if (!out.empty()) { out.emplace_back(property, parts.front()); }
         return out;
     }
-    // `flex`, WHICH MUST BE EXPANDED RATHER THAN READ: `.col { flex: 1 0 0 }` and
+    // `flex` must be expanded rather than read: `.col { flex: 1 0 0 }` and
     // a `.flex-grow-0` utility written after it has to win, so the longhands are
     // produced here and flex only ever sees those.
     //
-    // THE SHORTHAND'S DEFAULTS ARE NOT THE LONGHANDS' INITIAL VALUES, which is
+    // The shorthand's defaults are not the longhands' initial values, which is
     // the part that is easy to get wrong: `flex-basis` initial is `auto`, but
     // `flex: 1` means `1 1 0%`. Flexbox 1 §7.1.1 is explicit that the omitted
     // components take these values and not the initial ones, because `flex: 1`
@@ -130,8 +139,8 @@ std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_short
             },
             [](std::string_view part) { return std::optional{part}; });
         if (!components) {
-            // Keep the cascade's legacy acceptance of otherwise invalid multi-part
-            // forms. CSSOM rejects these; tightening the cascade is a separate change.
+            // The cascade still accepts otherwise invalid multi-part forms,
+            // which CSSOM rejects.
             const bool second_is_shrink = is_number(parts[1]);
             components = std::array{parts[0], second_is_shrink ? parts[1] : std::string_view{"1"},
                                     parts.size() > 2   ? parts[2]
@@ -144,10 +153,10 @@ std::vector<std::pair<std::string_view, std::string_view>> expand_cascaded_short
                 {names[2], (*components)[2]}};
     }
 
-    // `gap`, which is ROW then COLUMN - the opposite order to everything else
+    // `gap`, which is row then column - the opposite order to everything else
     // here, and the opposite order to how it reads. It is the one shorthand
     // whose two values are not left-to-right: `gap: 1rem 2rem` is a 1rem gap
-    // BETWEEN ROWS and a 2rem one between columns, because the block axis
+    // between rows and a 2rem one between columns, because the block axis
     // comes first in every Box Alignment shorthand. One value sets both.
     if (property == "gap") { return positional(property, value_parts(value, 2)); }
 

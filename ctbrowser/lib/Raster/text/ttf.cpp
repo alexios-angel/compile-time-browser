@@ -1,13 +1,17 @@
+//===- ctbrowser/lib/Raster/text/ttf.cpp - SDL3_ttf font backend ----------===//
+//
+// The SDL3_ttf font backend: the class and its glyph cache. Apart from the app
+// shell, this is the only engine file that includes an SDL header; the public
+// header declares only the interface and make_ttf_backend(), and
+// test/lint/api_surface.cpp allows SDL here explicitly.
+//
+// Optional: without SDL3_ttf make_ttf_backend() returns null and the class
+// below is not compiled at all.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/raster/text/ttf.hpp>
 
-// ttf: the whole SDL3_ttf backend - the class, its glyph cache, and the one
-// place in the engine that includes an SDL header. The public header declares
-// only the interface and make_ttf_backend(), so nothing that consumes it
-// parses <SDL_ttf.h>, and test/lint/api_surface lists this file alone.
-//
-// OPTIONAL: without SDL3_ttf make_ttf_backend() returns null and the class
-// below is not compiled at all.
 #if CTBROWSER_WITH_TTF
 
 #include <SDL3/SDL.h>
@@ -26,6 +30,8 @@ namespace ctbrowser::raster {
 
 namespace {
 
+/// A font_backend over SDL3_ttf. All state is guarded by mutex_, so one
+/// instance is shared by every raster thread.
 class sdl_ttf_backend final : public ttf_backend {
 public:
     sdl_ttf_backend() { started_ = TTF_Init(); }
@@ -60,8 +66,8 @@ public:
     void draw_run(const rect & where, const paint_command & c, const pixel_rect & clip,
                   surface & into) const override {
         const int size = pixel_size(c.font_size);
-        // The run's box top is the top of the LINE and glyphs sit on a baseline
-        // inside it - the same convention font8x8 uses, so a page that mixes
+        // The run's box top is the top of the line and glyphs sit on a baseline
+        // inside it, the same convention font8x8 uses, so a page that mixes
         // backends does not step up and down.
         const float baseline =
             where.y + ascent(c.font_size, c.face.family, c.face.bold, c.face.italic);
@@ -91,7 +97,7 @@ public:
         const std::lock_guard guard{mutex_};
         TTF_Font * font = sized_font(family, bold, italic, pixel_size(font_size));
         if (font == nullptr) { return font8x8_fonts().descent(font_size, family, bold, italic); }
-        // SDL3_ttf's descent is NEGATIVE, and a descent is a distance.
+        // SDL3_ttf's descent is negative, and a descent is a distance.
         return -static_cast<float>(TTF_GetFontDescent(font));
     }
 
@@ -134,9 +140,9 @@ private:
 
     [[nodiscard]] static TTF_Font * open_sized(const std::vector<std::byte> & bytes, int size);
 
-    // An unknown family falls back to the DEFAULT one rather than drawing
-    // nothing, and a missing bold/italic variant to the upright one - which is
-    // what a browser does with a family it only has one weight of.
+    /// An unknown family falls back to the default one rather than drawing
+    /// nothing, and a missing bold/italic variant to the upright one, which is
+    /// what a browser does with a family it only has one weight of.
     [[nodiscard]] const loaded_face * resolve(std::string_view family, bool bold,
                                               bool italic) const {
         const std::string name = ascii_lower_copy(family);
@@ -149,21 +155,21 @@ private:
         return faces_.empty() ? nullptr : &faces_.begin()->second;
     }
 
-    // One TTF_Font per (face, pixel size). Opening per size rather than calling
-    // TTF_SetFontSize keeps the cached glyphs of one size valid while another
-    // is being drawn - resizing a shared font would invalidate them underneath
-    // whichever thread was using it.
-    //
-    // Caller holds the lock.
+    /// One TTF_Font per (face, pixel size). Opening per size rather than calling
+    /// TTF_SetFontSize keeps the cached glyphs of one size valid while another
+    /// is being drawn; resizing a shared font would invalidate them underneath
+    /// whichever thread was using it.
+    ///
+    /// Caller holds the lock.
     [[nodiscard]] TTF_Font * sized_font(std::string_view family, bool bold, bool italic,
                                         int size) const {
         const loaded_face * face = resolve(family, bold, italic);
         if (face == nullptr) { return nullptr; }
         const sized_key key{face_key{ascii_lower_copy(family), bold, italic}, size};
         if (const auto it = sized_.find(key); it != sized_.end()) { return it->second; }
-        // BOUNDED: a page cycling font-size through thousands of values opened
-        // a FreeType face per size and never closed one. Every TTF_Font is
-        // only used under the lock, so closing them all here is safe.
+        // Bounded so a page cycling through many font sizes cannot open
+        // unlimited FreeType faces. Every TTF_Font is used only under the lock,
+        // so closing them all here is safe.
         // ponytail: clear-all rather than LRU; add recency if a real page thrashes.
         if (sized_.size() >= max_sized_fonts) {
             for (auto & [k, open] : sized_) {
@@ -176,9 +182,10 @@ private:
         return font;
     }
 
-    // Rasterized once, then read. The lookup is under the lock; the BLIT is
-    // not, which is safe because a glyph never changes after it is inserted and
-    // the caller holds a reference - the cache may drop it meanwhile.
+    /// The cached glyph for `code`, rasterized on first use; null when the font
+    /// has no such glyph. The lookup is under the lock; the blit is not, which
+    /// is safe because a glyph never changes after it is inserted and the
+    /// caller holds a reference (the cache may drop it meanwhile).
     [[nodiscard]] std::shared_ptr<const glyph> glyph_for(std::string_view family, bool bold,
                                                          bool italic, int size,
                                                          char32_t code) const {
@@ -204,7 +211,7 @@ private:
         TTF_ImageType type = TTF_IMAGE_INVALID;
         SDL_Surface * image = TTF_GetGlyphImage(font, code, &type);
         if (image != nullptr) {
-            // Whatever SDL3_ttf produced, read it as straight 8-bit COVERAGE:
+            // Whatever SDL3_ttf produced, read it as straight 8-bit coverage:
             // the glyph is a mask that scales the text colour's alpha, and the
             // text colour is the page's, not the font's.
             SDL_Surface * alpha = SDL_ConvertSurface(image, SDL_PIXELFORMAT_RGBA32);
@@ -235,8 +242,8 @@ private:
         return shared;
     }
 
-    // Antialiased: the glyph's coverage scales the text colour's alpha, which
-    // is what makes an outline font look like one.
+    /// Antialiased: the glyph's coverage scales the text colour's alpha, which
+    /// is what makes an outline font look like one.
     static void blit(const glyph & g, float pen_x, float baseline, color fill,
                      const pixel_rect & clip, surface & into) {
         const int left = round_to_pixel(pen_x) + g.left;
@@ -283,7 +290,7 @@ bool sdl_ttf_backend::add_face(std::string family, bool bold, bool italic,
     if (probe == nullptr) { return false; }
     TTF_CloseFont(probe);
     // Replacing a face frees the bytes its cached TTF_Fonts still read (via
-    // SDL_IOFromConstMem). sized_ is keyed by the REQUESTED family, so fallbacks
+    // SDL_IOFromConstMem). sized_ is keyed by the requested family, so fallbacks
     // may also point at it: close them all; they reopen on demand. glyphs_ are
     // bitmaps and stay.
     const face_key key{ascii_lower_copy(family), bold, italic};
@@ -308,7 +315,7 @@ void sdl_ttf_backend::set_default_family(std::string family) {
 }
 
 int sdl_ttf_backend::pixel_size(float font_size) noexcept {
-    // Clamped BEFORE the cast, which is undefined for 1e30 or NaN, and so a
+    // Clamped before the cast, which is undefined for 1e30 or NaN, and so a
     // `font-size: 100000px` does not ask FreeType for a gigapixel glyph.
     if (!(font_size >= 1.0f)) { return 1; }
     return static_cast<int>(std::min(font_size, max_pixel_size) + 0.5f);

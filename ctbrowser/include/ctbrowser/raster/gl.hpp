@@ -1,3 +1,15 @@
+//===- ctbrowser/include/ctbrowser/raster/gl.hpp - GL device ----*- C++ -*-===//
+//
+// The GL device behind WebGL: a thin handle onto an ANGLE context. It keeps no
+// copy of any state GL can report, so nothing here can drift from the driver
+// (docs/history/webgl-rewrite.md describes the design this replaced).
+//
+// No EGL or GLES type appears in this header (test/lint/api_surface.cpp
+// enforces it), because every consumer pays for what a header includes.
+// Parameters are plain integers because they arrive from JavaScript as plain
+// integers.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -7,45 +19,27 @@
 
 #include <ctbrowser/paint/command.hpp>
 
-// THE GL DEVICE. One implementation, no software twin.
-//
-// The stack this replaces kept a software mirror of GL state and, separately and
-// by hand, forwarded some calls to ANGLE. Nineteen methods never forwarded at
-// all, and because a call that never learned to forward also never learned to
-// record that it hadn't, the ledger could not see them. See
-// docs/history/webgl-rewrite.md.
-//
-// So there is nothing here but a handle onto ANGLE. No state is remembered that
-// GL can be asked for, because remembered state is the thing that drifts.
-//
-// NO EGL OR GLES TYPE APPEARS IN THIS HEADER, and `test/lint/api_surface` enforces
-// it: every consumer pays for what a header includes. Parameters are plain
-// integers because the numbers a page passes came from JavaScript and are
-// already plain integers by the time they arrive.
-
 namespace ctbrowser::raster::gl {
 
-// WHICH DRIVER. The old code hard-coded SwiftShader and left no way to ask for
-// anything else, which made "safe mode" a rewrite rather than a switch.
-//
-// `fastest` is the default because it is what a user should get; `deterministic`
-// is SwiftShader, which is what the byte-compared goldens need and what a player
-// or a debugging session can select at run time.
+/// Which ANGLE back end to use. `fastest` is the default; `deterministic`
+/// selects SwiftShader (a software renderer), which byte-compared golden images
+/// need and which can also be selected at run time for debugging.
 enum class driver {
     fastest,
     deterministic
 };
 
-// Whether a device can be made AT ALL: built with ANGLE, and the libraries load
-// and initialise. Asked rather than assumed - a build flag reports an intention
-// and this reports what happened.
+/// Whether a device can be made at all: the build has ANGLE, and its libraries
+/// load and initialise. This is probed rather than read from a build flag,
+/// because a flag reports an intention and this reports what happened.
 [[nodiscard]] bool available();
 
-// Why `available()` said no, in words a person can act on. Empty when it said
-// yes. Most of what goes wrong happens in EGL, before there is a context to ask
-// for an error string.
+/// Why `available()` said no, in words a person can act on. Empty when it said
+/// yes. Most failures happen in EGL, before there is a context to ask for an
+/// error string.
 [[nodiscard]] std::string unavailable_because();
 
+/// One GL context and its drawing surface.
 class device {
 public:
     device(int width, int height, driver which = driver::fastest);
@@ -58,71 +52,54 @@ public:
     [[nodiscard]] bool ok() const noexcept;
     [[nodiscard]] const std::string & error() const noexcept;
 
-    // What actually answered - "ANGLE (Vulkan 1.3.0 (SwiftShader Device))" and
-    // "ANGLE (Vulkan ... Intel Arc)" are the same code path and very different
-    // numbers, so a report that omits this is not reproducible.
+    /// The renderer string GL reports. "ANGLE (Vulkan 1.3.0 (SwiftShader
+    /// Device))" and "ANGLE (Vulkan ... Intel Arc)" run the same code path with
+    /// very different results, so a report that omits this is not reproducible.
     [[nodiscard]] std::string renderer() const;
     [[nodiscard]] std::string version() const;
 
-    // WHETHER THIS IS A BROWSER'S CONTEXT OR A NATIVE APP'S, asked of GL rather
-    // than inferred from the attributes that were requested. ANGLE validates a
-    // whole class of page mistake only in WebGL compatibility mode - a uniform
-    // buffer bound to a binding point with no storage is undefined behaviour to
-    // GLES and an INVALID_OPERATION to WebGL - so a context that quietly came up
-    // without it turns a page's error into a crash in the Vulkan back end. It
-    // is requested when the display advertises it, and this reports what
-    // happened.
+    /// Whether the context runs in ANGLE's WebGL compatibility mode, queried
+    /// from GL rather than inferred from the requested attributes. ANGLE
+    /// validates a whole class of page mistakes only in that mode (a uniform
+    /// buffer bound with no storage is undefined behaviour to GLES but an
+    /// INVALID_OPERATION to WebGL), so without it a page's error can become a
+    /// crash in the Vulkan back end. The mode is requested whenever the display
+    /// advertises it.
     [[nodiscard]] bool webgl_compatible() const;
 
     [[nodiscard]] int width() const noexcept;
     [[nodiscard]] int height() const noexcept;
 
-    // A NEW DRAWING BUFFER, THE SAME CONTEXT.
-    //
-    // Constructing a fresh device instead - which is what a canvas resize used
-    // to do - throws away every program, buffer, texture and piece of pipeline
-    // state the page has set up, and GL says nothing about any of it. The page
-    // goes on using handles that name objects in a destroyed context, so its
-    // draws quietly stop working while `glClear` on the new device keeps
-    // painting: "clears, but draws no geometry".
-    //
-    // Measured on p5's WEBGL page. `createCanvas(300, 200, WEBGL)` assigns
-    // canvas.width, which resized; p5 had already run `enable(DEPTH_TEST)` and
-    // `depthFunc(LEQUAL)` on the context it was handed. The first draw then
-    // reported test=0 and func=GL_LESS - both back at their defaults - and the
-    // sphere drew over the box instead of behind it.
-    //
-    // Only the SURFACE is replaced here. GL objects and GL state belong to the
-    // context, so they survive; EGL is explicitly fine with a context being
-    // made current against a different surface.
+    /// Replaces the drawing surface and keeps the context. GL objects and state
+    /// belong to the context, so they survive (EGL allows a context to be made
+    /// current against a different surface). Recreating the device instead
+    /// would silently invalidate every handle and setting the page holds:
+    /// draws stop working while clears still do. p5's WEBGL mode depends on
+    /// this, because it enables DEPTH_TEST before createCanvas() resizes the
+    /// canvas.
     bool resize(int width, int height);
 
-    // Every call below assumes this device's context is current. A second device
-    // on the same thread makes the first one's stale, which is GL's rule and not
-    // something a wrapper can hide.
+    /// Makes this device's context current. Every call below assumes it is; a
+    /// second device made current on the same thread displaces this one, which
+    /// is GL's rule and not something a wrapper can hide.
     bool make_current();
 
     void viewport(int x, int y, int width, int height);
     void scissor(int x, int y, int width, int height);
     void clear(float red, float green, float blue, float alpha);
-    // THE MASK A PAGE PASSED, not a fixed set. `gl.clear(COLOR_BUFFER_BIT)`
-    // must not silently clear depth as well - a page that clears colour
-    // per-object and depth per-frame renders inside out if it does.
+    /// Clears exactly the buffers in the page's `mask`. `gl.clear(COLOR_BUFFER_BIT)`
+    /// must not also clear depth: a page that clears colour per object and depth
+    /// per frame would render inside out.
     void clear_buffers(std::uint32_t mask);
     void clear_color(float red, float green, float blue, float alpha);
     void clear_depth(float depth);
     void set_capability(int capability, bool on);
-    // GL's own error, reported and cleared. Asked of the driver rather than
-    // tracked here, because tracked state is what drifts.
+    /// GL's own error flag, read and cleared (glGetError), never tracked here.
     [[nodiscard]] std::uint32_t take_error();
 
-    // ONE INTEGER, ASKED OF GL. `getParameter` answered a hardcoded table with
-    // `default: 0`, so ten of the caps Babylon reads - MAX_VARYING_VECTORS,
-    // MAX_DRAW_BUFFERS, MAX_SAMPLES and the rest - came back as ZERO. A page
-    // sizes buffers and picks shader permutations from those numbers, and zero
-    // is a plausible-looking answer rather than an obviously missing one.
-    //
-    // The CALLER decides which enums are integers; this only asks.
+    /// One integer parameter, queried from GL and never from a table: pages size
+    /// buffers and pick shaders from these limits, and a made-up 0 looks
+    /// plausible. The caller decides which enums are integer-valued.
     [[nodiscard]] int limit(int name) const;
 
     // --- shaders and programs ------------------------------------------------
@@ -140,6 +117,7 @@ public:
     [[nodiscard]] std::string program_log(unsigned program) const;
     void use_program(unsigned program);
 
+    /// One active attribute or uniform, as glGetActive* reports it.
     struct active {
         std::string name;
         std::uint32_t type = 0;
@@ -150,13 +128,13 @@ public:
     [[nodiscard]] int attribute_location(unsigned program, const std::string & name) const;
     [[nodiscard]] int uniform_location(unsigned program, const std::string & name) const;
 
-    // GL_INVALID_INDEX comes back as -1. A name no block declares is NOT an
-    // error: a page may ask about a block its shader dropped.
+    /// GL_INVALID_INDEX comes back as -1. A name no block declares is not an
+    /// error: a page may ask about a block its shader compiler dropped.
     [[nodiscard]] int uniform_block_index(unsigned program, const std::string & name) const;
     void uniform_block_binding(unsigned program, unsigned index, unsigned binding);
 
-    // `rows` x `cols` is the shape - 1x1 a scalar, 3x1 a vec3, 4x4 a mat4 -
-    // which is how one entry point covers the whole uniform* family.
+    /// Sets a uniform of shape `rows` x `cols` (1x1 a scalar, 3x1 a vec3, 4x4 a
+    /// mat4), which is how one entry point covers the whole uniform* family.
     void set_uniform(int location, const float * values, int count, int rows, int cols,
                      bool integer);
 
@@ -169,15 +147,14 @@ public:
     void buffer_data(int target, const void * bytes, std::size_t size, int usage);
     void buffer_sub_data(int target, std::size_t offset, const void * bytes, std::size_t size);
     void bind_buffer_base(int target, unsigned index, unsigned buffer);
-    // WHICH BUFFER IS BOUND TO A TARGET - asked of GL, never remembered. The
-    // uploads a page makes name a target and GL resolves it to a buffer, so
-    // "which buffer did that 3,072 bytes land in" is not answerable from the
-    // call alone, and it is the question a uniform buffer with no storage
-    // behind it is diagnosed by. 0 for a target with no binding query.
+    /// The buffer currently bound to `target`, queried from GL. Uploads name a
+    /// target, not a buffer, so this is how to find which buffer an upload
+    /// landed in (for example to diagnose a uniform buffer with no storage).
+    /// Returns 0 for a target with no binding query.
     [[nodiscard]] unsigned bound_buffer(int target) const;
-    // WHICH CLASS A HANDLE BELONGS TO. GL numbers each of these SEPARATELY and
-    // every one of them starts at 1, so name 1 routinely exists as a buffer AND
-    // a texture AND a shader at the same time.
+    /// The kind of GL object a name refers to. GL numbers each kind separately,
+    /// starting at 1, so name 1 routinely exists as a buffer, a texture and a
+    /// shader at the same time.
     enum class object_kind {
         buffer,
         texture,
@@ -187,22 +164,11 @@ public:
         shader
     };
 
-    // THE KIND IS AN ARGUMENT, and it has to be.
-    //
-    // This took a kind-less name and asked each `glIs*` in turn, on the stated
-    // premise that "a handle belongs to exactly one of them". That premise is
-    // FALSE - the namespaces are independent - and the six probes had no
-    // `else`, so `deleteShader(1)` also ran `glDeleteBuffers` on buffer 1.
-    //
-    // The damage was not a visible error. GL FREES THE NAME, `glGenBuffers`
-    // hands it straight back, and the next allocation lands on top of live
-    // geometry: measured on Babylon, buffer 7 held 1,835,008 bytes of vertices
-    // and was reissued as a 1,072-byte uniform buffer. What ANGLE finally
-    // reported was "it is undefined behaviour to use a uniform buffer that is
-    // too small" - three layers away from the delete that caused it.
-    //
-    // The caller always knows: `deleteBuffer` deletes a buffer whatever the
-    // handle claims to be, which is also what WebGL specifies.
+    /// Deletes `name` as an object of `kind`. Because one integer can name a
+    /// live object of several kinds at once, guessing the kind with glIs*
+    /// deletes the wrong object, and GL then reissues the freed name on top of
+    /// live data. The caller always knows the kind: WebGL defines deleteBuffer
+    /// and its siblings by the method's kind, not by what the name looks like.
     void delete_object(object_kind kind, unsigned name);
 
     void enable_attribute(unsigned location, bool on);
@@ -210,9 +176,8 @@ public:
                            std::size_t offset);
     void attribute_divisor(unsigned location, unsigned divisor);
 
-    // ONE ATTRIBUTE'S STATE, ASKED OF GL. Not a record of what was set: a page
-    // can change it through a vertex array this layer never saw, so anything
-    // remembered here would be a guess that looks like a fact.
+    /// One vertex attribute's state, queried from GL rather than recorded: a
+    /// page can change it through a vertex array this layer never saw.
     struct attribute_state {
         bool enabled = false;
         int size = 4;
@@ -234,9 +199,8 @@ public:
     [[nodiscard]] unsigned create_texture();
     void bind_texture(int target, unsigned texture);
     void active_texture(int unit);
-    // RGBA8 ONLY, by design rather than omission: a texture arrives here as
-    // bytes the bindings already normalised, so the format zoo stops before
-    // this line.
+    /// Uploads an RGBA8 image. Only RGBA8 is accepted, by design: the bindings
+    /// convert every other format before calling this.
     void texture_image(int target, int width, int height, const void * rgba);
     void texture_parameter(int target, int name, int value);
 
@@ -245,9 +209,8 @@ public:
     void framebuffer_texture(int attachment, unsigned texture);
     [[nodiscard]] std::uint32_t framebuffer_status() const;
 
-    // A RENDER TARGET USUALLY WANTS DEPTH, and these were three no-ops in the
-    // bindings, so it never got any: an offscreen target had colour and nothing
-    // else, and every draw into it passed the depth test in arrival order.
+    /// Renderbuffers, mainly so an offscreen render target can have a depth
+    /// attachment.
     [[nodiscard]] unsigned create_renderbuffer();
     void bind_renderbuffer(unsigned renderbuffer);
     void renderbuffer_storage(int format, int width, int height);
@@ -256,8 +219,8 @@ public:
     // --- draws and pipeline state ---------------------------------------------
 
     void draw_arrays(int mode, int first, int count);
-    // `offset` is a BYTE OFFSET into the bound element buffer, which is what
-    // drawElements takes and the reason it is not an index.
+    /// `offset` is a byte offset into the bound element buffer, as drawElements
+    /// takes it, not an index.
     void draw_elements(int mode, int count, int type, std::size_t offset);
     void draw_arrays_instanced(int mode, int first, int count, int instances);
     void draw_elements_instanced(int mode, int count, int type, std::size_t offset, int instances);
@@ -268,13 +231,11 @@ public:
     void depth_mask(bool on);
     void blend_func(int source, int destination);
 
-    // The pixels, into a bitmap the painter composites.
-    //
-    // FLIPPED, because GL's origin is bottom-left and a bitmap's is top-left,
-    // and ARGB, because that is the bitmap's packing and not GL's byte order.
-    // Handing back the raw buffer gives a picture that is upside down with red
-    // and blue swapped and otherwise perfect - the kind of wrong that survives a
-    // test which only counts painted pixels.
+    /// Reads the pixels into a bitmap the painter composites. Rows are flipped,
+    /// because GL's origin is bottom-left and a bitmap's is top-left, and pixels
+    /// are repacked as ARGB, the bitmap's format. Skipping either gives an image
+    /// that is upside down or has red and blue swapped yet passes a test that
+    /// only counts painted pixels.
     [[nodiscard]] bool read_pixels(paint::bitmap & into) const;
 
 private:

@@ -1,11 +1,21 @@
+//===- specified.cpp - Specified-value serialisation of <color> -----------===//
+//
+// Serialises a parsed colour tree as its specified value, the text
+// `el.style.color` reads back. Bare § numbers refer to CSS Color 4.
+//
+// Throughout, `slot` is the channel index: 0-2 for the colour space's
+// channels, 3 for alpha.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::color_detail {
 
 // --- the specified serialisation ---------------------------------------------
 
-// A literal channel in the function's own unit: a percentage becomes the
-// number it stands for, an angle its degrees.
+/// A literal channel in the function's own unit: a percentage becomes the
+/// number it stands for, an angle its degrees.
 [[nodiscard]] double literal_value(const channel & c, space cs, int slot, bool bytes) noexcept {
     switch (c.k) {
     case channel::kind::percent: return c.value * percent_reference(cs, slot, bytes) / 100.0;
@@ -18,9 +28,9 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
-// The specification's parse-time clamps: rgb() channels to the byte, hsl()
-// saturation and every chroma to nought and above, lightness to its range,
-// alpha to [0, 1].
+/// The specification's parse-time clamps: rgb() channels to the byte, hsl()
+/// saturation and every chroma to nought and above, lightness to its range,
+/// alpha to [0, 1].
 [[nodiscard]] double clamp_literal(double v, space cs, int slot, bool absolute,
                                    bool bytes) noexcept {
     if (std::isnan(v)) { v = 0; }
@@ -47,14 +57,16 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
+/// Whether a channel's value is known at parse time: a literal, or a calc()
+/// that resolved without a context. `none` and keywords are not.
 [[nodiscard]] bool channel_settled(const channel & c) noexcept {
     return c.k == channel::kind::number || c.k == channel::kind::percent ||
            c.k == channel::kind::angle || (c.k == channel::kind::calc && c.resolvable);
 }
 
-// Every channel known at parse time, `none` counted as known only when
-// `none_ok`: the legacy serialisation resolves `rgb(none none none)` as
-// black but keeps `hsl(120 none 50%)` in the modern form.
+/// Whether every channel is known at parse time, `none` counted as known only
+/// when `none_ok`: the legacy serialisation resolves `rgb(none none none)` as
+/// black but keeps `hsl(120 none 50%)` in the modern form.
 [[nodiscard]] bool all_settled(const parsed & p, bool none_ok) noexcept {
     for (const channel & c : p.ch) {
         if (c.k == channel::kind::none ? !none_ok : !channel_settled(c)) { return false; }
@@ -65,7 +77,7 @@ namespace ctbrowser::style::css::color_detail {
     return true;
 }
 
-// An absolute rgb()/hsl()/hwb() with every channel settled, as sRGB.
+/// An absolute rgb()/hsl()/hwb() with every channel settled, as sRGB.
 [[nodiscard]] resolved settled_legacy(const parsed & p) {
     vec3 c{};
     for (std::size_t slot = 0; slot < 3; ++slot) {
@@ -93,10 +105,10 @@ namespace ctbrowser::style::css::color_detail {
     return out;
 }
 
-// An absolute hsl()/hwb() an `rgb()` serialisation cannot stand in for:
-// its hue is powerless as written (§4.4.1), or its lightness is at either
-// end, so that converting the rgb() back makes the hue MISSING where the
-// author's colour kept it.
+/// Whether an absolute hsl()/hwb() is one an `rgb()` serialisation cannot
+/// stand in for: its hue is powerless as written (§4.4.1), or its lightness
+/// is at either end, so that converting the rgb() back makes the hue missing
+/// where the author's colour kept it.
 [[nodiscard]] bool origin_loses_in_rgb(const parsed & p) {
     if (p.cs != space::hsl && p.cs != space::hwb) { return false; }
     vec3 c{};
@@ -107,10 +119,13 @@ namespace ctbrowser::style::css::color_detail {
                       : clamp_literal(literal_value(ch, p.cs, static_cast<int>(slot), true), p.cs,
                                       static_cast<int>(slot), true, true);
     }
+    // In hwb, whiteness + blackness >= 100% makes the hue powerless; 99.999
+    // allows for floating-point error in the percentages.
     if (p.cs == space::hwb) { return c[1] + c[2] >= 99.999; }
     return c[1] <= hue_epsilon(space::hsl) || c[2] <= 0.0 || c[2] >= 100.0;
 }
 
+/// An sRGB colour in the legacy form: `rgb(r, g, b)` or `rgba(r, g, b, a)`.
 [[nodiscard]] std::string legacy_text(const resolved & r) {
     std::string out = byte_text(r.c[0] * 255.0) + ", " + byte_text(r.c[1] * 255.0) + ", " +
                       byte_text(r.c[2] * 255.0);
@@ -119,7 +134,7 @@ namespace ctbrowser::style::css::color_detail {
     return "rgba(" + out + ", " + legacy_alpha_text(alpha) + ")";
 }
 
-// One channel of an absolute colour in the modern syntax.
+/// One channel of an absolute colour in the modern syntax.
 [[nodiscard]] std::string modern_channel_text(const channel & c, space cs, int slot,
                                               bool resolve_calc, bool bytes) {
     switch (c.k) {
@@ -137,7 +152,7 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
-// A relative colour's channel: kept as written, numbers canonical.
+/// A relative colour's channel: kept as written, numbers canonical.
 [[nodiscard]] std::string relative_channel_text(const channel & c) {
     switch (c.k) {
     case channel::kind::none: return "none";
@@ -149,25 +164,27 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
+/// The specified text of an absolute colour function. `as_origin` is set when
+/// it is nested as an origin (relative colour, alpha()) or a mix item.
 [[nodiscard]] std::string absolute_specified(const parsed & p, bool as_origin) {
     const bool srgb_function = p.cs == space::srgb || p.cs == space::hsl || p.cs == space::hwb;
     const bool legacy_function = p.fn == "rgb" || p.fn == "hsl" || p.fn == "hwb";
-    // §15.2: a legacy-syntax colour with every channel known is `rgb()`, and
-    // a top-level rgb() with a missing channel is one with that channel at
-    // nought.
+    // CSS Color 4 §15.2: a legacy-syntax colour with every channel known
+    // serialises as `rgb()`, and a top-level rgb() with a missing channel is
+    // one with that channel at nought.
     //
-    // AN ORIGIN IS THE EXCEPTION, on purpose. The cascade is string-typed:
+    // An origin is the exception, on purpose. The cascade is string-typed:
     // the computed value of `hsl(from hsl(120 none 50%) h s l)` is computed
     // from this serialisation, so an origin serialised as `rgb(128, 128,
     // 128)` has lost its missing saturation, its hsl space (a hue that is
-    // powerless in hsl is missing after a conversion FROM rgb, and kept
+    // powerless in hsl is missing after a conversion from rgb, and kept
     // when there is none), and its exact channels. Chromium prints the
     // rgb() here because it keeps the parsed tree beside the text; this
     // engine keeps the modern form when the rgb() would lose something -
     // a missing channel, a powerless hue, a lightness at either end - which
-    // is what the computed side (color-computed-none, -powerless,
-    // -relative-color, -color-mix) measures, at the cost of the seventy-odd
-    // specified serialisations that expect the rgb() form.
+    // is what the computed-value WPT tests (color-computed-none, -powerless,
+    // -relative-color, -color-mix) measure, at the cost of the seventy-odd
+    // specified-value cases that expect the rgb() form.
     if (legacy_function && srgb_function && all_settled(p, p.fn == "rgb" && !as_origin) &&
         !(as_origin && origin_loses_in_rgb(p))) {
         return legacy_text(settled_legacy(p));
@@ -190,6 +207,7 @@ namespace ctbrowser::style::css::color_detail {
     return out + ")";
 }
 
+/// The specified text of a relative colour, `fn(from <origin> ...)`.
 [[nodiscard]] std::string relative_specified(const parsed & p) {
     std::string out = p.fn + "(from " + serialize_specified(*p.origin, true) + " ";
     if (p.fn == "color") { out += std::string{space_name(p.cs)} + " "; }
@@ -201,6 +219,7 @@ namespace ctbrowser::style::css::color_detail {
     return out + ")";
 }
 
+/// The specified text of a color-mix(); the default `in oklab` is omitted.
 [[nodiscard]] std::string mix_specified(const parsed & p) {
     std::string out = "color-mix(";
     if (p.mix_space != space::oklab || !p.hue_method.empty()) {
@@ -251,6 +270,8 @@ namespace ctbrowser::style::css::color_detail {
     return out + ")";
 }
 
+/// The specified serialisation of any parsed colour. `as_origin` is set when
+/// it is nested as an origin (relative colour, alpha()) or a mix item.
 std::string serialize_specified(const parsed & p, bool as_origin) {
     switch (p.k) {
     case parsed::kind::keyword: return p.keyword;

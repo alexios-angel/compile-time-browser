@@ -1,3 +1,4 @@
+# CSS property value parsing and computation, part of ctbrowser-style.
 target_sources(ctbrowser-style PRIVATE
   alignment.cpp
   backgrounds.cpp

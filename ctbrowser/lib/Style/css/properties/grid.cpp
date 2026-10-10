@@ -1,4 +1,6 @@
-// CSS Grid 2's value grammars, parsed and serialised - no layout:
+//===- grid.cpp - Grid property grammars ---------------------- -*- C++ -*-===//
+//
+// CSS Grid 2's value grammars, parsed and serialised (no layout):
 //
 //   <track-list> and <auto-track-list>   grid-template-columns / -rows
 //   <track-size>+                        grid-auto-columns / -rows
@@ -13,9 +15,11 @@
 // The specified form drops empty line-name lists (`[] 150px []` is `150px`)
 // and writes a grid line integer-first (`span 1 i` is `span i`); the
 // computed form is the same list with every length in pixels and a folded
-// calc() clamped to nought - which is the computed value of an element that
-// is NOT a grid container. A grid container's resolved value is its used
-// track sizes, which need a layout this engine does not do.
+// calc() clamped to zero, which is the computed value of an element that is
+// not a grid container. A grid container's resolved value is its used track
+// sizes, which need a layout this engine does not do.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -25,18 +29,22 @@ using namespace detail;
 
 namespace {
 
+/// Selects the serialisation mode: the computed value when `lengths` is set,
+/// the specified value when it is null.
 struct grid_context {
-    const length_context * lengths = nullptr; // computed when set
+    const length_context * lengths = nullptr;
 };
 
+/// Whether `word` may be a grid `<custom-ident>` (not a CSS-wide keyword,
+/// `span`, `auto` or `default`).
 [[nodiscard]] bool custom_ident_ok(std::string_view word) {
     return !is_wide_keyword(word) && !ascii_iequals_any(word, {"span", "auto", "default"});
 }
 
-// A cursor over the significant tokens of one value.
+/// A cursor over the significant tokens of one value.
 struct cursor {
     const token_stream & ts;
-    std::vector<std::size_t> at; // significant indices
+    std::vector<std::size_t> at; // Significant token indices.
     std::size_t i = 0;
 
     [[nodiscard]] bool done() const noexcept { return i >= at.size(); }
@@ -45,7 +53,7 @@ struct cursor {
     [[nodiscard]] bool is_ident(std::string_view word) const noexcept {
         return !done() && peek().type == token_type::ident && ascii_iequals(text(), word);
     }
-    // The significant index one past the block a function at `i` opens.
+    /// The significant index one past the block a function at `i` opens.
     [[nodiscard]] std::size_t block_end() const noexcept {
         int depth = 0;
         for (std::size_t k = at[i]; k < ts.tokens.size(); ++k) {
@@ -64,6 +72,8 @@ struct cursor {
         }
         return at.size();
     }
+    /// The source text of significant tokens [from, to), or empty when one of
+    /// them was rebuilt by the tokenizer and has no source span.
     [[nodiscard]] std::string_view slice(std::size_t from, std::size_t to) const noexcept {
         const css_token & first = ts.tokens[at[from]];
         const css_token & last = ts.tokens[at[to - 1]];
@@ -72,9 +82,9 @@ struct cursor {
     }
 };
 
-// A `<length-percentage>` or `<flex>` breadth, canonical; `nullopt` when
-// not one. `allow_flex` admits `fr`. A negative literal is a syntax error;
-// a folded calc() clamps.
+/// A `<length-percentage>` or `<flex>` breadth, canonical; `nullopt` when
+/// not one. `allow_flex` admits `fr`. A negative literal is a syntax error;
+/// a folded calc() clamps.
 [[nodiscard]] std::optional<std::string> breadth(cursor & c, bool allow_flex,
                                                  const grid_context & ctx) {
     if (c.done()) { return std::nullopt; }
@@ -90,7 +100,7 @@ struct cursor {
     }
     if (t.type == token_type::dimension) {
         const std::string unit = ascii_lower_copy(c.ts.unit_of(t));
-        // A negative length as written is invalid; one being COMPUTED is a
+        // A negative length as written is invalid; one being computed is a
         // calc() the cascade folded, and clamps to the range (CSS Values 4
         // §10.12): `calc(10px - 0.5em)` at a 40px font is `0px`.
         if (t.number < 0 && (ctx.lengths == nullptr || unit == "fr")) { return std::nullopt; }
@@ -140,12 +150,13 @@ struct cursor {
     return simplify_math(text);
 }
 
+/// Which track sizing grammar applies.
 enum class size_kind : std::uint8_t {
-    track, // <track-size>
-    fixed, // <fixed-size>
+    track, ///< <track-size>
+    fixed, ///< <fixed-size>, as inside an auto repeat().
 };
 
-// `<track-size>` or `<fixed-size>`, canonical.
+/// `<track-size>` or `<fixed-size>`, canonical.
 [[nodiscard]] std::optional<std::string> track_size(cursor & c, size_kind kind,
                                                     const grid_context & ctx) {
     if (c.done()) { return std::nullopt; }
@@ -211,8 +222,8 @@ enum class size_kind : std::uint8_t {
     return breadth(c, kind == size_kind::track, ctx);
 }
 
-// `[ <custom-ident>* ]`, canonical, or empty for `[]`; `nullopt` when the
-// cursor is not at a bracket.
+/// `[ <custom-ident>* ]`, canonical, or empty for `[]`; `nullopt` when the
+/// cursor is not at a bracket or the block is malformed.
 [[nodiscard]] std::optional<std::string> line_names(cursor & c) {
     if (c.done() || c.peek().type != token_type::open_square) { return std::nullopt; }
     std::string out = "[";
@@ -232,19 +243,23 @@ enum class size_kind : std::uint8_t {
     return any ? out + "]" : std::string{};
 }
 
-// `[ <line-names>? <size> ]+ <line-names>?` - the body of a repeat() and of
-// the whole list, appended to `out` with single spaces.
+/// `[ <line-names>? <size> ]+ <line-names>?`, the body of a repeat() and of
+/// the whole list, appended to `out` with single spaces. Reads up to the
+/// significant index `stop`; sets `any_size` once a size is read and
+/// `saw_auto_repeat` once an auto repeat() is.
 [[nodiscard]] bool sized_run(cursor & c, size_kind kind, const grid_context & ctx,
                              std::string & out, bool & any_size, std::size_t stop,
                              bool allow_repeat, bool & saw_auto_repeat);
 
+/// Appends a non-empty `piece` to `out`, space-separated.
 void append(std::string & out, std::string_view piece) {
     if (piece.empty()) { return; }
     if (!out.empty()) { out += ' '; }
     out += piece;
 }
 
-// repeat( ... ), at the cursor. `allow_auto` admits auto-fill/auto-fit once.
+/// repeat( ... ), at the cursor. `allow_auto` admits auto-fill/auto-fit, and
+/// `is_auto` reports whether this one was.
 [[nodiscard]] std::optional<std::string> repeat_function(cursor & c, size_kind outer,
                                                          const grid_context & ctx, bool allow_auto,
                                                          bool & is_auto) {
@@ -328,15 +343,15 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     return true;
 }
 
-// `<grid-line>` from the cursor to `stop`, canonical.
+/// `<grid-line>` from the cursor to `stop`, canonical.
 [[nodiscard]] std::optional<std::string> grid_line(cursor & c, std::size_t stop,
                                                    const grid_context & ctx) {
     bool span = false;
-    bool folded = false; // the integer came from a math function
+    bool folded = false; // The integer came from a math function.
     std::optional<long long> integer;
     std::string ident;
     std::size_t words = 0;
-    std::size_t span_at = 0; // which word `span` was, from one
+    std::size_t span_at = 0; // Which word `span` was, counting from one.
     while (c.i < stop && !c.done()) {
         const css_token & t = c.peek();
         ++words;
@@ -419,6 +434,7 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     return out;
 }
 
+/// The indices of the non-whitespace tokens before EOF.
 [[nodiscard]] std::vector<std::size_t> significant(const token_stream & ts) {
     std::vector<std::size_t> out;
     for (std::size_t i = 0; i + 1 < ts.tokens.size(); ++i) {
@@ -427,6 +443,8 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     return out;
 }
 
+/// A `<track-list>`/`<auto-track-list>` (grid-template-columns/-rows), or a
+/// `<track-size>+` when `auto_sizes` (grid-auto-columns/-rows), canonical.
 [[nodiscard]] std::optional<std::string> track_list(const token_stream & ts, bool auto_sizes,
                                                     const grid_context & ctx) {
     cursor c{ts, significant(ts), 0};
@@ -444,9 +462,9 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
         !any || !c.done()) {
         return std::nullopt;
     }
-    // `grid-auto-columns` is `<track-size>+`, with no line names in it at all -
-    // not even the empty `[]`, which writes nothing and so cannot be caught in
-    // the output (`[] 1px []`, grid-auto-columns-invalid).
+    // `grid-auto-columns` is `<track-size>+`, with no line names in it at all,
+    // not even the empty `[]`. Brackets were rejected on the input above,
+    // because an empty `[]` writes nothing and so cannot be caught here.
     if (auto_sizes && out.find('[') != std::string::npos) { return std::nullopt; }
     // An <auto-track-list> takes fixed sizes only beside its auto repeat.
     if (saw_auto) {
@@ -462,7 +480,8 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     return out;
 }
 
-// `none | <string>+`, each row's cells normalised, the areas rectangular.
+/// `grid-template-areas`: `none | <string>+`, each row's cells normalised and
+/// every named area a rectangle.
 [[nodiscard]] std::optional<std::string> template_areas(const token_stream & ts) {
     cursor c{ts, significant(ts), 0};
     if (c.done()) { return std::nullopt; }
@@ -523,6 +542,7 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     return out;
 }
 
+/// `grid-auto-flow`: `[ row | column ] || dense`, in its shortest spelling.
 [[nodiscard]] std::optional<std::string> auto_flow(const token_stream & ts) {
     cursor c{ts, significant(ts), 0};
     std::string direction;
@@ -541,7 +561,7 @@ bool sized_run(cursor & c, size_kind kind, const grid_context & ctx, std::string
     }
     if (direction.empty() && !dense) { return std::nullopt; }
     // The shortest spelling (CSSOM §6.7.2): `row` is the default, so `row
-    // dense` is `dense` (grid-auto-flow-valid, -computed).
+    // dense` is `dense`.
     if (dense) { return direction == "column" ? "column dense" : "dense"; }
     return direction;
 }
@@ -575,9 +595,9 @@ bool match_grid(std::string_view property, const token_stream & ts, const scan &
     return true;
 }
 
-// A canonical <grid-line> that is a custom ident and nothing else - which an
-// omitted line copies (CSS Grid 2 §8.4): one ident token. `--a`, `-a-` and
-// the escaped `\31 st` are idents; `-3` is an integer, `span a` two tokens.
+/// Whether a canonical <grid-line> is a custom ident and nothing else, which
+/// is what an omitted line copies (CSS Grid 2 §8.4). `--a`, `-a-` and the
+/// escaped `\31 st` are idents; `-3` is an integer, `span a` two tokens.
 [[nodiscard]] bool ident_only_line(const std::string & line) {
     const token_stream s = tokenize(line);
     return s.tokens.size() == 2 && s.tokens[0].type == token_type::ident &&
@@ -636,7 +656,7 @@ std::string fold_grid_lines(std::span<const std::string> lines) {
 
 } // namespace detail
 
-// --- grid-template and grid, CSS Grid 2 §7.4 and §7.8 ------------------------
+// grid-template and grid, CSS Grid 2 §7.4 and §7.8:
 //
 //   grid-template = none | [ <'grid-template-rows'> / <'grid-template-columns'> ]
 //                 | [ <line-names>? <string> <track-size>? <line-names>? ]+
@@ -650,7 +670,7 @@ std::string fold_grid_lines(std::span<const std::string> lines) {
 
 namespace {
 
-// The significant indices of `value` split at its top-level `/`s.
+/// The significant indices of `ts` split at its top-level `/`s.
 [[nodiscard]] std::vector<std::vector<std::size_t>> slash_parts(const token_stream & ts) {
     std::vector<std::vector<std::size_t>> parts{{}};
     int depth = 0;
@@ -671,15 +691,16 @@ namespace {
     return parts;
 }
 
-// The source text of some significant tokens, as their own value.
+/// The source text of some significant tokens, as their own value.
 [[nodiscard]] std::string part_text(const token_stream & ts, std::span<const std::size_t> at) {
     if (at.empty()) { return {}; }
     cursor c{ts, std::vector<std::size_t>(at.begin(), at.end()), 0};
     return std::string{c.slice(0, at.size())};
 }
 
-// A track list longhand's canonical value for some tokens: `explicit` refuses
-// an auto repeat and `none`, as the list after a grid-template's areas does.
+/// A track-list longhand's canonical value for some tokens. `explicit_only`
+/// refuses an auto repeat and `none`, as the list after grid-template's areas
+/// does.
 [[nodiscard]] std::optional<std::string> track_list_of(const token_stream & ts,
                                                        std::span<const std::size_t> at,
                                                        bool explicit_only) {
@@ -695,7 +716,7 @@ namespace {
     return list;
 }
 
-// The names of one `[ ... ]` into `names`; false for a malformed block.
+/// Appends the names of one `[ ... ]` to `names`; false for a malformed block.
 [[nodiscard]] bool gather_names(cursor & c, std::vector<std::string> & names) {
     const std::optional<std::string> block = line_names(c);
     if (!block) { return false; }
@@ -707,6 +728,7 @@ namespace {
     return true;
 }
 
+/// Writes `names` as one `[...]` block, or empty when there are none.
 [[nodiscard]] std::string names_text(std::span<const std::string> names) {
     if (names.empty()) { return {}; }
     std::string out = "[";
@@ -714,12 +736,13 @@ namespace {
     return out + "]";
 }
 
-// grid-template's areas form: `[names]? "row" size? [names]?` per row, each
-// row's trailing names and the next row's leading ones one line's names.
+/// Splits grid-template's areas form, `[names]? "row" size? [names]?` per row,
+/// into rows, columns (`none`) and areas. A row's trailing names and the next
+/// row's leading names belong to the same grid line.
 [[nodiscard]] bool split_template_areas(const token_stream & ts, std::span<const std::size_t> at,
                                         std::vector<std::string> & out) {
     cursor c{ts, std::vector<std::size_t>(at.begin(), at.end()), 0};
-    std::vector<std::vector<std::string>> lines{{}}; // line names, one entry per grid line
+    std::vector<std::vector<std::string>> lines{{}}; // Line names, one entry per grid line.
     std::vector<std::string> sizes;
     std::string strings;
     while (!c.done()) {
@@ -754,14 +777,15 @@ namespace {
     return true;
 }
 
-// A rows longhand as the rows of an areas form - `[names]` before each size
-// and after the last - or nullopt when it is not one: a repeat(), or a
-// different number of rows from the areas'.
+/// One row of the areas form of grid-template, as fold_grid_template writes it.
 struct template_row {
-    std::string before; // the names on the line above, first row only
+    std::string before; // The names on the line above; first row only.
     std::string size;
-    std::string after; // the names on the line below
+    std::string after; // The names on the line below.
 };
+
+/// A rows longhand read as the rows of an areas form, or nullopt when it
+/// cannot be one (it contains a repeat()).
 
 [[nodiscard]] std::optional<std::vector<template_row>> template_rows(std::string_view rows) {
     const token_stream ts = tokenize(rows);
@@ -831,7 +855,7 @@ std::string fold_grid_template(std::span<const std::string> v) {
         if (ascii_iequals(rows, "none") && ascii_iequals(columns, "none")) { return "none"; }
         return rows + " / " + columns;
     }
-    // THE AREAS FORM, which spells each row beside its string - so it exists
+    // The areas form spells each row's size beside its string, so it exists
     // only when the rows are one size per string, with no repeat() among them.
     const std::optional<std::vector<template_row>> each = template_rows(rows);
     const token_stream strings = tokenize(areas);
@@ -865,7 +889,7 @@ bool split_grid(std::string_view value, std::vector<std::string> & out) {
     const token_stream ts = tokenize(value);
     const std::vector<std::vector<std::size_t>> parts = slash_parts(ts);
     if (parts.size() != 2) { return false; }
-    // `[ auto-flow && dense? ] <track-size>*` - the auto-flow side.
+    // `[ auto-flow && dense? ] <track-size>*`: the auto-flow side.
     const auto flow_side = [&](std::span<const std::size_t> at, std::string & dense,
                                std::string & sizes) {
         std::vector<std::size_t> rest;

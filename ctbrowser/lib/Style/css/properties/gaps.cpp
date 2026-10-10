@@ -1,5 +1,7 @@
-// CSS Gap Decorations 1's rule lists, parsed, split, folded and computed -
-// no painting:
+//===- gaps.cpp - Gap rule lists ------------------------------ -*- C++ -*-===//
+//
+// CSS Gap Decorations 1's rule lists, parsed, split, folded and computed (no
+// painting):
 //
 //   column-rule-width, row-rule-width    [ <line-width> | <repeat> ]#
 //   column-rule-style, row-rule-style    the same over <line-style>
@@ -10,8 +12,10 @@
 //
 // where <repeat> is `repeat( <integer [1,∞]> | auto , <value># )` and a list
 // holds at most one `repeat(auto, ...)`. The shorthand's three lists keep the
-// shorthand's shape - `repeat(4, blue, 5px red)` is widths `repeat(4, medium,
-// 5px)` - and fold back only when all three still have it.
+// shorthand's shape (`repeat(4, blue, 5px red)` gives widths `repeat(4,
+// medium, 5px)`) and fold back only when all three still have it.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -21,9 +25,10 @@ using namespace detail;
 
 namespace {
 
-// One comma-separated item: a plain value, or a repeat() of several.
+/// One comma-separated item: a plain value, or a repeat() of several.
 struct gap_item {
-    std::string count; // empty for a plain value; `auto` or the integer as written
+    /// Empty for a plain value; otherwise `auto` or the integer as written.
+    std::string count;
     std::vector<std::string> values;
 };
 using gap_list = std::vector<gap_item>;
@@ -31,7 +36,8 @@ using gap_list = std::vector<gap_item>;
 constexpr std::string_view line_styles =
     "none hidden dotted dashed solid double groove ridge inset outset";
 
-// The list, each value through `one`; nullopt when it is not one.
+/// Parses a gap list, validating and serialising each value through `one`;
+/// nullopt when the text is not a valid list.
 template <typename One>
 [[nodiscard]] std::optional<gap_list> parse_list(std::string_view text, One && one) {
     static const property_syntax count_syntax{"", value_kind::integer, "", "", false, true};
@@ -69,6 +75,7 @@ template <typename One>
     return out;
 }
 
+/// Writes a parsed gap list back as text.
 [[nodiscard]] std::string serialize_list(const gap_list & list) {
     std::string out;
     for (const gap_item & item : list) {
@@ -84,7 +91,7 @@ template <typename One>
     return out;
 }
 
-// `<line-width>`: a non-negative length or one of the three keywords.
+/// `<line-width>`: a non-negative length or one of the three keywords.
 [[nodiscard]] std::optional<std::string> line_width(std::string_view part) {
     static const property_syntax syntax{"",  value_kind::length, "thin medium thick", "", false,
                                         true};
@@ -93,20 +100,21 @@ template <typename One>
     return out;
 }
 
+/// `<line-style>`: one of the border style keywords, lowercased.
 [[nodiscard]] std::optional<std::string> line_style(std::string_view part) {
     if (words_of(part).size() != 1 || !has_keyword(line_styles, part)) { return std::nullopt; }
     return ascii_lower_copy(part);
 }
 
-// A `<color>`, by the grammar every colour property has.
+/// A `<color>`, by the grammar every colour property has.
 [[nodiscard]] std::optional<std::string> line_color(std::string_view part) {
     const value_check checked = check_declaration("text-decoration-color", part, false);
     if (!checked.valid || is_wide_keyword(checked.serialized)) { return std::nullopt; }
     return checked.serialized;
 }
 
-// `<gap-rule>`: each of the three at most once, in any order; the omitted
-// ones are their longhands' initial values.
+/// `<gap-rule>`: width, style and colour, each at most once, in any order;
+/// the omitted ones are their longhands' initial values.
 [[nodiscard]] std::optional<std::array<std::string, 3>> gap_rule(std::string_view text) {
     std::array<std::string, 3> out;
     const std::vector<std::string_view> parts = words_of(text);
@@ -128,8 +136,8 @@ template <typename One>
     return out;
 }
 
-// One gap rule written back: the parts that are not initial, `medium` when
-// none is.
+/// One gap rule written back: the parts that are not initial, or `medium`
+/// when all are.
 [[nodiscard]] std::string gap_rule_text(std::string_view width, std::string_view style,
                                         std::string_view color) {
     std::string out;
@@ -143,6 +151,7 @@ template <typename One>
     return out.empty() ? std::string{"medium"} : out;
 }
 
+/// The identity value parser, for lists that are already valid.
 [[nodiscard]] std::optional<std::string> as_written(std::string_view part) {
     return std::string{part};
 }
@@ -172,8 +181,9 @@ bool split_gap_rule(std::string_view value, std::vector<std::string> & out) {
     const std::optional<gap_list> rules = parse_list(value, [](std::string_view part) {
         const std::optional<std::array<std::string, 3>> rule = gap_rule(part);
         if (!rule) { return std::optional<std::string>{}; }
-        // Carried through the list as one string, split again below: the
-        // three are joined by a byte no value can contain.
+        // Carried through the list as one string and split again below: the
+        // three are joined by 0x1F (ASCII unit separator), which no value
+        // can contain.
         return std::optional<std::string>{(*rule)[0] + '\x1f' + (*rule)[1] + '\x1f' + (*rule)[2]};
     });
     if (!rules) { return false; }

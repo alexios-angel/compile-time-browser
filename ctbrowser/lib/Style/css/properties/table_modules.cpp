@@ -1,10 +1,14 @@
-// The rest of the property table, grouped by CSS module: every property the
-// parsing and inheritance corpus tests that table.cpp's core set does not
-// carry. Each row is the property's initial value and inheritance from its
-// module's specification; the grammar is `freeform` until modelled, because
-// a name absent from the table is an expando on `el.style` (CSSOM §6.7.2)
-// and a property with no row has no initial value for getComputedStyle to
-// publish - the two halves of `inheritance.html`.
+//===- table_modules.cpp - Module property rows --------------- -*- C++ -*-===//
+//
+// The rest of the property table, grouped by CSS module: every property that
+// the WPT parsing and inheritance tests use and table.cpp does not list. Each
+// row gives the initial value and inheritance from the module's spec. The
+// grammar stays `freeform` until it is modelled. A row is needed even so:
+// without one, `el.style.name` is an expando (CSSOM §6.7.2) and
+// getComputedStyle has no initial value to report, the two things each
+// module's WPT inheritance.html checks.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -14,6 +18,9 @@ using namespace detail;
 
 namespace {
 
+/// Each row: {name, value kind, keywords (for keyword_only), initial value,
+/// inherited, nonnegative, shorthand}. See property_syntax in
+/// include/ctbrowser/style/css/properties.hpp.
 constexpr property_syntax modules[] = {
     // --- CSS Animations 1 and 2, Scroll-driven Animations ------------------
     {"animation-timing-function", k::freeform, "", "ease", false, false},
@@ -67,8 +74,8 @@ constexpr property_syntax modules[] = {
     {"mask-size", k::freeform, "", "auto", false, true},
     {"mask-composite", k::freeform, "", "add", false, false},
     {"mask-type", k::keyword_only, "luminance alpha", "luminance", false, false},
-    // CSS Masking 1 §8: a border image used as a mask - border-image's
-    // grammars (declaration.cpp), a nothing-sliced initial, and a mode.
+    // CSS Masking 1 §8: a border image used as a mask, with border-image's
+    // grammars (declaration.cpp), an initial slice of 0 and a mode.
     {"mask-border", k::freeform, "", "none", false, false, true},
     {"mask-border-source", k::freeform, "", "none", false, false},
     {"mask-border-slice", k::number_percentage, "", "0", false, true},
@@ -114,7 +121,7 @@ constexpr property_syntax modules[] = {
     {"column-wrap", k::keyword_only, "auto wrap nowrap", "auto", false, false},
     {"column-fill", k::keyword_only, "auto balance balance-all", "balance", false, false},
     // CSS Gap Decorations 1: a rule in every gap, columns and rows alike. The
-    // width, style and colour are LISTS - `10px, repeat(auto, thin)` - whose
+    // width, style and colour are lists (`10px, repeat(auto, thin)`) whose
     // grammar is gaps.cpp's; `rule` and the other `rule-*` shorthands set
     // the column and the row property together.
     {"column-rule", k::freeform, "", "medium none currentcolor", false, false, true},
@@ -218,7 +225,7 @@ constexpr property_syntax modules[] = {
     {"scroll-padding-inline-end", k::length_percentage, "auto", "auto", false, true},
     // CSS Overflow 5 §scroll-axis-lock: `auto | none`, whether a scroll
     // gesture sticks to the axis it began on. Nothing scrolls by gesture
-    // here, so it is a value and no behaviour (scroll-axis-lock-computed).
+    // here, so it is a value and no behaviour (WPT scroll-axis-lock-computed).
     {"scroll-axis-lock", k::keyword_only, "auto none", "auto", false, false},
     {"overscroll-behavior", k::freeform, "", "auto", false, false, true},
     {"overscroll-behavior-x", k::keyword_only, "contain none auto chain", "auto", false, false},
@@ -258,12 +265,11 @@ constexpr property_syntax modules[] = {
     {"-webkit-border-bottom-left-radius", k::freeform, "", "0px", false, true},
     {"margin-trim", k::freeform, "", "none", false, false}, // keywords.cpp
     {"contain", k::freeform, "", "none", false, false},
-    // CSS Conditional 5 §4: the container queries' two longhands and their
-    // shorthand. `CSS.supports("container-type:size")` is how every
-    // css-conditional container-query file asks whether they exist (110 of
-    // them were HARNESS_ERROR while these were unknown); the engine has
-    // evaluated `@container` against them since before they were in the
-    // table. Grammars in keywords.cpp, the split in shorthands.cpp.
+    // CSS Conditional 5 §4: the container-query longhands and their
+    // shorthand. WPT container-query tests check
+    // `CSS.supports("container-type:size")` before running, so these rows
+    // must exist. The grammars are in keywords.cpp; the shorthand split is
+    // split_slash_pair in shorthands/split.cpp.
     {"container-type", k::freeform, "", "normal", false, false},
     {"container-name", k::freeform, "", "none", false, false},
     {"container", k::freeform, "", "none", false, false, true},
@@ -403,6 +409,7 @@ constexpr property_syntax modules[] = {
 
 namespace detail {
 
+/// The rows above; every_property() in table.cpp appends them to its own.
 std::span<const property_syntax> module_properties() noexcept {
     return std::span<const property_syntax>{modules, std::size(modules)};
 }

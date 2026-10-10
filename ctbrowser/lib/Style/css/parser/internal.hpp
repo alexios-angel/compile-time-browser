@@ -1,3 +1,10 @@
+//===- lib/Style/css/parser/internal.hpp - CSS parser internals -*- C++ -*-===//
+//
+// The CSS parser class shared by the parser's .cpp files: CSS Syntax Level 3
+// §5 (parsing) over the §4 tokens, plus the at-rules the engine understands.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include <ctbrowser/style/css/parser.hpp>
@@ -24,7 +31,7 @@
 // a `;` inside `url(...)` is a child of a component value and is never seen by the
 // declaration splitter, and a `}` inside a string is a token rather than a brace.
 //
-// A BLOCK'S CONTENTS ARE DECLARATIONS AND RULES, MIXED (CSS Syntax 3 §5.4.4,
+// A block's contents are declarations and rules, mixed (CSS Syntax 3 §5.4.4,
 // the nesting revision): a style rule's block may hold nested style rules and
 // nested conditional groups, and a conditional group's block may hold bare
 // declarations that belong to the enclosing style rule. So every block goes
@@ -32,8 +39,8 @@
 // by the context it runs in - a style rule's selectors, an `@scope`, or
 // nothing at all at the top level.
 //
-// THE CONDITIONAL GROUPS: `@media` records a condition the engine evaluates
-// against the environment as it changes; `@supports` is decided HERE, once,
+// The conditional groups: `@media` records a condition the engine evaluates
+// against the environment as it changes; `@supports` is decided here, once,
 // since what a property table accepts does not change with the window; and
 // `@container` is deferred to the engine, which is the only thing that can ask
 // layout for the container's size. `@layer` names a cascade layer and `@scope`
@@ -41,8 +48,8 @@
 
 namespace ctbrowser::style::css::parser_detail {
 
-// The at-rules this recognises. Everything else with a block has its block
-// skipped, and everything else without one is consumed to the `;`.
+/// The at-rules this recognises. Everything else with a block has its block
+/// skipped, and everything else without one is consumed to the `;`.
 enum class at_kind {
     media,
     supports,
@@ -58,8 +65,11 @@ enum class at_kind {
     skip
 };
 
+/// Classifies an at-rule name (without the `@`), ASCII case-insensitively.
 [[nodiscard]] at_kind at_kind_of(std::string_view name);
 
+/// A CSS Syntax 3 parser over one tokenised source. Construct it, then call
+/// exactly one of the take_* entry points, which moves the result out.
 class parser {
 public:
     parser(std::string_view css, atom_table & atoms) : atoms_(&atoms) {
@@ -69,13 +79,14 @@ public:
         sheet_.source_length = stream.source_length;
     }
 
+    /// Parses the source as a whole stylesheet.
     [[nodiscard]] stylesheet take_stylesheet() {
         consume_rule_list(/*top_level=*/true);
         return std::move(sheet_);
     }
 
-    // A selector list on its own: no braces, no declarations. `invalid` comes back
-    // set when the text is not a selector at all.
+    /// Parses a selector list on its own: no braces, no declarations. `invalid`
+    /// comes back set when the text is not a selector at all.
     [[nodiscard]] stylesheet take_selector_list(bool & invalid,
                                                 const std::vector<namespace_declaration> * ns,
                                                 const nesting_context * nesting,
@@ -93,7 +104,7 @@ public:
         return std::move(sheet_);
     }
 
-    // A style attribute: declarations, no braces, no selector.
+    /// Parses a style attribute: declarations, no braces, no selector.
     [[nodiscard]] stylesheet take_declaration_list() {
         std::vector<component_value> run;
         while (!at_eof()) { run.push_back(consume_component_value()); }
@@ -104,9 +115,9 @@ public:
 private:
     [[nodiscard]] const css_token & here() const { return sheet_.tokens[at_]; }
 
-    // The prefix is an ident and the URL a string or a `url()` - either token
-    // shape, since `url("x")` is a function around a string. Anything else is
-    // not a namespace rule and declares nothing.
+    /// Records `@namespace [<prefix>]? <url>;`. The prefix is an ident and the
+    /// URL a string or a `url()` - either token shape, since `url("x")` is a
+    /// function around a string. Anything else declares nothing.
     void record_namespace(std::span<const component_value> prelude) {
         namespace_declaration made;
         bool have_uri = false;
@@ -142,10 +153,11 @@ private:
         if (have_uri) { sheet_.namespaces.push_back(std::move(made)); }
     }
 
-    // `@import <url> [layer | layer(...)]? [supports(...)]? <media-query-list>?`,
-    // CSS Cascade 5 §5, at `at_` = its `;` (or EOF). Only while the leading run
-    // is open, and only for an `@import` that is a source slice: one rebuilt
-    // from an escape has no byte position and cannot be spliced out.
+    /// Records `@import <url> [layer | layer(...)]? [supports(...)]?
+    /// <media-query-list>?` (CSS Cascade 5 §5), called with `at_` on its `;`
+    /// (or EOF). Only while the leading run is open, and only for an `@import`
+    /// that is a source slice: one rebuilt from an escape has no byte position
+    /// and cannot be spliced out.
     void record_import(std::size_t at_token, std::span<const component_value> prelude) {
         if (!leading_ || sheet_.tokens[at_token].text >= sheet_.source_length) {
             leading_ = false;
@@ -225,7 +237,7 @@ private:
         }
         sheet_.imports.push_back(std::move(made));
     }
-    // A string token's body, or a url token as it is.
+    /// A string token's body, or a url token as it is.
     [[nodiscard]] std::string_view unquoted(const css_token & t) const {
         const std::string_view raw = text(t);
         return t.type == token_type::string && raw.size() >= 2 ? raw.substr(1, raw.size() - 2)
@@ -238,9 +250,9 @@ private:
         while (here().type == token_type::whitespace) { ++at_; }
     }
 
-    // §5.4.1, in both modes. `top_level` only decides whether CDO/CDC are ignored:
-    // they are the HTML comment delimiters a 1990s page wrapped its stylesheet in,
-    // and inside a rule they are a parse error rather than nothing.
+    /// CSS Syntax 3 §5.4.1, in both modes. `top_level` only decides whether CDO/CDC are ignored:
+    /// they are the HTML comment delimiters a 1990s page wrapped its stylesheet
+    /// in, and inside a rule they are a parse error rather than nothing.
     void consume_rule_list(bool top_level) {
         for (;;) {
             const token_type t = here().type;
@@ -270,8 +282,8 @@ private:
         }
     }
 
-    // §5.4.2, at the top level. The prelude is a selector list; the block's
-    // contents are declarations and nested rules.
+    /// CSS Syntax 3 §5.4.2, at the top level. The prelude is a selector list;
+    /// the block's contents are declarations and nested rules.
     void consume_qualified_rule() {
         leading_ = false;
         std::vector<component_value> prelude;
@@ -303,19 +315,19 @@ private:
         style_rule(span_of(prelude), block);
     }
 
-    // WHAT A BLOCK IS PARSED INSIDE OF. The enclosing style rule's selectors
-    // are what `&` and an implicit `&` stand for and what a bare declaration
-    // in a nested `@media` belongs to; inside `@scope` with no style rule
-    // between, `&` is `:where(:scope)` and a bare declaration styles the
-    // scoping root. Copied rather than viewed: the sheet's selector vector
-    // moves while the children are parsed.
+    /// What a block is parsed inside of. The enclosing style rule's selectors
+    /// are what `&` and an implicit `&` stand for and what a bare declaration
+    /// in a nested `@media` belongs to; inside `@scope` with no style rule
+    /// between, `&` is `:where(:scope)` and a bare declaration styles the
+    /// scoping root. Copied rather than viewed: the sheet's selector vector
+    /// moves while the children are parsed.
     struct block_context {
         std::vector<compiled_selector> parent;
         bool in_scope = false;
     };
 
-    // A style rule, top-level or nested: compile the selector list in the
-    // current context, then walk the block with THIS rule as the context.
+    /// A style rule, top-level or nested: compiles the selector list in the
+    /// current context, then walks the block with this rule as the context.
     void style_rule(std::span<const component_value> prelude, const component_value & block) {
         const std::uint32_t first_selector = static_cast<std::uint32_t>(sheet_.selectors.size());
         const nesting_context nesting{context_.parent, context_.in_scope};
@@ -324,10 +336,10 @@ private:
         const std::uint32_t count =
             parse_selector_list(sheet_, prelude, *atoms_, &invalid, nested ? &nesting : nullptr);
         invalid = invalid || std::ranges::any_of(prelude, &component_value::too_deep);
-        // A SELECTOR LIST WITH ONE INVALID SELECTOR IS INVALID WHOLE (Selectors
+        // A selector list with one invalid selector is invalid whole (Selectors
         // 4 §3.1), and a style rule whose prelude is not a <selector-list> is
         // dropped with its block (CSS Syntax 3 §9) - `#a::before.x, #a {}`
-        // styles nothing. An alternative this engine cannot MATCH is not
+        // styles nothing. An alternative this engine cannot match is not
         // invalid and stays, dead; only a syntax error drops the rule.
         if (invalid) {
             sheet_.selectors.resize(first_selector);
@@ -344,26 +356,23 @@ private:
         context_ = saved;
     }
 
-    // §5.4.4, "consume a block's contents": declarations and rules, mixed.
-    //
-    // THE DECLARATIONS ARE EMITTED IN RUNS. `.a { color: red; .b { } color:
-    // blue }` is a rule, a nested rule, and a second run of declarations that
-    // CSS Nesting 1 §4 calls a nested declarations rule - and the runs must
-    // keep their place in source order, because the nested rule's
-    // declarations sit between them in the cascade's final tie-break. So each
-    // run becomes a raw_rule of its own under the same selectors, with the
-    // declaration order counter running through the whole block in sequence.
-    //
-    // THE RUN IS COPIED, AND THAT COPY IS THE FIX FOR A HEAP-USE-AFTER-FREE.
-    // `incoming` is a span INTO `sheet_.values`, and every declaration this
-    // emits APPENDS to that vector, so the first reallocation frees the buffer
-    // the span points at. It looked harmless because the freed bytes still
-    // held the old values; an ASAN build said otherwise, on the UA stylesheet.
-    // Measured on bootstrap.css at about four percent of the parse.
-    //
-    // `first_selector`/`selector_count` are the selectors a run of
-    // declarations belongs to; none at the top level or in a bare
-    // conditional group, where a bare declaration is dropped (§5.4.4).
+    /// CSS Syntax 3 §5.4.4, "consume a block's contents": declarations and
+    /// rules, mixed.
+    ///
+    /// The declarations are emitted in runs. `.a { color: red; .b { } color:
+    /// blue }` is a rule, a nested rule, and a second run of declarations that
+    /// CSS Nesting 1 §4 calls a nested declarations rule - and the runs must
+    /// keep their place in source order, because the nested rule's
+    /// declarations sit between them in the cascade's final tie-break. So each
+    /// run becomes a raw_rule of its own under the same selectors, with the
+    /// declaration order counter running through the whole block in sequence.
+    ///
+    /// `incoming` points into `sheet_.values`, which this appends to, so it is
+    /// copied first; see emit_declarations.
+    ///
+    /// `first_selector`/`selector_count` are the selectors a run of
+    /// declarations belongs to; none at the top level or in a bare
+    /// conditional group, where a bare declaration is dropped (§5.4.4).
     void consume_block_contents(std::span<const component_value> incoming,
                                 std::uint32_t first_selector, std::uint32_t selector_count) {
         const std::vector<component_value> owned{incoming.begin(), incoming.end()};
@@ -426,7 +435,7 @@ private:
                     ++nesting_;
                     at_rule_block_of(name, prelude, run[end]);
                     --nesting_;
-                    // The nested rules wrote THEIR declarations after ours:
+                    // The nested rules wrote their declarations after ours:
                     // the next run of ours starts past them.
                     run_first = static_cast<std::uint32_t>(sheet_.declarations.size());
                     i = end + 1;
@@ -438,7 +447,7 @@ private:
                 }
                 continue;
             }
-            // A DECLARATION OR A NESTED STYLE RULE. Try the declaration first,
+            // A declaration or a nested style rule. Try the declaration first,
             // as §5.4.4 does: an ident, a colon, and a value up to the next
             // `;` that holds no `{}` block - unless the property is custom, whose
             // value may hold anything. What fails that is a qualified rule whose
@@ -481,13 +490,13 @@ private:
         flush();
     }
 
-    // The token at a run's front, when the front IS a single token.
+    /// The token at a run's front, when the front is a single token; else null.
     [[nodiscard]] const css_token * token_at(std::span<const component_value> run) const {
         if (run.empty() || run.front().kind != cv_kind::token) { return nullptr; }
         return &sheet_.tokens[run.front().token];
     }
 
-    // The text of a run of component values: every token's text, joined.
+    /// The text of a run of component values: every token's text, joined.
     [[nodiscard]] std::string text_of_run(std::span<const component_value> run) const {
         std::string out;
         if (run.empty()) { return out; }
@@ -497,26 +506,29 @@ private:
         return out;
     }
 
-    // `<layer-name>`: `<ident> [ '.' <ident> ]*` with nothing between, CSS
-    // Cascade 5 §6.4.1. `run` is one comma-separated piece, trimmed.
+    /// Reads a `<layer-name>`: `<ident> [ '.' <ident> ]*` with nothing between
+    /// (CSS Cascade 5 §6.4.1). `run` is one comma-separated piece, trimmed.
     [[nodiscard]] bool layer_name_of(std::span<const component_value> run, std::string & out) const;
 
-    // FILE A LAYER, and every ancestor it implies, in first-appearance order:
-    // `@layer a.b` declares `a` then `a.b`. Names are relative to the layer
-    // being parsed inside of. Returns the 1-based index of the leaf.
+    /// Files a layer, and every ancestor it implies, in `sheet_.layers` in
+    /// first-appearance order: `@layer a.b` declares `a` then `a.b`. Names are
+    /// relative to the layer being parsed inside of. Returns the 1-based index
+    /// of the leaf, so that 0 can mean "no layer" elsewhere.
     [[nodiscard]] std::uint32_t declare_layer(std::string_view name);
 
-    // `@layer a, b.c;` - every name declared, in order; a bad name makes the
-    // whole statement invalid and declares nothing.
+    /// `@layer a, b.c;` - every name declared, in order; a bad name makes the
+    /// whole statement invalid and declares nothing.
     void layer_statement(std::span<const component_value> prelude);
 
-    // A BLOCK AT-RULE'S BODY, wherever it sits: the conditional groups walk
-    // their contents in the enclosing context - a nested `@media` in a style
-    // rule keeps the rule's selectors for `&` and for its bare declarations -
-    // and the rest are collected or skipped.
+    /// A block at-rule's body, wherever it sits: the conditional groups walk
+    /// their contents in the enclosing context - a nested `@media` in a style
+    /// rule keeps the rule's selectors for `&` and for its bare declarations -
+    /// and the rest are collected or skipped.
     void at_rule_block_of(std::string_view name, std::span<const component_value> prelude,
                           const component_value & block);
 
+    /// Appends `condition` to the sheet's condition table and runs `body` with
+    /// it as the current condition.
     template <typename F> void push_condition(media_condition condition, const F & body) {
         sheet_.conditions.push_back(std::move(condition));
         const std::uint32_t saved = condition_;
@@ -525,27 +537,28 @@ private:
         condition_ = saved;
     }
 
-    // `@scope [(<scope-start>)]? [to (<scope-end>)]? { }`, CSS Cascade 6 §3.
-    // The start is compiled in the enclosing context - a nested scope's
-    // `:scope` and a relative selector refer to the outer root - and the end
-    // relative to this scope's root. Anything else in the prelude makes the
-    // rule invalid.
+    /// `@scope [(<scope-start>)]? [to (<scope-end>)]? { }`, CSS Cascade 6 §3.
+    /// The start is compiled in the enclosing context - a nested scope's
+    /// `:scope` and a relative selector refer to the outer root - and the end
+    /// relative to this scope's root. Anything else in the prelude makes the
+    /// rule invalid.
     void scope_block_of(std::span<const component_value> prelude, const component_value & block);
 
-    // §5.4.3, at the top level.
+    /// CSS Syntax 3 §5.4.3, at the top level.
     void consume_at_rule();
 
-    // CSS Animations 1 §4. The prelude is one `<keyframes-name>` - a custom
-    // ident or a string - and the block is a list of keyframe blocks, each a
-    // `<keyframe-selector>#` prelude and a declaration block. The rule's
-    // `{...}` was consumed as ONE component value, so its children are the
-    // keyframe preludes' tokens with each keyframe's `{...}` as a nested block:
-    // walked here rather than re-tokenised. A block whose selector list has a
-    // token the grammar refuses is dropped, and only that block.
+    /// Records `@keyframes` (CSS Animations 1 §4). The prelude is one
+    /// `<keyframes-name>` - a custom ident or a string - and the block is a
+    /// list of keyframe blocks, each a `<keyframe-selector>#` prelude and a
+    /// declaration block. The rule's `{...}` was consumed as one component
+    /// value, so its children are the keyframe preludes' tokens with each
+    /// keyframe's `{...}` as a nested block: walked here rather than
+    /// re-tokenised. A block whose selector list has a token the grammar
+    /// refuses is dropped, and only that block.
     void record_keyframes(std::span<const component_value> prelude, const component_value & block);
 
-    // §5.4.7. A block or a function owns its children; a preserved token is one
-    // component value on its own.
+    /// CSS Syntax 3 §5.4.7. A block or a function owns its children; a
+    /// preserved token is one component value on its own.
     [[nodiscard]] component_value consume_component_value() {
         const css_token & t = here();
         if (t.type == token_type::open_curly || t.type == token_type::open_paren ||
@@ -561,23 +574,24 @@ private:
         return v;
     }
 
+    /// The closing token that matches opener `open`.
     [[nodiscard]] static token_type closer_for(token_type open) {
         if (open == token_type::open_curly) { return token_type::close_curly; }
         if (open == token_type::open_square) { return token_type::close_square; }
         return token_type::close_paren;
     }
 
-    // §5.4.8. Children are gathered into a scratch vector and then appended to
-    // sheet_.values in ONE run, because the vector reallocates while nested blocks
-    // are being consumed - so a child's index is only stable once its whole run is
-    // in place.
-    //
-    // NESTING IS CAPPED at max_depth: both recurse once per level, and thirty
-    // thousand `(` in one declaration would otherwise overflow the C++ stack.
-    // Past the cap the value is skipped whole, to its matching closer, and
-    // marked too_deep, which invalidates whatever declaration holds it.
+    /// Nesting cap for consume_block and consume_function (CSS Syntax 3 §5.4.8
+    /// and §5.4.9). Both recurse once per level, and thirty thousand `(` in one
+    /// declaration would otherwise overflow the C++ stack. Past the cap the
+    /// value is skipped whole, to its matching closer, and marked too_deep,
+    /// which invalidates whatever declaration holds it.
     static constexpr int max_depth = 128;
 
+    /// CSS Syntax 3 §5.4.8. Children are gathered into a scratch vector and
+    /// then appended to sheet_.values in one run, because the vector
+    /// reallocates while nested blocks are being consumed - so a child's index
+    /// is only stable once its whole run is in place.
     [[nodiscard]] component_value consume_block() {
         const std::size_t open_index = at_;
         const token_type open = here().type;
@@ -600,8 +614,8 @@ private:
         return v;
     }
 
-    // §5.4.9. `name(` was one token, so the function's name is the token's text
-    // minus the trailing `(`.
+    /// CSS Syntax 3 §5.4.9. `name(` was one token, so the function's name is
+    /// the token's text minus the trailing `(`.
     [[nodiscard]] component_value consume_function() {
         const std::size_t name_index = at_;
         if (depth_ >= max_depth) { return skip_too_deep(cv_kind::function, '('); }
@@ -621,8 +635,9 @@ private:
         return v;
     }
 
-    // A block or function past max_depth: its tokens up to the matching closer,
-    // counted with an explicit stack of closers rather than by recursing.
+    /// A block or function past max_depth: its tokens up to the matching
+    /// closer, counted with an explicit stack of closers rather than by
+    /// recursing.
     [[nodiscard]] component_value skip_too_deep(cv_kind kind, char open) {
         component_value v;
         v.kind = kind;
@@ -644,6 +659,8 @@ private:
         return v;
     }
 
+    /// Appends `children` to sheet_.values as `v`'s child run and propagates
+    /// too_deep from them.
     void attach(component_value & v, const std::vector<component_value> & children) {
         v.too_deep = std::ranges::any_of(children, &component_value::too_deep);
         if (children.empty()) { return; }
@@ -657,45 +674,24 @@ private:
         return std::span<const component_value>{v};
     }
 
+    /// An at-keyword token's name without the leading `@`.
     [[nodiscard]] std::string_view value_of_at(const css_token & t) const {
         std::string_view raw = text(t);
         if (!raw.empty() && raw.front() == '@') { raw.remove_prefix(1); }
         return raw;
     }
 
-    // §5.4.4/§5.4.5, over component values rather than tokens: split on top-level
-    // semicolons, then `ident : value`. A `;` inside a function or a block is a
-    // CHILD and is invisible here, which is the whole point.
-    // THE RUN IS COPIED, AND THAT COPY IS THE FIX FOR A HEAP-USE-AFTER-FREE.
-    //
-    // `run` arrives as `sheet_.children_of(block)`, a span INTO `sheet_.values`.
-    // Every declaration this loop emits APPENDS to that same vector, so the
-    // first reallocation frees the buffer `run` points at - and the next
-    // iteration's `is_semicolon(run[end])` reads it. The append itself was a
-    // self-aliasing `insert` for the same reason, which the standard does not
-    // allow either.
-    //
-    // It looked harmless because it is: the freed bytes still hold the old
-    // component values, so every golden matches and no test has ever failed on
-    // it. An ASAN build says otherwise, and it fires on the UA stylesheet -
-    // which is to say on EVERY browser construction. 29 of the 52 tests in the
-    // asan preset could not run.
-    //
-    // Copying once, here, makes the span stable for the whole loop and makes
-    // the append a copy from somewhere else, which fixes both halves.
-    //
-    // IT IS NOT FREE, and the first draft of this comment said it was. Measured
-    // on bootstrap.css - 298 KB, the largest sheet in the corpus - interleaved,
-    // five pairs, the copy losing every one: parse 2.44 ms to 2.55, and parse
-    // plus file into the engine 2.80 to 2.94. About four percent, for a
-    // heap-use-after-free on every browser construction. Cheap, but say the
-    // number.
-    //
-    // Zero-copy is possible and was not done: hold (first, count) indices into
-    // `sheet_.values` rather than a span, since indices survive a reallocation
-    // and pointers do not. That is index arithmetic through three functions and
-    // a separate buffer for the append, in a parser this change had no other
-    // business being in.
+    /// CSS Syntax 3 §5.4.4/§5.4.5, over component values rather than tokens:
+    /// split on top-level semicolons, then `ident : value`. A `;` inside a
+    /// function or a block is a child and is invisible here, which is the
+    /// whole point.
+    ///
+    /// `incoming` is a span into `sheet_.values`, and each emitted declaration
+    /// appends to that vector. A reallocation would leave the span dangling,
+    /// and the append would be a self-aliasing insert. Copying the run first
+    /// avoids both (ASan caught it on the UA stylesheet). Cost: about 4% of
+    /// parse time on bootstrap.css. Holding (first, count) indices instead
+    /// would avoid the copy.
     void emit_declarations(std::span<const component_value> incoming) {
         const std::vector<component_value> owned{incoming.begin(), incoming.end()};
         const std::span<const component_value> run{owned};
@@ -713,8 +709,9 @@ private:
         return v.kind == cv_kind::token && sheet_.tokens[v.token].type == token_type::semicolon;
     }
 
+    /// Parses one `name: value [!important]` piece and appends it to
+    /// sheet_.declarations; anything that is not a declaration is dropped.
     void emit_one_declaration(std::span<const component_value> run) {
-        // Trim whitespace both ends.
         while (!run.empty() && sheet_.is_space(run.front())) { run = run.subspan(1); }
         while (!run.empty() && sheet_.is_space(run.back())) {
             run = run.subspan(0, run.size() - 1);
@@ -736,7 +733,7 @@ private:
 
         raw_declaration d;
         const std::string_view property = text(name);
-        // A CUSTOM PROPERTY keeps its case and its value verbatim: `--Foo` and
+        // A custom property keeps its case and its value verbatim: `--Foo` and
         // `--foo` are different properties, and the value is a token stream that
         // is never parsed until something reads it through var().
         d.custom = property.size() >= 2 && property[0] == '-' && property[1] == '-';
@@ -745,12 +742,11 @@ private:
         d.property = d.custom ? atoms_->intern(property) : atoms_->intern_lower(property);
 
         // `!important`, as a trailing delim `!` and ident `important` with optional
-        // whitespace between. Peeled off the VALUE rather than searched for in the
+        // whitespace between. Peeled off the value rather than searched for in the
         // text, which is what makes `content: "!important"` a string and not a
-        // priority.
-        // Walked BACKWARDS, which is the only way that stays readable: skip
-        // trailing whitespace, expect `important`, skip whitespace again, expect
-        // `!`. Anything else leaves the value exactly as it was.
+        // priority. Walked backwards: skip trailing whitespace, expect
+        // `important`, skip whitespace again, expect `!`. Anything else leaves
+        // the value exactly as it was.
         {
             std::size_t end = value.size();
             const auto skip_space_back = [&](std::size_t i) {
@@ -776,17 +772,16 @@ private:
             value = value.subspan(0, value.size() - 1);
         }
         if (value.empty()) {
-            // `--x: ;` is an EMPTY BUT VALID custom property and must substitute to
+            // `--x: ;` is an empty but valid custom property and must substitute to
             // nothing, so it is kept; an empty ordinary declaration is dropped.
             if (!d.custom) { return; }
         }
 
-        // `value` is a subspan of the copy emit_declarations owns, so this
-        // append is not self-aliasing and the span survives it. Read first
-        // regardless: it costs nothing and it is one less thing depending on a
-        // caller three frames up.
+        // `value` is a subspan of the copy emit_declarations owns, so the
+        // append below is not self-aliasing. The source span is read first
+        // anyway, so this does not depend on that caller's copy.
         auto [text_at, text_len] = source_span(value);
-        // AN EMPTY CUSTOM PROPERTY IS ONE SPACE (CSS Variables 1 §2): `--x:;`
+        // An empty custom property is one space (CSS Variables 1 §2): `--x:;`
         // and `--x: ` both read back as " " from every engine, and substitute
         // to whitespace.
         if (d.custom && text_len == 0) {
@@ -803,6 +798,7 @@ private:
         sheet_.declarations.push_back(d);
     }
 
+    /// A component value's token type and text; type eof for a non-token.
     struct component_side {
         token_type type = token_type::eof;
         std::string_view text;
@@ -813,13 +809,15 @@ private:
         return component_side{t.type, text(t)};
     }
 
-    // The value's raw source substring, which is what the cascade stores today.
-    //
-    // [token, end_token) is the value's whole extent, closing brackets included, so
-    // the span is the first token's start to the last token's end. A run is a
-    // contiguous slice of the pool only when every token came from the SOURCE half -
-    // an escape was rebuilt into the tail and appears nowhere in order - and that is
-    // rare enough (Bootstrap: never) that the fallback simply concatenates.
+    /// The value's raw source text as (offset, length) in sheet_.pool, which is
+    /// what the cascade stores.
+    ///
+    /// [token, end_token) is the value's whole extent, closing brackets
+    /// included, so the span is the first token's start to the last token's
+    /// end. A run is a contiguous slice of the pool only when every token came
+    /// from the source half - a token rebuilt from an escape lives in the tail
+    /// and appears nowhere in order - and that is rare enough (Bootstrap:
+    /// never) that the fallback simply concatenates into the tail.
     [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> source_span(
         std::span<const component_value> value) {
         if (value.empty()) { return {0, 0}; }
@@ -831,7 +829,7 @@ private:
                                 last.text < sheet_.source_length &&
                                 last.text + last.length >= first.text;
         if (contiguous) {
-            // A <url-token>'s text is its BODY: `url(` and `)` are consumed
+            // A <url-token>'s text is its body: `url(` and `)` are consumed
             // around it and not recorded, so a value beginning or ending with
             // one is widened back over them - `src: url(a.ttf)` is the whole
             // function, not `a.ttf`.
@@ -859,9 +857,10 @@ private:
             const css_token & tok = sheet_.tokens[i];
             std::string piece{text(tok)};
             if (tok.type == token_type::url) { piece = "url(" + piece + ")"; }
-            // A REBUILT IDENTIFIER IS DECODED TEXT, and is written back as an
+            // A rebuilt identifier is decoded text, and is written back as an
             // identifier: `\33 myident` decoded is `3myident`, which reads as
-            // a dimension the second time round (ident-function-computed).
+            // a dimension the second time round (WPT css-values
+            // ident-function-computed).
             if (tok.text >= sheet_.source_length && tok.type == token_type::ident) {
                 piece = serialize_identifier(piece);
             }
@@ -878,13 +877,15 @@ private:
     std::int32_t order_ = 0;
     // The `@media` a rule being parsed sits inside. 0 is the unconditional entry.
     std::uint32_t condition_ = 0;
-    // How many at-rule blocks deep the parse is; @property and @function are
-    // only collected at 1, the top level.
+    // How many at-rule blocks deep the parse is (1 = a top-level at-rule's
+    // body). @property and @function are collected at 1, and also inside an
+    // unconditioned @container or @scope (see at_rules.cpp).
     std::uint32_t nesting_ = 0;
     // The `@layer` a rule being parsed sits inside - 0 for none - and its full
     // name, which a nested `@layer` is relative to.
     std::uint32_t layer_ = 0;
     std::string layer_prefix_;
+    // Counter for the unique names given to anonymous `@layer { }` blocks.
     std::uint32_t anonymous_layers_ = 0;
     // The `@scope` a rule sits inside, 0 for none, and the index of the
     // `:where(:scope)` selector its bare declarations file under.

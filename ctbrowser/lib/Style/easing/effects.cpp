@@ -1,7 +1,17 @@
+//===- ctbrowser/lib/Style/easing/effects.cpp - Interpolation -------------===//
+//
+// Interpolation and accumulation of the visual-effect values: transform lists
+// (function by function, or through 2D and 3D matrix decomposition), filter
+// lists, and the individual `rotate` property. Section numbers without a spec
+// name refer to CSS Transforms 2.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::easing_detail {
 
+// The primitive a transform function belongs to: two functions pair for
+// interpolation only when their primitives match.
 [[nodiscard]] std::string_view primitive_of(std::string_view name) {
     if (name.starts_with("translate")) { return "translate"; }
     if (name.starts_with("scale")) { return "scale"; }
@@ -10,12 +20,13 @@ namespace ctbrowser::style::easing_detail {
     return name;
 }
 
-// A transform list, or nothing for `none`, or nullopt for one this does not
-// model - a length other than px, a percentage outside a translate - which
-// stays discrete. Every function is read into its canonical form: the 2D
-// ones as before, and the 3D ones as translate3d(), scale3d(), rotate3d(),
-// perspective() (holding the RECIPROCAL of its length, 0 for `none`, which
-// is the quantity §15 interpolates) and matrix3d().
+// A transform list, or an empty list for `none`, or nullopt for one this does
+// not model (a length other than px, a percentage outside a translate), which
+// then animates discretely. Every function is read into a canonical form so
+// the same primitive always pairs: translateX/Y as translate(), scaleX/Y as
+// scale(), rotateZ as rotate(), and the 3D ones as translate3d(), scale3d(),
+// rotate3d(), perspective() (holding the reciprocal of its length, 0 for
+// `none`, which is what CSS Transforms 2 §15 interpolates) and matrix3d().
 [[nodiscard]] std::optional<std::vector<transform_fn>> parse_transforms(std::string_view text) {
     using css::token_type;
     std::vector<transform_fn> out;
@@ -88,7 +99,6 @@ namespace ctbrowser::style::easing_detail {
         if ((fn.name == "translatez" || fn.name == "translate3d") && n >= 1 && fn.pct[n - 1] != 0) {
             return std::nullopt;
         }
-        // Canonical forms, so the same primitive always pairs.
         const auto set = [&fn](std::string name, std::vector<double> args) {
             fn.name = std::move(name);
             fn.args = std::move(args);
@@ -157,11 +167,13 @@ void promote(transform_fn & fn) {
     }
 }
 
+// True for the canonical 3D functions.
 [[nodiscard]] bool is_3d(const transform_fn & fn) {
     return fn.name == "translate3d" || fn.name == "scale3d" || fn.name == "rotate3d" ||
            fn.name == "perspective" || fn.name == "matrix3d";
 }
 
+// The product m * n: n is applied first.
 [[nodiscard]] matrix2d multiply(const matrix2d & m, const matrix2d & n) {
     return {m[0] * n[0] + m[2] * n[1],        m[1] * n[0] + m[3] * n[1],
             m[0] * n[2] + m[2] * n[3],        m[1] * n[2] + m[3] * n[3],
@@ -185,7 +197,7 @@ void promote(transform_fn & fn) {
         return {1, std::tan(radians(a[1])), std::tan(radians(a[0])), 1, 0, 0};
     }
     if (fn.name == "skewx") { return {1, 0, std::tan(radians(a[0])), 1, 0, 0}; }
-    return {1, std::tan(radians(a[0])), 0, 1, 0, 0}; // skewy
+    return {1, std::tan(radians(a[0])), 0, 1, 0, 0}; // skewY.
 }
 
 [[nodiscard]] matrix2d matrix_of(const std::vector<transform_fn> & list) {
@@ -260,6 +272,7 @@ void promote(transform_fn & fn) {
     return m;
 }
 
+// True when the 4x4 matrix is a 2D affine transform.
 [[nodiscard]] bool flat(const matrix3d & m) {
     return m[2] == 0 && m[3] == 0 && m[6] == 0 && m[7] == 0 && m[8] == 0 && m[9] == 0 &&
            m[10] == 1 && m[11] == 0 && m[14] == 0 && m[15] == 1;
@@ -288,7 +301,7 @@ void promote(transform_fn & fn) {
             const double cofactor = ((r + c) % 2 == 0 ? 1 : -1) *
                                     determinant3(minor[0], minor[1], minor[2], minor[3], minor[4],
                                                  minor[5], minor[6], minor[7], minor[8]);
-            out[r * 4 + c] = cofactor; // transposed: the adjugate
+            out[r * 4 + c] = cofactor; // Transposed: the adjugate.
             if (r == 0) { det += at(0, c) * cofactor; }
         }
     }
@@ -423,9 +436,9 @@ void promote(transform_fn & fn) {
     for (std::size_t i = 0; i < 4; ++i) {
         out.perspective[i] = lerp(a.perspective[i], b.perspective[i]);
     }
-    // THE SHORT WAY ROUND: q and -q are one rotation, and a half angle over
-    // 90 degrees is the long way to it - which is how a 2D pair's rotation
-    // has always gone (§12.2's "the rotation goes the short way").
+    // Take the short way round: q and -q are one rotation, and a half angle
+    // over 90 degrees is the long way to it. A 2D pair's rotation goes the
+    // short way too (§12.2).
     std::array<double, 4> from = a.quaternion;
     double product = 0;
     for (std::size_t i = 0; i < 4; ++i) { product += from[i] * b.quaternion[i]; }
@@ -446,6 +459,8 @@ void promote(transform_fn & fn) {
     return out;
 }
 
+// CSS Transforms 1 §12.2's 2D decomposition: translation, scale, a rotation
+// angle in degrees and the residual matrix.
 [[nodiscard]] decomposed2d decompose(const matrix2d & m) {
     double row0x = m[0], row0y = m[1], row1x = m[2], row1y = m[3];
     decomposed2d d{m[4], m[5], 0, 0, 0, 1, 0, 0, 1};
@@ -506,6 +521,7 @@ void promote(transform_fn & fn) {
     return out + ')';
 }
 
+// One canonical transform function back to CSS text.
 [[nodiscard]] std::string function_text(const transform_fn & fn) {
     if (fn.name == "perspective") {
         if (fn.args[0] <= 0) { return "perspective(none)"; }
@@ -535,6 +551,7 @@ void promote(transform_fn & fn) {
     return out + ')';
 }
 
+// The identity function of `fn`'s kind, which pads the shorter list of a pair.
 [[nodiscard]] transform_fn identity_like(const transform_fn & fn) {
     transform_fn out{fn.name, {}, {}, fn.spelled};
     if (fn.name == "matrix") {
@@ -545,7 +562,7 @@ void promote(transform_fn & fn) {
     } else if (fn.name == "scale" || fn.name == "scale3d") {
         out.args.assign(fn.args.size(), 1.0);
     } else if (fn.name == "rotate3d") {
-        out.args = {fn.args[0], fn.args[1], fn.args[2], 0}; // about the same axis
+        out.args = {fn.args[0], fn.args[1], fn.args[2], 0}; // About the same axis.
     } else {
         out.args.assign(fn.args.size(), 0.0);
     }
@@ -559,7 +576,7 @@ void promote(transform_fn & fn) {
                                                            const std::vector<transform_fn> & b,
                                                            double p) {
     const matrix3d x = matrix3d_of(a), y = matrix3d_of(b);
-    if (flat(x) && flat(y)) { return std::nullopt; } // the caller's 2D path
+    if (flat(x) && flat(y)) { return std::nullopt; } // The caller's 2D path.
     const std::optional<decomposed3d> u = decompose3d(x);
     const std::optional<decomposed3d> v = decompose3d(y);
     if (!u || !v) { return std::nullopt; }
@@ -569,7 +586,7 @@ void promote(transform_fn & fn) {
 // Two lists blended as matrices (§15-16), decomposed as 4x4 matrices - the
 // decomposition that keeps a 2D pair's skew too: `matrix(1, 0, 0, 7, 0, 0)`
 // to `matrix(7, 0, 1, 1, 0, 0)` passes through `matrix(4, 0, 2, 4, 0, 0)` in
-// every engine (transform-interpolation-005). nullopt for a percentage, which
+// every engine (WPT transform-interpolation-005). nullopt for a percentage, which
 // has no matrix until the box exists, and for a singular matrix.
 [[nodiscard]] std::optional<std::string> blend_lists(const std::vector<transform_fn> & a,
                                                      const std::vector<transform_fn> & b,
@@ -594,7 +611,7 @@ void promote(transform_fn & fn) {
 // whatever follows it, on both sides, blended as matrices. So
 // `rotate(0deg) translate(100px)` to `rotate(720deg) scale(2) translate(200px)`
 // turns the rotation through 720 degrees and blends only the rest
-// (list-interpolation). A matrix() pair is a pair of matrices, blended so.
+// (WPT list-interpolation). A matrix() pair is a pair of matrices, blended so.
 [[nodiscard]] std::optional<std::string> interpolate_transform(std::string_view from,
                                                                std::string_view to, double p,
                                                                bool * singular) {
@@ -610,7 +627,8 @@ void promote(transform_fn & fn) {
     // Matrices that will not blend: a percentage is the caller's, and a
     // singular matrix makes the whole pair discrete (CSS Transforms 1 §10) -
     // no transition starts, and an animation flips the lists whole
-    // (transform-matrix-composition, transform-non-invertible-no-transition).
+    // (WPT transform-matrix-composition and
+    // transform-non-invertible-no-transition).
     const auto unblended = [&](const std::vector<transform_fn> & x,
                                const std::vector<transform_fn> & y) -> std::optional<std::string> {
         const auto percent = [](const transform_fn & fn) {
@@ -741,16 +759,17 @@ void promote(transform_fn & fn) {
     return out;
 }
 
-// The value a missing or empty function argument means (§11.2's lacuna).
+// The value a missing or empty function argument means (Filter Effects 1
+// §11.2's lacuna value).
 [[nodiscard]] std::string_view filter_identity(std::string_view name) {
     if (name == "blur") { return "0px"; }
     if (name == "hue-rotate") { return "0deg"; }
     if (name == "drop-shadow") { return "rgba(0, 0, 0, 0) 0px 0px 0px"; }
     if (name == "grayscale" || name == "invert" || name == "sepia") { return "0"; }
-    return "1"; // brightness, contrast, opacity, saturate
+    return "1"; // Brightness, contrast, opacity, saturate.
 }
 
-// §11.2: function by function while the lists match, the shorter padded
+// Filter Effects 1 §11.2: function by function while the lists match, the shorter padded
 // with the missing functions' lacuna values; a drop-shadow is a shadow. No
 // result goes negative, and the four amounts that saturate at 1 stop there.
 [[nodiscard]] std::optional<std::string> interpolate_filter(std::string_view from,
@@ -780,7 +799,7 @@ void promote(transform_fn & fn) {
             if (!n) { return std::nullopt; }
             css::calc_result mixed = mix(n->a, n->b, p);
             // Every amount but an angle stops at zero: hue-rotate(0deg) to
-            // hue-rotate(180deg) at -0.5 is -90deg (filter-interpolation-001).
+            // hue-rotate(180deg) at -0.5 is -90deg (WPT filter-interpolation-001).
             if (name != "hue-rotate") { mixed.px = std::max(mixed.px, 0.0); }
             if (name == "grayscale" || name == "invert" || name == "opacity" || name == "sepia") {
                 mixed.px = std::min(mixed.px, 1.0);
@@ -835,13 +854,13 @@ void promote(transform_fn & fn) {
     return out;
 }
 
-// Two WHOLE 2D lists accumulated as matrices (CSS Transforms 2 §16, for lists
+// Two whole 2D lists accumulated as matrices (CSS Transforms 2 §16, for lists
 // that do not pair function by function): each decomposed into a translation,
 // a rotation, a skew - the shear of the rows once scaled out, which is the 2D
 // case of the 3D decomposition - and a scale; the translations, angles and
 // skews summed, the scales each summed less one, and recomposed.
 // `translateX(100px) rotate(90deg)` accumulating `translateX(100px)` is
-// `matrix(0, 1, -1, 0, 200, 0)` (transform-translate-composition). nullopt
+// `matrix(0, 1, -1, 0, 200, 0)` (WPT transform-translate-composition). nullopt
 // for a percentage, a 3D list or a singular matrix.
 [[nodiscard]] std::optional<std::string> accumulate_as_matrices(
     const std::vector<transform_fn> & a, const std::vector<transform_fn> & b) {
@@ -917,7 +936,7 @@ void promote(transform_fn & fn) {
             promote(y);
         }
         // ponytail: a perspective or a matrix3d() pair does not accumulate
-        // here; the 3D decomposition's sum is the upgrade when a test asks.
+        // here; summing the 3D decomposition is the upgrade if one must.
         if (x.name == "perspective" || x.name == "matrix3d") { return std::nullopt; }
         transform_fn fn = x;
         if (fn.name == "matrix") {
@@ -1001,10 +1020,10 @@ void promote(transform_fn & fn) {
     return out;
 }
 
-// Two rotations about one axis - or one of them by nothing, which takes the
-// other's axis - interpolate by angle; different axes stay discrete.
-// ponytail: the spec's quaternion slerp for differing axes, when a test
-// reads one.
+// Interpolates two `rotate` property values. Rotations about one axis (or
+// where one side is a rotation by nothing, which takes the other's axis)
+// interpolate by angle; rotations about different axes are slerped as unit
+// quaternions (CSS Transforms 2 §9).
 [[nodiscard]] std::optional<std::string> interpolate_rotate(std::string_view from,
                                                             std::string_view to, double p,
                                                             const css::length_context & ctx) {
@@ -1021,14 +1040,14 @@ void promote(transform_fn & fn) {
     if (a->angle == 0) { a->x = b->x, a->y = b->y, a->z = b->z; }
     if (b->angle == 0) { b->x = a->x, b->y = a->y, b->z = a->z; }
     const auto text = [](double x, double y, double z, double angle) {
-        const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // no `-0`
+        const auto tidy = [](double v) { return std::fabs(v) < 5e-7 ? 0.0 : v; }; // No `-0`.
         return css::serialize_number(tidy(x)) + " " + css::serialize_number(tidy(y)) + " " +
                css::serialize_number(tidy(z)) + " " + css::serialize_number(tidy(angle)) + "deg";
     };
     const auto near = [](double u, double v) { return std::fabs(u - v) < 1e-6; };
-    // A WHOLE NUMBER OF TURNS about one axis, against another axis, is a
+    // A whole number of turns about one axis, against another axis, is a
     // rotation by nothing too, and takes the other's axis: `1 2 3 360deg` to
-    // `0 1 0 100deg` is 200deg about y at 2 (rotate-composition).
+    // `0 1 0 100deg` is 200deg about y at 2 (WPT rotate-composition).
     // At its own end that nothing is the identity, which is `0deg` about z.
     if (!(near(a->x, b->x) && near(a->y, b->y) && near(a->z, b->z))) {
         if (std::fmod(a->angle, 360.0) == 0) {

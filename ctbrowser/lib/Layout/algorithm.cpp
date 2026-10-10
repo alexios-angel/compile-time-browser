@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Layout/algorithm.cpp - Width and intrinsic sizing ----===//
+//
+// The box-model arithmetic shared by every formatting context: resolving
+// edges, a box's used width and auto margins, intrinsic (min/max-content)
+// measurement with a per-call cache, and layout_box, which dispatches a box to
+// the formatting context it establishes.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/layout/algorithm.hpp>
 
 #include <ctbrowser/layout/flex.hpp>
@@ -6,9 +14,6 @@
 #include <bit>
 #include <cstdint>
 #include <unordered_map>
-
-// algorithm: the function bodies.
-// The header says what these compute; this says how.
 
 namespace ctbrowser::layout {
 
@@ -29,10 +34,10 @@ float intrinsic_border_width(const box_node & b, const constraints & c, const re
     const float room = std::max(0.0f, c.available_width - e.horizontal_margin() - inner);
     float content = 0;
     if (want.u == unit::auto_ && !b.inline_level && !b.is_out_of_flow()) {
-        // `auto` AS A BASIS - `calc-size(auto, size * 2)` - is what auto means
-        // for this box's width: the available space for a block-level box, the
-        // rule outer_width_of applies to a plain `auto`; below, shrink-to-fit
-        // for an inline-level or out-of-flow one, which is fit-content.
+        // `auto` as a basis, as in `calc-size(auto, size * 2)`, means what auto
+        // means for this box's width: the available space for a block-level
+        // box (the rule outer_width_of applies to a plain `auto`). An
+        // inline-level or out-of-flow box takes the fit-content branch below.
         content = room;
     } else {
         const intrinsic_sizes wants = measure_box(b, c, measure);
@@ -63,7 +68,7 @@ std::optional<float> width_bound(const box_node & b, const constraints & c,
 
 float outer_width_of(const box_node & b, const constraints & c, const resolved_edges & e,
                      const measure_text_fn & measure) {
-    // A WIDTH THE PARENT ALREADY DECIDED is used verbatim, and is not re-clamped
+    // A width the parent already decided is used verbatim and not re-clamped
     // here: flex applied min/max-width inside its freeze loop, where the clamp
     // interacts with every other item on the line. Clamping a second time would
     // be right only for the items that never hit a constraint, which is the
@@ -71,9 +76,8 @@ float outer_width_of(const box_node & b, const constraints & c, const resolved_e
     if (c.forced_width >= 0) { return c.forced_width; }
     const float unclamped =
         width_bound(b, c, e, measure, b.width).value_or(c.available_width - e.horizontal_margin());
-    // MAX FIRST, THEN MIN, because min wins: a box whose min-width exceeds its
-    // max-width takes the min, which is what CSS 2.1 §10.4 says and the order
-    // that produces it without a special case.
+    // Apply max-width first and min-width second, so min-width wins when they
+    // conflict, as CSS 2.1 §10.4 requires, without a special case.
     float out = unclamped;
     if (const auto hi = width_bound(b, c, e, measure, b.max_width)) { out = std::min(out, *hi); }
     if (const auto lo = width_bound(b, c, e, measure, b.min_width)) { out = std::max(out, *lo); }
@@ -82,16 +86,14 @@ float outer_width_of(const box_node & b, const constraints & c, const resolved_e
 
 float auto_margin_left(const box_node & b, const constraints & c, const resolved_edges & e,
                        float outer_width) {
-    // `margin: 0 auto` on a box with a definite width CENTRES it, and that is the
-    // whole of how a page is centred. Both autos resolved to 0 before
-    // (length::resolve has no answer for auto), so `.container` sat hard against
-    // the left edge.
+    // `margin: 0 auto` on a box with a definite width centres it. length::resolve
+    // has no answer for `auto`, so auto margins are resolved here from the
+    // remaining space.
     //
-    // An AUTO WIDTH leaves both margins at zero, per CSS: the width absorbs the
-    // remainder instead. That is why adding this moves nothing that was not
-    // already asking to be centred.
+    // An auto width leaves both margins at zero, per CSS: the width absorbs the
+    // remainder instead.
     if (b.width.is_auto()) { return e.margin_left; }
-    // The FLAGS, not is_auto(): an unset margin is also `unit::auto_`, so asking the
+    // Read the flags, not is_auto(): an unset margin is also `unit::auto_`, so asking the
     // length would centre every definite-width box that declared no margins.
     const bool left_auto = b.margin_left_auto;
     const bool right_auto = b.margin_right_auto;
@@ -109,13 +111,14 @@ float content_width_of(const box_node & b, const constraints & c, const resolved
 
 namespace {
 
-// ONE MEASUREMENT PER (box, constraints) FOR THE DURATION OF THE OUTERMOST
-// measure_box. A flex container measures each item twice (outer_intrinsic, and
-// again for a growable one), so thirty nested `display: flex; flex-grow: 1`
-// divs made 2^30 calls. measure_box is a pure function of the box, its
-// constraints and the measure function, and the box tree is const for the whole
-// call, so a hit is the same answer bit for bit - the floats are keyed by their
-// bits, not by ==, so -0 and 0 stay distinct.
+/// Cache key for measure_box: one measurement per (box, constraints) for the
+/// duration of the outermost measure_box call. A flex container measures each
+/// item twice (outer_intrinsic, and again for a growable one), so without the
+/// cache thirty nested `display: flex; flex-grow: 1` divs would make 2^30 calls.
+/// measure_box is a pure function of the box, its constraints and the measure
+/// function, and the box tree is const for the whole call, so a hit is the same
+/// answer bit for bit. The floats are keyed by their bits, not by ==, so -0 and
+/// 0 stay distinct.
 struct measure_key {
     const box_node * box;
     const measure_text_fn * measure;
@@ -123,6 +126,7 @@ struct measure_key {
     bool suppress;
     bool operator==(const measure_key &) const = default;
 };
+/// Mixes the constraint bits with the 64-bit FNV prime (1099511628211).
 struct measure_key_hash {
     std::size_t operator()(const measure_key & k) const noexcept {
         std::size_t h = std::hash<const void *>{}(k.box) ^ std::hash<const void *>{}(k.measure);
@@ -131,6 +135,7 @@ struct measure_key_hash {
     }
 };
 using measure_cache = std::unordered_map<measure_key, intrinsic_sizes, measure_key_hash>;
+/// The cache of the outermost measure_box on this thread; null outside one.
 thread_local measure_cache * active_measure_cache = nullptr;
 
 intrinsic_sizes measure_box_uncached(const box_node & b, const constraints & c,
@@ -173,7 +178,7 @@ intrinsic_sizes measure_box_uncached(const box_node & b, const constraints & c,
                                measure(b.text, b.font_size, b.face)};
     }
     if (b.is_replaced()) {
-        // Its size is the ELEMENT's. A replaced box's children are not laid out
+        // Its size is the element's. A replaced box's children are not laid out
         // at all, so measuring them answers zero for a 300px canvas.
         return intrinsic_sizes{b.intrinsic_width, b.intrinsic_width};
     }
@@ -194,12 +199,12 @@ intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
     const float inner = edges.horizontal_inner();
     const intrinsic_sizes content = measure_box(child, c, measure);
     intrinsic_sizes out{content.min_content + inner, content.max_content + inner};
-    // A STATED WIDTH IS THE CONTRIBUTION whatever the content wants, as a BORDER
-    // box like every other size here. A PERCENTAGE has no answer while the
+    // A stated width is the contribution whatever the content wants, as a border
+    // box like every other size here. A percentage has no answer while the
     // containing block's own width is the question being asked, so there the
-    // content size stands - which is also why `.row > * { max-width: 100% }`
+    // content size stands; that is also why `.row > * { max-width: 100% }`
     // never reaches the clamp below.
-    // A KEYWORD WIDTH IS ONE OF THE TWO SIZES BEING CONTRIBUTED: `width:
+    // A keyword width picks one of the two sizes being contributed: `width:
     // max-content` contributes its max-content size as both, `min-content` its
     // min-content size as both, and `fit-content` (or `auto` under a
     // calc-size()) contributes as `auto` does - and the calculation, if there is
@@ -218,7 +223,8 @@ intrinsic_sizes outer_intrinsic(const box_node & child, const constraints & c,
         return intrinsic_sizes{stated, stated};
     };
     if (const auto stated = sized(child.width)) { out = *stated; }
-    // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
+    // Max first, then min, in the same order and for the same reason as
+    // outer_width_of.
     if (const auto hi = sized(child.max_width)) {
         out.min_content = std::min(out.min_content, hi->min_content);
         out.max_content = std::min(out.max_content, hi->max_content);
@@ -237,11 +243,12 @@ float shrink_to_fit_width(const box_node & b, const constraints & c, const resol
     const intrinsic_sizes wants = measure_box(b, c, measure);
     const float room =
         std::max(0.0f, c.available_width - e.horizontal_margin() - e.horizontal_inner());
-    // The measured sizes are the CONTENT's; the answer is a border box, like every
-    // other width here.
+    // The measured sizes are the content's; the answer is a border box, like
+    // every other width here.
     float out =
         std::max(wants.min_content, std::min(room, wants.max_content)) + e.horizontal_inner();
-    // MAX FIRST, THEN MIN, the same order and the same reason as outer_width_of.
+    // Max first, then min, in the same order and for the same reason as
+    // outer_width_of.
     if (const auto hi = width_bound(b, c, e, measure, b.max_width)) { out = std::min(out, *hi); }
     if (const auto lo = width_bound(b, c, e, measure, b.min_width)) { out = std::max(out, *lo); }
     return std::max(0.0f, out);
@@ -256,7 +263,7 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         f.bounds = rect{0, 0, measure(b.text, b.font_size, b.face), b.line_height};
         return f;
     }
-    // Dispatch on what the box IS, not on what its children are. An inline box
+    // Dispatch on what the box is, not on what its children are. An inline box
     // shrink-wraps to its content; a block box takes its width from the block
     // rules and lays its children out inline or as blocks internally.
     if (b.kind == box_kind::replaced) {
@@ -266,14 +273,9 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         fragment f;
         f.box = &b;
         f.source = b.source;
-        // A STATED SIZE GOES THROUGH THE SAME BOX MODEL as every other box here
-        // (border_box_size); only an INTRINSIC one is always a content size that
-        // the padding and the border are added around.
-        //
-        // Adding them to a stated width unconditionally made every
-        // `.form-control` 26px wider than Chrome's: Bootstrap sets `box-sizing:
-        // border-box` on `*`, so its `width: 100%` already contains the 24px of
-        // padding and the 2px of border, and this counted them a second time.
+        // A stated size goes through border_box_size like every other box, so
+        // `box-sizing: border-box` is honoured. Only an intrinsic size is a
+        // content size that padding and border are added around.
         f.bounds.width = width_bound(b, c, edges, measure, b.width)
                              .value_or(b.intrinsic_width + edges.horizontal_inner());
         f.bounds.height =
@@ -293,7 +295,7 @@ fragment layout_box(const box_node & b, const constraints & c, const measure_tex
         out = block_flow{}.arrange(b, c, measure);
     }
     // A flex or table container does not use block_flow, but it is still a
-    // block-level participant in its PARENT's formatting context and its own
+    // block-level participant in its parent's formatting context and its own
     // margins collapse with ordinary siblings there. block_flow already added
     // these for its kinds; append is idempotent, so one common exit keeps every
     // block-level dispatch on the same rule.

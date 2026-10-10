@@ -1,7 +1,11 @@
+//===- ctbrowser/lib/Layout/box.cpp - Box tree construction -----*- C++ -*-===//
+//
+// box_builder: turns the styled DOM into the box tree that layout runs on,
+// dropping collapsible whitespace and wrapping inline runs in anonymous boxes
+// where a block or flex container needs them.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/layout/box.hpp>
-
-// box: the method bodies.
-// The header says what these do; this says how.
 
 namespace ctbrowser::layout {
 
@@ -10,12 +14,11 @@ box_node box_builder::build(const read_txn & txn, node_id root) {
     out.kind = box_kind::block;
     out.source = root;
     out.style = style_of(root);
-    // THE ROOT ELEMENT'S BOX IS STYLED LIKE ANY OTHER: its width, height,
-    // margins, padding and border are its own - `html { height: 3000px }`
-    // makes the page that tall to scroll, and they were read for no root at
-    // all. Its OVERFLOW is the viewport's instead (CSS Overflow 3 §3.3), so
-    // the box itself scrolls and clips nothing; the tag stays empty, which is
-    // how the body's propagation knows its parent is the root.
+    // The root element's box is styled like any other (its width, height,
+    // margins, padding and border apply, so `html { height: 3000px }` makes the
+    // page scroll). Its overflow belongs to the viewport instead (CSS Overflow 3
+    // §3.3), so the box itself neither scrolls nor clips. The tag stays empty so
+    // that body propagation can tell its parent is the root.
     style_box(out, out.style, display_kind::block, 16.0f, text_face{}, false, false);
     out.scroll_container = out.clips_overflow = out.blocks_margin_collapse = false;
     build_children(txn, root, out, out.font_size, out.face, out.underline, out.line_through);
@@ -55,28 +58,21 @@ void box_builder::drop_collapsible_spaces(box_node & parent) {
     parent.children = std::move(kept);
 }
 
-// One anonymous box wrapping a run of inline-level children, in its parent's
-// inherited context.
-//
-// THE LINE HEIGHT IS THE PARENT'S. It was left at the default, so a wrapper
-// inside a `<p style="line-height: 2">` laid its lines out at 20px - because
-// inline_flow::arrange reads the CONTAINER's line_height, not each text run's,
-// which is what a line box means. The text boxes already carried the right
-// value and nothing read it.
+/// One anonymous box wrapping a run of inline-level children, in its parent's
+/// inherited context.
+///
+/// The wrapper takes the parent's line height because inline_flow::arrange
+/// reads line_height from the containing box, not from each text run.
 box_node box_builder::wrap_run(const box_node & parent, std::vector<box_node> & run) {
     box_node wrapper;
     wrapper.kind = box_kind::anonymous;
-    // THE INHERITED HALF ONLY. An anonymous box inherits the inherited properties
-    // and takes the INITIAL value for everything else (CSS 2.1 §9.2.1.1) - it has
+    // Only the inherited half. An anonymous box inherits the inherited properties
+    // and takes the initial value for everything else (CSS 2.1 §9.2.1.1): it has
     // no rules of its own, because it has no element for a rule to match.
     //
-    // Sharing the parent's whole style gave it the parent's BACKGROUND, BORDER,
-    // PADDING and SHADOW as well, and it drew all of them: a
-    // `.list-group-item.d-flex` wraps its text in one of these, so every item in
-    // a Bootstrap list group had a second copy of its own border painted around
-    // the words alone. The split halves make this exact rather than a filter over
-    // a list of properties to exclude - which would need the property table to be
-    // right about which ones inherit, twice.
+    // Copying only the inherited half keeps the parent's background, border,
+    // padding and shadow from being painted a second time around the wrapped
+    // text, and needs no list of excluded properties.
     wrapper.style = parent.style
                         ? computed_style_ptr{new style::computed_style{{}, parent.style->inherited}}
                         : computed_style_ptr{};
@@ -91,19 +87,19 @@ box_node box_builder::wrap_run(const box_node & parent, std::vector<box_node> & 
 }
 
 void box_builder::normalise(box_node & parent) {
-    // A FLEX CONTAINER'S CHILDREN ARE ALL FLEX ITEMS, and its rule is not the
-    // block one below. Flexbox 1 §4: EVERY in-flow child ELEMENT is a flex item
-    // whatever its display, and each contiguous sequence of child TEXT RUNS is
+    // A flex container's children are all flex items, and its rule is not the
+    // block one below. Flexbox 1 §4: every in-flow child element is a flex item
+    // whatever its display, and each contiguous sequence of child text runs is
     // wrapped in one anonymous block container that is then a flex item.
     //
-    // Two differences from the block rule, and both bite.
+    // This differs from the block rule in two ways.
     //
-    // It runs UNCONDITIONALLY, where the block rule fires only on mixed content -
+    // It runs unconditionally, where the block rule fires only on mixed content,
     // because a block whose children are all inline simply runs an inline
     // formatting context instead, and a flex container has none to fall back on.
     // `<div class=d-flex>text</div>` is homogeneous and still needs wrapping.
     //
-    // And it wraps TEXT, not "everything inline-level". A replaced element is
+    // And it wraps text, not "everything inline-level". A replaced element is
     // inline-level and is nonetheless an item in its own right: wrapping `<img>`
     // in an anonymous box would make two images one item and lay them out on a
     // line inside it. Every other element child is already block-level, because
@@ -111,7 +107,7 @@ void box_builder::normalise(box_node & parent) {
     if (parent.kind == box_kind::flex) {
         std::vector<box_node> rebuilt;
         std::vector<box_node> run;
-        // A run that is ONLY WHITESPACE is not rendered at all (§4 again), which
+        // A run that is only whitespace is not rendered at all (§4 again), which
         // is what stops the newline between two `<img>`s becoming a third column.
         // drop_collapsible_spaces has already removed the ones between block-level
         // siblings; this is the same rule for the ones it could not see.

@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Raster/svg.cpp - SVG through plutosvg ------*- C++ -*-===//
+//
+// render_svg: rasterises an SVG document into a straight-alpha bitmap. The one
+// file in the tree that includes a plutosvg header; everything the engine
+// knows about SVG rasterisation is the declarations in svg.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/raster/svg.hpp>
 
 #if CTBROWSER_WITH_SVG
@@ -9,30 +16,24 @@
 #include <memory>
 #endif
 
-// The one file in the tree that includes a plutosvg header. Everything the
-// engine knows about SVG rasterisation is the two declarations in svg.hpp.
-
 namespace ctbrowser::raster {
 
 #if CTBROWSER_WITH_SVG
 namespace {
 
-// plutosvg hands back raw pointers from a C API and there are two early exits
-// below, so ownership goes in a deleter rather than in a comment.
+/// Owning handles for plutosvg's C objects, so the early exits in render_svg
+/// cannot leak them.
 using document_ptr = std::unique_ptr<plutosvg_document_t, decltype(&plutosvg_document_destroy)>;
 using surface_ptr = std::unique_ptr<plutovg_surface_t, decltype(&plutovg_surface_destroy)>;
 
-// PREMULTIPLIED to STRAIGHT, and this is the whole reason this function exists
-// rather than a memcpy.
-//
-// plutovg stores premultiplied ARGB (plutovg.h:1135); paint::bitmap is straight
-// ARGB, and raster/draw.cpp's image path calls blend_over() on it as straight
-// alpha. Copying premultiplied pixels into a straight bitmap does not look
-// broken - it looks slightly DARK wherever alpha is partial, which on an
-// antialiased edge is every edge pixel and nowhere else. That is the kind of
-// wrong that survives a review and a golden regeneration, so it is undone here
-// explicitly and unittests/unit/svg_basics.cpp asserts a half-transparent red stays
-// r=255 rather than becoming r=128.
+/// Converts one premultiplied ARGB pixel to straight ARGB.
+///
+/// plutovg stores premultiplied ARGB; paint::bitmap is straight ARGB, and
+/// raster/draw.cpp's image path calls blend_over() on it as straight alpha.
+/// Copying premultiplied pixels into a straight bitmap does not look broken: it
+/// looks slightly dark wherever alpha is partial, which on an antialiased edge
+/// is every edge pixel and nowhere else. unittests/unit/svg_basics.cpp asserts
+/// that a half-transparent red stays r=255 rather than becoming r=128.
 [[nodiscard]] std::uint32_t unpremultiply(std::uint32_t argb) noexcept {
     const std::uint32_t a = argb >> 24;
     if (a == 0) { return 0; }      // fully transparent: colour is meaningless
@@ -89,7 +90,7 @@ paint::bitmap render_svg([[maybe_unused]] std::string_view source, [[maybe_unuse
     // pixels is a buffer overrun rather than a wrong picture.
     paint::bitmap out{got_w, got_h};
     for (int y = 0; y < got_h; ++y) {
-        // STRIDE, not width * 4: plutovg is free to pad rows, and assuming it
+        // Use the stride, not width * 4: plutovg is free to pad rows, and assuming it
         // does not is a bug that only appears at certain widths.
         const auto * row =
             reinterpret_cast<const std::uint32_t *>(data + static_cast<std::ptrdiff_t>(y) * stride);

@@ -1,9 +1,17 @@
+//===- fold.cpp - Shorthand serialisation --------------------- -*- C++ -*-===//
+//
+// Serialising a shorthand: folding its longhands' values back into the
+// shortest value the shorthand's grammar can spell, or "" when it cannot
+// spell them (CSSOM "serialize a CSS value"). Each fold_* function takes the
+// longhand values in the order the shorthand's table row lists them.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::shorthand_detail {
 
-// --- folding longhand values back into one shorthand value --------------------
-
+/// Joins `parts` with single spaces.
 [[nodiscard]] std::string join(std::span<const std::string> parts) {
     std::string out;
     for (const std::string & part : parts) {
@@ -13,7 +21,7 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
-// The shortest `margin` spelling of four sides.
+/// The shortest `margin` spelling of four sides.
 [[nodiscard]] std::string fold_sides(std::span<const std::string> v) {
     std::vector<std::string> parts(v.begin(), v.end());
     if (parts.size() == 4 && parts[3] == parts[1]) { parts.pop_back(); }
@@ -22,6 +30,9 @@ namespace ctbrowser::style::css::shorthand_detail {
     return join(parts);
 }
 
+/// `border-radius`, folded: each corner's value is `h` or `h v`; the
+/// horizontal and vertical radii fold like `margin`, joined by ` / ` when the
+/// two differ.
 [[nodiscard]] std::string fold_radius(std::span<const std::string> values) {
     std::vector<std::string> horizontal, vertical;
     for (const std::string & value : values) {
@@ -35,6 +46,8 @@ namespace ctbrowser::style::css::shorthand_detail {
     return h == v ? h : h + " / " + v;
 }
 
+/// `border-image`, folded: source, slice, `/ width`, `/ outset`, repeat, each
+/// left out at its initial value where the grammar allows; `none` when all are.
 [[nodiscard]] std::string fold_border_image(std::span<const std::string> v) {
     std::string out = v[0] == "none" ? "" : v[0];
     const bool width = v[2] != "1", outset = v[3] != "0";
@@ -50,6 +63,9 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out.empty() ? "none" : out;
 }
 
+/// `background`, folded per layer. `v` is in longhands_of("background")
+/// order: 0 color, 1 image, 2 position, 3 size, 4 repeat, 5 attachment,
+/// 6 origin, 7 clip. The colour is written once, on the last layer.
 [[nodiscard]] std::string fold_background(std::span<const std::string> v) {
     const auto names = longhands_of("background");
     std::array<std::vector<std::string_view>, 8> lists;
@@ -87,15 +103,16 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
-// `mask`, folded per layer in its longhands' order with the initial values
-// left out: the position when it or the size is not initial, the size after
-// a `/`, and one box for an origin and clip that agree - none at all for
-// `border-box` - or `no-clip` alone after the initial origin; `none` for a
-// layer that is all initial (mask-valid, mask-computed).
+/// `mask`, folded per layer in its longhands' order with the initial values
+/// left out: the position when it or the size is not initial, the size after
+/// a `/`, and one box for an origin and clip that agree - none at all for
+/// `border-box` - or `no-clip` alone after the initial origin; `none` for a
+/// layer that is all initial (WPT mask-valid, mask-computed).
 [[nodiscard]] std::string fold_mask(std::span<const std::string> v) {
     const auto names = longhands_of("mask");
-    // A mask-border the shorthand cannot spell - anything but its reset, a
-    // computed `0px` for the `0` included.
+    // Indices 8 and up are the mask-border longhands, which `mask` only
+    // resets: any value but the initial one (or a computed `0px` for an
+    // initial `0`) cannot be spelled.
     for (std::size_t i = 8; i < v.size(); ++i) {
         const bool zero = initial_of(names[i]) == "0" && v[i] == "0px";
         if (v[i] != initial_of(names[i]) && !zero) { return {}; }
@@ -133,20 +150,25 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
-// `font`, folded: the keywords that are not `normal`, the size, ` / ` and
-// the line-height when it is not `normal`, then the family - CSS Fonts 4
-// §3.1's canonical form, which getComputedStyle reads back too, so the
-// COMPUTED spellings of the four are folded as well: a weight of `400` is
-// the initial, a stretch is one of the nine percentages the shorthand can
-// only spell as its keyword, and one it cannot spell makes the whole
-// unrepresentable.
+/// `font`, folded: the keywords that are not `normal`, the size, ` / ` and
+/// the line-height when it is not `normal`, then the family - CSS Fonts 4
+/// §3.1's canonical form, which getComputedStyle reads back too, so the
+/// computed spellings of the four are folded as well: a weight of `400` is
+/// the initial, a stretch is one of the nine percentages the shorthand can
+/// only spell as its keyword, and one it cannot spell makes the whole
+/// unrepresentable.
+///
+/// Indices follow longhands_of("font"): 0 style, 1 variant-caps, 2 weight,
+/// 3 stretch, 4 size, 5 line-height, 6 family, 7+ the variant longhands
+/// `font` can only reset.
 [[nodiscard]] std::string fold_font(std::span<const std::string> v) {
     static constexpr std::pair<std::string_view, std::string_view> stretches[] = {
         {"50%", "ultra-condensed"},  {"62.5%", "extra-condensed"}, {"75%", "condensed"},
         {"87.5%", "semi-condensed"}, {"112.5%", "semi-expanded"},  {"125%", "expanded"},
         {"150%", "extra-expanded"},  {"200%", "ultra-expanded"}};
-    // THE VARIANT IS CSS 2's: `small-caps` or nothing, and every variant
-    // longhand `font` only resets at its initial value (font-shorthand-variant).
+    // The variant is CSS 2's: `small-caps` or nothing, and every variant
+    // longhand `font` only resets must be at its initial value (WPT
+    // font-shorthand-variant).
     if (!ascii_iequals_any(v[1], {"normal", "small-caps"})) { return {}; }
     for (std::size_t i = 7; i < v.size(); ++i) {
         if (!ascii_iequals(v[i], "normal")) { return {}; }
@@ -179,10 +201,10 @@ namespace ctbrowser::style::css::shorthand_detail {
     return join(parts);
 }
 
-// `font-variant`, folded: `normal` when every longhand is, `none` when only
-// the ligatures are `none`, else the longhands that are not `normal` in the
-// shorthand's order - and nothing when `none` sits beside another value,
-// which the grammar cannot say.
+/// `font-variant`, folded: `normal` when every longhand is, `none` when only
+/// the ligatures are `none`, else the longhands that are not `normal` in the
+/// shorthand's order - and nothing when `none` sits beside another value,
+/// which the grammar cannot say.
 [[nodiscard]] std::string fold_font_variant(std::span<const std::string> v) {
     std::vector<std::string> parts;
     for (const std::string & one : v) {
@@ -193,10 +215,10 @@ namespace ctbrowser::style::css::shorthand_detail {
     return join(parts);
 }
 
-// `line-clamp`, folded: `none` for the initial three, else the maximum, the
-// ellipsis when it is not `ellipsis`, and `-webkit-legacy` for that
-// continuation - nothing for any other. `-webkit-line-clamp` spells only
-// `none` and a bare integer continued the legacy way.
+/// `line-clamp`, folded: `none` for the initial three, else the maximum, the
+/// ellipsis when it is not `ellipsis`, and `-webkit-legacy` for that
+/// continuation - nothing for any other. `-webkit-line-clamp` spells only
+/// `none` and a bare integer continued the legacy way.
 [[nodiscard]] std::string fold_line_clamp(const expansion & e, std::span<const std::string> v) {
     if (ascii_iequals(v[0], "auto") && ascii_iequals(v[1], "no-ellipsis") &&
         ascii_iequals(v[2], "normal")) {
@@ -215,8 +237,8 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
-// `white-space`, folded: the keyword the longhands spell, else the parts that
-// are not initial (`preserve-breaks nowrap`), else `normal`.
+/// `white-space`, folded: the keyword the longhands spell, else the parts that
+/// are not initial (`preserve-breaks nowrap`), else `normal`.
 [[nodiscard]] std::string fold_white_space(std::span<const std::string> v) {
     if (ascii_iequals(v[2], "none")) {
         for (const auto & [keyword, collapse, mode] : white_space_keywords) {
@@ -232,9 +254,9 @@ namespace ctbrowser::style::css::shorthand_detail {
     return parts.empty() ? std::string{"normal"} : join(parts);
 }
 
-// `animation-range`, folded: per item the start, and the end only when it is
-// not the one the start implies - its range name, or `normal` (or the
-// `100%` that means the same) after a start that names none.
+/// `animation-range`, folded: per item the start, and the end only when it is
+/// not the one the start implies - its range name, or `normal` (or the
+/// `100%` that means the same) after a start that names none.
 [[nodiscard]] std::string fold_range(std::span<const std::string> v) {
     const std::vector<std::string_view> starts = split_top_level(v[0], ",");
     const std::vector<std::string_view> ends = split_top_level(v[1], ",");
@@ -255,10 +277,10 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
-// `transition`, folded: per item, the property then the components that are
-// not their defaults - a delay carries the duration before it - and the
-// property alone, `all` included, when nothing else is; "" when the lists
-// disagree in length.
+/// `transition`, folded: per item, the property then the components that are
+/// not their defaults - a delay carries the duration before it - and the
+/// property alone, `all` included, when nothing else is; "" when the lists
+/// disagree in length.
 [[nodiscard]] std::string fold_transition(std::span<const std::string> v) {
     std::array<std::vector<std::string_view>, 5> lists;
     for (std::size_t i = 0; i < 5; ++i) {
@@ -290,10 +312,10 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
-// `animation`, folded: per item, the components that are not their defaults in the
-// canonical order - a delay carries the duration before it, so the one time
-// is not read back as the other - and `none` for an item with nothing; ""
-// when the lists disagree in length or the reset longhands are not initial.
+/// `animation`, folded: per item, the components that are not their defaults in the
+/// canonical order - a delay carries the duration before it, so the one time
+/// is not read back as the other - and `none` for an item with nothing; ""
+/// when the lists disagree in length or the reset longhands are not initial.
 [[nodiscard]] std::string fold_animation(std::span<const std::string> v) {
     std::array<std::vector<std::string_view>, 8> lists;
     for (std::size_t i = 0; i < 8; ++i) {
@@ -318,6 +340,9 @@ namespace ctbrowser::style::css::shorthand_detail {
     return out;
 }
 
+/// A shorthand whose parts can appear in any order (`border-top`,
+/// `text-decoration`): the non-initial longhands joined by spaces, or the
+/// row's all_initial spelling when every longhand is initial.
 [[nodiscard]] std::string fold_bar(const expansion & e, std::span<const std::string> v) {
     std::vector<std::string> parts;
     for (std::size_t i = 0; i < v.size(); ++i) {
@@ -328,9 +353,9 @@ namespace ctbrowser::style::css::shorthand_detail {
     return join(parts);
 }
 
-// "Serialize a CSS value" of a shorthand's longhands: "" when they cannot be
-// one value - a CSS-wide keyword on some but not all, or `border` sides that
-// differ.
+/// "Serialize a CSS value" of a shorthand's longhands: "" when they cannot be
+/// one value - a CSS-wide keyword on some but not all, or `border` sides that
+/// differ.
 [[nodiscard]] std::string fold(const expansion & e, std::span<const std::string> v) {
     bool all_wide = true, any_wide = false;
     for (const std::string & one : v) {
@@ -438,6 +463,8 @@ namespace ctbrowser::style::css::shorthand_detail {
         for (std::size_t c = 0; c < 3; ++c) {
             if (v[c] != v[c + 3]) { return {}; }
         }
+        // Strip the "-width" suffix (6 characters) from the first longhand,
+        // e.g. border-block-start-width -> border-block-start.
         const expansion * start = expansion_of(e.longhands[0].substr(0, e.longhands[0].size() - 6));
         return fold_bar(*start, v.subspan(0, 3));
     }

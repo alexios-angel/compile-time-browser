@@ -1,15 +1,23 @@
+//===- ctbrowser/lib/Style/css/calc/evaluator.cpp - Math evaluation entry -===//
+//
+// The entry points of the CSS math-function evaluator (evaluate_math,
+// math_type_of, the symbolic evaluation of specified values), the random()
+// base, and the recursion and step limits every evaluation shares. The
+// evaluator itself is in evaluator/.
+//
+//===----------------------------------------------------------------------===//
 #include "evaluator/internal.hpp"
 
 namespace ctbrowser::style::css {
 
 using namespace evaluator_detail;
 
-// THE RANDOM BASE, CSS Values 5 §random-caching: a number in [0, 1) that is
-// the same every time the same KEY asks for it, so a page reflows to the same
-// random layout it first had. The key is what the sharing options say
-// (`random_options`, internal.hpp) - hashed (FNV-1a) into the mantissa of a
-// double. Deterministic on purpose: the render goldens are byte-compared and
-// `Math.random` is seeded for the same reason.
+/// The random base, CSS Values 5 §random-caching: a number in [0, 1) that is
+/// the same every time the same key asks for it, so a page reflows to the same
+/// random layout it first had. The key is what the sharing options say
+/// (random_options, declared in calc/internal.hpp), hashed with 64-bit FNV-1a
+/// and taken as 53 bits of a double. Deterministic on purpose: the render
+/// goldens are byte-compared and `Math.random` is seeded for the same reason.
 [[nodiscard]] double random_base(std::string_view options, const length_context & ctx) {
     const random_key sharing = random_options(options, ctx.property, ctx.random_index);
     std::string key = sharing.name + '|' + sharing.ua;
@@ -19,7 +27,8 @@ using namespace evaluator_detail;
         hash ^= static_cast<unsigned char>(c);
         hash *= 1099511628211ull;
     }
-    // A final mix so a one-character difference reaches every bit.
+    // A final mix (splitmix64's first multiplier) so a one-character difference
+    // reaches every bit.
     hash ^= hash >> 29;
     hash *= 0xbf58476d1ce4e5b9ull;
     hash ^= hash >> 32;
@@ -85,9 +94,9 @@ bool math_step::outermost() const noexcept {
     return math_depth == 1;
 }
 
-// One expression with NO bases at all - which is what a specified value is
-// written against - and its answer as a term rather than as a `calc_result`,
-// because a sum of units that could not be added has no single magnitude.
+/// Evaluates one expression with no bases at all (which is what a specified
+/// value is written against) and answers a term rather than a `calc_result`,
+/// because a sum of units that could not be added has no single magnitude.
 [[nodiscard]] std::pair<math_outcome, term> evaluate_symbolic(std::string_view expression,
                                                               bool size_symbol) {
     const token_stream tokens = tokenize(expression);

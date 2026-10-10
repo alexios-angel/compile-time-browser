@@ -1,8 +1,9 @@
 # ctbrowser.raster - display list -> pixels, in tiles across the pool.
 #
 # Turns display lists into pixels. Knows nothing about the DOM, style or
-# layout - only about paint's recorded commands. gl/ is the GL device: an
-# ANGLE branch and a stub branch of one #if, both always compiled.
+# layout, only about paint's recorded commands. gl/ is the GL device: the
+# ANGLE implementation (context/draw/objects.cpp) and stub.cpp are all always
+# compiled, and CTBROWSER_WITH_ANGLE selects which of them has a body.
 add_library(ctbrowser-raster)
 target_sources(ctbrowser-raster PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_sources(ctbrowser-raster PRIVATE
@@ -17,13 +18,14 @@ target_compile_features(ctbrowser-raster PUBLIC cxx_std_23)
 ctbrowser_target(ctbrowser-raster)
 target_link_libraries(ctbrowser-raster PUBLIC ctbrowser-core ctbrowser-paint)
 
-# ANGLE, from the pinned release tools/fetch-angle.sh downloads. PRIVATE, and
-# nothing that includes it inherits them and test/lint/api_surface stays satisfied.
+# ANGLE, from the pinned release tools/fetch-angle.sh downloads. Its include path
+# and libraries are PRIVATE so no consumer inherits them, which keeps
+# test/lint/api_surface passing.
 #
 # The definition is PUBLIC because a consumer needs to know whether the device
-# can exist - `gles::available()` answers at run time, but a test still has to
+# can exist: `gles::available()` answers at run time, but a test still has to
 # compile either way.
-# The root CMakeLists owns whether ANGLE is on: it is ON by default but only
+# The root CMakeLists owns whether ANGLE is on: it is on by default but only
 # when third-party/angle is actually there, and it resolves that above
 # add_subdirectory so this file and examples/ cannot disagree. By the time we
 # get here, CTBROWSER_WITH_ANGLE means "the directory exists".
@@ -37,7 +39,7 @@ if(CTBROWSER_WITH_ANGLE)
   target_include_directories(ctbrowser-raster PRIVATE "${angle-dir}/include")
   target_link_libraries(ctbrowser-raster PRIVATE ${angle-libs})
   target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_ANGLE=1)
-  # THE LIBRARIES HAVE TO BE FOUND AT RUN TIME TOO, and they are not in any
+  # The libraries have to be found at run time too, and they are not in any
   # system path: an rpath here is what stops every consumer needing
   # LD_LIBRARY_PATH set by hand.
   if(NOT WIN32)
@@ -46,13 +48,13 @@ if(CTBROWSER_WITH_ANGLE)
   endif()
   message(STATUS "ctbrowser: ANGLE - a real GLES device is available")
 endif()
-# Real fonts, through SDL3_ttf. THE ONE PLACE THE ENGINE LINKS SDL, and a
-# deliberate exception rather than an oversight - see the header of
+# Real fonts, through SDL3_ttf. This is the one place the engine links SDL, a
+# deliberate exception rather than an oversight: see the header of
 # text/ttf.hpp and the note in test/lint/api_surface.cpp. TTF_Init needs no video
 # subsystem, so real text stays testable with no display, which is what makes
 # the exception safe.
 #
-# OPTIONAL, like everything else here: without it the raster layer still builds
+# Optional, like everything else here: without it the raster layer still builds
 # and still draws font8x8, which keeps the goldens reproducible on a machine
 # with no font libraries at all.
 if(SDL3_FOUND AND SDL3_ttf_FOUND)
@@ -74,12 +76,12 @@ if(plutosvg_FOUND)
   target_compile_definitions(ctbrowser-raster PUBLIC CTBROWSER_WITH_SVG=1)
   message(STATUS "ctbrowser: plutosvg ${plutosvg_VERSION} - SVG renders")
 
-  # VERSION PARITY IS LOAD-BEARING, so it is checked rather than hoped for.
-  # test/golden/svg.ppm is ONE image compared byte-for-byte on both Linux and
-  # Windows, and the Windows sysroot pins whatever tools/mingw/build-sdl3.sh
+  # The plutosvg version must match on every platform, so it is checked here.
+  # test/golden/svg.ppm is one image compared byte-for-byte on both Linux and
+  # Windows, and the Windows sysroot pins whatever ../llvm-mingw/build-sdl3.sh
   # fetched. If a host's plutosvg drifts ahead of that, the golden moves on one
-  # platform and not the other - which is exactly how the renders diverged over
-  # a HarfBuzz version once already (docs/raster.md).
+  # platform and not the other, as the renders once did over a HarfBuzz version
+  # (docs/raster.md).
   set(CTBROWSER_PLUTOSVG_PINNED 0.0.8)
   if(NOT plutosvg_VERSION VERSION_EQUAL CTBROWSER_PLUTOSVG_PINNED)
     message(WARNING

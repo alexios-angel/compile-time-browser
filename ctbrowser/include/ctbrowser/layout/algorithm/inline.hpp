@@ -1,19 +1,26 @@
+//===- inline.hpp - Inline formatting context ----------------- -*- C++ -*-===//
+//
+// The inline formatting context: inline_flow places text and inline-level
+// boxes on shared lines, aligned on a common baseline.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 
 #include <ctbrowser/layout/algorithm/common.hpp>
 
 namespace ctbrowser::layout {
 
-// --- inline formatting context -------------------------------------------
-// Text and inline boxes on shared lines, wrapping at the content width. Line
-// breaking is greedy and breaks at spaces, which is what browsers do for
-// ordinary text; the interesting cases it does not handle (hyphenation,
-// bidi, shaping across an inline boundary) all belong to a text shaper.
+/// The inline formatting context: text and inline boxes on shared lines,
+/// wrapping at the content width. Line breaking is greedy and breaks at spaces,
+/// which is what browsers do for ordinary text; the cases it does not handle
+/// (hyphenation, bidi, shaping across an inline boundary) all belong to a text
+/// shaper.
 struct inline_flow {
-    // The factor `line-height: normal` falls back to. box_builder owns the
-    // resolution now (see resolve_line_height); this is only the default, and it
-    // stays a constant rather than becoming the font's own ascent+descent because
-    // the measure function is injected and the goldens pin it to font8x8.
+    /// The factor `line-height: normal` uses. Nothing reads this constant:
+    /// box_builder::resolve_line_height (layout/box.hpp) resolves line heights
+    /// with its own copy of the same 1.25. It is a constant rather than the
+    /// font's ascent+descent because the measure is injected and the goldens
+    /// pin it to font8x8.
     static constexpr float line_height_factor = 1.25f;
 
     [[nodiscard]] intrinsic_sizes measure(const box_node & b, const constraints & c,
@@ -22,10 +29,9 @@ struct inline_flow {
         float line = 0;
         for (const box_node & child : b.children) {
             if (child.is_out_of_flow()) { continue; } // contributes no width
-            // A replaced child's width is its OWN, not something derived from
-            // content it does not have - without that an <img> or a <canvas>
-            // measures as zero wide and never wraps, it just runs off the line.
-            // measure_box knows that, and knows what an inline-flex child is too.
+            // A replaced child (<img>, <canvas>) has a width of its own, not one
+            // derived from children it does not have; outer_intrinsic, through
+            // measure_box, knows that and how to measure an inline-flex child.
             const float w = child.kind == box_kind::text
                                 ? measure_text(child.text, child.font_size, child.face)
                                 : outer_intrinsic(child, c, measure_text).max_content;
@@ -41,26 +47,22 @@ struct inline_flow {
         fragment out;
         out.box = &b;
         out.source = b.source;
-        // THE BOX'S OWN line height, resolved by box_builder. This was
-        // `font_size * 1.25` for every box on every page, which is why
-        // `line-height` did nothing.
+        // The box's own line height, already resolved by box_builder.
         const float line_height = b.line_height;
 
-        // AN INLINE BOX'S OWN PADDING AND BORDER TAKE ROOM ON THE LINE (CSS
-        // 2.1 §10.3.1, §10.8.1): its content starts past the start side's, and
-        // the box ends past the end side's, as measure's outer_intrinsic
-        // already counted them. Left out, a `::before` divider with a
-        // padding-right grew its breadcrumb item by the padding and moved the
-        // text beside it by nothing. A block container's own edges are
-        // block_flow's business, and continuation lines start at zero.
+        // An inline box's own padding and border take room on the line (CSS
+        // 2.1 §10.3.1, §10.8.1): content starts after the start edge and the
+        // box ends after the end edge, matching outer_intrinsic. A block
+        // container's edges are block_flow's job, and continuation lines start
+        // at zero.
         const bool inline_box = b.kind == box_kind::inline_;
         const resolved_edges own = inline_box ? resolve_edges(b, c) : resolved_edges{};
         float pen_x = own.content_left();
         float pen_y = 0;
         float widest = 0;
         // The tallest thing on the current line. A line containing a 110px
-        // canvas is 110px tall, not one text line - and using the font size
-        // makes everything after it overlap.
+        // canvas is 110px tall, not one text line; using the font size would
+        // make everything after it overlap.
         float line_extent = line_height;
         float total_height = 0;
         // CSS treats a line containing only zero-edge, empty inline boxes as
@@ -68,39 +70,32 @@ struct inline_flow {
         // for geometry queries, but do not let vector non-emptiness manufacture
         // a phantom line box.
         bool has_line_content = false;
-        // BASELINE ALIGNMENT. Every item on a line is placed so that
-        // `y + ascent` is the same for all of them - which is what sharing a
-        // baseline means, and what the rasterizer then draws: it puts each
-        // run's glyphs at `y + ascent(its own size)`.
+        // Baseline alignment. Every item on a line is placed so that
+        // `y + ascent` is the same for all of them, which is what sharing a
+        // baseline means and what the rasterizer then draws: it puts each run's
+        // glyphs at `y + ascent(its own size)`. Aligning box tops or bottoms
+        // instead is only right when every item has the same font metrics.
         //
-        // Aligning the BOXES instead is only right when every item has the same
-        // metrics. Tops made <big> hang above its neighbours; bottoms were
-        // closer but still wrong, because a box's bottom is its descent below
-        // the baseline and two faces do not descend by the same amount.
-        //
-        // A REPLACED item - an <img>, a <canvas> - sits ON the baseline, so its
-        // ascent is its whole height. That is the CSS rule and it is why an
+        // A replaced item (an <img>, a <canvas>) sits on the baseline, so its
+        // ascent is its whole height. That is the CSS rule, and it is why an
         // image in a line of text does not sink into the descenders.
         std::size_t line_start = 0;
         const auto ascent_of = [&measure_text](const fragment & f) {
             if (f.box == nullptr) { return 0.0f; }
             if (f.box->is_replaced()) { return f.bounds.height; }
-            // AN INLINE-LEVEL BLOCK SITS ON ITS OWN LAST LINE'S BASELINE, not on
-            // its font's ascent (CSS 2.1 §10.8.1). The two are far apart the
-            // moment the box has padding: a `.badge` is .35em of padding, a line
-            // of text and .35em more, so aligning by the font ascent hangs the
-            // whole pill above the sentence it is in by exactly its top padding.
+            // An inline-level block sits on its own last line's baseline, not on
+            // its font's ascent (CSS 2.1 §10.8.1). The two differ by the box's
+            // top padding and border (e.g. a padded `.badge`).
             //
-            // With no in-flow line box - an empty `inline-block`, or one holding
-            // only other blocks - the spec falls back to the bottom margin edge,
+            // With no in-flow line box (an empty `inline-block`, or one holding
+            // only other blocks), the spec falls back to the bottom margin edge,
             // which is what a replaced element does and what the height is here.
             if (f.box->inline_level) {
-                // The last line box may be inside a descendant - an inline-block
-                // holding blocks takes the last block's last line - so this walks
-                // rather than scanning one level, accumulating offsets as it goes.
-                // The LOWEST baseline is the last one, and asking for that rather
-                // than for document order is also what keeps it right when a float
-                // or an out-of-flow box eventually reorders the children.
+                // The last line box may be inside a descendant (an inline-block
+                // holding blocks takes the last block's last line), so this walks
+                // the subtree, accumulating offsets as it goes. It takes the
+                // lowest baseline rather than the last in document order, which
+                // stays right if a float or out-of-flow box reorders children.
                 float lowest = -1;
                 const auto walk = [&](auto && self, const fragment & at, float dy) -> void {
                     if (at.box != nullptr && at.box->kind == box_kind::text) {
@@ -115,14 +110,13 @@ struct inline_flow {
             }
             return measure_text.ascent(f.box->font_size, f.box->face);
         };
-        // TEXT-ALIGN IS THE SAME PASS. A line is aligned by shifting everything on
-        // it, which is exactly the loop that already runs to put them on a shared
-        // baseline - so it happens there rather than in a second walk that would
-        // have to rediscover which fragments are on which line.
+        // `text-align` is applied in the same pass: a line is aligned by
+        // shifting everything on it, which the baseline loop already visits, so
+        // no second walk has to rediscover which fragments are on which line.
         //
-        // The shift is measured against `c.available_width`, the CONTENT width the
-        // container handed down, and not against `widest`: the leftover space is
-        // the whole point, and a line that already fills its container has none.
+        // The shift is measured against `c.available_width`, the content width
+        // the container handed down, not against `widest`: it distributes the
+        // leftover space, and a line that fills its container has none.
         const float align = b.text_align;
         const auto align_line = [&out, &line_start, &ascent_of, align, &c](float top) {
             float line_ascent = 0;
@@ -139,7 +133,7 @@ struct inline_flow {
                 align > 0 ? std::max(0.0f, c.available_width - extent) * align : 0.0f;
             for (std::size_t i = line_start; i < out.children.size(); ++i) {
                 fragment & f = out.children[i];
-                if (f.bounds.y != top) { continue; } // a later line already
+                if (f.bounds.y != top) { continue; } // belongs to a later line
                 f.bounds.y = top + line_ascent - ascent_of(f);
                 f.bounds.x += shift;
             }
@@ -166,25 +160,15 @@ struct inline_flow {
                 has_line_content |= out.children.size() != before;
                 continue;
             }
-            // LAID OUT FIRST, THEN ASKED WHETHER IT FITS. The width that decides
-            // a wrap has to be the width the box will actually take, and an
-            // intrinsic estimate is not it: `outer_intrinsic` cannot resolve a
-            // PERCENTAGE width - the containing block is the question it is
-            // usually asked in the middle of - so a `.form-control`, which is
-            // `width: 100%`, measured as its 20-character intrinsic and sat
-            // happily beside its label instead of taking the line to itself.
-            // Every Bootstrap form group was two lines short because of it.
-            //
-            // Laying out first costs nothing: a block or replaced child's layout
-            // depends on the containing block's width and not on where the pen
-            // happens to be, so the answer is the same either way and this call
-            // was going to happen regardless.
+            // Lay the child out before deciding whether it wraps: outer_intrinsic
+            // cannot resolve a percentage width (e.g. `width: 100%`), so only the
+            // laid-out width is reliable. This costs nothing, since a block's
+            // layout depends on the containing block's width, not on the pen
+            // position.
             fragment f =
                 layout_box(child, constraints{c.available_width, 0, child.font_size}, measure_text);
-            // AN INLINE-LEVEL BOX'S MARGINS ARE PART OF THE LINE. They were
-            // ignored outright, so `.form-label`'s `margin-bottom: .5rem` - which
-            // is what separates every Bootstrap label from its field - did
-            // nothing, and two inline-blocks side by side touched.
+            // An inline-level box's margins take room on the line, horizontally
+            // and in the line's extent.
             const resolved_edges child_edges = resolve_edges(child, c);
             const bool empty_inline =
                 child.kind == box_kind::inline_ && child.tag != "br" && f.bounds.width == 0 &&
@@ -215,12 +199,12 @@ struct inline_flow {
             f.bounds.x = pen_x + child_edges.margin_left;
             f.bounds.y = pen_y;
             if (f.bounds.width <= 0) { f.bounds.width = w - child_edges.horizontal_margin(); }
-            // An INLINE BOX with no height of its own is a line tall; an
-            // atomic inline - an inline-block - is the height it came to, a
-            // stated `height: 0` or an empty one's zero included, as its
-            // `auto` is (height-interpolation reads both).
-            // ponytail: a REPLACED box keeps the line height it had - an
-            // iframe of zero height would make its document's
+            // An inline box with no height of its own is a line tall. An atomic
+            // inline (an inline-block) is the height it came to, including a
+            // stated `height: 0` or an empty one's zero, as with its `auto`
+            // (height-interpolation reads both).
+            // ponytail: a replaced box with no height keeps the line height:
+            // an iframe of zero height would make its document's
             // `(device-height)` false, because device-* is the frame's
             // viewport here rather than the screen (test_media_queries);
             // drop the exception once media_environment has a device size.
@@ -228,9 +212,8 @@ struct inline_flow {
                 f.bounds.height = line_height;
             }
             pen_x += f.bounds.width + child_edges.horizontal_margin();
-            // The MARGIN box sets the line's extent: a margin below an
-            // inline-block pushes the next line down, which is the whole of what
-            // `margin-bottom` on a label does.
+            // The margin box sets the line's extent: a margin below an
+            // inline-block pushes the next line down.
             line_extent = std::max(line_extent, f.bounds.height + child_edges.margin_top +
                                                     child_edges.margin_bottom);
             total_height = std::max(total_height, f.bounds.y + f.bounds.height);
@@ -240,7 +223,7 @@ struct inline_flow {
         for (const fragment & line : out.children) {
             widest = std::max(widest, line.bounds.x + line.bounds.width);
         }
-        // The extent the content actually REACHED, not what it was offered. A
+        // The extent the content actually reached, not what it was offered. A
         // block container replaces this with its own block-rule width; an inline
         // box keeps it, which is what shrink-to-fit means.
         out.bounds.width = std::max(widest, own.content_left()) + own.pad_right + own.border_right;
@@ -250,12 +233,9 @@ struct inline_flow {
     }
 
 private:
-    // Greedy wrap: take words while they fit, then break. Each visual line
-    // becomes its own fragment, which is exactly the case the fragment tree
-    // exists to represent.
-    // `white-space: pre` keeps the newlines, and a kept newline is a LINE
-    // BREAK - not a character. Handing it to the rasterizer draws .notdef,
-    // which is a box, which is precisely what a <pre> block looked like.
+    /// Places `white-space: pre` text: each kept newline is a line break, not a
+    /// character (the rasterizer would draw it as a .notdef box), and lines are
+    /// neither wrapped nor re-measured.
     static void place_preformatted(const box_node & child, float line_height, float & pen_x,
                                    float & pen_y, fragment & out) {
         std::string_view rest = child.text;
@@ -277,11 +257,13 @@ private:
         }
     }
 
+    /// Greedy wrap: takes words while they fit in the remaining width, then
+    /// breaks. Each visual line becomes its own fragment.
     static void place_text(const box_node & child, const constraints & c,
                            const measure_text_fn & measure_text, float line_height, float & pen_x,
                            float & pen_y, fragment & out) {
         std::string_view rest = child.text;
-        // A space at the START of a line is removed. Otherwise the space
+        // A space at the start of a line is removed. Otherwise the space
         // between two elements indents the next line whenever the first of them
         // ends one.
         if (pen_x == 0) {
@@ -291,7 +273,7 @@ private:
             const std::size_t take = words_that_fit(rest, c.available_width - pen_x,
                                                     child.font_size, child.face, measure_text);
             if (take == 0) {
-                // nothing fits in what is left of this line: start a new one
+                // Nothing fits in what is left of this line: start a new one,
                 if (pen_x == 0) { break; } // ...unless the line is already empty
                 pen_x = 0;
                 pen_y += line_height;
@@ -316,7 +298,9 @@ private:
     }
 
 public:
-    // Used by block_flow to measure a text child, and by table_flow through it.
+    /// Returns the width of the widest space-separated word in a text box, which
+    /// is its min-content width; zero for any other box. Also used by
+    /// measure_box in lib/Layout/algorithm.cpp.
     [[nodiscard]] static float longest_word(const box_node & b,
                                             const measure_text_fn & measure_text) {
         if (b.kind != box_kind::text) { return 0; }

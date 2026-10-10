@@ -1,3 +1,5 @@
+//===- backgrounds.cpp - Background and mask layer lists ------------------===//
+//
 // The comma-separated layer lists of CSS Backgrounds 4 and Masking 1 -
 // one entry per background or mask image:
 //
@@ -11,6 +13,8 @@
 // `repeat no-repeat` is `repeat-x`, a pair of equals is one word, a size's
 // second `auto` is dropped when specified and written when computed, and a
 // keyword position computes to its percentage.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -20,13 +24,15 @@ using namespace detail;
 
 namespace {
 
+/// How a layer list is serialised: as specified when `lengths` is null, as
+/// computed (lengths folded to pixels, keywords to percentages) when set.
 struct layer_context {
-    const length_context * lengths = nullptr; // computed when set
+    const length_context * lengths = nullptr;
     std::string_view writing_mode = "horizontal-tb";
     std::string_view direction = "ltr";
 };
 
-// The significant tokens of each comma-separated layer.
+/// The significant tokens of each comma-separated layer.
 [[nodiscard]] std::vector<std::vector<std::size_t>> layers_of(const token_stream & ts,
                                                               const scan & found) {
     std::vector<std::vector<std::size_t>> out(1);
@@ -44,6 +50,8 @@ struct layer_context {
     return out;
 }
 
+/// A layer's source text, first token to last; nullopt for an empty layer or
+/// one holding a token rebuilt from an escape (not a source slice).
 [[nodiscard]] std::optional<std::string_view> layer_text(const token_stream & ts,
                                                          const std::vector<std::size_t> & layer) {
     if (layer.empty()) { return std::nullopt; }
@@ -53,6 +61,8 @@ struct layer_context {
     return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
+/// One `<repeat-style>` in canonical form: `repeat no-repeat` is `repeat-x`,
+/// and a pair of equal words is one word.
 [[nodiscard]] std::optional<std::string> repeat_style(std::span<const std::string> words) {
     if (words.empty() || words.size() > 2) { return std::nullopt; }
     if (words.size() == 1) {
@@ -71,7 +81,9 @@ struct layer_context {
     return words[0] + " " + words[1];
 }
 
-// One `<length-percentage>` or `auto`, canonical, folded when computing.
+/// One `<length-percentage>` or `auto`, canonical, folded when computing.
+/// `nonnegative` rejects a negative value when specified and clamps it to 0
+/// when computed.
 [[nodiscard]] std::optional<std::string> size_part(std::string_view text, const layer_context & ctx,
                                                    bool nonnegative) {
     const token_stream ts = tokenize(text);
@@ -121,11 +133,12 @@ struct layer_context {
     return simplify_math(text);
 }
 
-// The space-separated pieces of a layer, a function kept whole.
+/// The space-separated pieces of a layer, a function kept whole.
 [[nodiscard]] std::vector<std::string_view> pieces(std::string_view text) {
     return split_top_level(text, " \t\n\r\f");
 }
 
+/// One `<bg-size>`: `cover`, `contain`, or one or two size_part values.
 [[nodiscard]] std::optional<std::string> bg_size(std::string_view text, const layer_context & ctx) {
     const std::vector<std::string_view> parts = pieces(text);
     if (parts.empty() || parts.size() > 2) { return std::nullopt; }
@@ -145,7 +158,7 @@ struct layer_context {
     return out.size() == 1 ? out[0] : out[0] + " " + out[1];
 }
 
-// background-position-x / -y: `center | [ <side>? <lp>? ]!` per layer.
+/// background-position-x / -y: `center | [ <side>? <lp>? ]!` per layer.
 [[nodiscard]] std::optional<std::string> axis_position(std::string_view text, bool vertical,
                                                        const layer_context & ctx) {
     const std::vector<std::string_view> parts = pieces(text);
@@ -187,6 +200,8 @@ struct layer_context {
     return "calc(100% - " + offset + ")";
 }
 
+/// One `<position>` layer, specified or computed (lengths in pixels, then
+/// keywords resolved to percentages).
 [[nodiscard]] std::optional<std::string> position_layer(std::string_view text,
                                                         const layer_context & ctx) {
     if (ctx.lengths != nullptr) {
@@ -233,9 +248,9 @@ struct layer_context {
     return std::nullopt;
 }
 
-// `[ center | [ left | right ] <lp>? ] && [ center | [ top | bottom ] <lp>? ]`
-// with exactly one offset, CSS Backgrounds 3 §3.6: `center right 7%` is
-// `right 7% center`, `top 15px center` is `center top 15px`.
+/// `[ center | [ left | right ] <lp>? ] && [ center | [ top | bottom ] <lp>? ]`
+/// with exactly one offset, CSS Backgrounds 3 §3.6: `center right 7%` is
+/// `right 7% center`, `top 15px center` is `center top 15px`.
 [[nodiscard]] std::optional<std::string> three_value_position(std::string_view text,
                                                               const layer_context & ctx) {
     const std::vector<std::string_view> parts = pieces(text);
@@ -294,6 +309,8 @@ struct layer_context {
     return out;
 }
 
+/// The space-separated keyword set a single-keyword layer property accepts;
+/// empty for any other property.
 [[nodiscard]] std::string_view layer_keywords(std::string_view property) {
     if (ascii_iequals(property, "background-attachment")) { return "scroll fixed local"; }
     if (ascii_iequals(property, "background-clip")) {
@@ -317,6 +334,8 @@ struct layer_context {
     return {};
 }
 
+/// Serialises `property`'s whole layer list, one entry per comma-separated
+/// layer; nullopt if any layer is invalid.
 [[nodiscard]] std::optional<std::string> list(std::string_view property, const token_stream & ts,
                                               const scan & found, const layer_context & ctx) {
     std::string out;

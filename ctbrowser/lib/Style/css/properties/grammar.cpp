@@ -1,3 +1,11 @@
+//===- grammar.cpp - Shared value grammar --------------------- -*- C++ -*-===//
+//
+// The helpers every file in css/properties/ shares: token scanning, keyword
+// sets, typed components, math-function checks, `<position>` matching, and
+// the canonical respelling of numbers, strings and URLs in a value.
+//
+//===----------------------------------------------------------------------===//
+
 #include "grammar/internal.hpp"
 
 namespace ctbrowser::style::css {
@@ -6,8 +14,9 @@ using namespace grammar_detail;
 
 namespace detail {
 
-// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
-// with `"` and `\` escaped and a control character as a hex escape.
+/// A CSS string as CSSOM §2.1 "serialize a string" writes it: double-quoted,
+/// with `"` and `\` escaped, a control character as a hex escape and NUL as
+/// U+FFFD.
 [[nodiscard]] std::string string_text(std::string_view body) {
     std::string out{"\""};
     for (const char c : body) {
@@ -29,10 +38,9 @@ namespace detail {
     return out;
 }
 
-// A space-separated keyword set, matched ASCII case-insensitively. Written as
-// one string rather than an array per property because there are ~90 of them
-// and a `std::array` each would be ~90 more symbols for a linear scan either
-// way.
+/// Whether `word` is in a space-separated keyword set, matched ASCII
+/// case-insensitively. Sets are one string rather than an array per property
+/// because there are about 90 of them and the scan is linear either way.
 [[nodiscard]] bool has_keyword(std::string_view set, std::string_view word) {
     std::size_t i = 0;
     while (i < set.size()) {
@@ -45,6 +53,7 @@ namespace detail {
     return false;
 }
 
+/// The whitespace-separated top-level words of `text`.
 [[nodiscard]] std::vector<std::string_view> words_of(std::string_view text) {
     std::vector<std::string_view> out;
     for (const std::string_view raw : split_top_level(text, html_whitespace)) {
@@ -54,6 +63,7 @@ namespace detail {
     return out;
 }
 
+/// The tokens at `at`, lowercased, or nullopt if any is not an ident.
 [[nodiscard]] std::optional<std::vector<std::string>> words_of(const token_stream & ts,
                                                                std::span<const std::size_t> at) {
     std::vector<std::string> words;
@@ -64,6 +74,8 @@ namespace detail {
     return words;
 }
 
+/// The index after the bracket that closes the block opened at `open`, or
+/// `end` when it is never closed.
 [[nodiscard]] std::size_t matching_close(const token_stream & ts, std::size_t open,
                                          std::size_t end) noexcept {
     int depth = 0;
@@ -80,6 +92,9 @@ namespace detail {
     return end;
 }
 
+/// Collects a value's significant tokens and the facts check_declaration needs
+/// about them (malformed, `!important`, substitutions, unknown functions,
+/// blocks left open).
 [[nodiscard]] scan scan_tokens(const token_stream & ts) {
     scan out;
     int depth = 0;
@@ -90,15 +105,16 @@ namespace detail {
         if (t.type == token_type::bad_string || t.type == token_type::bad_url) {
             out.malformed = true;
         }
-        // A `!` AT THE TOP LEVEL ONLY. Inside a block it is a delim like any
-        // other - `if(style(--x!): a; else: b)` is a value whose condition is
-        // false, not a declaration with a priority (CSS Syntax 3 §5.4.6).
+        // Only a `!` at the top level marks a priority. Inside a block it is a
+        // delim like any other: `if(style(--x!): a; else: b)` is a value whose
+        // condition is false, not a declaration with a priority (CSS Syntax 3
+        // §5.4.6).
         if (depth == 0 && t.type == token_type::delim && ts.text_of(t) == "!") {
             out.important = true;
         }
         if (t.type == token_type::function) {
             const std::string_view fn = function_name(ts, t);
-            // A DASHED FUNCTION is a custom function call, CSS Functions and
+            // A dashed function is a custom function call, CSS Functions and
             // Mixins 1 §2: an arbitrary substitution function like var(),
             // performed by css/substitute.cpp against the sheet's @function
             // rules.
@@ -118,25 +134,21 @@ namespace detail {
         }
         out.significant.push_back(i);
     }
-    // A BLOCK STILL OPEN AT THE END IS NOT MALFORMED. CSS Syntax 3 §5.4.9 says
-    // EOF closes every open block, so `calc(1px` is `calc(1px)` and not a parse
-    // error - `css/css-values/minmax-length-computed` relies on it four times
-    // over with `calc(min(1em, 21px) * 2`, and refusing it deleted a declaration
-    // every browser folds to 40px. A block closed too MANY times still is
-    // malformed, because there is no rule that invents an opener.
+    // A block still open at the end is not malformed: CSS Syntax 3 §5.4.9 says
+    // EOF closes every open block, so `calc(1px` is `calc(1px)`. A block closed
+    // too many times is malformed, because no rule invents an opener.
     out.unclosed = depth > 0 ? depth : 0;
     return out;
 }
 
-// <integer>-ONLY SLOTS IN GRAMMARS THIS TABLE DOES NOT MODEL. CSS Values 4
-// §5.2: `1e1` and `10.1` are <number-token>s, and a slot that takes an
-// <integer> refuses them where it accepts `calc(1e1)`, which rounds
-// (§10.10). The counter properties, the grid lines, `repeat()`'s count,
-// `font-feature-settings`' value and `text-combine-upright: digits N` are all
-// such slots and all in properties kept freeform - so the rule is asked of the
-// bare numbers in the value rather than of a grammar: outside a math function
-// every one must be an integer literal. `initial-letter`'s FIRST value is a
-// <number> and only its second an <integer> (calc-rounds-to-integer).
+/// Checks <integer>-only slots in grammars this table does not model. CSS
+/// Values 4 §5.2: `1e1` and `10.1` are <number-token>s, and an <integer> slot
+/// refuses them while accepting `calc(1e1)`, which rounds (§10.10). The
+/// counter properties, grid lines, `repeat()`'s count, `font-feature-settings`
+/// and `text-combine-upright: digits N` all have such slots in freeform
+/// properties, so the rule is applied to the bare numbers in the value: outside
+/// a math function each must be an integer literal. `initial-letter`'s first
+/// value is a <number> and only its second an <integer>.
 [[nodiscard]] bool integer_slots_ok(std::string_view property, const token_stream & ts) {
     constexpr std::array<std::string_view, 17> integer_only{"counter-increment",
                                                             "counter-reset",
@@ -158,7 +170,7 @@ namespace detail {
     if (!ascii_iequals_any(property, integer_only)) { return true; }
     bool number_first = ascii_iequals(property, "initial-letter");
     int depth = 0;
-    int math_until = -1; // the depth a math function opened at, or -1 outside one
+    int math_until = -1; // The depth a math function opened at, or -1 outside one.
     for (const css_token & t : ts.tokens) {
         if (t.type == token_type::eof) { break; }
         const bool opens = t.type == token_type::function || t.type == token_type::open_paren ||
@@ -185,14 +197,15 @@ namespace detail {
     return true;
 }
 
+/// Checks the argument grammar of the functions whose arguments are known at
+/// parse time: steps(), random-item(), attr(), var(), inherit() and ident().
 [[nodiscard]] bool substitution_grammar_ok(const token_stream & ts) {
     for (std::size_t i = 0; i < ts.tokens.size(); ++i) {
         if (ts.tokens[i].type != token_type::function) { continue; }
         const std::string_view fn = function_name(ts, ts.tokens[i]);
         // `steps( <integer>, <step-position>? )`, CSS Easing 1 §3.2: a
-        // <number-token> that is not an integer - `1e1`, `10.1` - is a
-        // syntax error where a math function still rounds
-        // (calc-rounds-to-integer).
+        // <number-token> that is not an integer (`1e1`, `10.1`) is a syntax
+        // error, whereas a math function there still rounds.
         if (ascii_iequals(fn, "steps")) {
             std::size_t j = i + 1;
             while (j < ts.tokens.size() && ts.tokens[j].type == token_type::whitespace) { ++j; }
@@ -220,10 +233,11 @@ namespace detail {
         const bool is_ident = ascii_iequals(fn, "ident");
         // `var()` and `inherit()` both open with exactly one custom property
         // name (CSS Variables 1 §3: `var( <custom-property-name> ,
-        // <declaration-value>? )`) - `var()`, `var({})`, `var(, 10px)` and
-        // `var(--x {--y})` are all syntax errors (var-parsing.html).
+        // <declaration-value>? )`), so `var()`, `var({})`, `var(, 10px)` and
+        // `var(--x {--y})` are all syntax errors. `ident()` takes one argument
+        // with no commas and no `{}` block.
         if (!is_ident && !ascii_iequals(fn, "inherit") && !ascii_iequals(fn, "var")) { continue; }
-        // Everything about the argument list that either grammar asks: how many
+        // Everything about the argument list these grammars need: how many
         // top-level commas there are, what the first argument's significant
         // tokens are, and whether a `{}` block sits at the top of it.
         int depth = 1;
@@ -253,9 +267,9 @@ namespace detail {
         if (first.empty()) { return false; }
         if (is_ident && (commas != 0 || curly)) { return false; }
         if (!is_ident) {
-            // A CUSTOM PROPERTY NAME and nothing else: `inherit(!!, foo)` names
-            // no property, and `inherit(--x, foo)` has its fallback after the
-            // comma rather than beside the name.
+            // The first argument is a custom property name and nothing else:
+            // `inherit(!!, foo)` names no property, and `inherit(--x, foo)` has
+            // its fallback after the comma rather than beside the name.
             if ((commas > 1 && !ascii_iequals(fn, "var")) || first.size() != 1) { return false; }
             const css_token & name = ts.tokens[first.front()];
             if (name.type != token_type::ident || !ts.text_of(name).starts_with("--")) {
@@ -266,27 +280,22 @@ namespace detail {
     return true;
 }
 
-// Whether the WHOLE value is one math function applied to everything - which is
-// the only shape this file accepts one in. `calc(1px) calc(2px)` is two values
-// and belongs to a property that takes two.
+/// Whether the whole value is one math function, the only shape this file
+/// accepts one in. `calc(1px) calc(2px)` is two values and belongs to a
+/// property that takes two.
 [[nodiscard]] bool whole_value_is_math(const token_stream & ts, const scan & found) {
     if (found.significant.empty()) { return false; }
     const css_token & first = ts.tokens[found.significant.front()];
     if (first.type != token_type::function) { return false; }
     if (!ascii_iequals_any(function_name(ts, first), math_functions)) { return false; }
-    // AN EMPTY ARGUMENT LIST IS NOT A MATH FUNCTION. `round()` is the corpus's
-    // own example of an invalid value (`css/css-values/round-mod-rem-invalid`),
-    // and without this test it was accepted as "a math function over the whole
-    // value" - the exact `expected "" but got "round()"` this file exists to
-    // end.
+    // An empty argument list is not a math function: `round()` is invalid
+    // (css/css-values/round-mod-rem-invalid). Test whether the second token is
+    // the closing paren rather than counting tokens, because an unterminated
+    // `calc(1px` also has two tokens and is valid (EOF closes it).
     //
-    // It asks whether the SECOND token closes the first rather than counting to
-    // three, because two tokens is also what an unterminated `calc(1px` has and
-    // that one is a value: EOF closes it.
-    //
-    // ...EXCEPT FOR THE TREE-COUNTING FUNCTIONS, whose argument list is empty by
-    // definition: `z-index: sibling-index()` is the whole of CSS Values 5
-    // §tree-counting's example.
+    // The tree-counting functions are the exception: their argument list is
+    // empty by definition (`z-index: sibling-index()`, CSS Values 5
+    // §tree-counting).
     const std::string_view fn = function_name(ts, first);
     const bool takes_nothing =
         ascii_iequals(fn, "sibling-index") || ascii_iequals(fn, "sibling-count");
@@ -295,7 +304,7 @@ namespace detail {
         return false;
     }
     // The matching `)` must be the last significant token; anything after it is
-    // a second value. A function left OPEN at the end of the value is closed by
+    // a second value. A function left open at the end of the value is closed by
     // EOF and is therefore also the whole value.
     int depth = 0;
     for (const std::size_t at : found.significant) {
@@ -308,17 +317,16 @@ namespace detail {
     return depth > 0;
 }
 
-// DOES THIS MATH FUNCTION'S ANSWER FIT THE PROPERTY? CSS Values 4 §10.2: a math
-// function is valid where its RESOLVED TYPE is, so `width: calc(2 * 3)` is a
-// syntax error for the same reason `width: 3` is, and `rotate: calc(1s)` for the
-// same reason `rotate: 1s` is.
-//
-// AN UNRESOLVED ANSWER IS ACCEPTED unless its TYPE is already known and wrong.
-// `min(10px, 5%)` and `calc(1px + 1cqw)` are well formed and have no answer
-// until layout; §10.11 says their computed value is the function as written, and
-// refusing them here would delete declarations that work today. But `rotate:
-// calc(1px * sibling-index())` has no answer AND is a length, and §10.2 types it
-// before anything is measured - `math_type_of` is that reading.
+/// Whether a math function's result type fits the property. CSS Values 4
+/// §10.2: a math function is valid where its resolved type is, so `width:
+/// calc(2 * 3)` is invalid for the same reason `width: 3` is, and `rotate:
+/// calc(1s)` for the same reason `rotate: 1s` is.
+///
+/// An unresolved answer is accepted unless its type is already known and
+/// wrong. `min(10px, 5%)` and `calc(1px + 1cqw)` are well formed and have no
+/// answer until layout (§10.11 keeps the function as the computed value). But
+/// `rotate: calc(1px * sibling-index())` has no answer and is still a length,
+/// which `math_type_of` determines without measuring anything.
 [[nodiscard]] bool math_type_fits(const property_syntax & p, const math_answer & answer,
                                   std::string_view text) {
     if (answer.outcome == math_outcome::invalid) { return true; }
@@ -328,7 +336,7 @@ namespace detail {
         if (!typed) { return true; }
     }
     const calc_result & v = typed ? *typed : answer.value;
-    // A PERCENTAGE travels as a length carrying an unresolved part, so "this
+    // A percentage travels as a length carrying an unresolved part, so "this
     // answer is a bare percentage" is the pair below rather than a type tag.
     const bool bare_percentage = v.has_percent && v.px == 0;
     const bool length = !v.is_number && v.type == numeric_type::length;
@@ -355,8 +363,9 @@ namespace detail {
     return true;
 }
 
-// The whole value, read and written back in canonical order: the horizontal
-// half, then the vertical one, with an absent half spelled `center`.
+/// Matches a whole `<position>` value and writes it in canonical order: the
+/// horizontal half, then the vertical one, with an absent half spelled
+/// `center`.
 [[nodiscard]] bool match_position(const token_stream & ts, const scan & found, std::string & out) {
     boost::container::small_vector<position_axis, 4> axis;
     boost::container::small_vector<std::string, 4> text;
@@ -388,8 +397,8 @@ namespace detail {
             out = text[0] + " " + text[1];
             return true;
         }
-        // ...or the other way round, which the `&&` branch allows for KEYWORDS
-        // only: `bottom right` is a position and `10px right` is not.
+        // ...or reversed, which only keywords may be: `bottom right` is a
+        // position and `10px right` is not.
         if (fits(0, position_axis::vertical) && fits(1, position_axis::horizontal)) {
             out = text[1] + " " + text[0];
             return true;
@@ -413,8 +422,8 @@ namespace detail {
     return false;
 }
 
-// One typed component, matched and serialised. `false` means "not this type",
-// never "malformed" - the caller decides what an unmatched value means.
+/// Matches and serialises one typed component. `false` means "not this type",
+/// never "malformed"; the caller decides what an unmatched value means.
 [[nodiscard]] bool match_typed(const token_stream & ts, const css_token & t,
                                const property_syntax & p, std::string & out) {
     const bool takes_length = p.kind == k::length || p.kind == k::length_percentage ||
@@ -424,17 +433,16 @@ namespace detail {
                               p.kind == k::number_percentage || p.kind == k::number_length ||
                               p.kind == k::number_length_percentage;
     if (p.nonnegative && t.number < 0) { return false; }
-    // A NONNEGATIVE `<integer>` IS `<integer [1,inf]>`: every row in this table that
-    // marks an integer nonnegative - column-count, orphans, widows, max-lines,
-    // -webkit-line-clamp - is spelled `<integer [1,inf]>` by its specification,
-    // and `column-count: 0` is the assertion four of those parsing files make.
+    // A nonnegative `<integer>` here means `<integer [1,inf]>`: every row that
+    // marks an integer nonnegative (column-count, orphans, widows, max-lines,
+    // -webkit-line-clamp) is specified that way, so `column-count: 0` is invalid.
     if (p.nonnegative && p.kind == k::integer && t.number == 0) { return false; }
 
     switch (t.type) {
     case token_type::number:
         if (p.kind == k::integer && (t.flags & flag_integer) == 0) { return false; }
-        // A UNITLESS ZERO IS A LENGTH, and only zero is. `width: 0` is valid and
-        // serialises as `0px`; `width: 1` is not a length at all.
+        // A unitless zero is a length, and only zero is: `width: 0` is valid
+        // and serialises as `0px`; `width: 1` is not a length at all.
         if (!takes_number && takes_length && t.number == 0) {
             out = "0px";
             return true;
@@ -459,27 +467,10 @@ namespace detail {
     }
 }
 
-// THE AUTHOR'S TOKENS, WITH THE NUMBERS, STRINGS AND URLS WRITTEN CANONICALLY.
-//
-// A value whose grammar this table does not model is stored as written - that
-// is deliberate, see check_declaration - but CSSOM §6.7.2 serialises a number,
-// a string and a URL the same way in every value, and `css/cssom/serialize-values`
-// asks for `0.5%` where `.5%` was written, `0px` for `-0px`, `"x"` for `'x'` and
-// `url("x")` for `url(x)`, through `background-position`, `content` and every
-// other shorthand this file leaves freeform. So the token stream is rebuilt
-// with only those three token kinds respelled; whitespace, idents, commas and
-// functions keep their bytes, which is what keeps `ident( myident)` its space
-// and `random-item(auto ,serif)` its odd comma.
-//
-// An ident or function name with an ESCAPE in it was decoded by the tokenizer
-// and has no source span left to copy - it would need serialize-an-identifier
-// to write back - so a value holding one is returned as written.
-//
-// ...AND `counter()`/`counters()` LOSE A `decimal` STYLE, which is the one
-// function argument CSSOM canonicalises: `decimal` is the default and
-// `counter(par-num, decimal)` reads back as `counter(par-num)` in every engine
-// (serialize-values asks for it through `content`). Token-level: the trailing
-// `, decimal` before the function's own `)` is simply not written out.
+/// Finds a trailing `, decimal` in a counter()/counters() call starting at
+/// `open`, because CSSOM omits the default style: `counter(x, decimal)`
+/// serialises as `counter(x)`. Returns the [begin, end) token range to skip,
+/// or {0, 0} when there is none.
 [[nodiscard]] std::pair<std::size_t, std::size_t> default_counter_style_in(const token_stream & ts,
                                                                            std::size_t open) {
     const std::string_view fn = function_name(ts, ts.tokens[open]);
@@ -507,13 +498,16 @@ namespace detail {
     return {comma - 1, close};
 }
 
-// url( <string> <url-modifier>* ), CSS Values 4 §4.5.1 and §4.5.4: the
-// modifiers this engine knows written in one order, an unknown one dropped, a
-// duplicate of either kind a syntax error, and anything that is not an ident
-// or a function one too (urls/url-request-modifiers-*). Answers the index of
-// the token after the closing paren, or `npos` when the url is invalid; a
-// `url()` whose first argument is not a string is copied through as it came,
-// because `url(var(--x))` is decided elsewhere.
+/// Canonicalises `url( <string> <url-modifier>* )` (CSS Values 4 §4.5.1 and
+/// §4.5.4) starting at the function token `open`, appending it to `out`: the
+/// known modifiers are written in one order, an unknown one is dropped, and a
+/// duplicate or a modifier that is neither an ident nor a function is a syntax
+/// error.
+///
+/// Returns the index after the closing `)` on success, `npos` when the url()
+/// is invalid, and `npos - 1` when it is not a url(<string>) form at all (or
+/// holds a substitution such as `url(var(--x))`) and the caller should copy
+/// its tokens through unchanged.
 [[nodiscard]] std::size_t canonical_url(const token_stream & ts, std::size_t open,
                                         std::string & out) {
     std::size_t i = open + 1;
@@ -527,7 +521,7 @@ namespace detail {
     std::string url = "url(" + string_text(quoted.substr(1, quoted.size() - 2));
     ++i;
     std::string cross, integrity, referrer;
-    std::vector<std::string> seen; // lowercased name, `(` appended for the function form
+    std::vector<std::string> seen; // Lowercased names; `(` appended for a function.
     for (;;) {
         skip_ws();
         const css_token & t = ts.tokens[i];
@@ -596,6 +590,21 @@ namespace detail {
     return i;
 }
 
+/// Rebuilds the author's tokens with numbers, strings and URLs written
+/// canonically.
+///
+/// A value whose grammar this table does not model is stored as written (see
+/// check_declaration), but CSSOM §6.7.2 serialises numbers, strings and URLs
+/// the same way in every value: `.5%` becomes `0.5%`, `-0px` becomes `0px`,
+/// `'x'` becomes `"x"` and `url(x)` becomes `url("x")`. Only those token kinds
+/// are respelled; whitespace, idents, commas and functions keep their bytes, so
+/// `ident( myident)` keeps its space and `random-item(auto ,serif)` its comma.
+///
+/// An ident or function name containing an escape was decoded by the tokenizer
+/// and has no source span to copy, so a value holding one is returned as
+/// written. Default counter() and symbols() styles are dropped (see
+/// default_counter_style_in). `invalid`, when given, is set for an invalid
+/// url().
 [[nodiscard]] std::string normalize_value_tokens(const token_stream & ts, std::string_view text,
                                                  bool * invalid, std::size_t begin,
                                                  std::size_t end) {
@@ -603,26 +612,24 @@ namespace detail {
     out.reserve(text.size());
     if (end > ts.tokens.size()) { end = ts.tokens.size(); }
     std::pair<std::size_t, std::size_t> skip{0, 0};
-    // THE FALLBACK IS THE AUTHOR'S TEXT §3.3-PREPROCESSED, never the raw bytes.
-    // Callers re-tokenize what this returns and slice it by token offsets, and
-    // those index the preprocessed pool: a NUL is three bytes there and one in
-    // the raw text, so `\61<NUL><NUL>/` put the slash past the end of the
-    // value and `substr` threw out of the style engine (space_slashes,
-    // slash_halves, split_radius, split_columns).
+    // The fallback is the author's text after CSS Syntax 3 §3.3 preprocessing,
+    // never the raw bytes. Callers re-tokenize what this returns and slice it
+    // by token offsets, which index the preprocessed pool: a NUL is three bytes
+    // there (U+FFFD) and one in the raw text, so raw bytes would put offsets
+    // past the end and make `substr` throw (in space_slashes, slash_halves,
+    // split_radius and split_columns).
     const auto as_given = [&] {
         const token_stream again = tokenize(text);
         return std::string{std::string_view{again.pool}.substr(0, again.source_length)};
     };
-    // A NEGATIVE ZERO INSIDE A MATH FUNCTION KEEPS ITS SIGN. A lone `-0` is
-    // `0` (serialize-values), but `sign(calc(-0))` is -0 and `1 / sign(...)`
-    // tells the two apart - `signed-zero` reads it back through `scale` - and
-    // the arithmetic has not happened yet when this runs. The math function's
-    // own serialisation prints what it computed; this only has to not destroy
-    // the input. A PERCENTAGE IS EXCLUDED: nothing reads the sign of `-0%`
-    // back, and `min(-0%, 0%)` serialises as `min(0%, 0%)` in every engine
-    // (minmax-percentage-serialize).
+    // A negative zero inside a math function keeps its sign. A lone `-0` is
+    // `0`, but `sign(calc(-0))` is -0 and `1 / sign(...)` tells the two apart,
+    // and the arithmetic has not happened yet when this runs; the math
+    // function's own serialisation prints what it computed. Percentages are
+    // excluded: nothing reads the sign of `-0%` back, and `min(-0%, 0%)`
+    // serialises as `min(0%, 0%)` in every engine.
     int depth = 0;
-    int math_from = 0; // the depth at which the outermost math function opened
+    int math_from = 0; // The depth at which the outermost math function opened.
     const auto number = [&](double value) {
         return math_from != 0 && value == 0 && std::signbit(value) ? std::string{"-0"}
                                                                    : number_text(value);
@@ -644,8 +651,8 @@ namespace detail {
         }
         if (t.type == token_type::function) {
             skip = default_counter_style_in(ts, i);
-            // ...and `symbols()` its `symbolic`, the default type (CSS Counter
-            // Styles 3 §6.1): `symbols(symbolic "a")` is `symbols("a")`.
+            // `symbols()` likewise drops `symbolic`, its default type (CSS
+            // Counter Styles 3 §6.1): `symbols(symbolic "a")` is `symbols("a")`.
             if (ascii_iequals(function_name(ts, t), "symbols")) {
                 std::size_t j = i + 1;
                 while (j < end && ts.tokens[j].type == token_type::whitespace) { ++j; }
@@ -689,6 +696,8 @@ namespace detail {
     return out;
 }
 
+/// Matches one component (a keyword of `syntax`, a typed token, or a whole
+/// math function of a fitting type) and writes its serialisation to `out`.
 bool typed_component(std::string_view part, const property_syntax & syntax, std::string & out) {
     const token_stream ts = tokenize(part);
     const scan found = scan_tokens(ts);

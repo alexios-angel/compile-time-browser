@@ -1,3 +1,10 @@
+//===- compositor.hpp - Tile compositor ----------------------- -*- C++ -*-===//
+//
+// Driving a frame: draw() rasters the tiles a frame needs and composites them.
+// A scroll costs a composite only, because tiles are in content space and a
+// scroll only moves the layer.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -9,29 +16,25 @@
 #include <ctbrowser/raster/backend/software.hpp>
 #include <ctbrowser/raster/tile.hpp>
 
-// Driving a frame: draw() rasters the tiles a frame needs and composites them.
-// A scroll costs a composite only, because tiles are in content space and a
-// scroll only moves the layer.
-
 namespace ctbrowser::raster {
 
 using ctbrowser::paint::layer_tree;
 
-// Raster the tiles a frame needs - in parallel when a pool is given - then
-// composite.
-//
-// Two things keep this from doing the whole page every time:
-//
-//   * VIEWPORT CULLING. Only tiles near the visible region are rastered. A page
-//     is routinely a hundred times taller than the window, and rastering all of
-//     it costs a hundred times what it should. `viewport` is in viewport space;
-//     an empty one means "everything", which is what the identity tests want.
-//   * INCREMENTAL RASTER. needs_raster() skips tiles a previous frame already
-//     drew, so scrolling pays only for what came into view.
-//
-// The prefetch margin is one tile on each side. It is what stops a slow scroll
-// from stuttering at every tile boundary, and one tile is the smallest margin
-// that can hide a scroll step shorter than a tile.
+/// Rasters the tiles a frame needs (in parallel when a pool is given), then
+/// composites.
+///
+/// Two things keep this from doing the whole page every time:
+///
+///   * Viewport culling. Only tiles near the visible region are rastered. A
+///     page is routinely a hundred times taller than the window. `viewport` is
+///     in viewport space; an empty one means "everything", which is what the
+///     identity tests want.
+///   * Incremental raster. needs_raster() skips tiles a previous frame already
+///     drew, so scrolling pays only for what came into view.
+///
+/// The prefetch margin is one tile on each side. It stops a slow scroll from
+/// stuttering at every tile boundary, and one tile is the smallest margin that
+/// can hide a scroll step shorter than a tile.
 inline void draw(software_backend & backend, const layer_tree & tree, scheduler * pool = nullptr,
                  int extent = default_tile_extent, const rect & viewport = rect{}) {
     // The tiles this frame has to have, and which display list each comes from.
@@ -40,9 +43,9 @@ inline void draw(software_backend & backend, const layer_tree & tree, scheduler 
     for (std::uint32_t i = 0; i < tree.layers.size(); ++i) {
         const paint::layer & l = tree.layers[i];
         if (!l.contents) { continue; }
-        // The visible region in this layer's CONTENT space - which is where its
-        // tiles live, and why a layer's offset is what turns a scroll into a
-        // different set of tiles rather than a different set of commands.
+        // The visible region in this layer's content space, where its tiles
+        // live. The layer's offset is what turns a scroll into a different set
+        // of tiles rather than a different set of commands.
         const float margin = static_cast<float>(extent);
         const rect visible =
             viewport.empty()
@@ -59,9 +62,9 @@ inline void draw(software_backend & backend, const layer_tree & tree, scheduler 
 
     // Each tile is written by one thread into storage reserve_tiles already
     // allocated, and reads a const display list. Nothing is shared.
-    // Ask which tiles are actually stale BEFORE fanning out: needs_raster reads
-    // the same store raster() writes, and mixing the two across threads would
-    // be a race for no benefit - the query is trivial.
+    // Ask which tiles are stale before fanning out: needs_raster reads the same
+    // store raster() writes, and mixing the two across threads would be a race
+    // for no benefit, since the query is trivial.
     std::vector<std::size_t> stale;
     stale.reserve(tiles.size());
     for (std::size_t i = 0; i < tiles.size(); ++i) {

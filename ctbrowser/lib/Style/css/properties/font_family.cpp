@@ -1,6 +1,9 @@
-// The `font-family` list, serialised as CSSOM says - which is the one
-// serialisation `el.style` and `getComputedStyle` share word for word, so it
-// lives here and both ask for it.
+//===- font_family.cpp - font-family serialisation ------------ -*- C++ -*-===//
+//
+// The `font-family` list, serialised as CSSOM says. `el.style` and
+// `getComputedStyle` share this serialisation exactly, so both call it.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -8,23 +11,22 @@ namespace ctbrowser::style::css {
 
 namespace {
 
-// A FONT FAMILY IS NOT A KEYWORD: the case is the author's and it is
-// significant - Chrome answers `Twisty Tie`, never `twisty tie`.
+// A font family is not a keyword: its case is the author's and is significant
+// (Chrome answers `Twisty Tie`, never `twisty tie`).
 //
-// AND THE LIST IS SERIALISED, not handed back. CSSOM says a family name that is
-// a valid IDENTIFIER SEQUENCE serialises without quotes and one that is not
-// serialises as a string - so `'Times New Roman'` loses its quotes, `'34J'`
-// keeps them because `34J` is not an identifier, `"A  B"` keeps them because
-// the double space would not survive, and `"serif"` keeps them because dropping
-// them would turn a family CALLED serif into the generic one. The quotes a name
-// keeps are always DOUBLE ones, whichever the author used.
-// css/cssom/font-family-serialization-001 is fourteen assertions about exactly
-// this, and the five it makes about the COMPUTED value are the ones here.
+// The list is re-serialised, not handed back. CSSOM says a family name that is
+// a valid identifier sequence serialises without quotes and one that is not
+// serialises as a string: `'Times New Roman'` loses its quotes, `'34J'` keeps
+// them because `34J` is not an identifier, `"A  B"` keeps them because the
+// double space would not survive, and `"serif"` keeps them because dropping
+// them would turn a family called serif into the generic one. A name that
+// keeps its quotes always gets double ones, whichever the author used (WPT
+// css/cssom/font-family-serialization-001).
 
-// A CSS identifier that needs no escaping to be written down. A LEADING RUN OF
-// HYPHENS is allowed - `-webkit-serif` is an identifier and so is `--x` - but a
-// hyphen run with nothing after it is not, and neither is anything starting with
-// a digit, which is the whole reason `34J` has to stay a string.
+/// True for a CSS identifier that needs no escaping to be written down. A
+/// leading run of hyphens is allowed (`-webkit-serif` and `--x` are
+/// identifiers), but a hyphen run with nothing after it is not, and neither is
+/// anything starting with a digit, which is why `34J` has to stay a string.
 [[nodiscard]] bool is_bare_identifier(std::string_view word) {
     std::size_t start = 0;
     while (start < word.size() && word[start] == '-') { ++start; }
@@ -35,8 +37,8 @@ namespace {
     return true;
 }
 
-// The words CSS has already spoken for. A family name that IS one of them can
-// only be said as a string, because unquoting it would change what it means.
+/// The words CSS has already reserved. A family name equal to one of them can
+/// only be written as a string, because unquoting it would change its meaning.
 [[nodiscard]] bool is_reserved_family_word(std::string_view name) {
     return ascii_iequals_any(name, {"inherit", "initial", "unset", "revert", "revert-layer",
                                     "default", "serif", "sans-serif", "monospace", "cursive",
@@ -44,6 +46,8 @@ namespace {
                                     "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji"});
 }
 
+/// True when a quoted family name can be written without quotes: every
+/// space-separated word is a bare identifier and the name is not reserved.
 [[nodiscard]] bool family_can_drop_its_quotes(std::string_view name) {
     if (name.empty() || is_reserved_family_word(name)) { return false; }
     for (std::size_t at = 0;;) {
@@ -56,6 +60,7 @@ namespace {
     }
 }
 
+/// Writes `name` as a double-quoted CSS string.
 [[nodiscard]] std::string quoted_family(std::string_view name) {
     std::string out{"\""};
     for (const char c : name) {
@@ -69,9 +74,9 @@ namespace {
 } // namespace
 
 std::string serialize_font_family(std::string_view text) {
-    // (name, was it written as a string). The pair is the whole of the rule: an
-    // unquoted name is already an identifier sequence and is handed back as it
-    // stands, and only a QUOTED one has a decision to make.
+    // (name, was it written as a string). An unquoted name is already an
+    // identifier sequence and is handed back as it stands; only a quoted one
+    // needs the quote-dropping decision.
     std::vector<std::pair<std::string, bool>> families;
     std::string name;
     bool quoted = false;
@@ -88,9 +93,8 @@ std::string serialize_font_family(std::string_view text) {
             any = true;
             while (i < text.size() && text[i] != close) {
                 // A backslash escapes the next byte and is not itself part of
-                // the name. This does not decode `\61` - a hex escape in a font
-                // name is rare enough that carrying the digits through is a
-                // better answer than a half-implemented decoder.
+                // the name. Hex escapes such as `\61` are not decoded; they are
+                // rare in font names, so the digits are carried through.
                 if (text[i] == '\\' && i + 1 < text.size()) { ++i; }
                 name += text[i];
                 ++i;

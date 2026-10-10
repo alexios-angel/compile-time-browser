@@ -1,3 +1,11 @@
+//===- substitute.cpp - var() substitution entry points ------- -*- C++ -*-===//
+//
+// The public entry points of computed-value-time substitution: may_have_var
+// (a cheap pre-check), compute_registered (a value for an @property-registered
+// custom property) and substitute_var. The substituter itself is in
+// substitute/internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 #include "substitute/internal.hpp"
 
 namespace ctbrowser::style::css {
@@ -22,7 +30,7 @@ bool may_have_var(std::string_view value) noexcept {
         if (boundary && i + 8 <= value.size() && ascii_iequals(value.substr(i, 8), "inherit(")) {
             return true;
         }
-        // A DASHED FUNCTION - `--f(` - is a custom function call. `--diff(`
+        // A dashed function such as `--f(` is a custom function call. `--diff(`
         // above is one too; what it is not is an `if()`.
         if (boundary && value.substr(i, 2) == "--") {
             std::size_t j = i + 2;
@@ -47,8 +55,8 @@ std::optional<std::string> compute_registered(std::string_view text, std::string
         if (!found) { return std::nullopt; }
         matched = *found;
     }
-    // Then computed like the type it names: a `calc()` folded, a dimension in
-    // its canonical unit - `1em` under a 30px font is `30px`.
+    // Then computed like the type it names: a `calc()` is folded and a
+    // dimension goes to its canonical unit (`1em` under a 30px font is `30px`).
     if (may_have_math(matched)) {
         const folded_value done = fold_math(matched, ctx);
         if (!done.ok) { return std::nullopt; }
@@ -69,10 +77,10 @@ std::optional<std::string> substitute_var(std::string_view value, const custom_l
     }
     std::string out;
     if (!engine.run(value, out, 0)) { return std::nullopt; }
-    // A CYCLE IS NOT RESCUED BY A FALLBACK. CSS Variables 1 §3.1: every
-    // property in a dependency cycle is invalid at computed-value time,
-    // `var(--self, 3px)` included - the fallback is for a property that is
-    // absent, not for one that cannot be computed (attr-argument-grammar).
+    // A fallback does not rescue a cycle. CSS Variables 1 §3.1: every property
+    // in a dependency cycle is invalid at computed-value time, including
+    // `var(--self, 3px)`. The fallback is for a property that is absent, not
+    // for one that cannot be computed (WPT attr-argument-grammar).
     if (engine.reached_self()) { return std::nullopt; }
     if (introduced_structure(out)) { return std::nullopt; }
     return out;

@@ -1,8 +1,8 @@
 # ctbrowser.paint - geometry -> a recorded display list of layers.
 #
 # Records a display list from the fragment tree. Nothing downstream of layout
-# knows paint exists; paint knows nothing about how the list is drawn, which
-# is what allows a software and a GPU backend to consume the same recording.
+# knows paint exists; paint knows nothing about how the list is drawn, so any
+# raster backend can consume the same recording.
 add_library(ctbrowser-paint)
 target_sources(ctbrowser-paint PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_sources(ctbrowser-paint PRIVATE

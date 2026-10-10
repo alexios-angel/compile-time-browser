@@ -1,23 +1,27 @@
+//===- ctbrowser/lib/Layout/position.cpp - Positioned layout ----*- C++ -*-===//
+//
+// apply_positioning: one walk over the finished fragment tree that shifts
+// relative and translated boxes and places absolute and fixed ones against
+// their containing blocks. The header says why this is a pass rather than a
+// formatting context.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser/layout/position.hpp>
 
 #include <algorithm>
 #include <cstddef>
 
-// position: the function bodies.
-// The header says why this is a pass rather than a formatting context; this says
-// how the walk carries what the placement needs.
-
 namespace ctbrowser::layout {
 namespace {
 
-// The containing block an absolutely positioned box is placed against: the
-// PADDING box of the nearest positioned ancestor (CSS 2.1 §10.1), in absolute
-// coordinates, or the initial containing block when there is no such ancestor.
-//
-// The padding box and not the content box, which is the detail that is easy to
-// get wrong and invisible until an anchor has padding: `top: 0` on a child of a
-// `.position-relative` with 12px of padding puts it at the padding edge, level
-// with the padding, not with the text inside it.
+/// The containing block an absolutely positioned box is placed against: the
+/// padding box of the nearest positioned ancestor (CSS 2.1 §10.1), in absolute
+/// coordinates, or the initial containing block when there is no such ancestor.
+///
+/// It is the padding box, not the content box, a detail that is easy to get
+/// wrong and invisible until an anchor has padding: `top: 0` on a child of a
+/// `.position-relative` with 12px of padding puts it at the padding edge, not
+/// level with the text inside it.
 struct containing_block {
     float x = 0;
     float y = 0;
@@ -25,9 +29,9 @@ struct containing_block {
     float height = 0;
 };
 
-// A resolved edge offset, and whether it was given at all. `auto` is not zero
-// here - it means "use the static position", which is a completely different
-// answer and the one Bootstrap's `.position-absolute` with no offsets relies on.
+/// A resolved edge offset, and whether it was given at all. `auto` is not zero
+/// here: it means "use the static position", which Bootstrap's
+/// `.position-absolute` with no offsets relies on.
 struct offset {
     float value = 0;
     bool given = false;
@@ -38,13 +42,13 @@ struct offset {
     return offset{len.resolve(basis, font_size), true};
 }
 
-// Where a relative box, or a translated one, moves to.
-//
-// A RELATIVE BOX IS OFFSET, NOT RESIZED, and it leaves its slot behind: `left`
-// and `right` are opposites, so if both are given the left one wins in a
-// left-to-right document and the right one is ignored. Giving neither is the
-// common case - `.position-relative` exists mostly to be an anchor for something
-// else, and then this contributes nothing.
+/// How far a relatively positioned box moves.
+///
+/// A relative box is offset, not resized, and it leaves its slot behind: `left`
+/// and `right` are opposites, so if both are given the left one wins in a
+/// left-to-right document and the right one is ignored. Giving neither is the
+/// common case (`.position-relative` exists mostly to be an anchor for
+/// something else), and then this contributes nothing.
 [[nodiscard]] point relative_shift(const box_node & b, const containing_block & cb) {
     const offset left = resolve_offset(b.inset.left, cb.width, b.font_size);
     const offset right = resolve_offset(b.inset.right, cb.width, b.font_size);
@@ -54,17 +58,17 @@ struct offset {
                  top.given ? top.value : (bottom.given ? -bottom.value : 0.0f)};
 }
 
-// `transform: translate(x, y)`, whose percentages are of the box's OWN size -
-// which is what makes `.translate-middle` centre a box on its anchor point
-// rather than on anything about its parent.
+/// `transform: translate(x, y)`, whose percentages are of the box's own size,
+/// which is what makes `.translate-middle` centre a box on its anchor point
+/// rather than on anything about its parent.
 [[nodiscard]] point translate_shift(const box_node & b, const rect & bounds) {
     return point{b.translate.x.resolve(bounds.width, b.font_size),
                  b.translate.y.resolve(bounds.height, b.font_size)};
 }
 
-// One walk, carrying everything a placement needs: where the current fragment is
-// in absolute coordinates, and what the nearest positioned ancestor's padding box
-// is.
+/// One walk, carrying everything a placement needs: where the current fragment
+/// is in absolute coordinates, and what the nearest positioned ancestor's padding
+/// box is.
 struct positioner {
     const rect & viewport;
     const measure_text_fn & measure;
@@ -81,7 +85,7 @@ struct positioner {
         } else if (box != nullptr && box->is_positioned()) {
             // `relative` and `sticky`: laid out in flow, then moved. The move is
             // applied to the fragment's own bounds, so every descendant travels
-            // with it for free - which is what "relative positioning does not
+            // with it for free, which is what "relative positioning does not
             // affect layout" means in practice.
             const point shift = relative_shift(*box, cb);
             f.bounds.x += shift.x;
@@ -96,11 +100,11 @@ struct positioner {
             abs_x += shift.x;
             abs_y += shift.y;
         }
-        // Everything but `static` is an anchor for the descendants below it -
-        // and so is a TRANSFORMED box, whatever its position, for its fixed
+        // Everything but `static` is an anchor for the descendants below it,
+        // and so is a transformed box, whatever its position, for its fixed
         // descendants as well as its absolute ones (CSS Transforms 1 §3): a
         // `position: fixed` inside a `transform: scale(1)` is placed against
-        // that box and not the viewport (getComputedStyle-insets-fixed).
+        // that box and not the viewport (WPT getComputedStyle-insets-fixed).
         const bool holds_fixed = box != nullptr && box->transformed;
         if (box != nullptr && (box->is_positioned() || holds_fixed)) {
             inner = padding_box_of(*box, f, abs_x + f.bounds.x, abs_y + f.bounds.y);
@@ -111,8 +115,8 @@ struct positioner {
         }
     }
 
-    // The padding box: the border box less the border, which is where a
-    // positioned descendant's `top: 0` lands.
+    /// The padding box: the border box less the border, which is where a
+    /// positioned descendant's `top: 0` lands.
     [[nodiscard]] static containing_block padding_box_of(const box_node & b, const fragment & f,
                                                          float abs_x, float abs_y) {
         const constraints c{f.bounds.width, f.bounds.height, b.font_size};
@@ -122,8 +126,9 @@ struct positioner {
                                 std::max(0.0f, f.bounds.height - e.border_top - e.border_bottom)};
     }
 
-    // THE PLACEMENT. `f` arrives as an empty fragment at its static position, in
-    // its parent's coordinates; `abs_x`/`abs_y` are that parent's absolute origin.
+    /// Lays out and places one absolute or fixed box. `f` arrives as an empty
+    /// fragment at its static position, in its parent's coordinates;
+    /// `abs_x`/`abs_y` are that parent's absolute origin.
     void place_out_of_flow(fragment & f, float abs_x, float abs_y, const containing_block & cb) {
         const box_node & b = *f.box;
         const float static_abs_x = abs_x + f.bounds.x;
@@ -137,10 +142,10 @@ struct positioner {
         const constraints outer{cb.width, cb.height, b.font_size};
         resolved_edges edges = resolve_edges(b, outer);
 
-        // THE WIDTH, and the three cases are genuinely different rules rather than
-        // one rule with exceptions (§10.3.7). A stated width is itself; BOTH
-        // offsets given with an auto width stretches between them, which is how a
-        // full-width overlay is written; and anything else SHRINKS TO FIT, which
+        // The width. The three cases are different rules rather than one rule
+        // with exceptions (§10.3.7). A stated width is itself; both offsets
+        // given with an auto width stretches between them, which is how a
+        // full-width overlay is written; and anything else shrinks to fit, which
         // is why `.position-absolute.top-0.start-0` is the size of its text and
         // not the size of the page.
         float width = 0;
@@ -154,10 +159,10 @@ struct positioner {
             width = shrink_to_fit_width(b, outer, edges, measure);
         }
 
-        // AUTO MARGINS ARE SOLVED, §10.3.7 rule 6 and §10.6.4 rule 6: with both
+        // Auto margins are solved (§10.3.7 rule 6 and §10.6.4 rule 6): with both
         // offsets and a width given, what is left over goes to the auto
-        // margins - both, equally, which is how `left: 0; right: 0; margin:
-        // auto` centres an absolutely positioned box; one, wholly. Horizontally
+        // margins, split equally between two (which is how `left: 0; right: 0;
+        // margin: auto` centres an absolutely positioned box) or wholly to one. Horizontally
         // a negative remainder falls on margin-right (`direction: ltr`); the
         // vertical rule has no such clause and a negative split is what it says.
         if (!b.width.is_auto() && left.given && right.given &&
@@ -196,7 +201,7 @@ struct positioner {
         }
 
         // Where it goes, in absolute coordinates. An `auto` offset means the
-        // static position - where the box would have been in flow - which is the
+        // static position (where the box would have been in flow), which is the
         // whole reason the flows leave a marker behind rather than nothing.
         const float height = placed.bounds.height;
         float x = static_abs_x;
@@ -229,7 +234,7 @@ struct positioner {
 void apply_positioning(fragment & root, const rect & viewport, float viewport_height,
                        const measure_text_fn & measure) {
     const containing_block initial{0, 0, viewport.width, viewport.height};
-    // A FIXED BOX IS PLACED AGAINST THE WINDOW, not the document. The two are the
+    // A fixed box is placed against the window, not the document. The two are the
     // same only on a page that does not scroll, and `.fixed-bottom` is exactly
     // the case that tells them apart: against the document it lands after the
     // last paragraph, where nobody will ever see it.

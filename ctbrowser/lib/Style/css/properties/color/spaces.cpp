@@ -1,3 +1,11 @@
+//===- spaces.cpp - CSS colour spaces and conversions ---------------------===//
+//
+// CSS Color 4 colour spaces: names, channel layouts, conversions through
+// XYZ D65 (with missing-component carry-forward), and number serialisation.
+// Bare § numbers in this file refer to CSS Color 4.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::color_detail {
@@ -30,7 +38,7 @@ namespace ctbrowser::style::css::color_detail {
     return "srgb";
 }
 
-// The spaces `color()` and `color-mix(in ...)` name. `xyz` is `xyz-d65`.
+/// The spaces `color()` and `color-mix(in ...)` name. `xyz` is `xyz-d65`.
 [[nodiscard]] std::optional<space> predefined_space(std::string_view word) {
     static constexpr std::pair<std::string_view, space> table[] = {
         {"srgb", space::srgb},
@@ -74,7 +82,7 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
-// The slot holding `p` in `s`, or -1.
+/// The slot holding `p` in `s`, or -1.
 [[nodiscard]] int slot_of(space s, part p) noexcept {
     const std::array<part, 3> parts = parts_of(s);
     for (int i = 0; i < 3; ++i) {
@@ -91,8 +99,8 @@ namespace ctbrowser::style::css::color_detail {
     return slot_of(s, part::colorfulness);
 }
 
-// The channel keywords a relative colour may use, per space, in slot order;
-// `alpha` is always the fourth.
+/// The channel keywords a relative colour may use, per space, in slot order;
+/// `alpha` is always the fourth.
 [[nodiscard]] std::array<std::string_view, 3> channel_keywords(space s) noexcept {
     switch (s) {
     case space::hsl: return {"h", "s", "l"};
@@ -107,8 +115,9 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
-// What 100% means in each slot (CSS Color 4 §4.1's reference ranges), and
-// how a plain number in the channel maps to the space's own unit.
+/// What 100% means in each slot (CSS Color 4 §4.1's reference ranges), and
+/// how a plain number in the channel maps to the space's own unit. Slot 3 is
+/// alpha.
 [[nodiscard]] double percent_reference(space s, int slot, bool bytes) noexcept {
     switch (s) {
     case space::srgb: return slot == 3 || !bytes ? 1.0 : 255.0; // rgb(): numbers are 0..255
@@ -128,7 +137,8 @@ namespace ctbrowser::style::css::color_detail {
             m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]};
 }
 
-// The transfer functions, sign-preserving as the specification writes them.
+// The transfer functions (lin_* decode to linear light, gam_* encode),
+// sign-preserving as the specification writes them.
 [[nodiscard]] double lin_srgb(double v) noexcept {
     const double a = std::fabs(v);
     const double sign = v < 0 ? -1.0 : 1.0;
@@ -163,9 +173,9 @@ namespace ctbrowser::style::css::color_detail {
     return sign * std::pow(std::fabs(v), 256.0 / 563);
 }
 
-// rec2020 is display-referred: BT.1886's pure 2.4 gamma, not BT.2020's
-// camera curve (CSS Color 4 §10.8 since 2024; the corpus's rec2020 answers
-// are computed with it).
+/// rec2020 is display-referred: BT.1886's pure 2.4 gamma, not BT.2020's
+/// camera curve (CSS Color 4 §10.8 since 2024; the WPT rec2020 expectations
+/// are computed with it).
 [[nodiscard]] double lin_2020(double v) noexcept {
     const double sign = v < 0 ? -1.0 : 1.0;
     return sign * std::pow(std::fabs(v), 2.4);
@@ -188,6 +198,8 @@ namespace ctbrowser::style::css::color_detail {
 }
 
 // §7.1 and §8: hsl and hwb to and from sRGB, the specification's own code.
+// Hues are in degrees; saturation, lightness, whiteness and blackness in
+// 0..100; sRGB in 0..1.
 [[nodiscard]] vec3 hsl_to_rgb(double hue, double sat, double light) noexcept {
     hue = normalize_hue(hue);
     sat /= 100.0;
@@ -200,9 +212,9 @@ namespace ctbrowser::style::css::color_detail {
     return {f(0), f(8), f(4)};
 }
 
-// The hue of an sRGB triple, the specification's rgbToHue: nought when the
-// channels are equal, and no rotation for a negative saturation - that is
-// hsl's own step below, and hwb does not take it.
+/// The hue of an sRGB triple, the specification's rgbToHue: nought when the
+/// channels are equal, and no rotation for a negative saturation - that is
+/// hsl's own step below, and hwb does not take it.
 [[nodiscard]] double rgb_to_hue(const vec3 & rgb) noexcept {
     const double red = rgb[0], green = rgb[1], blue = rgb[2];
     const double max = std::max({red, green, blue});
@@ -257,7 +269,8 @@ namespace ctbrowser::style::css::color_detail {
     return {rgb_to_hue(rgb), white * 100.0, black * 100.0};
 }
 
-// §9 and §10: Lab (D50) and OKLab, to and from XYZ D65.
+// §9 and §10: Lab (D50) and OKLab, to and from XYZ D65. epsilon = 216/24389
+// and kappa = 24389/27 are CIE's exact rational constants.
 [[nodiscard]] vec3 xyz_to_lab(const vec3 & xyz65) noexcept {
     constexpr double epsilon = 216.0 / 24389;
     constexpr double kappa = 24389.0 / 27;
@@ -307,7 +320,8 @@ namespace ctbrowser::style::css::color_detail {
     return {lch[0], lch[1] * std::cos(h), lch[1] * std::sin(h)};
 }
 
-// Every channel to XYZ D65, `none` as zero.
+/// Converts channels in space `s` to XYZ D65; the caller passes `none` as
+/// zero.
 [[nodiscard]] vec3 to_xyz(space s, vec3 c) noexcept {
     switch (s) {
     case space::hsl: c = hsl_to_rgb(c[0], c[1], c[2]); [[fallthrough]];
@@ -330,6 +344,7 @@ namespace ctbrowser::style::css::color_detail {
     return c;
 }
 
+/// Converts XYZ D65 to space `s`'s channels.
 [[nodiscard]] vec3 from_xyz(space s, const vec3 & xyz) noexcept {
     switch (s) {
     case space::srgb: return map3(mul(xyz_to_lin_srgb, xyz), gam_srgb);
@@ -352,10 +367,11 @@ namespace ctbrowser::style::css::color_detail {
     return xyz;
 }
 
-// §4.4.1's POWERLESS HUE: a colourfulness at or under the space's own epsilon
-// - `hsl(180 0.001% 50%)` and `lch(20 0.0015 180)` are the corpus's
-// boundaries - or an hwb whose white and black fill the whole colour. A
-// missing colourfulness is nought here, as it is for every other purpose.
+/// The colourfulness at or below which a hue is powerless (CSS Color 4
+/// §4.4.1). The thresholds match the WPT boundary cases `hsl(180 0.001% 50%)`
+/// and `lch(20 0.0015 180)`. hwb is handled separately: its hue is powerless
+/// when white + black fill the whole colour. A missing colourfulness counts
+/// as nought here, as it does for every other purpose.
 [[nodiscard]] double hue_epsilon(space s) noexcept {
     switch (s) {
     case space::hsl: return 0.001;
@@ -365,17 +381,19 @@ namespace ctbrowser::style::css::color_detail {
     }
 }
 
-// A colour about to be converted, its powerless hue made missing (§4.4.1):
-// the colourfulness that made it powerless goes to nought so the conversion
-// does not amplify floating-point noise, and an hwb fills its white and
-// black to 100. A colour written by hand never has this done to it -
-// `hsl(180 0% 50%)` keeps its hue for as long as it stays hsl.
+/// Prepares a colour about to be converted by making its powerless hue
+/// missing (§4.4.1): the colourfulness that made it powerless goes to nought
+/// so the conversion does not amplify floating-point noise, and an hwb fills
+/// its white and black to 100. A colour written by hand never has this done
+/// to it - `hsl(180 0% 50%)` keeps its hue for as long as it stays hsl.
 void settle_powerless(resolved & r) noexcept {
     const int h = hue_slot(r.cs);
     if (h < 0) { return; }
     if (r.cs == space::hwb) {
         const double w = r.none[1] ? 0.0 : r.c[1];
         const double b = r.none[2] ? 0.0 : r.c[2];
+        // White + black >= 100% makes the hue powerless; 99.999 allows for
+        // floating-point error in the percentages.
         if (w + b < 99.999) { return; }
         r.none[0] = true;
         r.c[0] = 0.0;
@@ -398,19 +416,20 @@ void settle_powerless(resolved & r) noexcept {
     if (chroma > 0.0) { r.c[c] = 0.0; }
 }
 
+/// Whether `s` is sRGB or one of its cylindrical forms (hsl, hwb).
 [[nodiscard]] bool srgb_family(space s) noexcept {
     return s == space::srgb || s == space::hsl || s == space::hwb;
 }
 
-// ONE COLOUR IN ANOTHER SPACE: §11.2's algorithm with §12.2's carrying
-// forward of missing components. The source's powerless hue is made missing
-// first; a missing component lands in the analogous slot of the target; and
-// when every source component WITHOUT an analogue is missing, every target
-// component without one is missing too - so `lab(50 none none)` is
-// `lch(50 none none)`, `hwb(180 none none)` is `hsl(180 none none)`, and
-// `rgb(none none none)` is missing everything wherever it goes. A hue the
-// conversion produces powerless is missing as well. A colour is never
-// converted to its own space, so a hand-written powerless hue stays.
+/// Converts one colour to another space: §11.2's algorithm with §12.2's
+/// carrying forward of missing components. The source's powerless hue is made
+/// missing first; a missing component lands in the analogous slot of the
+/// target; and when every source component without an analogue is missing,
+/// every target component without one is missing too - so `lab(50 none none)`
+/// is `lch(50 none none)`, `hwb(180 none none)` is `hsl(180 none none)`, and
+/// `rgb(none none none)` is missing everything wherever it goes. A hue the
+/// conversion produces powerless is missing as well. A colour is never
+/// converted to its own space, so a hand-written powerless hue stays.
 [[nodiscard]] resolved convert(const resolved & from, space to) {
     if (from.cs == to) { return from; }
     resolved src = from;
@@ -469,9 +488,9 @@ void settle_powerless(resolved & r) noexcept {
 
 // --- serialising numbers ----------------------------------------------------
 
-// A channel value as every engine prints one: six significant digits, no
-// exponent, trailing zeros dropped. `0.501961` for 128/255 and `73.3386` for
-// 1.28rad.
+/// A channel value as every engine prints one: six significant digits, no
+/// exponent, trailing zeros dropped. `0.501961` for 128/255 and `73.3386` for
+/// 1.28rad.
 [[nodiscard]] std::string channel_text(double v) {
     if (std::isnan(v)) { return "calc(NaN)"; }
     if (std::isinf(v)) { return v > 0 ? "calc(infinity)" : "calc(-infinity)"; }
@@ -498,7 +517,7 @@ void settle_powerless(resolved & r) noexcept {
     return out;
 }
 
-// A legacy sRGB channel: clamped to the byte and rounded, half up.
+/// A legacy sRGB channel: clamped to the byte and rounded, half up.
 [[nodiscard]] std::string byte_text(double v) {
     if (std::isnan(v)) { v = 0; }
     // Snapped to a millionth first: `hwb(120 30% 50%)` is 127.49999999999997
@@ -507,8 +526,8 @@ void settle_powerless(resolved & r) noexcept {
     return std::to_string(static_cast<int>(std::floor(clamped + 0.5)));
 }
 
-// CSSOM §6.7.2's <alphavalue> for an 8-bit alpha: the two-decimal fraction
-// that rounds to the same byte if there is one, else three decimals.
+/// CSSOM §6.7.2's <alphavalue> for an 8-bit alpha: the two-decimal fraction
+/// that rounds to the same byte if there is one, else three decimals.
 [[nodiscard]] std::string legacy_alpha_text(double alpha) {
     if (std::isnan(alpha)) { alpha = 0; }
     alpha = std::min(1.0, std::max(0.0, alpha));

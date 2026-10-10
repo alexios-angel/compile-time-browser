@@ -1,4 +1,7 @@
-// CSS Transforms 2's individual transform properties and the origins:
+//===- transforms.cpp - Transform properties ------------------ -*- C++ -*-===//
+//
+// Parsing and serialisation for `transform`, CSS Transforms 2's individual
+// transform properties and the origins:
 //
 //   rotate      none | <angle> | [ x | y | z | <number>{3} ] && <angle>
 //   scale       none | [ <number> | <percentage> ]{1,3}
@@ -14,6 +17,8 @@
 // `0px`, and the origins put the horizontal keyword first. Computed: angles
 // in degrees, percentages of a scale as numbers, lengths in pixels, and an
 // origin resolved against the box it was given.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -23,14 +28,19 @@ using namespace detail;
 
 namespace {
 
+/// How values are read: as specified, or folded to computed values.
 struct transform_context {
-    const length_context * lengths = nullptr; // computed when set
+    /// Set: fold to computed values against these bases; null: keep the
+    /// value as specified.
+    const length_context * lengths = nullptr;
 };
 
+/// `px` serialised as a computed length, e.g. `12.5px`.
 [[nodiscard]] std::string px_text_of(float px) {
     return serialize_calc(calc_result{px, 0.0, false, false, numeric_type::length});
 }
 
+/// Indices of the non-whitespace tokens, excluding the trailing EOF token.
 [[nodiscard]] std::vector<std::size_t> significant(const token_stream & ts) {
     std::vector<std::size_t> out;
     for (std::size_t i = 0; i + 1 < ts.tokens.size(); ++i) {
@@ -39,14 +49,15 @@ struct transform_context {
     return out;
 }
 
-// One component: the text of a single token or of a function to its close,
-// and the index past it.
+/// One component: the text of a single token, or of a function up to its
+/// closing `)`, and the index (into the significant-token list) past it.
 struct piece {
     std::string_view text;
     std::size_t next = 0;
     const css_token * token = nullptr;
 };
 
+/// The component starting at significant token `k`, or nullopt past the end.
 [[nodiscard]] std::optional<piece> take(const token_stream & ts,
                                         const std::vector<std::size_t> & at, std::size_t k) {
     if (k >= at.size()) { return std::nullopt; }
@@ -71,15 +82,16 @@ struct piece {
                  &t};
 }
 
+/// The type typed() checks a component against.
 enum class want : std::uint8_t {
-    number,            // a <number> or a <percentage> read as one (scale)
-    angle,             // an <angle>
-    length,            // a <length>
-    length_percentage, // a <length-percentage>
+    number,            ///< A <number>, or a <percentage> read as one (scale).
+    angle,             ///< An <angle>.
+    length,            ///< A <length>.
+    length_percentage, ///< A <length-percentage>.
 };
 
-// One typed value, canonical: a specified value keeps its unit, a computed
-// one is folded. `nullopt` when the piece is not of that type.
+/// One typed value, canonical: a specified value keeps its unit, a computed
+/// one is folded. `nullopt` when the piece is not of that type.
 [[nodiscard]] std::optional<std::string> typed(const piece & p, want kind,
                                                const transform_context & ctx) {
     const css_token & t = *p.token;
@@ -149,6 +161,7 @@ enum class want : std::uint8_t {
     return simplify_math(p.text);
 }
 
+/// `rotate`, serialised (see the file comment), or nullopt if invalid.
 [[nodiscard]] std::optional<std::string> rotate(const token_stream & ts,
                                                 const std::vector<std::size_t> & at,
                                                 const transform_context & ctx) {
@@ -199,6 +212,7 @@ enum class want : std::uint8_t {
     return axis + " " + angle;
 }
 
+/// `scale`, serialised (see the file comment), or nullopt if invalid.
 [[nodiscard]] std::optional<std::string> scale(const token_stream & ts,
                                                const std::vector<std::size_t> & at,
                                                const transform_context & ctx) {
@@ -223,6 +237,7 @@ enum class want : std::uint8_t {
     return out;
 }
 
+/// `translate`, serialised (see the file comment), or nullopt if invalid.
 [[nodiscard]] std::optional<std::string> translate(const token_stream & ts,
                                                    const std::vector<std::size_t> & at,
                                                    const transform_context & ctx) {
@@ -248,11 +263,11 @@ enum class want : std::uint8_t {
     return out;
 }
 
-// `none | <transform-function>+` (CSS Transforms 1 §7, 2 §13): each
-// function's arguments counted and typed - `matrix(1, 2)`, `rotate(0, 0)`,
-// `perspective(1000)` and `scaleX(2), scaleY(3)` are no transforms - and
-// written canonically: a scale's percentage as its number, a zero angle as
-// `0deg`. A function's name keeps the author's spelling.
+/// `transform`: `none | <transform-function>+` (CSS Transforms 1 §7, 2 §13).
+/// Each function's arguments are counted and typed, so `matrix(1, 2)`,
+/// `rotate(0, 0)`, `perspective(1000)` and `scaleX(2), scaleY(3)` are invalid,
+/// and written canonically: a scale's percentage as its number, a zero angle
+/// as `0deg`. A function's name keeps the author's spelling.
 [[nodiscard]] std::optional<std::string> transform_list(const token_stream & ts,
                                                         const std::vector<std::size_t> & at) {
     if (at.size() == 1 && ts.tokens[at[0]].type == token_type::ident &&
@@ -288,7 +303,8 @@ enum class want : std::uint8_t {
             if (s.name == name) { sig = &s; }
         }
         if (sig == nullptr) { return std::nullopt; }
-        // The arguments end at the `)`, or at the end of the value that closed it.
+        // The arguments end at the `)`, or at the end of the value if the
+        // function was left unclosed.
         const bool closed =
             whole->next - 1 > k && ts.tokens[at[whole->next - 1]].type == token_type::close_paren;
         const std::size_t end = closed ? whole->next - 1 : whole->next;
@@ -336,17 +352,18 @@ enum class want : std::uint8_t {
     return out;
 }
 
-// The origin: horizontal, vertical and an optional depth, with the keywords
-// placed on their axes.
+/// The origin: horizontal, vertical and an optional depth, with the keywords
+/// placed on their axes. A lone value has empty `y` and `z`.
 struct origin {
     std::string x, y, z;
 };
 
+/// Reads a `transform-origin` value, or returns nullopt if it is invalid.
 [[nodiscard]] std::optional<origin> read_origin(const token_stream & ts,
                                                 const std::vector<std::size_t> & at,
                                                 const transform_context & ctx) {
-    std::vector<std::string> values; // the first one or two components
-    std::vector<int> axes;           // 0 horizontal keyword, 1 vertical, 2 center, 3 length
+    std::vector<std::string> values; // The first one or two components.
+    std::vector<int> axes;           // 0 horizontal keyword, 1 vertical, 2 center, 3 length.
     std::string depth;
     for (std::size_t k = 0; k < at.size();) {
         const std::optional<piece> p = take(ts, at, k);
@@ -382,7 +399,8 @@ struct origin {
     if (values.empty()) { return std::nullopt; }
     origin out;
     if (values.size() == 1) {
-        // Written as the one value it was, so `bottom` reads back as `bottom`.
+        // A single value is kept as written here; the caller decides how it
+        // serialises (specified values pair it with `center`).
         if (!depth.empty()) { return std::nullopt; }
         return origin{values[0], "", ""};
     }
@@ -409,6 +427,9 @@ struct origin {
 
 namespace detail {
 
+/// Parses and serialises the specified value of `rotate`, `scale`,
+/// `translate`, `transform` or `transform-origin` into `out` (empty if
+/// invalid). Returns false if `property` is none of these.
 bool match_transform_property(std::string_view property, const token_stream & ts,
                               const scan & found, std::string & out) {
     (void)found;
@@ -426,9 +447,9 @@ bool match_transform_property(std::string_view property, const token_stream & ts
         const std::optional<origin> o = read_origin(ts, at, {});
         if (o) {
             if (o->y.empty()) {
-                // A LONE VALUE is one axis with the other `center` (CSS
+                // A lone value is one axis with the other `center` (CSS
                 // Transforms 1 §6), and serialises as the pair:
-                // `left center`, `center top` (transform-origin-valid).
+                // `left center`, `center top` (WPT transform-origin-valid).
                 const bool vertical = ascii_iequals(o->x, "top") || ascii_iequals(o->x, "bottom");
                 answer = vertical ? "center " + o->x : o->x + " center";
             } else {
@@ -438,7 +459,8 @@ bool match_transform_property(std::string_view property, const token_stream & ts
     } else {
         return false;
     }
-    // A random() spells its sharing key with the property's name.
+    // Give each random() a default caching key that includes the property
+    // name, so random() in different properties does not share one value.
     if (answer && answer->find("random(") != std::string::npos) {
         answer = canonical_random(*answer, property);
     }
@@ -448,6 +470,9 @@ bool match_transform_property(std::string_view property, const token_stream & ts
 
 } // namespace detail
 
+/// The computed value of `rotate`, `scale`, `translate`, `transform-origin` or
+/// `perspective-origin`, with origins resolved to pixels against a
+/// `box_width` x `box_height` box. Empty if invalid or another property.
 std::string computed_transform_property(std::string_view property, std::string_view specified,
                                         const color_context & ctx, float box_width,
                                         float box_height) {
@@ -520,9 +545,9 @@ std::string computed_transform_property(std::string_view property, std::string_v
                         : resolve(o->x, false, true) + " " + px_text_of(box_height / 2);
     }
     std::string out = resolve(o->x, false, false) + " " + resolve(o->y, true, false);
-    // A zero z offset is left out, written or not - `100% 150% 0px` reads
-    // back as the pair an interpolation's zero end does
-    // (transform-origin-interpolation).
+    // A zero z offset is left out, written or not: `100% 150% 0px` reads
+    // back as the pair, as an interpolation's zero end does
+    // (WPT transform-origin-interpolation).
     if (!o->z.empty() && length_text_to_px(o->z, *tc.lengths).value_or(1.0f) != 0.0f) {
         out += " " + o->z;
     }

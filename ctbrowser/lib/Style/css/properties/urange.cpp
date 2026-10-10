@@ -1,10 +1,14 @@
+//===- urange.cpp - unicode-range values ---------------------- -*- C++ -*-===//
+//
 // `<urange>` (CSS Syntax 3 §6), the value of the `unicode-range` descriptor:
-// a comma-separated list, each item one of the token sequences the
-// specification lists after a `u` - `+ <ident> ?*`, `<dimension> ?*`,
-// `<number> ?*`, `<number> <dimension>`, `<number> <number>`, `+ ?+` - whose
-// representations are concatenated and then read as U+ hex, `?` wildcards
-// and an optional `-` end. Serialised as `U+X` or `U+X-Y`, uppercase, no
-// leading zeros. urange-parsing.html walks every clause.
+// a comma-separated list. Each item is one of the token sequences the
+// specification lists after a `u` (`+ <ident> ?*`, `<dimension> ?*`,
+// `<number> ?*`, `<number> <dimension>`, `<number> <number>`, `+ ?+`); their
+// text is concatenated and then read as U+ hex, `?` wildcards and an optional
+// `-` end. Serialised as `U+X` or `U+X-Y`, uppercase, with no leading zeros.
+// WPT css/css-syntax/urange-parsing.html covers every clause.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -14,7 +18,8 @@ using namespace detail;
 
 namespace {
 
-// The text of one urange (after the leading `u`), or nullopt.
+/// Parses the text of one urange (after the leading `u`) into its `U+X` or
+/// `U+X-Y` serialisation, or returns nullopt if it is not a valid urange.
 [[nodiscard]] std::optional<std::string> interpret(std::string_view text) {
     if (text.size() < 2 || text[0] != '+') { return std::nullopt; }
     std::size_t at = 1;
@@ -67,10 +72,11 @@ bool match_unicode_range(const token_stream & ts, const scan & found, std::strin
     std::size_t i = 0;
     const auto & sig = found.significant;
     while (i < sig.size()) {
-        // `u` or `U`, an ident on its own (`u+0` tokenises as ident + dimension).
+        // `u` or `U` as an ident on its own (`u+0` tokenises as ident plus
+        // dimension).
         const css_token & u = ts.tokens[sig[i]];
         if (u.type != token_type::ident || !ascii_iequals(ts.text_of(u), "u")) { return false; }
-        // The tokens that follow with NO whitespace between them, up to a
+        // The tokens that follow with no whitespace between them, up to a
         // comma: the spec's sequences are all adjacent.
         std::string text;
         std::size_t k = sig[i] + 1;

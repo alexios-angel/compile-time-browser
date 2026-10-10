@@ -1,18 +1,22 @@
+//===- image.cpp - Image values ------------------------------- -*- C++ -*-===//
+//
 // `<image>` lists, CSS Images 3 and 4: the gradients, `image()`,
 // `cross-fade()` and `light-dark()`, with a `url()` or an unknown image
 // function kept as written. What `background-image`, `mask-image`,
 // `border-image-source` and `list-style-image` read back as, specified and
 // computed.
 //
-// A GRADIENT IS THE ONLY GRAMMAR HERE WITH A CANONICAL ORDER: the direction
+// A gradient is the only grammar here with a canonical order: the direction
 // or shape first, then `at <position>`, then the colour interpolation method,
 // then the stops - each stop its colour first and its positions after, the
 // hints between. The defaults are dropped: `to bottom`, `ellipse`,
 // `farthest-corner`, `from 0deg`, and the interpolation method that CSS Images
 // 4 §3.4.3 would have chosen anyway (`srgb` over legacy colours, `oklab` over
-// anything else). The COMPUTED value is the same walk with the colours
+// anything else). The computed value is the same walk with the colours
 // resolved, the lengths in pixels, the angles in degrees and a centre
 // position dropped.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -22,14 +26,17 @@ using namespace detail;
 
 namespace {
 
+/// Selects the serialisation mode and supplies what the computed value needs.
 struct image_context {
-    const length_context * lengths = nullptr; // computed when set; specified otherwise
+    /// The computed value is serialised when set; the specified one otherwise.
+    const length_context * lengths = nullptr;
     std::string_view current_color;
+    /// Whether light-dark() picks its dark branch.
     bool dark = false;
 };
 
-// The source text of the tokens [begin, end), or nothing when one was
-// rebuilt from an escape and has no source span.
+/// The source text of the tokens [begin, end), or nullopt when one was
+/// rebuilt from an escape and has no source span.
 [[nodiscard]] std::optional<std::string_view> slice(const token_stream & ts, std::size_t begin,
                                                     std::size_t end) {
     if (begin >= end) { return std::string_view{}; }
@@ -39,8 +46,8 @@ struct image_context {
     return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
-// The significant (non-whitespace) token indices of [begin, end), split at
-// the top-level commas.
+/// The significant (non-whitespace) token indices of [begin, end), split at
+/// the top-level commas.
 [[nodiscard]] std::vector<std::vector<std::size_t>> arguments(const token_stream & ts,
                                                               std::size_t begin, std::size_t end) {
     std::vector<std::vector<std::size_t>> out(1);
@@ -64,14 +71,15 @@ struct image_context {
     return out;
 }
 
-// One value in canonical text: a length, percentage, angle or math
-// function, absolutised when computing. `nullopt` for text that is not one.
+/// Which kind of quantity canonical_quantity accepts.
 enum class quantity : std::uint8_t {
     length_percentage,
     angle_percentage,
-    length, // a non-negative one, for a radial size
+    length, ///< A non-negative length, for a radial size.
 };
 
+/// One value in canonical text: a length, percentage, angle or math
+/// function, absolutised when computing. `nullopt` for text that is not one.
 [[nodiscard]] std::optional<std::string> canonical_quantity(std::string_view text, quantity kind,
                                                             const image_context & ctx) {
     const token_stream ts = tokenize(text);
@@ -128,6 +136,8 @@ enum class quantity : std::uint8_t {
     return simplify_math(text);
 }
 
+/// An `<angle>` in canonical text (degrees when computing). Clears `*ok` when
+/// `text` is not an angle, including a colour function that starts the stops.
 [[nodiscard]] std::string canonical_angle(std::string_view text, const image_context & ctx,
                                           bool * ok) {
     const token_stream ts = tokenize(text);
@@ -164,9 +174,9 @@ enum class quantity : std::uint8_t {
     return simplify_math(text);
 }
 
-// `<position>` as CSS Values 5 writes it: the keywords in canonical order
-// when specified, percentages and pixels when computed. Empty for a
-// position this cannot read; `centered` says whether it is the centre.
+/// `<position>` as CSS Values 5 writes it: the keywords in canonical order
+/// when specified, percentages and pixels when computed. Empty for a
+/// position this cannot read; `centered` says whether it is the centre.
 [[nodiscard]] std::string canonical_position(std::string_view text, const image_context & ctx,
                                              bool & centered) {
     centered = false;
@@ -207,27 +217,28 @@ enum class quantity : std::uint8_t {
     return {};
 }
 
-// Is this colour text one of the legacy sRGB forms - which decide a
-// gradient's default interpolation space (CSS Images 4 §3.4.3)?
+/// Whether this colour text is one of the legacy sRGB forms, which decide a
+/// gradient's default interpolation space (CSS Images 4 §3.4.3).
 [[nodiscard]] bool legacy_color_syntax(std::string_view text) {
     const std::string_view t = trim(text, html_whitespace);
     if (t.empty()) { return false; }
     if (t.front() == '#') { return true; }
     const std::size_t open = t.find('(');
-    if (open == std::string_view::npos) { return true; } // a keyword
+    if (open == std::string_view::npos) { return true; } // A keyword.
     return ascii_iequals_any(t.substr(0, open), {"rgb", "rgba", "hsl", "hsla", "hwb"});
 }
 
-// `in <colorspace> [ <hue-method> hue ]?`, read from significant tokens at
-// `at`; answers the canonical text and advances `at`. Three answers: no
-// `in` here, a well-formed method, or an `in` with a malformed method -
-// which condemns the gradient rather than leaving the tokens to the stops.
+/// The result of read_interpolation. A malformed method invalidates the
+/// gradient rather than leaving the tokens to the stops.
 enum class method_read : std::uint8_t {
-    absent,
-    read,
-    malformed
+    absent,   ///< No `in` here.
+    read,     ///< A well-formed method.
+    malformed ///< An `in` followed by a malformed method.
 };
 
+/// Reads `in <colorspace> [ <hue-method> hue ]?` from the significant tokens
+/// of `arg` at `at`, writing the canonical space and hue method (empty for the
+/// default `shorter`) and advancing `at`.
 [[nodiscard]] method_read read_interpolation(const token_stream & ts,
                                              const std::vector<std::size_t> & arg, std::size_t & at,
                                              std::string & space, std::string & hue_method) {
@@ -267,8 +278,9 @@ enum class method_read : std::uint8_t {
     return method_read::read;
 }
 
-// A colour at significant index `at` of `arg`: one token, or a function to
-// its close. Answers the token index past it, or `at` when there is none.
+/// The extent of a colour at significant index `at` of `arg`: one token, or a
+/// function to its close. Returns the index past it, or `at` when there is
+/// none.
 [[nodiscard]] std::size_t colour_extent(const token_stream & ts,
                                         const std::vector<std::size_t> & arg, std::size_t at) {
     if (at >= arg.size()) { return at; }
@@ -283,12 +295,13 @@ enum class method_read : std::uint8_t {
     return at;
 }
 
+/// Reads and canonicalises the three gradient families.
 struct gradient_reader {
     const token_stream & ts;
     const image_context & ctx;
 
-    // One past the last significant token of a position that starts at
-    // `from`: the argument's end, or the `in` of an interpolation method.
+    /// One past the last significant token of a position that starts at
+    /// `from`: the argument's end, or the `in` of an interpolation method.
     [[nodiscard]] std::size_t position_end(const std::vector<std::size_t> & arg,
                                            std::size_t from) const {
         for (std::size_t k = from; k < arg.size(); ++k) {
@@ -298,13 +311,14 @@ struct gradient_reader {
         return arg.size();
     }
 
-    // The colour stops and hints: `arg` lists after the first (or all of
-    // them when the first is a stop). Appends the canonical text.
+    /// Reads the colour stops and hints in `args` from index `from` (0 when the
+    /// first argument is already a stop) and appends their canonical text.
+    /// Clears `all_legacy` when any colour is not a legacy sRGB form.
     [[nodiscard]] bool stops(const std::vector<std::vector<std::size_t>> & args, std::size_t from,
                              bool angular, std::string & out, bool & all_legacy) {
         if (from >= args.size()) { return false; }
         const quantity kind = angular ? quantity::angle_percentage : quantity::length_percentage;
-        bool previous_hint = true; // a hint may not open the list
+        bool previous_hint = true; // A hint may not open the list.
         bool first_piece = true;
         const auto separator = [&]() -> std::string_view {
             if (first_piece) {
@@ -377,6 +391,7 @@ struct gradient_reader {
         return !previous_hint;
     }
 
+    /// linear-gradient() and repeating-linear-gradient().
     [[nodiscard]] std::optional<std::string> linear(
         const std::vector<std::vector<std::size_t>> & args, std::string_view name) {
         std::string head;
@@ -431,7 +446,7 @@ struct gradient_reader {
             }
             return false;
         };
-        // `[ <direction> || <method> ]?` - either order, each at most once.
+        // `[ <direction> || <method> ]?`: either order, each at most once.
         for (int round = 0; round < 2; ++round) {
             if (!have_method) {
                 const method_read method = read_interpolation(ts, first, at, space, hue);
@@ -452,6 +467,7 @@ struct gradient_reader {
         return assemble(name, head, space, hue, all_legacy, body);
     }
 
+    /// radial-gradient() and repeating-radial-gradient().
     [[nodiscard]] std::optional<std::string> radial(
         const std::vector<std::vector<std::size_t>> & args, std::string_view name) {
         const std::vector<std::size_t> & first = args.front();
@@ -573,6 +589,7 @@ struct gradient_reader {
         return assemble(name, head, space, hue, all_legacy, body);
     }
 
+    /// conic-gradient() and repeating-conic-gradient().
     [[nodiscard]] std::optional<std::string> conic(
         const std::vector<std::vector<std::size_t>> & args, std::string_view name) {
         const std::vector<std::size_t> & first = args.front();
@@ -649,6 +666,8 @@ struct gradient_reader {
         return assemble(name, head, space, hue, all_legacy, body);
     }
 
+    /// Writes `name(head, body)`, adding the interpolation method only when it
+    /// differs from the default (srgb for all-legacy colours, else oklab).
     [[nodiscard]] static std::string assemble(std::string_view name, std::string head,
                                               const std::string & space, const std::string & hue,
                                               bool all_legacy, const std::string & body) {
@@ -664,19 +683,24 @@ struct gradient_reader {
     }
 };
 
-// One `<image>` from the significant tokens `item`; `nullopt` when it is not
-// one this file models (the caller keeps the author's bytes), and an empty
-// string when it is one and is invalid.
+/// One `<image>` from the significant tokens `item`; `nullopt` when it is not
+/// one this file models (the caller keeps the author's bytes), and an empty
+/// string when it is one and is invalid. `depth` counts nested image functions
+/// (cross-fade, light-dark).
 [[nodiscard]] std::optional<std::string> one_image(const token_stream & ts,
                                                    const std::vector<std::size_t> & item,
                                                    const image_context & ctx, int depth);
 
+/// One nested image argument (as in light-dark()); currently the same as
+/// one_image.
 [[nodiscard]] std::optional<std::string> image_list(const token_stream & ts,
                                                     const std::vector<std::size_t> & item,
                                                     const image_context & ctx, int depth);
 
 std::optional<std::string> one_image(const token_stream & ts, const std::vector<std::size_t> & item,
                                      const image_context & ctx, int depth) {
+    // Past 16 levels of nested image functions the value is rejected rather
+    // than recursing further, so a hostile value cannot exhaust the stack.
     if (item.empty() || depth > 16) { return std::string{}; }
     const css_token & first = ts.tokens[item.front()];
     if (first.type == token_type::url) {
@@ -692,7 +716,7 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
     if (first.type != token_type::function) { return std::nullopt; }
     const std::size_t close = matching_close(ts, item.front(), ts.tokens.size() - 1);
     if (item.back() + 1 != close && !(close == ts.tokens.size() - 1 && item.back() < close)) {
-        return std::string{}; // something after the function
+        return std::string{}; // Something follows the function.
     }
     const std::string name = ascii_lower_copy(ts.text_of(first));
     const std::string_view fn = std::string_view{name}.substr(0, name.size() - 1);
@@ -707,7 +731,7 @@ std::optional<std::string> one_image(const token_stream & ts, const std::vector<
             normalize_value_tokens(ts, *text, &invalid, item.front(), item.back() + 1);
         return invalid ? std::string{} : url;
     }
-    // `src(<string>)` COMPUTES TO THE URL IT NAMES (CSS Values 4 §4.5), which
+    // `src(<string>)` computes to the URL it names (CSS Values 4 §4.5), which
     // is written the one way a computed <url> is: `src(url("a.png"))`. The
     // specified value keeps the author's bytes.
     if (fn == "src" && ctx.lengths != nullptr && args.size() == 1 && args.front().size() == 1 &&
@@ -816,6 +840,9 @@ std::optional<std::string> image_list(const token_stream & ts,
     return one_image(ts, item, ctx, depth);
 }
 
+/// A comma-separated `<image>` list in canonical text. Items this file does
+/// not model keep their bytes (with numbers, strings and URLs normalised);
+/// nullopt when no item is modelled, and empty when the list is invalid.
 [[nodiscard]] std::optional<std::string> image_list_text(std::string_view text,
                                                          const image_context & ctx) {
     const token_stream ts = tokenize(text);

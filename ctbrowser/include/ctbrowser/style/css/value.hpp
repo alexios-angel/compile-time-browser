@@ -1,3 +1,28 @@
+//===- value.hpp - CSS component values -------------------------*- C++ -*-===//
+//
+// CSS Syntax Level 3 §5: the data structure a parsed stylesheet becomes.
+//
+// A component value is a preserved token, a function, or a block, and its
+// children live contiguously in one vector, so any value list is a
+// `std::span<const component_value>` and walking one is linear in memory.
+// That shape keeps `var()` substitution simple: substituting splices a run of
+// component values in place of one, and the enclosing function does not care
+// how many arrived. `rgba(var(--x), .5)` is
+//
+//     function{rgba} -> [ function{var} -> [ident --x], comma, number .5 ]
+//
+// so "a var() inside an argument list" and "a var() that expands to a comma
+// list" need no special cases.
+//
+// A rule is a declaration block, not a (selector x declaration) pair, so a
+// selector is compiled once per selector and never once per declaration.
+//
+// Everything is an offset into one pool. `stylesheet` owns the pool for its
+// whole life and never reallocates it after parsing, so every string_view into
+// it is stable, which lets a resolved declaration's value be a view rather
+// than a std::string.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -12,110 +37,86 @@
 #include <ctbrowser/style/css/token.hpp>
 #include <ctbrowser/style/selector.hpp>
 
-// CSS Syntax Level 3 §5: what a stylesheet IS once it has been parsed.
-//
-// A COMPONENT VALUE is a preserved token, a function, or a block - and its
-// children live CONTIGUOUSLY in one vector, so any value list is a
-// `std::span<const component_value>` and walking one is linear in memory. That
-// shape is what makes `var()` substitution tractable later: substituting splices a
-// RUN of component values in place of one, and the enclosing function does not
-// care how many arrived. `rgba(var(--x), .5)` is
-//
-//     function{rgba} -> [ function{var} -> [ident --x], comma, number .5 ]
-//
-// so "a var() inside an argument list" and "a var() that expands to a comma list"
-// need no special cases.
-//
-// A RULE IS A DECLARATION BLOCK, not a (selector x declaration) pair, so a
-// selector is compiled once per selector and never once per declaration.
-//
-// EVERYTHING IS OFFSETS INTO ONE POOL. `stylesheet` owns the pool for its whole
-// life and is never reallocated after parsing, so every string_view into it is
-// stable - which is the licence for a resolved declaration's value to be a view
-// rather than a std::string.
-
 namespace ctbrowser::style::css {
 
+/// What a component_value is.
 enum class cv_kind : std::uint8_t {
-    token,    // a preserved token
+    token,    // A preserved token.
     function, // `name(` ... `)`
-    block,    // `(` `[` or `{` ... its closer
+    block,    // `(`, `[` or `{` ... its closer.
 };
 
+/// One component value: a token, function or block, with its children stored
+/// contiguously in stylesheet::values.
 struct component_value {
     cv_kind kind = cv_kind::token;
-    // For a block, which bracket opened it. For a function this is '(' always.
-    // Kept so a serialiser and `@media`'s prelude walker can tell `[a]` from `(a)`
-    // without going back to the token.
+    /// For a block, which bracket opened it; always '(' for a function. Kept so
+    /// a serialiser and `@media`'s prelude walker can tell `[a]` from `(a)`
+    /// without going back to the token.
     char open = '\0';
-    // A block or function nested past the parser's depth limit, or one holding
-    // one: its tokens were skipped to the matching closer and it has no
-    // children. A declaration whose value holds one is invalid and dropped, as
-    // is a rule whose prelude does.
+    /// Set for a block or function nested past the parser's depth limit, or
+    /// one containing such: its tokens were skipped to the matching closer and
+    /// it has no children. A declaration whose value holds one is invalid and
+    /// dropped, as is a rule whose prelude does.
     bool too_deep = false;
     std::uint8_t pad = 0;
-    std::uint32_t token = 0; // the first token: the preserved one, or the opener
-    // ONE PAST THE LAST token belonging to this value, so [token, end_token) is
-    // its whole extent - the closing bracket included.
-    //
-    // Without it the extent has to be inferred from the last CHILD, and the closer
-    // is not a child: `var(--x)` came back as `var(--x` and every `rgba(...)` lost
-    // its `)`, so the colour failed to parse and the element was painted with
-    // nothing. Recording the range instead of deducing it also makes exact
-    // reconstruction a straight concatenation.
+    std::uint32_t token = 0; // The first token: the preserved one, or the opener.
+    /// One past the last token of this value, so [token, end_token) is its
+    /// whole extent including the closing bracket (which is not a child).
+    /// Exact reconstruction is then a straight concatenation.
     std::uint32_t end_token = 0;
-    std::uint32_t first_child = 0; // index into stylesheet::values; 0 = none
+    std::uint32_t first_child = 0; // Index into stylesheet::values; 0 = none.
     std::uint32_t child_count = 0;
 };
 
-// `prop: value` or `--custom: <anything>`.
+/// One declaration, `prop: value` or `--custom: <anything>`.
 struct raw_declaration {
-    atom property;                 // lowercased for a known property, verbatim for a custom one
-    std::uint32_t first_value = 0; // into stylesheet::values, whitespace-trimmed both ends
+    atom property;                 // Lowercased for a known property, verbatim for a custom one.
+    std::uint32_t first_value = 0; // Into stylesheet::values, whitespace-trimmed.
     std::uint32_t value_count = 0;
-    std::uint32_t text = 0; // the raw value substring - what a custom property STORES
+    std::uint32_t text = 0; // The raw value substring: what a custom property stores.
     std::uint32_t length = 0;
-    // Source order, counted per DECLARATION across the whole sheet rather than
-    // per rule. That is what the cascade's last tie-break compares, and two
-    // declarations in one block must not tie: `padding: 1px` followed by
-    // `padding-left: 2px` has to resolve by which was written second.
+    /// Source order, counted per declaration across the whole sheet rather
+    /// than per rule. The cascade's last tie-break compares it, and two
+    /// declarations in one block must not tie: `padding: 1px` followed by
+    /// `padding-left: 2px` resolves by which was written second.
     std::int32_t order = 0;
     bool important = false;
-    bool custom = false; // `--x`, whose value is never parsed and never validated
+    bool custom = false; // `--x`, whose value is never parsed or validated.
 };
 
-// One qualified rule: a selector list and a declaration block.
+/// One qualified rule: a selector list and a declaration block.
 struct raw_rule {
-    std::uint32_t first_selector = 0; // into stylesheet::selectors
+    std::uint32_t first_selector = 0; // Into stylesheet::selectors.
     std::uint32_t selector_count = 0;
-    std::uint32_t first_declaration = 0; // into stylesheet::declarations
+    std::uint32_t first_declaration = 0; // Into stylesheet::declarations.
     std::uint32_t declaration_count = 0;
-    // Which `@media` this rule sits inside, as an index into
-    // stylesheet::conditions. 0 is the UNCONDITIONAL entry, always present and
-    // always true, so a rule outside any at-rule needs no special case.
+    /// Which `@media` this rule sits inside, as an index into
+    /// stylesheet::conditions. 0 is the unconditional entry, always present
+    /// and always true, so a rule outside any at-rule needs no special case.
     std::uint32_t condition = 0;
-    // Which `@layer` this rule sits inside: 0 is UNLAYERED, k is
-    // stylesheet::layers[k - 1] (CSS Cascade 5 §6.4).
+    /// Which `@layer` this rule sits inside: 0 is unlayered, k is
+    /// stylesheet::layers[k - 1] (CSS Cascade 5 §6.4).
     std::uint32_t layer = 0;
-    // Which `@scope` this rule sits inside: 0 is none, k is
-    // stylesheet::scopes[k - 1] (CSS Cascade 6 §3).
+    /// Which `@scope` this rule sits inside: 0 is none, k is
+    /// stylesheet::scopes[k - 1] (CSS Cascade 6 §3).
     std::uint32_t scope = 0;
-    // Which `@container`: 0 is none, k is stylesheet::containers[k - 1].
+    /// Which `@container`: 0 is none, k is stylesheet::containers[k - 1].
     std::uint32_t container = 0;
 };
 
-// One `@scope (<start>) to (<end>)` block, CSS Cascade 6 §3. The roots and
-// the limits are selector lists compiled into stylesheet::selectors, as a
-// rule's are; a scope with no prelude has no roots and is the IMPLICIT
-// scope, whose root is the parent of the sheet's owner node. Nesting is a
-// parent index, as a condition's is: a rule in an inner scope must also sit
-// inside the outer one.
-//
-// THE IMPLICIT ROOT IS AN ELEMENT, not a selector: `implicit_root` is the
-// engine key of the owner node's parent, which the text itself cannot say -
-// the author's sheets reach the cascade concatenated, so whoever concatenates
-// them writes `@-ctbrowser-scope-root <key>;` before each sheet that has an
-// `@scope`, and every root-less scope after it takes that key. Zero is none.
+/// One `@scope (<start>) to (<end>)` block (CSS Cascade 6 §3). The roots and
+/// limits are selector lists compiled into stylesheet::selectors, as a rule's
+/// are; a scope with no prelude has no roots and is the implicit scope, whose
+/// root is the parent of the sheet's owner node. Nesting is a parent index, as
+/// for conditions: a rule in an inner scope must also sit inside the outer one.
+///
+/// The implicit root is an element, not a selector: `implicit_root` is the
+/// engine key of the owner node's parent, which the CSS text cannot express.
+/// The author's sheets reach the cascade concatenated, so the code that
+/// concatenates them writes `@-ctbrowser-scope-root <key>;` before each sheet
+/// that has an `@scope`, and every root-less scope after it takes that key.
+/// Zero is none.
 struct scope_block {
     std::uint32_t parent = 0;
     std::uint32_t first_root = 0;
@@ -125,108 +126,110 @@ struct scope_block {
     std::uint64_t implicit_root = 0;
 };
 
-// The private statement that names an implicit scope's root - see
-// scope_block. Not CSS: nothing but the concatenating shell writes it.
+/// The private at-rule that names an implicit scope's root; see scope_block.
+/// Not CSS: only the shell's sheet concatenation writes it.
 inline constexpr std::string_view scope_root_at_rule = "-ctbrowser-scope-root";
 
-// @font-face, the one at-rule whose product the cascade does not touch: it is a
-// resource list, so it is collected rather than matched.
+/// One @font-face rule. The cascade does not touch it: it is a resource list, so
+/// it is collected rather than matched.
 struct font_face {
     std::uint32_t first_declaration = 0;
     std::uint32_t declaration_count = 0;
 };
 
-// @property and @function, collected the same way - descriptors are a
-// declaration range - plus the prelude, which is not a selector: `--name`
-// for @property, `--name(<params>) returns <type>` for @function. Only
-// top-level rules are collected; the engine reads the prelude and decides
-// what registers.
+/// One @property or @function rule, collected like @font-face (descriptors are
+/// a declaration range) plus the prelude, which is not a selector: `--name`
+/// for @property, `--name(<params>) returns <type>` for @function. Only
+/// top-level rules are collected; the engine reads the prelude and decides
+/// what registers.
 struct at_rule_block {
-    std::uint32_t prelude_first = 0; // into stylesheet::values
+    std::uint32_t prelude_first = 0; // Into stylesheet::values.
     std::uint32_t prelude_count = 0;
     std::uint32_t first_declaration = 0;
     std::uint32_t declaration_count = 0;
 };
 
-// One `@namespace` rule. An empty prefix is the DEFAULT namespace, which is not
-// the same as a namespace whose prefix is the empty string - CSS has no such thing.
+/// One `@namespace` rule. An empty prefix means the default namespace (CSS has
+/// no namespace whose prefix is the empty string).
 struct namespace_declaration {
     std::string prefix;
     std::string uri;
 };
 
-// One `@import` of the sheet's LEADING RUN - CSS Cascade 5 §5. The parser
-// consumes the statement but cannot fetch what it names; whoever can - the
-// browser collecting the author's sheets, the CSSOM building a CSSImportRule -
-// reads these, loads each one and splices the loaded text where the statement
-// stood. Only the leading run is recorded: an `@import` after any rule other
-// than `@charset`, `@layer x;` or another `@import` is invalid and ignored.
-//
-// `media` is the query list as written, trimmed and with `layer` / `layer(...)`
-// / `supports(...)` removed; empty means unconditional.
+/// One `@import` from the sheet's leading run (CSS Cascade 5 §5). The parser
+/// consumes the statement but cannot fetch what it names; the code that can
+/// (the browser collecting the author's sheets, the CSSOM building a
+/// CSSImportRule) reads these, loads each one and splices the loaded text where
+/// the statement stood. Only the leading run is recorded: an `@import` after
+/// any rule other than `@charset`, `@layer x;` or another `@import` is invalid
+/// and ignored.
+///
+/// `media` is the query list as written, trimmed, with `layer`, `layer(...)`
+/// and `supports(...)` removed; empty means unconditional.
 struct import_statement {
     std::string href;
     std::string media;
-    // `layer` / `layer(<name>)`: the layer the imported rules belong to, as
-    // `@layer <name> { ... }` would spell it. `layered` with an empty name is
-    // the anonymous form; whoever splices the import in wraps the text in
-    // exactly that block, which is how the imported rules land in the layer.
+    /// `layer` / `layer(<name>)`: the layer the imported rules belong to, as
+    /// `@layer <name> { ... }` would spell it. `layered` with an empty name is
+    /// the anonymous form. The splicer wraps the imported text in exactly that
+    /// block, which is how the imported rules land in the layer.
     std::string layer;
     bool layered = false;
-    // `supports(<condition>)`'s argument, verbatim, or empty.
+    /// `supports(<condition>)`'s argument, verbatim, or empty.
     std::string supports;
-    // `scope(...)` (CSS Cascade 6 §2.2): the `@scope` prelude the imported
-    // rules are wrapped in - `(.a) to (.b)`, or empty for `scope()`, the
-    // implicit scope. `scoped` says the call was there at all.
+    /// `scope(...)` (CSS Cascade 6 §2.2): the `@scope` prelude the imported
+    /// rules are wrapped in, such as `(.a) to (.b)`, or empty for `scope()`,
+    /// the implicit scope. `scoped` says whether the call was present.
     std::string scope;
     bool scoped = false;
-    std::size_t begin = 0; // the byte span of the whole statement in the input,
-    std::size_t end = 0;   // `@import` through its `;` inclusive
+    std::size_t begin = 0; // The byte span of the whole statement in the input,
+    std::size_t end = 0;   // from `@import` through its `;` inclusive.
 };
 
+/// A parsed stylesheet. It owns every byte every view into it points to.
 struct stylesheet {
-    // §3.3-preprocessed input plus decoded escapes. Owns every byte every view
-    // below points into.
+    /// The input after CSS Syntax 3 §3.3 preprocessing (newline and NUL
+    /// normalisation), followed by decoded escape text.
     std::string pool;
-    // The `@namespace` rules seen so far, which is what decides whether `ns|e`
-    // is a selector: Selectors 4 §3.2 makes an undeclared prefix a syntax error.
-    // `prefixes_checked` is false only for a caller of `parse_selector_text` that
-    // offered no declarations at all - a prefix is then taken on trust, because
-    // refusing it would drop a rule the sheet may well have declared.
+    /// The `@namespace` rules seen so far, which decide whether `ns|e` is a
+    /// selector: Selectors 4 §3.2 makes an undeclared prefix a syntax error.
+    /// `prefixes_checked` is false only for a caller of parse_selector_text()
+    /// that offered no declarations at all; a prefix is then accepted on trust,
+    /// because rejecting it could drop a rule whose prefix is declared
+    /// elsewhere.
     std::vector<namespace_declaration> namespaces;
     bool prefixes_checked = true;
-    // FALSE ONLY FOR `selector()` in @supports (CSS Conditional 4 §6.2): an
-    // argument of `:is()`/`:where()` that does not parse, or none at all, fails
-    // the whole selector instead of being dropped, and a vendor-prefixed
-    // pseudo-element is not taken on trust.
+    /// False only for `selector()` in @supports (CSS Conditional 4 §6.2): an
+    /// argument of `:is()`/`:where()` that does not parse, or a missing one,
+    /// fails the whole selector instead of being dropped, and a vendor-prefixed
+    /// pseudo-element is not accepted on trust.
     bool forgiving = true;
     std::vector<import_statement> imports;
-    // How much of the pool is the INPUT. Beyond it is decoded escape text, which
-    // appears nowhere in the source - so a run of tokens is a contiguous source
-    // substring only when every one of them starts below this. That is the test
-    // for whether a declaration's raw value can be a view or has to be rebuilt.
+    /// How much of the pool is the input. Beyond it is decoded escape text,
+    /// which appears nowhere in the source, so a run of tokens is a contiguous
+    /// source substring only when every token starts below this. That decides
+    /// whether a declaration's raw value can be a view or must be rebuilt.
     std::uint32_t source_length = 0;
     std::vector<css_token> tokens;
     std::vector<component_value> values;
-    // Already COMPILED. There is no separate transcription step, which is what
-    // removes engine::compile_selector and with it the per-declaration bug.
+    // Already compiled by the parser, once per selector.
     std::vector<compiled_selector> selectors;
     std::vector<raw_declaration> declarations;
     std::vector<raw_rule> rules;
     std::vector<font_face> font_faces;
     std::vector<at_rule_block> properties;
     std::vector<at_rule_block> functions;
-    // Every `@keyframes` rule, in source order (style/css/keyframes.hpp).
+    /// Every `@keyframes` rule, in source order (style/css/keyframes.hpp).
     std::vector<keyframes_block> keyframes;
-    // The `@media` conditions this sheet's rules are gated on. Entry 0 is the
-    // unconditional one; nesting is a parent index, so truth ANDs up the chain
-    // without the tree being flattened.
+    /// The `@media` conditions this sheet's rules are gated on. Entry 0 is the
+    /// unconditional one; nesting is a parent index, so truth ANDs up the chain
+    /// without the tree being flattened.
     std::vector<media_condition> conditions{media_condition{}};
-    // Every `@layer` this sheet names, in the order of FIRST appearance -
-    // which is the layer order, CSS Cascade 5 §6.4.2 - as full dotted names:
-    // `@layer a { @layer b {} }` and `@layer a.b {}` both file `a.b`, after
-    // `a`. An anonymous layer gets a name no author can write - it begins
-    // with `\x01` - unique within this sheet.
+    /// Every `@layer` this sheet names, in order of first appearance (the layer
+    /// order, CSS Cascade 5 §6.4.2), as full dotted names: `@layer a { @layer b
+    /// {} }` and `@layer a.b {}` both file `a.b`, after `a`. An anonymous layer
+    /// gets a name unique within this sheet that no author can write: it
+    /// begins with `\x01`.
     std::vector<std::string> layers;
     std::vector<scope_block> scopes;
     std::vector<container_condition> containers;
@@ -234,8 +237,8 @@ struct stylesheet {
     [[nodiscard]] std::string_view text_of(const css_token & t) const noexcept {
         return std::string_view{pool}.substr(t.text, t.length);
     }
-    // A dimension's unit. The same accessor token_stream has, because the tokens moved
-    // here after parsing and a consumer that needs a unit should not have to know that.
+    /// A dimension's unit; the same accessor token_stream has, since the tokens
+    /// move here after parsing.
     [[nodiscard]] std::string_view unit_of(const css_token & t) const noexcept {
         if (t.type != token_type::dimension || t.unit_length == 0) { return {}; }
         return std::string_view{pool}.substr(t.text + t.length - t.unit_length, t.unit_length);
@@ -247,8 +250,8 @@ struct stylesheet {
         if (v.child_count == 0) { return {}; }
         return std::span<const component_value>{values}.subspan(v.first_child, v.child_count);
     }
-    // A preserved whitespace token, and a run with those stripped from both
-    // ends - what every reader of a prelude or a value does first.
+    /// Whether `v` is a preserved whitespace token; trimmed() strips those from
+    /// both ends of a run, which every reader of a prelude or value does first.
     [[nodiscard]] bool is_space(const component_value & v) const noexcept {
         return v.kind == cv_kind::token && tokens[v.token].type == token_type::whitespace;
     }

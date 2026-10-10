@@ -1,3 +1,5 @@
+//===- filter.cpp - Filter value lists ------------------------ -*- C++ -*-===//
+//
 // `<filter-value-list>`, Filter Effects 1 §11: `none | [ <filter-function> |
 // <url> ]+`, for `filter` and `backdrop-filter`.
 //
@@ -6,11 +8,13 @@
 //   saturate( ... )  sepia( ... )      hue-rotate( <angle>? )
 //   drop-shadow( <color>? && <length>{2,3} )
 //
-// The SPECIFIED value keeps the author's unit and percentage, fills in an
+// The specified value keeps the author's unit and percentage, fills in an
 // omitted argument, clamps the four whose range is [0, 1] at their ceiling
-// and refuses a negative literal; the COMPUTED value writes numbers for the
+// and refuses a negative literal. The computed value writes numbers for the
 // percentages, pixels and degrees, a shadow's colour first with its blur
 // filled in, and clamps a folded calc() into the function's range.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -20,29 +24,32 @@ using namespace detail;
 
 namespace {
 
-// The functions whose argument is a `<number-percentage>`, and whether the
-// range is capped at one (`grayscale(300%)` is `grayscale(100%)`) or open
-// (`brightness(300%)`).
+/// For a function whose argument is a `<number-percentage>`, whether its range
+/// is capped at one (`grayscale(300%)` is `grayscale(100%)`) or open
+/// (`brightness(300%)`); nullopt for any other function.
 [[nodiscard]] std::optional<bool> capped_amount(std::string_view fn) {
     if (ascii_iequals_any(fn, {"grayscale", "invert", "opacity", "sepia"})) { return true; }
     if (ascii_iequals_any(fn, {"brightness", "contrast", "saturate"})) { return false; }
     return std::nullopt;
 }
 
+/// Selects the serialisation mode. `lengths == nullptr` means the specified
+/// value is being serialised; otherwise it is the computed value, with
+/// lengths resolved against `lengths`.
 struct filter_context {
     const length_context * lengths = nullptr;
     std::string_view current_color;
 };
 
+/// The source text spanned by tokens [begin, end).
 [[nodiscard]] std::string_view slice(const token_stream & ts, std::size_t begin, std::size_t end) {
     const css_token & first = ts.tokens[begin];
     const css_token & last = ts.tokens[end - 1];
     return std::string_view{ts.pool}.substr(first.text, last.text + last.length - first.text);
 }
 
-// One `<number-percentage>` argument, or an omitted one, as the function's
-// text. `capped` clamps to one; a negative literal is a syntax error and a
-// negative calc() clamps to nought.
+/// Serialises one `<number-percentage>` argument. `capped` clamps to one; a
+/// negative literal is a syntax error and a negative calc() clamps to zero.
 [[nodiscard]] std::optional<std::string> amount(std::string_view text, bool capped,
                                                 const filter_context & ctx) {
     const token_stream ts = tokenize(text);
@@ -51,8 +58,8 @@ struct filter_context {
                                   ts.tokens.front().type == token_type::percentage)) {
         const css_token & t = ts.tokens.front();
         const bool percent = t.type == token_type::percentage;
-        // A negative literal is only a computed value's when the cascade
-        // folded a calc() to it - `calc(-10)` - which clamps (filter-computed).
+        // A negative literal reaches the computed path only when the cascade
+        // folded a calc() to it, such as `calc(-10)`, and then it clamps.
         if (t.number < 0 && !computed) { return std::nullopt; }
         double v = std::max(0.0, t.number);
         if (capped) { v = std::min(v, percent ? 100.0 : 1.0); }
@@ -80,8 +87,8 @@ struct filter_context {
     return simplify_math(text);
 }
 
-// A `<length>` (blur, a shadow offset) or an `<angle>` (hue-rotate), kept
-// with its unit when specified and canonical when computed.
+/// Serialises a `<length>` (blur, a shadow offset) or an `<angle>`
+/// (hue-rotate), kept with its unit when specified and canonical when computed.
 [[nodiscard]] std::optional<std::string> dimension(std::string_view text, bool angle,
                                                    bool non_negative, const filter_context & ctx) {
     const token_stream ts = tokenize(text);
@@ -124,7 +131,7 @@ struct filter_context {
     return simplify_math(text);
 }
 
-// One filter function from its argument tokens (significant indices).
+/// Serialises one filter function from its significant argument token indices.
 [[nodiscard]] std::optional<std::string> one_filter(const token_stream & ts, std::string_view name,
                                                     const std::vector<std::size_t> & args,
                                                     const filter_context & ctx) {
@@ -208,6 +215,7 @@ struct filter_context {
     return std::nullopt;
 }
 
+/// Serialises a whole filter list, or nullopt when it is invalid.
 [[nodiscard]] std::optional<std::string> filter_list(const token_stream & ts,
                                                      const filter_context & ctx) {
     std::string out;
@@ -235,7 +243,7 @@ struct filter_context {
         if (t.type != token_type::function) { return std::nullopt; }
         const std::string_view raw = ts.text_of(t);
         const std::string_view name = raw.substr(0, raw.size() - 1);
-        // To the matching paren, collecting the significant argument tokens.
+        // Scan to the matching paren, collecting the significant argument tokens.
         std::vector<std::size_t> args;
         int depth = 1;
         std::size_t j = i + 1;

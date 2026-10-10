@@ -1,3 +1,10 @@
+//===- expansion.hpp - Shorthand expansion -------------------- -*- C++ -*-===//
+//
+// Positional (margin-style) and `flex` shorthand expansion, templated on the
+// value type so CSSOM and the cascade share one implementation.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -11,8 +18,9 @@
 
 namespace ctbrowser::style::css::detail {
 
-// CSSOM supplies validated owning strings; the cascade supplies borrowed,
-// substituted tokens. Propagation is the same without changing either owner.
+/// Expands 1-2 or 1-4 positional values (margin-style) to `count` values, or
+/// returns an empty vector for a bad count. Templated so CSSOM's owning
+/// strings and the cascade's borrowed tokens share one implementation.
 template <typename T>
 [[nodiscard]] std::vector<T> expand_positional(std::span<const T> parts, std::size_t count) {
     if (parts.empty() || parts.size() > count || (count != 2 && count != 4)) { return {}; }
@@ -25,8 +33,9 @@ template <typename T>
     return out;
 }
 
-// Flex's assignment/defaulting grammar; callers retain their own numeric and
-// basis validation, and name the omitted basis - `0%` for both today.
+/// Expands the `flex` shorthand into grow, shrink and basis. Callers validate
+/// numbers (`number`) and bases (`basis`), and pass the basis used when it is
+/// omitted (`0%` for both current callers).
 template <typename T, typename Number, typename Basis>
 [[nodiscard]] std::optional<std::array<T, 3>> expand_flex(std::span<const std::string_view> parts,
                                                           std::string_view omitted_basis,
@@ -52,8 +61,8 @@ template <typename T, typename Number, typename Basis>
         auto parsed = basis(parts[i++]);
         if (!parsed) { return std::nullopt; }
         out[2] = std::move(*parsed);
-        // `||`: the basis may come FIRST, the grow and shrink after it
-        // (Flexbox 1 §7.1) - `flex: 7% 8` is a basis of 7% and a grow of 8.
+        // `||`: the basis may come first, the grow and shrink after it
+        // (Flexbox 1 §7.1), so `flex: 7% 8` is a basis of 7% and a grow of 8.
         if (i == 1 && i < parts.size()) {
             auto grow = number(parts[i]);
             if (!grow) { return std::nullopt; }

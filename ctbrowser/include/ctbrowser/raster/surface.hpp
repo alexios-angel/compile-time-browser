@@ -1,3 +1,15 @@
+//===- surface.hpp - Pixel surface ------------------------------*- C++ -*-===//
+//
+// A block of 0xAARRGGBB pixels addressed as span + explicit stride, plus the
+// source-over blend and the single float-to-pixel rounding rule the rasterizer
+// uses.
+//
+// Span + stride rather than a 2D view because libstdc++ 13 has no std::mdspan
+// and Boost has no replacement. It is not a hardship: a tile is written by
+// exactly one thread, row by row, and the row span is the shape raster loops
+// want.
+//
+//===----------------------------------------------------------------------===//
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -9,18 +21,13 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// A block of 0xAARRGGBB pixels, addressed as span + explicit stride.
-//
-// span + stride rather than a 2D view because libstdc++ 13 has no std::mdspan
-// and Boost has no replacement. It is not a hardship: a tile is written by
-// exactly one thread, row by row, and the row span is the shape that raster
-// loops actually want.
-
 namespace ctbrowser::raster {
 
 using ctbrowser::color;
 using ctbrowser::rect;
 
+/// An owned width x height block of 0xAARRGGBB pixels, initially transparent
+/// black. Negative sizes clamp to 0.
 class surface {
 public:
     surface() = default;
@@ -55,8 +62,8 @@ private:
     std::vector<std::uint32_t> pixels_;
 };
 
-// Source-over, the only blend mode that exists so far. Written out rather than
-// pulled from a table because it is the innermost loop of every fill.
+/// Blends `src` over `dst` (source-over, the only blend mode so far). Written
+/// out rather than table-driven because it is the innermost loop of every fill.
 [[nodiscard]] inline std::uint32_t blend_over(std::uint32_t dst, color src) noexcept {
     const std::uint32_t a = src.alpha();
     if (a == 255) { return src.argb; }
@@ -72,28 +79,29 @@ private:
     return (out_a << 24) | channel(16) | channel(8) | channel(0);
 }
 
-// Pixel bounds of a rect, clipped to a surface. Rounding happens HERE and
-// nowhere else: layout is float all the way down, and the single place that
-// turns fractions into pixels is what keeps two backends agreeing.
+/// Pixel bounds of a rect, as a half-open [left, right) x [top, bottom) range.
+/// Layout is float throughout; converting to pixels in one place (to_pixels,
+/// via round_to_pixel) is what keeps two backends agreeing.
 struct pixel_rect {
     int left = 0, top = 0, right = 0, bottom = 0;
     [[nodiscard]] bool empty() const noexcept { return right <= left || bottom <= top; }
 };
 
-// The overlap of two pixel rects, edge by edge. May come back inverted (empty()
-// is true) when they do not meet; every caller tests that or ranges over it.
+/// The overlap of two pixel rects, edge by edge. May come back inverted (empty()
+/// is true) when they do not meet; every caller tests that or ranges over it.
 [[nodiscard]] constexpr pixel_rect intersect(pixel_rect a, pixel_rect b) noexcept {
     return pixel_rect{std::max(a.left, b.left), std::max(a.top, b.top), std::min(a.right, b.right),
                       std::min(a.bottom, b.bottom)};
 }
 
-// THE rounding. Every float-to-pixel conversion in the rasterizer goes through
-// here, and it is not a style preference: static_cast<int>(f + 0.5f) truncates
-// toward zero, so it rounds -27.5 to -27 instead of -28. Negative coordinates
-// are not an edge case here - they are what a tile sees for content starting to
-// its left, and what a blit sees for a scrolled layer - so an inconsistent
-// rounding shows up as tile seams and as a scroll that lands one pixel short.
-// Saturate before narrowing; callers clip wide coordinate sums before indexing.
+/// The one float-to-pixel rounding every rasterizer conversion goes through:
+/// round half away from zero, NaN to 0, saturating at the int range. Callers
+/// clip wide coordinate sums before indexing.
+///
+/// static_cast<int>(f + 0.5f) would truncate toward zero and round -27.5 to
+/// -27 instead of -28. Negative coordinates are common (a tile sees them for
+/// content starting to its left, a blit for a scrolled layer), so inconsistent
+/// rounding shows up as tile seams and scrolls that land one pixel short.
 [[nodiscard]] constexpr int round_to_pixel(float f) noexcept {
     if (f != f) { return 0; }
     const double rounded = static_cast<double>(f) + (f < 0 ? -0.5 : 0.5);
@@ -102,6 +110,8 @@ struct pixel_rect {
     return static_cast<int>(rounded);
 }
 
+/// The pixel bounds of `r`, clipped to [0, clip_width) x [0, clip_height).
+/// A rect with a non-finite coordinate gives an empty result.
 [[nodiscard]] inline pixel_rect to_pixels(const rect & r, int clip_width,
                                           int clip_height) noexcept {
     if (!std::isfinite(r.x) || !std::isfinite(r.y) || !std::isfinite(r.width) ||

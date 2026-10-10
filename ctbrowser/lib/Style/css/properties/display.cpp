@@ -1,15 +1,19 @@
+//===- display.cpp - The display grammar ---------------------- -*- C++ -*-===//
+//
 // `display`, CSS Display 3 §2: the two-value syntax and its short forms.
 //
 //   [ <display-outside> || <display-inside> ]
 //   | [ <display-outside>? && [ flow | flow-root ]? && list-item ]
 //   | <display-internal> | <display-box> | <display-legacy>
 //
-// §2.7 says the specified value serialises in the SHORTEST equivalent form:
+// §2.7 says the specified value serialises in the shortest equivalent form:
 // `block flow` is `block`, `inline flow-root` is `inline-block`, `flex block`
-// is `flex`, and only the pairs with no single-keyword spelling - `block
-// ruby`, `run-in flex`, `inline list-item` - keep two words, outside first.
+// is `flex`, and only the pairs with no single-keyword spelling (`block
+// ruby`, `run-in flex`, `inline list-item`) keep two words, outside first.
 // layout/values.hpp reads the result by its single-keyword forms and treats
 // anything else as `block`, which is what every unlisted pair is.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -19,6 +23,7 @@ using namespace detail;
 
 namespace detail {
 
+/// Matches a `display` value and writes its shortest canonical form to `out`.
 bool match_display(const token_stream & ts, const scan & found, std::string & out) {
     static constexpr std::string_view outsides = "block inline run-in";
     static constexpr std::string_view insides = "flow flow-root table flex grid grid-lanes ruby";
@@ -78,7 +83,8 @@ bool match_display(const token_stream & ts, const scan & found, std::string & ou
             out = "ruby";
         } else if (inside == "grid-lanes") {
             // `inline-grid-lanes` is a keyword of its own, not the short form
-            // of this pair: the pair is written out (display-valid).
+            // of this pair, so the pair is serialised as two words (WPT
+            // css-display/display-valid.html).
             out = "inline grid-lanes";
         } else {
             out = "inline-" + inside;

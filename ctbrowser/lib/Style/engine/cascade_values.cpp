@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Style/engine/cascade_values.cpp - Value folding ------===//
+//
+// Computed-value helpers for the cascade: shorthand splitting through the CSSOM
+// grammar, per-property length folding and clamping (fold_value), and viewport
+// and container-query unit handling. Declared in cascade_values.hpp.
+//
+//===----------------------------------------------------------------------===//
+
 #include "cascade_values.hpp"
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -8,16 +16,16 @@
 
 namespace ctbrowser::style::cascade_detail {
 
-// EVERY SHORTHAND expand_shorthand DOES NOT SPLIT goes through the CSSOM's
-// declaration block, which knows each one's grammar
+// Every shorthand that expand_shorthand does not split goes through the
+// CSSOM's declaration block, which knows each one's grammar
 // (properties/shorthands.cpp): `font`, `white-space`, `animation`, the
-// flow-relative margins, insets and borders, `place-*`, `columns` ... What
-// comes back is validated and canonical; a value the grammar refuses, or a
-// shape the block keeps whole, is an empty block and the declaration
+// flow-relative margins, insets and borders, `place-*`, `columns` and so on.
+// What comes back is validated and canonical; a value the grammar refuses, or
+// a shape the block keeps whole, gives an empty block and the declaration
 // stays as it was.
 css::declaration_block split_via_block(std::string_view name, std::string_view text) {
     css::declaration_block block;
-    if (css::longhands_of(name).empty()) { return block; } // a longhand
+    if (css::longhands_of(name).empty()) { return block; } // A longhand.
     (void)css::set_declaration(block, name, text, false);
     if (block.size() == 1 && ascii_iequals(block[0].name, name)) { block.clear(); }
     return block;
@@ -49,8 +57,8 @@ std::string resolve_container_units(std::string text, const css::length_context 
         if (t.type == css::token_type::eof) { break; }
         const std::string_view piece = ts.text_of(t);
         if (t.type == css::token_type::dimension && ascii_istarts_with(ts.unit_of(t), "cq")) {
-            // In double precision, as a folded calc() is: `10cqh` of 768 is
-            // 76.8px, not the float's 76.800003px.
+            // Evaluated in double precision, as a folded calc() is: `10cqh` of
+            // 768 is 76.8px, not the float's 76.800003px.
             const css::math_answer answer = css::evaluate_math(piece, lengths);
             if (answer.outcome == css::math_outcome::resolved && !answer.value.is_number &&
                 !answer.value.has_percent) {
@@ -67,8 +75,9 @@ std::string resolve_container_units(std::string text, const css::length_context 
 std::string fold_value(std::string text, std::string_view name,
                        const css::length_context & lengths) {
     if (name == "background-size" || name == "mask-size") {
-        // Each layer resolves and clamps before inheritance. Keep the
-        // shared math fold above for random ordinals and finite bounds.
+        // Each layer resolves and clamps before inheritance; anything
+        // computed_background_list cannot handle falls through to the generic
+        // folding below.
         const css::color_context ctx{{}, &lengths};
         if (std::string computed = css::computed_background_list(name, text, ctx);
             !computed.empty()) {
@@ -138,8 +147,8 @@ std::string fold_value(std::string text, std::string_view name,
         const css::value_check checked = css::check_declaration(name, result, false);
         return checked.valid ? checked.serialized : result;
     }
-    // A comma LIST computes item by item: `transition-delay: -500ms, 6s` is
-    // `-0.5s, 6s`, as its lone form is.
+    // A comma list computes item by item: `transition-delay: -500ms, 6s` is
+    // `-0.5s, 6s`, as each item alone would be.
     if (const auto items = split_top_level(text, ","); items.size() > 1) {
         std::string result;
         bool changed = false;
@@ -151,8 +160,8 @@ std::string fold_value(std::string text, std::string_view name,
         }
         return changed ? result : text;
     }
-    // Shorthands have no range of their own. Clamp after expansion,
-    // including components whose math was already folded above.
+    // Shorthands have no range of their own, so a value is clamped only here,
+    // after expansion, including components whose math was already folded.
     return component(text);
 }
 

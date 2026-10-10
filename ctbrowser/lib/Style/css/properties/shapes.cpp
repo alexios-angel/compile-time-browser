@@ -1,5 +1,9 @@
-// <basic-shape>, CSS Shapes 1 §3 - for clip-path and shape-outside: parsed,
-// written in canonical form, computed, and blended for an animation:
+//===- shapes.cpp - <basic-shape> values ---------------------- -*- C++ -*-===//
+//
+// <basic-shape> (CSS Shapes 1 §3), plus ray() (Motion Path 1) and shape()
+// (CSS Shapes 2), for clip-path, shape-outside, offset-path and
+// object-view-box: parsed, written in canonical form, computed, and blended
+// for an animation:
 //
 //   circle( <radial-size>? [ at <position> ]? )
 //   ellipse( [ <radial-size>{2} ]? [ at <position> ]? )
@@ -9,16 +13,17 @@
 //   polygon( [ <fill-rule> || round <length> ]? , [ <length-percentage>{2} ]# )
 //   path( <fill-rule>? , <string> )
 //
-// beside the box it is drawn in: clip-path's <geometry-box> (`border-box`
-// by default) or shape-outside's <shape-box> (`margin-box`) - and CSS Shapes
-// 2's shape(), whose grammar is set out above parse_shape_command. Nothing
-// here draws.
+// each beside the box it is drawn in: clip-path's <geometry-box>
+// (`border-box` by default) or shape-outside's <shape-box> (`margin-box`).
+// shape()'s grammar is set out above parse_shape_command. Nothing here draws.
 //
-// The COMPUTED shape has its lengths absolute, its position in percentages
+// The computed shape has its lengths absolute, its position in percentages
 // and calc()s from the top left, and xywh() and rect() as the inset() they
 // mean (CSS Shapes 1 §3.2). Two computed shapes of one function blend
-// component by component - the interpolation of §3.3 and the addition of
-// Web Animations - and anything else is discrete.
+// component by component (the interpolation of §3.3 and the addition of Web
+// Animations); anything else is discrete.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
@@ -32,45 +37,50 @@ using namespace detail;
 
 namespace {
 
-// One command of a shape(), CSS Shapes 2 §3.2.
+/// One command of a shape(), CSS Shapes 2 §3.2.
 struct shape_command {
-    std::string verb; // move line hline vline curve smooth arc close, lowercased
-    bool by = false;  // `by` - relative to the command's start - rather than `to`
-    std::string end;  // `to`'s <position>, `by`'s pair, or an hline's or vline's one value
-    // curve's and smooth's control points, each with its anchor - `start`,
-    // `end` or `origin` - empty for the command's default: `origin` after
-    // `to`, `start` after `by`.
+    std::string verb; ///< move line hline vline curve smooth arc close, lowercased.
+    bool by = false;  ///< `by` (relative to the command's start) rather than `to`.
+    std::string end;  ///< `to`'s <position>, `by`'s pair, or an hline's or vline's value.
+    /// curve's and smooth's control points, each with its anchor (`start`,
+    /// `end` or `origin`), empty for the command's default: `origin` after
+    /// `to`, `start` after `by`.
     std::vector<std::pair<std::string, std::string>> controls;
-    std::vector<std::string> radii; // arc's one or two
-    bool cw = false;                // arc's sweep; `ccw` is the default
-    bool large = false;             // arc's size; `small` is the default
-    std::string rotate;             // arc's angle, empty for none
+    std::vector<std::string> radii; ///< arc's one or two radii.
+    bool cw = false;                ///< arc's sweep; `ccw` is the default.
+    bool large = false;             ///< arc's size; `small` is the default.
+    std::string rotate;             ///< arc's angle, empty for none.
 };
 
+/// A parsed shape value: one shape function's components and the box beside
+/// it. Which fields are set depends on `function`.
 struct shape_parts {
-    std::string function;                // lowercased name; empty when not a shape
-    std::vector<std::string> args;       // radial sizes, inset sides, xywh / rect components
-    std::string position;                // after `at`; empty when omitted
-    std::vector<std::string> radii;      // `round`'s eight corners, or empty
-    std::string fill_rule;               // `evenodd`, or empty for the default
-    std::string round;                   // polygon's `round <length>`, or empty
-    std::vector<std::string> points;     // polygon: x, y, x, y ...
-    std::string path;                    // path's string, serialised
-    std::string box;                     // the box beside it, or empty for the default
-    std::string size;                    // ray()'s size, or empty for `closest-side`
-    bool contain = false;                // ray()'s `contain`
-    std::vector<shape_command> commands; // shape(), whose `from` is `position`
+    std::string function;                ///< Lowercased name; empty when not a shape.
+    std::vector<std::string> args;       ///< Radial sizes, inset sides, xywh/rect parts.
+    std::string position;                ///< After `at`; empty when omitted.
+    std::vector<std::string> radii;      ///< `round`'s eight corners, or empty.
+    std::string fill_rule;               ///< `evenodd`, or empty for the default.
+    std::string round;                   ///< polygon's `round <length>`, or empty.
+    std::vector<std::string> points;     ///< polygon: x, y, x, y, ...
+    std::string path;                    ///< path()'s string, serialised.
+    std::string box;                     ///< The box beside it, or empty for the default.
+    std::string size;                    ///< ray()'s size, or empty for `closest-side`.
+    bool contain = false;                ///< ray()'s `contain`.
+    std::vector<shape_command> commands; ///< shape()'s commands; its `from` is `position`.
 };
 
-// --- SVG path data (SVG 2 §9.3.9), for path() -------------------------------
+// SVG path data (SVG 2 §9.3.9), for path().
 
-// One command and its numbers; an implicit repetition is its own segment,
-// written with the letter it stands for (`M 1 2 3 4` is `M 1 2 L 3 4`).
+/// One command and its numbers; an implicit repetition is its own segment,
+/// written with the letter it stands for (`M 1 2 3 4` is `M 1 2 L 3 4`).
 struct path_segment {
     char command = 'M';
     std::vector<double> numbers;
 };
 
+/// Returns how many numbers a path command takes, or size_t(-1) when
+/// `command` is not a path command letter. `| 0x20` lowercases an ASCII
+/// letter, here and below.
 [[nodiscard]] std::size_t path_arity(char command) {
     switch (command | 0x20) {
     case 'm':
@@ -87,8 +97,8 @@ struct path_segment {
     }
 }
 
-// The whole data, or nullopt for anything SVG's grammar refuses - an empty
-// path, a first command that is not a moveto, a command short of numbers.
+/// The whole data, or nullopt for anything SVG's grammar refuses - an empty
+/// path, a first command that is not a moveto, a command short of numbers.
 [[nodiscard]] std::optional<std::vector<path_segment>> parse_path_data(std::string_view data) {
     std::vector<path_segment> out;
     std::size_t i = 0;
@@ -160,9 +170,9 @@ struct path_segment {
     return out;
 }
 
-// Every command as its absolute twin: a relative one's points are offsets
-// from the current point, and a closepath returns the current point to the
-// start of its subpath.
+/// Every command as its absolute twin: a relative one's points are offsets
+/// from the current point, and a closepath returns the current point to the
+/// start of its subpath.
 void absolutize(std::vector<path_segment> & data) {
     double x = 0, y = 0, start_x = 0, start_y = 0;
     for (path_segment & s : data) {
@@ -204,6 +214,7 @@ void absolutize(std::vector<path_segment> & data) {
     }
 }
 
+/// Writes path data back as a string, one space between every letter and number.
 [[nodiscard]] std::string path_text(std::span<const path_segment> data) {
     std::string out;
     for (const path_segment & s : data) {
@@ -236,13 +247,15 @@ constexpr std::string_view geometry_boxes =
     return out;
 }
 
-// `margin`'s four sides, from one to four values.
+/// Expands one to four values to four sides, the way `margin` does; empty
+/// when there are none or more than four.
 [[nodiscard]] std::vector<std::string> four(std::span<const std::string> v) {
     if (v.empty() || v.size() > 4) { return {}; }
     return {v[0], v.size() > 1 ? v[1] : v[0], v.size() > 2 ? v[2] : v[0],
             v.size() > 3 ? v[3] : (v.size() > 1 ? v[1] : v[0])};
 }
 
+/// The inverse of four(): the shortest one-to-four-value spelling.
 [[nodiscard]] std::string fold_four(std::span<const std::string> v) {
     std::vector<std::string> parts(v.begin(), v.end());
     if (parts.size() == 4 && parts[3] == parts[1]) { parts.pop_back(); }
@@ -251,8 +264,8 @@ constexpr std::string_view geometry_boxes =
     return joined(parts);
 }
 
-// `round <'border-radius'>`: eight corners, the vertical four the
-// horizontal when there is no slash.
+/// `round <'border-radius'>`: eight corners, the vertical four the
+/// horizontal when there is no slash.
 [[nodiscard]] bool parse_radii(std::span<const std::string_view> words,
                                std::vector<std::string> & out) {
     std::vector<std::string> horizontal, vertical;
@@ -288,8 +301,8 @@ constexpr std::string_view geometry_boxes =
 }
 
 [[nodiscard]] std::optional<std::string> canonical_position(std::string_view text) {
-    // A MATH FUNCTION in a position - `from calc(10% - 5px) 2px`, which is how
-    // an interpolated one computes. match_position reads single tokens, so one
+    // A math function in a position, as in `from calc(10% - 5px) 2px`, which
+    // is how an interpolated position computes. match_position reads single tokens, so one
     // or two <length-percentage>s with one among them are written here.
     if (text.find('(') != std::string_view::npos) {
         const std::vector<std::string_view> words = words_of(text);
@@ -311,7 +324,7 @@ constexpr std::string_view geometry_boxes =
     return out;
 }
 
-// The words of a circle() or an ellipse(): the radii, then `at` and a position.
+/// The words of a circle() or an ellipse(): the radii, then `at` and a position.
 [[nodiscard]] bool parse_radial(std::span<const std::string_view> words, std::size_t most,
                                 shape_parts & out) {
     std::size_t at = 0;
@@ -343,7 +356,7 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
-// Everything after `round`, into the radii; empty `words` is no `round`.
+/// Everything after `round`, into the radii; empty `words` is no `round`.
 [[nodiscard]] bool parse_round(std::span<const std::string_view> words, shape_parts & out) {
     if (words.empty()) { return true; }
     if (!parse_radii(words, out.radii)) { return false; }
@@ -353,7 +366,7 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
-// --- shape(), CSS Shapes 2 §3.2 ----------------------------------------------
+// shape(), CSS Shapes 2 §3.2:
 //
 //   shape( <fill-rule>? from <position> , <shape-command># )
 //   <shape-command> = move <end> | line <end> | close
@@ -374,7 +387,7 @@ constexpr std::string_view geometry_boxes =
     return out;
 }
 
-// Exactly two <length-percentage>s.
+/// Exactly two <length-percentage>s.
 [[nodiscard]] bool coordinate_pair(std::span<const std::string_view> words, std::string & out) {
     if (words.size() != 2) { return false; }
     const std::optional<std::string> x = length_percentage(words[0], false);
@@ -384,7 +397,7 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
-// `to <position>` or `by <pair>`, the words after the `to` or `by`.
+/// `to <position>` or `by <pair>`, the words after the `to` or `by`.
 [[nodiscard]] bool end_point(std::span<const std::string_view> words, bool by, std::string & out) {
     if (words.empty()) { return false; }
     if (by) { return coordinate_pair(words, out); }
@@ -394,9 +407,9 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
-// One control point. A <position> is allowed after `to` only, and anchors at
-// the origin; the anchor a command defaults to is left unwritten, which is
-// how `with 1px 2px from origin` after `to` serialises as `with 1px 2px`.
+/// One control point. A <position> is allowed after `to` only, and anchors at
+/// the origin; the anchor a command defaults to is left unwritten, which is
+/// how `with 1px 2px from origin` after `to` serialises as `with 1px 2px`.
 [[nodiscard]] bool control_point(std::span<const std::string_view> words, bool by,
                                  std::pair<std::string, std::string> & out) {
     std::string anchor;
@@ -415,7 +428,7 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
-// An angle in degrees: the computed form of arc's `rotate`.
+/// An angle in degrees: the computed form of arc's `rotate`.
 [[nodiscard]] std::optional<double> degrees_of(std::string_view text) {
     std::size_t unit = 0;
     while (unit < text.size() &&
@@ -423,8 +436,8 @@ constexpr std::string_view geometry_boxes =
             text[unit] == '-' || text[unit] == '+' || text[unit] == 'e' || text[unit] == 'E')) {
         ++unit;
     }
-    // `1e3deg`'s `e` is the exponent; `1deg`'s is not reached. A trailing `e`
-    // before the unit belongs to the unit, which only `deg` would begin with.
+    // The scan also takes `e`/`E` as an exponent. If it ended on one with no
+    // digits after it, give the `e` back so from_chars sees a complete number.
     if (unit > 0 && (text[unit - 1] == 'e' || text[unit - 1] == 'E')) { --unit; }
     double value = 0;
     const auto [end, ec] = std::from_chars(text.data(), text.data() + unit, value);
@@ -437,6 +450,7 @@ constexpr std::string_view geometry_boxes =
     return std::nullopt;
 }
 
+/// Parses one comma-separated <shape-command> of shape(), or nullopt.
 [[nodiscard]] std::optional<shape_command> parse_shape_command(std::string_view item) {
     // A `/` is a word of its own however it is spaced: `53px /34% 61px`.
     std::string spaced;
@@ -537,7 +551,7 @@ constexpr std::string_view geometry_boxes =
     return std::nullopt;
 }
 
-// `<fill-rule>? from <position>`, then one command per comma - at least one.
+/// `<fill-rule>? from <position>`, then one command per comma - at least one.
 [[nodiscard]] bool parse_shape_body(std::string_view body, shape_parts & out) {
     const std::vector<std::string_view> items = split_top_level(body, ",");
     if (items.size() < 2) { return false; }
@@ -569,6 +583,7 @@ constexpr std::string_view geometry_boxes =
     return true;
 }
 
+/// Writes one shape() command in canonical form.
 [[nodiscard]] std::string command_text(const shape_command & c) {
     if (c.verb == "close") { return "close"; }
     std::string out = c.verb + (c.by ? " by " : " to ") + c.end;
@@ -585,6 +600,7 @@ constexpr std::string_view geometry_boxes =
     return out;
 }
 
+/// Parses one shape function, `name( ... )`, or returns nullopt.
 [[nodiscard]] std::optional<shape_parts> parse_function(std::string_view text) {
     shape_parts out;
     const std::size_t open = text.find('(');
@@ -722,6 +738,7 @@ constexpr std::string_view geometry_boxes =
     return std::nullopt;
 }
 
+/// Writes a parsed shape, and its box when not the default, in canonical form.
 [[nodiscard]] std::string serialize(const shape_parts & s) {
     std::string out = s.function + "(";
     const auto round = [&s]() -> std::string {
@@ -759,8 +776,8 @@ constexpr std::string_view geometry_boxes =
     return out;
 }
 
-// A shape and its box, in either order; nullopt when `text` is not one of
-// the shapes above. `default_box` is the one left unwritten.
+/// A shape and its box, in either order; nullopt when `text` is not one of
+/// the shapes above. `default_box` is the one left unwritten.
 [[nodiscard]] std::optional<shape_parts> parse_shape_value(std::string_view text,
                                                            std::string_view default_box) {
     const std::vector<std::string_view> parts = words_of(text);
@@ -786,8 +803,8 @@ constexpr std::string_view geometry_boxes =
     return property == "shape-outside" ? "margin-box" : "border-box";
 }
 
-// One component's computed text: its math folded against `ctx`, a length
-// in pixels, a percentage and a mix of the two in canonical form.
+/// One component's computed text: its math folded against `ctx`, a length
+/// in pixels, a percentage and a mix of the two in canonical form.
 [[nodiscard]] std::string computed_component(std::string_view text, const length_context & ctx,
                                              bool nonnegative) {
     if (ascii_iequals_any(text, {"auto", "closest-side", "farthest-side"})) {
@@ -805,7 +822,7 @@ constexpr std::string_view geometry_boxes =
     return answer.value;
 }
 
-// `100% - a - b` for xywh() and rect(), in canonical form.
+/// `100% - a - b` for xywh() and rect(), in canonical form.
 [[nodiscard]] std::optional<std::string> remainder(std::string_view a, std::string_view b) {
     calc_result out;
     out.has_percent = true;
@@ -820,11 +837,11 @@ constexpr std::string_view geometry_boxes =
     return serialize_calc(out);
 }
 
-// A path() AS THE shape() IT DRAWS, which is how the two interpolate (CSS
-// Shapes 2 §3.3): its moveto the `from`, each later command the shape
-// command of the same meaning - an absolute one `to`, a relative one `by` -
-// and every number a length in pixels. A quadratic is a one-control curve,
-// `T` a smooth with none, and an arc's flags its `large` and `cw`.
+/// Converts a path() to the shape() it draws, which is how the two
+/// interpolate (CSS Shapes 2 §3.3): its moveto becomes the `from`, each later
+/// command the shape command of the same meaning (an absolute one `to`, a
+/// relative one `by`), and every number a length in pixels. A quadratic is a one-control curve,
+/// `T` a smooth with none, and an arc's flags its `large` and `cw`.
 [[nodiscard]] std::optional<shape_parts> shape_of_path(const shape_parts & path) {
     const std::optional<std::vector<path_segment>> data = parse_path_data(path.path);
     if (!data) { return std::nullopt; }
@@ -838,7 +855,7 @@ constexpr std::string_view geometry_boxes =
         const std::vector<double> & n = s.numbers;
         const char verb = static_cast<char>(s.command | 0x20);
         if (out.position.empty()) {
-            out.position = pair(n[0], n[1]); // parse_path_data refuses any other first command
+            out.position = pair(n[0], n[1]); // parse_path_data ensures a moveto.
             continue;
         }
         shape_command c;
@@ -917,7 +934,7 @@ bool match_basic_shape(std::string_view property, std::string_view text, std::st
     if (!ascii_iequals_any(property, {"clip-path", "shape-outside", "offset-path"})) {
         return false;
     }
-    // A box alone is a value too, written as itself.
+    // A box alone is not a shape: the caller writes it as itself.
     bool any_function = false;
     for (const std::string_view part : parts) {
         any_function = any_function || part.find('(') != std::string_view::npos;
@@ -1088,18 +1105,17 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
         mix_all(x->radii, y->radii, true);
     }
     if (x->function == "path") {
-        // SVG 2 §9.3.9's path interpolation: both paths in ABSOLUTE commands -
-        // `m 20 70` and `M 100 30` are one command, and the result is written
-        // absolute as every engine writes it (offset-path-interpolation-001 to
-        // -004) - the same commands in the same order, their numbers blended.
-        // An arc's two flags are booleans: the nearer end's outside the
-        // interval, and set in between wherever either end sets one.
+        // Path interpolation (SVG 2 §9.3.9): convert both paths to absolute
+        // commands, require the same commands in the same order, and blend the
+        // numbers. An arc's two flags are booleans: at or beyond either end
+        // they take that end's value; in between, a flag is set if either end
+        // sets it.
         std::optional<std::vector<path_segment>> p = parse_path_data(x->path);
         std::optional<std::vector<path_segment>> q = parse_path_data(y->path);
         if (!p || !q || p->size() != q->size()) { return std::nullopt; }
         absolutize(*p);
         absolutize(*q);
-        const bool interpolating = std::abs(wa + wb - 1) < 1e-9; // not an addition
+        const bool interpolating = std::abs(wa + wb - 1) < 1e-9; // Not an addition.
         for (std::size_t i = 0; i < p->size(); ++i) {
             path_segment & s = (*p)[i];
             const path_segment & t = (*q)[i];
@@ -1134,7 +1150,7 @@ std::optional<std::string> blend_basic_shapes(std::string_view property, std::st
             }
             return mix(u[0], v[0], false) + " " + mix(u[1], v[1], false);
         };
-        const bool interpolating = std::abs(wa + wb - 1) < 1e-9; // not an addition
+        const bool interpolating = std::abs(wa + wb - 1) < 1e-9; // Not an addition.
         const auto flag = [&](bool from, bool to) {
             if (interpolating && wb <= 0) { return from; }
             if (interpolating && wb >= 1) { return to; }

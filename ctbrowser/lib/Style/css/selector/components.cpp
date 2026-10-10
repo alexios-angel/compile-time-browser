@@ -1,33 +1,36 @@
+//===- components.cpp - Pseudo-class tables ------------------- -*- C++ -*-===//
+//
+// The selector parser's leaf readers: pseudo-class name tables and their
+// state and structural bits, the `An+B` reader for `:nth-*()`, the attribute
+// selector reader, and specificity.
+//
+//===----------------------------------------------------------------------===//
 #include "internal.hpp"
 
 namespace ctbrowser::style::css::selector_detail {
 
-// The pseudo-classes the engine can actually observe, mapped to the state bits in
-// style/selector.hpp. Everything else - `:not()`, `:first-child`, `::before`,
-// `:root` - makes the alternative unmatchable at this rung.
-//
-// `:visited` deserves a word: it is unmatchable here and will STAY unmatchable.
-// Chrome restricts it to colour for privacy reasons, and "never matches" is the
-// honest subset rather than a gap.
-// The three pseudo-classes that are genuinely transient UI state, tracked per node
-// by the shell and cleared when the pointer moves. `:checked` and `:disabled` are
-// NOT among them: they are facts about the element - see structural_disabled.
+/// Maps a pseudo-class name to its transient UI-state bit (style/selector.hpp),
+/// or 0 if it is not a UI-state pseudo-class. The shell sets these per node:
+/// hover, active and focus from the pointer and keyboard, target from the URL
+/// fragment, focus-within and focus-visible from focus. `:checked` and
+/// `:disabled` are facts about the element and live in structural_bit_of.
 [[nodiscard]] std::uint32_t state_bit_of(std::string_view name) {
     if (ascii_iequals(name, "hover")) { return state_hover; }
     if (ascii_iequals(name, "active")) { return state_active; }
     if (ascii_iequals(name, "focus")) { return state_focus; }
     // `:target` is UI state of the same shape: one element at a time, set by the
-    // shell (from the URL fragment rather than the pointer), no document fact.
+    // shell (from the URL fragment rather than the pointer), not a document fact.
     if (ascii_iequals(name, "target")) { return state_target; }
     if (ascii_iequals(name, "focus-within")) { return state_focus_within; }
     if (ascii_iequals(name, "focus-visible")) { return state_focus_visible; }
     return 0;
 }
 
-// The structural pseudo-classes, which are a question about POSITION rather than
-// about UI state - so they need no bit set on the element and no invalidation when
-// one changes. `:root` is the whole set at this rung; the rest arrive with the
-// facts stack that makes them cheap to answer.
+/// Maps a pseudo-class answered from the element's position or own attributes
+/// (not UI state) to its structural bit, or 0. These need no per-node state bit
+/// and no invalidation when the pointer moves. `:visited` always fails to
+/// match (selectors.cpp): browsers restrict it to colour for privacy, so never
+/// matching is the honest subset.
 [[nodiscard]] std::uint32_t structural_bit_of(std::string_view name) {
     if (ascii_iequals(name, "root")) { return structural_root; }
     if (ascii_iequals(name, "empty")) { return structural_empty; }
@@ -43,8 +46,8 @@ namespace ctbrowser::style::css::selector_detail {
     if (ascii_iequals(name, "link") || ascii_iequals(name, "any-link")) { return structural_link; }
     if (ascii_iequals(name, "visited")) { return structural_visited; }
     if (ascii_iequals(name, "scope")) { return structural_scope; }
-    // `:defined` is answered from the element's name and namespace - a built-in is
-    // always defined - so it belongs here rather than in the state bits nothing sets.
+    // `:defined` is answered from the element's name and namespace (a built-in
+    // is always defined), so it belongs here rather than in the state bits.
     if (ascii_iequals(name, "defined")) { return structural_defined; }
     if (ascii_iequals(name, "placeholder-shown")) { return structural_placeholder_shown; }
     if (ascii_iequals(name, "valid")) { return structural_valid; }
@@ -52,13 +55,14 @@ namespace ctbrowser::style::css::selector_detail {
     return 0;
 }
 
-// THE NAMES CSS HAS DEFINED, because Selectors 4 §3.1 says a pseudo-class or
-// pseudo-element it has not is a syntax error: `:gibberish` and `::part` with no
-// argument are not selectors in any browser, and `css/cssom/invalid-pseudo-elements`
-// asserts a rule carrying one is not in the sheet at all. What these lists decide
-// is only VALID or NOT - a name here that the matcher does not model still makes
-// the compound unmatchable, exactly as before.
+// The names CSS has defined. Selectors 4 §3.1 says a pseudo-class or
+// pseudo-element it has not defined is a syntax error: `:gibberish` and `::part`
+// with no argument are not selectors in any browser, and WPT
+// css/cssom/invalid-pseudo-elements asserts a rule carrying one is not in the
+// sheet at all. These lists decide only valid or not: a name listed here that
+// the matcher does not model still makes the compound unmatchable.
 
+/// True if `name` is a non-functional pseudo-class CSS defines.
 [[nodiscard]] bool known_pseudo_class(std::string_view name) {
     static constexpr std::string_view names[] = {"active",
                                                  "any-link",
@@ -125,6 +129,7 @@ namespace ctbrowser::style::css::selector_detail {
     return ascii_iequals_any(name, names);
 }
 
+/// True if `name` is a functional pseudo-class CSS defines (`:name(...)`).
 [[nodiscard]] bool known_functional_pseudo_class(std::string_view name) {
     static constexpr std::string_view names[] = {"not",
                                                  "is",
@@ -149,13 +154,15 @@ namespace ctbrowser::style::css::selector_detail {
     return ascii_iequals_any(name, names);
 }
 
-// The four CSS 2 pseudo-elements may be written with one colon, and serialise
-// with two either way.
+/// True for the CSS 2 pseudo-elements that may still be written with a single
+/// colon (`:before`, `:after`, `:first-line`, `:first-letter`). They serialise
+/// with two colons either way.
 [[nodiscard]] bool legacy_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"before", "after", "first-line", "first-letter"};
     return ascii_iequals_any(name, names);
 }
 
+/// True if `name` is a functional pseudo-element CSS defines (`::name(...)`).
 [[nodiscard]] bool known_functional_pseudo_element(std::string_view name) {
     static constexpr std::string_view names[] = {"part",
                                                  "slotted",
@@ -171,24 +178,25 @@ namespace ctbrowser::style::css::selector_detail {
     return ascii_iequals_any(name, names);
 }
 
-// `An+B`, from the component values inside an `:nth-child()` - Syntax 3 §6.
-//
-// The tokenizer has already decided where the numbers are, and not helpfully:
-// `4n-1` is ONE dimension token whose unit is `n-1`, `-n+3` an ident and a signed
-// number, `2n + 1` a dimension, two runs of whitespace, a delim and a number. So
-// the token texts are joined back into the author's spelling - a single space
-// standing for each run of whitespace - and that string is read against the
-// grammar directly. The grammar allows whitespace in exactly one place, either
-// side of the sign that separates `An` from `B`, so a space anywhere else is the
-// syntax error it should be.
-//
-// Returns false for anything it cannot read, which the caller reports as a
-// syntax error: `:nth-child(fred)` is not a selector in any browser.
+/// Reads `An+B` (CSS Syntax 3 §6) from the component values inside an
+/// `:nth-child()` into `a` and `b`.
+///
+/// The tokenizer has already decided where the numbers are, and not helpfully:
+/// `4n-1` is one dimension token whose unit is `n-1`, `-n+3` an ident and a
+/// signed number, `2n + 1` a dimension, two runs of whitespace, a delim and a
+/// number. So the token texts are joined back into the author's spelling, a
+/// single space standing for each run of whitespace, and that string is read
+/// against the grammar directly. The grammar allows whitespace in exactly one
+/// place, either side of the sign that separates `An` from `B`, so a space
+/// anywhere else is a syntax error.
+///
+/// Returns false for anything it cannot read, which the caller reports as a
+/// syntax error: `:nth-child(fred)` is not a selector in any browser.
 [[nodiscard]] bool parse_nth(const stylesheet & sheet, std::span<const component_value> inner,
                              std::int32_t & a, std::int32_t & b) {
     std::string spelled;
     for (const component_value & v : inner) {
-        if (v.kind != cv_kind::token) { return false; } // a nested block or function
+        if (v.kind != cv_kind::token) { return false; } // A nested block or function.
         const css_token & t = sheet.tokens[v.token];
         if (t.type == token_type::whitespace) {
             if (!spelled.empty() && spelled.back() != ' ') { spelled += ' '; }
@@ -223,8 +231,8 @@ namespace ctbrowser::style::css::selector_detail {
         std::size_t digits = 0;
         std::int64_t value = 0;
         while (digits < rest.size() && rest[digits] >= '0' && rest[digits] <= '9') {
-            // CLAMPED, not refused: a coefficient past the integer range is
-            // INT_MAX (nth-child-large-anplusb-clamp), as the CSSOM reads it.
+            // Clamped, not refused: a coefficient past the integer range is
+            // INT_MAX (WPT nth-child-large-anplusb-clamp), as the CSSOM reads it.
             if (value <= INT32_MAX) { value = value * 10 + (rest[digits] - '0'); }
             if (value > INT32_MAX) { value = INT32_MAX; }
             ++digits;
@@ -260,9 +268,10 @@ namespace ctbrowser::style::css::selector_detail {
     return true;
 }
 
-// `[name op "value" i]`, from the component values INSIDE the square block. The
-// block itself was already delimited by the tokenizer, so there is no scanning for
-// a `]` here and a `]` inside a quoted value cannot end it early.
+/// Reads `[name op "value" i]` from the component values inside the square
+/// block into `out`; false on a syntax error. The block itself was already
+/// delimited by the tokenizer, so there is no scanning for a `]` here and a
+/// `]` inside a quoted value cannot end it early.
 [[nodiscard]] bool parse_attribute(const stylesheet & sheet, std::span<const component_value> inner,
                                    atom_table & atoms, attribute_match & out) {
     const auto tok = [&](const component_value & v) -> const css_token & {
@@ -280,8 +289,8 @@ namespace ctbrowser::style::css::selector_detail {
                tok(inner[at]).type == token_type::ident;
     };
     // `*|name`, `|name` and `prefix|name`. The last is told from `[lang|=en]` by
-    // what FOLLOWS the bar: a local name, not an `=`. Selectors 4 §3.2: a prefix
-    // no `@namespace` declared is a syntax error - and `querySelector` declares
+    // what follows the bar: a local name, not an `=`. Selectors 4 §3.2: a prefix
+    // no `@namespace` declared is a syntax error, and `querySelector` declares
     // none, so `[ns|a]` throws there exactly as `ns|div` does.
     if (is_delim(0, "*") && is_delim(1, "|")) {
         out.ns = ns_prefix::any;
@@ -302,7 +311,7 @@ namespace ctbrowser::style::css::selector_detail {
     }
     if (!is_ident(0)) { return false; }
     // Attribute names are ASCII case-insensitive in HTML, and the DOM interns them
-    // lowercased - so folding here is what makes `[HREF]` match `href`.
+    // lowercased, so folding here is what makes `[HREF]` match `href`.
     out.name = atoms.intern_lower(sheet.text_of(tok(inner.front())));
     out.name_exact = atoms.intern(sheet.text_of(tok(inner.front())));
     inner = inner.subspan(1);
@@ -312,7 +321,7 @@ namespace ctbrowser::style::css::selector_detail {
         return true;
     }
     // The operator. `=` is one delim; the others are a delim followed by `=`,
-    // because the tokenizer has no compound-operator tokens - `~=` is `~` then `=`.
+    // because the tokenizer has no compound-operator tokens: `~=` is `~` then `=`.
     if (inner.front().kind != cv_kind::token) { return false; }
     const std::string_view first = sheet.text_of(tok(inner.front()));
     if (first == "=") {
@@ -340,9 +349,9 @@ namespace ctbrowser::style::css::selector_detail {
     }
     while (!inner.empty() && sheet.is_space(inner.front())) { inner = inner.subspan(1); }
     if (inner.empty() || inner.front().kind != cv_kind::token) { return false; }
-    // The value is a string or an ident. `[href$=.pdf]` is legal unquoted, and
-    // arrives as a dimension-ish run rather than one ident - so anything that is
-    // not plainly one token of the right kind is refused rather than guessed at.
+    // The value is a string or an ident. Anything that is not plainly one token
+    // of either kind is refused rather than guessed at: unquoted `[href$=.pdf]`
+    // arrives as a delim and an ident, not one ident, and is a syntax error.
     const css_token & value = tok(inner.front());
     if (value.type == token_type::string) {
         out.value = std::string{sheet.text_of(value).substr(1, sheet.text_of(value).size() - 2)};
@@ -352,7 +361,9 @@ namespace ctbrowser::style::css::selector_detail {
         return false;
     }
     inner = inner.subspan(1);
-    // An `i` or `s` flag. `s` is the default, so only `i` changes anything.
+    // An `i` or `s` flag. `i` matches the value ASCII case-insensitively; `s`
+    // turns off HTML's legacy case-insensitivity for attributes such as `type`
+    // (selectors.cpp) and is kept for selectorText.
     while (!inner.empty() && sheet.is_space(inner.front())) { inner = inner.subspan(1); }
     if (!inner.empty()) {
         if (inner.size() != 1 || inner.front().kind != cv_kind::token ||
@@ -368,15 +379,15 @@ namespace ctbrowser::style::css::selector_detail {
             return false;
         }
     }
-    // An EMPTY value is not the same as no value: `[a=""]` matches an attribute
-    // whose value is empty, which `[a]` also does - but `[a^=""]` matches nothing
-    // at all, per the spec, and that is the matcher's business rather than ours.
+    // An empty value is not the same as no value: `[a=""]` matches an attribute
+    // whose value is empty, which `[a]` also does, but `[a^=""]` matches nothing
+    // at all, per the spec. That is left to the matcher.
     return true;
 }
 
-// The spec's (a, b, c): ids, then class-level conditions, then type-level ones.
-// An ATTRIBUTE selector and a pseudo-class are both class-level, which is why they
-// share the counter.
+/// The spec's (a, b, c) specificity: ids, then class-level conditions, then
+/// type-level ones. An attribute selector and a pseudo-class are both
+/// class-level, which is why they share the counter.
 [[nodiscard]] specificity specificity_of(const building & b) {
     return specificity::of(static_cast<std::uint32_t>(b.ids), static_cast<std::uint32_t>(b.classes),
                            static_cast<std::uint32_t>(b.tags));
