@@ -886,11 +886,16 @@ NUMBER_CASES["class_number_captured_helper"] = (
     ),
     "1100",
 )
-# A nested closure still observes its enclosing callee during preparation.
-# Deleting children in a different order cannot authorize erasing that identity.
-NUMBER_REFUSALS["class_number_nested_helper"] = NUMBER_CASES["class_number_helper"][0].replace(
-    "return Number(text)",
-    "function identity(value) { return value; } return Number(identity(text))",
+# The nested closure is capture-free and called once, after its creation, in
+# its creator's block: a synchronous leaf (7fa3a87b4). Its use of the helper's
+# callee is an inert enclosure, so class preparation retires that identity
+# itself and the leaf joins the helper's complete DOM proof.
+NUMBER_CASES["class_number_nested_helper"] = (
+    NUMBER_CASES["class_number_helper"][0].replace(
+        "return Number(text)",
+        "function identity(value) { return value; } return Number(identity(text))",
+    ),
+    "1100",
 )
 NUMBER_CASES.update(M_CASES)
 NUMBER_REFUSALS.update(M_REFUSALS)

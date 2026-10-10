@@ -31,7 +31,7 @@ function static_call_getter() {
 }
 var a = static_call_getter();
 
-// An unused static body still participates in the complete source census.
+// No read reaches an unused static method: it is dropped before the census.
 //--- static-call-unused.js
 function static_call_unused() {
     class Shape { static read(n) { return n + 1; } }
@@ -40,7 +40,7 @@ function static_call_unused() {
 }
 var a = static_call_unused();
 
-// An unused body and an untaken arm do not authorize an ambient effect.
+// So is an unread static with an ambient call, which could never run.
 //--- static-call-ambient.js
 function static_call_ambient() {
     class Shape { static read(n) { if (n) unknown(n); return 7; } }

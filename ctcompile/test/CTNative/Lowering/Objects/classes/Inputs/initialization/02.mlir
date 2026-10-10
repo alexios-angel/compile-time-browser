@@ -492,7 +492,7 @@ function static_unused_setter() {
 }
 var a = static_unused_setter();
 
-// The VM reads function metadata before own accessors; preserve the discrepancy.
+// Own accessors now precede function metadata in the VM, as in Node.
 //--- static-name.js
 function static_name() {
     class Shape { static get name() { return "replacement"; } }
