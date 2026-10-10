@@ -191,7 +191,7 @@ def check_object_keys(args, node, reference, compilers, nm):
     print(f"object keys: {len(positives)} native programs and their controls")
 
 
-# The groups a global-maps-<group>.test runs alone (--group); ../core.test runs the rest.
+# The groups a ../<group>.test runs alone (--group); ../core.test runs the rest.
 GROUPS = {
     "nested-maps": check_nested_maps,
     "object-keys": check_object_keys,
@@ -203,9 +203,10 @@ GROUPS = {
 def setup():
     """The command line every group shares, and the two oracles plus the two
     compilers and the nm control they all need. Each group is its own lit
-    test (global-maps*.test), so a failure in one no longer hides the rest
-    and lit -j parallelises across them; within a group the programs run one
-    after another, which is what lit's own pool is for."""
+    test (../*.test), so a failure in one no longer hides the rest and lit -j
+    parallelises across them; within a group the programs run one after
+    another. core.test is the exception: its four hundred programs and their
+    controls are one lit case, so __main__.parallel spreads them itself."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group", choices=GROUPS)
     args = native_args(__doc__, parser=parser)
