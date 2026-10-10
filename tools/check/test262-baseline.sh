@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
-# The BASELINE run: every area docs/test262.md records a number for, one after
-# another, into /tmp/t262/. Sequential on purpose - four workers is the cap the
-# whole box shares, and two of these at once is eight.
+# The baseline run: every area ctbrowser/docs/test262.md records a number for,
+# one after another, into /tmp/t262/. Sequential on purpose: each run already
+# uses four workers, the cap on the shared build machine.
 #
 #   tools/check/test262-baseline.sh            # ~10 minutes on an idle devbox
 #   OUT=/tmp/t262 tools/check/test262-baseline.sh
 #
-# It exists because the alternative is ten hand-typed commands whose flags drift
-# between them, and a baseline whose runs were not measured the same way is not
-# a baseline. Run it detached (`nohup ... &`) on the devbox: the box is shared,
-# and an ssh drop should not cost fifteen minutes of measurement.
-# NOT `set -e`: one area that dies must not take the other nine with it. The
-# first run of this lost fifteen minutes because the runner was OOM-killed in
-# test/language on a loaded box and the script stopped there, so the nine areas
-# after it measured nothing at all. Each area records its own exit status.
+# One script so every area is measured with the same flags. Run it detached
+# (`nohup ... &`) on a shared machine so an ssh drop does not lose the run.
+# Not `set -e`: an area whose runner dies (e.g. OOM-killed) must not stop the
+# remaining areas; each area records its own exit status.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -21,15 +17,10 @@ out="${OUT:-/tmp/t262}"
 binary="${BINARY:-build/tools/ct262}"
 mkdir -p "$out"
 
-# THE WHOLE OF ECMAScript, since 2026-09-12: test/language, test/built-ins and
-# test/annexB, which together are every file the corpus holds for the language
-# and its standard library (intl402 is ECMA-402 and staging is not yet the
-# specification; neither is run). Before this the list was test/language and
-# nine hand-picked built-ins directories, and the number it gave was the score
-# over 33,000 of 48,600 files - so RegExp at 24%, Promise at 34% and
-# TypedArray at 0.1% were invisible. The docs' per-area table is read out of
-# the built-ins JSON by directory (docs/test262.md says how), so the old rows
-# remain comparable.
+# All of ECMA-262: test/language, test/built-ins and test/annexB. intl402
+# (ECMA-402) and staging (not yet specification) are not run. The per-area
+# table in ctbrowser/docs/test262.md is read out of the built-ins JSON by
+# directory.
 areas=(
   test/language
   test/built-ins

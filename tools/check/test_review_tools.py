@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded regression checks for the comparison rig; no browser/build required."""
+"""Unit tests for compare.py (the ctbrowser-vs-real-browser driver) and css-parity.py.
+
+Covers request deadlines, child-process cleanup, and the parity record format.
+Needs no browser or build.
+"""
 
 import importlib.util
 import json

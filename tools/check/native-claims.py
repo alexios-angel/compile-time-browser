@@ -1,73 +1,68 @@
 #!/usr/bin/env python3
-"""THE CLAIMED SET - ctcompile part 24 Phase 63 Steps 2 and 3.
+"""Report which functions of a JavaScript program the native backend compiles.
 
-Step 2 asks for per-function selection WITH A REASON, and says of the refusals:
-"That list is the roadmap." Step 3 asks how many functions each backend claims.
-This is both, over one JavaScript program, as a table and as JSON.
+For every function it reports either that the native (EmitC) backend claimed
+it or the reason it was refused; the list of refusal reasons is the to-do list
+for widening the backend. Output is a table and, with --json, a JSON file.
 
-It runs the native pipeline - the importer, the closed world, the lift and the
-lowering - and sorts every function of the program into exactly one of three
-buckets, plus functions proved unreachable by the default optimization stages:
+It runs the native pipeline (importer, closed world, closure lift, lowering)
+and sorts every function of the program into exactly one of four buckets:
 
   claimed   an `emitc.func`: proved, lowered, no interpreter and no collector
   refused   a `ctjs.func` still carrying `ctnative.not_native = "<reason>"`
-  skipped   never imported at all, because the bytecode used an opcode the
-            importer does not lower; ctjs-translate warns about each one
-  pruned    an imported private function removed by proved reachability;
-            counted in the source denominator, never as native admission
+  skipped   never imported, because the bytecode used an opcode the importer
+            does not lower; ctjs-translate warns about each one
+  pruned    an imported private function removed as provably unreachable by
+            the default optimizations; counted in the denominator, never as
+            claimed
 
-Use --no-default-optimizations to measure the historical admission baseline.
-The default measures the same bounded stages as ordinary native lowering.
+--no-default-optimizations measures admission without those optimizations
+(no precomputation, no reachability pruning).
 
-THE THIRD BUCKET IS THE POINT. A percentage over (claimed + refused) alone
-flatters the compiler by exactly the functions it never looked at, and those
-are not free: they are the ones with the constructs it likes least. The
-denominator here is all three.
+The skipped bucket matters most: a percentage over claimed + refused alone
+would flatter the compiler by exactly the functions it never looked at, which
+are the ones with the constructs it handles worst. The denominator is all four.
 
-AND THE CEILING, WHICH THE THREE BUCKETS DO NOT SEE. Two closed-world rules
-landed sound and far too coarse, and every global on every real corpus stopped
-resolving: bootstrap 37 of 37 refused, p5 101 of 101, phaser 72 of 72, and not
-one ctjs.call_direct emitted anywhere. THIS CHECK DID NOT NOTICE. The claimed
-count did not move, because TypeInference::setToEntryState hands an entry
-argument !ctnative.boxed unless a caller proves otherwise - so the functions
-that stopped being reachable were the ones that take a parameter, which were
-never claimed in the first place. A gate that measures only the outcome cannot
-see the input to the outcome collapse.
-
-So it measures the closed world too, from --ctjs-resolve-globals' own counters:
+The buckets cannot see a collapse of the closed world: if global resolution
+stops working, functions that take parameters become unreachable, but those
+were never claimed anyway (TypeInference::setToEntryState boxes an entry
+argument unless a caller proves otherwise), so the claimed count does not
+move. So this also measures the closed world, from --ctjs-resolve-globals' own
+counters:
 
   globals   every name the census wrote a row for
   resolved  names bound exactly once, in the prologue, to one closure
   direct    ctjs.call sites rewritten to ctjs.call_direct
 
---min-resolved and --min-direct are floors on the last two, and they are the
-teeth: a rule that closes the world by one clause too many fails HERE, in the
-same commit, rather than in a survey six weeks later.
+--min-resolved and --min-direct are floors on the last two, so a rule that
+closes the world too far fails here, in the same commit that introduces it.
 
-FIVE INVARIANTS ARE ASSERTED, not printed and admired:
+Five invariants are asserted, numbered as in the code below:
 
-  * every function that was imported and not claimed carries a reason. A
-    `ctjs.func` with no `ctnative.not_native` is a function silently left
-    behind - the failure part 24 SS2 exists to prevent - and it fails this
-    check by name.
-  * the total is not zero. A pipeline that produced nothing, or a corpus path
-    that does not exist, would otherwise report "0 refused" and look perfect.
-  * --ctjs-resolve-globals emitted its remark. Without it every closed-world
-    count reads zero, and a corpus with no globals is indistinguishable from a
-    pass whose `report` option somebody deleted.
-  * the remark and the IR agree about the rewrite. A pass that counts a
-    ctjs.call_direct it did not emit makes both floors below it worthless.
-  * every imported function is accounted for as native, refused or pruned.
-    Removing unreachable functions must not inflate the native percentage by
-    silently shrinking the source denominator.
+  1. every function that was imported and not claimed carries a reason. A
+     `ctjs.func` with no `ctnative.not_native` is a function silently left
+     behind, and it fails this check by name.
+  2. the total is not zero. A pipeline that produced nothing, or a corpus path
+     that does not exist, would otherwise report "0 refused" and look perfect.
+  3. --ctjs-resolve-globals emitted its remark. Without it every closed-world
+     count reads zero, and a corpus with no globals is indistinguishable from a
+     pass whose `report` option somebody deleted.
+  4. the remark and the IR agree about the rewrite. A pass that counts a
+     ctjs.call_direct it did not emit makes both floors below it worthless.
+  5. every imported function is accounted for as native, refused or pruned.
+     Removing unreachable functions must not inflate the native percentage by
+     silently shrinking the source denominator.
 
 Usage:
   native-claims.py --translate <ctjs-translate> --opt <ctjs-opt>
                    --corpus <program.js> --name <label>
                    [--json <out.json>] [--top <n>] [--min-claimed <n>]
-                   [--min-resolved <n>] [--min-direct <n>] [--timeout <seconds>]
+                   [--min-resolved <n>] [--min-direct <n>]
+                   [--min-lifted-direct <n>] [--no-default-optimizations]
+                   [--timeout <seconds>]
 
-NEGATIVE PROOFS, so both teeth stay in the suite rather than in a transcript:
+Negative proofs, which show the check can fail (combine one with
+--expect-failure; ctcompile/test/cmake/Native.cmake does so):
 
   --mutate-drop-one-reason   delete one `ctnative.not_native` from the lowered
                              module before counting, which is what a function
@@ -75,17 +70,18 @@ NEGATIVE PROOFS, so both teeth stay in the suite rather than in a transcript:
   --mutate-drop-call-direct  rename every ctjs.call_direct before counting,
                              which is what a closed world that stopped closing
                              looks like from here
-  --expect-failure <text>    run this same check as a child WITHOUT this flag
-                             and pass only if the child FAILED with <text> in
+  --mutate-pruned-count      count one more pruned function than the module
+                             reports, which source conservation must catch
+  --expect-failure <text>    run this same check as a child without this flag
+                             and pass only if the child failed with <text> in
                              its output. Not ctest's WILL_FAIL: that passes when
                              the child crashes, segfaults or cannot find its
                              corpus, which is how a negative test rots.
 
 Exit status is 0 only when all five invariants hold and every floor given is
 met. A floor is a guard against silent narrowing: a change that refuses
-functions - or globals - it used to claim fails here even though every other
-gate stays green, because every other gate uses fixtures the compiler already
-handles.
+functions (or globals) it used to claim fails here even when every other check
+passes, because the other checks use fixtures the compiler already handles.
 """
 
 from __future__ import annotations
@@ -102,7 +98,7 @@ import sys
 _CHILD_MARK = "CTCOMPILE_NATIVE_CLAIMS_CHILD"
 
 # A refusal names the value or site that failed, so the raw strings are almost
-# all distinct. Grouping needs the SHAPE of the reason: identifiers in
+# all distinct. Grouping needs the shape of the reason: identifiers in
 # backticks, numbers, and quoted MLIR types are the parts that vary.
 _IDENTIFIER = re.compile(r"`[^`]*`")
 _NUMBER = re.compile(r"\d+")
@@ -114,8 +110,8 @@ _CTJS_FUNC = re.compile(r"^\s*ctjs\.func\b", re.MULTILINE)
 _EMITC_FUNC = re.compile(r"^\s*emitc\.func\b", re.MULTILINE)
 # ctjs-translate: `function 685 is not compiled: <reason> (<where>)`
 _SKIPPED = re.compile(r"function (\d+) is not compiled: ([^(\n]*)")
-# --ctjs-resolve-globals=report=true, as a remark on the module. THE PASS'S OWN
-# COUNTERS, not a count of text in the IR: `resolved` is incremented where the
+# --ctjs-resolve-globals=report=true, as a remark on the module. These are the
+# pass's own counters, not a count of text in the IR: `resolved` is incremented where the
 # proof completes and `rewrittenCalls` where a call site is actually replaced,
 # and a grep for `resolved = @` would instead count the rows of a diagnostic
 # attribute. The remark exists because this LLVM package compiles pass
@@ -129,17 +125,16 @@ _CLOSED_WORLD = re.compile(
 # what it did not do.
 _CALL_DIRECT = re.compile(r"\bctjs\.call_direct\b")
 # --ctnative-lower-to-emitc=report=true, as a remark on the module. `rewrote N
-# call(s)` is the closure lift's OWN count of the ctjs.call_direct it made -
-# the second stage at which a callee gets named, and the one this check used to
-# be blind to.
+# call(s)` is the closure lift's own count of the ctjs.call_direct it made: the
+# second stage at which a callee gets named.
 _LIFT_REPORT = re.compile(r"ctnative: lifted \d+ closure\(s\).*?rewrote (\d+) call\(s\)")
+# `ctnative.reachability_summary = {removed = N : i64, ...}`: how many imported
+# functions the default reachability pruning removed.
 _REACHABILITY = re.compile(r"ctnative\.reachability_summary = \{removed = (\d+) : i64,")
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
-# the per-name verdict the pass writes on the module. The REASONS are the
-# roadmap for the ceiling in exactly the way `ctnative.not_native` is the
-# roadmap for the claimed set: on 2026-09-02 every one of bootstrap's 37 said
-# the same thing, and knowing WHICH thing is the difference between "the closed
-# world is off" and "the program passes globalThis into a call".
+# the per-name verdict the pass writes on the module. Grouping the reasons
+# shows why globals failed to resolve, the same way `ctnative.not_native`
+# shows why functions were refused.
 _GLOBAL_REASON = re.compile(r'\{name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"')
 
 
@@ -152,6 +147,8 @@ def shape_of(reason: str) -> str:
 
 
 def run(argv: argparse.Namespace) -> dict:
+    """Run the pipeline on argv.corpus, assert the five invariants (exiting on a
+    violation) and return the counts as a dict."""
     translate = subprocess.run(
         [argv.translate, "--ctbrowser-js-to-ctjs", argv.corpus, "--mlir-print-debuginfo"],
         capture_output=True,
@@ -162,9 +159,9 @@ def run(argv: argparse.Namespace) -> dict:
             f"native-claims ({argv.name}): the importer failed on {argv.corpus}\n"
             + translate.stderr.decode("utf-8", "replace")[:4000]
         )
-    # THE CLOSED WORLD ON ITS OWN, so what it produced can be counted before
+    # Run the closed world on its own, so what it produced can be counted before
     # the lowering consumes it. --ctnative-lower-to-emitc turns a
-    # ctjs.call_direct into an emitc call, so counting them in the FINAL module
+    # ctjs.call_direct into an emitc call, so counting them in the final module
     # would report a number that falls as the backend improves.
     closed = subprocess.run(
         [argv.opt, "--ctjs-resolve-globals=report=true"],
@@ -182,9 +179,8 @@ def run(argv: argparse.Namespace) -> dict:
         resolved_ir = resolved_ir.replace("ctjs.call_direct", "ctjs.call_indirect_")
     remark = _CLOSED_WORLD.search(closed.stderr.decode("utf-8", "replace"))
     if not remark:
-        # INVARIANT 3, and it is the one that would have caught the regression
-        # quietly: no remark means the `report` option is gone, and every count
-        # below would read zero and look like a corpus with no globals.
+        # Invariant 3: no remark means the `report` option is gone, and every
+        # count below would read zero and look like a corpus with no globals.
         sys.exit(
             f"native-claims ({argv.name}): --ctjs-resolve-globals=report=true emitted no "
             "remark, so the closed-world counts cannot be read. The pass's `report` option "
@@ -216,24 +212,13 @@ def run(argv: argparse.Namespace) -> dict:
             + lower.stderr.decode("utf-8", "replace")[:4000]
         )
 
-    # THE SECOND STAGE AT WHICH A DIRECT CALL IS MADE, AND THE INSTRUMENT WAS
-    # BLIND TO IT.
-    #
-    # `direct` above counts ctjs.call_direct after --ctjs-resolve-globals, and
-    # that number was 0 on all three vendor bundles - which was read, in this
-    # file and in the CMakeLists floors and in a survey written for a human, as
-    # "no direct call is ever made inside a bundle". It is not what it means.
-    # --ctnative-lower-to-emitc's own closure lift ALSO turns a call whose
-    # callee is a ctjs.create_closure result into a ctjs.call_direct, later in
-    # the pipeline, and it was doing so all along: measured on 2026-09-03 at 3
-    # calls on bootstrap, 47 on p5 and 3 on phaser. Counting one stage and
-    # reporting the total is how a capability that already exists gets built a
-    # second time.
-    #
-    # So both stages are read, from each pass's own `report` remark, and both
-    # are printed. They are DIFFERENT NUMBERS measuring different rewrites -
-    # the resolver names a call and leaves the closure alone, the lift also
-    # moves the captures into leading parameters - so they are not summed.
+    # Direct calls are made at two stages. `direct` above counts the
+    # ctjs.call_direct that --ctjs-resolve-globals makes; the closure lift inside
+    # --ctnative-lower-to-emitc also rewrites a call whose callee is a
+    # ctjs.create_closure result into ctjs.call_direct (and moves the captures
+    # into leading parameters). Both counts come from each pass's own `report`
+    # remark and are printed separately; they measure different rewrites, so they
+    # are not summed.
     lift_remark = _LIFT_REPORT.search(lower.stderr.decode("utf-8", "replace"))
     if not lift_remark:
         sys.exit(
@@ -262,28 +247,29 @@ def run(argv: argparse.Namespace) -> dict:
         for m in _SKIPPED.finditer(translate.stderr.decode("utf-8", "replace"))
     ]
 
-    # INVARIANT 1: nothing is left behind without a reason.
+    # Invariant 1: nothing is left behind without a reason.
     if left != len(reasons):
         sys.exit(
             f"native-claims ({argv.name}): {left} function(s) were not lowered but only "
             f"{len(reasons)} carry `ctnative.not_native`; {left - len(reasons)} were "
             "dropped silently, which part 24 SS2 forbids"
         )
-    # INVARIANT 2: the run is not vacuous.
+    # Invariant 5: every imported function is claimed, refused or pruned.
     if imported != claimed + left + pruned:
         sys.exit(
             f"native-claims ({argv.name}): source function conservation failed: "
             f"{imported} imported, {claimed} claimed + {left} refused + {pruned} pruned"
         )
     total = imported + len(skipped)
+    # Invariant 2: the run is not vacuous.
     if total == 0:
         sys.exit(
             f"native-claims ({argv.name}): no functions at all from {argv.corpus} - "
             "an empty or unreadable corpus would report a perfect score"
         )
 
-    # INVARIANT 4: the remark and the IR agree about the rewrite. A pass that
-    # counts a rewrite it did not perform - or performs one it does not count -
+    # Invariant 4: the remark and the IR agree about the rewrite. A pass that
+    # counts a rewrite it did not perform, or performs one it does not count,
     # makes every floor below it meaningless.
     if direct_in_ir != globals_rewritten:
         sys.exit(
@@ -306,7 +292,7 @@ def run(argv: argparse.Namespace) -> dict:
         "claimed_percent": round(100.0 * claimed / total, 2),
         "refusals": by_reason.most_common(),
         "skips": by_skip.most_common(),
-        # THE CEILING, which the three buckets above cannot see.
+        # The closed world, which the four buckets above cannot see.
         "globals": globals_total,
         "globals_resolved": globals_resolved,
         "call_direct": globals_rewritten,
@@ -317,6 +303,7 @@ def run(argv: argparse.Namespace) -> dict:
 
 
 def report(result: dict, top: int) -> None:
+    """Print the summary and the `top` most common refusal, skip and global reasons."""
     print(
         f"native claims ({result['name']}): {result['claimed']} of {result['total']} "
         f"functions claimed ({result['claimed_percent']}%), {result['refused']} refused "
@@ -400,15 +387,11 @@ def main() -> None:
     argv = parser.parse_args()
 
     if argv.expect_failure:
-        # THE CHILD ARGV IS REBUILT FROM THE PARSED VALUES, never filtered out
-        # of sys.argv. Filtering looked right and was catastrophically wrong:
-        # `--expect-failure=TEXT` arrives as ONE token that equals neither the
-        # flag nor the value, so it survived into the child, which re-ran
-        # itself, forever. Each generation was killed by the OOM killer, and
-        # its parent then found its own expected text quoted in the failure
-        # message it printed - so the test PASSED while the machine died.
-        # Belt as well as braces: the child is marked in the environment and
-        # refuses to be a parent.
+        # Rebuild the child's argv from the parsed values rather than filtering
+        # sys.argv: `--expect-failure=TEXT` arrives as one token that a filter can
+        # miss, and a child that inherits the flag re-runs itself forever. The
+        # environment marker is a second guard: a marked child refuses to be a
+        # parent.
         if os.environ.get(_CHILD_MARK):
             sys.exit(
                 "native-claims: --expect-failure reached a child process; the recursion "

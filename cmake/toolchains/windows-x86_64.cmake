@@ -11,16 +11,16 @@
 #              <repo>/tools/llvm-mingw
 #   SDL3       $SDL3_MINGW (the package root holding x86_64-w64-mingw32/),
 #              ~/projects/sdl3-mingw
-#   Boost      $BOOST_INC, ~/projects/boost-inc - an ISOLATED directory holding
+#   Boost      $BOOST_INC, ~/projects/boost-inc - an isolated directory holding
 #              boost/ only; a symlink to the host's boost/ inside an otherwise
-#              empty directory is enough. The COMPILED libraries (Boost.URL, and
+#              empty directory is enough. The compiled libraries (Boost.URL, and
 #              Boost.ProgramOptions for the tools and tests) come from the mingw
 #              sysroot, built by tools/mingw/build-boost-mingw.sh.
 
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
-# --- the std::embed mingw clang
+# The std::embed mingw clang.
 get_filename_component(_ctb_cmake_dir "${CMAKE_CURRENT_LIST_DIR}" DIRECTORY)
 get_filename_component(_ctb_repo_root "${_ctb_cmake_dir}" DIRECTORY)
 set(_ctb_mingw_roots "$ENV{LLVM_MINGW}"
@@ -42,19 +42,19 @@ if(NOT CMAKE_CXX_COMPILER)
     "as tools/llvm-mingw/.")
 endif()
 
-# --- SDL3. The TOOLCHAIN'S OWN SYSROOT FIRST: llvm-mingw's build-sdl3.sh
-# installs a STATIC SDL3 (and SDL3_ttf) there, and a static one is what makes
+# SDL3: the toolchain's own sysroot is searched first. llvm-mingw's build-sdl3.sh
+# installs a static SDL3 (and SDL3_ttf) there, and a static one is what makes
 # an application a single .exe rather than a folder with DLLs in it. The
 # sysroot is already on the compiler's search path, so nothing more is needed
 # when it is present.
 #
-# libsdl's official mingw devel package is the FALLBACK (brew SDL3 is ELF -
+# libsdl's official mingw devel package is the fallback (brew's SDL3 is ELF,
 # useless for PE). It carries only an import library and SDL3.dll, so a build
 # that lands here ships that DLL beside every exe.
 get_filename_component(_ctb_toolchain_root "${CMAKE_CXX_COMPILER}" DIRECTORY)
 get_filename_component(_ctb_toolchain_root "${_ctb_toolchain_root}" DIRECTORY)
 # The sysroot has to be on CMAKE_FIND_ROOT_PATH explicitly, or find_package
-# escapes to the HOST's packages - which for SDL3 means linuxbrew's ELF build,
+# escapes to the host's packages, which for SDL3 means linuxbrew's ELF build,
 # found and then unusable ("IMPORTED_IMPLIB not set").
 list(APPEND CMAKE_FIND_ROOT_PATH "${_ctb_toolchain_root}/x86_64-w64-mingw32")
 if(NOT EXISTS "${_ctb_toolchain_root}/x86_64-w64-mingw32/lib/cmake/SDL3")
@@ -67,8 +67,8 @@ if(NOT EXISTS "${_ctb_toolchain_root}/x86_64-w64-mingw32/lib/cmake/SDL3")
   endforeach()
 endif()
 
-# --- Boost: the isolated include dir. There is no BoostConfig for the cross
-# target, and there does not need to be - the engine links Boost::headers and
+# Boost: the isolated include dir. There is no BoostConfig for the cross
+# target, and none is needed: the engine links Boost::headers and
 # Boost::url, and the tools and tests Boost::program_options, so
 # ctbrowser/cmake/dependencies.cmake builds all three targets from this path.
 set(_ctb_boost_roots "$ENV{BOOST_INC}" "$ENV{HOME}/projects/boost-inc")
@@ -80,7 +80,7 @@ foreach(_root IN LISTS _ctb_boost_roots)
   endif()
 endforeach()
 
-# --- static everything. With a static SDL3 in the sysroot the produced exes
+# Link everything statically. With a static SDL3 in the sysroot the produced exes
 # depend on nothing but the system DLLs: no SDL3.dll, no libc++.dll, no
 # libunwind.dll. Falling back to the shared devel package still works - its
 # CMake config links the import library by full path, immune to -static's -l
@@ -90,19 +90,19 @@ endforeach()
 set(CMAKE_CXX_FLAGS_INIT "-static")
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
 
-# PKG-CONFIG MUST NOT SEE THE HOST. CMAKE_FIND_ROOT_PATH_MODE_* governs
-# find_package/find_library, but pkg-config is a separate program with its own
-# search path - and SDL3_ttf's config resolves HarfBuzz through it. Left alone
-# it found the HOST's harfbuzz.pc and put `-L/home/linuxbrew/...`, `-lglib-2.0`
-# and `-lgraphite2` on a WINDOWS link line, which fails on the ones the host
-# has and would silently link the wrong ones if it had them all.
+# Pkg-config must not see the host's packages. CMAKE_FIND_ROOT_PATH_MODE_*
+# governs find_package/find_library, but pkg-config is a separate program with
+# its own search path, and SDL3_ttf's config resolves HarfBuzz through it. Left
+# alone it finds the host's harfbuzz.pc and puts `-L/home/linuxbrew/...`,
+# `-lglib-2.0` and `-lgraphite2` on a Windows link line, which fails for the
+# libraries the cross sysroot lacks and would silently link host ones otherwise.
 #
-# PKG_CONFIG_LIBDIR (not _PATH) REPLACES the default search path rather than
-# adding to it, which is what makes this airtight.
+# PKG_CONFIG_LIBDIR (not _PATH) replaces the default search path rather than
+# adding to it, so no host directory is searched.
 set(ENV{PKG_CONFIG_LIBDIR} "${_ctb_toolchain_root}/x86_64-w64-mingw32/lib/pkgconfig")
 unset(ENV{PKG_CONFIG_PATH})
 
-# find_*: programs from the host, everything else from the cross roots
+# find_*: programs from the host, everything else from the cross roots.
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)

@@ -2,24 +2,23 @@
 # Sync the working tree (incl. submodules) to the shared devbox and run the
 # build there. Usage:
 #   ./remote-build.sh [ninja target ...]   default preset: configure + build
-#                                          + ctest (Ninja)
-#
-# THE CONFIGURE ROOT IS ctbrowser/, NOT THE REPOSITORY ROOT. The repository
-# became a monorepo - ctbrowser/ and ctcompile/ as sibling projects, the LLVM
-# model - so CMakePresets.json lives in ctbrowser/ and every cmake and ctest
-# invocation below runs from there. The build trees still land at the
-# REPOSITORY root (build/, build-windows/, ...), which is where every tool in
-# here already looks for them.
-#
-# The `default` preset builds BOTH projects: it sets
-# CTBROWSER_ENABLE_PROJECTS=ctcompile, so the compiler is covered by the same
-# one command. That is deliberate - this script is the whole gate, and a
-# sibling project nobody builds is a sibling project nobody notices breaking.
-# `browser` and `browser-no-llvm` are the engine-only configurations.
-#   ./remote-build.sh windows              windows-fetch preset: cross-compile
+#                                          + ctest (Ninja); with targets, build
+#                                          only those and run no tests
+#   ./remote-build.sh windows              `windows` preset: cross-compile
 #                                          the examples, collect exes+SDL3.dll
 #                                          via windows-dist, rsync them back
 #                                          into examples-windows/
+#
+# The configure root is ctbrowser/, not the repository root: the repository is
+# a monorepo with ctbrowser/ and ctcompile/ as sibling projects (the LLVM
+# model), so CMakePresets.json lives in ctbrowser/ and every cmake and ctest
+# invocation below runs from there. The build trees still land at the
+# repository root (build/, build-windows/, ...), where the other tools look.
+#
+# The `default` preset builds both projects: it sets
+# CTBROWSER_ENABLE_PROJECTS=ctcompile. There is no CI, so this script is the
+# only full build and test run; a sibling project it skipped would break
+# unnoticed. `browser` and `browser-no-llvm` are the engine-only configurations.
 #
 # The box is github.com/alexios-angel/infra (sibling checkout ../infra),
 # reached via the `devbox` ssh alias that `../infra/azure-build-server/
@@ -30,29 +29,26 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 host="${DEVBOX_HOST:-devbox}"
-# WHERE ON THE BOX, because the rsync below carries --delete and two checkouts
-# building at once would each erase the other's tree mid-compile. One worktree
-# per remote directory keeps parallel work honest:
+# The directory on the box. Give each worktree its own: the rsync below
+# carries --delete, so two checkouts syncing to one directory would erase each
+# other's tree mid-compile.
 #
 #   DEVBOX_DIR=projects/ctbrowser-lexical ./tools/remote-build.sh
-#
-# The default is unchanged, so nothing that does not set it notices.
 remote_dir="${DEVBOX_DIR:-projects/compile-time-browser}"
 
-# The embed repo's pinned toolchain release. sync-to-ctbrowser.sh may install a
-# locally-built one instead — the rsync protect filter keeps whichever is on the
-# server. This used to say "same knob and default as CI"; there is no CI any
-# more (deleted 2026-08-08), so this script IS the pin.
+# The pinned clang-std-embed toolchain release (from the embed repo). There is
+# no CI, so this is the only place the pin lives. sync-to-ctbrowser.sh may
+# install a locally built one instead; the rsync protect filter keeps whichever
+# is on the server.
 CLANG_STD_EMBED_TAG="${CLANG_STD_EMBED_TAG:-clang-std-embed-e3986d225}"
 CLANG_STD_EMBED_RELEASE="${CLANG_STD_EMBED_RELEASE:-https://github.com/alexios-angel/embed/releases/download/${CLANG_STD_EMBED_TAG}/${CLANG_STD_EMBED_TAG}-linux-x86_64.tar.xz}"
 
-# ANGLE IS ON FOR A DEVBOX BUILD, and stays off everywhere else. The option
-# FATAL_ERRORs when third-party/angle/ is missing, which is the right answer for
-# a developer who has not fetched - so it is set HERE, where fetch-angle.sh has
-# just run, rather than in the `default` preset everyone shares. Without it the
-# box builds a binary in which gl_basics prints SKIP and the render-angle-*
-# tests are never registered: a green suite that measured nothing.
-# CTBROWSER_ANGLE=OFF opts out.
+# ANGLE is on for a devbox build and off everywhere else. The option is a
+# FATAL_ERROR when third-party/angle/ is missing, which is right for a developer
+# who has not fetched it, so it is set here, where fetch-angle.sh has just run,
+# rather than in the shared `default` preset. Without it gl_basics prints SKIP
+# and the render-angle-* tests are never registered, so the suite passes without
+# testing WebGL. CTBROWSER_ANGLE=OFF opts out.
 CTBROWSER_ANGLE="${CTBROWSER_ANGLE:-ON}"
 
 if ! ssh -o ConnectTimeout=5 "$host" true 2>/dev/null; then
@@ -76,33 +72,25 @@ printf 'devbox: %s CPUs; build jobs=%s; CTest jobs=%s\n' "$devbox_jobs" "$build_
 
 repo_root=$(git rev-parse --show-toplevel)
 
-# `build*/`, NOT `build/`: the presets here write build-windows/, build-asan/
-# and build-tsan/ beside it, and only the first was excluded - so a local
-# build-windows/ was copied UP to the box, cache and all, and cmake refused it
-# with "the current CMakeCache.txt directory is different than the directory
-# where CMakeCache.txt was created". A cache is full of absolute paths from the
-# machine that wrote it and never belongs on another one.
-#
 # rsync the whole tree including submodule checkouts; leave remote build
-# artifacts in place so the PCH bake is reused across syncs.
-# tools/clang-std-embed stays local: the server-side copy is converged below.
+# artifacts in place so incremental builds survive a sync.
 #
-# third-party/angle/ is FETCHED ON THE BOX, never pushed. It is ~34 MB of
-# libraries that tools/fetch-angle.sh downloads from a pinned release, so
-# sending them up every sync is pure wire time - and without the protect
-# filter `--delete` would remove the box's copy on the first run from a
-# checkout that has not fetched, which is a rebuild rather than a re-sync.
-# tools/.venv/ is the same story as angle/: created ON THE BOX by
-# `tools/check/compare.py setup`, ~400 MB with Playwright's browsers behind it,
-# and gitignored - so it exists on one side or the other but never both. Without
-# the protect filter `--delete` removed it on the next sync, and the failure lands
-# nowhere near the cause: the build succeeds and then css-parity.py says
-# "playwright not installed" about a venv that was there a minute ago.
-# Windows toolchains and packaged executables are cached build assets too.
-# Preserve each machine's copies when syncing sources from another worktree.
-# Content can change to a version older than the last build when switching
-# worktrees. Give changed files fresh destination mtimes so Ninja rebuilds;
-# checksums leave identical files (and their mtimes) alone.
+# Exclude every build*/ tree (build-windows/, build-asan/, ...): a CMake cache
+# holds absolute paths from the machine that wrote it, and cmake refuses a
+# cache copied from elsewhere. tools/clang-std-embed stays local: the
+# server-side copy is converged below.
+#
+# Directories created on the box itself are excluded and protected from
+# --delete, so a sync from a checkout that lacks them does not wipe them:
+# third-party/angle/ (~34 MB fetched by tools/fetch-angle.sh from a pinned
+# release) and tools/.venv/ (~400 MB with Playwright's browsers, created by
+# `tools/check/compare.py setup`; losing it makes css-parity.py report
+# "playwright not installed"). Windows toolchains and packaged executables
+# are cached build assets too.
+#
+# Switching worktrees can replace a file with an older version than the last
+# build saw. --no-times gives changed files fresh destination mtimes so Ninja
+# rebuilds them; --checksum leaves identical files (and their mtimes) alone.
 rsync -az --checksum --no-times --delete \
   --exclude '.git/' \
   --exclude '.claude/' \
@@ -131,41 +119,32 @@ if [ -x "$BREW" ]; then
     || "$BREW" bundle install --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile"
 fi
 tool="$HOME/$CT_REMOTE_DIR/tools/clang-std-embed"
-# KEYED ON THE RELEASE, not merely on the binary existing. The guard used to be
-# `[ ! -x "$tool/bin/clang++" ]`, which installs once and then never upgrades:
-# bumping the pin above changed nothing, and the box quietly kept building with
-# a toolchain three releases behind the one this file names. A stamp costs one
-# line and makes the pin mean what it says.
+# Reinstall whenever the pinned release changes, not only when the binary is
+# missing; the .release stamp records which release is installed.
 if [ "$(cat "$tool/.release" 2>/dev/null)" != "$CLANG_STD_EMBED_RELEASE" ]; then
   rm -rf "$tool"
   mkdir -p "$tool"
   curl -fsSL --retry 5 "$CLANG_STD_EMBED_RELEASE" | tar -xJ --strip-components=1 -C "$tool"
   printf '%s' "$CLANG_STD_EMBED_RELEASE" > "$tool/.release"
 fi
-# ANGLE, from the pinned release. Its own guard is keyed on the release stamp,
-# so this is a no-op once the box is at the pin and a re-download when the pin
-# moves. It runs HERE rather than beside the cmake line because the Windows path
-# needs it too, and because a fetch that failed should stop the build before it
-# configures with the option off and reports a green suite that never linked
-# ANGLE at all.
+# ANGLE, from the pinned release. fetch-angle.sh checks its own release stamp,
+# so this is a no-op once the box is at the pin. It runs here rather than beside
+# the cmake line because the Windows path needs it too, and a failed fetch must
+# stop the run before configure.
 cd "$HOME/$CT_REMOTE_DIR" && tools/fetch-angle.sh
 REMOTE
 
 if [ "${1:-}" = windows ]; then
-  # `windows`, not `windows-fetch`: that preset no longer exists and this line
-  # had gone stale, so the windows path failed at the first command with
-  # "No such preset". The cross build also needs compiled libraries in the
-  # mingw sysroot that the box does not ship - Boost.URL, Boost.ProgramOptions,
-  # zlib, libpng, libjpeg-turbo, mimalloc, simdutf and cpptrace - so the two
-  # builder scripts run first. Both are idempotent and skip what is already
-  # installed.
-  # THE ISOLATED BOOST INCLUDE DIR the cross toolchain wants. It is one
-  # symlink: cmake/toolchains/windows-x86_64.cmake puts this on the cross
-  # compile's -isystem path, so it must hold boost/ AND NOTHING ELSE - pointing
+  # The cross build needs compiled libraries in the mingw sysroot that the box
+  # does not ship (Boost.URL, Boost.ProgramOptions, zlib, libpng,
+  # libjpeg-turbo, mimalloc, simdutf, cpptrace), so the two idempotent builder
+  # scripts run first.
+  #
+  # ~/projects/boost-inc is the isolated Boost include dir the cross toolchain
+  # wants: cmake/toolchains/windows-x86_64.cmake puts it on the cross compile's
+  # -isystem path, so it must hold a boost/ symlink and nothing else. Pointing
   # it at brew's whole include/ would put the host's SDL3, libpng and zlib
-  # headers in front of a Windows build's. Created here rather than documented
-  # as a prerequisite, because a box that cannot build itself is not much of a
-  # build box.
+  # headers in front of the Windows ones.
   ssh "$host" 'inc="$HOME/projects/boost-inc"; mkdir -p "$inc";
     [ -e "$inc/boost" ] || ln -s /home/linuxbrew/.linuxbrew/include/boost "$inc/boost";
     ls "$inc/boost/version.hpp" >/dev/null'
@@ -174,30 +153,20 @@ if [ "${1:-}" = windows ]; then
   rsync -az "$host:$remote_dir/examples-windows/" "$repo_root/examples-windows/"
   echo "examples-windows/ refreshed from the devbox"
 else
-  # THE BREW PREFIX AS A CMAKE PREFIX PATH. The compiled libraries this box gets
-  # from brew are found through an -isystem include path, which is enough for a
-  # header and a -l - but SDL3 and SDL3_ttf ship CMake config packages, and
-  # find_package cannot see one without this. Without it `brew install sdl3_ttf`
-  # changed nothing and the box kept reporting "no SDL3_ttf - text renders with
-  # font8x8 only", which is a silent 2.5x error in every text measurement.
+  # Pass the brew prefix as CMAKE_PREFIX_PATH. The -isystem include path is
+  # enough for header-plus-library dependencies, but SDL3 and SDL3_ttf ship
+  # CMake config packages that find_package cannot see without it; a missing
+  # SDL3_ttf silently falls back to the font8x8 bitmap font and skews every
+  # text measurement.
   prefix=""
   if ssh "$host" '[ -d /home/linuxbrew/.linuxbrew ]'; then
     prefix="-DCMAKE_PREFIX_PATH=/home/linuxbrew/.linuxbrew"
   fi
-  # ctcompile IS PART OF THE GATE, and it was not.
-  #
-  # The `default` preset never sets CTCOMPILE_ENABLE_MLIR, whose default is OFF,
-  # so this script - the thing CLAUDE.md calls the whole gate, there being no CI
-  # - built no dialect, no importer and no EmitC backend, and ran none of
-  # ctcompile_lit, ctcompile_differential, ctcompile_linkable,
-  # ctcompile_gc_roots or ctcompile_importer_coverage. It printed "gc-roots test
-  # unavailable" and moved on. A tree that had been configured by hand once kept
-  # the setting in its CMakeCache and looked fine forever; a fresh checkout ran
-  # 108 tests that tested none of the compiler.
-  #
-  # NOT IN THE PRESET, deliberately: the guard exists so a runtime-only build
-  # needs no LLVM, and CMakePresets.json is shared with people who have none.
-  # The devbox has it, and this script is the gate, so this is where it belongs.
+  # CTCOMPILE_ENABLE_MLIR defaults to OFF so a runtime-only build needs no
+  # LLVM, and CMakePresets.json is shared with machines that have none. The
+  # devbox has LLVM, so turn it on here; otherwise ctcompile's dialect,
+  # importer, EmitC backend and their lit/differential tests are silently
+  # skipped. CTCOMPILE_MLIR=OFF opts out.
   configure="cmake --preset default -DCTBROWSER_WITH_ANGLE=$CTBROWSER_ANGLE \
     -DCTCOMPILE_ENABLE_MLIR=${CTCOMPILE_MLIR:-ON} $prefix"
   if [ $# -gt 0 ]; then

@@ -1,4 +1,10 @@
-"""Keep generated C++ array rows in bounded include files beside their declarations."""
+"""Keep generated C++ array rows in bounded include files beside their declarations.
+
+Used by the table generators in this directory (idna_table.py, nfc_table.py,
+unicode_properties.py): each prints one C++ header to stdout, and generate()
+splits every large array in it into `<header stem>/<array>-NN.inc` files that
+the header #includes.
+"""
 
 import argparse
 from contextlib import redirect_stdout
@@ -8,6 +14,9 @@ import re
 
 
 def write_table(text, output):
+    """Write C++ header `text` to `output`, moving the rows of each
+    `constexpr ... name[...] = {` array into `<output stem>/<name>-NN.inc`
+    include files, and delete any stale .inc files left in that directory."""
     directory = output.with_suffix("")
     directory.mkdir(parents=True, exist_ok=True)
     lines = text.splitlines(keepends=True)
@@ -22,6 +31,8 @@ def write_table(text, output):
         if not match:
             continue
         end = next(i for i in range(at, len(lines)) if lines[i].strip() == "};")
+        # 900 rows per include file keeps every generated file small enough to
+        # read and diff; the include order rebuilds the array unchanged.
         for start in range(at, end, 900):
             part = directory / f"{match[1]}-{(start - at) // 900 + 1:02d}.inc"
             part.write_text("".join(lines[start : min(start + 900, end)]))
@@ -34,6 +45,9 @@ def write_table(text, output):
 
 
 def generate(main, relative_output):
+    """Run `main` (which prints a C++ table to stdout), split the result with
+    write_table, and write it to --output (default: `relative_output` under the
+    repository root). Returns main's nonzero result unchanged."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output",

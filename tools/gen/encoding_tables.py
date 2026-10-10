@@ -4,8 +4,8 @@ ctbrowser/include/ctbrowser/dom/encoding_tables.inc.
 
 The Encoding Standard publishes one index per legacy single-byte encoding as a
 plain text file; each maps the 128 bytes 0x80-0xFF to a code point, with gaps
-where a byte has no mapping. They are DATA - hand-typing 3,456 code points is
-how a wrong one gets in and stays in - so this fetches them and prints the
+where a byte has no mapping. They are data (hand-typing 3,456 code points is
+how a wrong one gets in and stays in), so this fetches them and prints the
 table. Run it when the Standard republishes an index:
 
     python3 tools/gen/encoding_tables.py > \\
@@ -59,7 +59,7 @@ def index_of(name):
     """The 128 code points of one index, 0 where the byte has no mapping."""
     out = [0] * 128
     with urllib.request.urlopen(BASE.format(name)) as response:
-        # split("\n") and NOT splitlines(): the description column holds the
+        # split("\n") and not splitlines(): the description column holds the
         # mapped character itself, and U+0085, U+2028 and U+2029 are line
         # breaks to splitlines() but not to the file.
         for line in response.read().decode("utf-8").split("\n"):

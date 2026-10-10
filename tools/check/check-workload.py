@@ -14,11 +14,11 @@ the same data (schema 1).
   tools/check/check-workload.py --list               # workloads and stages
   tools/check/check-workload.py --self-test          # needs no build
 
-Run it where the build is: on the devbox, by the validator, under
+Run it where the build tree is (the shared devbox), while holding
 /tmp/ctbrowser-devbox-build.lock. A missing build output is reported as ERROR
 with the target to build.
 
-EXTENDING. A workload is a JSON file in tools/check/workloads/; defaults.json
+Extending: a workload is a JSON file in tools/check/workloads/; defaults.json
 is merged under every one, so one edit there changes them all. A stage is a
 function registered with @stage(...). Every .py file in that directory is
 loaded first with `stage`, `SetupError` and `StepTimeout` in its globals, so a
@@ -26,7 +26,7 @@ plugin can register a stage that a workload file then names. Statuses are
 fixed: PASS, FAIL, MISSING (a capability that does not exist yet), BLOCKED (an
 earlier stage did not pass for the same item), TIMEOUT, ERROR (the environment).
 
-TIME LIMITS. Every command has a limit (timeouts.command, or a stage's own
+Time limits: every command has a limit (timeouts.command, or a stage's own
 "timeout" option), every item a limit across its stages (timeouts.item), and
 the run a budget (--timeout, default timeouts.total). A command over its limit
 is killed with its whole process group.
@@ -53,14 +53,15 @@ import sys
 import tempfile
 import time
 
-sys.dont_write_bytecode = True  # plugins must not leave __pycache__ in the tree
+sys.dont_write_bytecode = True  # Plugins must not leave __pycache__ in the tree.
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKLOADS = Path(__file__).resolve().parent / "workloads"
 SCHEMA = 1
-SEVERITY = ("ERROR", "TIMEOUT", "FAIL", "MISSING", "BLOCKED", "PASS")  # worst first
+SEVERITY = ("ERROR", "TIMEOUT", "FAIL", "MISSING", "BLOCKED", "PASS")  # Worst first.
+# Verdict -> process exit status.
 VERDICTS = {"DONE": 0, "NOT DONE": 1, "CANNOT CHECK": 2, "TIMED OUT": 3}
-STAGES = {}
+STAGES = {}  # Stage name -> registration record; filled by @stage.
 
 
 class SetupError(Exception):
@@ -87,12 +88,14 @@ def stage(name, describes, next_step, needs=None):
 
 
 def tail(text, count=20):
+    """Last `count` non-blank lines of `text`, noting how many were dropped."""
     lines = [line for line in text.splitlines() if line.strip()]
     hidden = len(lines) - count
     return ([f"... {hidden} earlier lines omitted"] if hidden > 0 else []) + lines[-count:]
 
 
 def slug(item):
+    """`item` reduced to a short, filesystem-safe name."""
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", item)[-120:]
 
 
@@ -199,6 +202,8 @@ def harness(module):
 
 
 def patterns(entries):
+    """Yield (pattern, optional) for each entry. An entry is a glob string, or
+    {"pattern": ..., "optional": bool}; an optional pattern may match nothing."""
     for entry in entries:
         yield (
             (entry, False)
@@ -268,6 +273,8 @@ def vm_reference(ctx, name):
 
 
 class ScriptTags(html.parser.HTMLParser):
+    """Collect each <script>'s attributes and inline text, in document order."""
+
     def __init__(self):
         super().__init__()
         self.scripts, self.open = [], None
@@ -482,7 +489,7 @@ def script_run(ctx, name):
         "ctcompile/test/ctcompile-test-native-reference", "ctcompile-test-native-reference"
     )
 
-    # stdout only, in order, as Checks/compilation-unit.py compares: the reference's
+    # Compare stdout only, in order, as Checks/compilation-unit.py does: the reference's
     # stderr carries its counts, which the native program does not print. A NaN's
     # sign is unobservable in JavaScript, so "=-nan" reads as "=nan" there too.
     def globals_of(text):
@@ -560,6 +567,7 @@ def native_run(ctx, name):
 
 
 def merge(base, override):
+    """Recursively merge dict `override` over `base`; non-dict values replace."""
     merged = dict(base)
     for key, value in override.items():
         nested = isinstance(value, dict) and isinstance(merged.get(key), dict)
@@ -591,6 +599,7 @@ def load(directory):
 
 
 def check(workload, build, deadline, root=ROOT):
+    """Run every stage of `workload` in order and return its summary."""
     ctx = Context(workload, build, deadline, root)
     with tempfile.TemporaryDirectory(prefix=f"check-workload-{workload['name']}-") as scratch:
         ctx.scratch = Path(scratch)
@@ -612,6 +621,7 @@ def check(workload, build, deadline, root=ROOT):
 
 
 def summarize(ctx):
+    """Reduce a finished Context to per-stage statuses and the workload verdict."""
     stages = []
     for name in ctx.workload["stages"]:
         mine = [r for r in ctx.results if r["stage"] == name]
@@ -711,6 +721,7 @@ def render_text(report, details):
 
 
 def finish(workloads, budget, started):
+    """Build the top-level report; the exit status is the worst verdict's."""
     exit_code = max((VERDICTS[w["verdict"]] for w in workloads), default=0)
     meaning = {0: "every workload DONE", 1: "some workload NOT DONE"}
     meaning.update({2: "CANNOT CHECK: setup error", 3: "TIMED OUT: a time limit was exceeded"})
@@ -719,6 +730,8 @@ def finish(workloads, budget, started):
     return report
 
 
+# A plugin the self-test loads: one stage that fails on b*.js, one that hangs
+# in a grandchild process, and one that reports MISSING.
 PLUGIN = """
 @stage("probe-check", "fails on scripts named b*.js", "rename it", needs="discover")
 def probe_check(ctx, name):

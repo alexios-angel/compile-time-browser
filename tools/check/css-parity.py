@@ -6,28 +6,27 @@
     tools/check/css-parity.py --all ctbrowser/examples/pages/bootstrap-grid.html
     tools/check/css-parity.py --advance           # record the numbers, deliberately
 
-Drives ctbrowser and Chrome through compare.py's daemon, runs ONE dump script
-(css-dump.js) in both, and diffs the answers. Two numbers per fixture, and both
-are ratcheted:
+Drives ctbrowser and Chrome through compare.py's daemon, runs one dump script
+(css-dump.js) in both, and diffs the answers. Three numbers per fixture, all
+ratcheted (none may rise without --advance):
 
     differ        values that disagree            -> falls as layout gets right
     substituted   values ctbrowser did not give   -> falls as properties get modelled
-    cells         coarse screen cells that differ -> falls as the RENDER gets right
+    cells         coarse screen cells that differ -> falls as the render gets right
 
-The third is the guard against mistaking the first two for the picture: they
-score each element's own computed values, so neither can see a box that reports
-everything correctly and is never painted, or one that is drawn on top of
-another. Both of those have shipped here. See the note on CELL_COLUMNS.
+`substituted` guards against mistaking silence for success: an unanswered
+property is replaced by its CSS initial value, which may happen to equal
+Chrome's answer and so produce no diff.
 
-The second one is the guard against mistaking silence for success. A property
-ctbrowser cannot answer comes back empty, this tool substitutes the CSS initial
-value, and if that happens to equal Chrome's answer there is no diff - which
-would read as "implemented" when nothing is implemented at all.
+`cells` guards against what per-element values cannot see: a box that reports
+correct values but is never painted, or one painted on top of another. See the
+note on CELL_COLUMNS.
 
-NOT A CTEST, deliberately: ctbrowser/docs/build.md - "a browser-versus-browser diff should
-be read, not silently failed." The numbers are ratcheted so a regression is
-caught; the READING is a person's job. ctbrowser/unittests/unit/bootstrap_layout.cpp is the
-automatic half and needs no Chrome.
+Deliberately not a CTest (ctbrowser/docs/build.md: "a browser-versus-browser
+diff should be read, not silently failed"). The numbers are ratcheted so a
+regression is caught; reading the report is a person's job.
+ctbrowser/unittests/unit/bootstrap_layout.cpp is the automatic half and needs
+no Chrome.
 """
 
 import argparse
@@ -48,56 +47,43 @@ RECORD = HERE / "css-parity.txt"
 PROPS_FILE = HERE / "css-parity-props.txt"
 
 # Chrome's LayoutUnit is 1/64 px, so that is the smallest difference Chrome can
-# represent. NOT A KNOB: anything below it is not a disagreement about layout,
-# anything at or above it is. The ratchet is on the COUNT of differences, never on
-# this number - a 0.5px difference is a recorded difference, not "within
-# tolerance". Raising it would be a visible one-line edit to a file whose header
-# says only --advance writes here, which is the point.
+# represent. This is not a tolerance knob: anything below it is not a
+# disagreement about layout, anything at or above it is. The ratchet is on the
+# count of differences, never on this number; a 0.5px difference is a recorded
+# difference, not "within tolerance".
 EPSILON_PX = 1.0 / 64.0
 
 # --- the visual instrument ---------------------------------------------------
 #
-# THE PROPERTY DIFF HAS A BLIND SPOT, and it has been walked into twice. It scores
-# each element's own computed values, so it cannot see:
+# The property diff scores each element's own computed values, so it cannot
+# see a box that reports correct values but is never painted (Bootstrap's
+# `RGBA(` once failed a case-sensitive colour parse, so no badge drew), or a
+# box painted over another. The third number measures pixels instead.
 #
-#   * a box that is the right size, at the right place, reporting the right
-#     colour, and NEVER PAINTED. `parse_color` matched `rgb(` case-sensitively
-#     while Bootstrap writes `RGBA(`, so every badge on the page drew nothing -
-#     and the numbers did not move by one when it was fixed, because this tool
-#     normalises both sides' text and the two spellings already compared equal.
-#   * a box drawn ON TOP OF another. `.h-100` collapsed three cards to their
-#     headers and the table below them drew straight through the wreckage; the
-#     numbers moved by FOUR.
+# Not a pixel diff: a different text rasteriser never matches Chrome pixel for
+# pixel, and a metric that cannot reach zero goes unread. Both screenshots are
+# reduced to a 32x24 grid of mean colours (32x32 px per cell at the 1024x768
+# viewport) and the number is how many cells disagree. That ignores glyph
+# antialiasing but catches a missing fill, a misplaced box or a wrong colour.
 #
-# So there is a third number, and it measures the pixels.
-#
-# NOT A PIXEL DIFF. Pixel-identical to Chrome is not reachable and never will be -
-# a different text rasteriser is a different set of pixels - and a metric that can
-# never reach zero is a metric nobody reads. Instead both screenshots are reduced
-# to a COARSE GRID of mean colours, and the number is how many cells disagree.
-# That is deliberately blind to glyph antialiasing and deliberately loud about a
-# missing fill, a box in the wrong place, or a colour that is simply wrong: one
-# 32x24 cell is 32x32 pixels, far larger than any rasteriser difference and far
-# smaller than any component.
-#
-# The threshold is a MEAN over the cell, so a handful of differently-antialiased
-# glyph edges move it by a few units where a missing background moves it by
-# hundreds. 24 is about 9% of the channel range, chosen so that the same page
-# rendered by the same engine twice scores 0 and a missing `.badge` scores its
-# whole area.
+# CELL_TOLERANCE applies to the per-channel mean over a cell, so a few
+# differently antialiased glyph edges move it by a few units while a missing
+# background moves it by hundreds. 24 (about 9% of 0-255) scores 0 for the same
+# page rendered twice and the whole area for a missing `.badge`.
 CELL_COLUMNS = 32
 CELL_ROWS = 24
 CELL_TOLERANCE = 24
 
-# THE COMPARED SET, and the only copy of it. css-dump.js gets it prepended as a
-# literal, and ctbrowser/unittests/unit/bootstrap_layout.cpp reads css-parity-props.txt written
-# by --emit-props, so there is no second list to drift.
+# The compared set, and the only copy of it. css-dump.js gets it prepended as a
+# literal, and ctbrowser/unittests/unit/bootstrap_layout.cpp reads the
+# css-parity-props.txt that --emit-props writes, so there is no second list to
+# drift.
 #
-# Chosen by four rules: the property appears in bootstrap.css; it is a LONGHAND
+# Chosen by four rules: the property appears in bootstrap.css; it is a longhand
 # (Chrome reconstructs shorthands with rules that differ between engines and
 # between its own versions); it changes geometry or visible decoration; and both
 # engines could in principle produce it. That excludes cursor, pointer-events,
-# user-select, appearance, -webkit-*, and font-family - Chrome returns the
+# user-select, appearance, -webkit-*, and font-family: Chrome returns the
 # specified list there and ctbrowser resolves to one name, so it always differs
 # and measures nothing.
 PROPS_VERSION = 1
@@ -156,21 +142,19 @@ PROPS = [
 GEOMETRY = ["@x", "@y", "@w", "@h"]
 
 # The CSS initial value, substituted when ctbrowser answers nothing. `display` is
-# NOT here: its initial value is `inline` but almost nothing renders as that - a
-# div is `block` because a UA sheet says so - so ctbrowser reports display from
-# the box tree instead (ctbrowser/lib/Shell/bindings/computed_style/entries.cpp) and an empty answer
-# there is a real finding rather than a missing default.
+# not here: its initial value is `inline` but almost nothing renders as that (a
+# div is `block` because a UA sheet says so), so ctbrowser reports display from
+# the box tree instead (ctbrowser/lib/Shell/bindings/computed_style/entries.cpp)
+# and an empty answer there is a real finding rather than a missing default.
 INITIAL = {
     "box-sizing": "content-box",
     "width": "auto",
     "height": "auto",
-    # 0px, THOUGH CSS SIZING 3 SAYS THE INITIAL VALUE IS `auto`. Chrome reports
-    # `auto` for a FLEX ITEM and `0px` for everything else, because `min-width:
-    # auto` only has a meaning - the automatic minimum size - inside a flex or grid
-    # container. Setting `auto` here to match the spec moved 566 differences the
-    # wrong way, which is a good measurement of how much of Bootstrap is flex: the
-    # remaining min-width differences are flex items and they close at the flex
-    # rung, not in this table.
+    # 0px, although CSS Sizing 3 gives `auto` as the initial value: Chrome reports
+    # `auto` only for a flex item (where it means the automatic minimum size) and
+    # `0px` everywhere else. Using `auto` here made 566 more values differ. The
+    # remaining min-width differences are flex items and are fixed by flex layout
+    # support, not by this table.
     "min-width": "0px",
     "max-width": "none",
     "min-height": "0px",
@@ -218,7 +202,7 @@ VIEWPORT = (1024, 768)
 CHUNK = 40
 
 
-# --- talking to the rig ------------------------------------------------------
+# --- talking to compare.py's session -----------------------------------------
 
 
 def load_compare():
@@ -230,6 +214,7 @@ def load_compare():
 
 
 def dump_script(from_index: int, count: int) -> str:
+    """css-dump.js with the globals it reads (PROPS, PROPS_VERSION, FROM, COUNT) prepended."""
     body = (HERE / "css-dump.js").read_text()
     head = (
         f"var PROPS = {json.dumps(PROPS)};\n"
@@ -304,15 +289,15 @@ def quantise(value: float) -> float:
 
 
 def normalise(prop: str, raw: str):
-    """One normaliser, applied to BOTH engines.
+    """One normaliser, applied to both engines.
 
     Neither engine imitates the other's serialiser: Chrome prints 13.3333px and
     its colour output has drifted across versions, and chasing that byte for byte
     measures nothing about layout. Returns a float for a length or a number and a
     string otherwise, so the comparison can be numeric where that is meaningful.
     """
-    # getBoundingClientRect gives JSON NUMBERS, while every property gives a
-    # string - so this takes both rather than making the dump stringify and this
+    # getBoundingClientRect gives JSON numbers, while every property gives a
+    # string, so this takes both rather than making the dump stringify and this
     # side parse back, which is one more place for the two engines to differ.
     if isinstance(raw, (int, float)) and not isinstance(raw, bool):
         return quantise(float(raw))
@@ -422,7 +407,7 @@ def compare_page(data, mine_name, theirs_name):
 
 
 def rank(result):
-    """Group so the biggest CAUSE surfaces first, each rule consuming what it explains.
+    """Group so the biggest cause surfaces first, each rule consuming what it explains.
 
     Without this the report is dominated by consequences: one wrong number high in
     the tree moves every descendant, and a missing feature repeats on every element
@@ -432,8 +417,8 @@ def rank(result):
     claimed = set()
     groups = []
 
-    # 1. A whole subtree shifted by the same amount is ONE finding. This is the
-    #    answer to "a 1/64 error at the root shows up 400 times".
+    # 1. A whole subtree shifted by the same amount is one finding, so a 1/64 px
+    #    error at the root does not show up 400 times.
     by_path_axis = defaultdict(list)
     for f in findings:
         if f.prop in ("@x", "@y"):
@@ -443,6 +428,7 @@ def rank(result):
         if f.prop in ("@x", "@y") and isinstance(f.mine, float) and isinstance(f.theirs, float):
             shifts[(f.prop, round(f.theirs - f.mine, 4))].append(f)
     for (prop, delta), members in sorted(shifts.items(), key=lambda kv: -len(kv[1])):
+        # Fewer than 8 elements sharing one offset is coincidence, not a shifted subtree.
         if len(members) < 8:
             continue
         root = min((f.path for f in members), key=len)
@@ -455,7 +441,7 @@ def rank(result):
         )
         claimed.update(id(f) for f in members)
 
-    # 2. By property: which FEATURE is missing.
+    # 2. By property: which feature is missing.
     by_prop = defaultdict(list)
     for f in findings:
         if id(f) not in claimed:
@@ -469,7 +455,7 @@ def rank(result):
 
 
 def by_component(findings):
-    """Which class token the differing elements share - i.e. which COMPONENT is broken.
+    """Which class token the differing elements share, i.e. which component is broken.
 
     Best-effort and explicitly not a cascade attribution: it intersects the class
     lists in the element keys. It answers "the .btn rows are wrong", which is what
@@ -511,9 +497,8 @@ def cell_means(width: int, height: int, rgb: bytes) -> list:
             x0 = col * width // CELL_COLUMNS
             x1 = max(x0 + 1, (col + 1) * width // CELL_COLUMNS)
             r = g = b = n = 0
-            # Every fourth row and column: a mean over a 32x32 cell is the same
-            # number to within a rounding either way, and this is 16x less work
-            # on six fixtures' worth of megapixels.
+            # Sample every fourth row and column: the mean over a 32x32 cell is
+            # the same to within rounding, and this is 16x less work.
             for y in range(y0, y1, 4):
                 base = y * width * 3
                 for x in range(x0, x1, 4):
@@ -529,7 +514,7 @@ def cell_means(width: int, height: int, rgb: bytes) -> list:
 def cells_that_differ(cmp, name: str, engines: list[str]) -> int:
     """How many cells of the two renders disagree. See the note on CELL_COLUMNS.
 
-    Screenshots BOTH engines through the running session, which is why this lives
+    Screenshots both engines through the running session, which is why this lives
     in the same loop as the property dump rather than in a tool of its own: the
     two measurements are of the same page in the same state, and a second session
     would be a second chance for them to disagree about something that is not the
@@ -545,7 +530,7 @@ def cells_that_differ(cmp, name: str, engines: list[str]) -> int:
     w1, h1, a = cmp.read_png(shots[engines[0]])
     w2, h2, b = cmp.read_png(shots[engines[1]])
     if (w1, h1) != (w2, h2):
-        # Different sizes is a rig failure, not a difference: there is no
+        # Different sizes are a harness failure, not a difference: there is no
         # meaningful cell-to-cell correspondence between two different viewports.
         raise RuntimeError(f"screenshots differ in size: {w1}x{h1} vs {w2}x{h2}")
     ours = cell_means(w1, h1, a)
@@ -555,9 +540,8 @@ def cells_that_differ(cmp, name: str, engines: list[str]) -> int:
         for i, (p, q) in enumerate(zip(ours, ref))
         if max(abs(p[0] - q[0]), abs(p[1] - q[1]), abs(p[2] - q[2])) > CELL_TOLERANCE
     ]
-    # WHERE, not just how many. A count says there is something to look at; the
-    # band of rows says where to point the screenshot, and that is the difference
-    # between a number and a lead.
+    # Report where, not just how many: the bounding box of the differing cells
+    # says where to look in the screenshot.
     where = ""
     if bad:
         rows = sorted({i // CELL_COLUMNS for i in bad})
@@ -710,7 +694,7 @@ def main() -> int:
         return 0
 
     cmp = load_compare()
-    # UNDER THE VENV, like compare.py itself: cells_that_differ() reads the
+    # Run under the venv, like compare.py itself: cells_that_differ() reads the
     # screenshots through Pillow, which `compare.py setup` installs beside
     # Playwright. Re-exec once; a venv that predates Pillow needs setup again.
     if importlib.util.find_spec("PIL") is None:
@@ -760,11 +744,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 2
+        # Give the freshly started session a moment to finish loading the page
+        # before the first dump.
         time.sleep(1.0)
-        # THE SESSION STAYS OPEN UNTIL BOTH MEASUREMENTS ARE TAKEN. The property
-        # dump and the screenshot must be of the same page in the same state, and
-        # a second session would be a second chance for them to disagree about
-        # something that is not the engine.
         cells = None
         cells_where = ""
         failed = False
@@ -773,9 +755,8 @@ def main() -> int:
             data = collect(cmp, ["ctbrowse", args.engine])
             cells, cells_where = cells_that_differ(cmp, stem, ["ctbrowse", args.engine])
         except Exception as why:
-            # A screenshot failure is a RIG failure and must not read as parity:
-            # scoring zero cells because no image arrived would be the best
-            # possible number for the worst possible reason.
+            # A screenshot failure is a harness failure and must not read as
+            # parity: a missing image must not score zero differing cells.
             print(f"css-parity: RIG FAILURE on {page}: {why}", file=sys.stderr)
             failed = True
         finally:

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check local CMake ownership and forbid parent-relative CMake paths."""
+"""Check that CMake files are owned locally and never use parent-relative paths.
+
+Every directory under ctbrowser/, ctcompile/, cmake/ and tools/ that holds C++
+sources must have its own CMakeLists.txt, and no CMakeLists.txt or .cmake file
+may reference `..`. Runs a self-test on a temporary tree first.
+"""
 
 import os
 from pathlib import Path
@@ -7,6 +12,7 @@ import re
 import sys
 import tempfile
 
+# Files whose presence requires a CMakeLists.txt in the same directory.
 CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"}
 SKIP_DIRECTORIES = {
     ".git",
@@ -17,10 +23,12 @@ SKIP_DIRECTORIES = {
     "clang-std-embed",
     "llvm-mingw",
 }
+# A `..` path component not preceded by a word character or dot.
 PARENT_PATH = re.compile(r"(?<![\w.])\.\.(?:[/\\]|[\"'\s)]|$)")
 
 
 def check(root):
+    """Return one error string per violation found under `root`."""
     errors = []
     for area in ("ctbrowser", "ctcompile", "cmake", "tools"):
         for directory, children, files in os.walk(root / area):
@@ -44,6 +52,8 @@ def check(root):
 
 
 def self_test():
+    """Assert check() reports a missing CMakeLists.txt and a `..` path, and
+    skips vendor directories."""
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         folder = root / "ctcompile/lib/Example"

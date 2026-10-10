@@ -3,9 +3,9 @@
 Database as the regular-expression engine's `\\p{...}` reads it (ECMA-262
 22.2.2.9, UnicodeMatchProperty and UnicodeMatchPropertyValue).
 
-Everything is code-point RANGES, sorted and disjoint, in one flat array with a
-name index over it, so a lookup is one linear scan of the names at compile
-time and one binary search per character at match time:
+Everything is code-point ranges, sorted and disjoint, in one flat array with a
+name index over it, so a lookup is one linear scan of the names when a pattern
+is compiled and one binary search per character at match time:
 
   * General_Category, from UnicodeData.txt, plus the eight groupings the
     specification's table 68 lists (L, LC, M, N, P, S, Z, C) and every alias
@@ -17,14 +17,14 @@ time and one binary search per character at match time:
     PropList.txt, emoji-data.txt, DerivedNormalizationProps.txt (CWKCF) and
     UnicodeData.txt (Bidi_Mirrored) - with their PropertyAliases.txt aliases,
     and the three ECMAScript adds: Any, ASCII, Assigned.
-  * The binary properties of STRINGS of table 69 (`v` flag), from
+  * The binary properties of strings of table 69 (`v` flag), from
     emoji-sequences.txt and emoji-zwj-sequences.txt: the lone code points as
     ranges and the sequences as a second table.
   * CaseFolding.txt's simple folds (C + S), for Canonicalize under `iu`.
 
     python3 tools/gen/unicode_properties.py
 
-The version is PINNED, not "latest": test262's property-escape tests are
+The version is pinned, not "latest": test262's property-escape tests are
 generated from one Unicode release and assert the exact sets, so the engine
 must carry that same release until the corpus moves. Bump VERSION with it.
 """
@@ -110,6 +110,7 @@ STRING_PROPERTIES = [
 
 
 def fetch(url):
+    """The lines of the file at url, split on "\\n" only (see idna_table.py)."""
     with urllib.request.urlopen(url) as response:
         return response.read().decode("utf-8").split("\n")
 
@@ -272,12 +273,14 @@ class table:
         self.indexes = {}
 
     def add(self, index, names, ranges):
+        """Append ranges to the flat array and list them under each of names."""
         at = len(self.ranges)
         self.ranges.extend(ranges)
         for name in names:
             self.indexes.setdefault(index, []).append((name, at, len(ranges)))
 
     def print_index(self, index, comment):
+        """Print index as a C++ rx_property array of {name, start, count}."""
         print("// %s" % comment)
         print("constexpr rx_property %s[] = {" % index)
         for name, at, count in sorted(self.indexes[index]):

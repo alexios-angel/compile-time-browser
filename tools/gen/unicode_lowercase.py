@@ -6,7 +6,8 @@
 Default full lowercase is UnicodeData field 13 plus unconditional SpecialCasing
 overrides. Final_Sigma cannot apply to an isolated unit; locale rules do not apply.
 The generator checks every unit against the uncompressed UCD mapping and prints
-its checksum to stderr for the independent exhaustive core_basics regression.
+a checksum to stderr; ctbrowser/unittests/unit/core/basics.cpp recomputes it
+from unicode_lowercase_unit() over all 65,536 units and compares.
 """
 
 import hashlib
@@ -60,6 +61,8 @@ authorization of the copyright holder."""
 
 
 def fields(name):
+    """Fetch a pinned UCD file, verify its SHA-256 and yield each data line's
+    semicolon-separated fields."""
     with urllib.request.urlopen(
         f"https://www.unicode.org/Public/{VERSION}/ucd/{name}", timeout=30
     ) as response:
@@ -88,6 +91,10 @@ def main():
     assert {cp: out for cp, out in lower.items() if len(out) != 1} == {0x130: (0x69, 0x307)}
     assert all(all(unit < 0x10000 for unit in out) for out in lower.values())
 
+    # Compress the one-unit mappings into [first, last, stride, delta] runs:
+    # every stride-th unit from first to last lowercases to unit + delta. A
+    # stride of 2 covers the alternating upper/lower pairs of Latin Extended.
+    # U+0130 is the only multi-unit mapping; unicode_lowercase.cpp special-cases it.
     ranges = []
     for cp, out in sorted(lower.items()):
         if len(out) != 1:
@@ -104,6 +111,8 @@ def main():
         else:
             ranges.append([cp, cp, 1, delta])
 
+    # 64-bit FNV-1a over (length, units...) of every unit's lowercase form:
+    # 14695981039346656037 is the offset basis and 1099511628211 the prime.
     checksum = 14695981039346656037
     for cp in range(0x10000):
         expected = lower.get(cp, (cp,))

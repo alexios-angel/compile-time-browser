@@ -1,64 +1,47 @@
 #!/usr/bin/env python3
-"""THE CENSUS OF ctjs.create_closure's CAPTURE OPERANDS - part 24 Phase 59.
+"""Count the capture operands of every ctjs.create_closure in a ctjs module.
 
-WHY THIS EXISTS. Two comments in the compiler state a measured figure - "219 of
-1,021 capture operands" (CTJSOps.td, BytecodeImport.cpp) - as the reason the
-descriptor's index rides on an attribute instead of a live ctjs.load_upvalue.
-A comment in this repository is read as specification, so a number in one that
-no command reproduces is a liability: the script that produced the original
-figure lived in a devbox directory and was deleted with it.
+Why this exists: CTJSOps.td and BytecodeImport.cpp cite "219 of 1,021
+capture operands" as the reason a descriptor's index is an attribute rather
+than a live ctjs.load_upvalue. This script reproduces that figure from a
+module so those comments stay checkable (use --expect-indexed 219).
 
-SSA NAMES ARE SCOPED TO THE FUNCTION THAT DEFINES THEM, because `%0` exists in
-all 574 of bootstrap's ctjs.funcs and a table shared across them would let the
-last definition decide what every other function's `%0` was. On bootstrap that
-precaution does not change the answer - a capture operand is always defined
-earlier in the SAME function than the create_closure that reads it, so a flat
-table walked in order agrees, 414/388/219 either way - but it is wrong in
-principle and it costs one line to be right.
+SSA names are scoped per ctjs.func, because `%0` exists in every function.
+On the bootstrap corpus a flat table gives the same answer (--flat shows
+this), because a capture operand is always defined earlier in the same
+function, but per-function scoping is the correct reading.
 
-AND AN EARLIER COUNT SAID 427, WHICH NOTHING HERE REPRODUCES. Neither an
-in-order flat table nor a whole-module two-pass one gives 427 on any of the
-three commits' modules, so the 427 has no derivation on record and should not be
-quoted. What 219 has is three corroborations: it is the placeholder count at
-69ea710 (where no index existed anywhere), the count of live upvalue reads
-standing in capture operands at 0bf7501, and the exact ctjs.load_upvalue delta
-between them, 1,330 - 1,111.
-
-WHAT IT COUNTS, over the module `ctjs-translate --ctbrowser-js-to-ctjs` writes:
+What it counts, over the module `ctjs-translate --ctbrowser-js-to-ctjs` writes:
 
   closures     ctjs.create_closure operations
   with-list    those carrying a `captures` list at all
   operands     capture operands over all of them
   cells        operands defined by ctjs.create_cell - a from_parent_local slot,
-               the binding boxed in THIS frame
+               the binding boxed in this frame
   block-args   operands that are entry-block or block arguments - also
                from_parent_local, a binding that lives in a register
   placeholder  operands defined by `ctjs.constant #ctjs.undefined` - the slot
-               the VM fills from the ENCLOSING closure, whose descriptor index
+               the VM fills from the enclosing closure, whose descriptor index
                is on `enclosing_indices` beside it
   other        anything else, which the shapes above are supposed to exhaust
 
   indexed      placeholder slots whose `enclosing_indices` entry is >= 0. This
-               is the number the two comments cite, and the one that turned
-               into a runtime upvalue read per slot when the index was an
-               operand: every one of them cost the BOXED tier a parked
-               ct_aot_make_closure argument for a native-tier fact.
+               is the number the two comments cite. Were the index an operand,
+               each of these would cost compiled code an extra
+               ct_aot_make_closure argument for a value known at compile time.
 
-  load_upvalue ctjs.load_upvalue operations in the module. The corroboration:
-               when the index was written as an operand, this count rose by
-               exactly `indexed`.
+  load_upvalue ctjs.load_upvalue operations in the module. Writing the index
+               as an operand instead raises this count by exactly `indexed`.
 
-USAGE
+Usage:
   capture-census.py <module.mlir>            # or - for stdin
   capture-census.py --json out.json <module.mlir>
-  capture-census.py --expect-indexed 219 <module.mlir>   # a floor AND a ceiling
+  capture-census.py --expect-indexed 219 <module.mlir>   # exact match required
 
-THE PARSE IS TEXTUAL, and deliberately so: this measures the module a build
-already produced rather than linking MLIR, so it can be pointed at a file from
-any commit - which is the whole use, since the figure is a comparison between
-two of them. The shapes it reads are the ones ctjs's own assembly format prints:
-one operation per line, `%name = ctjs.op ...`, and a `captures %a, %b` clause
-before the attribute dictionary.
+The parse is textual on purpose: it reads a module a build already produced
+instead of linking MLIR, so it works on a file from any commit. It relies on
+ctjs's assembly format: one operation per line, `%name = ctjs.op ...`, and a
+`captures %a, %b` clause before the attribute dictionary.
 """
 
 import argparse
@@ -66,12 +49,11 @@ import json
 import re
 import sys
 
-# `  ctjs.func private @name$3(%arg0: !ctjs.value, ...) -> ...` - two spaces of
-# indent, because a func is a top-level operation of the module and nothing in
-# this dialect nests one. That indent is what separates one function's SSA
-# names from the next one's.
+# `  ctjs.func private @name$3(%arg0: !ctjs.value, ...) -> ...` with two spaces
+# of indent: a func is a top-level operation of the module and this dialect
+# never nests one, so the indent marks where one function's SSA names end.
 FUNC = re.compile(r"^  ctjs\.func\b")
-# `%12 = ctjs.create_cell %11` / `%3 = ctjs.constant #ctjs.undefined`
+# `%12 = ctjs.create_cell %11` / `%3 = ctjs.constant #ctjs.undefined`.
 DEF = re.compile(r"^\s*(%[\w$.]+)\s*=\s*(\S+)")
 UNDEF = re.compile(r"^\s*(%[\w$.]+)\s*=\s*ctjs\.constant\s+#ctjs\.undefined\b")
 # Block arguments: the func's own entry list and every `^bb1(%7: !ctjs.value)`.
@@ -84,6 +66,12 @@ LOAD_UPVALUE = re.compile(r"\bctjs\.load_upvalue\b")
 
 
 def census(lines, scoped=True):
+    """Return (counts, disagreements) for the module text in `lines`.
+
+    `disagreements` lists (line, operand, shape, index) for each indexed slot
+    whose operand is not a placeholder. With `scoped` false, one SSA table is
+    shared across all functions (--flat).
+    """
     counts = dict(
         closures=0,
         with_list=0,
@@ -97,13 +85,12 @@ def census(lines, scoped=True):
         functions=0,
     )
     disagreements = []
-    kind = {}  # SSA name -> shape, RESET at every ctjs.func
+    kind = {}  # SSA name -> shape, reset at every ctjs.func.
 
     for number, line in enumerate(lines, 1):
         if FUNC.match(line):
-            # --flat KEEPS THE TABLE, which is the reading the sentence in the
-            # docstring is about: on bootstrap it agrees, and a reader can see
-            # that rather than take it.
+            # --flat keeps the table, so a reader can check the docstring's
+            # claim that both readings agree on bootstrap.
             if scoped:
                 kind = {}
             counts["functions"] += 1
@@ -131,10 +118,10 @@ def census(lines, scoped=True):
                     k = indices[i] if i < len(indices) else -1
                     if k >= 0:
                         counts["indexed"] += 1
-                        # THE SLOT SAYS TWO THINGS: ctjs.create_closure's
-                        # verifier rejects exactly this, so a module that
-                        # reaches here holding one was written by something
-                        # that did not run it.
+                        # A slot with an enclosing index must be a placeholder;
+                        # the create_closure verifier rejects anything else, so
+                        # hitting this means the module was written without
+                        # running the verifier.
                         if shape != "placeholder":
                             disagreements.append((number, operand, shape, k))
 
@@ -179,9 +166,9 @@ def main():
         with open(args.json, "w") as out:
             json.dump(counts, out, indent=2, sort_keys=True)
 
-    # AN EMPTY MODULE IS NOT A CLEAN SHEET. A path that does not exist, or a
-    # stage that failed upstream and left nothing on the pipe, would otherwise
-    # print zeros and satisfy any floor written as ">=".
+    # An empty module is a failure, not a clean result: a stage that failed
+    # upstream and left nothing on the pipe would otherwise print zeros and
+    # satisfy any floor written as ">=".
     if counts["closures"] == 0:
         print(
             "capture-census: no ctjs.create_closure in the module - nothing was measured",
@@ -189,9 +176,9 @@ def main():
         )
         return 2
     failed = False
-    # EXACT, NOT A FLOOR, on both: the figure the comments cite is a
-    # measurement of one corpus at one commit, and a census that drifts either
-    # way is a census that no longer says what the comment says.
+    # Both expectations are exact, not floors: the cited figure measures one
+    # corpus at one commit, and a count that drifts either way no longer
+    # matches what the comment says.
     for name, expected in (("indexed", args.expect_indexed), ("operands", args.expect_operands)):
         if expected is not None and counts[name] != expected:
             print(f"capture-census: {name} is {counts[name]}, expected {expected}", file=sys.stderr)

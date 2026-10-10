@@ -4,29 +4,26 @@
 # (Boost.URL and Boost.ProgramOptions are not built with CMake here; they have
 # their own tools/mingw/build-boost-mingw.sh.)
 #
-# Until 2026-09-15 these were four scripts - image-libs, mimalloc, simdutf and
-# cpptrace - each a copy of the same probe/clone/configure/install skeleton with
-# a different repo, tag and flag list. One table-driven script is the same
-# skeleton once, and a new library is one `fetch` and one `build` line.
+# Adding a library takes one `fetch` and one `build` line below.
 #
-# WHY EACH ONE IS HERE:
-#   zlib, libpng, libjpeg-turbo   PNG and JPEG decode in the SDL-FREE engine
-#                                 (2026-08-01; ctbrowser/docs/build.md), so the
-#                                 sysroot needs them. zlib only because libpng
+# Why each one is here:
+#   zlib, libpng, libjpeg-turbo   PNG and JPEG decode in the SDL-free engine
+#                                 (ctbrowser/docs/build.md), so the sysroot
+#                                 needs them. zlib only because libpng
 #                                 needs it.
-#   mimalloc                      backs operator new/delete and is REQUIRED by
+#   mimalloc                      backs operator new/delete and is required by
 #                                 the default build (-4.2% instructions on Linux,
 #                                 -11.7% wall on Windows; ctbrowser/docs/performance.md).
 #                                 It beat jemalloc on this file alone: jemalloc
 #                                 does not cross-compile under llvm-mingw.
 #   simdutf                       base64_decode's fast path, 42x the loop.
-#   cpptrace                      TESTS ONLY and optional: llvm-mingw has no
+#   cpptrace                      tests only, and optional: llvm-mingw has no
 #                                 <stacktrace>, and most of this project's
 #                                 expensive bugs were Windows-only deaths with
 #                                 no location. ctbrowser/cmake/modules/CTTest.cmake attaches it.
 #
-# STATIC, because that is what makes an application a single .exe rather than a
-# folder with DLLs in it - the same reason the SDL3 in that sysroot is static.
+# Static, because that makes an application a single .exe rather than a
+# folder with DLLs in it; the SDL3 in that sysroot is static for the same reason.
 # The result lands in the mingw sysroot beside SDL3, SDL3_ttf, plutosvg,
 # libboost_url and libboost_program_options. That sysroot is gitignored and
 # populated out-of-band.
@@ -38,7 +35,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 target="x86_64-w64-mingw32"
 
-# --- the cross compiler, looked for where the toolchain file looks ----------
+# --- The cross compiler, looked for where the toolchain file looks. ---------
 for root in "${LLVM_MINGW:-}" "$HOME/projects/llvm-mingw/install/llvm-mingw-native" \
             "$here/tools/llvm-mingw"; do
     if [ -n "$root" ] && [ -x "$root/bin/$target-clang++" ]; then
@@ -56,12 +53,11 @@ work="$HOME/projects/ctbrowser-mingw-libs"
 if [ "${1:-}" = "--clean" ]; then rm -rf "$work"; fi
 mkdir -p "$work"
 
-# --- VERSIONS ARE PINNED ---------------------------------------------------
-# A cross build that silently follows upstream's default branch is how the
-# Windows half of a byte-compared golden starts disagreeing with the Linux half
-# for a reason nobody can see. Bump these deliberately - and mimalloc, simdutf
-# and cpptrace MATCH BREW'S (tools/Brewfile), which is where the Linux side gets
-# its copy; two platforms on two allocator versions is the same disagreement.
+# --- Pinned versions. ------------------------------------------------------
+# Goldens are byte-compared between the Windows and Linux builds, so a cross
+# build that followed upstream's default branch could make them disagree for
+# no visible reason. Bump these deliberately. mimalloc, simdutf and cpptrace
+# must match the versions in tools/Brewfile, where the Linux build gets them.
 zlib_tag="v1.3.1"
 libpng_tag="v1.6.50"
 turbo_tag="3.1.2"
@@ -69,10 +65,9 @@ mimalloc_tag="v3.4.3"
 simdutf_tag="v9.0.0"
 cpptrace_tag="v1.0.4"
 
-# KEYED ON THE TAG, not merely on the checkout existing. `[ ! -d ... ]` clones
-# once and then never updates, so bumping a pin above would change nothing and
-# the sysroot would quietly keep the old version - which is exactly how the
-# clang toolchain sat three releases behind its own pin for weeks.
+# fetch <name> <git url> <tag>: re-clone whenever the pinned tag changes, not
+# only when the checkout is missing; otherwise bumping a pin would silently
+# keep the old version. <name>.tag records the tag of the current checkout.
 fetch() {
     local name="$1" url="$2" tag="$3"
     if [ "$(cat "$work/$name.tag" 2>/dev/null)" != "$tag" ]; then
@@ -83,17 +78,13 @@ fetch() {
     fi
 }
 
-# A CMake build directory records the TOOLCHAIN FILE BY PATH - in the cache,
-# and again in CMakeFiles/<ver>/CMakeSystem.cmake, which project() re-includes
-# on every reconfigure. When that file MOVES - as it did when the repository
-# became a monorepo and the toolchain went to cmake/toolchains/ - the include
-# fails and the build dies at project() naming a path that no longer exists.
-#
-# CHECKING THE CACHE IS NOT ENOUGH, which is how this was first written and why
-# it did not work: a reconfigure that fails still rewrites CMakeCache.txt with
-# the NEW toolchain while CMakeSystem.cmake keeps the old one, so the two
-# disagree and only the second is consulted. Ask the question that actually
-# fails instead: does every .cmake this build dir says it includes still exist?
+# stale_cache <build dir>: succeeds when the dir must be wiped. A CMake build
+# dir records the toolchain file by path in both CMakeCache.txt and
+# CMakeFiles/<ver>/CMakeSystem.cmake, which project() re-includes on every
+# reconfigure. If that file moves, reconfiguring fails at project(). A failed
+# reconfigure rewrites the cache but not CMakeSystem.cmake, so checking the
+# cache is not enough: report the dir as stale when any .cmake that
+# CMakeSystem.cmake includes no longer exists.
 stale_cache() {
     local dir="$1" named
     [ -d "$dir" ] || return 1
@@ -105,10 +96,9 @@ stale_cache() {
     return 1
 }
 
-# CMake for all of them: each ships its own CMakeLists, and the engine's own
-# toolchain file is reused rather than a second description of the same
-# compiler - two spellings of one toolchain is the drift this tree keeps paying
-# for.
+# build <name> <cmake -D flags>...: configure, build and install one library
+# into the sysroot. Each ships its own CMakeLists, and all of them reuse the
+# engine's toolchain file so there is one description of the cross compiler.
 build() {
     local name="$1"
     shift
@@ -130,14 +120,14 @@ build() {
 
 fetch zlib https://github.com/madler/zlib.git "$zlib_tag"
 build zlib -DZLIB_BUILD_EXAMPLES=OFF
-# zlib's CMake builds a DLL and its import library REGARDLESS of
-# BUILD_SHARED_LIBS, and FindZLIB prefers the name `zlib` - so leaving them
-# there means every .exe wants a zlib1.dll beside it, which is exactly the
-# folder-of-DLLs this sysroot exists to avoid. The static one stays.
+# zlib's CMake builds a DLL and its import library regardless of
+# BUILD_SHARED_LIBS, and FindZLIB prefers the name `zlib`, so leaving them
+# there would make every .exe need zlib1.dll beside it. Remove them and keep
+# the static library.
 rm -f "$sysroot/lib/libzlib.dll.a" "$sysroot"/bin/*zlib*.dll
 
 fetch libpng https://github.com/pnggroup/libpng.git "$libpng_tag"
-# PNG_TESTS off: they build executables for the HOST to run and this is a cross
+# PNG_TESTS off: they build executables for the host to run and this is a cross
 # build, so they cannot run and would only fail late. Same for simdutf's and
 # cpptrace's tests below.
 build libpng -DPNG_SHARED=OFF -DPNG_STATIC=ON -DPNG_TESTS=OFF -DPNG_TOOLS=OFF
@@ -155,17 +145,14 @@ fetch mimalloc https://github.com/microsoft/mimalloc.git "$mimalloc_tag"
 # not depend on load order.
 build mimalloc -DMI_BUILD_SHARED=OFF -DMI_BUILD_OBJECT=OFF -DMI_BUILD_TESTS=OFF \
     -DMI_OVERRIDE=OFF -DMI_WIN_REDIRECT=OFF
-# FLATTENED INTO THE SYSROOT'S OWN lib/ AND include/. mimalloc installs into
-# lib/mimalloc-<version>/ and include/mimalloc-<version>/, and `find_library`
-# does not search versioned subdirectories - so the cross build reports
-# "mimalloc not found" with the library sitting right there. MI_INSTALL_TOPLEVEL
-# is supposed to prevent that and is not honoured by 2.1.9. Copying is
-# version-proof.
-# EVERY PREVIOUS COPY GOES FIRST: v2 installs libmimalloc-static.a, v3
-# libmimalloc.a, so a bump leaves BOTH and find_library picked the stale v2 -
-# the Windows build quietly linked the old allocator across a major version.
-# ctbrowser/unittests/unit/core_basics asks ctbrowser::allocator_version() and
-# caught it, which is the entire reason that check exists.
+# Copy into the sysroot's own lib/ and include/: mimalloc installs into
+# versioned lib/mimalloc-<ver>/ and include/mimalloc-<ver>/ subdirectories,
+# which find_library does not search, and MI_INSTALL_TOPLEVEL was not honoured
+# in every release (2.1.9 ignored it).
+# Remove every previous copy first: v2 installs libmimalloc-static.a and v3
+# libmimalloc.a, so a bump would leave both and find_library could pick the
+# stale one. ctbrowser/unittests/unit/core/basics.cpp checks which allocator
+# version is linked to catch exactly this.
 rm -f "$sysroot"/lib/libmimalloc*.a
 built="$(find "$work/mimalloc-build" -name 'libmimalloc*.a' -print -quit)"
 header="$(find "$work/mimalloc/include" -name 'mimalloc.h' -print -quit)"
