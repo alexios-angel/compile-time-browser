@@ -9,3 +9,7 @@ llvm-mingw/
 
 # __pycache__ from importing a tool as a module (the survey does).
 __pycache__/
+
+# Machine-local build-box settings for devbox-pool.py; the committed
+# template is devbox-settings.example.json.
+/devbox-settings.json
