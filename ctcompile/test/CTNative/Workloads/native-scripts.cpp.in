@@ -13,6 +13,9 @@
 
 // The generated file's DOM and page views must be declared before it calls
 // them.
+// ponytail: the wrapper supplies CTNATIVE_DOM and Page.hpp, so a generated
+// file that reads the page does not compile on its own. Emit both from
+// Module.cpp when a workload needs the output to stand alone.
 #define CTNATIVE_DOM 1
 #include "ctcompile/CTNative/Runtime/Page.hpp"
 
