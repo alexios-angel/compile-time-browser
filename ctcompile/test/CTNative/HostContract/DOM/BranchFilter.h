@@ -808,13 +808,27 @@ module {
         if (refused) { llvm::consumeError(std::move(refused)); }
     }
 
+    // An unread local object is inert: preparation drops it and its stores,
+    // which leaves exactly the source it was added to.
+    if (auto input = parsed(context,
+                            replaced(source, "%callback =",
+                                     "%result = ctjs.create_object\n      ctjs.set_property "
+                                     "%result[%filterName], %u\n      %callback ="),
+                            "unread local object fixture parses")) {
+        auto prepared = expandDOMHelpers(*input, "branch$0", 100000);
+        check(!prepared && fingerprint == hostContractFingerprint(*input),
+              "preparation drops an unread local object and keeps every other source operation");
+        if (prepared) {
+            llvm::consumeError(std::move(prepared));
+        } else {
+            checkPrepared(*input, "branch$0");
+        }
+    }
+
     // Scheduling supplies no authority for effects or the original !element
     // guard. Those remain the complete entry proof's responsibility.
     for (const auto & invalid :
-         {replaced(source, "%callback =",
-                   "%result = ctjs.create_object\n      ctjs.set_property %result[%filterName], "
-                   "%u\n      %callback ="),
-          replaced(source, "ctjs.return %selected",
+         {replaced(source, "ctjs.return %selected",
                    "ctjs.store_global \"saved\", %key\n    ctjs.return %selected"),
           replaced(source, "%condition = ctjs.truthy %flag",
                    "%not = ctjs.unary not %element\n    %condition = ctjs.truthy %not"),

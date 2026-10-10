@@ -370,8 +370,13 @@ module {
           "DOM proof leaves source declarations, effects and fingerprint unchanged");
     check(!HostContractAnalysis(*module, contract).proved(),
           "DOM provider cannot impersonate a closed-source host proof");
+    // Map is a DOM identity too (an entry may own local Maps); Error is still
+    // a closed-source-only promise.
     auto mixed = contract;
     mixed.initialIntrinsics = {"Map"};
+    check(DOMEntryAnalysis(*module, mixed).proved(),
+          "typed DOM input may declare the standard Map an entry owns locally");
+    mixed.initialIntrinsics = {"Error"};
     check(!DOMEntryAnalysis(*module, mixed).proved(),
           "typed C++ input cannot mix DOM and closed-source environment promises");
     mixed = contract;
