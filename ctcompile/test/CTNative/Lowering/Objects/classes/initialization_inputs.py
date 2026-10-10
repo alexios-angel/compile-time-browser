@@ -1025,6 +1025,7 @@ POSITIVES = GLOBAL_HOLDERS | {
     "static-call-capture",
     "static-call-getter",
     "static-call-unused",
+    "static-call-ambient",
     "nested-helper-constructor",
     "inherited-nested-helper-distinct",
     "nested-helper-method",
