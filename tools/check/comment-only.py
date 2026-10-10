@@ -25,10 +25,12 @@ comment-only. Built for the 2026-10-10 repository-wide comment rewrite.
 """
 
 import io
+import multiprocessing
 import re
 import subprocess
 import sys
 import tokenize
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 C_LIKE = {
@@ -54,36 +56,34 @@ DIRECTIVE = re.compile(
 )
 
 
+# One scan finds every construct that matters, leftmost first, exactly as a
+# character-by-character reader would: a raw string (not preceded by an
+# identifier character), a string, character or template literal (", ' and `
+# literals end at their newline, a template does not), a line comment or a block
+# comment. Literals are kept verbatim; comments go, keeping their newlines.
+C_CONSTRUCT = re.compile(
+    r"""(?P<raw>(?<![A-Za-z0-9_])(?:u8|u|U|L)?R"(?P<delim>[^()\\ ]{0,16})\(.*?(?:\)(?P=delim)"|\Z))"""
+    r"""|(?P<literal>"(?:\\.|\\\Z|[^"\\\n])*(?:"|\n|\Z)"""
+    r"""|'(?:\\.|\\\Z|[^'\\\n])*(?:'|\n|\Z)"""
+    r"""|`(?:\\.|\\\Z|[^`\\])*(?:`|\Z))"""
+    r"""|(?P<line>//[^\n]*)"""
+    r"""|(?P<block>/\*.*?(?:\*/|\Z))""",
+    re.DOTALL,
+)
+
+
 def strip_c(text):
     """`text` with // and /* */ comments removed, string, char and raw string
     literals kept verbatim, and each comment's newlines kept."""
-    out, i, n = [], 0, len(text)
-    while i < n:
-        c = text[i]
-        raw = re.match(r'(?:u8|u|U|L)?R"([^()\\ ]{0,16})\(', text[i : i + 24])
-        if raw and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
-            end = text.find(")" + raw[1] + '"', i)
-            end = n if end < 0 else end + len(raw[1]) + 2
-            out.append(text[i:end])
-            i = end
-        elif c in "\"'`":
-            j = i + 1
-            while j < n and text[j] != c and not (text[j] == "\n" and c != "`"):
-                j += 2 if text[j] == "\\" else 1
-            out.append(text[i : j + 1])
-            i = j + 1
-        elif text.startswith("//", i):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-        elif text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            j = n if j < 0 else j + 2
-            out.append("\n" * text.count("\n", i, j))
-            i = j
-        else:
-            out.append(c)
-            i += 1
-    return "".join(out)
+
+    def keep(match):
+        if match["line"] is not None:
+            return ""
+        if match["block"] is not None:
+            return "\n" * match[0].count("\n")
+        return match[0]
+
+    return C_CONSTRUCT.sub(keep, text)
 
 
 def strip_hash(text):
@@ -190,6 +190,32 @@ def check(path, old, new):
     return None
 
 
+def read_blobs(repo, specs):
+    """The text of each object named in `specs`, from one `git cat-file --batch`
+    process (a process per file costs most of the run on a slow filesystem).
+    Decoded and newline-normalised as `Path.read_text` would."""
+    if not specs:
+        return []
+    batch = subprocess.run(
+        ["git", "-C", repo, "cat-file", "--batch"],
+        input="".join(spec + "\n" for spec in specs).encode(),
+        capture_output=True,
+        check=True,
+    ).stdout
+    texts, at = [], 0
+    for spec in specs:
+        end = batch.index(b"\n", at)
+        header = batch[at:end].split()
+        if header[-1] == b"missing":
+            raise SystemExit(f"comment-only: {spec} is missing")
+        size = int(header[2])
+        body = batch[end + 1 : end + 1 + size]
+        at = end + 1 + size + 1
+        text = body.decode("utf-8", errors="surrogateescape")
+        texts.append(text.replace("\r\n", "\n").replace("\r", "\n"))
+    return texts
+
+
 def main():
     arguments = sys.argv[1:]
     if len(arguments) == 1 or (arguments and not Path(arguments[0]).is_dir()):
@@ -200,20 +226,37 @@ def main():
     git = lambda *a: (
         subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True, check=True).stdout
     )
-    status = git("diff", "--name-status", "--no-renames", base, "--", *paths)
-    status += "".join(
-        f"A\t{p}\n" for p in git("ls-files", "--others", "--exclude-standard", "--", *paths).split()
-    )
+    # --raw gives each file's old blob, so the blobs can be read by hash: resolving
+    # `rev:path` walks the tree again for every file, which costs seconds per
+    # thousand files. -z keeps unusual paths unquoted.
+    raw = git("diff", "--raw", "-z", "--no-abbrev", "--no-renames", base, "--", *paths).split("\0")
+    changes, blobs = [], {}
+    for meta, path in zip(raw[0::2], raw[1::2]):
+        _, _, old_blob, _, flag = meta.split(" ")
+        changes.append((flag, path))
+        blobs[path] = old_blob
+    untracked = git("ls-files", "-z", "--others", "--exclude-standard", "--", *paths)
+    changes += [("A", path) for path in untracked.split("\0") if path]
+    modified = [path for flag, path in changes if flag == "M"]
+    originals = dict(zip(modified, read_blobs(repo, [blobs[path] for path in modified])))
+    # Opening a file is slow on a mounted Windows drive, so read them on threads.
+    read = lambda path: Path(repo, path).read_text(encoding="utf-8", errors="surrogateescape")
+    with ThreadPoolExecutor(16) as pool:
+        currents = dict(zip(modified, pool.map(read, modified)))
+    # Comparing is pure CPU, so a large change set is spread over processes.
+    jobs = [(path, originals[path], currents[path]) for path in modified]
+    if len(jobs) > 100:
+        with multiprocessing.get_context("fork").Pool() as pool:
+            verdicts = dict(zip(modified, pool.starmap(check, jobs, chunksize=16)))
+    else:
+        verdicts = {path: check(*job) for path, job in zip(modified, jobs)}
     bad = 0
-    for line in status.splitlines():
-        flag, path = line.split("\t", 1)
+    for flag, path in changes:
         if flag != "M":
             print(f"FAIL {path}: file {flag} (only modifications are allowed)")
             bad += 1
             continue
-        old = git("show", f"{base}:{path}")
-        new = Path(repo, path).read_text(encoding="utf-8", errors="surrogateescape")
-        why = check(path, old, new)
+        why = verdicts[path]
         if why:
             print(f"FAIL {path}: {why}")
             bad += 1
