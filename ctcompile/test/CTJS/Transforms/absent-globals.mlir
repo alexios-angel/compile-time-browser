@@ -25,6 +25,14 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/plain.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PLAIN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-umd.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXUMD
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-declarations.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=PREFIXPROPS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-call.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/prefix-twice.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals | FileCheck %s --check-prefix=KEPT
 
 // PROBE: {name = "PROPS", reason = "absent: never stored and not provided by the native realm; 1 typeof read(s) folded to undefined", resolved = "none", stores = 0 : i32}
 // PROBE-NOT: ctjs.load_global "PROPS"
@@ -37,6 +45,25 @@
 
 // PLAIN: ctjs.load_global "PROPS"
 // PLAIN-NOT: typeof_lookup
+
+// --- The prefix rule ---------------------------------------------------------
+//
+// These modules pass the window to a callee the program never binds, so clause
+// 5 refuses them and the whole-module rule does not apply. A `typeof` read that
+// runs before anything could bind a global still folds: the UMD wrapper's
+// checks at the top of the IIFE the script calls once, and a feature test
+// after nothing but function declarations. The rows name the rule. A call to
+// an unknown function before the read, a computed write through the window
+// before it (window.js above), and a read in a function the script also calls
+// again after the escape keep the read.
+//
+// PREFIXUMD: {name = "define", reason = "absent before any global can be bound: never stored and not provided by the native realm; 1 typeof read(s) in the script's prefix folded to undefined", resolved = "none", stores = 0 : i32}
+// PREFIXUMD-NOT: ctjs.load_global "define" {typeof_lookup = true}
+// PREFIXUMD-NOT: ctjs.load_global "exports" {typeof_lookup = true}
+// PREFIXUMD-NOT: ctjs.load_global "module" {typeof_lookup = true}
+//
+// PREFIXPROPS: {name = "PROPS", reason = "absent before any global can be bound: never stored and not provided by the native realm; 1 typeof read(s) in the script's prefix folded to undefined", resolved = "none", stores = 0 : i32}
+// PREFIXPROPS-NOT: ctjs.load_global "PROPS" {typeof_lookup = true}
 
 //--- probe.js
 var r = typeof PROPS === "undefined" ? 1 : 2;
@@ -60,3 +87,27 @@ var r = typeof PROPS === "undefined" ? 1 : 2;
 
 //--- plain.js
 var r = PROPS;
+
+//--- prefix-umd.js
+var r = (function (factory) {
+    return typeof exports === "object" && typeof module !== "undefined" ? factory()
+        : typeof define === "function" && define.amd ? define(factory)
+        : factory();
+})(function () { return 1; });
+someHost(window);
+
+//--- prefix-declarations.js
+function dump(p) { return p; }
+var r = typeof PROPS !== "undefined" ? dump(PROPS) : 0;
+someHost(window);
+
+//--- prefix-call.js
+someHost(0);
+var r = typeof PROPS === "undefined" ? 1 : 2;
+someHost(window);
+
+//--- prefix-twice.js
+var probe = function () { return typeof PROPS === "undefined" ? 1 : 2; };
+var a = probe();
+someHost(window);
+var b = probe();
