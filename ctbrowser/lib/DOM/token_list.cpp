@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/DOM/token_list.cpp - DOMTokenList operations ---------===//
+//
+// The ordered-set token parsing and the add/remove/toggle operations behind
+// DOMTokenList (element.classList, relList and similar), which read and write
+// the backing attribute.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/token_list.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -49,6 +57,8 @@ bool contains_token(std::string_view attribute_text, std::string_view token) {
 }
 
 namespace {
+/// Validates every token in `given`, then adds them to (`add`) or removes them
+/// from the attribute's token set and writes the attribute back.
 token_update_result change_tokens(document & doc, node_id element, atom attribute,
                                   std::span<const std::string> given, bool add) {
     for (std::size_t i = 0; i < given.size(); ++i) {

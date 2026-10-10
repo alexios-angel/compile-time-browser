@@ -1,4 +1,5 @@
-# ctbrowser.dom - the WHATWG tokenizer and tree builder, and the document as a slab.
+# ctbrowser-dom: the WHATWG HTML tokenizer and tree builder, the XML parser, and
+# the document stored as a slab of nodes.
 add_library(ctbrowser-dom)
 target_sources(ctbrowser-dom PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INCLUDE_DIR}")
 target_sources(ctbrowser-dom PRIVATE

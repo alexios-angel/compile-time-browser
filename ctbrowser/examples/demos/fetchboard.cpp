@@ -1,14 +1,16 @@
-// fetch, both ways: a resource baked into the binary and a real HTTP request.
+//===- ctbrowser/examples/demos/fetchboard.cpp - fetch() demo - -*- C++ -*-===//
 //
-// The registry is consulted first, so the first card answers with no socket at
-// all. The second one goes to the network - and takes its catch branch when
-// there is none, which is what `CTBROWSER_NETWORK=0` sets up. That is how this
-// example can be a test: the run is deterministic and touches nothing outside
-// the process.
+// fetch(), both ways: a resource baked into the binary and a real HTTP request.
 //
-// The page is what changed most in the port. the previous engine's fetched at COMPILE time
-// through a patched clang's std::fetch; the engine has a real HTTP client, so the page
-// is written the way a page would be.
+// The asset registry is consulted first, so the first card is answered with no
+// socket at all. The second goes to the network, and takes its catch branch
+// when there is none, which is what `CTBROWSER_NETWORK=0` sets up. That makes
+// the run deterministic, so this example can be a test.
+//
+// The page calls fetch() at run time like any web page; the engine has a real
+// HTTP client.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

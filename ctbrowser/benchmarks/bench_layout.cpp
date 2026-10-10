@@ -1,14 +1,17 @@
-// Layout: the box tree and the layout pass, on the same document at the same
-// viewport.
+//===- ctbrowser/benchmarks/bench_layout.cpp - Layout benchmark -----------===//
 //
-// STYLE IS EXCLUDED. Resolving a style per property per element is what
-// bench_style measures; leaving it in would make this a second, noisier copy
-// of that benchmark. The styles here come out of a precomputed table.
+// Measures building the box tree and running the layout pass, on generated
+// documents of increasing size at a fixed viewport.
 //
-// BUILDING THE BOX TREE IS REPORTED SEPARATELY from laying it out, because
-// they are paid at different times: a restyle pays build + layout, while a
-// resize or a scroll pays layout alone - and real frames are overwhelmingly
-// the second.
+// Style resolution is excluded: bench_style measures it, and including it here
+// would make this a second, noisier copy of that benchmark. Styles are resolved
+// once, before timing starts.
+//
+// Building the box tree is reported separately from laying it out because they
+// are paid at different times: a restyle pays build plus layout, while a resize
+// pays layout alone.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/dom/dom.hpp>
 #include <ctbrowser/layout/layout.hpp>
@@ -29,10 +32,10 @@ constexpr std::string_view sheet = "body { margin: 0; padding: 0 }"
                                    "ul { display: block; padding: 8px }"
                                    "li { display: block; font-size: 14px; margin: 1px }";
 
-// Count ELEMENTS, not fragments. A wrapped paragraph produces one fragment per
-// visual line, all carrying the same source node, so counting fragments counts
-// line breaks rather than content and moves with the viewport. Filtering to
-// non-text boxes is what makes the number comparable between runs.
+/// Counts element fragments under `f`, not all fragments. A wrapped paragraph
+/// produces one fragment per visual line, all with the same source node, so a
+/// fragment count would vary with the viewport. Skipping text boxes keeps the
+/// number comparable between runs.
 std::size_t count_elements(const ctbrowser::layout::fragment & f) {
     using ctbrowser::layout::box_kind;
     std::size_t total = (f.source && f.box != nullptr && f.box->kind != box_kind::text) ? 1u : 0u;
@@ -40,9 +43,8 @@ std::size_t count_elements(const ctbrowser::layout::fragment & f) {
     return total;
 }
 
-// ...minus the outermost box, which stands for the document rather than for an
-// element, so that this counts what the page has rather than what layout
-// wraps it in.
+/// count_elements() minus the outermost box, which stands for the document
+/// rather than an element.
 std::size_t count_document_elements(const ctbrowser::layout::fragment & root) {
     const std::size_t all = count_elements(root);
     return all == 0 ? 0 : all - 1;
@@ -74,8 +76,8 @@ void run_case(int sections, int rows, std::int32_t viewport) {
     const double seq_ms =
         bench::time_ms(20, [&] { (void)eng.run(tree, static_cast<float>(viewport)); });
 
-    // The style benchmark taught this the hard way: a timing is only worth
-    // reading once the run is shown to have processed the whole document.
+    // Print the element count so a timing can be checked against the whole
+    // document having been laid out.
     const layout::fragment out = eng.run(tree, static_cast<float>(viewport));
     const std::size_t placed = count_document_elements(out);
     std::printf("%4d x %-4d %6zu %7zu  %8.3f %8.3f\n", sections, rows, placed, out.count(),

@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/DOM/tokenizer/references.cpp - Character references --===//
+//
+// The tokenizer's character reference states (HTML 13.2.5.72-80): decoding
+// named references such as `&amp;` and numeric ones such as `&#x41;` in text and
+// attribute values.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/dom/tokenizer.hpp>
 
 #include <ctbrowser/core/algorithms.hpp>
@@ -5,9 +13,9 @@
 namespace ctbrowser::html {
 namespace {
 
-// The 106 named references that decode WITHOUT a semicolon (the ones from
-// HTML 4's Latin-1 set): the specification's table lists both spellings and
-// the entity table here carries only the `;` ones.
+/// The 106 named references that also decode without a semicolon (the ones
+/// from HTML 4's Latin-1 set). The specification's table lists both spellings;
+/// the entity table here carries only the `;` ones.
 constexpr std::string_view legacy_names[] = {
     "AElig",  "AMP",    "Aacute", "Acirc",  "Agrave", "Aring",  "Atilde", "Auml",   "COPY",
     "Ccedil", "ETH",    "Eacute", "Ecirc",  "Egrave", "Euml",   "GT",     "Iacute", "Icirc",
@@ -22,13 +30,14 @@ constexpr std::string_view legacy_names[] = {
     "sect",   "shy",    "sup1",   "sup2",   "sup3",   "szlig",  "thorn",  "times",  "uacute",
     "ucirc",  "ugrave", "uml",    "uuml",   "yacute", "yen",    "yuml"};
 
+/// True when `name` is one of legacy_names.
 [[nodiscard]] bool is_legacy_name(std::string_view name) {
     return std::ranges::find(legacy_names, name) != std::ranges::end(legacy_names);
 }
 
-// "Numeric character reference end state": the C1 controls that Windows-1252
-// put printable characters at, which is what an author who wrote `&#150;`
-// meant.
+/// One row of the "numeric character reference end state" remap table: a C1
+/// control code point that Windows-1252 used for a printable character, and
+/// that character. An author who wrote `&#150;` meant U+2013, not U+0096.
 struct c1_remap {
     std::uint32_t from;
     char32_t to;
@@ -41,10 +50,6 @@ constexpr c1_remap c1_table[] = {
     {0x9C, 0x0153}, {0x9E, 0x017E}, {0x9F, 0x0178}};
 
 } // namespace
-
-// ============================================================================
-// CHARACTER REFERENCES, 13.2.5.72-80
-// ============================================================================
 
 void tokenizer::character_reference(std::string & out, bool in_attribute) {
     const std::size_t start = at_;
@@ -73,7 +78,7 @@ void tokenizer::character_reference(std::string & out, bool in_attribute) {
             ++at_;
         }
         if (!any) {
-            // absence-of-digits: flush `&#` (and the x) as text
+            // The absence-of-digits error: flush `&#` (and the x) as text.
             out += input_.substr(start, at_ - start);
             return;
         }
@@ -97,7 +102,8 @@ void tokenizer::character_reference(std::string & out, bool in_attribute) {
         if (found != nullptr) { consumed = run.size() + 1; }
     }
     if (found == nullptr) {
-        // The longest legacy name that is a prefix of the run.
+        // The longest legacy name that is a prefix of the run. 6 is the length
+        // of the longest legacy names (`brvbar`, `frac12`, ...).
         for (std::size_t length = std::min<std::size_t>(run.size(), 6);
              length > 0 && found == nullptr; --length) {
             const std::string_view prefix = run.substr(0, length);
@@ -117,7 +123,7 @@ void tokenizer::character_reference(std::string & out, bool in_attribute) {
     const bool with_semicolon = consumed > run.size();
     if (in_attribute && !with_semicolon) {
         // For historical reasons: in an attribute a legacy reference followed
-        // by `=` or an alphanumeric is NOT a reference - `?a=1&copy=2`.
+        // by `=` or an alphanumeric is not a reference: `?a=1&copy=2`.
         const char next = at_ + consumed < input_.size() ? input_[at_ + consumed] : '\0';
         if (next == '=' || is_alnum(next)) {
             out += '&';
@@ -129,6 +135,9 @@ void tokenizer::character_reference(std::string & out, bool in_attribute) {
     if (found->second != 0) { append_utf8(out, found->second); }
 }
 
+/// The code point a numeric reference produces: U+FFFD for zero, surrogates
+/// and anything past U+10FFFF, the Windows-1252 character for a remapped C1
+/// control, and `code` itself otherwise.
 char32_t tokenizer::numeric_reference_code(std::uint32_t code) {
     if (code == 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF)) { return 0xFFFD; }
     for (const c1_remap & entry : c1_table) {

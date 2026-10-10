@@ -1,16 +1,23 @@
-#include "treebuilder/internal.hpp"
+//===- ctbrowser/lib/DOM/treebuilder.cpp - HTML tree builder ----*- C++ -*-===//
+//
+// The tree builder's core method bodies, in the order of HTML 13.2.6: the
+// parse and document.write entry points, the dispatcher, the stack of open
+// elements, node insertion, the list of active formatting elements and the
+// adoption agency algorithm. The insertion modes live in treebuilder/. The
+// header says what these do; this file says how, and each part names the
+// section of the specification it implements.
+//
+//===----------------------------------------------------------------------===//
 
-// treebuilder: the method bodies, in the order of HTML 13.2.6.
-// The header says what these do; this says how, and each mode says which
-// section of the specification it is.
+#include "treebuilder/internal.hpp"
 
 namespace ctbrowser::html {
 
 using namespace treebuilder_detail;
 
-// ============================================================================
-// THE PARSE, AND THE PARSER-DRIVEN ENTRY POINTS
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// The parse, and the parser-driven entry points
+//===----------------------------------------------------------------------===//
 
 node_id tree_builder::parse(std::string_view input, std::string_view context, node_ns context_ns) {
     start(input, context, context_ns);
@@ -27,10 +34,11 @@ void tree_builder::start(std::string_view input, std::string_view context, node_
     foreign_depth_ = 0;
     open_.clear();
     reindex();
-    // ponytail: a fixed budget, not per-select incremental selectedness - a
-    // parse whose option pops walk more than this many select descendants in
-    // all (a <select> of a few thousand options) stops mirroring into
-    // <selectedcontent> rather than going quadratic (DOS-018).
+    // ponytail: a fixed budget, not per-select incremental selectedness. A
+    // parse whose option pops walk more than this many (2^24, about 16.8
+    // million) select descendants in all stops mirroring into
+    // <selectedcontent> rather than going quadratic (the 200000-option test in
+    // unittests/unit/html/parse.cpp covers this).
     option_walk_budget_ = std::size_t{1} << 24;
     active_.clear();
     template_modes_.clear();
@@ -51,23 +59,23 @@ void tree_builder::start(std::string_view input, std::string_view context, node_
     context_entry_ = entry{};
     if (context_.empty()) {
         // The <html> element is the "before html" mode's to make, when the
-        // first token that needs it arrives - so `document.open()` followed
+        // first token that needs it arrives, so `document.open()` followed
         // by a doctype write leaves the doctype the Document's only child.
         mode_ = mode::initial;
         return;
     }
     root_ = doc_->create_element(atoms_->intern_lower("html"));
     doc_->set_document_element(root_);
-    // THE FRAGMENT CASE, 13.2.9: the root is on the stack, the context
-    // element is not - it stands in for the topmost node wherever the
-    // algorithm asks about "the adjusted current node" or resets the mode -
-    // and what is parsed lands under the root, for the caller to move.
+    // The fragment case, HTML 13.2.9: the root is on the stack and the context
+    // element is not (it stands in for the topmost node wherever the algorithm
+    // asks about "the adjusted current node" or resets the mode), and what is
+    // parsed lands under the root, for the caller to move.
     push(entry{root_, "html"});
     context_entry_ = make_entry(node_id{}, context_, context_ns, {});
-    // The tokenizer starts in the context element's state - an HTML one's:
-    // an SVG <title> is not RCDATA - and with NO appropriate end tag, since
-    // no start tag has been emitted: `</title>` inside a <title>'s innerHTML
-    // is text (13.2.5, "appropriate end tag token").
+    // The tokenizer starts in the context element's state (only an HTML
+    // one's: an SVG <title> is not RCDATA) and with no appropriate end tag,
+    // since no start tag has been emitted: `</title>` inside a <title>'s
+    // innerHTML is text (HTML 13.2.5, "appropriate end tag token").
     const content_model model =
         context_ns == node_ns::html ? content_model_for(context_) : content_model::data;
     if (model != content_model::data) { lexer_.set_content_model(model, {}); }
@@ -81,7 +89,7 @@ void tree_builder::start(std::string_view input, std::string_view context, node_
 void tree_builder::begin(std::string_view input, bool open, bool eager_root) {
     start(input, {}, node_ns::html);
     open_stream_ = open;
-    // THE PAGE'S OWN DOCUMENT ALWAYS HAS AN ELEMENT: every walk in the style,
+    // The page's own document always has an element: every walk in the style,
     // layout and paint engines starts at `document::root()` and expects one,
     // so a `document.open()` that returns to the event loop before writing
     // must not leave the Document bare. A frame's or a made document may.
@@ -89,9 +97,9 @@ void tree_builder::begin(std::string_view input, bool open, bool eager_root) {
         root_ = doc_->create_element(atoms_->intern_lower("html"));
         doc_->set_document_element(root_);
     }
-    // AN OPEN STREAM'S INSERTION POINT IS ITS END: `document.open()` leaves the
-    // parser waiting there, and each `write` appends at it and advances it.
-    // Kept at the BOTTOM of the stack, under whatever the scripts push, so
+    // An open stream's insertion point is its end: `document.open()` leaves
+    // the parser waiting there, and each `write` appends at it and advances
+    // it. Kept at the bottom of the stack, under whatever the scripts push, so
     // `close` can take it away from under a nested script.
     if (open) { insertion_points_.push_back(stream_.size()); }
     pump();
@@ -103,8 +111,8 @@ void tree_builder::write(std::string_view text) {
     stream_.insert(at, text);
     input_ = stream_;
     // Every insertion point at or after the insert moves with the text,
-    // including the one written at - "just before the insertion point"
-    // means the text is BEHIND it afterwards. An outer script's insertion
+    // including the one written at: "just before the insertion point" means
+    // the text is behind it afterwards. An outer script's insertion
     // point, further along, moves the same way.
     for (std::size_t & point : insertion_points_) {
         if (point >= at) { point += text.size(); }
@@ -116,7 +124,7 @@ void tree_builder::close() {
     if (finished_ || !open_stream_) { return; }
     open_stream_ = false;
     // The open stream's end was the bottom insertion point; without it the
-    // tokenizer reads to EOF - now, or once the scripts above it return.
+    // tokenizer reads to EOF, now or once the scripts above it return.
     if (!insertion_points_.empty()) { insertion_points_.erase(insertion_points_.begin()); }
     if (nesting_ == 0) { pump(); }
 }
@@ -145,8 +153,8 @@ void tree_builder::finish() {
     // graphic is a better answer than a blank box for a page that is merely
     // missing a close tag.
     close_foreign(stream_.size());
-    // "Pop all the nodes off the stack of open elements" - one at a time, as
-    // an option's popped steps care.
+    // "Pop all the nodes off the stack of open elements" one at a time,
+    // because popping an <option> runs option_popped.
     while (!open_.empty()) { pop(); }
     finished_ = true;
     insertion_points_.clear();
@@ -159,17 +167,17 @@ void tree_builder::run_script(node_id script) {
         if (aborted_) { return; }
     }
     // "Let the old insertion point be the current one; set the insertion point
-    // just before the next input character" - which is where the tokenizer is
+    // just before the next input character", which is where the tokenizer is
     // now, past the `</script>`. Pushed rather than saved, because a write from
-    // the script inserts BEFORE the old one and moves it.
+    // the script inserts before the old one and moves it.
     insertion_points_.push_back(lexer_.position());
     ++nesting_;
     on_script_(script);
     --nesting_;
     if (!insertion_points_.empty()) { insertion_points_.pop_back(); }
-    // A parsing-blocking script the hook left pending. Inside a script -
-    // this `</script>` came from its document.write - the parser pauses and
-    // the write returns; the script runs when the nesting level is zero.
+    // A parsing-blocking script the hook left pending. Inside a script (this
+    // `</script>` came from its document.write) the parser pauses and the
+    // write returns; the script runs when the nesting level is zero.
     if (nesting_ > 0) {
         if (pending_blocking_) { paused_ = true; }
         return;
@@ -190,9 +198,9 @@ void tree_builder::run_script(node_id script) {
     }
 }
 
-// ============================================================================
-// THE DISPATCHER, 13.2.6
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// The dispatcher, HTML 13.2.6
+//===----------------------------------------------------------------------===//
 
 const tree_builder::entry * tree_builder::adjusted_current() const {
     if (open_.empty()) { return nullptr; }
@@ -200,7 +208,9 @@ const tree_builder::entry * tree_builder::adjusted_current() const {
     return &open_.back();
 }
 
-// 13.2.6, the tree construction dispatcher's list.
+/// HTML 13.2.6, the tree construction dispatcher's list: true when the token
+/// is processed by the rules for foreign content rather than the current
+/// insertion mode.
 bool tree_builder::use_foreign_rules(const token & t) const {
     const entry * node = adjusted_current();
     if (node == nullptr || node->ns == node_ns::html) { return false; }
@@ -260,8 +270,9 @@ void tree_builder::handle(const token & t) {
 }
 
 void tree_builder::sync_foreign() {
-    // 13.2.5.42: a CDATA section wherever the ADJUSTED current node is not
-    // HTML - an integration point included, and a foreign fragment context.
+    // HTML 13.2.5.42: a CDATA section is allowed wherever the adjusted current
+    // node is not HTML, an integration point included, and in a foreign
+    // fragment context.
     const entry * node = adjusted_current();
     lexer_.set_cdata_allowed(node != nullptr && node->ns != node_ns::html);
 }
@@ -292,10 +303,10 @@ void tree_builder::process(const token & t, mode in) {
     }
 }
 
-// A run of characters where the mode treats whitespace and other characters
-// differently: the leading whitespace is handled here per `in`, and the rest
-// is reprocessed as one character token - which the caller's "anything else"
-// branch then sees as non-whitespace.
+/// A run of characters where the mode treats whitespace and other characters
+/// differently: the leading whitespace is handled here per `in`, and the rest
+/// is reprocessed as one character token, which the caller's "anything else"
+/// branch then sees as non-whitespace.
 void tree_builder::characters(const std::string & data, mode in) {
     std::size_t split = 0;
     while (split < data.size() && is_whitespace(data[split])) { ++split; }
@@ -316,14 +327,14 @@ void tree_builder::characters(const std::string & data, mode in) {
     token rest;
     rest.kind = token_kind::character;
     rest.data = data.substr(split);
-    // "Anything else" for the mode - each mode's handler is written so that a
+    // "Anything else" for the mode: each mode's handler is written so that a
     // character token with a non-whitespace first character takes that path.
     process(rest, in);
 }
 
-// ============================================================================
-// THE STACK OF OPEN ELEMENTS, 13.2.4.2
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// The stack of open elements, HTML 13.2.4.2
+//===----------------------------------------------------------------------===//
 
 std::string_view tree_builder::current_tag() const {
     return open_.empty() ? std::string_view{"html"} : std::string_view{open_.back().tag};
@@ -359,17 +370,18 @@ void tree_builder::reindex() {
     for (entry & e : stack) { push(std::move(e)); }
 }
 
-// "WHEN AN OPTION ELEMENT IS POPPED OFF THE STACK OF OPEN ELEMENTS of an HTML
-// parser, maybe clone an option into selectedcontent" (HTML 4.10.10): when
-// the option is its select's selected one and the select has an enabled
-// <selectedcontent>, that element's children become a copy of the option's.
-// So `<select><button><selectedcontent></button><option>X` shows X in the
-// button with no script at all.
-//
-// ponytail: SELECTEDNESS AS THE PARSER CAN SEE IT - the selectedness setting
-// algorithm run over the `selected` attributes of the select's options so far
-// (the last one that has it, else the first not disabled). A script that set
-// `.selected` between two options is not seen; the bindings own that state.
+/// "When an option element is popped off the stack of open elements of an
+/// HTML parser, maybe clone an option into selectedcontent" (HTML 4.10.10):
+/// when the option is its select's selected one and the select has an enabled
+/// <selectedcontent>, that element's children become a copy of the option's.
+/// So `<select><button><selectedcontent></button><option>X` shows X in the
+/// button with no script at all.
+///
+/// ponytail: selectedness as the parser can see it, i.e. the selectedness
+/// setting algorithm run over the `selected` attributes of the select's
+/// options so far (the last one that has it, else the first not disabled). A
+/// script that set `.selected` between two options is not seen; the bindings
+/// own that state.
 void tree_builder::option_popped(node_id option) {
     std::vector<node_id> children;
     node_id selectedcontent;
@@ -379,8 +391,8 @@ void tree_builder::option_popped(node_id option) {
             return txn.kind(id).value_or(node_kind::text) == node_kind::element &&
                    txn.element_ns(id) == node_ns::html && txn.local_name(id) == name;
         };
-        // An option's "nearest ancestor select": a datalist, an hr or another
-        // option between them, or a second optgroup, and it has none.
+        // An option's "nearest ancestor select". It has none when a datalist,
+        // an hr, another option or a second optgroup is between them.
         const auto nearest_select = [&](node_id from) {
             bool optgroup = false;
             for (node_id at = txn.parent(from); at; at = txn.parent(at)) {
@@ -433,7 +445,7 @@ void tree_builder::option_popped(node_id option) {
         children.assign(kids.begin(), kids.end());
     }
     // "Clone an option into a selectedcontent": replace all of its children
-    // with clones of the option's - unless the copies would pass the depth
+    // with clones of the option's, unless the copies would pass the depth
     // cap (max_dom_depth), and then it keeps what it had.
     if (doc_->depth(selectedcontent) + doc_->height(option) >= max_dom_depth) { return; }
     std::vector<node_id> old;
@@ -531,8 +543,10 @@ bool tree_builder::is_scope_boundary(const entry & e, scope which) {
                           "select", "template"});
 }
 
-// The walk down from the top meets the topmost `tag` before the topmost
-// boundary - or they are one element, whose tag is checked first.
+/// True when the walk down from the top of the stack meets the topmost `tag`
+/// before the topmost boundary for `which`, or they are one element (whose tag
+/// is checked first). Uses the per-tag and per-scope index stacks, so it is
+/// O(1) rather than a walk.
 bool tree_builder::has_in_scope(std::string_view tag, scope which) const {
     const auto at = tag_at_.find(tag);
     if (at == tag_at_.end() || at->second.empty()) { return false; }
@@ -599,7 +613,7 @@ void tree_builder::close_the_cell() {
     mode_ = mode::in_row;
 }
 
-// "Reset the insertion mode appropriately", 13.2.4.1.
+/// "Reset the insertion mode appropriately", HTML 13.2.4.1.
 void tree_builder::reset_insertion_mode() {
     for (std::size_t i = open_.size(); i-- > 0;) {
         const bool last = i == 0;
@@ -658,18 +672,19 @@ void tree_builder::reset_insertion_mode() {
     mode_ = mode::in_body;
 }
 
-// ============================================================================
-// INSERTING NODES, 13.2.6.1
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// Inserting nodes, HTML 13.2.6.1
+//===----------------------------------------------------------------------===//
 
 node_id tree_builder::insertion_parent(node_id parent) const {
     if (const node_id contents = doc_->template_content(parent)) { return contents; }
     return parent;
 }
 
-// "Appropriate place for inserting a node": the current node, or - foster
-// parenting - just before the last <table> on the stack, in its parent (or
-// inside the <template> above it when there is no such parent).
+/// "Appropriate place for inserting a node": the current node, or (when
+/// foster parenting) just before the last <table> on the stack, in its parent
+/// (or inside the <template> above it when there is no such parent). The
+/// result is clamped by fit() to stay under max_dom_depth.
 tree_builder::insertion_point tree_builder::appropriate_place(node_id override_target) const {
     return fit(spec_place(override_target));
 }
@@ -689,7 +704,7 @@ tree_builder::insertion_point tree_builder::fit(insertion_point where, std::size
 tree_builder::insertion_point tree_builder::spec_place(node_id override_target) const {
     const node_id target = override_target ? override_target : current();
     if (foster_parenting_ && !open_.empty()) {
-        // The TARGET's kind decides, which for the adoption agency's override
+        // The target's kind decides, which for the adoption agency's override
         // is the common ancestor rather than the current node.
         std::string_view target_tag;
         node_ns target_ns = node_ns::html;
@@ -721,15 +736,15 @@ tree_builder::insertion_point tree_builder::spec_place(node_id override_target) 
             const node_id parent = doc_->read().parent(table);
             // A script may have moved the table under a <template>: the
             // location is then inside its contents, after the last child
-            // (13.2.6.1's last step), and "before the table" means nothing.
+            // (HTML 13.2.6.1's last step), and "before the table" means nothing.
             if (const node_id contents = doc_->template_content(parent)) {
                 return insertion_point{contents, node_id{}};
             }
             if (parent) { return insertion_point{parent, table}; }
-            // ...or made it the DOCUMENT ELEMENT, whose parent is the Document
+            // ...or made it the document element, whose parent is the Document
             // though the engine's parent pointer is empty (document_node):
-            // the location is before it, in the Document - where an element
-            // or text cannot go and is dropped (insert_element, insert_text).
+            // the location is before it, in the Document, where an element or
+            // text cannot go and is dropped (insert_element, insert_text).
             if (doc_->root() == table) { return insertion_point{doc_->document_node(), table}; }
             return insertion_point{insertion_parent(open_[last_table - 1].id), node_id{}};
         }
@@ -762,14 +777,14 @@ void tree_builder::move_to(node_id child, const insertion_point & where) {
     if (on_insert_) { on_insert_(); }
 }
 
-// "INSERT A CHARACTER": onto the Text node immediately before the insertion
-// location when there is one, else a new one. That is what makes
-// `document.write("a"); document.write("b")` one Text node, and a stray end
-// tag in the middle of a run - `a</span>b` - not a boundary between two.
+/// "Insert a character": onto the Text node immediately before the insertion
+/// location when there is one, else a new one. That is what makes
+/// `document.write("a"); document.write("b")` one Text node, and a stray end
+/// tag in the middle of a run (`a</span>b`) not a boundary between two.
 void tree_builder::insert_text(const std::string & text) {
     if (text.empty()) { return; }
     const insertion_point where = appropriate_place();
-    // A Document node is not a place for text (13.2.6.1 step 3).
+    // A Document node is not a place for text (HTML 13.2.6.1 step 3).
     if (where.parent == doc_->document_node()) { return; }
     node_id previous;
     {
@@ -806,24 +821,24 @@ void tree_builder::insert_comment(const token & t, node_id parent, bool before_r
     insert_at(appropriate_place(), comment);
 }
 
-// "Create an element for a token" (13.2.6.1) with 13.2.6.5's adjustments
-// applied: an SVG name from its table, a MathML `definitionurl` as
-// `definitionURL`, and the foreign attributes (`xlink:`, `xml:`, `xmlns`)
-// into their namespaces - that last step is the builder's, see
-// document::foreign_namespace_of. The tokenizer folded every name to
-// lowercase, so the tables are exact lookups.
+/// "Create an element for a token" (HTML 13.2.6.1) with HTML 13.2.6.5's
+/// adjustments applied: an SVG name from its table, a MathML `definitionurl`
+/// as `definitionURL`, and the foreign attributes (`xlink:`, `xml:`, `xmlns`)
+/// into their namespaces (that last step is the builder's, see
+/// document::foreign_namespace_of). The tokenizer folded every name to
+/// lowercase, so the tables are exact lookups.
 node_id tree_builder::create_element(const std::string & tag,
                                      const std::vector<token_attribute> & attributes, node_ns ns) {
-    // ITS CUSTOM ELEMENT REGISTRY IS ITS INTENDED PARENT'S - read here off the
+    // Its custom element registry is its intended parent's (read here off the
     // current node, which is the intended parent everywhere but foster
-    // parenting - unless its own tag says `customelementregistry`, which makes
+    // parenting), unless its own tag says `customelementregistry`, which makes
     // it null and so every element parsed under it (document.hpp).
     const node_id parent = open_.empty() ? node_id{} : open_.back().id;
     const bool own_null = std::ranges::find(attributes, std::string_view{"customelementregistry"},
                                             &token_attribute::name) != attributes.end();
-    // A DECLARATIVE SHADOW ROOT'S <template> on the stack stands for the root,
+    // A declarative shadow root's <template> on the stack stands for the root,
     // whose registry is null only when written with
-    // `shadowrootcustomelementregistry` - whatever the template's own.
+    // `shadowrootcustomelementregistry`, whatever the template's own is.
     const document::shadow_tree * shadow = [&]() -> const document::shadow_tree * {
         if (!parent || open_.back().tag != "template" || !doc_->has_shadow_roots()) {
             return nullptr;
@@ -835,7 +850,7 @@ node_id tree_builder::create_element(const std::string & tag,
         own_null || (shadow != nullptr ? shadow->null_registry
                                        : doc_->has_null_custom_element_registries() && parent &&
                                              doc_->null_custom_element_registry(parent));
-    // A CUSTOM ELEMENT IS CONSTRUCTED, NOT CREATED - see set_custom_element_hooks.
+    // A custom element is constructed, not created: see set_custom_element_hooks.
     // Asked under a null-registry declarative shadow root too: a script in it
     // may have initialize()d the root since, which only the shell knows.
     if (ns == node_ns::html && on_element_ && !own_null && (!null_registry || shadow != nullptr)) {
@@ -864,7 +879,7 @@ node_id tree_builder::insert_element(const std::string & tag,
                                      const std::vector<token_attribute> & attributes, node_ns ns) {
     const node_id element = create_element(tag, attributes, ns);
     // "If it is not possible to insert element at the adjusted insertion
-    // location, abort these steps" (13.2.6.1) - the element is still pushed.
+    // location, abort these steps" (HTML 13.2.6.1); the element is still pushed.
     // The Document is the one such location: it already has an element,
     // which is how foster parenting reached it (appropriate_place). So is a
     // parent the element already has: a custom element whose own reactions
@@ -887,18 +902,18 @@ node_id tree_builder::insert_element(const token & t, node_ns ns) {
     return insert_element(t.name, t.attributes, ns);
 }
 
-// THE FORM ELEMENT POINTER'S ONE CONSUMER (13.2.6.1 "create an element for a
-// token", step 12): a form-associated element made while the pointer is set -
-// no <template> open, no `form` attribute if it is a listed one, and headed
-// into the pointer's tree - belongs to that form even when it is not inside
-// it. `<table><form><tr><td><input>` pops the form the moment it is
-// inserted, and the input is still its control. One whose NEAREST form
-// ancestor is the pointer's records nothing: its ancestors already say so,
-// and every removal would otherwise have one more pair to look at
-// (document::parser_form). A script that put another form between them made
-// that one nearest, so then the pointer's is recorded. Not a form-associated
-// custom element, which the specification leaves out - an autonomous one's
-// tag is not in the list.
+/// The form element pointer's one consumer (HTML 13.2.6.1 "create an element
+/// for a token", step 12): a form-associated element made while the pointer
+/// is set (no <template> open, no `form` attribute if it is a listed one, and
+/// headed into the pointer's tree) belongs to that form even when it is not
+/// inside it. `<table><form><tr><td><input>` pops the form the moment it is
+/// inserted, and the input is still its control. One whose nearest form
+/// ancestor is the pointer's records nothing: its ancestors already say so,
+/// and every removal would otherwise have one more pair to look at
+/// (document::parser_form). A script that put another form between them made
+/// that one nearest, so then the pointer's is recorded. A form-associated
+/// custom element is not handled, as the specification leaves it out: an
+/// autonomous one's tag is not in the list.
 void tree_builder::associate_with_form(node_id element, node_id intended_parent,
                                        std::string_view tag,
                                        const std::vector<token_attribute> & attributes,
@@ -924,7 +939,7 @@ void tree_builder::associate_with_form(node_id element, node_id intended_parent,
     doc_->set_parser_form(element, form_);
 }
 
-// "Generic raw text element parsing algorithm" and its RCDATA twin.
+/// "Generic raw text element parsing algorithm" and its RCDATA twin.
 void tree_builder::insert_text_element(const token & t, content_model model) {
     (void)insert_element(t);
     lexer_.set_content_model(model, t.name);
@@ -942,13 +957,13 @@ void tree_builder::merge_attributes(node_id target,
     }
 }
 
-// ============================================================================
-// THE LIST OF ACTIVE FORMATTING ELEMENTS, 13.2.4.3
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// The list of active formatting elements, HTML 13.2.4.3
+//===----------------------------------------------------------------------===//
 
 void tree_builder::push_formatting(node_id id, const token & t) {
-    // THE NOAH'S ARK CLAUSE: at most three of the same element with the same
-    // attributes since the last marker. The earliest goes.
+    // At most three of the same element with the same attributes since the
+    // last marker (the Noah's Ark clause); the earliest goes.
     std::size_t same = 0;
     std::size_t earliest = active_.size();
     for (std::size_t i = active_.size(); i-- > 0;) {
@@ -996,9 +1011,9 @@ void tree_builder::remove_formatting(node_id id) {
     if (at < active_.size()) { active_.erase(active_.begin() + static_cast<std::ptrdiff_t>(at)); }
 }
 
-// "Reconstruct the active formatting elements": re-open the ones that are
-// still active but no longer on the stack, from the last marker on. This is
-// what makes `<b>one<p>two</p></b>` bold the second paragraph too.
+/// "Reconstruct the active formatting elements": re-open the ones that are
+/// still active but no longer on the stack, from the last marker on. This is
+/// what makes `<p><b>one<p>two` bold the second paragraph too.
 void tree_builder::reconstruct_formatting() {
     if (active_.empty()) { return; }
     if (active_.back().marker || on_stack(active_.back().id)) { return; }
@@ -1017,18 +1032,19 @@ void tree_builder::reconstruct_formatting() {
     }
 }
 
-// ============================================================================
-// THE ADOPTION AGENCY ALGORITHM, 13.2.6.4.7
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// The adoption agency algorithm, HTML 13.2.6.4.7
+//===----------------------------------------------------------------------===//
 
 bool tree_builder::adoption_agency(const std::string & subject) {
-    // Step 2: the simple case - the current node is it and it is not active.
+    // Step 2: the simple case, where the current node is it and it is not
+    // active.
     if (current_is(subject) && formatting_index_of(current()) == active_.size()) {
         pop();
         return true;
     }
     for (int outer = 0; outer < 8; ++outer) {
-        // Step 4.3: the formatting element - the last one in the list with
+        // Step 4.3: the formatting element, the last one in the list with
         // this tag, after the last marker.
         std::size_t fe_index = active_.size();
         for (std::size_t i = active_.size(); i-- > 0;) {
@@ -1046,7 +1062,7 @@ bool tree_builder::adoption_agency(const std::string & subject) {
             return true;
         }
         if (!has_in_scope(fe)) { return true; } // parse error, ignore
-        // Step 4.9: the furthest block - the topmost special element below it.
+        // Step 4.9: the furthest block, the topmost special element below it.
         std::size_t fb_stack = open_.size();
         for (std::size_t i = fe_stack + 1; i < open_.size(); ++i) {
             if (is_special(open_[i])) {
@@ -1101,7 +1117,7 @@ bool tree_builder::adoption_agency(const std::string & subject) {
         // the furthest block's children.
         const formatting fe_entry = active_[fe_index];
         const node_id fresh = create_element(fe_entry.tag, fe_entry.attributes);
-        // Every child goes one level deeper - unless that passes the cap
+        // Every child goes one level deeper, unless that passes the cap
         // (max_dom_depth), and then they stay where they are.
         if (doc_->depth(furthest_block) + 1 + doc_->height(furthest_block) < max_dom_depth) {
             std::vector<node_id> moving;

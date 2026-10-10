@@ -1,10 +1,18 @@
+//===- ctbrowser/lib/DOM/treebuilder/table.cpp - Table and template modes -===//
+//
+// The tree builder's table insertion modes ("in table" through "in cell",
+// HTML 13.2.6.4.9-15), which handle foster parenting of misplaced content, and
+// the "in template" mode (HTML 13.2.6.4.18).
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::html {
 
 using namespace treebuilder_detail;
 
-// 13.2.6.4.9 "in table"
+/// The "in table" insertion mode, HTML 13.2.6.4.9.
 void tree_builder::mode_in_table(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -102,7 +110,7 @@ void tree_builder::mode_in_table(const token & t) {
     foster_parenting_ = false;
 }
 
-// 13.2.6.4.10 "in table text"
+/// The "in table text" insertion mode, HTML 13.2.6.4.10.
 void tree_builder::mode_in_table_text(const token & t) {
     if (t.kind == token_kind::character) {
         for (const char c : t.data) {
@@ -132,7 +140,7 @@ void tree_builder::mode_in_table_text(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.11 "in caption"
+/// The "in caption" insertion mode, HTML 13.2.6.4.11.
 void tree_builder::mode_in_caption(const token & t) {
     const auto close_caption = [this] {
         if (!has_in_scope("caption", scope::table)) { return false; }
@@ -164,7 +172,7 @@ void tree_builder::mode_in_caption(const token & t) {
     process(t, mode::in_body);
 }
 
-// 13.2.6.4.12 "in column group"
+/// The "in column group" insertion mode, HTML 13.2.6.4.12.
 void tree_builder::mode_in_column_group(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -202,7 +210,7 @@ void tree_builder::mode_in_column_group(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.13 "in table body"
+/// The "in table body" insertion mode, HTML 13.2.6.4.13.
 void tree_builder::mode_in_table_body(const token & t) {
     if (t.kind == token_kind::start_tag) {
         const std::string & tag = t.name;
@@ -255,7 +263,7 @@ void tree_builder::mode_in_table_body(const token & t) {
     process(t, mode::in_table);
 }
 
-// 13.2.6.4.14 "in row"
+/// The "in row" insertion mode, HTML 13.2.6.4.14.
 void tree_builder::mode_in_row(const token & t) {
     if (t.kind == token_kind::start_tag) {
         const std::string & tag = t.name;
@@ -302,7 +310,7 @@ void tree_builder::mode_in_row(const token & t) {
     process(t, mode::in_table);
 }
 
-// 13.2.6.4.15 "in cell"
+/// The "in cell" insertion mode, HTML 13.2.6.4.15.
 void tree_builder::mode_in_cell(const token & t) {
     if (t.kind == token_kind::end_tag) {
         const std::string & tag = t.name;
@@ -330,7 +338,7 @@ void tree_builder::mode_in_cell(const token & t) {
     process(t, mode::in_body);
 }
 
-// 13.2.6.4.18 "in template"
+/// The "in template" insertion mode, HTML 13.2.6.4.18.
 void tree_builder::mode_in_template(const token & t) {
     const auto switch_to = [&](mode next) {
         if (!template_modes_.empty()) { template_modes_.pop_back(); }

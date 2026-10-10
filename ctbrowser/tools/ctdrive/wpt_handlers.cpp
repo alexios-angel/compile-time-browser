@@ -1,22 +1,25 @@
-// ctdrive - the server half of the web-platform-tests this driver runs.
+//===- ctbrowser/tools/ctdrive/wpt_handlers.cpp - Emulated wptserve -------===//
 //
-// WPT runs under wptserve, and a test that submits a form or loads a frame
-// from `something.py` is talking to a Python function on the other end: the
-// test asserts on what THAT function answered. There is no server here -
-// tools/wpt/run-wpt.py opens the file and hands leading-`/` paths to the
-// document root - so without this every such test measures the missing
-// server rather than the engine: the frame gets the handler's SOURCE as an
-// octet-stream and the assertion reads "".
+// The server half of the web-platform-tests this driver runs. WPT runs under
+// wptserve, and a test that submits a form or loads a frame from
+// `something.py` is talking to a Python function on the other end: the test
+// asserts on what that function answered. There is no server here
+// (tools/wpt/run-wpt.py opens the file and hands leading-`/` paths to the
+// document root), so without this every such test would measure the missing
+// server rather than the engine: the frame would get the handler's source as
+// an octet-stream and the assertion would read "".
 //
-// EACH ENTRY BELOW IS ONE HANDLER, REPRODUCED. The function is what the `.py`
-// does for any request, read off the file in the corpus - the query parse it
-// uses, the escaping, the content type, the 500 a missing field raises - and
-// not an answer for one test's input. A path that is not in the table is left
-// to the asset registry, which is what it always was.
+// Each entry below reproduces one handler: what the `.py` does for any request
+// (its query parsing, escaping, content type, and the 500 a missing field
+// raises), not an answer for one test's input. A GET for a `*.sub.*` file goes
+// through wptserve's `sub` pipe (substituted); any other path not in the table
+// falls through to the asset registry.
 //
-// Installed only under a document root (CTBROWSER_DOC_ROOT), which is
-// run-wpt.py and nothing else: an ordinary page driven by ctdrive talks to its
-// files and nothing more.
+// Installed only under a document root (CTBROWSER_DOC_ROOT), which only
+// run-wpt.py sets: an ordinary page driven by ctdrive talks to its files and
+// nothing more.
+//
+//===----------------------------------------------------------------------===//
 
 #include "wpt_handlers.hpp"
 
@@ -42,9 +45,10 @@ using ctbrowser::shell::resource_request;
 
 using params = std::vector<std::pair<std::string, std::string>>;
 
-// Python's parse_qsl over BYTES: `&`-separated, `+` a space, percent-decoded
-// - what wptserve's request.GET and an urlencoded request.POST are (both keep
-// blank values, and read the bytes as ISO-8859-1, so a value is its bytes).
+/// Python's parse_qsl over bytes: `&`-separated, `+` a space, percent-decoded.
+/// This is what wptserve's request.GET and an urlencoded request.POST are (both
+/// keep blank values, and read the bytes as ISO-8859-1, so a value is its
+/// bytes).
 [[nodiscard]] params parse_urlencoded(std::string_view text) {
     params out;
     std::size_t start = 0;
@@ -66,10 +70,10 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return out;
 }
 
-// Python's bytes.decode('utf-8', 'replace'), re-encoded: well-formed UTF-8,
-// each ill-formed subsequence one U+FFFD. The Encoding Standard's decoder
-// replaces the same maximal subparts; it drops a leading BOM, which Python
-// keeps.
+/// Python's bytes.decode('utf-8', 'replace'), re-encoded: well-formed UTF-8,
+/// each ill-formed subsequence one U+FFFD. The Encoding Standard's decoder
+/// replaces the same maximal subparts; it drops a leading BOM, which Python
+/// keeps.
 [[nodiscard]] std::string utf8_round_trip(std::string_view bytes) {
     std::string out;
     if (bytes.starts_with("\xEF\xBB\xBF")) {
@@ -79,7 +83,7 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return out + ctbrowser::decode_document_bytes(bytes, "UTF-8");
 }
 
-// A `name="..."` parameter out of a Content-Disposition line.
+/// A `name="..."` parameter out of a Content-Disposition line.
 [[nodiscard]] std::string disposition_name(std::string_view headers) {
     const std::size_t at = headers.find("name=\"");
     if (at == std::string_view::npos) { return {}; }
@@ -88,8 +92,8 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return std::string{headers.substr(from, to == std::string_view::npos ? to : to - from)};
 }
 
-// wptserve's request.POST for a multipart/form-data body: each part's field
-// name and its content, in order. The boundary is the Content-Type's.
+/// wptserve's request.POST for a multipart/form-data body: each part's field
+/// name and its content, in order. The boundary is the Content-Type's.
 [[nodiscard]] params parse_multipart(std::string_view body, std::string_view content_type) {
     params out;
     const std::size_t at = content_type.find("boundary=");
@@ -103,7 +107,7 @@ using params = std::vector<std::pair<std::string, std::string>>;
     std::size_t pos = body.find(delimiter);
     while (pos != std::string_view::npos) {
         pos += delimiter.size();
-        if (body.substr(pos).starts_with("--")) { break; } // the close delimiter
+        if (body.substr(pos).starts_with("--")) { break; } // The close delimiter.
         if (body.substr(pos).starts_with("\r\n")) { pos += 2; }
         const std::size_t blank = body.find("\r\n\r\n", pos);
         if (blank == std::string_view::npos) { break; }
@@ -118,7 +122,7 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return out;
 }
 
-// MultiDict.first: the FIRST value under the name.
+/// MultiDict.first: the first value under the name, or null.
 [[nodiscard]] const std::string * first(const params & list, std::string_view name) {
     for (const auto & [key, value] : list) {
         if (key == name) { return &value; }
@@ -126,7 +130,7 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return nullptr;
 }
 
-// request.POST: the body parsed by its own Content-Type.
+/// request.POST: the body parsed by its own Content-Type.
 [[nodiscard]] params post_fields(const resource_request & request) {
     const std::string_view type = request.content_type;
     if (type.starts_with("multipart/form-data")) { return parse_multipart(request.body, type); }
@@ -144,12 +148,12 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return out;
 }
 
-// What a handler that raised gets from wptserve: a 500.
+/// What a handler that raised gets from wptserve: a 500.
 [[nodiscard]] resource_reply raised(std::string_view what) {
     return reply("text/plain", std::string{what}, 500);
 }
 
-// Python's html.escape(s, quote=True).
+/// Python's html.escape(s, quote=True).
 [[nodiscard]] std::string html_escape(std::string_view text) {
     std::string out;
     for (const char c : text) {
@@ -165,11 +169,13 @@ using params = std::vector<std::pair<std::string, std::string>>;
     return out;
 }
 
-// --- the handlers ------------------------------------------------------------------
+//===----------------------------------------------------------------------===//
+// Handlers
+//===----------------------------------------------------------------------===//
 
-// /FileAPI/file/resources/echo-content-escaped.py: the body with every
-// control and non-ASCII byte as `\xNN` (lowercase hex) and a backslash
-// doubled - and then each escaped CR LF put back as a real one.
+/// /FileAPI/file/resources/echo-content-escaped.py: the body with every
+/// control and non-ASCII byte as `\xNN` (lowercase hex) and a backslash
+/// doubled, and then each escaped CR LF put back as a real one.
 resource_reply echo_content_escaped(const resource_request & request, const params &) {
     std::string escaped;
     for (const char c : request.body) {
@@ -196,15 +202,16 @@ resource_reply echo_content_escaped(const resource_request & request, const para
     return reply("text/plain; charset=UTF-8", std::move(content));
 }
 
-// /fetch/api/resources/echo-content.py: the body, as text/plain.
+/// /fetch/api/resources/echo-content.py: the body, as text/plain.
 resource_reply echo_content(const resource_request & request, const params &) {
     return reply("text/plain", request.body);
 }
 
-// html/semantics/forms/form-submission-0/resources/form-submission.py: "OK"
-// when the body is the one the query says to expect. ITS OWN QUERY PARSE:
-// `dict(parse_qsl(query))` - blank values dropped, a later duplicate winning,
-// each value UTF-8 decoded with replacement - and then `.encode('UTF-8')`.
+/// html/semantics/forms/form-submission-0/resources/form-submission.py: "OK"
+/// when the body is the one the query says to expect. It parses the query its
+/// own way, `dict(parse_qsl(query))` (blank values dropped, a later duplicate
+/// winning, each value UTF-8 decoded with replacement), then
+/// `.encode('UTF-8')`.
 resource_reply form_submission(const resource_request & request, const params &) {
     std::string_view query = request.url;
     query = query.substr(0, query.find('#'));
@@ -234,8 +241,8 @@ resource_reply form_submission(const resource_request & request, const params &)
     return reply("text/plain", result ? "OK" : "FAIL");
 }
 
-// html/semantics/forms/form-submission-0/form-echo.py: the body's bytes as
-// two-digit lowercase hex, space separated.
+/// html/semantics/forms/form-submission-0/form-echo.py: the body's bytes as
+/// two-digit lowercase hex, space separated.
 resource_reply form_echo(const resource_request & request, const params &) {
     std::string out;
     for (const char c : request.body) {
@@ -248,7 +255,8 @@ resource_reply form_echo(const resource_request & request, const params &) {
     return reply("text/plain", std::move(out));
 }
 
-// html/semantics/forms/form-submission-0/resources/file-submission.py.
+/// html/semantics/forms/form-submission-0/resources/file-submission.py: posts
+/// the `testinput` field to the parent as a JSON string.
 resource_reply file_submission(const resource_request & request, const params &) {
     const std::string * input = first(post_fields(request), "testinput");
     if (input == nullptr) { return raised("KeyError: testinput"); }
@@ -272,9 +280,9 @@ resource_reply file_submission(const resource_request & request, const params &)
     return reply("text/html", "<script>parent.postMessage(" + json + ", '*');</script>");
 }
 
-// dom/nodes/encoding.py: a document whose <meta charset> is the label,
-// isomorphic-decoded and escaped. No Content-Type is sent; `<!doctype html`
-// sniffs as HTML.
+/// dom/nodes/encoding.py: a document whose <meta charset> is the label,
+/// isomorphic-decoded and escaped. No Content-Type is sent; `<!doctype html`
+/// sniffs as HTML.
 resource_reply encoding_label(const resource_request &, const params & query) {
     const std::string * label = first(query, "label");
     if (label == nullptr) { return raised("KeyError: label"); }
@@ -282,7 +290,9 @@ resource_reply encoding_label(const resource_request &, const params & query) {
                                   html_escape(ctbrowser::isomorphic_decode(*label)) + "\">");
 }
 
-// dom/nodes/Document-contentType/support/contenttype_setter.py.
+/// dom/nodes/Document-contentType/support/contenttype_setter.py: a document
+/// served with the Content-Type the query builds (`type`/`subtype`, or none
+/// under `removeContentType`), optionally with a `mime` http-equiv meta.
 resource_reply contenttype_setter(const resource_request &, const params & query) {
     const std::string * type = first(query, "type");
     const std::string * subtype = first(query, "subtype");
@@ -305,13 +315,14 @@ resource_reply contenttype_setter(const resource_request &, const params & query
                  std::move(content));
 }
 
-// html/semantics/forms/form-submission-target/form-target-iframe-helper.py.
+/// html/semantics/forms/form-submission-target/form-target-iframe-helper.py:
+/// "OK".
 resource_reply form_target_helper(const resource_request &, const params &) {
     return reply("text/plain", "OK");
 }
 
-// html/syntax/charset/resources/bogus-charset-http{,-valid-meta}.py: a
-// Content-Type whose charset names no encoding, over windows-125x bytes.
+/// html/syntax/charset/resources/bogus-charset-http{,-valid-meta}.py: a
+/// Content-Type whose charset names no encoding, over windows-125x bytes.
 resource_reply bogus_charset(const resource_request &, const params &) {
     return reply("text/html;charset=this-is-not-a-charset", "\xA2\n");
 }
@@ -319,9 +330,9 @@ resource_reply bogus_charset_valid_meta(const resource_request &, const params &
     return reply("text/html;charset=this-is-not-a-charset", "<meta charset=windows-1251>\xA2\n");
 }
 
-// url/resources/percent-encoding.py: an <a> whose query and fragment are the
-// `value` - base64 of UTF-8 - as hexadecimal character references, in a
-// document the Content-Type says is in `encoding`.
+/// url/resources/percent-encoding.py: an <a> whose query and fragment are the
+/// `value` (base64 of UTF-8) as hexadecimal character references, in a
+/// document the Content-Type says is in `encoding`.
 resource_reply percent_encoding(const resource_request &, const params & query) {
     const std::string * value = first(query, "value");
     const std::string * encoding = first(query, "encoding");
@@ -367,8 +378,8 @@ constexpr route routes[] = {
 } // namespace
 
 // The URL's path as the server would have seen it: a `file:` URL under the
-// document root is that much of its path shorter, and one that is not -
-// `/FileAPI/...` resolved against a file: page is file:///FileAPI/... - is
+// document root is that much of its path shorter, and one that is not
+// (`/FileAPI/...` resolved against a file: page is file:///FileAPI/...) is
 // already server-absolute, which is how the registry reads it too.
 std::string server_path(std::string_view url, std::string_view document_root) {
     std::string_view path = url;
@@ -392,11 +403,11 @@ std::string server_path(std::string_view url, std::string_view document_root) {
 
 namespace {
 
-// wptserve's `sub` pipe, which it runs over every file named `*.sub.*`: the
-// file, its `{{GET[name]}}` tokens replaced by the query's FIRST value under
-// that name - "" when there is none - HTML-escaped as the pipe's default
-// escaping does. The other tokens (`{{host}}`, `{{ports[...]}}`, ...) name a
-// server that is not here and are left as written.
+/// wptserve's `sub` pipe, which it runs over every file named `*.sub.*`: the
+/// file, its `{{GET[name]}}` tokens replaced by the query's first value under
+/// that name ("" when there is none), HTML-escaped as the pipe's default
+/// escaping does. The other tokens (`{{host}}`, `{{ports[...]}}`, ...) name a
+/// server that is not here and are left as written.
 // ponytail: GET alone; `{{location[...]}}` and `{{uuid()}}` are the next ones
 // if a measured page needs them.
 [[nodiscard]] std::optional<resource_reply> substituted(const std::string & root,

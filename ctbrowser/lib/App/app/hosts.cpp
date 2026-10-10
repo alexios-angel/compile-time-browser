@@ -1,17 +1,18 @@
-// run_app's hosts: the headless one, the SDL window with its event translation,
-// and make_host, which chooses between them at run time.
+//===- ctbrowser/lib/App/app/hosts.cpp - Window and headless hosts --------===//
 //
-// One of two files carved out of a 1,034-line App/app.cpp on 2026-09-08. The
-// `host` interface they share is in internal.hpp beside this, with the
-// includes app.cpp had; nothing about include/ctbrowser/app/app.hpp changed.
+// run_app's hosts: the headless one, the SDL window with its event translation,
+// and make_host, which chooses between them at run time. The `host` interface
+// these implement is declared in internal.hpp.
+//
+//===----------------------------------------------------------------------===//
 
 #include "internal.hpp"
 
 namespace ctbrowser::detail {
 
-// No display at all. Always available, and the ONLY backend in a build without
-// SDL3 - so a headless render, a CI run and an SDL-less machine are one code
-// path rather than three special cases.
+/// No display at all. Always available, and the only backend in a build without
+/// SDL3, so a headless render, a CI run and an SDL-less machine are one code
+/// path rather than three special cases.
 class headless_host final : public host {
 public:
     [[nodiscard]] bool start(const app_options &) override { return true; }
@@ -21,19 +22,20 @@ public:
 
 #if CTBROWSER_WITH_SDL3
 
+/// unique_ptr deleter that destroys an SDL window.
 struct window_deleter {
     void operator()(SDL_Window * w) const noexcept { SDL_DestroyWindow(w); }
 };
 
-// An SDL scancode as the DOM `code` of the physical key.
-//
-// SCANCODE, not keycode: `code` is defined as the key's position, so the key
-// left of Z is "KeyZ" on QWERTY and on AZERTY alike. The keycode would give
-// "KeyW" on AZERTY, which is what `key` is for and this is not.
-//
-// The table this replaces had FIFTEEN entries and no letters or digits at all,
-// so a page bound to WASD received nothing - translate() returned false and the
-// event was dropped before the browser ever saw it.
+/// Maps an SDL scancode to the DOM `code` of the physical key, or "" for a key
+/// with no mapping.
+///
+/// Scancode, not keycode: `code` is defined as the key's position, so the key
+/// left of Z is "KeyZ" on QWERTY and on AZERTY alike. The keycode would give
+/// "KeyW" on AZERTY, which is what `key` is for and this is not.
+///
+/// A key with no mapping returns "" and translate() drops its event, so every
+/// key a page may bind (letters and digits for WASD controls) must be listed.
 [[nodiscard]] inline std::string dom_key_code(SDL_Scancode code) {
     if (code >= SDL_SCANCODE_A && code <= SDL_SCANCODE_Z) {
         return std::string{"Key"} + static_cast<char>('A' + (code - SDL_SCANCODE_A));
@@ -84,6 +86,9 @@ struct window_deleter {
     }
 }
 
+/// The SDL3 window host: a renderer presenting the browser's pixels as a
+/// streaming texture, SDL events translated into input_events, and system
+/// cursors following the page.
 class sdl_host final : public host {
 public:
     ~sdl_host() override {
@@ -106,7 +111,7 @@ public:
             SDL_SetRenderLogicalPresentation(renderer_, options.logical_width,
                                              options.logical_height,
                                              SDL_LOGICAL_PRESENTATION_LETTERBOX);
-            // The PAGE is authored at the logical size and stays there; the
+            // The page is authored at the logical size and stays there; the
             // window only decides how big that gets drawn.
             letterboxed_ = true;
         }
@@ -149,16 +154,16 @@ public:
             texture_ =
                 SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                   image.width(), image.height());
-            // NEAREST, because SDL3 defaults a texture to LINEAR and the only
-            // time this one is SCALED is under logical presentation - where a
-            // 320x240 playfield is stretched over a 960x720 window and bilinear
+            // Nearest-neighbour, because SDL3 defaults a texture to linear and
+            // the only time this one is scaled is under logical presentation,
+            // where a 320x240 playfield is stretched over a 960x720 window and bilinear
             // filtering smears every sprite edge into a soft ramp.
             //
             // Unconditional rather than gated on letterboxing: without it a
             // resize reflows the page and this texture is recreated at the new
-            // size, so the blit is 1:1 and the filter cannot be observed - bar
-            // the single frame between the resize event and the reflow, where
-            // the old texture is stretched and NEAREST is the right answer too.
+            // size, so the blit is 1:1 and the filter cannot be observed, except
+            // for the single frame between the resize event and the reflow,
+            // where the old texture is stretched and nearest is right too.
             if (texture_ != nullptr) { SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_NEAREST); }
             width_ = image.width();
             height_ = image.height();
@@ -172,9 +177,9 @@ public:
     }
 
     void wait_for_event(std::int32_t timeout_ms) override {
-        // NULL: wait for an event to be THERE without taking it, so the next
+        // Null: wait for an event to be there without taking it, so the next
         // pump() sees it. Taking it and pushing it back looks equivalent and is
-        // not - SDL posts an internal poll sentinel to bound PollEvent loops,
+        // not: SDL posts an internal poll sentinel to bound PollEvent loops,
         // and pushing that back re-arms it, so the wait returns instantly,
         // forever. Measured at eight million iterations in ten seconds.
         (void)SDL_WaitEventTimeout(nullptr, timeout_ms);
@@ -183,21 +188,23 @@ public:
     [[nodiscard]] void * native_window() override { return window_.get(); }
 
 private:
+    /// Maps an SDL mouse button number to the DOM's `MouseEvent.button`.
     [[nodiscard]] static std::uint8_t dom_button(std::uint8_t sdl_button) noexcept {
         if (sdl_button == SDL_BUTTON_RIGHT) { return input_event::right_button; }
+        // The DOM numbers the middle button 1.
         if (sdl_button == SDL_BUTTON_MIDDLE) { return 1; }
         return input_event::left_button;
     }
 
+    /// Translates one SDL event into `out`. False means the browser has no use
+    /// for the event and it is dropped.
     [[nodiscard]] bool translate(const SDL_Event & event, input_event & out) const {
         switch (event.type) {
         case SDL_EVENT_MOUSE_MOTION:
             out = input_event::mouse_move_to(event.motion.x, event.motion.y);
             return true;
         // SDL numbers buttons from 1 and calls the right one 3; the DOM numbers
-        // from 0 and calls it 2, and so does input_event. Passing SDL's number
-        // straight through made a right-click look like button 3, which nothing
-        // was looking for.
+        // from 0 and calls it 2, and so does input_event; dom_button converts.
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             out = input_event::mouse_down_at(event.button.x, event.button.y,
                                              dom_button(event.button.button));
@@ -206,14 +213,13 @@ private:
             out = input_event::mouse_up_at(event.button.x, event.button.y,
                                            dom_button(event.button.button));
             return true;
-        // The TRACKED pointer, not event.wheel.mouse_x. SDL3's wheel event does
-        // carry a position, but SDL_ConvertEventToRenderCoordinates documents
-        // itself as converting mouse, touch and pen events and does not name
-        // the wheel's - and under logical presentation an unconverted position
-        // is wrong by the letterbox factor, which is exactly the bug the
-        // pointer events already had once. mouse_x_/mouse_y_ are taken from
-        // motion events AFTER the blanket convert, so they are definitely in
-        // render coordinates.
+        // Use the tracked pointer, not event.wheel.mouse_x. SDL3's wheel event
+        // does carry a position, but SDL_ConvertEventToRenderCoordinates
+        // documents itself as converting mouse, touch and pen events and does
+        // not name the wheel's, and under logical presentation an unconverted
+        // position is wrong by the letterbox factor. mouse_x_/mouse_y_ are
+        // taken from motion events after the blanket convert in pump(), so
+        // they are in render coordinates.
         case SDL_EVENT_MOUSE_WHEEL:
             out = input_event::wheel_at(mouse_x_, mouse_y_, event.wheel.y);
             return true;
@@ -227,7 +233,7 @@ private:
             if (code.empty()) { return false; }
             const bool shift = (event.key.mod & SDL_KMOD_SHIFT) != 0;
             const bool ctrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
-            // A key RELEASE is half the information a game needs. Without it
+            // A key release is half the information a game needs. Without it
             // every held key stays down forever, so a paddle that starts moving
             // never stops.
             out = event.type == SDL_EVENT_KEY_DOWN
@@ -236,11 +242,11 @@ private:
             return true;
         }
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-            // A LETTERBOXED page must not be resized by its window. SDL sends
+            // A letterboxed page must not be resized by its window. SDL sends
             // this on the very first frame with the window's size, so a
-            // 320x240 game in a 960x720 window had its viewport widened to the
-            // window immediately - leaving the canvas, which is 320x240 by its
-            // own attributes, occupying a ninth of the page.
+            // 320x240 game in a 960x720 window would have its viewport widened
+            // to the window immediately, leaving the canvas (320x240 by its
+            // own attributes) occupying a ninth of the page.
             if (letterboxed_) { return false; }
             out = input_event::resized(event.window.data1, event.window.data2);
             return true;
@@ -248,9 +254,9 @@ private:
         }
     }
 
-    // What the pointer should look like where it is now. Asked of the browser
-    // each frame rather than pushed, so the engine needs no cursor vocabulary
-    // beyond a name.
+    /// Sets the system cursor the page wants under the pointer. Asked of the
+    /// browser each frame rather than pushed, so the engine needs no cursor
+    /// vocabulary beyond a name.
     void apply_cursor(browser & page) {
         SDL_Cursor * want = arrow_;
         const std::string_view name = page.cursor_at(mouse_x_, mouse_y_);

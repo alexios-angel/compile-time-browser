@@ -1,3 +1,11 @@
+//===- ctbrowser/lib/Core/scheduler.cpp - Thread pool ---------------------===//
+//
+// scheduler: a fixed pool of worker threads draining one FIFO task queue.
+// With no worker count given it uses one fewer than the hardware threads, so
+// the submitting (main) thread keeps a core.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/scheduler.hpp>
 
 namespace ctbrowser {
@@ -20,7 +28,7 @@ scheduler::~scheduler() {
 void scheduler::submit(task t) {
     // Pushed under the lock the waiters evaluate their predicate under, so a
     // notify cannot slip between a worker's "empty" check and its wait() and
-    // be lost - a lost wakeup here is a pool that sleeps through the work it
+    // be lost; a lost wakeup here is a pool that sleeps through the work it
     // was just given.
     {
         const std::lock_guard lock{mutex_};

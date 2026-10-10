@@ -1,49 +1,49 @@
-// ct262 - the host shell test262 is run through.
+//===- ctbrowser/tools/ct262/ct262.cpp - The test262 host shell -----------===//
 //
-// test262 does not test an engine; it tests a HOST that has one. The suite's
-// contract (its INTERPRETING.md) is a list of things the runner must provide -
-// `print`, a `$262` object, a fresh realm per test, the two harness files
-// evaluated as global code before the test, a strict-mode transformation, an
-// ES-module mode - and every one of those is a decision about ctbrowser rather
+// test262 does not test an engine; it tests a host that has one. The suite's
+// contract (its INTERPRETING.md) is a list of things the runner must provide:
+// `print`, a `$262` object, a fresh realm per test, the harness files
+// evaluated as global code before the test, a strict-mode transformation and
+// an ES-module mode. Every one of those is a decision about ctbrowser rather
 // than about JavaScript. This binary is where those decisions live, so
 // `tools/check/test262.py` can stay a process runner and a table.
 //
 //   ct262 [--prelude harness/assert.js]... [--strict] [--module] test.js
 //
-// ONE PROCESS, ONE TEST, ONE REALM. `script::context` is one agent and one
-// heap, and the suite requires a test to see a realm nothing else has touched -
-// so isolation here is the process, which also makes a hang or a crash cost one
-// test instead of the run. The runner caps the time and the address space.
+// One process runs one test in one realm. The suite requires a test to see a
+// realm nothing else has touched, so isolation here is the process, which also
+// makes a hang or a crash cost one test instead of the run. The runner caps the
+// time and the address space.
 //
-// WHAT IT PRINTS is the whole interface, and it is deliberately not prose. A
-// failing run writes ONE tab-separated line to stderr:
+// The output is the whole interface, and it is deliberately not prose. A
+// failing run writes one tab-separated line to stderr:
 //
 //   ct262<TAB>error<TAB><phase><TAB><constructor><TAB><name><TAB><message>
 //
 // `phase` is the suite's own vocabulary (parse / resolution / runtime) with two
 // of this engine's own added, because they are not the same thing and folding
-// them together is how a conformance number flatters itself:
+// them together would inflate the conformance number:
 //
-//   refusal   the COMPILER refused a construct it has not implemented -
+//   refusal   the compiler refused a construct it has not implemented, such as
 //             "tagged template literals are not in this VM subset". The source
 //             is valid JavaScript. A `negative: {phase: parse}` test would
-//             otherwise be scored a PASS for the engine's own gap, which is
-//             precisely backwards, so it gets its own phase and never matches
-//             SyntaxError.
-//   vm        the run ended with no thrown value at all - the allocation
-//             ceiling, the call-stack ceiling. Nothing was thrown, so no
+//             otherwise be scored a pass for the engine's own gap, so it gets
+//             its own phase and never matches SyntaxError.
+//   vm        the run ended with no thrown value at all (the allocation
+//             ceiling, the call-stack ceiling). Nothing was thrown, so no
 //             `negative` test can match it.
 //
-// `constructor` is `thrown.constructor.name` and `name` is `thrown.name`, both
-// reported because they DISAGREE here: `context::throw_error` builds every
-// error on the one Error prototype, so an engine-raised TypeError has
-// `name === "TypeError"` and `constructor === Error`. The runner is told both
-// and documents which it accepted; inventing one number out of two would hide a
-// real gap in the engine.
+// `constructor` is `thrown.constructor.name` and `name` is `thrown.name`. Both
+// are reported because a thrown value can carry one without the other (a
+// primitive, or an error kind with no constructor such as "DataCloneError",
+// which context::make_error builds on Error.prototype with an own `name`).
+// The runner documents which of the two it accepted.
 //
 // Exit status: 0 the test ran to completion, 1 it did not (the line above says
-// how), 3 the HOST failed - a file that will not open, a harness file that will
-// not parse. 3 is never a test result.
+// how), 3 the host failed (a file that will not open, a harness file that will
+// not parse). 3 is never a test result.
+//
+//===----------------------------------------------------------------------===//
 #include <ctbrowser.hpp>
 
 #include "options.hpp"
@@ -68,9 +68,10 @@ using ctbrowser::script::run_result;
 using ctbrowser::script::value;
 
 [[nodiscard]] std::string read_file(const std::filesystem::path & path, bool & ok) {
-    // A DIRECTORY OPENS. `import('')` resolves to the test's own directory,
-    // and libstdc++ opens it fine and then throws ios_failure from the read -
-    // which nothing here catches, so the process aborted. Not a file, not ok.
+    // A directory opens successfully: `import('')` resolves to the test's own
+    // directory, and libstdc++ opens it and then throws ios_failure from the
+    // read, which nothing here catches. Anything that is not a regular file is
+    // therefore refused up front.
     if (!std::filesystem::is_regular_file(path)) {
         ok = false;
         return {};
@@ -84,9 +85,9 @@ using ctbrowser::script::value;
     return std::string{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
 }
 
-// ONE LINE, WHATEVER THE MESSAGE CONTAINS. A parse error carries the offending
-// source in it and a stack trace carries newlines; a report that can be two
-// lines is a report the runner has to guess the end of.
+/// Flattens `text` to one line. A parse error carries the offending source and
+/// a stack trace carries newlines; a report that can span two lines is one the
+/// runner has to guess the end of.
 [[nodiscard]] std::string one_line(std::string text) {
     for (char & c : text) {
         if (c == '\n' || c == '\r' || c == '\t') { c = ' '; }
@@ -94,6 +95,7 @@ using ctbrowser::script::value;
     return text;
 }
 
+/// Writes the one `ct262<TAB>error<TAB>...` line described in the file header.
 void report(std::string_view phase, std::string_view ctor, std::string_view name,
             const std::string & message) {
     std::fprintf(stderr, "ct262\terror\t%.*s\t%.*s\t%.*s\t%s\n", static_cast<int>(phase.size()),
@@ -101,19 +103,22 @@ void report(std::string_view phase, std::string_view ctor, std::string_view name
                  static_cast<int>(name.size()), name.data(), one_line(message).c_str());
 }
 
+/// Reports a failure of the host itself (exit status 3), never a test result.
 void host_error(const std::string & message) {
     std::fprintf(stderr, "ct262\thost\t%s\n", one_line(message).c_str());
 }
 
-// A COMPILE FAILURE IS TWO DIFFERENT ANSWERS. `compiler::compile` sets the same
-// `ok = false` for source the parser REJECTED and for source the compiler has
-// not implemented, and only the first is a SyntaxError. The parser's own errors
-// are the ones it prefixes "parse error:" (compile.cpp writes exactly that);
-// everything else came from `compiler_impl::fail` and is this engine's gap.
+/// Whether a compile failure is a real SyntaxError. `compiler::compile` sets the
+/// same `ok = false` for source the parser rejected and for source the compiler
+/// has not implemented, and only the first is a SyntaxError. The parser's own
+/// errors are the ones prefixed "parse error:" (compile.cpp writes exactly
+/// that); everything else came from `compiler_impl::fail` and is this engine's
+/// gap.
 [[nodiscard]] bool is_parse_error(const std::string & message) {
     return message.starts_with("parse error:");
 }
 
+/// Reports a failed compile as phase "parse" or "refusal" (see is_parse_error).
 void report_compile_failure(const program & prog) {
     if (is_parse_error(prog.error)) {
         // The suite's rule, not a guess: source text that does not parse must
@@ -124,8 +129,9 @@ void report_compile_failure(const program & prog) {
     }
 }
 
-// WHAT WAS THROWN, BY NAME. `constructor.name` first, because that is what
-// test262's own `assert.throws` compares and what `negative: {type}` means.
+/// Reports what was thrown, by name. `constructor.name` comes first because
+/// that is what test262's own `assert.throws` compares and what
+/// `negative: {type}` means.
 void report_run_failure(context & cx, std::string_view phase, const run_result & result) {
     const value thrown = cx.last_thrown();
     if (thrown.is_undefined()) {
@@ -145,18 +151,20 @@ void report_run_failure(context & cx, std::string_view phase, const run_result &
         const value own_name = cx.lookup_property(thrown, "name");
         if (!own_name.is_undefined()) { name = cx.to_string(own_name); }
     } else {
-        // `$DONOTEVALUATE()` throws a STRING, and a test that reaches it has
-        // failed whatever else is true - so the type has to survive the report.
+        // `$DONOTEVALUATE()` throws a string, and a test that reaches it has
+        // failed whatever else is true, so the type has to survive the report.
         name = std::string{"<"} + std::string{context::type_of(thrown)} + ">";
     }
     report(phase, ctor, name, result.error);
 }
 
-// --- the host objects ----------------------------------------------------
+//===----------------------------------------------------------------------===//
+// Host objects
+//===----------------------------------------------------------------------===//
 
-// `print`, which is how an async test says it finished: the suite's
-// doneprintHandle.js calls it with "Test262:AsyncTestComplete". stdout, and
-// flushed, because the runner reads it after the process is gone.
+/// Installs `print`, which is how an async test says it finished: the suite's
+/// doneprintHandle.js calls it with "Test262:AsyncTestComplete". It writes to
+/// stdout and flushes, because the runner reads it after the process is gone.
 void install_print(context & cx) {
     cx.define_native("print", [](context & c, std::span<value> args) {
         std::string line;
@@ -171,15 +179,15 @@ void install_print(context & cx) {
     });
 }
 
-// `$262`, with the four properties this host can honestly provide and stubs
-// that THROW for the rest.
-//
-// A stub that returns undefined instead of throwing is the one thing that must
-// not happen here: a `$262.createRealm()` returning undefined would let a test
-// measure one realm as two and pass some of its assertions. A throw makes the
-// test fail, which is the truth - and the runner SKIPS those tests by feature
-// rather than counting the failures, so the throw is a backstop rather than
-// the plan.
+/// Installs `$262`: the properties this host can provide (global, evalScript,
+/// gc, detachArrayBuffer, AbstractModuleSource), and stubs that throw for the
+/// rest (createRealm, agent.*).
+///
+/// A stub must throw rather than return undefined: a `$262.createRealm()`
+/// returning undefined would let a test measure one realm as two and pass some
+/// of its assertions. A throw makes the test fail, which is the truth. The
+/// runner skips those tests by feature rather than counting the failures, so
+/// the throw is only a backstop.
 void install_262(context & cx) {
     auto * host = static_cast<ctbrowser::script::object_object *>(cx.make_object().as_heap());
     const auto method = [&cx, host](const char * name, ctbrowser::script::native_fn fn) {
@@ -187,19 +195,16 @@ void install_262(context & cx) {
                             cx.allocate<ctbrowser::script::native_object>(name, std::move(fn))));
     };
 
-    // `global`: AN ORDINARY OBJECT, AND IT IS NOT THE GLOBAL OBJECT. This
-    // engine's globals are a map on the context, not properties of an object -
-    // `globalThis` exists only as a DOM binding the Shell installs (see
-    // lib/Shell/bindings/window/window.cpp), and the script engine alone has no global
-    // object at all. So this is the property the suite requires, holding the
-    // only thing there is to put in it. Tests that reach the global through it
-    // FAIL rather than silently measuring a different object, and the gap is
-    // written down in docs/test262.md rather than papered over here.
+    // `global`: currently a fresh ordinary object, not the realm's global
+    // object. A bare script::context does have one (context::make_global_object,
+    // which `globalThis` returns), so tests that reach the global through
+    // $262.global fail here only because this host has not been switched over
+    // to it. The gap is recorded in docs/test262.md.
     host->set("global", cx.make_object());
 
-    // `evalScript`: parse and run the string as a CLASSIC SCRIPT in this realm,
-    // exactly as `new Function` already does - the context owns the program, so
-    // it outlives the closures the script leaves behind.
+    // `evalScript`: parse and run the string as a classic script in this realm.
+    // As with `new Function`, the context owns the program, so it outlives the
+    // closures the script leaves behind.
     method("evalScript", [](context & c, std::span<value> args) {
         const std::string source = args.empty() ? std::string{} : c.to_string(args[0]);
         program compiled = ctbrowser::script::compiler::compile_script(source);
@@ -217,11 +222,9 @@ void install_262(context & cx) {
         return value::number(static_cast<double>(c.collect()));
     });
 
-    // `createRealm`: REFUSED, and it cannot be otherwise today. A realm here is
-    // a `script::context`, which owns its heap and sweeps it in its destructor;
-    // a value from one context is a raw pointer into another context's heap, so
-    // handing one across is a use-after-free waiting for the first GC. The
-    // `cross-realm` feature is on the runner's skip list for this reason.
+    // `createRealm`: refused. One script::context can hold several realms
+    // (create_intrinsic_realm), but this host does not hand one out yet, so the
+    // runner skips the `cross-realm` feature and this throw is the backstop.
     method("createRealm", [](context & c, std::span<value>) {
         c.throw_error("TypeError",
                       "$262.createRealm: this host has one realm - a script::context owns its "
@@ -230,7 +233,7 @@ void install_262(context & cx) {
     });
     // `detachArrayBuffer`: DetachArrayBuffer(buffer) with an undefined key,
     // which is exactly what ArrayBuffer.prototype.transfer does to its
-    // receiver (25.1.6.13 step 20) - the copy it makes is dropped. A
+    // receiver (25.1.6.13 step 20); the copy it makes is dropped. A
     // non-buffer or an immutable one throws there, as the host hook would.
     method("detachArrayBuffer", [](context & c, std::span<value> a) {
         const value transfer =
@@ -239,7 +242,7 @@ void install_262(context & cx) {
         return value::undefined();
     });
 
-    // `agent`: an OBJECT whose every method throws, rather than an absent
+    // `agent`: an object whose every method throws, rather than an absent
     // property. `typeof $262.agent` is what a test looks at before it decides
     // it can run, and an absent agent and a present-but-useless one are
     // different answers to that.
@@ -256,8 +259,8 @@ void install_262(context & cx) {
     host->set("agent", value::object(agent));
 
     // `AbstractModuleSource`: the %AbstractModuleSource% intrinsic, which is
-    // not a global - the engine keeps it on Function.prototype under a private
-    // key (builtins/objects/function.cpp) for exactly this.
+    // not a global. The engine keeps it on Function.prototype under a private
+    // key (lib/Script/builtins/objects/function.cpp) for exactly this.
     if (auto * fn_proto = cx.prototype(context::proto_kind::function)) {
         if (const value * intrinsic =
                 fn_proto->find(CTBROWSER_PRIVATE_KEY("AbstractModuleSource"))) {
@@ -268,20 +271,24 @@ void install_262(context & cx) {
     cx.define_global("$262", value::object(host));
 }
 
-// --- modules -------------------------------------------------------------
+//===----------------------------------------------------------------------===//
+// Modules
+//===----------------------------------------------------------------------===//
 
-// The two-pass module loader, over the FILESYSTEM rather than an asset
-// registry. It is the shape `lib/Shell/browser/scripts.cpp` uses and for the same
-// reason: every binding in the graph has to exist before any of the graph runs,
-// or a cycle hands the importer a name whose exporter has not started.
-//
-// test262's specifiers all begin "./" and name a file beside the importer
-// (INTERPRETING.md says so), so resolution is `std::filesystem` and nothing
-// more - no URL, no import map.
+/// The two-pass module loader, over the filesystem rather than an asset
+/// registry. It has the shape `lib/Shell/browser/scripts.cpp` uses, for the
+/// same reason: every binding in the graph has to exist before any of the graph
+/// runs, or a cycle hands the importer a name whose exporter has not started.
+///
+/// test262's specifiers all begin "./" and name a file beside the importer
+/// (INTERPRETING.md says so), so resolution is `std::filesystem` and nothing
+/// more: no URL, no import map.
 class module_loader {
 public:
     explicit module_loader(context & cx) : cx_{cx} {}
 
+    /// Loads `file` and, recursively, everything it imports, then wires the
+    /// graph's re-exports once the outermost call returns.
     void instantiate(const std::filesystem::path & file) {
         const std::string key = std::filesystem::weakly_canonical(file).generic_string();
         auto & registry = cx_.modules();
@@ -293,17 +300,17 @@ public:
             note("module `" + key + "` could not be read");
             return;
         }
-        // Registered BEFORE its dependencies, so a cycle stops here rather than
+        // Registered before its dependencies, so a cycle stops here rather than
         // descending for ever.
         ctbrowser::script::module_record & record = registry[key];
         record.specifier = key;
 
-        // A JSON MODULE - `import v from './x.json' with { type: 'json' }`
+        // A JSON module, `import v from './x.json' with { type: 'json' }`
         // (16.2.1.8 ParseJSONModule, CreateDefaultExportSyntheticModule): the
-        // text parsed as JSON NOW, so text that is not JSON is the graph's
-        // SyntaxError while it loads, and the value its one export, `default`.
-        // By the file's extension, which is how the suite names them; the
-        // attribute itself does not reach the program.
+        // text is parsed as JSON now, so text that is not JSON is the graph's
+        // SyntaxError while it loads, and the value is its one export,
+        // `default`. It is recognised by the file's extension, which is how the
+        // suite names them; the attribute itself does not reach the program.
         if (file.extension() == ".json") {
             instantiate_json(record, key, source);
             return;
@@ -336,6 +343,8 @@ public:
         if (depth_ == 0) { wire_reexports(); }
     }
 
+    /// Instantiates a JSON module: an empty module program whose `default`
+    /// export cell holds the parsed value.
     void instantiate_json(ctbrowser::script::module_record & record, const std::string & key,
                           const std::string & source) {
         const value json = cx_.global("JSON");
@@ -361,17 +370,18 @@ public:
         owned_.push_back(std::move(compiled));
     }
 
-    // `export { a } from './m.js'` AND `export * from './m.js'` - 16.2.1.6.3
-    // ResolveExport, over the WHOLE graph once it is loaded. A re-export is an
-    // alias of the other module's cell, not a copy, so a write there is a
-    // read here. Wired to a fixed point rather than deepest-first, because a
-    // cycle of index files has no deepest member: an edge whose source is
-    // not bound yet simply waits for the next pass, and a genuinely circular
-    // one never resolves - which is the specification's null. An explicit
-    // edge outranks a star's, a name the module binds itself outranks both,
-    // `export *` never carries `default`, and one name reached through two
-    // stars as two different cells is AMBIGUOUS: not exported at all. An
-    // explicit edge left unresolved at the end is the resolution SyntaxError.
+    /// Wires `export { a } from './m.js'` and `export * from './m.js'`
+    /// (16.2.1.6.3 ResolveExport) over the whole graph once it is loaded. A
+    /// re-export is an alias of the other module's cell, not a copy, so a write
+    /// there is a read here. Wiring runs to a fixed point rather than
+    /// deepest-first, because a cycle of index files has no deepest member: an
+    /// edge whose source is not bound yet waits for the next pass, and a
+    /// genuinely circular one never resolves, which is the specification's
+    /// null. An explicit edge outranks a star's, a name the module binds itself
+    /// outranks both, `export *` never carries `default`, and one name reached
+    /// through two stars as two different cells is ambiguous: not exported at
+    /// all. An explicit edge left unresolved at the end is the resolution
+    /// SyntaxError.
     void wire_reexports() {
         auto & registry = cx_.modules();
         std::set<std::pair<std::string, std::string>> from_star;
@@ -438,12 +448,13 @@ public:
         check_imports();
     }
 
-    // AND EVERY NAMED IMPORT, the same way (16.2.1.6.4 InitializeEnvironment
-    // step 7: ResolveExport of each ImportEntry, null or ambiguous a
-    // SyntaxError) - which the VM only found at the import's first read, as a
-    // "has no export named" raise at run time. The program records specifiers,
-    // not import entries; they are the module entry's `load_import`s (names[b]
-    // the export, names[c] the specifier), which is what the VM reads too.
+    /// Checks every named import the same way (16.2.1.6.4 InitializeEnvironment
+    /// step 7: ResolveExport of each ImportEntry; null or ambiguous is a
+    /// SyntaxError). Without this the VM finds a missing export only at the
+    /// import's first read, as a "has no export named" raise at run time. The
+    /// program records specifiers, not import entries; the entries are the
+    /// module entry function's `load_import` instructions (names[b] the export,
+    /// names[c] the specifier), which is what the VM reads too.
     void check_imports() {
         auto & registry = cx_.modules();
         for (const auto & [key, record] : registry) {
@@ -465,8 +476,9 @@ public:
         }
     }
 
-    // POST-ORDER, each module once: a dependency has finished before the module
-    // importing it reaches its first statement.
+    /// Runs `file` and its dependencies in post-order, each module once: a
+    /// dependency has finished before the module importing it reaches its first
+    /// statement.
     run_result evaluate(const std::filesystem::path & file) {
         const std::string key = std::filesystem::weakly_canonical(file).generic_string();
         auto & registry = cx_.modules();
@@ -502,11 +514,11 @@ public:
 
     [[nodiscard]] bool failed() const noexcept { return failed_; }
     [[nodiscard]] const program & compile_error() const noexcept { return compile_error_; }
-    // Which module the compile error is in - the test file or a dependency.
+    /// Which module the compile error is in: the test file or a dependency.
     [[nodiscard]] const std::string & failed_key() const noexcept { return failed_key_; }
     [[nodiscard]] const std::string & resolution_error() const noexcept { return resolution_; }
-    // A dynamic import that failed is one rejected promise, not a failed run:
-    // clear the record so the next import starts clean.
+    /// Clears the failure record. A dynamic import that failed is one rejected
+    /// promise, not a failed run, so the next import must start clean.
     void reset_failure() {
         failed_ = false;
         compile_error_ = program{};
@@ -521,7 +533,7 @@ private:
 
     context & cx_;
     std::vector<std::unique_ptr<program>> owned_;
-    std::size_t depth_ = 0; // instantiate() recursing: the graph is wired when it is back at 0
+    std::size_t depth_ = 0; ///< instantiate() recursion depth; wiring runs when it is back at 0.
     bool failed_ = false;
     program compile_error_;
     std::string failed_key_;
@@ -532,9 +544,9 @@ private:
 
 int main(int argc, char ** argv) {
     namespace po = boost::program_options;
-    // STRINGS, NOT PATHS. Boost would read a std::filesystem::path through
-    // lexical_cast and so through std::quoted: a path with a space in it is
-    // refused, and one wrapped in quotes loses them.
+    // Strings, not paths: Boost would read a std::filesystem::path through
+    // lexical_cast and so through std::quoted, so a path with a space in it is
+    // refused and one wrapped in quotes loses them.
     std::vector<std::string> preludes;
     std::string test;
     bool strict = false;
@@ -558,13 +570,13 @@ int main(int argc, char ** argv) {
     install_print(cx);
     install_262(cx);
 
-    // THE HARNESS FILES ARE THEIR OWN PROGRAMS, not text glued to the front of
-    // the test. Two reasons, and the second is the one that matters: the suite
-    // says they are evaluated as global code before the test, which is what
-    // this is; and a concatenated test whose PARSE fails cannot be told apart
-    // from a harness file whose parse fails, so every `negative: {phase: parse}`
-    // test would be scored on the whole blob. Compiling them separately makes a
-    // harness failure exit 3 - a host error, never a test result.
+    // The harness files are their own programs, not text glued to the front of
+    // the test. The suite says they are evaluated as global code before the
+    // test, which is what this is. More importantly, a concatenated test whose
+    // parse fails cannot be told apart from a harness file whose parse fails,
+    // so every `negative: {phase: parse}` test would be scored on the whole
+    // blob. Compiling them separately makes a harness failure exit 3, a host
+    // error, never a test result.
     for (const std::string & prelude : preludes) {
         bool ok = false;
         const std::string source = read_file(prelude, ok);
@@ -572,15 +584,13 @@ int main(int argc, char ** argv) {
             host_error("cannot read harness file " + prelude);
             return 3;
         }
-        // OWNED BY THE CONTEXT, not by this loop. A harness file's whole
-        // purpose is to leave functions behind for the test to call, and a
-        // closure holds a `function_proto *` into the program it came from - so
-        // a `program` that dies at the end of this iteration leaves the global
-        // `assert` pointing into freed memory. It does not fail immediately:
-        // `assert.sameValue(1, 1)` returns before it touches anything that has
-        // been reused, and the first test to FAIL an assertion segfaults inside
-        // the message it was building. Which is exactly how this was found -
-        // every passing test passed and every failing one crashed.
+        // Owned by the context, not by this loop. A harness file exists to
+        // leave functions behind for the test to call, and a closure holds a
+        // `function_proto *` into the program it came from, so a `program`
+        // that died at the end of this iteration would leave the global
+        // `assert` pointing into freed memory. That bug hides well: passing
+        // assertions return before touching reused memory, and only a failing
+        // assertion crashes while building its message.
         const program & compiled =
             cx.own_program(ctbrowser::script::compiler::compile_script(source));
         if (!compiled.ok) {
@@ -595,13 +605,13 @@ int main(int argc, char ** argv) {
     }
 
     module_loader loader{cx};
-    // WHAT `import(specifier)` CALLS, in both modes: a script may import a
-    // module and a module may import another lazily. The graph is walked
-    // the same two-pass way; a compile failure or a missing file REJECTS the
+    // What `import(specifier)` calls, in both modes: a script may import a
+    // module and a module may import another lazily. The graph is walked the
+    // same two-pass way; a compile failure or a missing file rejects the
     // promise (16.2.1.9 HostLoadImportedModule's failure path) rather than
-    // failing the run, and an evaluation that threw rejects with what it
-    // threw. Settled at once, like the shell's, because the filesystem is
-    // synchronous. A referrer that is not a module - the test script - is
+    // failing the run, and an evaluation that threw rejects with what it threw.
+    // The promise settles at once, like the shell's, because the filesystem is
+    // synchronous. A referrer that is not a module (the test script) is
     // resolved beside the test file.
     cx.set_module_evaluator([&loader](context &, ctbrowser::script::module_record & record) {
         return loader.evaluate(std::filesystem::path{record.specifier}).ok;
@@ -644,7 +654,7 @@ int main(int argc, char ** argv) {
         // the suite never sets both.
         loader.instantiate(test);
         if (loader.failed()) {
-            // A DEPENDENCY THAT DOES NOT PARSE fails the graph while it loads,
+            // A dependency that does not parse fails the graph while it loads,
             // which is the suite's "resolution" phase (instn-resolve-err-
             // syntax-*.js); only the test file's own syntax error is "parse".
             const program & bad = loader.compile_error();
@@ -680,7 +690,7 @@ int main(int argc, char ** argv) {
     // a semicolon and a newline, before anything else the metadata asks for.
     if (strict) { source = "\"use strict\";\n" + source; }
 
-    // A TEST IS A Script (16.1), so compile_script: a top-level `return` or
+    // A test is a Script (16.1), so compile_script: a top-level `return` or
     // `new.target` is the SyntaxError the suite expects, where compile() takes
     // it as the embedder's way of returning a value.
     const program & compiled = cx.own_program(ctbrowser::script::compiler::compile_script(source));

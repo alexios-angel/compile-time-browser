@@ -1,18 +1,17 @@
-// PNG through SDL3_image, with a golden.
+//===- ctbrowser/examples/demos/imageformats.cpp - PNG decoding demo ------===//
 //
-// The engine decodes BMP itself; everything else arrives through the optional
-// SDL3_image, and nothing in the tree exercised that path - so `<img src=x.png>`
-// could have been blank on every build and no test would have said so.
+// Renders a PNG badge at three sizes and compares it with a golden image, so
+// `<img src=x.png>` decoding is covered by a test. The badge's four coloured
+// quadrants make a flipped, channel-swapped or alpha-less decode obvious.
 //
-// PNG rather than JPEG for the golden, and the reason is byte-exactness: PNG is
-// LOSSLESS, so two platforms decode it identically. JPEG works too - it goes
-// through the same decoder - but two libjpeg builds may differ in the last bit,
-// which would make the golden platform-dependent for a reason that is not a
-// regression. docs/raster.md says so.
+// PNG rather than JPEG for the golden because PNG is lossless and decodes
+// identically on every platform; two libjpeg builds may differ in the last bit
+// (docs/raster.md).
 //
-// Gated on CTBROWSER_WITH_IMAGE in examples/CMakeLists.txt, exactly as the SVG
-// golden is gated on plutosvg: without the dependency the page lays out the same
-// and simply draws no image, and comparing then would fail for the wrong reason.
+// The golden is registered only when SDL3_image is found or
+// CTBROWSER_WITH_IMAGE is set (examples/CMakeLists.txt).
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 
@@ -21,6 +20,6 @@ int main() {
     options.title = "image formats";
     options.width = 120;
     options.height = 200;
-    options.confine_assets = false; // trusted: examples/assets/ is the working directory's
+    options.confine_assets = false; // Trusted in-tree page; it loads from examples/assets/.
     return ctbrowser::run_app_file("examples/pages/image-formats.html", options);
 }

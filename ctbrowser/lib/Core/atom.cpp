@@ -1,3 +1,10 @@
+//===- ctbrowser/lib/Core/atom.cpp - Interned string table ----------------===//
+//
+// atom_table: a thread-safe interning table mapping strings to small integer
+// ids (atoms). Reads take a shared lock, inserts an exclusive one.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/algorithms.hpp>
 #include <ctbrowser/core/atom.hpp>
 
@@ -6,7 +13,7 @@
 namespace ctbrowser {
 
 atom_table::atom_table() {
-    storage_.emplace_back(); // id 0 == ""
+    storage_.emplace_back(); // Id 0 is the empty string.
     index_.emplace(std::string_view{}, 0u);
 }
 
@@ -16,10 +23,10 @@ atom atom_table::intern(std::string_view text) {
         if (const auto it = index_.find(text); it != index_.end()) { return atom{it->second}; }
     }
     const std::unique_lock write{mutex_};
-    // re-check: another thread may have interned it between the two locks
+    // Re-check: another thread may have interned it between the two locks.
     if (const auto it = index_.find(text); it != index_.end()) { return atom{it->second}; }
     const auto id = static_cast<std::uint32_t>(storage_.size());
-    // The view must key off the STORED copy, not the caller's argument,
+    // The view must key off the stored copy, not the caller's argument,
     // which may dangle the moment intern() returns.
     const std::string & stored = storage_.emplace_back(text);
     index_.emplace(std::string_view{stored}, id);

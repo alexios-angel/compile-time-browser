@@ -1,14 +1,18 @@
+//===- ctbrowser/lib/DOM/treebuilder/modes.cpp - Insertion modes ----------===//
+//
+// The tree builder's insertion modes outside "in body" and the table modes:
+// "initial" through "after head", declarative shadow roots, the frameset and
+// "after body" modes (HTML 13.2.6.4), and the DOCTYPE quirks-mode decision.
+//
+//===----------------------------------------------------------------------===//
+
 #include "internal.hpp"
 
 namespace ctbrowser::html {
 
 using namespace treebuilder_detail;
 
-// ============================================================================
-// THE INSERTION MODES
-// ============================================================================
-
-// 13.2.6.4.1 "initial"
+/// The "initial" insertion mode, HTML 13.2.6.4.1.
 void tree_builder::mode_initial(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -38,11 +42,12 @@ void tree_builder::mode_initial(const token & t) {
     process(t, mode_);
 }
 
-// The <html> element, appended to the Document - unless the Document already
-// has an element child (a script put one there before the parser reached
-// this), in which case the tree is built DETACHED: the spec's "insert an
-// element at the adjusted insertion location" returns without inserting
-// when the location cannot accept the node, and everything under it follows.
+/// The <html> element, appended to the Document, unless the Document already
+/// has an element child (a script put one there before the parser reached
+/// this), in which case the tree is built detached: the specification's
+/// "insert an element at the adjusted insertion location" returns without
+/// inserting when the location cannot accept the node, and everything under
+/// it follows.
 void tree_builder::create_root() {
     if (!root_) {
         root_ = doc_->create_element(atoms_->intern_lower("html"));
@@ -51,8 +56,8 @@ void tree_builder::create_root() {
     if (!on_stack(root_)) { push(entry{root_, "html"}); }
 }
 
-// Whether the Document has a child of this kind - other than the root this
-// parse made, which begin() may have put there ahead of time.
+/// Whether the Document has a child of this kind, other than the root this
+/// parse made, which begin() may have put there ahead of time.
 bool tree_builder::document_has_child(node_kind kind) const {
     const auto txn = doc_->read();
     for (const node_id child : txn.children(doc_->document_node())) {
@@ -61,8 +66,8 @@ bool tree_builder::document_has_child(node_kind kind) const {
     return false;
 }
 
-// 13.2.6.4.2 "before html": the <html> element is made here, by the tag or
-// for whatever came first.
+/// The "before html" insertion mode, HTML 13.2.6.4.2: the <html> element is
+/// made here, by the tag or for whatever came first.
 void tree_builder::mode_before_html(const token & t) {
     switch (t.kind) {
     case token_kind::doctype: return;
@@ -90,7 +95,7 @@ void tree_builder::mode_before_html(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.3 "before head"
+/// The "before head" insertion mode, HTML 13.2.6.4.3.
 void tree_builder::mode_before_head(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -118,7 +123,7 @@ void tree_builder::mode_before_head(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.4 "in head"
+/// The "in head" insertion mode, HTML 13.2.6.4.4.
 void tree_builder::mode_in_head(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -195,16 +200,17 @@ void tree_builder::mode_in_head(const token & t) {
     process(t, mode_);
 }
 
-// "In head", a template start tag, steps 9-10: A DECLARATIVE SHADOW ROOT.
-// The template is made and pushed but NOT inserted, and its contents ARE the
-// adjusted current node's new shadow root - so everything up to `</template>`
-// is parsed straight into the shadow tree, a script in it runs connected, and
-// a mutation observer never sees a template come and go. Every refusal of
-// "attach a shadow root" (an element that cannot host one, or already does)
-// inserts the template as an ordinary one instead, contents and all.
-//
-// NOT AT THE TOP OF A FRAGMENT: there the adjusted current node is the
-// context element, which is not in the tree being built.
+/// "In head", a template start tag, steps 9-10: a declarative shadow root.
+/// The template is made and pushed but not inserted, and its contents are the
+/// adjusted current node's new shadow root, so everything up to `</template>`
+/// is parsed straight into the shadow tree, a script in it runs connected, and
+/// a mutation observer never sees a template come and go. Every refusal of
+/// "attach a shadow root" (an element that cannot host one, or already does)
+/// inserts the template as an ordinary one instead, contents and all.
+///
+/// Not at the top of a fragment: there the adjusted current node is the
+/// context element, which is not in the tree being built. Returns false when
+/// the template is not a declarative shadow root and the caller inserts it.
 bool tree_builder::declarative_shadow_root(const token & t) {
     const auto attribute = [&](std::string_view name) -> const token_attribute * {
         const auto it = std::ranges::find(t.attributes, name, &token_attribute::name);
@@ -217,8 +223,8 @@ bool tree_builder::declarative_shadow_root(const token & t) {
     }
     const entry * current = adjusted_current();
     if (current == nullptr || !current->id || current->id == open_.front().id) { return false; }
-    // The host's ID, not the entry: the push below can move `open_`, and the
-    // entry with it (ASan: heap-use-after-free, 2026-09-26).
+    // Copy the host's ID, not the entry pointer: the push below can
+    // reallocate `open_` and invalidate `current`.
     const node_id host = current->id;
     const insertion_point where = appropriate_place();
     const node_id element = create_element(t.name, t.attributes);
@@ -248,7 +254,7 @@ bool tree_builder::declarative_shadow_root(const token & t) {
     return true;
 }
 
-// 13.2.6.4.5 "in head noscript"
+/// The "in head noscript" insertion mode, HTML 13.2.6.4.5.
 void tree_builder::mode_in_head_noscript(const token & t) {
     switch (t.kind) {
     case token_kind::doctype: return;
@@ -280,7 +286,7 @@ void tree_builder::mode_in_head_noscript(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.6 "after head"
+/// The "after head" insertion mode, HTML 13.2.6.4.6.
 void tree_builder::mode_after_head(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -325,8 +331,8 @@ void tree_builder::mode_after_head(const token & t) {
     process(t, mode_);
 }
 
-// The frameset modes insert each whitespace character of a run and ignore
-// the rest, character by character - so " te st" leaves two spaces.
+/// The frameset modes insert each whitespace character of a run and ignore
+/// the rest, character by character, so " te st" leaves two spaces.
 void tree_builder::insert_whitespace_only(const std::string & data) {
     std::string kept;
     for (const char c : data) {
@@ -343,7 +349,7 @@ void tree_builder::insert_whitespace_only(const std::string & data) {
     insert_text(kept);
 }
 
-// 13.2.6.4.19 "after body"
+/// The "after body" insertion mode, HTML 13.2.6.4.19.
 void tree_builder::mode_after_body(const token & t) {
     switch (t.kind) {
     case token_kind::character:
@@ -371,7 +377,7 @@ void tree_builder::mode_after_body(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.20 "in frameset"
+/// The "in frameset" insertion mode, HTML 13.2.6.4.20.
 void tree_builder::mode_in_frameset(const token & t) {
     switch (t.kind) {
     case token_kind::character: return insert_whitespace_only(t.data);
@@ -404,7 +410,7 @@ void tree_builder::mode_in_frameset(const token & t) {
     }
 }
 
-// 13.2.6.4.21 "after frameset"
+/// The "after frameset" insertion mode, HTML 13.2.6.4.21.
 void tree_builder::mode_after_frameset(const token & t) {
     switch (t.kind) {
     case token_kind::character: return insert_whitespace_only(t.data);
@@ -422,7 +428,7 @@ void tree_builder::mode_after_frameset(const token & t) {
     }
 }
 
-// 13.2.6.4.22 "after after body"
+/// The "after after body" insertion mode, HTML 13.2.6.4.22.
 void tree_builder::mode_after_after_body(const token & t) {
     switch (t.kind) {
     case token_kind::comment:
@@ -442,7 +448,7 @@ void tree_builder::mode_after_after_body(const token & t) {
     process(t, mode_);
 }
 
-// 13.2.6.4.23 "after after frameset"
+/// The "after after frameset" insertion mode, HTML 13.2.6.4.23.
 void tree_builder::mode_after_after_frameset(const token & t) {
     switch (t.kind) {
     case token_kind::comment:
@@ -457,13 +463,14 @@ void tree_builder::mode_after_after_frameset(const token & t) {
     }
 }
 
-// ============================================================================
-// THE DOCTYPE'S QUIRKS DECISION, 13.2.6.4.1's table
-// ============================================================================
+//===----------------------------------------------------------------------===//
+// The DOCTYPE's quirks decision, HTML 13.2.6.4.1's table
+//===----------------------------------------------------------------------===//
 
-// `compatMode` reports quirks against the other two modes, so limited-quirks
-// is no-quirks here; the name and the public identifier are compared ASCII
-// case-insensitively, as the specification says.
+/// True when the DOCTYPE puts the document in quirks mode. `compatMode`
+/// reports quirks against the other two modes, so limited-quirks is no-quirks
+/// here; the name and the public identifier are compared ASCII
+/// case-insensitively, as the specification says.
 bool tree_builder::quirks_for(const token & doctype) {
     if (doctype.force_quirks || !ascii_iequals(doctype.name, "html")) { return true; }
     const std::string public_id = ascii_lower_copy(doctype.public_id);
@@ -533,8 +540,8 @@ bool tree_builder::quirks_for(const token & doctype) {
     for (const std::string_view prefix : prefixes) {
         if (public_id.starts_with(prefix)) { return true; }
     }
-    // "The system identifier is missing or the empty string" - an empty one
-    // reads as missing here (doctype-system-identifier-distinction.html),
+    // "The system identifier is missing or the empty string": an empty one
+    // reads as missing here (WPT doctype-system-identifier-distinction.html),
     // and a non-empty one puts the same public identifier in limited quirks.
     if (system_id.empty() && (public_id.starts_with("-//w3c//dtd html 4.01 frameset//") ||
                               public_id.starts_with("-//w3c//dtd html 4.01 transitional//"))) {

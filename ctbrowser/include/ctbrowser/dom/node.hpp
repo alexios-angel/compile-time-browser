@@ -1,3 +1,22 @@
+//===- node.hpp - The DOM node -------------------------------- -*- C++ -*-===//
+//
+// The DOM node, its kinds, element namespaces, attributes and the tree depth
+// cap.
+//
+// A generation-tagged handle (node_id) stops a reader resolving a freed node.
+// Children, attributes and text are plain members mutated in place, so a span
+// or string_view a read_txn handed out over a node is invalidated by the next
+// write to that node; a caller that walks a list while writing copies it first.
+//
+// Single-threaded: the DOM is read and written only on the frame thread, so
+// nodes need no atomics or locks.
+//
+// What this deliberately does not store: layout rects, text-line caches, widget
+// state, selection ranges, caret positions, blink phase. Those are outputs of
+// style and layout and belong to the box tree, which is not the DOM tree.
+//
+//===----------------------------------------------------------------------===//
+
 #pragma once
 #include <boost/container/small_vector.hpp>
 #include <cstddef>
@@ -7,145 +26,118 @@
 
 #include <ctbrowser/core/core.hpp>
 
-// The DOM node.
-//
-// A generation-tagged handle stops a reader resolving a FREED node. Children,
-// attributes and text are plain members mutated in place, so a span or
-// string_view a read_txn handed out over a node is invalidated by the next
-// write to THAT node, and a caller that walks a list while writing copies it
-// first.
-//
-// SINGLE-THREADED. They were copy-on-write blocks behind atomics, retired
-// through an epoch domain so that concurrent readers could keep them (git
-// history, audit CTB-01); no engine thread ever read the DOM off the frame
-// thread, and the blocks, the atomics and the per-node stripe locks went
-// with that design.
-//
-// What this deliberately does NOT store: layout rects, text-line caches, widget
-// state, selection ranges, caret positions, blink phase. Those are outputs of
-// style and layout, and keeping them on the node is what stops layout running
-// concurrently. They belong to the box tree, which is not the DOM tree.
-
 namespace ctbrowser {
 
 struct node_tag {};
+/// A handle to a node in a document's slab.
 using node_id = handle<node_tag>;
 
-// THE DEEPEST A TREE MAY GO: no node sits max_dom_depth or more levels below
-// the top of its tree, counting a shadow root and a <template>'s contents as
-// one level below their element. Blink's parser cap
-// (kMaximumHTMLParserDOMTreeDepth) - the HTML tree builder flattens past it
-// and document::append_child / insert_before refuse to exceed it - so every
-// recursive tree walk downstream of the DOM is bounded by it.
-//
-// PAST THE CAP, per caller (no browser caps a script's tree, so no spec says
-// what happens): the HTML parser flattens, the XML parser fails the document
-// ("elements nested too deeply"), appendChild / insertBefore / attachShadow
-// throw HierarchyRequestError (bindings/element/pre_insert.cpp), and every
-// internal insertion that discards append_child / insert_before's result -
-// innerHTML's and textContent's moves, innerText, cloning, slot edits -
-// DROPS the node that would not fit, silently, and goes on with the rest.
+/// The deepest a tree may go: no node sits max_dom_depth or more levels below
+/// the top of its tree, counting a shadow root and a <template>'s contents as
+/// one level below their element. This is Blink's parser cap
+/// (kMaximumHTMLParserDOMTreeDepth); the HTML tree builder flattens past it and
+/// document::append_child / insert_before refuse to exceed it, so every
+/// recursive tree walk downstream of the DOM is bounded by it.
+///
+/// Past the cap, per caller (no browser caps a script's tree, so no spec says
+/// what happens): the HTML parser flattens, the XML parser fails the document
+/// ("elements nested too deeply"), appendChild / insertBefore / attachShadow
+/// throw HierarchyRequestError (bindings/element/pre_insert.cpp), and every
+/// internal insertion that discards append_child / insert_before's result
+/// (innerHTML's and textContent's moves, innerText, cloning, slot edits)
+/// silently drops the node that would not fit and continues with the rest.
 inline constexpr std::size_t max_dom_depth = 512;
 
+/// What a node is; the DOM's nodeType, restricted to what the engine models.
 enum class node_kind : std::uint8_t {
     document,
     element,
     text,
     comment,
-    // A DocumentFragment: a parentless bag of nodes that a script fills and
-    // then inserts, at which point its CHILDREN move and the fragment itself
-    // does not. It never reaches style or layout - insertion flattens it - so
-    // nothing downstream has to learn about it; what it buys is the one idiom
-    // that makes building a list cheap, `frag.append(a, b, c); ul.append(frag)`.
+    /// A DocumentFragment: a parentless set of nodes that a script fills and
+    /// then inserts, at which point its children move and the fragment itself
+    /// does not. It never reaches style or layout (insertion flattens it).
     document_fragment,
-    // THE THREE KINDS A PAGE CAN HOLD BUT NEVER SEES DRAWN. None of them is
-    // laid out, styled, matched by a selector or counted as an element, so
-    // every switch downstream treats them the way it treats a comment - and
-    // `unittests/unit/dom/special_nodes` is what asserts they got there.
-    //
-    // A DocumentType: `tag` is its name and `text` its public and system
-    // identifiers - see document::create_document_type. It lives under the
-    // Document node, ahead of the document element.
+    // The next three kinds are never drawn: none is laid out, styled, matched
+    // by a selector or counted as an element, so every switch downstream
+    // treats them like a comment (unittests/unit/dom/special_nodes checks
+    // this).
+
+    /// A DocumentType: `tag` is its name and `text` its public and system
+    /// identifiers (see document::create_document_type). It lives under the
+    /// Document node, ahead of the document element.
     document_type,
-    // A ProcessingInstruction, `<?target data?>`: `tag` is the target and
-    // `text` the data, and its attribute map (DOM 4.13) on the attribute list
-    // beside them - see document::update_pi_attributes. The XML front end,
-    // `createProcessingInstruction` and, since HTML grew the processing
-    // instruction states, the HTML tokenizer produce it; `<?xml ...?>` in HTML
-    // is still a bogus comment.
+    /// A ProcessingInstruction, `<?target data?>`: `tag` is the target, `text`
+    /// the data, and the attribute list holds its attribute map (DOM 4.13; see
+    /// document::update_pi_attributes). Produced by the XML parser,
+    /// `createProcessingInstruction` and the HTML tokenizer's processing
+    /// instruction states; `<?xml ...?>` in HTML is still a bogus comment.
     processing_instruction,
-    // A CDATASection, `<![CDATA[ data ]]>`: a Text node by inheritance, so
-    // everything that reads text through `text()` reads it too - a `<script>`
-    // written the XML way still runs - and only `nodeType` and the serialiser
-    // tell the two apart. XML documents only; `createCDATASection` on an HTML
-    // document is a NotSupportedError.
+    /// A CDATASection, `<![CDATA[ data ]]>`: a Text node by inheritance, so
+    /// everything that reads text through `text()` reads it too (a `<script>`
+    /// written the XML way still runs); only `nodeType` and the serialiser tell
+    /// the two apart. XML documents only; `createCDATASection` on an HTML
+    /// document is a NotSupportedError.
     cdata_section
 };
 
-// Is this kind a Text node in the DOM's sense - Text or its one subclass? The
-// question every "kind == text" decision is really asking, spelled once so a
-// CDATA section cannot be forgotten by half of them.
+/// Whether `k` is a Text node in the DOM's sense: Text or its one subclass,
+/// CDATASection. Use this instead of `kind == text` so CDATA is never missed.
 [[nodiscard]] constexpr bool is_text_kind(node_kind k) noexcept {
     return k == node_kind::text || k == node_kind::cdata_section;
 }
 
-// Which language an element is written in. HTML and SVG share a document but
-// not a vocabulary: an SVG <title> is a tooltip and an HTML one is the window
-// title, an SVG <a> is not a link element, and `<text>` means nothing in HTML
-// at all. Without this they are the same atom and the difference is
-// unrecoverable.
-//
-// FREE, in the literal sense: `node` is kind(1) + tag(4) with three bytes of
-// padding between them, so this occupies padding that already existed.
+/// Which vocabulary an element belongs to. HTML and SVG share a document but
+/// not a vocabulary: an SVG <title> is a tooltip and an HTML one is the window
+/// title, an SVG <a> is not a link element, and `<text>` means nothing in HTML.
+/// Both intern to the same atom, so this is the only record of the
+/// difference.
+///
+/// It costs no space: `node` is kind(1) + tag(4) with three bytes of padding
+/// between them, and this occupies that padding.
 enum class node_ns : std::uint8_t {
     html,
     svg,
-    // NEITHER: what `document.createElementNS` asks for with any other URI,
-    // what the XML parser makes of a page's own vocabulary, and what the HTML
-    // parser makes of MathML (`<math>` and everything under it). The exact
-    // URI is not here - the document records it (document::element_namespace)
-    // and the element wrapper records createElementNS's - because a fourth
-    // field on `node` is not free and this is the most replicated object in
-    // the engine; a `mathml` enumerator would cost nothing here but is
-    // switched on in ctcompile's document comparator, which this tree may
-    // not edit. What the enumerator buys is the distinction every consumer
-    // actually tests for: `element_ns == html` gates script execution,
-    // <style> collection and the tagName case fold, and an element in some
-    // page-invented namespace must fail all three.
+    /// Neither HTML nor SVG: what `document.createElementNS` makes for any
+    /// other URI, what the XML parser makes of a page's own vocabulary, and
+    /// what the HTML parser makes of MathML (`<math>` and everything under
+    /// it). The exact URI is recorded by the document
+    /// (document::element_namespace) and, for createElementNS, by the element
+    /// wrapper, because `node` is the most replicated object in the engine and
+    /// has no room for it. A `mathml` enumerator would cost no space but would
+    /// need a matching case in ctcompile's document comparator, which switches
+    /// on this enum. What matters to consumers is `element_ns == html`, which
+    /// gates script execution, <style> collection and the tagName case fold;
+    /// an element in a page-invented namespace must fail all three.
     other
 };
 
-// AN ATTRIBUTE HAS A NAMESPACE. DOM §4.9 says one is four things - a namespace,
-// a namespace prefix, a local name and a value - and this is two atoms and a
-// string, because the other two are DERIVABLE and a fourth field is not free.
-//
-// `name` is the QUALIFIED name: `prefix:local` when there is a prefix and
-// `local` when there is not. It stays first and stays the whole name because it
-// is what every existing reader compares - the style engine, the layout engine,
-// `getAttribute` - and that comparison must stay one integer compare.
-//
-// `ns` is the namespace URI, INTERNED. The empty atom is the null namespace,
-// which is what every attribute in an ordinary HTML document has: `xlink:href`
-// and `xmlns:xlink` inside `<svg>` are the only ones a parsed page normally
-// carries. It is an atom for the reason `node_ns` beside it is an enumerator
-// rather than a URI - a `std::string` here is 32 bytes on EVERY attribute of
-// EVERY element to describe a case that arises twice per document - and it is
-// an atom rather than a three-valued enum because `setAttributeNS` may be
-// handed any URI a page can spell.
-//
-// AND IT COSTS NOTHING AT ALL, which is the same trick and the same measurement
-// `node_ns` records: `attribute` was atom(4) + four bytes of padding +
-// std::string(32), so `ns` lands in padding that already existed and the
-// `small_vector<attribute, 2>` on every element is the size it always was. The
-// static_assert below is what stops a third atom being added without anybody
-// noticing that it is no longer free.
+/// An attribute. DOM §4.9 defines one as a namespace, a namespace prefix, a
+/// local name and a value; this stores two atoms and a string, because the
+/// prefix and local name are derivable (attribute_local_name, attribute_prefix).
+///
+/// `name` is the qualified name: `prefix:local` with a prefix, `local`
+/// without. It is the whole name because every reader compares it (the style
+/// engine, the layout engine, `getAttribute`), and that must stay one integer
+/// compare.
+///
+/// `ns` is the interned namespace URI. The empty atom is the null namespace,
+/// which every attribute in an ordinary HTML document has; `xlink:href` and
+/// `xmlns:xlink` inside `<svg>` are the only namespaced ones a parsed page
+/// normally carries. An atom rather than a std::string (32 bytes on every
+/// attribute for a rare case), and rather than an enum because
+/// `setAttributeNS` accepts any URI a page can spell.
+///
+/// `ns` costs no space: atom(4) + four bytes of padding + std::string(32) left
+/// room for it. The static_assert below catches a field that would grow the
+/// struct.
 struct attribute {
     atom name;
     atom ns;
-    std::string value; // "" for a boolean attribute, per HTML
+    std::string value; ///< "" for a boolean attribute, per HTML.
 
     attribute() = default;
-    // The null namespace, which is what the parser and `setAttribute` produce.
+    /// The null namespace, which is what the parser and `setAttribute` produce.
     attribute(atom qualified, std::string v) : name(qualified), value(std::move(v)) {}
     attribute(atom qualified, atom uri, std::string v)
         : name(qualified), ns(uri), value(std::move(v)) {}
@@ -154,25 +146,24 @@ struct attribute {
 static_assert(sizeof(attribute) <= sizeof(std::string) + alignof(std::string),
               "the namespace must be FREE: two atoms in the padding ahead of `value`");
 
-// THE LOCAL NAME AND THE PREFIX, DERIVED RATHER THAN STORED - and derived
-// exactly, not approximately.
+/// An attribute's local name and prefix, derived exactly from its qualified
+/// name and namespace.
+///
+/// DOM's "validate and extract" makes a prefix with a null namespace a
+/// NamespaceError, so an attribute has a prefix only if it has a namespace:
 //
-// The rule that makes it exact is one line of DOM's "validate and extract": a
-// prefix with a null namespace is a NamespaceError. So an attribute has a
-// prefix ONLY IF it has a namespace, and:
-//
-//   ns empty     - the whole qualified name is the local name, colons and all.
-//                  `el.setAttribute("pre:fix", v)` really does have local name
-//                  "pre:fix" and no prefix, and `xml:lang` written on an HTML
-//                  element really is one unprefixed attribute called
-//                  "xml:lang" - `dom/nodes/Attr-prefix.html` asserts both.
-//   ns non-empty - everything before the FIRST colon is the prefix. `a:b:c` is
-//                  prefix `a` and local `b:c`, which is the DOM's split and not
-//                  the XML QName production's; the two disagree and the DOM is
-//                  what a page is measured against.
-//
-// The views point into the atom table's storage, which is a deque of stable
-// strings, so they outlive the call.
+///
+///   ns empty     - the whole qualified name is the local name, colons and all.
+///                  `el.setAttribute("pre:fix", v)` has local name "pre:fix"
+///                  and no prefix, and `xml:lang` written on an HTML element is
+///                  one unprefixed attribute called "xml:lang" (WPT
+///                  dom/nodes/Attr-prefix.html checks both).
+///   ns non-empty - everything before the first colon is the prefix. `a:b:c` is
+///                  prefix `a` and local `b:c`, the DOM's split rather than the
+///                  XML QName production's.
+///
+/// The views point into the atom table's stable storage, so they outlive the
+/// call.
 [[nodiscard]] inline std::string_view attribute_local_name(const atom_table & atoms,
                                                            const attribute & a) {
     const std::string_view qualified = atoms.text(a.name);
@@ -188,22 +179,23 @@ static_assert(sizeof(attribute) <= sizeof(std::string) + alignof(std::string),
     return colon == std::string_view::npos ? std::string_view{} : qualified.substr(0, colon);
 }
 
+/// One DOM node, stored in place in a document's slab.
 struct node {
     node_kind kind = node_kind::element;
-    node_ns ns = node_ns::html; // elements only; see node_ns - this is free
-    // Elements only, and free for the same reason: does a colon in `tag`
-    // introduce a PREFIX? `createElementNS(ns, "a:b")` and an XML-parsed
-    // `<a:b>` have prefix `a` and local name `b`; `createElement("a:b")` and
-    // an HTML-parsed `<a:b>` have no prefix and the local name `a:b`. The
-    // atom alone cannot say which, and DOM 4.9 makes both observable.
+    node_ns ns = node_ns::html; ///< Elements only; see node_ns (costs no space).
+    /// Elements only, and also stored in padding: whether a colon in `tag`
+    /// introduces a prefix. `createElementNS(ns, "a:b")` and an XML-parsed
+    /// `<a:b>` have prefix `a` and local name `b`; `createElement("a:b")` and
+    /// an HTML-parsed `<a:b>` have no prefix and local name `a:b`. The atom
+    /// alone cannot say which, and DOM 4.9 makes both observable.
     bool prefixed = false;
-    atom tag; // elements only
+    atom tag; ///< Elements only (and see node_kind for other kinds' uses).
 
     node_id parent;
 
-    // Small-vector because the overwhelming majority of elements have a
-    // handful of children and one or two attributes, and a heap allocation
-    // each would dominate document construction.
+    // Small vectors because most elements have a handful of children and one
+    // or two attributes, and a heap allocation each would dominate document
+    // construction.
     boost::container::small_vector<node_id, 4> children;
     boost::container::small_vector<attribute, 2> attributes;
     std::string text;
@@ -217,11 +209,9 @@ struct node {
     node(const node &) = delete;
     node & operator=(const node &) = delete;
 
-    // The namespace field claimed padding that was already there - measured, on
-    // this target, before and after adding it. A node is the single most
-    // replicated object in the engine, so "free" is worth asserting rather than
-    // believing: if a future field pushes this over, that is a real cost and
-    // should be a decision rather than a surprise.
+    // A node is the most replicated object in the engine, so assert that the
+    // small fields fit in the padding ahead of `tag`; a field that does not is
+    // a real cost and should be a deliberate decision.
     static_assert(sizeof(node_kind) + sizeof(node_ns) + sizeof(bool) <=
                       alignof(atom) + sizeof(atom),
                   "kind, ns and prefixed must share the padding ahead of `tag`");

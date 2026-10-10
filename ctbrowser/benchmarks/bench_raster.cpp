@@ -1,17 +1,20 @@
-// Frame cost: what a first paint costs, and what a SCROLL costs.
+//===- ctbrowser/benchmarks/bench_raster.cpp - Paint and raster benchmark -===//
 //
-// The second number is the one the whole pipeline exists for. A frame is split
-// into three, and ONLY THE LAST runs on a scroll - an engine that re-runs
-// layout and re-emits every paint command each frame pays a full layout to
-// scroll one line:
+// Measures frame cost: what a first paint costs and what a scroll costs.
+//
+// The scroll number matters most. A frame has three stages, and a scroll runs
+// only the last two for newly visible tiles (an engine that re-ran layout and
+// re-recorded every frame would pay a full layout to scroll one line):
 //
 //   record     fragment tree -> display list
-//   raster     display list -> tiles, in CONTENT space, so a scroll cannot
+//   raster     display list -> tiles, in content space, so a scroll does not
 //              invalidate them
 //   composite  tiles -> the target, at the layer's current offset
 //
-// Everything here is measured with the software backend, which is the point of
-// writing it first: the numbers are reproducible on a machine with no GPU.
+// Everything is measured with the software backend, so the numbers are
+// reproducible on a machine with no GPU.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser/core/core.hpp>
 #include <ctbrowser/dom/dom.hpp>
@@ -70,7 +73,7 @@ void run_case(int sections, int rows, int viewport_w, int viewport_h, scheduler 
         raster::draw(backend, layers, &pool, raster::default_tile_extent, viewport);
     });
 
-    // A SCROLL FRAME, measured the way one actually happens: raster whatever
+    // A scroll frame, measured the way one actually happens: raster whatever
     // came into view, then composite. Tiles already drawn are kept, so the
     // steady-state cost is one row of tiles rather than a page.
     raster::software_backend scrolled{viewport_w, viewport_h};

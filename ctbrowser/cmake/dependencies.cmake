@@ -1,37 +1,30 @@
-# Everything the engine LOOKS FOR, in one place.
+# Every find_package/find_library the engine needs, in one place. Discovery
+# happens here, first; each lib/<Subsystem>/CMakeLists.txt then uses what was
+# found.
 #
-# Split out of src/CMakeLists.txt on 2026-08-09, when that file was 897 lines
-# doing two jobs: finding dependencies and defining ten targets. Discovery all
-# happens here, first; each lib/<Subsystem>/CMakeLists.txt then just USES what
-# was found.
+# Keep the blocks in this order. Several comments below depend on it (which
+# hints are searched first, which failure a find_package would hide).
 #
-# THE ORDER IS THE ORDER IT WAS IN, deliberately. Several of these blocks say
-# why they are shaped the way they are - which hints come first, which failure
-# mode a find_package would hide - and reordering them to look tidier is how
-# that reasoning gets quietly invalidated.
-#
-# Target-specific configuration did NOT move here. ANGLE, plutosvg and SDL3_ttf
-# are link lines and compile definitions on ctbrowser-raster, so they live with
-# it.
+# Target-specific configuration (ANGLE, plutosvg, SDL3_ttf) lives with
+# ctbrowser-raster, not here.
 
 # CONFIG mode: FindBoost was removed in CMake 4 (policy CMP0167), and Boost has
 # shipped its own package config for years.
 #
-# MOSTLY header-only, and the exception is deliberate. This was header-only ONLY
-# until 2026-07-31, because a compiled Boost meant cross-compiling Boost for the
-# llvm-mingw Windows presets. Boost.URL forced the question: it has been
-# compiled-only since 1.87 - `boost/url/src.hpp` now hard-errors, "src.hpp is
-# discontinued" - so there is no header-only way to have it. The rule is lifted
-# for libraries worth the cost, and Boost.URL is the first. See NOTICE.
+# Mostly header-only, because every compiled Boost library must also be
+# cross-compiled for the llvm-mingw Windows presets. Two compiled libraries are
+# linked on purpose:
 #
-# Boost.ProgramOptions is the second (2026-10-09), and the ENGINE does not link
-# it: tools/support/options.hpp is how the tools and the test programs that take
-# arguments read argv, through the ctbrowser-options target in tools/.
+# - Boost.URL, which is compiled-only since 1.87 (`boost/url/src.hpp` now fails
+#   with "src.hpp is discontinued"). See NOTICE.
+# - Boost.ProgramOptions, which only the tools and the test programs that take
+#   arguments link, through the ctbrowser-options target in tools/
+#   (tools/support/options.hpp). The engine does not link it.
 #
-# STILL EXCLUDED: Boost.Context, Coroutine and Fiber. Those are what actually
-# broke the cross build, and nothing here needs them.
+# Boost.Context, Coroutine and Fiber stay excluded: they break the cross build,
+# and nothing here needs them.
 #
-# CROSS BUILDS have no BoostConfig for the target: the headers come from an
+# Cross builds have no BoostConfig for the target: the headers come from an
 # isolated include directory (the toolchain finds it the way it finds GLM's) and
 # the compiled libraries from the mingw sysroot, beside the static SDL3 that
 # already lives there.
@@ -68,10 +61,10 @@ if(CTBROWSER_BOOST_INCLUDE_DIR)
       IMPORTED_LOCATION "${CTBROWSER_BOOST_PROGRAM_OPTIONS_LIBRARY}"
       INTERFACE_INCLUDE_DIRECTORIES "${CTBROWSER_BOOST_INCLUDE_DIR}")
   endif()
-  # THE CROSS PATH HAS NO VERSION TO CHECK, so it checks for the header that
-  # moved the floor instead. Without this a sysroot Boost older than 1.88 fails
-  # inside program_image/write.cpp with "boost/hash2/xxhash.hpp: No such file", which
-  # names a file rather than a version and sends the reader to the wrong place.
+  # The cross path has no version to check, so it checks for the header that
+  # sets the 1.88 minimum instead. Without this, a sysroot Boost older than 1.88
+  # fails inside program_image/write.cpp with "boost/hash2/xxhash.hpp: No such
+  # file", which names a file rather than a version.
   if(NOT EXISTS "${CTBROWSER_BOOST_INCLUDE_DIR}/boost/hash2/xxhash.hpp")
     message(FATAL_ERROR
       "ctbrowser: this Boost has no Boost.Hash2 (added in 1.88). The script image's source "
@@ -81,43 +74,38 @@ if(CTBROWSER_BOOST_INCLUDE_DIR)
   message(STATUS "ctbrowser: Boost headers ${CTBROWSER_BOOST_INCLUDE_DIR}, "
                  "url ${CTBROWSER_BOOST_URL_LIBRARY}")
 else()
-  # 1.88 IS WHERE Boost.Hash2 ARRIVED, and the script image's source hash is
-  # its xxhash_64. The floor said 1.80 and had been nominal for some time -
-  # Boost.URL, which the line beside it requires as a COMPONENT, did not exist
-  # until 1.81 - so this is the first version the build could actually use.
+  # 1.88 is the first release with Boost.Hash2, whose xxhash_64 is the script
+  # image's source hash.
   find_package(Boost 1.88 REQUIRED CONFIG COMPONENTS url program_options)
 endif()
-# GLOBAL, because this file runs in lib/'s scope and an imported target is seen
-# only there and below - but ctbrowser-options, which links it, is in tools/, and
-# the tests and ctcompile that link that are further away still.
+# Global, because this file runs in lib/'s scope and an imported target is
+# visible only there and below, but ctbrowser-options (in tools/), the tests and
+# ctcompile all link it.
 set_target_properties(Boost::program_options PROPERTIES IMPORTED_GLOBAL TRUE)
 
 find_package(Threads REQUIRED)
 
-# THE ALLOCATOR. mimalloc backs operator new/delete (core/allocator.cpp),
-# because allocator traffic is ~4.8% of a Phaser frame and a drop-in allocator
-# is a link-line change that cannot alter results - see docs/performance.md,
-# which also records why jemalloc lost (a tie on wall clock, and no
-# cross-build).
+# The allocator. mimalloc backs operator new/delete (lib/Core/allocator.cpp)
+# because allocator traffic is ~4.8% of a Phaser frame, and a drop-in allocator
+# is a link-line change that cannot alter results. docs/performance.md also
+# records why jemalloc lost (a tie on wall clock, and no cross build).
 #
-# REQUIRED once found, and PUBLIC on purpose: an executable that links the
-# engine but not mimalloc would resolve operator new from libstdc++ instead and
-# silently run on the system allocator. unittests/unit/core/basics asks
-# ctbrowser::allocator_name() so that mistake is a test failure.
+# Required when CTBROWSER_USE_MIMALLOC is ON, and linked PUBLIC on purpose: an
+# executable that links the engine but not mimalloc would resolve operator new
+# from libstdc++ and silently run on the system allocator.
+# unittests/unit/core/basics asks ctbrowser::allocator_name() so that mistake
+# fails a test. The Windows sysroot gets mimalloc from
+# tools/mingw/build-libs-mingw.sh.
 #
-# The Windows sysroot gets it from tools/mingw/build-libs-mingw.sh.
-# BY PATH, NOT BY find_package. mimalloc's exported config advertises a
-# `mimalloc-static` target on distributions that ship only the shared library,
-# so taking the config's word for it fails at link time with a target that
-# cannot be satisfied. Asking for the file answers what is actually installed,
-# and the static one is preferred where both exist because that is what makes a
-# Windows .exe self-contained.
-# BREW IS HINTED EXPLICITLY. Nothing puts its prefix on CMake's default search
-# path, so a box with brew's mimalloc and no apt one configures with "mimalloc
-# not found" while the library sits in /home/linuxbrew/.linuxbrew/lib. The
-# hints are checked FIRST so brew's copy wins over a distribution's - which
-# matters here because apt ships v2 and this tree pins v3, and the two are
-# different allocators behind the same header name.
+# Found by path, not find_package: mimalloc's exported config advertises a
+# `mimalloc-static` target even on distributions that ship only the shared
+# library, which then fails at link time. Searching for the file finds what is
+# actually installed. The static library is preferred where both exist, because
+# it makes a Windows .exe self-contained.
+#
+# Brew's prefixes are hinted explicitly and searched first, so brew's copy wins
+# over a distribution's: apt ships v2 and this tree pins v3, two different
+# allocators behind the same header name.
 find_library(CTBROWSER_MIMALLOC NAMES mimalloc-static mimalloc
   HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
 find_path(CTBROWSER_MIMALLOC_INCLUDE mimalloc.h
@@ -129,10 +117,10 @@ if(CTBROWSER_USE_MIMALLOC AND (NOT CTBROWSER_MIMALLOC OR NOT CTBROWSER_MIMALLOC_
     "Or configure with -DCTBROWSER_USE_MIMALLOC=OFF to use the system allocator.")
 endif()
 
-# simdutf. It backs base64_decode's fast path - 42x on well-formed input, with
-# this file's own decoder still handling anything simdutf's strict mode refuses,
-# so the leniency contract is unchanged. See docs/performance.md, which also
-# records the differential test that ruled out the obvious drop-in.
+# simdutf. It backs base64_decode's fast path (42x on well-formed input). The
+# hand-written loop in lib/Core/algorithms.cpp still handles anything simdutf's
+# strict mode refuses, so the lenient behaviour is unchanged. docs/performance.md
+# records the differential test that ruled out using simdutf alone.
 find_library(CTBROWSER_SIMDUTF NAMES simdutf HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES lib)
 find_path(CTBROWSER_SIMDUTF_INCLUDE simdutf.h HINTS ${CTBROWSER_BREW_HINTS} PATH_SUFFIXES include)
 if(NOT CTBROWSER_SIMDUTF OR NOT CTBROWSER_SIMDUTF_INCLUDE)
@@ -141,41 +129,35 @@ if(NOT CTBROWSER_SIMDUTF OR NOT CTBROWSER_SIMDUTF_INCLUDE)
     "Windows cross: run tools/mingw/build-libs-mingw.sh")
 endif()
 
-# --- THE HTTP TRANSPORT ---------------------------------------------------
+# --- HTTP transport -------------------------------------------------------
 #
-# libcurl, and only libcurl. There used to be a hand-written Asio client beside
-# it and a switch to choose; both are gone (see docs/build.md). Asio is a
-# socket, and everything above the socket - the request line, header folding,
-# chunked decoding, redirects - had to be written and maintained here, which is
-# precisely the half a browser keeps needing more of. curl brings TLS as well:
-# SCHANNEL on Windows, so the cross build has https with no OpenSSL.
+# libcurl is the only transport. It provides HTTP framing (request lines,
+# chunked decoding, redirects and so on) and TLS, using SChannel on Windows, so
+# the cross build has https without OpenSSL. See docs/build.md.
 #
-# REQUIRED rather than optional. An engine that silently falls back to a
-# transport with no TLS is worse than one that will not configure.
+# Required rather than optional: an engine that silently fell back to a
+# transport with no TLS would be worse than one that does not configure.
 find_package(CURL REQUIRED)
 
-# --- PNG, WITHOUT SDL ----------------------------------------------------
-# The engine decoded BMP itself and got every other format from a hook the
-# application layer fills in from SDL3_image. That split held until `tests/`
-# needed a PNG: the suite is SDL-FREE by an invariant `test/lint/api_surface`
-# lints for, so every test saw a PNG as a zero-sized image and nothing said so.
-# Phaser's texture manager loads three base64 PNGs during boot and waits for
-# all three, which is how it was found.
+# --- PNG, without SDL ----------------------------------------------------
+# PNG is decoded inside the engine, not through SDL3_image, because the test
+# suite is SDL-free (test/lint/api_surface enforces this). A PNG decoded only
+# when SDL was present would be a zero-sized image in every test.
 #
-# LIBPNG, the format's reference implementation, and zlib with it. PRIVATE for
-# the same reason as curl and boost/url: png.h is png.cpp's business.
+# libpng, the format's reference implementation, brings zlib with it. Linked
+# PRIVATE, like curl and Boost.URL: only png.cpp includes png.h.
 find_package(PNG REQUIRED)
 
-# --- JPEG, WITHOUT SDL ---------------------------------------------------
-# The same move as PNG above and for the same reason: a format that only
-# decodes when SDL3_image happened to be found is one no test can assert on
-# and no golden can compare.
+# --- JPEG, without SDL ---------------------------------------------------
+# Decoded inside the engine for the same reason as PNG: a format that decodes
+# only when SDL3_image is found is one no test can assert on and no golden can
+# compare.
 #
-# LIBJPEG-TURBO through its TurboJPEG API - libjpeg's decoder with SIMD, and
-# the one browsers and Android ship. PRIVATE: turbojpeg.h is jpeg.cpp's
-# business. No CMake config module is guaranteed for it, so pkg-config is the
-# portable way to ask, with a plain library search as the fallback the cross
-# build lands on.
+# libjpeg-turbo through its TurboJPEG API (libjpeg's decoder with SIMD, the one
+# browsers and Android ship). Linked PRIVATE: only jpeg.cpp includes
+# turbojpeg.h. No CMake config module is guaranteed for it, so pkg-config is
+# asked first, with a plain library search as the fallback the cross build
+# uses.
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
   pkg_check_modules(CTB_TURBOJPEG QUIET IMPORTED_TARGET libturbojpeg)

@@ -1,10 +1,12 @@
+//===- ctbrowser/examples/demos/game.cpp - Keyboard canvas game demo ------===//
+//
 // A small canvas game, driven by keys.
 //
-// the previous engine's version of this used engine-specific shorthand - getContext("game") by
-// element id, and global onKey/onFrame callbacks. None of that is here: the
-// page below is ordinary web code, because the engine now supports ordinary
-// web code and a shim that only this browser understands is a shim nobody can
-// test against a real one.
+// The page is ordinary web code (keydown/keyup listeners, canvas 2D,
+// requestAnimationFrame), so it runs unchanged in any browser and can be
+// checked against one.
+//
+//===----------------------------------------------------------------------===//
 
 #include <ctbrowser.hpp>
 

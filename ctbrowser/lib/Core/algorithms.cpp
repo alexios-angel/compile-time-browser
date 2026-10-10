@@ -1,3 +1,12 @@
+//===- ctbrowser/lib/Core/algorithms.cpp - Small shared algorithms --------===//
+//
+// ASCII case folding and comparison, top-level list splitting, WTF-8 <-> UTF-16
+// conversion, and base64 (declared in core/algorithms.hpp). Everything here is
+// ASCII-only and locale-independent so goldens compare byte for byte across
+// platforms.
+//
+//===----------------------------------------------------------------------===//
+
 #include <ctbrowser/core/algorithms.hpp>
 
 #include <simdutf.h>
@@ -73,7 +82,7 @@ std::u16string wtf8_to_utf16(std::string_view text) {
     units.reserve(text.size());
     for (std::size_t at = 0; at < text.size();) {
         // A truncated or invalid sequence: the byte stands for itself, which
-        // keeps this total on any bytes at all - the document's text comes
+        // keeps this total on any bytes at all, since the document's text comes
         // from a tokenizer that does not promise well-formedness.
         const char32_t cp = decode_utf8(text, at);
         if (cp >= 0x10000) {
@@ -101,8 +110,8 @@ std::string utf16_to_wtf8(std::u16string_view units) {
     return out;
 }
 
-// The value of one base64 alphabet character, or -1 for anything else -
-// padding, whitespace and garbage alike, all of which the lenient path skips.
+// The value of one base64 alphabet character, or -1 for anything else
+// (padding, whitespace and garbage alike, all of which the lenient path skips).
 [[nodiscard]] constexpr int base64_sextet(char c) noexcept {
     if (c >= 'A' && c <= 'Z') { return c - 'A'; }
     if (c >= 'a' && c <= 'z') { return c - 'a' + 26; }
@@ -140,24 +149,21 @@ std::string base64_encode(std::string_view bytes, bool url, bool omit_padding) {
     return out;
 }
 
-// The buffer is sized by rounding the character count UP to a whole group:
-// `n / 4 * 3` assumes the padding is present, and unpadded "aGVsbG8" is seven
-// characters that decode to FIVE bytes, not three.
 std::string base64_decode(std::string_view text) {
-    // THE FAST PATH: simdutf, which decodes at ~48 GB/s against this loop's
-    // ~1.1 GB/s - 42x, measured on a payload the size of the base64 PNGs Phaser
-    // decodes at boot (docs/performance.md).
+    // Fast path: simdutf, which decodes at ~48 GB/s against this loop's
+    // ~1.1 GB/s (42x, measured on a payload the size of the base64 PNGs Phaser
+    // decodes at boot; see docs/performance.md).
     //
-    // STRICT MODE, and the fallback below is not a formality. simdutf's
-    // `accept_garbage` option LOOKS like this function's documented leniency
-    // and is not - it stops at the first `=` where this loop reads past it, and
-    // the two disagreed on 4.7% of 200,000 malformed inputs. Restricted to
-    // input strict mode ACCEPTS, they agreed 60,856 times and differed zero
-    // times, which is exactly the precondition being relied on here.
+    // It runs in strict mode, and the fallback below is not a formality.
+    // simdutf's `accept_garbage` option looks like this function's documented
+    // leniency and is not: it stops at the first `=` where this loop reads past
+    // it, and the two disagreed on 4.7% of 200,000 malformed inputs. Restricted
+    // to input strict mode accepts, they agreed 60,856 times and differed zero
+    // times, which is the precondition relied on here.
     //
-    // So: every well-formed payload - every `data:` URL and every real `atob` -
-    // goes through simdutf, and anything it refuses falls through to the loop
-    // that has always handled it. The observable behaviour does not change.
+    // So every well-formed payload (every `data:` URL and every real `atob`)
+    // goes through simdutf, and anything it refuses falls through to the
+    // lenient loop below. The observable behaviour is the same either way.
     if (!text.empty()) {
         std::string fast;
         fast.resize(simdutf::maximal_binary_length_from_base64(text.data(), text.size()));
@@ -169,6 +175,9 @@ std::string base64_decode(std::string_view text) {
         }
     }
 
+    // The buffer is sized by rounding the character count up to a whole group:
+    // `n / 4 * 3` assumes the padding is present, and unpadded "aGVsbG8" is
+    // seven characters that decode to five bytes, not three.
     std::string out;
     out.resize((text.size() + 3) / 4 * 3);
     char * write = out.data();
