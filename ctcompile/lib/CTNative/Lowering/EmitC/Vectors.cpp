@@ -65,14 +65,28 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         op->setAttr(kStringArrayAction, mlir::StringAttr::get(op->getContext(), action));
     };
     fn.getBody().walk([&](mlir::Operation * op) {
-        if (isVectorCallPlumbing(op) || (lower.pageViews && isPageGlobal(op))) {
+        if (isVectorCallPlumbing(op) ||
+            (lower.pageViews && (isPageGlobal(op) || isPageMethodRead(op)))) {
             mark(op, "plumbing");
             return;
         }
-        // An array is an object, so always truthy.
+        // An array or a rect is an object, so always truthy.
         if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(op);
-            truthy && arrays.contains(truthy.getValue())) {
+            truthy && (arrays.contains(truthy.getValue()) ||
+                       carrierOf(lower.typeOf(truthy.getValue())) == carrier::domRect)) {
             mark(op, "truthy");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isRectCall(op) &&
+            carrierOf(lower.typeOf(op->getResult(0))) == carrier::domRect) {
+            mark(op, "bounding_rect");
+            return;
+        }
+        // The null on the branch an element's getBoundingClientRect test never
+        // takes (TypeInference::deadRectReceiver): any rect will do.
+        if (lower.pageViews && TypeInference::deadRectReceiver(op) &&
+            carrierOf(lower.typeOf(op->getResult(0))) == carrier::domRect) {
+            mark(op, "dead_rect");
             return;
         }
         if (auto negated = llvm::dyn_cast<ctjs::UnaryOp>(op);
@@ -90,6 +104,16 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             }
             // The member is recorded now: by replacement time the key is an
             // emitc constant.
+            if (carrierOf(lower.typeOf(read.getObject())) == carrier::domRect) {
+                mark(op, ("rect:" + key).str());
+                return;
+            }
+            // The method exists on every element, so the test is true.
+            if (TypeInference::isRectTest(op) &&
+                carrierOf(lower.typeOf(read.getObject())) == carrier::domElement) {
+                mark(op, "method_test");
+                return;
+            }
             if (carrierOf(lower.typeOf(read.getObject())) == carrier::domElement) {
                 const bool client = key == "clientWidth" || key == "clientHeight";
                 mark(op, key == "children" ? std::string{"children"}
@@ -266,6 +290,24 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(isBooleanCarrier(o->getResult(0).getType())
                  ? lower.convertScalar(b, where, constant, o->getResult(0).getType())
                  : constant);
+        return true;
+    }
+    if (kind == "method_test") {
+        swap(lower.boolConstant(b, where, true));
+        return true;
+    }
+    if (kind == "bounding_rect") {
+        swap(callValue(b, where, o->getResult(0).getType(), "ctnative::getBoundingClientRect",
+                       llvm::cast<ctjs::CallOp>(o).getReceiver()));
+        return true;
+    }
+    if (kind == "dead_rect") {
+        swap(ec::ConstantOp::create(b, where, o->getResult(0).getType(),
+                                    ec::OpaqueAttr::get(context, "ctnative::js_dom_rect{}")));
+        return true;
+    }
+    if (llvm::StringRef field = kind; field.consume_front("rect:")) {
+        swap(callValue(b, where, numeric, "ctnative::rect_" + field, o->getOperand(0)));
         return true;
     }
     if (kind == "document_element") {

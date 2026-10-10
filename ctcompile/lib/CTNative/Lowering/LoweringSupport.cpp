@@ -79,6 +79,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
     if (llvm::isa<SymbolType>(type)) { return carrier::symbol; }
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
+    if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -207,6 +208,13 @@ bool isPageGlobal(mlir::Operation * o) {
         auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
         return get && use.getOperandNumber() == 0 && ctjs::constantKey(get.getKey()) == read;
     });
+}
+
+bool isPageMethodRead(mlir::Operation * o) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o);
+    if (!read || !read.getResult().hasOneUse()) { return false; }
+    auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
+    return call && TypeInference::isRectCall(call) && ctjs::receiverMethod(call) == read;
 }
 
 bool isVectorCallPlumbing(mlir::Operation * o) {

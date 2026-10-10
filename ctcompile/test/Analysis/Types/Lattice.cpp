@@ -331,6 +331,14 @@ const MeetRow kMeetTable[] = {
      "!ctnative.vec<!ctnative.bool>>",
      "a tuple and a vector are different containers"},
 
+    // --- page objects ------------------------------------------------------
+    {"!ctnative.dom_rect", "!ctnative.dom_rect", "!ctnative.dom_rect", "idempotent"},
+    {"!ctnative.dom_rect", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.dom_rect>",
+     "a rect that may be null is an optional rect, not a rect"},
+    {"!ctnative.dom_rect", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.dom_rect, !ctnative.num<f64>>",
+     "a rect is an object, not a Number: the two stay alternatives"},
+
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
      "!ctnative.shared<!ctnative.bool>",
@@ -385,6 +393,7 @@ const char * const kSampleTypes[] = {
     "!ctnative.tuple<!ctnative.str<utf8>, !ctnative.bool>",
     "!ctnative.tuple<!ctnative.bool, !ctnative.bool, !ctnative.bool>",
     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
+    "!ctnative.dom_rect",
 };
 
 //===--------------------------------------------------------------------===//
@@ -639,9 +648,9 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 67 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 70 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 153;
+    const int expectedChecks = 159;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

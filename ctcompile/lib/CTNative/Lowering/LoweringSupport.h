@@ -87,7 +87,9 @@ enum class carrier {
     /// std::pair of its positions' carriers (elementSpelling).
     tuple,
     /// A vector of such tuples (elementArraySpelling).
-    tupleVector
+    tupleVector,
+    /// An ordinary script's getBoundingClientRect answer (Runtime/Page.hpp).
+    domRect
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -114,6 +116,7 @@ inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrow
 /// An ordinary script's element: the runtime's view, which carries the style
 /// engine its page reads need (Runtime/Browser.hpp).
 inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t";
+inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
@@ -151,8 +154,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::stringVector, ""},
     {carrier::tuple, ""},
     {carrier::tupleVector, ""},
+    {carrier::domRect, kDOMRectType},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::tupleVector) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::domRect) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -251,6 +255,10 @@ bool isVectorCallPlumbing(mlir::Operation * o);
 /// `document.documentElement` or `window.devicePixelRatio` off it. The read
 /// lowers to a runtime call, so the load lowers to nothing.
 bool isPageGlobal(mlir::Operation * o);
+/// Whether `o` reads a page method only to call it on the object it read it
+/// from (`el.getBoundingClientRect()`). The call lowers to a runtime call, so
+/// the read lowers to nothing.
+bool isPageMethodRead(mlir::Operation * o);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
 llvm::StringRef mixedMapKeySpelling(mlir::Type type);

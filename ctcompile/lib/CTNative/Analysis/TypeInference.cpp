@@ -43,6 +43,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/Support/raw_ostream.h"
@@ -282,11 +283,69 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     return appended == appends_.end() ? element : joinLattices(op, appended->second, element);
 }
 
+bool TypeInference::isRectTest(mlir::Operation * op) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
+    return read && ctjs::constantKey(read.getKey()) == "getBoundingClientRect" &&
+           !read.getResult().use_empty() &&
+           llvm::all_of(read.getResult().getUsers(),
+                        [](mlir::Operation * user) { return llvm::isa<ctjs::TruthyOp>(user); });
+}
+
+bool TypeInference::isRectCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || !call.getArgs().empty() || ctjs::methodKey(call) != "getBoundingClientRect") {
+        return false;
+    }
+    auto read = ctjs::receiverMethod(call);
+    return read.getObject() == call.getReceiver() && read.getResult().hasOneUse();
+}
+
+mlir::Value TypeInference::deadRectReceiver(mlir::Operation * op) {
+    auto null = llvm::dyn_cast_or_null<ctjs::ConstantOp>(op);
+    if (!null || !llvm::isa<ctjs::NullAttr>(null.getValue()) || !null.getResult().hasOneUse()) {
+        return {};
+    }
+    mlir::OpOperand & use = *null.getResult().getUses().begin();
+    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+    auto selected =
+        yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp()) : mlir::scf::IfOp{};
+    if (!selected || yield->getParentRegion() != &selected.getElseRegion()) { return {}; }
+    auto truthy = selected.getCondition().getDefiningOp<ctjs::TruthyOp>();
+    auto test =
+        truthy ? truthy.getValue().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+    if (!test || !isRectTest(test)) { return {}; }
+    mlir::Operation * made =
+        selected.thenYield().getOperand(use.getOperandNumber()).getDefiningOp();
+    if (!isRectCall(made) || llvm::cast<ctjs::CallOp>(made).getReceiver() != test.getObject()) {
+        return {};
+    }
+    return test.getObject();
+}
+
 mlir::Type TypeInference::domReadType(mlir::Operation * op,
                                       llvm::ArrayRef<const TypeLattice *> operands) {
+    mlir::MLIRContext * c = op->getContext();
+    const auto element = [&](mlir::Value value) {
+        return llvm::isa_and_nonnull<DOMElementType>(joinLattices(op, value, mlir::Type{}));
+    };
+    // `el.getBoundingClientRect ? el.getBoundingClientRect() : null` on an
+    // element: the method exists, so the test is true, the call answers a rect
+    // and the null is on a branch that never runs. Typing that null as the
+    // rect keeps the join a rect rather than an optional one.
+    if (isRectCall(op) && element(llvm::cast<ctjs::CallOp>(op).getReceiver())) {
+        return DOMRectType::get(c);
+    }
+    if (const mlir::Value receiver = deadRectReceiver(op); receiver && element(receiver)) {
+        return DOMRectType::get(c);
+    }
     auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
     if (!read) { return {}; }
-    mlir::MLIRContext * c = op->getContext();
+    if (llvm::isa_and_nonnull<DOMRectType>(operands[0]->getValue().getType())) {
+        const llvm::StringRef field = ctjs::constantKey(read.getKey());
+        return field == "left" || field == "top" || field == "width" || field == "height"
+                   ? doubleType(c)
+                   : mlir::Type{};
+    }
     const llvm::StringRef key = ctjs::constantKey(read.getKey());
     if (key == "documentElement" && isRealmGlobal(read.getObject().getDefiningOp(), "document")) {
         return DOMElementType::get(c);
@@ -296,6 +355,8 @@ mlir::Type TypeInference::domReadType(mlir::Operation * op,
     }
     if (!llvm::isa_and_nonnull<DOMElementType>(operands[0]->getValue().getType())) { return {}; }
     if (key == "tagName" || key == "id" || key == "className") { return stringType(c); }
+    // The method itself, read only to test that it exists: a function, so true.
+    if (isRectTest(op)) { return boolType(c); }
     if (key == "children") { return VecType::get(c, DOMElementType::get(c)); }
     // Only the root's client size is native (Page.hpp's clientWidth throws
     // for any other element), so only a read straight off documentElement.

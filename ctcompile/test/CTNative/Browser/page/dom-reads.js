@@ -1,7 +1,8 @@
 // The DOM reads of an ordinary native script: document.documentElement, an
 // element's tagName, id, className and children, the root's clientWidth and
-// clientHeight, and window.devicePixelRatio. dom-reads.test runs it on the
-// interpreter and natively over dom-reads.html and compares the answers.
+// clientHeight, window.devicePixelRatio, and getBoundingClientRect guarded as
+// css-dump.js guards it. dom-reads.test runs it on the interpreter and
+// natively over dom-reads.html and compares the answers.
 function dom_reads() {
     var root = document.documentElement;
     var out = root.tagName + ' ' + root.id + ' ' + root.className;
@@ -14,7 +15,10 @@ function dom_reads() {
         out += '|' + kid.tagName + '#' + kid.id + '.' + kid.className;
         var grand = kid.children;
         for (var j = 0; j < grand.length; j++) {
-            out += '>' + grand[j].tagName;
+            var el = grand[j];
+            var r = el.getBoundingClientRect ? el.getBoundingClientRect() : null;
+            out += '>' + el.tagName + '@' + (r ? r.left : '') + ',' + (r ? r.top : '') + ' ' +
+                (r ? r.width : '') + 'x' + (r ? r.height : '');
         }
     }
     return out + '|' + root.clientWidth + 'x' + root.clientHeight + '@' +

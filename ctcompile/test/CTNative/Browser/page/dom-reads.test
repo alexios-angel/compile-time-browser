@@ -5,4 +5,4 @@
 # RUN: diff %t.vm %t.native
 # RUN: FileCheck %s --input-file %t.native
 # RUN: %nm -C %{obj}/ctcompile-test-dom-reads-native | not grep -E "ctbrowser::script::"
-# CHECK: HTML top b a|HEAD#.>TITLE|BODY#.page>DIV>SECTION|400x300@1
+# CHECK: HTML top b a|HEAD#.>TITLE@0,0 0x0|BODY#.page>DIV@10.25,16 33.29999923706055x10.5>SECTION@8,26.5 384x0|400x300@1

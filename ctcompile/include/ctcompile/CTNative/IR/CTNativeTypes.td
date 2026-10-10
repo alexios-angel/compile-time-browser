@@ -87,13 +87,25 @@ def CTNative_BoxedType : CTNative_Type<"Boxed", "boxed"> {
 def CTNative_DOMElementType : CTNative_Type<"DOMElement", "dom_element"> {
   let summary = "A borrowed ctbrowser document and element node handle";
   let description = [{
-    Introduced only by a live, fingerprint-bound native DOM entry proof.
+    Introduced by a live, fingerprint-bound native DOM entry proof, or by an
+    ordinary script's page reads (TypeInference::domReadType), where the
+    carrier is the runtime's ctnative::js_element_t view instead.
     The document owns the node and outlives the call; identity includes both
     the document address and node_id. This is neither an owning JavaScript
     object nor a numeric node ID. A local closest result may be a canonical
     empty handle denoting null; live proof permits only identity comparisons
     of that nullable result, never dereference. Retention and borrowed function
     results are refused.
+  }];
+}
+
+def CTNative_DOMRectType : CTNative_Type<"DOMRect", "dom_rect"> {
+  let summary = "A DOMRect's geometry, as ctnative::js_dom_rect";
+  let description = [{
+    The answer of an ordinary script's `el.getBoundingClientRect()` on a
+    proved page element: left, top, width and height as Numbers, copied out
+    of the laid-out page (Runtime/Page.hpp). A snapshot, like the VM's DOMRect,
+    so it outlives later layout. It meets only itself.
   }];
 }
 
