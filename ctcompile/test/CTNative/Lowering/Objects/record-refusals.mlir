@@ -19,6 +19,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/kept.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=KEPT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/argument.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ARGUMENT
@@ -36,7 +39,14 @@
 // STORED: ctnative.not_native = "an object literal that escapes - it is returned"
 // STORED: ctnative.not_native = "field `r` is stored a !ctnative.boxed, not a number or a boolean"
 
-// --- Passed on to a call, which could keep it -----------------------------
+// --- Lent to a parameter that keeps it -------------------------------------
+// The parameter is stored into a global, so it is no record parameter, and the
+// call that lends to it is a use the record rule does not take.
+// KEPT: ctnative.not_native = "an object literal that escapes - it is returned"
+
+// --- Lent to a parameter that returns it ----------------------------------
+// The callee hands the reference back, so caller and result would be two
+// copies of one object.
 // ARGUMENT: ctnative.not_native = "an object literal that escapes - it is returned"
 
 // --- Two literals joined by control flow -----------------------------------
@@ -73,6 +83,24 @@ function store() {
 }
 var answer = store();
 
+//--- kept.js
+function make() {
+    return {
+        v: 1
+    };
+}
+var keep = 0;
+
+function stash(o) {
+    keep = o;
+    return o.v;
+}
+
+function lend() {
+    return stash(make());
+}
+var answer = lend();
+
 //--- argument.js
 function make() {
     return {
@@ -80,12 +108,12 @@ function make() {
     };
 }
 
-function read(o) {
-    return o.v;
+function same(o) {
+    return o;
 }
 
 function pass() {
-    return read(make());
+    return same(make()).v;
 }
 var answer = pass();
 

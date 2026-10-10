@@ -438,7 +438,7 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
             const mlir::Value actual = call->getOperand(index);
             // Each forwarded slot needs its own complete callable census.
             // A schema group alone proves neither origin nor initialization.
-            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() &&
+            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() && !isRecordCall(actual) &&
                  !objectParameterCallSites_.contains(actual)) ||
                 !self(self, actual, call)) {
                 return false;

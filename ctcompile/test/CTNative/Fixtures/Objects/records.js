@@ -6,7 +6,8 @@
 // every printed global.
 //
 //   viewport12 = 12    client20 = 20    mutated25 = 25    twocalls103 = 103
-//   optional10 = 10    chained9 = 9
+//   optional10 = 10    chained9 = 9       lent42 = 42      clientbox13 = 13
+//   grown3 = 3         forwarded4 = 4
 
 // The rectangle Popper's getViewportRect returns: four Number fields.
 function viewport(width, height) {
@@ -72,6 +73,53 @@ function optional_field() {
     return p.m * 2;
 }
 
+// A record lent to a parameter. The callee receives a pointer to the caller's
+// copy, so it reads the same object the caller holds.
+function area_of(r) {
+    return r.width * r.height;
+}
+
+function lent() {
+    var r = viewport(6, 7);
+    return area_of(r);
+}
+
+// Popper's rectToClientRect: it reads a lent record and returns a new one.
+function to_client(rect) {
+    return {
+        left: rect.x,
+        top: rect.y,
+        right: rect.x + rect.width,
+        bottom: rect.y + rect.height
+    };
+}
+
+function client_box() {
+    var c = to_client(client_rect(1, 2, 3, 4));
+    return c.left + c.top + c.right + c.bottom;
+}
+
+// A write through the parameter is a write to the caller's object: one
+// object, two names, as in JavaScript.
+function grow(r) {
+    r.width = r.width + 1;
+}
+
+function grown() {
+    var r = viewport(2, 3);
+    grow(r);
+    return r.width;
+}
+
+// A record parameter lent on to another record parameter.
+function forward(r) {
+    return area_of(r);
+}
+
+function forwarded() {
+    return forward(viewport(2, 2));
+}
+
 // A record's field passed on to another record function.
 function chained() {
     var a = viewport(4, 5);
@@ -85,3 +133,7 @@ var mutated25 = mutated();
 var twocalls103 = two_calls();
 var optional10 = optional_field();
 var chained9 = chained();
+var lent42 = lent();
+var clientbox13 = client_box();
+var grown3 = grown();
+var forwarded4 = forwarded();

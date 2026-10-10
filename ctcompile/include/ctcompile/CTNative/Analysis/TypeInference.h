@@ -215,8 +215,11 @@ public:
     /// Marks data records returned by value with kRecordReturn: a private
     /// function, called only directly, whose every `ctjs.return` returns an
     /// object literal it made, used otherwise only through constant keys, and
-    /// whose every call result is used only through constant keys. Run once,
-    /// after closure lifting and before groupReceivers.
+    /// whose every call result is used only through constant keys or lent to
+    /// a record parameter. A record parameter belongs to a private function
+    /// called only directly, every call passes it a record, and it is used the
+    /// same way; its index joins `ctnative.object_args`. Run once, after
+    /// closure lifting and before groupReceivers.
     static void markRecordReturns(mlir::Operation * top);
     /// Whether `value` is the result of a call kRecordReturn marks.
     static bool isRecordCall(mlir::Value value);
