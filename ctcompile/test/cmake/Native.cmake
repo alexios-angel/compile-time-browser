@@ -31,6 +31,12 @@ ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 # Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-callable)
 
+# ctnative::dictionary, ctnative::Object (CTNative/Runtime/Dictionary.hpp,
+# Object.hpp) and ctnative::callable_identity (Handlers.hpp): an object used as
+# a string-keyed table, and `===` on function values. Header-only; String.hpp
+# needs ctbrowser's headers. Its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-handlers LIBS ctbrowser::ctbrowser)
+
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
 # reaches the interpreter, linked against the engine; it must fail the
