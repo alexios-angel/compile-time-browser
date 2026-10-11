@@ -185,9 +185,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                 return;
             }
             if (!arrays.contains(read.getObject())) { return; }
-            mark(op, ctjs::constantKey(read.getKey()) == "length" ? "length"
-                     : TypeInference::isBoundedIndexRead(op)      ? "element"
-                                                                  : "at");
+            mark(op, ctjs::constantKey(read.getKey()) == "length"                   ? "length"
+                     : TypeInference::isBoundedIndexRead(op)                        ? "element"
+                     : carrierOf(lower.typeOf(read.getObject())) == carrier::vector ? "at_number"
+                                                                                    : "at");
             return;
         }
         auto call = llvm::dyn_cast<ctjs::CallOp>(op);
@@ -212,6 +213,22 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         case VectorCall::includes:
             if (arrays.contains(call.getReceiver())) { mark(op, "includes"); }
             break;
+        case VectorCall::builtinStatic: {
+            // The row rides on the mark, as `static <kinds> <callee>` with one
+            // `s` (String), `n` (Number) or `e` (Element) per parameter: the
+            // reads it was recognised by are plumbing, replaced first, and so
+            // are String literal arguments.
+            using Param = TypeInference::BuiltinStatic::Param;
+            const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+            std::string action = "static ";
+            for (unsigned i = 0; i < row.arity; ++i) {
+                action += row.params[i] == Param::string   ? 's'
+                          : row.params[i] == Param::number ? 'n'
+                                                           : 'e';
+            }
+            mark(op, action + " " + row.callee.str());
+            break;
+        }
         case VectorCall::callback:
             if (arrays.contains(call.getReceiver())) {
                 mark(op, "callback");
@@ -306,7 +323,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     const auto place = [&](mlir::Value array) { return lowering::cellPlace(b, where, array); };
     const auto numeric = carrierType(context, carrier::number);
     const auto vectorValue = ec::OpaqueType::get(context, kStringArrayType);
-    const llvm::StringRef kind = action.getValue();
+    llvm::StringRef kind = action.getValue();
     if (kind == "plumbing") {
         // A method read or RegExp literal the call below it consumes: a dead
         // placeholder, as for an erased property-key constant.
@@ -417,11 +434,12 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
                        mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)}));
         return true;
     }
-    if (kind == "at") {
+    if (kind == "at" || kind == "at_number") {
         const mlir::Type result = o->getResult(0).getType();
-        const mlir::Value value =
-            callValue(b, where, carrierType(context, carrier::nullableString), "ctnative::vec_at",
-                      mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)});
+        const mlir::Value value = callValue(
+            b, where,
+            carrierType(context, kind == "at" ? carrier::nullableString : carrier::nullable),
+            "ctnative::vec_at", mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)});
         swap(lower.convertScalar(b, where, value, result));
         return true;
     }
@@ -489,6 +507,18 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(callValue(b, where, carrierType(context, carrier::string),
                        "ctnative::Array.prototype.join.call",
                        mlir::ValueRange{place(call.getReceiver()), separator}));
+        return true;
+    }
+    if (kind.consume_front("static ")) {
+        // `ctnative::Number.parseInt(s, radix)`: admission proved each
+        // argument the kind its parameter asks; only a Number converts.
+        const auto [kinds, callee] = kind.split(' ');
+        llvm::SmallVector<mlir::Value, 2> operands;
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            operands.push_back(
+                kinds[index] == 'n' ? lower.convertScalar(b, where, argument, numeric) : argument);
+        }
+        swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;
     }
     if (kind == "includes") {

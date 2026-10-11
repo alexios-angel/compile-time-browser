@@ -67,6 +67,7 @@ TypeInference::VectorCall TypeInference::vectorCallOf(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
     if (!call) { return VectorCall::none; }
     if (isArrayCallbackCall(call)) { return VectorCall::callback; }
+    if (builtinStaticOf(call)) { return VectorCall::builtinStatic; }
     if (ctjs::calleeGlobalName(call) == "__ctbrowser_regexp") { return VectorCall::regexp; }
     const std::size_t arity = call.getArgs().size();
     if (arity == 1 && isMethodCall(call, "push")) { return VectorCall::push; }

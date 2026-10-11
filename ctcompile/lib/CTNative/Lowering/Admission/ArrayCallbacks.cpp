@@ -26,7 +26,7 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
             return self.refuse("the receiver of " + method + " is an element array: " + why);
         }
         return self.refuse("the receiver of " + method + " is " + printed(array) +
-                           ", not an array of Strings or rows");
+                           ", not an array of Strings, Numbers or rows");
     }
     auto callback = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         call, call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback));
@@ -50,7 +50,7 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
         }
         return isElementArray(result, self.typeOf(result), self.pageViews()) ||
                self.refuse("the result of " + method + " is " + printed(self.typeOf(result)) +
-                           ", not an array of Strings or rows");
+                           ", not an array of Strings, Numbers or rows");
     }
     if (key == "reduce") {
         // The runtime's accumulator is the initial value's C++ type, and each

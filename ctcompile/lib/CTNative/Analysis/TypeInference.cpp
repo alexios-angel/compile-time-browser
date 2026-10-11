@@ -459,7 +459,9 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                        : mlir::Type{};
         }
         auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(operands[0]));
-        if (!vector || !lowered(vector.getElementType()) ||
+        if (!vector ||
+            (!lowered(vector.getElementType()) && !(llvm::isa<NumType>(vector.getElementType()) &&
+                                                    isNumberElementVector(read.getObject()))) ||
             elementVectorAliases(read.getObject()).empty()) {
             return {};
         }
@@ -495,6 +497,18 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         if (members.empty()) { return VecType::get(c, stringType(c)); }
         const mlir::Type stored = element(members);
         return VecType::get(c, stored ? stored : stringType(c));
+    }
+    case VectorCall::builtinStatic: {
+        // The row's result once each String parameter is given a String;
+        // admission checks the others.
+        const BuiltinStatic & row = *builtinStaticOf(op);
+        for (std::size_t i = 2; i < operands.size(); ++i) {
+            if (row.params[i - 2] == BuiltinStatic::Param::string &&
+                !llvm::isa_and_nonnull<StrType>(typeOf(operands[i]))) {
+                return {};
+            }
+        }
+        return row.result == BuiltinStatic::Result::string ? stringType(c) : doubleType(c);
     }
     case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
     case VectorCall::callback: return arrayCallbackType(op, operands, pending);
