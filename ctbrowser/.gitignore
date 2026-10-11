@@ -9,3 +9,6 @@
 /*.ppm
 /*.log
 /*.csv
+
+# The documentation stays on disk but out of the repository (user, 2026-10-11).
+/docs/
