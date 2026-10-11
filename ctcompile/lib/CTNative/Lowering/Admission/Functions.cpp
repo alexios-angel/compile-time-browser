@@ -63,7 +63,9 @@ bool admission::function(ctjs::FuncOp fn) {
         // JsonType also describes widened lattice facts. Only the complete DOM
         // proof establishes a parsed tree with owning, identity-free contents.
         return storage == carrier::none ||
-               (storage == carrier::json && (!domEntry || domEntry->entry() != fn));
+               (storage == carrier::json && (!domEntry || domEntry->entry() != fn)) ||
+               // ClosureSets.cpp: only a set the lift made has a representation.
+               (storage == carrier::closureSet && !isProvedClosureSet(fn, typeOf(value)));
     };
     // The receiver is a parameter when the lift said so, and %arg0 is then
     // the one implicit argument that has a carrier: the generated class of

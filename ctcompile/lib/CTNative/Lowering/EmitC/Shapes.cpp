@@ -105,6 +105,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     const auto carried = [&](mlir::Value v) {
         auto type = typeOf(v);
         if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) { return tableType(table); }
+        if (mlir::Type set = closureSetCarrierOf(v)) { return set; } // ClosureSets.cpp
         if (auto closure = llvm::dyn_cast_or_null<ClosureType>(type)) {
             return closureCarrierType(closure);
         }

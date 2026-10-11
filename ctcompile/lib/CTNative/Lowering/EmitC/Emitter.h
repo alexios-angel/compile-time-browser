@@ -264,9 +264,12 @@ struct lowering {
     bool replaceClosureSetMember(mlir::Operation * op);
     std::string closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets);
     std::string closureSetMemberSpelling(llvm::StringRef target);
+    mlir::Type closureSetCarrierOf(mlir::Value v);
+    void declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered);
     llvm::StringMap<std::string> closureSetMembers;
-    /// Every target a closure-set member's closure names, once computed.
-    std::optional<llvm::StringSet<>> closureSetTargets;
+    /// Each closure-set member's target, mapped to its whole set's variant
+    /// spelling, once computed.
+    std::optional<llvm::StringMap<std::string>> closureSetGroups;
     static std::string spelled(mlir::Type type);
 
     std::string spelling(const siteShape & site) const;

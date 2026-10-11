@@ -39,6 +39,8 @@ void lowering::finish() {
                 break;
             }
         }
+        // A class field holding a closure set names its members' functions.
+        declareClosureSetMembers(b, lowered); // ClosureSets.cpp
         // One emitc.class per object shape (not per allocation site), with
         // public fields only. A shape family whose members disagree on a field
         // type becomes a class template: the varying fields' types are template
