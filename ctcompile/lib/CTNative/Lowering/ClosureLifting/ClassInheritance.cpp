@@ -378,12 +378,9 @@ struct flattener {
         Reason returned;
         ctjs::FuncOp parentFn = targetOf(parent->constructor);
         parentFn.walk([&](ctjs::ReturnOp ret) {
-            mlir::Operation * made = ret.getValue().getDefiningOp();
-            if (returned || ret.getValue() == parentFn.getBody().front().getArgument(0) ||
-                llvm::isa_and_nonnull<ctjs::ConstantOp, ctjs::BinaryOp, ctjs::BinaryStaticOp,
-                                      ctjs::UnaryOp, ctjs::CompareOp, ctjs::TruthyOp,
-                                      ctjs::FromBoolOp, ctjs::InstanceOfOp, ctjs::HasPropertyOp>(
-                    made)) {
+            llvm::DenseSet<mlir::Value> seen;
+            if (returned ||
+                thisOrPrimitive(ret.getValue(), parentFn.getBody().front().getArgument(0), seen)) {
                 return;
             }
             returned = "its parent's constructor may return an object, which would replace `this`";
@@ -528,6 +525,11 @@ struct flattener {
         }
     }
 
+    static bool isUndefined(mlir::Value value) {
+        auto constant = value.getDefiningOp<ctjs::ConstantOp>();
+        return constant && llvm::isa<ctjs::UndefinedAttr>(constant.getValue());
+    }
+
     /// The integer `value` holds when it is a constant, through index casts.
     static std::optional<int64_t> constantInt(mlir::Value value) {
         mlir::Operation * made = value.getDefiningOp();
@@ -584,7 +586,38 @@ struct flattener {
                         inlineRegion(op, *region);
                         changed = true;
                     }
-                } else if (auto select = llvm::dyn_cast<mlir::arith::SelectOp>(op)) {
+                }
+                if (changed) { return mlir::WalkResult::interrupt(); }
+                // A result every arm yields the same outer value for is that
+                // value.
+                if (llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(op)) {
+                    for (mlir::OpResult result : op->getResults()) {
+                        if (result.use_empty()) { continue; }
+                        mlir::Value same;
+                        bool agree = true;
+                        for (mlir::Region & region : op->getRegions()) {
+                            if (region.empty()) {
+                                agree = false;
+                                break;
+                            }
+                            mlir::Value given = region.front().getTerminator()->getOperand(
+                                result.getResultNumber());
+                            if ((same && given != same) ||
+                                (given.getParentRegion() &&
+                                 op->isAncestor(given.getParentRegion()->getParentOp()))) {
+                                agree = false;
+                                break;
+                            }
+                            same = given;
+                        }
+                        if (agree && same) {
+                            result.replaceAllUsesWith(same);
+                            changed = true;
+                        }
+                    }
+                }
+                if (changed) { return mlir::WalkResult::interrupt(); }
+                if (auto select = llvm::dyn_cast<mlir::arith::SelectOp>(op)) {
                     if (auto taken = constantInt(select.getCondition())) {
                         select.getResult().replaceAllUsesWith(*taken ? select.getTrueValue()
                                                                      : select.getFalseValue());
@@ -672,10 +705,96 @@ struct flattener {
     void returnUndefined(ctjs::FuncOp fn) {
         const mlir::Value self = fn.getBody().front().getArgument(0);
         fn.walk([&](ctjs::ReturnOp returned) {
-            if (returned.getValue() != self) { return; }
+            llvm::DenseSet<mlir::Value> seen;
+            if (!thisOrPrimitive(returned.getValue(), self, seen)) { return; }
             mlir::OpBuilder at(returned);
             returned->setOperand(0, undefinedAt(at, returned.getLoc()));
         });
+        // The structured results and block arguments that carried `this` to
+        // those returns are unused now; pass undefined through them instead,
+        // so `this` is used only where the body uses it.
+        for (bool changed = true; changed;) {
+            changed = false;
+            fn.walk([&](mlir::Operation * op) {
+                if (!llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(op)) { return; }
+                for (mlir::OpResult result : op->getResults()) {
+                    if (!result.use_empty()) { continue; }
+                    for (mlir::Region & region : op->getRegions()) {
+                        if (region.empty()) { continue; }
+                        mlir::Operation * yield = region.front().getTerminator();
+                        mlir::OpOperand & carried = yield->getOpOperand(result.getResultNumber());
+                        if (!llvm::isa<ctjs::ValueType>(carried.get().getType()) ||
+                            isUndefined(carried.get())) {
+                            continue;
+                        }
+                        mlir::OpBuilder at(yield);
+                        carried.set(undefinedAt(at, yield->getLoc()));
+                        changed = true;
+                    }
+                }
+            });
+            for (mlir::Block & block : llvm::drop_begin(fn.getBody().getBlocks())) {
+                for (mlir::BlockArgument argument : block.getArguments()) {
+                    if (!argument.use_empty()) { continue; }
+                    for (mlir::Block * from : block.getPredecessors()) {
+                        auto branch =
+                            llvm::dyn_cast<mlir::BranchOpInterface>(from->getTerminator());
+                        if (!branch) { continue; }
+                        for (unsigned i = 0; i < branch->getNumSuccessors(); ++i) {
+                            if (branch->getSuccessor(i) != &block) { continue; }
+                            mlir::OperandRange forwarded =
+                                branch.getSuccessorOperands(i).getForwardedOperands();
+                            const unsigned at = argument.getArgNumber();
+                            if (at >= forwarded.size() ||
+                                !llvm::isa<ctjs::ValueType>(forwarded[at].getType()) ||
+                                isUndefined(forwarded[at])) {
+                                continue;
+                            }
+                            mlir::OpBuilder before(branch);
+                            branch->setOperand(forwarded.getBeginOperandIndex() + at,
+                                               undefinedAt(before, branch.getLoc()));
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether every value `value` can hold is `self` or a primitive,
+    /// followed through scf results and block arguments. A poison value is
+    /// one no path that reaches the use produces.
+    static bool thisOrPrimitive(mlir::Value value, mlir::Value self,
+                                llvm::DenseSet<mlir::Value> & seen) {
+        if (!seen.insert(value).second || value == self) { return true; }
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+            mlir::Block * block = argument.getOwner();
+            if (block->isEntryBlock()) { return false; }
+            for (mlir::Block * from : block->getPredecessors()) {
+                auto branch = llvm::dyn_cast<mlir::BranchOpInterface>(from->getTerminator());
+                if (!branch) { return false; }
+                for (unsigned i = 0; i < branch->getNumSuccessors(); ++i) {
+                    if (branch->getSuccessor(i) != block) { continue; }
+                    mlir::Value passed = branch.getSuccessorOperands(i)[argument.getArgNumber()];
+                    if (!passed || !thisOrPrimitive(passed, self, seen)) { return false; }
+                }
+            }
+            return true;
+        }
+        mlir::Operation * made = value.getDefiningOp();
+        if (made->getName().getStringRef() == "ub.poison") { return true; }
+        if (llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(made)) {
+            const unsigned index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+            for (mlir::Region & region : made->getRegions()) {
+                if (region.empty()) { continue; }
+                mlir::Operation * yield = region.front().getTerminator();
+                if (!thisOrPrimitive(yield->getOperand(index), self, seen)) { return false; }
+            }
+            return true;
+        }
+        return llvm::isa<ctjs::ConstantOp, ctjs::BinaryOp, ctjs::BinaryStaticOp, ctjs::UnaryOp,
+                         ctjs::CompareOp, ctjs::TruthyOp, ctjs::FromBoolOp, ctjs::InstanceOfOp,
+                         ctjs::HasPropertyOp>(made);
     }
 
     /// Whether `fn` is the importer's implicit derived constructor:

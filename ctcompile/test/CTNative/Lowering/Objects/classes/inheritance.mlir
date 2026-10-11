@@ -4,7 +4,9 @@
 // The chain mirrors Bootstrap's Config, BaseComponent and components: Config
 // holds the configuration methods, Base calls `super()` and then a method
 // Alert overrides, Alert inherits Base's constructor without writing one, and
-// Toast calls `super(el, 10)` and `super.dispose()`. Each concrete class gets
+// Toast calls `super(el, 10)` and `super.dispose()`. Base's constructor
+// branches, so its implicit `return this` reaches the return through the
+// branch's results. Each concrete class gets
 // its own copy of every function that runs on its instances, named after the
 // class, so `this._base()` inside Alert's copy of `_getConfig` calls Alert's
 // `_base` with no dispatch. Config is never constructed and its copies cover
@@ -54,7 +56,11 @@ function run() {
         dispose() { return 0; }
     }
     class Base extends Config {
-        constructor(el, n) { super(); this._element = el; this._config = this._getConfig(n); }
+        constructor(el, n) {
+            super();
+            if (el > 0) { this._element = el; } else { this._element = 0; }
+            this._config = this._getConfig(n);
+        }
         dispose() { return super.dispose() + this._element + this._config; }
     }
     class Alert extends Base {
