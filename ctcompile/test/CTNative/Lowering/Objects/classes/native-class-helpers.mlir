@@ -20,6 +20,26 @@
 // RUN: %native_reference %t/helper.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/helper.js | FileCheck %s --check-prefix=OBSERVATION
 //
+// A helper that reads one static getter of the class passed to it: the input
+// that native-class-statics-refusals.mlir's ESCAPE case used to refuse, with
+// `show` declared inside `run`. Declared at the top level instead (global.js),
+// the class still specialises and is proved, but `run` reads `show` through a
+// global binding that still holds the original function, so it is refused
+// for that binding, not for the class.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/show.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/show.mlir
+// RUN: FileCheck %s --check-prefix=SHOW --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/show.mlir
+// RUN: ctjs-opt %t/show.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/show.cpp
+// RUN: %gxx -O2 %t/show.cpp -o %t/show-gcc
+// RUN: %t/show-gcc | FileCheck %s --check-prefix=SHOW-RUN
+// RUN: %clangxx -O2 %t/show.cpp -o %t/show-clang
+// RUN: %t/show-clang | FileCheck %s --check-prefix=SHOW-RUN
+// RUN: %native_reference %t/show.js | FileCheck %s --check-prefix=SHOW-RUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/show.js | FileCheck %s --check-prefix=SHOW-RUN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/global.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=GLOBAL --implicit-check-not=ctnative.class_reason
+//
 // What the specialisation refuses: a helper that stores the class or compares
 // it, and one that reaches its captures through its own closure (a direct
 // call of the clone has no closure to pass).
@@ -37,6 +57,9 @@
 // CHECK: emitc.class @B
 // CPP-COUNT-2: function label,
 // OBSERVATION: r=23
+// SHOW: emitc.func @main
+// SHOW-RUN: r=6
+// GLOBAL: ctnative.not_native = "global `show` is !ctnative.boxed, not a number"
 // STORES: ctnative.class_reason = "it has static getter `NAME`; `A` is used as a value by `ctjs.set_property` in `keep${{[0-9]+}}`"
 // COMPARES: ctnative.class_reason = "it has static getter `NAME`; `A` is used as a value by `ctjs.compare` in `same${{[0-9]+}}`"
 // CAPTURES: ctnative.class_reason = "it has static getter `NAME`; `A` is passed to `keep${{[0-9]+}}`, which reads new.target or its own closure in `run${{[0-9]+}}`"
@@ -73,5 +96,21 @@ function run() {
     function keep(k) { return k.NAME.length + seen; }
     class A { constructor(v) { this.v = v; } static get NAME() { return "a"; } }
     return keep(A) + new A(1).v;
+}
+var r = run();
+
+//--- show.js
+function run() {
+    function show(k) { return k.size; }
+    class Box { constructor(v) { this.v = v; } static get size() { return 4; } }
+    return new Box(2).v + show(Box);
+}
+var r = run();
+
+//--- global.js
+function show(k) { return k.size; }
+function run() {
+    class Box { constructor(v) { this.v = v; } static get size() { return 4; } }
+    return new Box(2).v + show(Box);
 }
 var r = run();
