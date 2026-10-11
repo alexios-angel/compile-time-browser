@@ -50,6 +50,27 @@ function label(prefix, text) {
     }, text);
 }
 var labelled = label("x-", "a");
+// The MIXED and CAPTURED shapes of callback/arguments.mlir, run here.
+function mixedRun() {
+    var wrapper = function (factory) {
+        return factory();
+    };
+    return wrapper(function () {
+        return 10;
+    }) + wrapper(function () {
+        return 20;
+    });
+}
+var mixed30 = mixedRun();
+function capturedRun(seed) {
+    var factory = function () {
+        return seed;
+    };
+    return (function (callback) {
+        return callback();
+    })(factory);
+}
+var captured42 = capturedRun(42);
 
 #--- expected.cjs
 const assert = require("node:assert/strict");
@@ -59,6 +80,8 @@ const scope = {};
 vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
 assert.equal(scope.shifted, 40);
 assert.equal(scope.labelled, "x-a|a!");
+assert.equal(scope.mixed30, 30);
+assert.equal(scope.captured42, 42);
 
 #--- retained.js
 var kept;

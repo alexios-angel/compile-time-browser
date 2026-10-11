@@ -22,10 +22,17 @@
 // ESCAPE: ctjs.func @fn$2
 // ESCAPE-SAME: ctnative.not_native
 
-// Two different callbacks for one call-only parameter are borrowed instead
-// (ClosureLifting/BorrowedCallbacks.cpp): the wrapper takes a function_ref.
+// Two different capture-free callbacks for one call-only parameter, which
+// specializeCallbacks refuses because the targets differ, are a group the
+// borrowed-callback rule admits (ClosureLifting/BorrowedCallbacks.cpp): the
+// wrapper takes a function_ref. Borrowed-callbacks.test runs this shape.
 // MIXED: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::function_ref<ctnative::js_num()>">)
-// A callback with a capture is borrowed too, bound to the captured value.
+// A callback with a capture, which specializeCallbacks refuses as not
+// capture-free: the binding written once forwards the closure (rule 1 of
+// ClosureLifter.h), the immediately called wrapper is lifted to a private
+// direct call, and the borrowed-callback rule admits the one-closure group
+// because it captures `seed`, which it binds by value. Borrowed-callbacks.test
+// runs this shape.
 // CAPTURED: call_opaque "std::bind_front"(%{{[0-9]+}}, %arg0)
 // CAPTURED: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::function_ref<ctnative::js_num()>">)
 // RAW: ctnative.callback_refusal = "the wrapper reads its raw argument window"
