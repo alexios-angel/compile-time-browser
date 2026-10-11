@@ -8,7 +8,10 @@
 
 #include "ctcompile/CTNative/Analysis/Instances.h"
 
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+#include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
@@ -242,6 +245,76 @@ template <class Quiet> bool quietBefore(mlir::Operation * op, mlir::Operation * 
         if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(at) && !quiet(at)) { return false; }
     }
     return true;
+}
+
+/// A `for (const k of Object.getOwnPropertyNames(self)) self[k] = null` loop
+/// in `self`'s block, after --ctjs-lift-to-scf: the names call, then the
+/// iteration the importer spells with `__ctbrowser_*` helpers, up to the
+/// iterator's close. Nothing else may happen in between, and nothing the
+/// loop defines may be used after it. Its first and last operation, or none.
+std::optional<std::pair<mlir::Operation *, mlir::Operation *>> ownNameNulling(
+    mlir::OpOperand & use) {
+    auto names = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    auto method = names ? ctjs::receiverMethod(names) : ctjs::GetPropertyOp{};
+    auto object =
+        method ? method.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+    if (!object || object.getName() != "Object" ||
+        ctjs::methodKey(names) != "getOwnPropertyNames" || names.getArgs().size() != 1 ||
+        names.getArgs()[0] != use.get()) {
+        return std::nullopt;
+    }
+    const mlir::Value self = use.get();
+    mlir::Operation * last = nullptr;
+    for (mlir::Operation * at = names->getNextNode(); at && !last; at = at->getNextNode()) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(at);
+        if (call && ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close") { last = at; }
+    }
+    if (!last) { return std::nullopt; }
+    llvm::DenseSet<mlir::Operation *> inside;
+    unsigned stores = 0;
+    bool fits = true;
+    for (mlir::Operation * at = names;; at = at->getNextNode()) {
+        at->walk([&](mlir::Operation * op) {
+            inside.insert(op);
+            const llvm::StringRef dialect = op->getName().getDialectNamespace();
+            if (dialect == "arith" || dialect == "ub" || dialect == "scf") { return; }
+            if (llvm::isa<ctjs::ConstantOp, ctjs::CompareOp, ctjs::TruthyOp, ctjs::UnaryOp,
+                          ctjs::BinaryOp, ctjs::BinaryStaticOp>(op) ||
+                op->getName().getStringRef() == "ctjs.iterable") {
+                return;
+            }
+            if (auto global = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+                fits &= global.getName().starts_with("__ctbrowser_");
+                return;
+            }
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                fits &= read.getObject() != self;
+                return;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                fits &= op == names.getOperation() ||
+                        ctjs::calleeGlobalName(call).starts_with("__ctbrowser_");
+                return;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+                ++stores;
+                fits &= store.getObject() == self && ctjs::constantKey(store.getKey()).empty() &&
+                        static_cast<bool>(ctjs::constantAttr<ctjs::NullAttr>(store.getValue()));
+                return;
+            }
+            fits = false;
+        });
+        if (at == last) { break; }
+    }
+    if (!fits || stores != 1) { return std::nullopt; }
+    for (mlir::Operation * op : inside) {
+        for (mlir::Value result : op->getResults()) {
+            for (mlir::Operation * user : result.getUsers()) {
+                if (!inside.contains(user)) { return std::nullopt; }
+            }
+        }
+    }
+    return std::make_pair(names.getOperation(), last);
 }
 
 /// The values that name one `new Map()`, the method calls made on them, and
@@ -533,7 +606,12 @@ class registryProof {
         for (ctjs::FuncOp method : methods) {
             const mlir::Value self = method.getBody().front().getArgument(ctjs::arg_receiver);
             receivers.insert(self);
+            // The nulling loops first: a loop's own store is another use.
             for (mlir::OpOperand & use : self.getUses()) {
+                if (auto loop = ownNameNulling(use)) { out.ownNameNullings.push_back(*loop); }
+            }
+            for (mlir::OpOperand & use : self.getUses()) {
+                if (inNulling(use.getOwner())) { continue; }
                 if (!instanceUse(use)) {
                     return refuse("`this` in the method `" + jsName(method) + "` of `" + name +
                                   "` reaches " + named(use.getOwner()));
@@ -546,6 +624,53 @@ class registryProof {
                 if (!instanceUse(use)) {
                     return refuse("a new `" + name + "` reaches " + named(use.getOwner()) +
                                   " - only its fields and methods may use it");
+                }
+            }
+        }
+        return true;
+    }
+
+    /// Whether `op` sits in a nulling loop already recorded.
+    bool inNulling(mlir::Operation * op) {
+        return llvm::any_of(out.ownNameNullings, [&](const auto & loop) {
+            for (mlir::Operation * at = loop.first;; at = at->getNextNode()) {
+                if (at->isAncestor(op)) { return true; }
+                if (at == loop.second) { return false; }
+            }
+        });
+    }
+
+    /// The fields every instance has: those the constructor writes through
+    /// `this` at the top of its body, before any call. A nulling loop sets
+    /// own properties, so every field the class ever writes must be one.
+    bool collectFields() {
+        mlir::Block & entry = out.constructor.getBody().front();
+        const mlir::Value self = entry.getArgument(ctjs::arg_receiver);
+        for (mlir::Operation & op : entry) {
+            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::ConstructOp>(op) ||
+                op.getNumRegions() != 0) {
+                break;
+            }
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            const std::string key = store && store.getObject() == self
+                                        ? ctjs::constantKey(store.getKey()).str()
+                                        : std::string{};
+            if (!key.empty() && !llvm::is_contained(out.fields, key)) { out.fields.push_back(key); }
+        }
+        if (out.ownNameNullings.empty()) { return true; }
+        llvm::SmallVector<mlir::Value> selves{self};
+        for (ctjs::FuncOp method : methods) {
+            selves.push_back(method.getBody().front().getArgument(ctjs::arg_receiver));
+        }
+        for (mlir::Value receiver : selves) {
+            for (mlir::Operation * user : receiver.getUsers()) {
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                const llvm::StringRef key = store ? ctjs::constantKey(store.getKey()) : "";
+                if (store && store.getObject() == receiver && !key.empty() &&
+                    !llvm::is_contained(out.fields, key)) {
+                    return refuse(("the own-property loop of `" + name + "` would miss `" + key +
+                                   "`, a field its constructor may not have written yet")
+                                      .str());
                 }
             }
         }
@@ -627,6 +752,10 @@ class registryProof {
                 }
                 continue;
             }
+            if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0) {
+                return refuse("a field of an instance read from the registry Map is written "
+                              "outside its class's constructor and methods");
+            }
             if (llvm::isa<ctjs::SetPropertyOp, ctjs::ConstructOp>(user)) {
                 return refuse("a value read from the registry Map is stored into an object, so "
                               "shared ownership could form a cycle no destructor breaks");
@@ -634,6 +763,28 @@ class registryProof {
             return refuse("a value read from the registry Map reaches " + named(user));
         }
         return true;
+    }
+
+    /// The falsy yields whose join only truthiness reads: every use of the
+    /// joined value is a truthiness test, or a yield where that test holds.
+    void collectFalsyYields() {
+        for (mlir::Value value : maybe) {
+            const bool truthinessOnly = llvm::all_of(value.getUses(), [&](mlir::OpOperand & use) {
+                mlir::Operation * user = use.getOwner();
+                return llvm::isa<ctjs::TruthyOp>(user) ||
+                       (llvm::isa<mlir::scf::YieldOp>(user) && guardedAt(value, user, nullptr));
+            });
+            if (!truthinessOnly) { continue; }
+            for (const source & from : sources.lookup(value)) {
+                auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(from.site);
+                if (!yield || !from.value || nullishBits(from.value) ||
+                    maybe.contains(from.value)) {
+                    continue;
+                }
+                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+                out.falsyYields.emplace_back(yield, index);
+            }
+        }
     }
 
     /// Whether every value joined into an instance is an instance, null or
@@ -712,6 +863,9 @@ class registryProof {
     /// function held as a value could own the Map (see checkCaptors).
     bool instanceUse(mlir::OpOperand & use) {
         if (!dereferences(use)) { return false; }
+        // Only the class's own code writes its fields, so the native type
+        // of each field is the join of the stores through `this`.
+        if (llvm::isa<ctjs::SetPropertyOp>(use.getOwner())) { return isReceiver(use.get()); }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
             return methodNames.contains(ctjs::methodKey(call));
         }
@@ -864,7 +1018,9 @@ public:
             return refuse("the registry Map is iterated, and `delete` removes entries from it "
                           "- a removal during the iteration changes what it visits");
         }
-        if (!checkOuter() || !collectClass() || !checkReceivers()) { return false; }
+        if (!checkOuter() || !collectClass() || !checkReceivers() || !collectFields()) {
+            return false;
+        }
         // Instances read back: every flow followed, every dereference checked.
         for (ctjs::CallOp get : map.gets) { maybe.insert(get.getResult()); }
         for (std::size_t at = 0; at < maybe.size(); ++at) {
@@ -895,8 +1051,30 @@ public:
         // it can be stored anywhere. So no field of an instance can reach the
         // Map or an instance, whatever else it holds.
         if (!checkCaptors()) { return false; }
+        collectFalsyYields();
         for (ctjs::ConstructOp made : constructions) { out.instances.push_back(made.getResult()); }
+        out.methods = methods;
         llvm::append_range(out.readBack, maybe);
+        // The tests against null or undefined that a null pointer answers
+        // exactly: a loose one on a value that is an instance, null or
+        // undefined, or a strict one on a value that can only be the nullish
+        // value it names.
+        for (mlir::Value value : maybe) {
+            for (mlir::Operation * user : value.getUsers()) {
+                auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
+                if (!compare) { continue; }
+                const mlir::Value other =
+                    compare.getLhs() == value ? compare.getRhs() : compare.getLhs();
+                // A falsy non-nullish value (mayBeFalsy) is also a null
+                // pointer, and no comparison with null answers true for it.
+                const unsigned against = nullishBits(other);
+                const unsigned may = nullish.lookup(value);
+                if (compare.getKind() == ctjs::CompareKind::Eq ? (may & mayBeFalsy) == 0
+                                                               : (may & ~against) == 0) {
+                    out.exactTests.push_back(compare);
+                }
+            }
+        }
         return true;
     }
 };
@@ -963,13 +1141,31 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
 }
 
 std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
-    module.walk([](ctjs::FuncOp fn) { fn->removeAttr(kNativeInstanceClass); });
+    module.walk([](mlir::Operation * op) {
+        op->removeAttr(kNativeInstanceClass);
+        op->removeAttr(kNativeInstanceTest);
+        op->removeAttr(kNativeInstanceMethod);
+    });
     std::vector<InstanceRegistry> proved;
     for (InstanceRegistry & registry : proveInstanceRegistries(module)) {
         if (!registry.refusal.empty()) { continue; }
         registry.constructor->setAttr(
             kNativeInstanceClass,
             mlir::StringAttr::get(module.getContext(), jsName(registry.constructor)));
+        for (ctjs::FuncOp method : registry.methods) {
+            method->setAttr(kNativeInstanceMethod,
+                            registry.constructor->getAttr(kNativeInstanceClass));
+        }
+        for (const auto & [yield, index] : registry.falsyYields) {
+            mlir::OpBuilder at(yield);
+            auto null = ctjs::ConstantOp::create(at, yield->getLoc(),
+                                                 ctjs::ValueType::get(module.getContext()),
+                                                 ctjs::NullAttr::get(module.getContext()));
+            yield->setOperand(index, null);
+        }
+        for (mlir::Operation * test : registry.exactTests) {
+            test->setAttr(kNativeInstanceTest, mlir::UnitAttr::get(module.getContext()));
+        }
         proved.push_back(std::move(registry));
     }
     return proved;
@@ -977,6 +1173,179 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
 
 bool isIdentityClass(ctjs::FuncOp fn) {
     return fn && fn->hasAttr(kNativeInstanceClass);
+}
+
+namespace {
+
+/// The identity class a `ctjs.create_object` is a `new` of: the constructor
+/// lift (ClosureLifting/Constructors.cpp) turns `new C(...)` into an empty
+/// literal and a receiver call of C's constructor, whose mark names it.
+llvm::StringRef instanceClassOf(ctjs::CreateObjectOp object) {
+    if (!object->hasAttr(kNativeClassName)) { return {}; }
+    for (mlir::Operation * user : object.getResult().getUsers()) {
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+        if (!call || !call->hasAttr(kNativeReceiver) || call.getReceiver() != object.getResult()) {
+            continue;
+        }
+        if (auto mark = call.getTarget() ? call.getTarget()->getAttrOfType<mlir::StringAttr>(
+                                               kNativeInstanceClass)
+                                         : mlir::StringAttr{}) {
+            return mark.getValue();
+        }
+    }
+    return {};
+}
+
+/// The identity class of a value of type `instance<C>` or `opt<instance<C>>`.
+llvm::StringRef instanceClassOf(mlir::Type type) {
+    if (auto optional = llvm::dyn_cast_or_null<OptType>(type)) { type = optional.getElementType(); }
+    auto instance = llvm::dyn_cast_or_null<InstanceType>(type);
+    return instance ? instance.getClassName() : llvm::StringRef{};
+}
+
+/// The constructor of identity class `name`, or null.
+ctjs::FuncOp constructorOf(mlir::ModuleOp module, llvm::StringRef name) {
+    ctjs::FuncOp found;
+    module.walk([&](ctjs::FuncOp fn) {
+        auto mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass);
+        if (mark && mark.getValue() == name) { found = fn; }
+    });
+    return found;
+}
+
+/// Whether the constructor writes field `key` before anything else can see
+/// the instance: a store to `this` at the top of its body, before any call.
+/// Every instance a registry hands out has then been through that store.
+bool assignedInConstructor(ctjs::FuncOp constructor, llvm::StringRef key) {
+    if (!constructor || constructor.getBody().empty()) { return false; }
+    mlir::Block & entry = constructor.getBody().front();
+    const mlir::Value self = entry.getArgument(ctjs::arg_receiver);
+    for (mlir::Operation & op : entry) {
+        if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::ConstructOp>(op) ||
+            op.getNumRegions() != 0) {
+            return false;
+        }
+        auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+        if (store && store.getObject() == self && ctjs::constantKey(store.getKey()) == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+std::optional<mlir::Type> TypeInference::instanceTypeOf(
+    mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands) {
+    mlir::MLIRContext * context = op->getContext();
+    if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
+        const llvm::StringRef name = instanceClassOf(object);
+        if (name.empty()) { return std::nullopt; }
+        return InstanceType::get(context, name);
+    }
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+    if (!read || operands.empty()) { return std::nullopt; }
+    // A Map's `get` is absent alone until a value stored in the Map is
+    // visited; answering now would let the generic field rule box the read
+    // before the instance arrives.
+    const mlir::Type object = operands[0]->getValue().getType();
+    if (object == OptType::get(context, BottomType::get(context)) &&
+        read.getObject().getDefiningOp() &&
+        nativeMapAction(read.getObject().getDefiningOp()) == "get") {
+        return mlir::Type{};
+    }
+    const llvm::StringRef name = instanceClassOf(object);
+    const llvm::StringRef key = ctjs::constantKey(read.getKey());
+    if (name.empty() || !ctjs::ordinaryKey(key)) { return std::nullopt; }
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    if (!instanceStoresBuilt_) {
+        instanceStoresBuilt_ = true;
+        module.walk([&](ctjs::FuncOp fn) {
+            auto mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass);
+            if (!mark) { mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod); }
+            if (!mark || fn.getBody().empty()) { return; }
+            const mlir::Value self = fn.getBody().front().getArgument(ctjs::arg_receiver);
+            for (mlir::Operation * user : self.getUsers()) {
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (!store || store.getObject() != self) { continue; }
+                instanceStores_[(mark.getValue() + llvm::Twine('\0') +
+                                 ctjs::constantKey(store.getKey()))
+                                    .str()]
+                    .push_back(store.getValue());
+            }
+        });
+    }
+    // The class's stores of `key`. A field the constructor writes first is
+    // never read absent; any other may be.
+    mlir::Type field = assignedInConstructor(constructorOf(module, name), key)
+                           ? mlir::Type{}
+                           : OptType::get(context, BottomType::get(context));
+    const auto stores = instanceStores_.find((name + llvm::Twine('\0') + key).str());
+    if (stores != instanceStores_.end()) { field = joinLattices(op, stores->second, field); }
+    return field;
+}
+
+void TypeInference::joinInstanceReceivers(mlir::Operation * top,
+                                          llvm::EquivalenceClasses<mlir::Value> & classes) {
+    llvm::StringMap<mlir::Value> leader; // Per class, the first member seen.
+    const auto join = [&](llvm::StringRef name, mlir::Value member) {
+        auto [entry, fresh] = leader.try_emplace(name, member);
+        if (fresh) {
+            classes.insert(member);
+        } else {
+            classes.unionSets(entry->second, member);
+        }
+    };
+    top->walk([&](mlir::Operation * op) {
+        if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
+            const llvm::StringRef name = instanceClassOf(object);
+            if (!name.empty()) { join(name, object.getResult()); }
+            return;
+        }
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
+        if (!fn || fn.getBody().empty()) { return; }
+        auto mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass);
+        if (!mark) { mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod); }
+        if (mark) { join(mark.getValue(), fn.getBody().front().getArgument(ctjs::arg_receiver)); }
+    });
+}
+
+void rewriteInstanceRegistries(mlir::ModuleOp module) {
+    mlir::MLIRContext * context = module.getContext();
+    const auto value = ctjs::ValueType::get(context);
+    for (const InstanceRegistry & registry : markInstanceRegistries(module)) {
+        for (const auto & [first, last] : registry.ownNameNullings) {
+            auto names = llvm::cast<ctjs::CallOp>(first);
+            const mlir::Value self = names.getArgs()[0];
+            // One store of null per own property, where the loop began.
+            mlir::OpBuilder at(first);
+            for (const std::string & field : registry.fields) {
+                auto key = ctjs::ConstantOp::create(at, first->getLoc(), value,
+                                                    ctjs::StringAttr::get(context, field));
+                auto null = ctjs::ConstantOp::create(at, first->getLoc(), value,
+                                                     ctjs::NullAttr::get(context));
+                ctjs::SetPropertyOp::create(at, first->getLoc(), self, key, null);
+            }
+            // The loop, last operation first, then what only fed the names
+            // call (`Object.getOwnPropertyNames`).
+            mlir::Value callee = names.getCallee();
+            llvm::SmallVector<mlir::Operation *> loop;
+            for (mlir::Operation * op = first;; op = op->getNextNode()) {
+                loop.push_back(op);
+                if (op == last) { break; }
+            }
+            for (mlir::Operation * op : llvm::reverse(loop)) {
+                op->dropAllUses();
+                op->erase();
+            }
+            for (mlir::Operation * fed = callee.getDefiningOp(); fed && fed->use_empty();) {
+                mlir::Operation * next =
+                    fed->getNumOperands() ? fed->getOperand(0).getDefiningOp() : nullptr;
+                fed->erase();
+                fed = next;
+            }
+        }
+    }
 }
 
 } // namespace ctcompile::ctnative

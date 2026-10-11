@@ -11,6 +11,7 @@
 #include "Admission.h"
 #include "ctcompile/CTJS/Import/EngineGlobals.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
@@ -73,7 +74,9 @@ bool admission::function(ctjs::FuncOp fn) {
     // made before its own rewrite ran, and a later refusal (the callee of
     // a `this.other()` that was not lifted) can have opened it since.
     const bool carriesReceiver = fn->hasAttr(kNativeReceiver);
-    if (carriesReceiver && !isClosedObject(entry.getArgument(0))) {
+    // An identity class's constructor hands `this` to its registry Map, which
+    // the registry proof checked (Analysis/Instances.h).
+    if (carriesReceiver && !isClosedObject(entry.getArgument(0)) && !isIdentityClass(fn)) {
         return refuse("its `this` is no longer a closed-shape receiver - " +
                       whyOpenReceiver(entry.getArgument(0)));
     }

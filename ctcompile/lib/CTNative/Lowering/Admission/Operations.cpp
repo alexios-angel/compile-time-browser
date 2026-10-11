@@ -375,6 +375,7 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
     if (auto admitted = staticTableOperation(o)) { return *admitted; }
+    if (auto admitted = instanceOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
@@ -1071,7 +1072,10 @@ bool admission::directCall(ctjs::CallDirectOp call) {
     // is the generated class, so it must really be a closed-shape object and
     // not some other value the lift never looked at.
     const auto operands = call.getArgOperands();
-    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver())) {
+    // An instance a registry Map owns is passed as its owner or borrowed
+    // (EmitC/Instances.cpp).
+    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver()) &&
+        carrierOf(typeOf(call.getReceiver())) != carrier::instance) {
         return refuse("a method call whose receiver is not a closed-shape object");
     }
     for (unsigned i = 3; i < operands.size(); ++i) {
@@ -1107,6 +1111,7 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&
+            carrierOf(typeOf(operands[i])) != carrier::instance &&
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&

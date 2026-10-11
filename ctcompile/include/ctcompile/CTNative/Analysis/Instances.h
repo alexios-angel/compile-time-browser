@@ -54,13 +54,39 @@ struct InstanceRegistry {
     /// The parameters proved never null or undefined: every call passes them
     /// an instance it has already checked.
     llvm::DenseSet<mlir::Value> nonNull;
+    /// The class's prototype methods.
+    llvm::SmallVector<ctjs::FuncOp> methods;
     /// The `new` results of the class.
     llvm::SmallVector<mlir::Value> instances;
     /// The values read back from the Map that may hold an instance: `get`
     /// results and every branch result, call result and parameter they flow
     /// into.
     llvm::SmallVector<mlir::Value> readBack;
+    /// The comparisons of a read-back value with null or undefined whose
+    /// answer does not depend on which of the two an absent instance is, so a
+    /// null `std::shared_ptr` answers them.
+    llvm::SmallVector<mlir::Operation *> exactTests;
+    /// The yields of a falsy value that is not an instance into a join that
+    /// only truthiness reads (`map.has(k) && map.get(k) || null`), by yield
+    /// and operand: markInstanceRegistries yields null there instead, which
+    /// every reader treats alike, so the join is an instance or neither.
+    llvm::SmallVector<std::pair<mlir::Operation *, unsigned>> falsyYields;
+    /// Each method's `for (const k of Object.getOwnPropertyNames(this))
+    /// this[k] = null` loop: its first and last operation, in one block.
+    /// rewriteInstanceRegistries replaces it with one constant-key store of
+    /// null per field.
+    llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> ownNameNullings;
+    /// The class's fields, in the order its constructor first writes them:
+    /// the own properties every instance has.
+    llvm::SmallVector<std::string> fields;
 };
+
+/// The mark markInstanceRegistries puts on each method of a proved class: the
+/// class's name. Only the constructor and these write the class's fields.
+inline constexpr llvm::StringLiteral kNativeInstanceMethod = "ctnative.instance_method";
+
+/// The mark markInstanceRegistries puts on each of those comparisons.
+inline constexpr llvm::StringLiteral kNativeInstanceTest = "ctnative.instance_test";
 
 /// The attribute markInstanceRegistries puts on a proved constructor: the
 /// class's name, which its instances' C++ class is named after.
@@ -104,6 +130,12 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module);
 /// kNativeInstanceClass (clearing marks the input carried), and returns the
 /// proved registries only.
 std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module);
+
+/// markInstanceRegistries, after which each proved class's own-property
+/// nulling loops (Bootstrap's `dispose`) become one constant-key store of
+/// null per field. Runs in the closure lifter before its censuses, which
+/// index the operations this removes.
+void rewriteInstanceRegistries(mlir::ModuleOp module);
 
 /// Whether `fn` is the constructor of a class whose instances a registry
 /// Map owns: its JavaScript constructor becomes a factory returning

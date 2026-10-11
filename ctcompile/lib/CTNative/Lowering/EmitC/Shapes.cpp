@@ -172,6 +172,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
 /// every site in the program, so no site can be spelled until all of them
 /// have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    joinInstanceValues(accepted);
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {

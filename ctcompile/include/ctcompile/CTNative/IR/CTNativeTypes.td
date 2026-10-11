@@ -454,6 +454,21 @@ def CTNative_StaticTableType
   }];
 }
 
+def CTNative_InstanceType
+    : CTNative_WrapperType<"Instance", "instance", (ins StringRefParameter<>:$className)> {
+  let summary = "An instance of a JavaScript class a registry Map owns: `std::shared_ptr<C>`";
+  let description = [{
+    Only a class whose constructor carries `ctnative.instance_class`
+    (Analysis/Instances.h) has instances of this type: its constructor stores
+    `this` into a Map that is proved to own nothing but instances of the
+    class, with no path from an instance back to the Map or another
+    instance. Shared ownership is then plain RAII: the Map entry and every
+    local holding the instance are owners, and the last one to go destroys
+    it. `opt<instance>` is a null pointer for both null and undefined, so
+    native code refuses wherever a program tells the two apart on it.
+  }];
+}
+
 def CTNative_MethodTableType
     : CTNative_WrapperType<"MethodTable", "method_table", (ins StringRefParameter<>:$site)> {
   let summary = "An owning closed table of immutable stored callable fields";

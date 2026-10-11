@@ -8,6 +8,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -154,6 +155,13 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         const carrier c = carrierOf(typeOf(v));
+        if (c == carrier::instance) {
+            v.setType(borrowsInstance(v)
+                          ? ec::PointerType::get(ec::OpaqueType::get(
+                                context, instanceClassSpelling(instanceClassName(typeOf(v)))))
+                          : instanceType(typeOf(v)));
+            return;
+        }
         if (c == carrier::objectIdentity) {
             needsObjectIdentity = true;
             v.setType(carrierType(context, c));
@@ -289,6 +297,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         // A static table's literal is its address (EmitC/StaticTables.cpp).
         if (object->hasAttr(kNativeStaticTable)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
+        // A `new` of an identity class is its owner (EmitC/Instances.cpp).
+        if (carrierOf(typeOf(object.getResult())) == carrier::instance) {
+            mlir::Value(object.getResult()).setType(instanceType(typeOf(object.getResult())));
+            return;
+        }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
     // The receiver of a lifted method has the same shape, behind a pointer.
@@ -296,7 +309,10 @@ void lowering::retype(ctjs::FuncOp fn) {
     // their shape is known, and `%arg0` of a lifted method is one.
     if (fn->hasAttr("ctnative.receiver")) {
         mlir::Value self = fn.getBody().front().getArgument(0);
-        self.setType(receiverType(shapeAt(self)));
+        // An identity class's constructor takes the owner, which it hands to
+        // the Map (EmitC/Instances.cpp).
+        self.setType(isIdentityClass(fn) ? instanceType(typeOf(self))
+                                         : receiverType(shapeAt(self)));
     }
     // Object parameters are passed the same way as the receiver: a pointer to
     // their shape's class.

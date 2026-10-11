@@ -14,6 +14,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=LIFT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tells.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=TELLS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined-global.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=UNDEFINED-GLOBAL
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unchecked.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=UNCHECKED
@@ -26,6 +32,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-field.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=OBJECT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/outside.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
+// RUN:   | FileCheck %s --check-prefix=OUTSIDE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nulling-miss.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
+// RUN:   | FileCheck %s --check-prefix=NULLING-MISS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captor.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=CAPTOR
@@ -89,13 +101,21 @@
 // LIFT-DAG: ctjs.call_direct @dispose${{[0-9]+}}({{.*}}{ctnative.receiver
 // LIFT-DAG: ctjs.func private @Widget${{[0-9]+}}({{.*}}ctnative.instance_class = "Widget"
 
+// The accepted program runs natively end to end in
+// ../Fixtures/Objects/instance-registry.js. Two things its carrier, a
+// `std::shared_ptr<Widget>` that is null for both null and undefined, cannot
+// say are refused in the lowering:
+// TELLS: ctnative.not_native = "a comparison of an instance with something that tells null from undefined, which one null pointer stands for"
+// And reading the global `undefined` beside the Map keeps the Map unproved.
+// UNDEFINED-GLOBAL: ctnative.not_native = "standard Map identity is unproved with other host/global value reads"
+
 // --- A read used without a check -------------------------------------------
 // UNCHECKED: ctnative.instance_registry = "a value read from the registry Map is used at `ctjs.get_property` without a check - `get` answers undefined for a missing key"
 
 // --- `!== null` on a read that may be undefined is no check ----------------
 // STRICT: ctnative.instance_registry = "a value read from the registry Map is used at `ctjs.get_property` without a check - `get` answers undefined for a missing key"
 
-// --- An instance stored into another instance ------------------------------
+// --- An instance stored into an object ---------------------------------------
 // CYCLE: ctnative.instance_registry = "a value read from the registry Map is stored into an object, so shared ownership could form a cycle no destructor breaks"
 
 // --- Fields holding objects ------------------------------------------------
@@ -103,6 +123,17 @@
 // object field cannot reach one, whatever it holds: Bootstrap's `_element`
 // and `_config`.
 // OBJECT: ctnative.instance_registry = "proved"
+
+// --- A field written outside the class ---------------------------------------
+// Only the constructor and the methods write fields, so each field's native
+// type is the join of their stores.
+// OUTSIDE: ctnative.instance_registry = "a field of an instance read from the registry Map is written outside its class's constructor and methods"
+
+// --- An own-property loop over a field that may not exist yet ---------------
+// `for (const k of Object.getOwnPropertyNames(this)) this[k] = null` becomes
+// one store per field the constructor writes before anything else runs; a
+// field only a method writes may not be an own property yet.
+// NULLING-MISS: ctnative.instance_registry = "the own-property loop of `Widget` would miss `extra`, a field its constructor may not have written yet"
 
 // --- A field holding a function that captures the Map ----------------------
 // The binding `count` holds it, so whoever reads the binding holds it too.
@@ -226,14 +257,13 @@ function run() {
     class Widget {
         constructor(key) {
             this.key = key;
-            this.peer = null;
             registry.set(key, this);
         }
     }
     new Widget("a");
-    const b = new Widget("b");
+    const holder = { item: null };
     const a = registry.get("a");
-    if (a) { b.peer = a; }
+    if (a) { holder.item = a; }
     return registry.size;
 }
 var result = run();
@@ -604,3 +634,72 @@ var result = (function () {
     new Alert("a");
     return registry.size;
 })();
+
+//--- outside.js
+function run() {
+    const registry = new Map();
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            this.size = 0;
+            registry.set(key, this);
+        }
+    }
+    new Widget("a");
+    const a = registry.get("a");
+    if (a) { a.size = 5; }
+    return registry.size;
+}
+var result = run();
+
+//--- tells.js
+function run(flag) {
+    const registry = new Map();
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            registry.set(key, this);
+        }
+    }
+    new Widget("a");
+    const found = flag ? registry.get("a") : null;
+    return found === null ? 1 : 2;
+}
+var result = run(true);
+
+//--- undefined-global.js
+function run() {
+    const registry = new Map();
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            registry.set(key, this);
+        }
+    }
+    new Widget("a");
+    const found = registry.get("a");
+    return found != undefined ? found.key.length : 0;
+}
+var result = run();
+
+//--- nulling-miss.js
+function run() {
+    const registry = new Map();
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            registry.set(key, this);
+        }
+        mark() {
+            this.extra = 1;
+        }
+        dispose() {
+            for (const name of Object.getOwnPropertyNames(this)) {
+                this[name] = null;
+            }
+        }
+    }
+    new Widget("a");
+    return registry.size;
+}
+var result = run();

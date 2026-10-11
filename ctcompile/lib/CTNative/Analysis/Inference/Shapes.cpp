@@ -267,6 +267,9 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         }
     });
 
+    // One struct per class a registry Map owns (Inference/Instances.cpp).
+    joinInstanceReceivers(top, classes);
+
     return flatten<2>(classes);
 }
 

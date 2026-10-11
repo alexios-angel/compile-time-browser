@@ -828,6 +828,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
     }
+    // Instances a registry Map owns (Inference/Instances.cpp).
+    if (const auto instance = instanceTypeOf(op, operands)) {
+        return *instance ? answer(*instance) : mlir::success();
+    }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && isProvedString(operands[0]) && constantKey(read.getKey()) == "length") {
         return answer(doubleType(c));

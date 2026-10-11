@@ -42,6 +42,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -616,6 +617,23 @@ private:
     /// `seed` met with the type of every value after `op`, subscribing `op` to
     /// each. A value not visited yet contributes nothing now and revisits `op`.
     mlir::Type joinLattices(mlir::Operation * op, mlir::ValueRange values, mlir::Type seed);
+
+    /// Instances of a class a registry Map owns (Inference/Instances.cpp):
+    /// the `new` of such a class is `instance<C>`, and a field read on any
+    /// value of that type is the join of the class's field stores. Nullopt
+    /// when `op` is none of these; a null Type while a store is pending.
+    std::optional<mlir::Type> instanceTypeOf(mlir::Operation * op,
+                                             llvm::ArrayRef<const TypeLattice *> operands);
+    /// Joins the `this` of an identity class's constructor and methods with
+    /// its `new` objects, so the class has one struct holding every field
+    /// they write, whichever instance a method is called on.
+    static void joinInstanceReceivers(mlir::Operation * top,
+                                      llvm::EquivalenceClasses<mlir::Value> & classes);
+    /// Per identity class and field (`class` NUL `key`), every value its
+    /// constructor and methods store into that field of `this`, the only
+    /// writes the registry proof allows; built on first use.
+    llvm::StringMap<llvm::SmallVector<mlir::Value, 2>> instanceStores_;
+    bool instanceStoresBuilt_ = false;
 
     /// What a shared (carried) binding holds. The closure lift marks a
     /// `ctjs.create_cell` it can make a frame-local variable
