@@ -130,6 +130,52 @@ UNTRUSTED_NATIVE = {
         ),
         (True,),
     ),
+    # Static members: when the class is never used as a value, every read of
+    # a static member becomes a direct call, `this` in a static member and
+    # `this.constructor` in a method name the class itself, and a static
+    # member nothing reads is erased with its definition
+    # (ClosureLifting/ClassStatics.cpp). The getter cycles, throwing getters
+    # and ambient calls here sit in members that are never read.
+    **dict.fromkeys(
+        (
+            "class-map-mixed-method",
+            "method-captured-class-key",
+            "method-captured-class-name",
+            "receiver-default-dispatch",
+            "static-arguments",
+            "static-branch",
+            "static-call-ambient",
+            "static-call-arguments",
+            "static-call-capture",
+            "static-call-getter",
+            "static-call-this-getter-chain",
+            "static-call-this-method",
+            "static-call-unused",
+            "static-caller",
+            "static-chain",
+            "static-constant",
+            "static-cycle",
+            "static-error-coercion",
+            "static-error-replaced",
+            "static-error-return",
+            "static-forward-chain",
+            "static-length",
+            "static-methods",
+            "static-name",
+            "static-order",
+            "static-repeated",
+            "static-throw-ambient",
+            "static-throw-object",
+            "static-throw-unused",
+            "static-throw-unused-chain",
+            "static-unread-chain",
+            "static-unread-new-this",
+        ),
+        (False, True),
+    ),
+    # The same, once optimization folds the computed key `"NA" + "ME"` to a
+    # constant.
+    **dict.fromkeys(("static-dynamic",), (True,)),
 }
 
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
