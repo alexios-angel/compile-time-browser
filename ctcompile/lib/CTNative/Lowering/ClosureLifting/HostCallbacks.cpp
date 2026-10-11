@@ -54,10 +54,13 @@ std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosure
     ctjs::CallOp call = hostCallbacks.lookup(c.getOperation());
     const bool timer = TypeInference::isTimerCall(call);
     const std::string method = timer ? "setTimeout" : "EventTarget.prototype.addEventListener";
-    if (call.getArgs().size() != 2) {
+    // A listener may be given a capture flag; admission checks that it is a
+    // Boolean, not an options object.
+    if (call.getArgs().size() != 2 && (timer || call.getArgs().size() != 3)) {
         return timer ? method + " with " + std::to_string(call.getArgs().size()) +
                            " arguments - only (handler, timeout) is native"
-                     : method + " with options - only (type, listener) is native";
+                     : method + " with " + std::to_string(call.getArgs().size()) +
+                           " arguments - only (type, listener, capture) is native";
     }
     if (auto why = whyTargetIsNotLiftable(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
@@ -93,14 +96,24 @@ std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosure
 void closureLifter::rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target,
                                         liftReport & out) {
     ctjs::CallOp call = hostCallbacks.lookup(c.getOperation());
-    // The call passes the event type or the delay, then the captured values.
+    // The call passes the event type or the delay, then the captured values,
+    // then a listener's capture flag.
     const bool timer = TypeInference::isTimerCall(call);
+    const bool capture = !timer && call.getArgs().size() == 3;
     llvm::SmallVector<mlir::Value> arguments{call.getArgs()[timer ? 1 : 0]};
     llvm::append_range(arguments, liftedCaptures(c));
     const auto captured = static_cast<unsigned>(arguments.size() - 1);
+    if (capture) { arguments.push_back(call.getArgs()[2]); }
+    // The receiver's name, for the realm's own document and window.
+    for (const llvm::StringRef name : {"document", "window"}) {
+        if (!timer && TypeInference::isRealmGlobal(call.getReceiver().getDefiningOp(), name)) {
+            call->setAttr(kNativeHostTarget, mlir::StringAttr::get(context, name));
+        }
+    }
     call.getArgsMutable().assign(arguments);
     call->setAttr(kNativeHostCallback, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()));
     if (timer) { call->setAttr(kNativeHostTimer, mlir::UnitAttr::get(context)); }
+    if (capture) { call->setAttr(kNativeHostCapture, mlir::UnitAttr::get(context)); }
     target->setAttr(kNativeHostCallback, mlir::UnitAttr::get(context));
     // Public for the reason rewriteArrayCallback gives: no ctjs.call_direct
     // names the callback, and type inference must still visit its body.

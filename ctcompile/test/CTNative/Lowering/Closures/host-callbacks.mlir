@@ -9,6 +9,12 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refusals.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=DYNAMIC
+
+// A window listener leaves the globals typed (EMIT stores them and registers
+// one); a window that also flows into a property write may write any global,
+// so the globals are boxed (TypeInference::isInertWindowLoad).
+// DYNAMIC: ctnative.not_native = "global `count` is !ctnative.boxed
 
 // EMIT-DAG: emitc.include <"ctcompile/CTNative/Runtime/Events.hpp">
 // EMIT-DAG: call_opaque "std::bind_front"
@@ -20,13 +26,16 @@
 // EMIT-DAG: member_call_opaque {{.*}} "type"()
 // EMIT-DAG: member_call_opaque {{.*}} "currentTarget"()
 // EMIT-DAG: !emitc.opaque<"ctnative::js_event">
+// EMIT-DAG: literal "ctnative::document"
+// EMIT-DAG: literal "ctnative::window"
 
 // CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener captures binding 0, which is written after it is captured - the host keeps the listener, so it takes its captures by value"
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener reads `this`"
 // CHECK-DAG: @takesTwo${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener declares 2 parameters - only a listener that takes the event alone is native"
 // CHECK-DAG: ctnative.not_native = "a listener's Event used other than through its reads and its preventDefault and stopPropagation calls - it lives only while the listener runs"
 // CHECK-DAG: ctnative.not_native = "an Event read through `clientX` - only type, target, currentTarget and defaultPrevented are native"
-// CHECK-DAG: @withOptions${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: EventTarget.prototype.addEventListener with options - only (type, listener) is native"
+// CHECK-DAG: ctnative.not_native = "addEventListener with options of {{.*}} - only a Boolean capture flag is native"
+// CHECK-DAG: ctnative.not_native = "currentTarget of a listener on the document or the window - only an element's listener reads it natively"
 // CHECK-DAG: @capturesArray${{[0-9]+}}{{.*}}ctnative.not_native = "an array of Strings: an array passed to a call the native runtime does not implement"
 // CHECK-DAG: @timerLater${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout captures binding 0, which is written after it is captured - the host keeps the handler, so it takes its captures by value"
 // CHECK-DAG: @timerThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout reads `this`"
@@ -50,6 +59,12 @@ document.documentElement.addEventListener('click', function (event) {
     event.preventDefault();
     event.stopPropagation();
     seen = event.type + event.currentTarget.id + (event.defaultPrevented ? '!' : '');
+});
+document.addEventListener('click', function (event) {
+    seen = event.target.id;
+}, true);
+window.addEventListener('click', function () {
+    seen = 'w';
 });
 setTimeout(function () {
     seen = seen + 't';
@@ -99,7 +114,12 @@ function readsClientX() {
 function withOptions() {
     document.documentElement.addEventListener('click', function () {
         seen = 'o';
-    }, true);
+    }, 'capture');
+}
+function documentCurrentTarget() {
+    document.addEventListener('click', function (event) {
+        seen = event.currentTarget.id;
+    });
 }
 function capturesArray() {
     var names = ['a', 'b'];
@@ -153,5 +173,13 @@ storesEvent();
 returnsEvent();
 readsClientX();
 withOptions();
+documentCurrentTarget();
 capturesArray();
 capturesStyle();
+
+//--- dynamic.js
+var count = 0;
+window.addEventListener('click', function () {
+    count = count + 1;
+});
+window.foo = 1;

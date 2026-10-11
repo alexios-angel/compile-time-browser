@@ -7,7 +7,8 @@
 // listener is reported without stopping the rest, forget() drops a
 // document's listeners, and a listener's Event reports its type, target and
 // current target and carries preventDefault and stopPropagation back to the
-// dispatch.
+// dispatch, and the capture phase runs from the window down before the target
+// and the bubble phase.
 //
 //===----------------------------------------------------------------------===//
 
@@ -146,6 +147,45 @@ void test_the_event_a_listener_receives() {
     table.forget(bound.page.doc());
 }
 
+void test_capture_then_target_then_bubble() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const js_element_t root = *ctnative::document.documentElement();
+    const js_element_t body = root.children()[1];
+    const js_element_t leaf = body.children()[0];
+    std::string order;
+    const auto log = [&](const char * what) { return [&order, what] { order += what; }; };
+    const ctnative::js_boolean_t capture{true};
+    EventTarget.prototype.addEventListener.call(ctnative::window, js_string{"click"}, log("w "));
+    EventTarget.prototype.addEventListener.call(ctnative::window, js_string{"click"}, log("W "),
+                                                capture);
+    EventTarget.prototype.addEventListener.call(ctnative::document, js_string{"click"}, log("d "));
+    EventTarget.prototype.addEventListener.call(ctnative::document, js_string{"click"}, log("D "),
+                                                capture);
+    EventTarget.prototype.addEventListener.call(root, js_string{"click"}, log("r "));
+    EventTarget.prototype.addEventListener.call(root, js_string{"click"}, log("R "), capture);
+    // At the target the capturing listener runs first, whatever the order of
+    // registration.
+    EventTarget.prototype.addEventListener.call(leaf, js_string{"click"}, log("l "));
+    EventTarget.prototype.addEventListener.call(leaf, js_string{"click"}, log("L "), capture);
+    event_listeners & table = event_listeners::program();
+    CHECK_EQ(table.dispatch(leaf, "click"), std::size_t{8});
+    CHECK_EQ(order, std::string{"W D R L l r d w "});
+    // An event that does not bubble still has its capture phase.
+    order.clear();
+    CHECK_EQ(table.dispatch(leaf, "click", false), std::size_t{5});
+    CHECK_EQ(order, std::string{"W D R L l "});
+    // Stopping in the capture phase ends the dispatch there.
+    EventTarget.prototype.addEventListener.call(
+        ctnative::document, js_string{"click"},
+        [](const ctnative::js_event & e) { ctnative::Event.prototype.stopPropagation.call(e); },
+        capture);
+    order.clear();
+    CHECK_EQ(table.dispatch(leaf, "click"), std::size_t{3});
+    CHECK_EQ(order, std::string{"W D "});
+    table.forget(bound.page.doc());
+}
+
 } // namespace
 
 int main() {
@@ -153,5 +193,6 @@ int main() {
     test_a_listener_added_while_dispatching_waits();
     test_a_throwing_listener_is_reported();
     test_the_event_a_listener_receives();
+    test_capture_then_target_then_bubble();
     REPORT("native_events");
 }

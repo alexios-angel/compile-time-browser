@@ -36,11 +36,14 @@
 
 namespace ctnative {
 
+struct window_object;
+
 /// The Event a native listener receives (DOM §2.2) while the host dispatches
 /// it: a view of the dispatch's own state, so preventDefault and
-/// stopPropagation reach the dispatch. It is valid only during the listener
+/// stopPropagation reach the dispatch. It is one pointer and owns nothing, so
+/// generated listeners take it by value. It is valid only during the listener
 /// call; the native lowering admits a listener's event parameter only as the
-/// receiver of the reads and calls below, so it never outlives that call.
+/// receiver of the reads and calls below, so no copy outlives that call.
 class js_event {
 public:
     /// What one dispatch shares with every listener it calls.
@@ -55,9 +58,10 @@ public:
 
     explicit js_event(state & shared) noexcept : shared_(&shared) {}
 
-    /// Event.type, .target and .currentTarget (DOM §2.2). The target and the
-    /// current target are page elements, since only listeners on elements are
-    /// native.
+    /// Event.type, .target and .currentTarget (DOM §2.2). The target is a page
+    /// element, since the host dispatches only at elements. The current target
+    /// is the element whose listener runs; a listener on the document or the
+    /// window has none here, and the lowering refuses its currentTarget read.
     [[nodiscard]] js_string type() const { return js_string{shared_->type}; }
     [[nodiscard]] js_element_t target() const { return shared_->target; }
     [[nodiscard]] js_element_t currentTarget() const { return shared_->current_target.value(); }
@@ -123,25 +127,29 @@ public:
         return table;
     }
 
-    /// EventTarget.addEventListener(type, callback) (DOM §2.7) with no
-    /// options: a bubbling-phase listener, not once and not passive. Each call
-    /// adds a new listener, since every native callback is a fresh function
-    /// object (the lowering admits only a closure created for this call), so
-    /// the duplicate check of step 4 never matches.
-    void add(const js_element_t & target, std::string type, listener callback) {
+    /// EventTarget.addEventListener(type, callback, capture) (DOM §2.7) on an
+    /// element, not once and not passive. Each call adds a new listener, since
+    /// every native callback is a fresh function object (the lowering admits
+    /// only a closure created for this call), so the duplicate check of step 4
+    /// never matches.
+    void add(const js_element_t & target, std::string type, listener callback, bool capture) {
         const ctbrowser::element_ref element = target.value();
-        per_document & listeners = documents_[element.owner];
-        ctbrowser::shell::listener_registry<registration>::entry made;
-        made.target = {ctbrowser::shell::event_target_kind::node, element.id.key()};
-        made.type = std::move(type);
-        made.callback_id = ++listeners.next_callback;
-        made.payload = registration{target, std::make_unique<listener>(std::move(callback))};
-        (void)listeners.registry.add(std::move(made));
+        add(*element.owner, {ctbrowser::shell::event_target_kind::node, element.id.key()}, target,
+            std::move(type), std::move(callback), capture);
+    }
+    /// The same on `document`'s Document node or its window, which are past
+    /// the document element on every element's propagation path.
+    void add(const ctbrowser::document & document, ctbrowser::shell::event_target_kind kind,
+             std::string type, listener callback, bool capture) {
+        add(document, {kind, 0}, std::nullopt, std::move(type), std::move(callback), capture);
     }
 
     /// Dispatches an event of `type` at `target` (DOM §2.9), as the host does
-    /// for a click: the target, then, when it bubbles, each ancestor element
-    /// up to the document element, stopping after the step in which a
+    /// for a click. The path is the target, its ancestor elements, the
+    /// document and the window. Capturing listeners run from the window down
+    /// to the target's parent, then at the target its capturing listeners and
+    /// then its others, then, when the event bubbles, the others of each step
+    /// back up to the window. The dispatch stops after the step in which a
     /// listener called stopPropagation. Each step's listeners are the ones
     /// registered when the step begins, in registration order. A listener
     /// that throws is reported (reported()) and the rest still run, as the VM
@@ -149,33 +157,34 @@ public:
     /// `canceled`, when given, is set to whether a listener canceled the
     /// event.
     ///
-    /// ponytail: element steps only, with no capture phase, since only
-    /// bubbling listeners on elements can be registered natively. The
-    /// document and window steps, capture, stopPropagation and shadow-tree
-    /// retargeting arrive with the first native registration that needs them;
-    /// the VM's propagation path in dom_bindings is the one to lift then.
+    /// ponytail: no shadow-tree retargeting and no passive or once listeners,
+    /// since none can be registered natively yet; the VM's propagation path in
+    /// dom_bindings is the one to lift when they can.
     std::size_t dispatch(const js_element_t & target, std::string_view type, bool bubbles = true,
                          bool cancelable = true, bool * canceled = nullptr) {
+        using ctbrowser::shell::event_target_kind;
         const ctbrowser::element_ref element = target.value();
         const auto found = documents_.find(element.owner);
         if (found == documents_.end()) { return 0; }
         per_document & listeners = found->second;
-        std::vector<ctbrowser::node_id> path;
+        // The path from the target outwards.
+        std::vector<ctbrowser::shell::listener_target> path;
         {
             const auto txn = element.owner->read();
             for (ctbrowser::node_id at = element.id; at; at = txn.parent(at)) {
-                path.push_back(at);
-                if (!bubbles) { break; }
+                path.push_back({event_target_kind::node, at.key()});
             }
         }
+        path.push_back({event_target_kind::document, 0});
+        path.push_back({event_target_kind::window, 0});
         js_event::state shared{std::string{type}, target, std::nullopt, cancelable};
         const js_event event{shared};
         std::size_t ran = 0;
-        for (const ctbrowser::node_id at : path) {
-            const ctbrowser::shell::listener_target step{ctbrowser::shell::event_target_kind::node,
-                                                         at.key()};
-            for (const std::uint64_t id : listeners.registry.snapshot(step, type, false)) {
-                const auto * entry = listeners.registry.begin(step, type, id, false);
+        // Runs one step's listeners of one phase; false once propagation
+        // stopped.
+        const auto step = [&](const ctbrowser::shell::listener_target & at, bool capture) {
+            for (const std::uint64_t id : listeners.registry.snapshot(at, type, capture)) {
+                const auto * entry = listeners.registry.begin(at, type, id, capture);
                 if (entry == nullptr) { continue; }
                 shared.current_target = entry->payload.current_target;
                 // The payload's address survives the listener adding another.
@@ -185,14 +194,20 @@ public:
                     callback(event);
                 } catch (const std::exception & thrown) { reported_.emplace_back(thrown.what()); }
             }
-            if (shared.stop_propagation) { break; }
+            return !shared.stop_propagation;
+        };
+        bool going = true;
+        for (std::size_t i = path.size(); going && i-- > 1;) { going = step(path[i], true); }
+        going = going && step(path[0], true) && step(path[0], false);
+        for (std::size_t i = 1; going && bubbles && i < path.size(); ++i) {
+            going = step(path[i], false);
         }
         if (canceled != nullptr) { *canceled = shared.canceled; }
         return ran;
     }
 
-    /// Drops every listener registered on `document`'s nodes. A host calls it
-    /// before destroying a document whose elements have listeners.
+    /// Drops every listener registered on `document`, its nodes and its
+    /// window. A host calls it before destroying a document with listeners.
     void forget(const ctbrowser::document & document) { documents_.erase(&document); }
 
     /// The messages of the exceptions listeners threw, oldest first.
@@ -200,10 +215,9 @@ public:
 
 private:
     /// One registration: the element it is on, which is the event's
-    /// currentTarget while it runs, and the listener.
+    /// currentTarget while it runs (none for the document and the window), and
+    /// the listener.
     struct registration {
-        /// Always set; optional only because the registry default-constructs
-        /// its entries.
         std::optional<js_element_t> current_target;
         std::unique_ptr<listener> callback;
     };
@@ -213,18 +227,61 @@ private:
     };
     std::unordered_map<const ctbrowser::document *, per_document> documents_;
     std::vector<std::string> reported_;
+
+    void add(const ctbrowser::document & document, ctbrowser::shell::listener_target target,
+             std::optional<js_element_t> current_target, std::string type, listener callback,
+             bool capture) {
+        per_document & listeners = documents_[&document];
+        ctbrowser::shell::listener_registry<registration>::entry made;
+        made.target = target;
+        made.type = std::move(type);
+        made.callback_id = ++listeners.next_callback;
+        made.capture = capture;
+        made.payload = registration{std::move(current_target),
+                                    std::make_unique<listener>(std::move(callback))};
+        (void)listeners.registry.add(std::move(made));
+    }
 };
 
 /// EventTarget.prototype.addEventListener (DOM §2.7), as generated code spells
 /// it: `ctnative::EventTarget.prototype.addEventListener.call(el, type, f)`,
-/// where `f` takes the event or declares no parameter.
+/// with `ctnative::document` or `ctnative::window` for `el` on those targets,
+/// and an optional fourth argument, the capture flag. `f` takes the event or
+/// declares no parameter.
 struct add_event_listener_method {
     template <class F>
     requires std::invocable<F &, const js_event &> || std::invocable<F &>
-    undefined_t call(const js_element_t & target, const js_string & type, F && callback) const {
+    undefined_t call(const js_element_t & target, const js_string & type, F && callback,
+                     js_boolean_t capture = js_boolean_t{}) const {
         event_listeners::program().add(target, std::string{type.value()},
-                                       event_listeners::wrap(std::forward<F>(callback)));
+                                       event_listeners::wrap(std::forward<F>(callback)),
+                                       static_cast<bool>(capture));
         return {};
+    }
+    template <class F>
+    requires std::invocable<F &, const js_event &> || std::invocable<F &>
+    undefined_t call(const document_object &, const js_string & type, F && callback,
+                     js_boolean_t capture = js_boolean_t{}) const {
+        event_listeners::program().add(
+            page_document(), ctbrowser::shell::event_target_kind::document,
+            std::string{type.value()}, event_listeners::wrap(std::forward<F>(callback)),
+            static_cast<bool>(capture));
+        return {};
+    }
+    template <class F>
+    requires std::invocable<F &, const js_event &> || std::invocable<F &>
+    undefined_t call(const window_object &, const js_string & type, F && callback,
+                     js_boolean_t capture = js_boolean_t{}) const {
+        event_listeners::program().add(
+            page_document(), ctbrowser::shell::event_target_kind::window, std::string{type.value()},
+            event_listeners::wrap(std::forward<F>(callback)), static_cast<bool>(capture));
+        return {};
+    }
+
+private:
+    /// The document of the active document scope, through its element.
+    static const ctbrowser::document & page_document() {
+        return *require_document_element().value().owner;
     }
 };
 

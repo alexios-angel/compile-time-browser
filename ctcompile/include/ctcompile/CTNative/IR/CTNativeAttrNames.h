@@ -70,6 +70,12 @@ inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callba
 /// Marks such a call as `setTimeout(f, delay)`, since the lowering replaces
 /// the `setTimeout` load the call was recognised by before the call itself.
 inline constexpr llvm::StringLiteral kNativeHostTimer = "ctnative.host_timer";
+/// On a specialised `addEventListener` call whose receiver is the realm's own
+/// `document` or `window`: that name, since the lowering replaces the load.
+inline constexpr llvm::StringLiteral kNativeHostTarget = "ctnative.host_target";
+/// On a specialised `addEventListener` call that passes a capture flag: the
+/// flag is its last argument, after the captures.
+inline constexpr llvm::StringLiteral kNativeHostCapture = "ctnative.host_capture";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

@@ -266,6 +266,10 @@ public:
     static bool isHostCallbackCall(mlir::Operation * op);
     /// Whether `op` is a call of the realm's own `setTimeout`.
     static bool isTimerCall(mlir::Operation * op);
+    /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
+    /// cannot write the globals table, so it leaves the globals typed
+    /// (Inference/HostCallbacks.cpp holds the one list of such uses).
+    static bool isInertWindowLoad(mlir::Operation * load);
     /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
     /// method read only for the call; x is an Event when its type says so.
     static bool isEventCall(mlir::Operation * op);

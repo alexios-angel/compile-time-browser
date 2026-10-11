@@ -35,16 +35,28 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
                                ", not a Number");
         }
     } else {
-        if (carrierOf(self.typeOf(call.getReceiver())) != carrier::domElement) {
+        // The realm's own document and window (ctnative.host_target), or an
+        // element.
+        if (!call->hasAttr(kNativeHostTarget) &&
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::domElement) {
             return self.refuse("addEventListener on " + printed(self.typeOf(call.getReceiver())) +
-                               ", not a proved page element");
+                               ", not a proved page element, document or window");
         }
         if (carrierOf(self.typeOf(first)) != carrier::string) {
             return self.refuse("addEventListener with an event type of " +
                                printed(self.typeOf(first)) + ", not a String");
         }
     }
-    for (mlir::Value capture : call.getArgs().drop_front()) {
+    auto captures = call.getArgs().drop_front();
+    if (call->hasAttr(kNativeHostCapture)) {
+        const mlir::Value flag = captures.back();
+        if (carrierOf(self.typeOf(flag)) != carrier::boolean) {
+            return self.refuse("addEventListener with options of " + printed(self.typeOf(flag)) +
+                               " - only a Boolean capture flag is native");
+        }
+        captures = captures.drop_back();
+    }
+    for (mlir::Value capture : captures) {
         switch (carrierOf(self.typeOf(capture))) {
         case carrier::number:
         case carrier::boolean:
@@ -59,6 +71,23 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
     }
     return true;
 }
+
+namespace {
+
+/// Whether the listener `op` is in was registered on the document or the
+/// window, whose currentTarget is not an element.
+bool registeredOnDocumentOrWindow(mlir::Operation * op) {
+    auto listener = op->getParentOfType<ctjs::FuncOp>();
+    bool found = false;
+    op->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::CallOp call) {
+        auto named = call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback);
+        found |=
+            named && named.getValue() == listener.getSymName() && call->hasAttr(kNativeHostTarget);
+    });
+    return found;
+}
+
+} // namespace
 
 std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
     const auto event = [&](mlir::Value v) {
@@ -76,6 +105,10 @@ std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
     if (llvm::none_of(o->getOperands(), event)) { return std::nullopt; }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o); read && event(read.getObject())) {
         const llvm::StringRef key = ctjs::constantKey(read.getKey());
+        if (key == "currentTarget" && registeredOnDocumentOrWindow(read)) {
+            return self.refuse("currentTarget of a listener on the document or the window - "
+                               "only an element's listener reads it natively");
+        }
         const carrier result = carrierOf(self.typeOf(read.getResult()));
         if ((key == "type" && result == carrier::string) ||
             ((key == "target" || key == "currentTarget") && result == carrier::domElement) ||

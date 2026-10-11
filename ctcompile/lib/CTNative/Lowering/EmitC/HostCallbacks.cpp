@@ -6,6 +6,8 @@
 //
 //   ctnative::EventTarget.prototype.addEventListener.call(el, type,
 //                                                         std::bind_front(listener, label))
+//   ctnative::EventTarget.prototype.addEventListener.call(ctnative::document, type,
+//                                                         listener, capture)
 //   ctnative::setTimeout(std::bind_front(handler, label), delay)
 //
 // or the bare callback when it captures nothing. The runtime's listener table
@@ -33,9 +35,13 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
     const std::string listener = named == lower.names.end() ? cIdentifier(symbol) : named->second;
     const auto any = ec::OpaqueType::get(context, "auto");
     mlir::Value bound = ec::LiteralOp::create(b, where, any, listener);
-    if (call.getArgs().size() > 1) {
+    // The captures, without a listener's capture flag.
+    auto captures = call.getArgs().drop_front();
+    const bool flagged = o->hasAttr(kNativeHostCapture);
+    if (flagged) { captures = captures.drop_back(); }
+    if (!captures.empty()) {
         llvm::SmallVector<mlir::Value> captured{bound};
-        llvm::append_range(captured, call.getArgs().drop_front());
+        llvm::append_range(captured, captures);
         bound = callValue(b, where, any, "std::bind_front", captured);
     }
     if (TypeInference::isTimerCall(call)) {
@@ -43,8 +49,13 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
         callWithConstValueOperands(b, where, mlir::TypeRange{},
                                    b.getStringAttr("ctnative::setTimeout"), operands);
     } else {
-        const mlir::Value operands[] = {lowering::cellPlace(b, where, call.getReceiver()),
-                                        call.getArgs().front(), bound};
+        // The realm's document or window by its runtime name, or the element.
+        const auto host = o->getAttrOfType<mlir::StringAttr>(kNativeHostTarget);
+        llvm::SmallVector<mlir::Value> operands{
+            host ? ec::LiteralOp::create(b, where, any, ("ctnative::" + host.getValue()).str())
+                 : lowering::cellPlace(b, where, call.getReceiver()),
+            call.getArgs().front(), bound};
+        if (flagged) { operands.push_back(call.getArgs().back()); }
         callWithConstValueOperands(
             b, where, mlir::TypeRange{},
             b.getStringAttr("ctnative::EventTarget.prototype.addEventListener.call"), operands);

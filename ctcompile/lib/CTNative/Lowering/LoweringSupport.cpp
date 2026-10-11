@@ -222,7 +222,14 @@ bool isPageGlobal(mlir::Operation * o) {
                                                               : "";
     if (read.empty() || !TypeInference::isRealmGlobal(load, load.getName())) { return false; }
     return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
-        auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+        // The receiver of a listener registration (HostCallbacks.cpp), and
+        // its method read.
+        mlir::Operation * user = use.getOwner();
+        if ((use.getOperandNumber() == 1 && TypeInference::isHostCallbackCall(user)) ||
+            isPageMethodRead(user)) {
+            return true;
+        }
+        auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
         return get && use.getOperandNumber() == 0 && ctjs::constantKey(get.getKey()) == read;
     });
 }

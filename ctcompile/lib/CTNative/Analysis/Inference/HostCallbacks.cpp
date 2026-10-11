@@ -43,6 +43,37 @@ bool TypeInference::isHostCallbackParameter(mlir::Value value) {
     return function && function->hasAttr(kNativeHostCallback);
 }
 
+/// The one list of uses of the global object that leave the globals table
+/// alone. Initialization.cpp treats any other load of `window`, `self` or
+/// `globalThis` as a possible dynamic write to every global. Each entry is
+/// safe because the host defines the member and the program never writes
+/// through it:
+/// - `.devicePixelRatio`: a Number read (TypeInference::domReadType);
+/// - `.addEventListener` read only to call it with a listener closure lifting
+///   specialised (isHostCallbackCall), and the global object as that call's
+///   receiver: the runtime's listener table keeps the listener, and no
+///   property of the window is read or written.
+/// Other lanes add their inert host reads here.
+bool TypeInference::isInertWindowLoad(mlir::Operation * op) {
+    auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(op);
+    if (!load || (load.getName() != "window" && load.getName() != "self" &&
+                  load.getName() != "globalThis")) {
+        return false;
+    }
+    return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
+        mlir::Operation * user = use.getOwner();
+        if (use.getOperandNumber() == 1 && isHostCallbackCall(user)) { return true; }
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+        if (!read || use.getOperandNumber() != 0) { return false; }
+        const llvm::StringRef key = ctjs::constantKey(read.getKey());
+        if (key == "devicePixelRatio") { return true; }
+        if (key != "addEventListener" || !read.getResult().hasOneUse()) { return false; }
+        auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
+        return call && isHostCallbackCall(call) && call.getCallee() == read.getResult() &&
+               call.getReceiver() == load.getResult();
+    });
+}
+
 bool TypeInference::isEventCall(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
     if (!call || !call.getArgs().empty()) { return false; }
@@ -78,8 +109,10 @@ mlir::Type TypeInference::hostCallbackType(mlir::Operation * op,
     mlir::Block & entry = listener.getBody().front();
     // Operands are the callee, the receiver, the event type or the delay,
     // then the captures, which the callback takes after its implicit
-    // arguments.
-    for (unsigned i = 3; i < operands.size(); ++i) {
+    // arguments, then a listener's capture flag.
+    const auto end =
+        static_cast<unsigned>(operands.size()) - (op->hasAttr(kNativeHostCapture) ? 1 : 0);
+    for (unsigned i = 3; i < end; ++i) {
         const unsigned index = ctjs::implicit_arguments + i - 3;
         const mlir::Type type = operands[i]->getValue().getType();
         if (!type || index >= entry.getNumArguments()) { continue; }
@@ -87,8 +120,7 @@ mlir::Type TypeInference::hostCallbackType(mlir::Operation * op,
         propagateIfChanged(lattice, lattice->join(TypeValue{type}));
     }
     // A listener's declared parameter, after its captures, is the Event.
-    if (const unsigned index =
-            ctjs::implicit_arguments + static_cast<unsigned>(operands.size()) - 3;
+    if (const unsigned index = ctjs::implicit_arguments + end - 3;
         !isTimerCall(op) && index < entry.getNumArguments()) {
         TypeLattice * lattice = getLatticeElement(entry.getArgument(index));
         propagateIfChanged(lattice, lattice->join(TypeValue{EventType::get(c)}));

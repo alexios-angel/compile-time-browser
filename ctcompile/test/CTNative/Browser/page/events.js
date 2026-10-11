@@ -6,6 +6,7 @@
 var clicks = 0;
 var order = '';
 var seen = '';
+var phases = '';
 
 // A listener with no captures, on the root element.
 document.documentElement.addEventListener('click', function () {
@@ -40,6 +41,19 @@ function listen(name) {
 }
 listen('b');
 
+// The capture phase, from the window down: a capturing listener on the
+// document and one on the root, and a bubbling one on the window, which a
+// click stopped at <body> never reaches.
+document.addEventListener('click', function (e) {
+    phases = phases + 'D' + e.target.id + ' ';
+}, true);
+document.documentElement.addEventListener('click', function () {
+    phases = phases + 'c ';
+}, true);
+window.addEventListener('click', function () {
+    phases = phases + 'W ';
+});
+
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases;
 }
