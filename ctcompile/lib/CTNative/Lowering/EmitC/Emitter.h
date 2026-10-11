@@ -349,6 +349,9 @@ struct lowering {
     void lower(ctjs::FuncOp fn);
 
     void declareGlobals();
+    /// Whether the lowered module uses an ordinary script's page views
+    /// (Runtime/Page.hpp).
+    bool usesPageViews();
     /// A verbatim C++ fragment at `b`, located at the module.
     void verbatim(mlir::OpBuilder & b, const llvm::Twine & text);
 };

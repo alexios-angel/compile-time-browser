@@ -9,6 +9,9 @@
 #include "Emitter.h"
 #include "Runtime.h"
 
+#include <array>
+#include <string>
+
 namespace ctcompile::ctnative::lowering_detail {
 
 void lowering::verbatim(mlir::OpBuilder & b, const llvm::Twine & text) {
@@ -112,6 +115,42 @@ void lowering::finish() {
     shells.clear();
 }
 
+bool lowering::usesPageViews() {
+    if (!pageViews) { return false; }
+    // The page views' types and the calls and objects only Page.hpp declares.
+    static constexpr std::array<llvm::StringLiteral, 6> kMarkers{
+        "ctnative::js_element_t",
+        "ctnative::js_dom_rect",
+        "ctnative::js_computed_style",
+        "ctnative::window",
+        "ctnative::require_document_element",
+        "ctnative::document"};
+    const auto mentions = [](llvm::StringRef text) {
+        return llvm::any_of(kMarkers,
+                            [&](llvm::StringRef marker) { return text.contains(marker); });
+    };
+    const auto typed = [&](mlir::Type type) {
+        std::string text;
+        llvm::raw_string_ostream(text) << type;
+        return mentions(text);
+    };
+    bool found = false;
+    module.walk([&](mlir::Operation * op) {
+        if (auto call = llvm::dyn_cast<ec::CallOpaqueOp>(op)) {
+            found |= mentions(call.getCallee());
+        }
+        if (auto literal = llvm::dyn_cast<ec::LiteralOp>(op)) {
+            found |= mentions(literal.getValue());
+        }
+        found |= llvm::any_of(op->getResultTypes(), typed);
+        if (auto fn = llvm::dyn_cast<ec::FuncOp>(op)) {
+            found |= llvm::any_of(fn.getFunctionType().getInputs(), typed);
+        }
+        return found ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
+    });
+    return found;
+}
+
 void lowering::declareGlobals() {
     // Presentation policies for the C++ printer only: keep typed constants
     // through every optimization and let the printer choose their literal
@@ -140,8 +179,19 @@ void lowering::declareGlobals() {
     // its identity struct and field accessors, its environments, its method
     // tables, its DOM session.
     if (needsMapOrder) { verbatim(b, kOrderedMapsDefine); }
+    // An ordinary script's page reads use the runtime's page views (Page.hpp),
+    // which need CTNATIVE_DOM, so the file compiles on its own. The define is
+    // guarded: a workload wrapper that includes Page.hpp itself defines it
+    // first.
+    const bool pageReads = !needsDOM && usesPageViews();
     if (needsDOM) { verbatim(b, kDOMDefine); }
+    if (pageReads) { verbatim(b, ("#ifndef CTNATIVE_DOM\n" + kDOMDefine + "\n#endif").str()); }
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
+    if (pageReads) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Page.hpp"),
+                              b.getUnitAttr());
+    }
     // Browser views include the live selector engine only for entries that
     // already borrow Style. Primitive-only programs keep the smaller header.
     if (!domStyleParameters.empty()) {
