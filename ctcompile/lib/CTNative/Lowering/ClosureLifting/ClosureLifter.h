@@ -488,6 +488,16 @@ struct closureLifter {
 
     void specializeCallbacks(liftReport & out);
 
+    /// Array-method callbacks (ArrayCallbacks.cpp): each closure whose one use
+    /// is the callback argument of `a.forEach(f)`, `a.map(f)` and the like,
+    /// with that call. Such a closure is judged by whyNotArrayCallback and,
+    /// once lift() has made its captures parameters, its call is rewritten by
+    /// rewriteArrayCallback instead of lift()'s call-site loop.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> arrayCallbacks;
+    void arrayCallbackCensus();
+    std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
+    void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
     void census();
 
     void singleWriteCensus();

@@ -15,6 +15,9 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
+bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
+
 namespace {
 
 /// Admits an operation on an element array (isElementArray: Strings or
@@ -150,6 +153,35 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::builtinStatic: {
+        const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+        const std::string name =
+            (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
+        using Param = TypeInference::BuiltinStatic::Param;
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            const Param kind = row.params[index];
+            const carrier wanted = kind == Param::string   ? carrier::string
+                                   : kind == Param::number ? carrier::number
+                                                           : carrier::domElement;
+            if (carrierOf(self.typeOf(argument)) != wanted) {
+                return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
+                                   printed(self.typeOf(argument)) + ", not " +
+                                   (kind == Param::string   ? "a String"
+                                    : kind == Param::number ? "a Number"
+                                                            : "an Element"));
+            }
+        }
+        return true;
+    }
+    case VectorCall::includes:
+        if (!array(call.getReceiver()) ||
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
+            return std::nullopt;
+        }
+        return isString(call.getArgs()[0]) ||
+               self.refuse("includes on an array of Strings is given " +
+                           printed(self.typeOf(call.getArgs()[0])) + ", not a String");
+    case VectorCall::callback: return arrayCallbackOperation(self, call);
     case VectorCall::regexp:
         // Plumbing returned above; every other RegExp literal is refused here.
         return self.refuse("a regular expression literal - only `text.split(/\\s+/)` is native");

@@ -66,11 +66,14 @@ bool isMethodCall(ctjs::CallOp call, llvm::StringRef key) {
 TypeInference::VectorCall TypeInference::vectorCallOf(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
     if (!call) { return VectorCall::none; }
+    if (isArrayCallbackCall(call)) { return VectorCall::callback; }
+    if (builtinStaticOf(call)) { return VectorCall::builtinStatic; }
     if (ctjs::calleeGlobalName(call) == "__ctbrowser_regexp") { return VectorCall::regexp; }
     const std::size_t arity = call.getArgs().size();
     if (arity == 1 && isMethodCall(call, "push")) { return VectorCall::push; }
     if (arity <= 1 && isMethodCall(call, "join")) { return VectorCall::join; }
     if (arity == 0 && isMethodCall(call, "sort")) { return VectorCall::sort; }
+    if (arity == 1 && isMethodCall(call, "includes")) { return VectorCall::includes; }
     if (arity == 1 && isMethodCall(call, "split")) {
         mlir::Operation * separator = call.getArgs()[0].getDefiningOp();
         if (isWhitespaceRegExp(separator)) { return VectorCall::splitSpace; }
@@ -148,7 +151,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             // A literal, or the array a direct call returned by value.
             owners.push_back(definition);
         } else if (const VectorCall made = vectorCallOf(definition);
-                   made == VectorCall::split || made == VectorCall::splitSpace) {
+                   made == VectorCall::split || made == VectorCall::splitSpace ||
+                   (made == VectorCall::callback && arrayCallbackMakesArray(definition))) {
             owners.push_back(definition);
         } else if (made == VectorCall::sort) {
             // `a.sort()` answers `a` itself.
@@ -205,7 +209,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                 // An empty key is an index, which TypeInference requires to be
                 // a proved Number before it types the read.
                 if (key.empty() || key == "length") { continue; }
-                if (key == "push" || key == "join" || key == "sort") {
+                if (key == "push" || key == "join" || key == "sort" || key == "includes" ||
+                    isArrayCallbackMethod(key)) {
                     // The read has to be the callee of one call on this
                     // array; vectorCallOf checks that it has no other use.
                     if (!read.getResult().hasOneUse()) {
@@ -228,9 +233,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
                 const VectorCall kind = vectorCallOf(call);
+                if (kind == VectorCall::callback &&
+                    arrayCallbackBorrows(call, use.getOperandNumber())) {
+                    continue;
+                }
                 if (use.getOperandNumber() == 1 &&
                     (kind == VectorCall::push || kind == VectorCall::join ||
-                     kind == VectorCall::sort)) {
+                     kind == VectorCall::sort || kind == VectorCall::includes)) {
                     if (kind == VectorCall::sort) { add(call.getResult()); }
                     continue;
                 }
