@@ -8,10 +8,11 @@
 // a String parameter (it is refused only because getOffset is, for the
 // closure it returns); CELLWRITTEN has that closure write `t`, so the reads are
 // not one value and the callback's parameter stays unproved. No refinement
-// outlives the pass, and none is left in a refused function when the
-// reachability proof reads it: DEAD keeps a refinement in the refused
-// `render` and still removes css-dump.js's shape of dead callback, the
-// forEach under `typeof PROPS !== 'undefined'` with PROPS absent.
+// outlives the pass. The reachability proof reads a refused function with
+// its refinements (Reachability/Analysis.cpp accepts ctnative.refine): DEAD
+// keeps a refinement in the refused `render` and still removes css-dump.js's
+// shape of dead callback, the forEach under `typeof PROPS !== 'undefined'`
+// with PROPS absent.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.refine

@@ -949,12 +949,6 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
 
-        // A refused function keeps its CTJS body, which the reachability proof
-        // reads and which must hold no ctnative.refine; an accepted one lowers
-        // its refinements below.
-        for (ctjs::FuncOp fn : functions) {
-            if (!llvm::is_contained(accepted, fn)) { dropRefinements(fn); }
-        }
         removeUnreachableRefusals(functions, hostContract.has_value());
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         dropRefinements(module);
