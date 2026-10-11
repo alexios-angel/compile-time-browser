@@ -274,8 +274,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                           : row.params[i] == Param::number    ? 'n'
                           : row.params[i] == Param::element   ? 'e'
                           : row.params[i] == Param::printable ? 'p'
-                          : table                             ? 'd'
-                                                              : 'r';
+                          // A constant table is passed as it is, as a printable is.
+                          : row.params[i] == Param::staticTable ? 'p'
+                          : table                               ? 'd'
+                                                                : 'r';
                 // A record's keys, in definition order, read now while its
                 // writes are still ctjs.
                 if (row.params[i] == Param::record && !table && i < call.getArgs().size()) {

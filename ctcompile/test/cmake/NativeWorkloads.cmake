@@ -253,4 +253,6 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   ctcompile_page_workload(timers timers_report)
   # The element calls of Bootstrap's SelectorEngine and Manipulator.
   ctcompile_page_workload(selectors selectors_report)
+  # A Config-like struct field that holds an element or null.
+  ctcompile_page_workload(element_fields element_fields_report)
 endif()

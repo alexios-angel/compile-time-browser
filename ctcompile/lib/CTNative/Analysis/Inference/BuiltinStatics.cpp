@@ -78,6 +78,23 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     // replacer and no space: ctnative::JSON.stringify of the literal's
     // ctnative::json_record, or of the table itself.
     {"JSON", "stringify", "ctnative::JSON.stringify", {Param::record}, 1, 1, Result::string},
+    // Object.entries, Object.keys and Object.values (ECMA-262 20.1.2.5, .18,
+    // .22) of a constant table (Runtime/Object.hpp's object_table).
+    {"Object",
+     "entries",
+     "ctnative::Object.entries",
+     {Param::staticTable},
+     1,
+     1,
+     Result::tableEntries},
+    {"Object", "keys", "ctnative::Object.keys", {Param::staticTable}, 1, 1, Result::tableKeys},
+    {"Object",
+     "values",
+     "ctnative::Object.values",
+     {Param::staticTable},
+     1,
+     1,
+     Result::tableValues},
 };
 
 /// Whether --ctjs-resolve-globals found that this program never binds

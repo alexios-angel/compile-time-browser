@@ -29,7 +29,18 @@
 # RUN: %t/spread-clang | FileCheck %s --check-prefix=SPREAD-OBSERVATION
 # RUN: %native_reference %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
-# RUN: for name in written dynamic argument stored nested spread-array spread-enumerated; do \
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/entries.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/entries.mlir
+# RUN: FileCheck %s --check-prefix=ENTRIES --implicit-check-not=ctnative.not_native < %t/entries.mlir
+# RUN: ctjs-opt %t/entries.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/entries.cpp
+# RUN: FileCheck %s --check-prefix=ENTRIES-CPP < %t/entries.cpp
+# RUN: %gxx -O2 %t/entries.cpp -o %t/entries-gcc
+# RUN: %t/entries-gcc | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %clangxx -O2 %t/entries.cpp -o %t/entries-clang
+# RUN: %t/entries-clang | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %native_reference %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: for name in written dynamic argument stored nested spread-array spread-enumerated entries-mixed; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc; done \
 # RUN:   | FileCheck %s --check-prefix=REFUSED
@@ -63,7 +74,15 @@
 # whose target's keys are enumerated: the target is not a struct then, so a
 # field the table did not copy can never read as one that holds undefined.
 # REFUSED: holding an object literal that is spread while it holds the array field `offset`
-# REFUSED: global `Object` is !ctnative.boxed, not a number
+# REFUSED: an object literal that escapes - it is passed to a call
+# REFUSED: it reads `{{[a-z]+}}`, a static variable of a function that runs once, holding an object literal that is passed as an argument
+
+# A for-of over Object.entries of a table of Strings is an index loop over
+# object_table's pairs, in definition order. A table with a field that is not
+# a String keeps the refusal above (entries-mixed.js).
+# ENTRIES: call_opaque "ctnative::object_table<static_types_table_t>::entries"
+# ENTRIES-CPP: static constexpr std::array<std::string_view, 2> keys{"interval", "pause"};
+# ENTRIES-OBSERVATION: r=29
 
 #--- table.js
 var r = (function () {
@@ -164,3 +183,31 @@ var r = (function () {
     return get();
 })();
 
+
+#--- entries.js
+var r = (function () {
+    var types = {interval: "number", pause: "string"};
+    function make() {
+        return () => types;
+    }
+    const get = make();
+    var out = "";
+    for (const [k, v] of Object.entries(get())) {
+        out = out + k + "=" + v + ";";
+    }
+    return out.length;
+})();
+
+#--- entries-mixed.js
+var r = (function () {
+    var types = {interval: 5, pause: "string"};
+    function make() {
+        return () => types;
+    }
+    const get = make();
+    var out = "";
+    for (const [k, v] of Object.entries(get())) {
+        out = out + k + ";";
+    }
+    return out.length;
+})();

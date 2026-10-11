@@ -32,6 +32,18 @@ inline constexpr llvm::StringLiteral kNativeStaticTableField = "ctnative.static_
 /// the field's constant or undefined. A unit attribute.
 inline constexpr llvm::StringLiteral kNativeStaticTableSpread = "ctnative.static_table_spread";
 
+/// On an `Object.entries`, `Object.keys` or `Object.values` call (a row of the
+/// built-in statics table, Inference/BuiltinStatics.cpp) whose argument is a
+/// read of a table whose fields are all Strings: the static variable's name
+/// (a StringAttr). The call answers in the table's definition order
+/// (Runtime/Object.hpp's object_table).
+inline constexpr llvm::StringLiteral kNativeStaticTableEnumeration =
+    "ctnative.static_table_enumeration";
+
+/// On the same call: which of the three it is ("entries", "keys" or
+/// "values"), kept because the method read is lowered before the call.
+inline constexpr llvm::StringLiteral kNativeStaticTableMethod = "ctnative.static_table_method";
+
 /// On every cell of a static whose stored object literal is not a constant
 /// table: why not, as a clause that completes "it reads `x`, a run-once static
 /// holding an object literal that ...".
@@ -61,6 +73,11 @@ inline constexpr llvm::StringLiteral kNativeStaticTableReason = "ctnative.static
 ///     hold an undefined field where JavaScript has no field at all, which is
 ///     unobservable because native lowering gives the target a struct only
 ///     when its keys are never enumerated, tested or copied again.
+///  5. A read may also be the argument of `Object.entries`, `Object.keys` or
+///     `Object.values` (recognised by the built-in statics table) when every
+///     field is a String; the call is marked kNativeStaticTableEnumeration.
+///     The table holds no array-index key, so definition order is property
+///     order.
 void markStaticTables(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctnative

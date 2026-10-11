@@ -18,6 +18,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 
 #include "llvm/ADT/MapVector.h"
@@ -138,7 +139,25 @@ struct readers {
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, mlir::Attribute>> reads;
     /// Spreads of the table into a fresh literal, written out once proved.
     llvm::SmallVector<ctjs::CopyPropsOp> spreads;
+    /// `Object.entries`, `keys` or `values` calls of the table, marked once
+    /// proved.
+    llvm::SmallVector<ctjs::CallOp> enumerations;
     llvm::DenseSet<mlir::Operation *> followed;
+
+    /// Whether `use` is the argument of a built-in statics row that takes a
+    /// constant table (Object.entries, keys, values) and every field of this
+    /// table is a String, which is what the row answers.
+    bool enumerates(ctjs::CallOp call, mlir::OpOperand & use) const {
+        const auto * row = TypeInference::builtinStaticOf(call);
+        if (!row || row->params[0] != TypeInference::BuiltinStatic::Param::staticTable ||
+            call.getArgs().size() != 1 || call.getArgs().front() != use.get() ||
+            !fields.arrays.empty()) {
+            return false;
+        }
+        return llvm::all_of(fields.scalars, [](const auto & field) {
+            return llvm::isa<ctjs::StringAttr>(field.getValue());
+        });
+    }
 
     Reason check(mlir::Value value) {
         for (mlir::OpOperand & use : value.getUses()) {
@@ -169,6 +188,10 @@ struct readers {
                            fields.arrays.begin()->first().str() + "`";
                 }
                 spreads.push_back(spread);
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user); call && enumerates(call, use)) {
+                enumerations.push_back(call);
                 continue;
             }
             if (llvm::isa<ctjs::ReturnOp>(user)) {
@@ -290,6 +313,11 @@ void markStaticTables(mlir::ModuleOp module) {
             read->setAttr(kNativeStaticTableField, constant);
         }
         for (ctjs::CopyPropsOp spread : uses.spreads) { expandSpread(spread, name, fields); }
+        for (ctjs::CallOp call : uses.enumerations) {
+            call->setAttr(kNativeStaticTableEnumeration, name);
+            call->setAttr(kNativeStaticTableMethod,
+                          mlir::StringAttr::get(call.getContext(), ctjs::methodKey(call)));
+        }
     }
 }
 

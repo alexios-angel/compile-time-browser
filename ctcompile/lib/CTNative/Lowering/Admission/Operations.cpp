@@ -14,6 +14,7 @@
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -228,19 +229,25 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             const bool printable = held == carrier::string || held == carrier::number ||
                                    held == carrier::boolean || held == carrier::nullable ||
                                    held == carrier::nullableString;
-            const bool fits = kind == Param::string   ? isString(argument)
-                              : kind == Param::number ? held == carrier::number
-                              : kind == Param::element
-                                  ? held == carrier::domElement || held == carrier::nullableElement
-                                  : printable;
+            // A constant table only where its proof marked the call.
+            const bool table =
+                held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
+            const bool fits = kind == Param::string        ? isString(argument)
+                              : kind == Param::number      ? held == carrier::number
+                              : kind == Param::element     ? held == carrier::domElement ||
+                                                             held == carrier::nullableElement
+                              : kind == Param::staticTable ? table
+                                                           : printable;
             if (!fits) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
                                    (kind == Param::string    ? "a String"
                                     : kind == Param::number  ? "a Number"
                                     : kind == Param::element ? "an Element"
-                                                             : "a String, Number, Boolean, null "
-                                                               "or undefined"));
+                                    : kind == Param::staticTable
+                                        ? "a constant table of Strings"
+                                        : "a String, Number, Boolean, null "
+                                          "or undefined"));
             }
         }
         return true;

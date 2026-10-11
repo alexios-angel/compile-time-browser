@@ -327,7 +327,11 @@ public:
             record,
             /// What console.log prints (Runtime/Console.hpp): a String, a
             /// Number, a Boolean, null or undefined, or an optional of them.
-            printable
+            printable,
+            /// A run-once static's constant table whose fields are all
+            /// Strings, proved by Inference/StaticTables.cpp, which marks the
+            /// call (kNativeStaticTableEnumeration).
+            staticTable
         };
         /// What the call answers.
         enum class Result {
@@ -337,7 +341,14 @@ public:
             elementVector,
             /// An ordinary script's element or null.
             nullableElement,
-            undefined
+            undefined,
+            /// Object.entries, Object.keys and Object.values of a proved
+            /// constant table of Strings: [key, value] pairs, the keys and the
+            /// values, in definition order. A call the table proof did not
+            /// mark has no type.
+            tableEntries,
+            tableKeys,
+            tableValues
         };
         llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
         /// `parseInt`, `min`, `toLowerCase`; empty for a call of the global
