@@ -142,7 +142,7 @@ UNTRUSTED_NATIVE.update(
             "inherited",
             "inherited-base-instance",
             "inherited-branch-helper",
-        "inherited-chain",
+            "inherited-chain",
             "inherited-dispatch",
             "inherited-explicit",
             "inherited-helper-chain",
