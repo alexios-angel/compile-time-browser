@@ -26,6 +26,11 @@ ctcompile_target(ctcompile-test-native-reference)
 # ctbrowser for its DOM section.
 ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 
+# ctnative::function_ref (CTNative/Runtime/Callable.hpp), the parameter type of
+# a borrowed callback. Header-only and library-free; its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-callable)
+
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
 # reaches the interpreter, linked against the engine; it must fail the

@@ -488,12 +488,30 @@ struct closureLifter {
 
     void specializeCallbacks(liftReport & out);
 
+    /// Array-method callbacks (ArrayCallbacks.cpp): each closure whose one use
+    /// is the callback argument of `a.forEach(f)`, `a.map(f)` and the like,
+    /// with that call. Such a closure is judged by whyNotArrayCallback and,
+    /// once lift() has made its captures parameters, its call is rewritten by
+    /// rewriteArrayCallback instead of lift()'s call-site loop.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> arrayCallbacks;
+    void arrayCallbackCensus();
+    std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
+    void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
     /// Replacement functions of `text.replace(/pattern/g, f)`
     /// (StringCallbacks.cpp), judged and rewritten as an Array callback is.
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> stringCallbacks;
     void stringCallbackCensus();
     std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
     void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
+    /// Listeners handed to the host (HostCallbacks.cpp): each closure whose
+    /// one use is the listener argument of `el.addEventListener(type, f)`,
+    /// with that call. Judged by whyNotHostCallback and rewritten by
+    /// rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    void hostCallbackCensus();
+    std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
+    void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     void census();
 
@@ -646,6 +664,11 @@ struct closureLifter {
     bool makeRunOnceCellsStatic(liftReport & out, bool functions);
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
+
+    /// Turns calls of methods of an object literal held in a static variable
+    /// into direct calls when nothing else reads it (Singletons.cpp). Returns
+    /// whether it changed the module.
+    bool bindSingletonMethods(liftReport & out);
 
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 
@@ -848,6 +871,20 @@ struct closureLifter {
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
+
+    // --- Borrowed callbacks (BorrowedCallbacks.cpp) ----------------------------
+    //
+    // A closure passed to a parameter that its callee only calls, where every
+    // caller of that callee passes one. Each such closure maps to all the
+    // closures passed to the same parameter (including itself), because that
+    // parameter has one C++ type for all of them. The census is retaken each
+    // round, as lifting a callee changes its operand positions.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp, 2>>
+        borrowedCallbacks;
+    void borrowedCallbackCensus();
+    std::optional<std::string> whyNotBorrowedMember(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyNotBorrowedCallback(ctjs::CreateClosureOp c);
+    void rewriteBorrowedCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     liftReport run();
 

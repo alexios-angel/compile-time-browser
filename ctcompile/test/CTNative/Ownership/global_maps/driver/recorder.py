@@ -7,6 +7,8 @@ lifetime harness that verifies every Map and object is freed once its last
 owner is dropped.
 """
 
+from CTNative.harness import run_parallel
+
 from .common import observe
 from ..harness.map_results import run_sanitized_lifetime
 from ..sources.recorders import *
@@ -383,11 +385,13 @@ def template_lifetime(
 def check_recorders(args, node, reference, compilers, nm):
     """Run every recorder, snapshot and template case end to end and print a summary."""
     cases = {**recorder_cases(), **recorder_refusals(), **snapshot_cases(), **template_cases()}
-    observations = 0
 
-    for name, row in cases.items():
+    # Every case, future and mutation below writes only files named after
+    # itself, so they run side by side (run_parallel).
+    def observe_case(item):
+        name, row = item
         observe(args, name, row["source"], row["values"])
-        observations += len(row["values"])
+        observations = len(row["values"])
         if row["admitted"]:
             values = dict(row["values"], traceFuture=1)
             future = row["source"] + (
@@ -409,12 +413,20 @@ for (let i = 0; i < 1024; ++i) {
                 values.update(traceErrorCount=values["traceErrorCount"] + 2048, traceErrorMessage=0)
             observe(args, name + "-future", future, values)
             observations += len(row["values"]) + 1
-    mutations = [*recorder_mutations(), *template_mutations()]
-    for name, source, values in mutations:
-        observe(args, name, source, values)
-        observations += len(values)
+        return observations
 
-    for name, row in cases.items():
+    def observe_mutation(mutation):
+        name, source, values = mutation
+        observe(args, name, source, values)
+        return len(values)
+
+    mutations = [*recorder_mutations(), *template_mutations()]
+    observations = sum(run_parallel(cases.items(), observe_case)) + sum(
+        run_parallel(mutations, observe_mutation)
+    )
+
+    def check_case(item):
+        name, row = item
         # boundary.prepare appends one newline, so strip it here to compile the
         # pinned source bytes exactly.
         js, ir, functions = boundary.prepare(args, name, row["source"].removesuffix("\n"))
@@ -564,6 +576,8 @@ for (let i = 0; i < 1024; ++i) {
                     )
                 else:
                     methods.lifetime(args, cpp, name, mode, expected, compilers[1])
+
+    run_parallel(cases.items(), check_case)
     native = sum(row["admitted"] for row in cases.values())
     print(
         f"recorder boundary: {native} native programs, {len(cases) - native} refusals, "

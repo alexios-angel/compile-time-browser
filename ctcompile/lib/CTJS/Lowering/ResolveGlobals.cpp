@@ -799,6 +799,17 @@ void rewrite_direct(CallOp call, FuncOp target, unsigned parameters) {
     call.erase();
 }
 
+/// Whether every object, the global object included, inherits a property
+/// named \p key from Object.prototype, so that reading it never answers
+/// undefined for want of an own property.
+bool inheritedFromObject(llvm::StringRef key) {
+    return llvm::is_contained({"constructor", "hasOwnProperty", "isPrototypeOf",
+                               "propertyIsEnumerable", "toString", "toLocaleString", "valueOf",
+                               "__proto__", "__defineGetter__", "__defineSetter__",
+                               "__lookupGetter__", "__lookupSetter__"},
+                              key);
+}
+
 /// How a watched value of kind \p kind is described in a refusal reason.
 std::string name_of(watched kind) {
     switch (kind) {
@@ -1309,6 +1320,54 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             }
         }
 
+        // The same names read as properties of the global object. With
+        // nothing writing the globals table dynamically, `window.jQuery` for a
+        // name the program never binds is an own property no one created,
+        // so it is undefined, and a library's probe for an optional global
+        // (`window.jQuery ? window.jQuery : null`) folds like `typeof jQuery`
+        // does. Unlike the bare name it does not throw, so every read folds,
+        // not only `typeof`. The holder must be the global object itself (a
+        // load of `window`, `self` or `globalThis` the program never binds),
+        // and a name that the global object inherits from Object.prototype is
+        // never absent.
+        llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
+        if (!dynamic) {
+            const auto bound = [&](mlir::StringAttr name) {
+                const auto facts = world.bindings.find(name);
+                return (facts != world.bindings.end() && !facts->second.stores.empty()) ||
+                       world.refused.contains(name) || declared.contains(name) ||
+                       bound_through.contains(name);
+            };
+            llvm::SmallVector<GetPropertyOp> reads;
+            module.walk([&](GetPropertyOp get) {
+                auto holder = get.getObject().getDefiningOp<LoadGlobalOp>();
+                const llvm::StringRef key = constantKey(get.getKey());
+                if (!holder || !names_global_object(holder.getName()) ||
+                    bound(holder.getNameAttr()) || key.empty() || inheritedFromObject(key) ||
+                    nativeRealmProvides(key) || bound(mlir::StringAttr::get(context, key))) {
+                    return;
+                }
+                reads.push_back(get);
+            });
+            for (GetPropertyOp get : reads) {
+                mlir::OpBuilder at(get);
+                auto undefined = ConstantOp::create(at, get.getLoc(), get.getType(),
+                                                    UndefinedAttr::get(context));
+                ++folded_through[mlir::StringAttr::get(context, constantKey(get.getKey()))];
+                get.getResult().replaceAllUsesWith(undefined.getResult());
+                auto holder = get.getObject().getDefiningOp<LoadGlobalOp>();
+                mlir::Operation * key = get.getKey().getDefiningOp();
+                get.erase();
+                if (key && mlir::isa<ConstantOp>(key) && key->use_empty()) { key->erase(); }
+                // A load of the global object that only held the folded read
+                // goes too, so the census below does not count it as a use.
+                if (holder.getResult().use_empty()) {
+                    llvm::erase(world.bindings[holder.getNameAttr()].loads, holder);
+                    holder.erase();
+                }
+            }
+        }
+
         llvm::SmallVector<mlir::Attribute> rows;
         const auto record = [&](mlir::StringAttr name, std::size_t stores, FuncOp resolved,
                                 const std::string & reason) {
@@ -1438,6 +1497,14 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             ++closed_here;
             record(name, facts.stores.size(), target,
                    "closed: " + std::to_string(rewritten) + " call(s) rewritten");
+        }
+
+        for (const auto & [name, reads] : folded_through) {
+            if (world.bindings.contains(name)) { continue; } // its row is above
+            record(name, 0, FuncOp{},
+                   "absent: never stored and not provided by the native realm; " +
+                       std::to_string(reads) + " read(s) through the global object folded to " +
+                       "undefined");
         }
 
         // Second shape: a ctjs.call whose callee is a ctjs.create_closure

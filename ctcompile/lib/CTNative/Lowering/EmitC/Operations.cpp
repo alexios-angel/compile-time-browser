@@ -135,6 +135,7 @@ void lowering::printObservations(mlir::OpBuilder & b, mlir::Location where) {
 }
 
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
+    if (replaceStaticTable(o)) { return; }
     if (replaceDOM(o)) { return; }
     if (replaceOwnedGlobal(o)) { return; }
     if (replaceException(o)) { return; }
@@ -558,6 +559,11 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (auto load = llvm::dyn_cast<LoadGlobalOp>(o)) {
+        // The global `undefined` is the undefined value; it has no storage.
+        if (TypeInference::isUndefinedGlobal(o)) {
+            swap(convertScalar(b, where, absentConstant(b, where), load.getResult().getType()));
+            return;
+        }
         if (admission::feedsOnlyDirectCallees(load.getResult())) {
             // Every use is a call_direct's callee-value operand, and the
             // call is rewritten below without it; by the sweep it is dead.

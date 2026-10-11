@@ -293,9 +293,36 @@ public:
         sort,
         split,
         splitSpace,
-        regexp
+        regexp,
+        /// `a.includes(x)` on an array of Strings.
+        includes,
+        /// A callback method closure lifting specialised
+        /// (Inference/ArrayCallbacks.cpp).
+        callback
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
+
+    // Array-method callbacks (Inference/ArrayCallbacks.cpp).
+    /// Whether `key` names an Array method the runtime calls back from.
+    static bool isArrayCallbackMethod(llvm::StringRef key);
+    /// Whether `op` is a call closure lifting specialised for its callback.
+    static bool isArrayCallbackCall(mlir::Operation * op);
+    /// Whether that call answers a new array (filter and map).
+    static bool arrayCallbackMakesArray(mlir::Operation * op);
+    /// Whether operand `index` of that call only lends an array to it: the
+    /// receiver, or a captured value the callback reads.
+    static bool arrayCallbackBorrows(mlir::Operation * op, unsigned index);
+    /// Whether `value` is a parameter of a specialised callback, which its
+    /// call types rather than the entry state.
+    static bool isArrayCallbackParameter(mlir::Value value);
+
+    // Listeners handed to the host (Inference/HostCallbacks.cpp).
+    /// Whether `op` is an `addEventListener` call closure lifting specialised
+    /// for its listener.
+    static bool isHostCallbackCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a listener, which its call
+    /// types rather than the entry state.
+    static bool isHostCallbackParameter(mlir::Value value);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -312,6 +339,29 @@ public:
     /// splitsAString says whether there is one.
     static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
         llvm::ArrayRef<mlir::Value> members);
+    /// Whether `op` reads the global `undefined` in a program that never
+    /// stores to it. `undefined` is a non-writable, non-configurable property
+    /// of the global object (ECMA-262 19.1.4), so such a read is the undefined
+    /// value, whatever else writes the globals table.
+    static bool isUndefinedGlobal(mlir::Operation * op);
+    /// Whether `op` reads `x.getBoundingClientRect` only to test it.
+    static bool isRectTest(mlir::Operation * op);
+    /// Whether `op` is `x.getBoundingClientRect()`, its callee read for that
+    /// call alone.
+    static bool isRectCall(mlir::Operation * op);
+    /// When `op` is the null of `x.getBoundingClientRect ?
+    /// x.getBoundingClientRect() : null`, `x`; null otherwise. For an element
+    /// `x` the test is always true and the null never produced.
+    static mlir::Value deadRectReceiver(mlir::Operation * op);
+    /// Whether `op` calls the realm's own `getComputedStyle` with one argument.
+    static bool isStyleCall(mlir::Operation * op);
+    /// Whether `op` is `x.getPropertyValue(name)`, its callee read for that
+    /// call alone.
+    static bool isStylePropertyCall(mlir::Operation * op);
+    /// Whether `op` loads the global `name` in a program that never stores
+    /// to it, so the load is the realm's own binding of that name.
+    static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
+
     /// Whether the array `members` names is a function's parameter: a
     /// read-only borrow of the caller's array, lowered as std::span.
     static bool elementVectorParameter(llvm::ArrayRef<mlir::Value> members);
@@ -428,7 +478,23 @@ private:
     /// vector (elementVectorAliases), or calls split on a String; null when it
     /// does none of these. Sets `pending` when the answer has to wait for a
     /// stored value's lattice.
+    /// The type of a page read of an ordinary script: `document.documentElement`
+    /// (an element), an element's tagName, id and className (Strings),
+    /// children (a vector of elements), clientWidth and clientHeight, and
+    /// `window.devicePixelRatio` (Numbers); getBoundingClientRect (a rect, its
+    /// existence test a Boolean, the null of its guard the rect too), the
+    /// rect's left, top, width and height (Numbers), getComputedStyle(el) and
+    /// its getPropertyValue (a String). Null for anything else.
+    mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+                                 bool & pending);
+    /// The type of a specialised `addEventListener` call (undefined), after
+    /// joining its captured values into the listener's parameters.
+    mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of a specialised Array-method call, after joining its
+    /// receiver's element type, the index and its captured values into the
+    /// callback's parameters.
+    mlir::Type arrayCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
     /// The type of a specialised replace call, after joining its captures, and
     /// the match and groups (Strings), into the callback's parameters.
@@ -501,6 +567,17 @@ private:
     /// values crossing a call boundary, and every operation the transfer
     /// function does not handle. `boxed` is the top of the lattice and always
     /// safe; the native compiler either proves a type or falls back to it.
+    // Borrowed callbacks (Inference/BorrowedCallbacks.cpp).
+    /// Whether `value` is a parameter of a borrowed callback, which the
+    /// closure and the calls through its callee's parameter type rather than
+    /// the entry state.
+    static bool isBorrowedCallbackParameter(mlir::Value value);
+    /// The transfer function of a borrowed callback's closure and of a call
+    /// through a borrowed parameter; nullopt for any other operation.
+    std::optional<mlir::LogicalResult> visitBorrowedCallback(
+        mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+        llvm::ArrayRef<TypeLattice *> results);
+
     void setToEntryState(TypeLattice * lattice) override;
 };
 

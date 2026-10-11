@@ -127,6 +127,9 @@ bool admission::function(ctjs::FuncOp fn) {
     const auto capturesAttr = fn->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures);
     const unsigned captures = capturesAttr ? static_cast<unsigned>(capturesAttr.getInt()) : 0u;
     for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
+        // A borrowed callback parameter is a ctnative::function_ref; the calls
+        // through it are admitted one by one (BorrowedCallbacks.cpp).
+        if (isBorrowedParameter(entry.getArgument(i))) { continue; }
         // Object parameters get the receiver's check. Their carrier is the
         // generated class one indirection away, so `carrierOf` has no row for
         // them and the check below would refuse every one; what has to hold is

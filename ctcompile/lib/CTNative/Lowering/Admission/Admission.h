@@ -39,6 +39,9 @@ struct admission {
     /// The returned type, kept so that the source alternatives survive when a
     /// nullable carrier can also hold a boolean.
     mlir::Type returnedType = {};
+    /// Whether this is an ordinary script, with no host contract: its DOM
+    /// elements are the runtime's views (lowering::pageViews).
+    [[nodiscard]] bool pageViews() const { return !domEntry && !ownedGlobals; }
     /// The inferred type of `v`, or null when the solver has no fact for it.
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const;
 
@@ -158,6 +161,9 @@ struct admission {
     bool op(mlir::Operation * o);
     // op()'s larger arms, one member each.
     std::optional<bool> domOperation(mlir::Operation * o);
+    /// A run-once static's constant table: its literal, fields and reads, and a
+    /// read of a static whose literal is not one (Admission/StaticTables.cpp).
+    std::optional<bool> staticTableOperation(mlir::Operation * o);
     bool nativeMapCall(mlir::Operation * o, llvm::StringRef action);
     bool closedObject(ctjs::CreateObjectOp object);
     bool directCall(ctjs::CallDirectOp call);

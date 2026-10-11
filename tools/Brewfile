@@ -83,20 +83,20 @@ brew "sdl3_ttf"   # and sdl3 beneath it, as a dependency
 # one. Bumping the major is its own change - ctcompile/docs/LLVMUpgrade.md.
 brew "llvm"   # 23.1.0: clang, LLVM, MLIR, mlir-tblgen, FileCheck
 
-# lit IS NOT IN THIS FILE and cannot be, which is worth saying here rather than
-# leaving to be rediscovered. brew's llvm bottle ships FileCheck but no
-# llvm-lit, Ubuntu's python is PEP 668 managed so `pip install lit` refuses,
-# and brew's python refuses for the same reason. ctcompile's lit suite is run
-# from a virtual environment:
-#
-#     python3 -m venv ~/.lit-venv && ~/.lit-venv/bin/pip install lit
-#
-# ctcompile/test/CMakeLists.txt finds it there or reports that check-ctcompile
-# is unavailable, rather than silently running no tests.
+# Python tools come from uv, not from this file. brew's llvm bottle ships FileCheck
+# but no llvm-lit, and both Ubuntu's and brew's python refuse `pip install`
+# under PEP 668, so lit (ctcompile's lit suite), Playwright (compare.py) and
+# ruff (the Python half of tools/format.sh) are dependency groups in
+# pyproject.toml at the repository root, pinned by uv.lock and installed into
+# /.venv by `uv sync`. tools/remote-build.sh syncs the test group on the box;
+# ctcompile/test/cmake/Lit.cmake finds lit there, or reports that
+# check-ctcompile is unavailable rather than silently running no tests.
+brew "uv"
 
 # THE PYTHON FORMATTER, the second half of tools/format.sh: every tracked .py
 # (the WPT and test262 runners, the corpus tools, ctcompile's test drivers) is
 # formatted by `ruff format` (black until 2026-10-10) at the 100 columns the C++
 # style already uses - pyproject.toml at the repository root is the whole
-# configuration.
+# configuration. format.sh runs uv.lock's ruff through `uv run`; this one is
+# the fallback for a machine without uv.
 brew "ruff"

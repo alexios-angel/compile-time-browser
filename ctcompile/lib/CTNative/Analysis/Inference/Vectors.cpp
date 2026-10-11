@@ -66,11 +66,13 @@ bool isMethodCall(ctjs::CallOp call, llvm::StringRef key) {
 TypeInference::VectorCall TypeInference::vectorCallOf(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
     if (!call) { return VectorCall::none; }
+    if (isArrayCallbackCall(call)) { return VectorCall::callback; }
     if (ctjs::calleeGlobalName(call) == "__ctbrowser_regexp") { return VectorCall::regexp; }
     const std::size_t arity = call.getArgs().size();
     if (arity == 1 && isMethodCall(call, "push")) { return VectorCall::push; }
     if (arity <= 1 && isMethodCall(call, "join")) { return VectorCall::join; }
     if (arity == 0 && isMethodCall(call, "sort")) { return VectorCall::sort; }
+    if (arity == 1 && isMethodCall(call, "includes")) { return VectorCall::includes; }
     if (arity == 1 && isMethodCall(call, "split")) {
         mlir::Operation * separator = call.getArgs()[0].getDefiningOp();
         if (isWhitespaceRegExp(separator)) { return VectorCall::splitSpace; }
@@ -96,6 +98,10 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
     // A parameter is a read-only borrow of the caller's array: nothing here
     // may write it, return it or mix it with an array this function owns.
     bool parameter = false, writes = false, returned = false;
+    // An element's `children` is an HTMLCollection, which has no push, join
+    // or sort, and which the native runtime snapshots (Browser.hpp): it may
+    // only be read.
+    bool collection = false, joined = false, lent = false;
     std::size_t work = 0;
     const auto add = [&](mlir::Value value) {
         if (seen.insert(value).second) { members.push_back(value); }
@@ -147,8 +153,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
         } else if (llvm::isa<ctjs::CreateArrayOp, ctjs::CallDirectOp>(definition)) {
             // A literal, or the array a direct call returned by value.
             owners.push_back(definition);
+        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(definition);
+                   read && ctjs::constantKey(read.getKey()) == "children") {
+            collection = true;
+            owners.push_back(definition);
         } else if (const VectorCall made = vectorCallOf(definition);
-                   made == VectorCall::split || made == VectorCall::splitSpace) {
+                   made == VectorCall::split || made == VectorCall::splitSpace ||
+                   (made == VectorCall::callback && arrayCallbackMakesArray(definition))) {
             owners.push_back(definition);
         } else if (made == VectorCall::sort) {
             // `a.sort()` answers `a` itself.
@@ -160,8 +171,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             return fail("an array created inside a branch or a loop whose variable is carried "
                         "out of it - its storage has to be one frame slot");
         } else {
-            return fail("an array that is not a literal, a split result, a sort of one, a "
-                        "parameter or a call result");
+            return fail("an array that is not a literal, a split result, a sort of one, an "
+                        "element's children, a parameter or a call result");
         }
         for (mlir::OpOperand & use : member.getUses()) {
             if (++work > 65536) { return fail("an array whose alias group is too large to check"); }
@@ -205,7 +216,8 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                 // An empty key is an index, which TypeInference requires to be
                 // a proved Number before it types the read.
                 if (key.empty() || key == "length") { continue; }
-                if (key == "push" || key == "join" || key == "sort") {
+                if (key == "push" || key == "join" || key == "sort" || key == "includes" ||
+                    isArrayCallbackMethod(key)) {
                     // The read has to be the callee of one call on this
                     // array; vectorCallOf checks that it has no other use.
                     if (!read.getResult().hasOneUse()) {
@@ -215,6 +227,7 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                     auto * call = *read.getResult().getUsers().begin();
                     const VectorCall kind = vectorCallOf(call);
                     writes |= kind == VectorCall::push || kind == VectorCall::sort;
+                    joined |= kind == VectorCall::join;
                     if (kind == VectorCall::none ||
                         llvm::cast<ctjs::CallOp>(call).getReceiver() != member) {
                         return fail(("an array whose method `" + key +
@@ -228,9 +241,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
                 const VectorCall kind = vectorCallOf(call);
+                if (kind == VectorCall::callback &&
+                    arrayCallbackBorrows(call, use.getOperandNumber())) {
+                    continue;
+                }
                 if (use.getOperandNumber() == 1 &&
                     (kind == VectorCall::push || kind == VectorCall::join ||
-                     kind == VectorCall::sort)) {
+                     kind == VectorCall::sort || kind == VectorCall::includes)) {
                     if (kind == VectorCall::sort) { add(call.getResult()); }
                     continue;
                 }
@@ -240,6 +257,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             // parameter read-only; a refused callee refuses this caller too.
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
                 call && use.getOperandNumber() >= 3) {
+                lent = true;
+                continue;
+            }
+            // An array is an object, so always truthy.
+            if (llvm::isa<ctjs::TruthyOp>(user)) { continue; }
+            if (auto negated = llvm::dyn_cast<ctjs::UnaryOp>(user);
+                negated && negated.getKind() == ctjs::UnaryKind::Not) {
                 continue;
             }
             // Returned by value: the owner is moved out as the function ends.
@@ -252,6 +276,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             }
             return fail(("an array that reaches `" + user->getName().getStringRef() + "`").str());
         }
+    }
+    // Lent or returned, it would meet a callee's or caller's Array methods.
+    if (collection && (writes || joined || lent || returned || owners.size() != 1)) {
+        return fail(owners.size() != 1 ? "an element's children mixed with another array"
+                    : lent || returned ? "an element's children passed to or returned from "
+                                         "a function"
+                                       : "an element's children called with an Array method");
     }
     if (parameter && (!owners.empty() || writes || returned)) {
         return fail(!owners.empty() ? "a parameter array mixed with an array this function owns"
@@ -396,6 +427,21 @@ bool TypeInference::elementVectorParameter(llvm::ArrayRef<mlir::Value> members) 
                llvm::isa<ctjs::FuncOp>(argument.getOwner()->getParentOp()) &&
                argument.getArgNumber() >= 3;
     });
+}
+
+bool TypeInference::isUndefinedGlobal(mlir::Operation * op) {
+    return isRealmGlobal(op, "undefined");
+}
+
+bool TypeInference::isRealmGlobal(mlir::Operation * op, llvm::StringRef name) {
+    auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(op);
+    if (!load || load.getName() != name) { return false; }
+    // ponytail: one module walk per query; index the stores per solve if a
+    // large program makes this slow.
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    bool stored = false;
+    module.walk([&](ctjs::StoreGlobalOp store) { stored |= store.getName() == name; });
+    return !stored;
 }
 
 } // namespace ctcompile::ctnative

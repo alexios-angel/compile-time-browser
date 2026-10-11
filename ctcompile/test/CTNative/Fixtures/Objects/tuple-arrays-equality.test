@@ -1,0 +1,14 @@
+# Differential test of tuple-arrays-equality.js: strict equality of a row's
+# Number|String value against '', null and the global `undefined`, then the
+# kept rows joined. The C++ is compiled against public Core, checked for
+# interpreter symbols with nm, run, and every global compared with the
+# interpreter's (compilation-unit.py). The negative prefixes the printed
+# String `line`, by name, and requires the comparison to fail naming it.
+# compile-clean.py checks a warning-free build on both toolchains.
+
+# RUN: python3 %S/tuple-arrays-equality.py --translate ctjs-translate --opt ctjs-opt --js %S/tuple-arrays-equality.js --out %t/tuple-arrays-equality.emitc.mlir
+# RUN: %compilation_unit --module %t/tuple-arrays-equality.emitc.mlir --js %S/tuple-arrays-equality.js --work %t --name tuple_arrays_equality --core-build %build
+# RUN: not %compilation_unit --module %t/tuple-arrays-equality.emitc.mlir --js %S/tuple-arrays-equality.js --work %t --name tuple_arrays_equality_negative --core-build %build --mutate line --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# RUN: %compile_clean --module %t/tuple-arrays-equality.emitc.mlir --work %t --name tuple_arrays_equality
+
+# NEGATIVE: global 'line' differs

@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Admission.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -380,7 +381,9 @@ bool admission::isVectorKeyString(mlir::Operation * o) {
 /// ones: the three implicit arguments (erased once their declaration closures
 /// are gone), a declaration or lifted closure's result, an unboxed cell, map
 /// bookkeeping, the lift's poison (replaced by NaN), a key constant (a member
-/// name) and a load_global that only names a direct call's callee. function()
+/// name), a load_global that only names a direct call's callee, and one of
+/// `document` or `window` that only its page read uses, and a page method read
+/// only to be called. function()
 /// exempts this list from the carrier check; retype() asks the same question.
 bool admission::lowersToNothing(mlir::Value v) {
     if (auto arg = llvm::dyn_cast<mlir::BlockArgument>(v)) {
@@ -391,7 +394,7 @@ bool admission::lowersToNothing(mlir::Value v) {
     if (isNativeMapBookkeeping(o)) { return true; }
     if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
     if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
-    if (isVectorCallPlumbing(o)) { return true; }
+    if (isVectorCallPlumbing(o) || isPageGlobal(o) || isPageMethodRead(o)) { return true; }
     // A specialised replace call's method read and RegExp literal, and the
     // constant strings they read: the call spells them itself.
     if (TypeInference::consumedByStringCallback(o) ||
@@ -401,6 +404,9 @@ bool admission::lowersToNothing(mlir::Value v) {
         return true;
     }
     if (o->getName().getStringRef() == "ub.poison") { return true; }
+    // An array field of a run-once static's constant table is spelled in the
+    // table's namespace-scope definition, not in this frame.
+    if (llvm::isa<ctjs::CreateArrayOp>(o) && o->hasAttr(kNativeStaticTable)) { return true; }
     return llvm::isa<ctjs::LoadGlobalOp>(o) && feedsOnlyDirectCallees(v);
 }
 

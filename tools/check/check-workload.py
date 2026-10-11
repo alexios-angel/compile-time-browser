@@ -348,7 +348,8 @@ def page_scripts(ctx, name):
 
 @stage(
     "admission",
-    "ctcompile claims every function natively: native-claims.py finds no refusal and no skip",
+    "ctcompile claims every function that can run natively: native-claims.py finds no refusal "
+    "and no skip, and every function it does not claim was removed as unreachable",
     "Take the most common refusal reason in DETAILS, find the lowering that refuses it, and "
     "teach it the construct under the native-output invariants; rerun to see the next reason.",
 )
@@ -374,14 +375,32 @@ def admission(ctx, name):
             ctx.add(name, item, "FAIL", "native-claims.py failed", tail(output))
             return
         claim = json.loads(out.read_text())
-        keep = ("claimed", "total", "refused", "skipped", "pruned", "globals", "globals_resolved")
+        keep = (
+            "claimed",
+            "total",
+            "refused",
+            "skipped",
+            "pruned",
+            "removed",
+            "globals",
+            "globals_resolved",
+        )
         metrics = {key: claim.get(key) for key in keep}
         summary = (
             f"{claim['claimed']} of {claim['total']} functions native "
             f"({claim['claimed_percent']}%), {claim['refused']} refused, "
-            f"{claim['skipped']} never imported"
+            f"{claim['skipped']} never imported, "
+            f"{claim['pruned'] + claim.get('removed', 0)} removed as unreachable"
         )
-        if claim["claimed"] == claim["total"] and not claim["refused"] and not claim["skipped"]:
+        # A function removed as unreachable is not native: it cannot run, so
+        # it counts toward the total without being claimed, and it is listed
+        # here rather than folded into the native count.
+        unreachable = claim["pruned"] + claim.get("removed", 0)
+        if (
+            claim["claimed"] + unreachable == claim["total"]
+            and not claim["refused"]
+            and not claim["skipped"]
+        ):
             ctx.add(name, item, "PASS", summary, metrics=metrics)
             return
         details = ["most common refusal reasons (count, reason):"]

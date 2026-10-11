@@ -1,17 +1,21 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
+  ArrayCallbacks.cpp
   Calls.cpp
   Callbacks.cpp
   Cells.cpp
   Classes.cpp
   Bindings.cpp
+  BorrowedCallbacks.cpp
   Captures.cpp
   Methods.cpp
   Diagnostics.cpp
   Constructors.cpp
+  HostCallbacks.cpp
   Rewrite.cpp
   ReturnedClosures.cpp
   MethodTables.cpp
   RunOnce.cpp
+  Singletons.cpp
   StringCallbacks.cpp
   ClosureLifter.h
 )
