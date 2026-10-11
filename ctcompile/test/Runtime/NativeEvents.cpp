@@ -7,8 +7,10 @@
 // listener is reported without stopping the rest, forget() drops a
 // document's listeners, and a listener's Event reports its type, target and
 // current target and carries preventDefault and stopPropagation back to the
-// dispatch, and the capture phase runs from the window down before the target
-// and the bubble phase.
+// dispatch, the capture phase runs from the window down before the target and
+// the bubble phase, and an event the program made with new Event is
+// dispatched with its own flags and keeps the extra fields its listeners
+// wrote.
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,10 +26,16 @@
 
 #include "check.hpp"
 
+/// This program's extra event fields, as generated code would define them.
+struct ctnative::event_extra {
+    std::string written_by;
+};
+
 namespace {
 
 using ctnative::event_listeners;
 using ctnative::EventTarget;
+using ctnative::js_boolean_t;
 using ctnative::js_element_t;
 using ctnative::js_string;
 
@@ -186,6 +194,40 @@ void test_capture_then_target_then_bubble() {
     table.forget(bound.page.doc());
 }
 
+void test_a_program_made_event_and_its_extra_fields() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const js_element_t root = *ctnative::document.documentElement();
+    const js_element_t leaf = root.children()[1].children()[0];
+    std::string order;
+    // The first listener writes an extra field; the second reads it back.
+    EventTarget.prototype.addEventListener.call(
+        leaf, js_string{"custom"}, [&](const ctnative::js_event & e) {
+            CHECK(e.extra_if() == nullptr);
+            e.extra().written_by = "leaf";
+            ctnative::Event.prototype.preventDefault.call(e);
+        });
+    EventTarget.prototype.addEventListener.call(
+        root, js_string{"custom"}, [&](const ctnative::js_event & e) {
+            order += e.extra_if() ? e.extra_if()->written_by : std::string{"none"};
+        });
+    // new Event(type) neither bubbles nor can be canceled.
+    ctnative::js_event_object quiet = ctnative::Event(js_string{"custom"});
+    CHECK(static_cast<bool>(EventTarget.prototype.dispatchEvent.call(leaf, quiet)));
+    CHECK(!static_cast<bool>(quiet.defaultPrevented()));
+    CHECK_EQ(order, std::string{});
+    // With both flags the root hears it, and the cancel and the field are read
+    // back from the same object afterwards.
+    ctnative::js_event_object loud = ctnative::Event(
+        js_string{"custom"}, ctnative::event_init{js_boolean_t{true}, js_boolean_t{true}});
+    CHECK(!static_cast<bool>(EventTarget.prototype.dispatchEvent.call(leaf, loud)));
+    CHECK(static_cast<bool>(loud.defaultPrevented()));
+    CHECK_EQ(order, std::string{"leaf"});
+    CHECK(loud.view().extra_if() != nullptr);
+    CHECK_EQ(loud.view().extra().written_by, std::string{"leaf"});
+    event_listeners::program().forget(bound.page.doc());
+}
+
 } // namespace
 
 int main() {
@@ -194,5 +236,6 @@ int main() {
     test_a_throwing_listener_is_reported();
     test_the_event_a_listener_receives();
     test_capture_then_target_then_bubble();
+    test_a_program_made_event_and_its_extra_fields();
     REPORT("native_events");
 }
