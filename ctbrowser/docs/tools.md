@@ -121,6 +121,24 @@ with it.
     new stages.
   - **Proofs.** `fixture` is a hidden workload that must be DONE, proving the
     checker can say so, and `--self-test` checks the engine without a build.
+- `tools/check/round-checks.py` — **which focused checks a queue round must
+  run**: `round-checks.py <base> <tip>` prints a lit `--filter`, a `ctest -R`
+  regex, the `remote-build.sh` targets and the commands that cover
+  `git diff base..tip`, for a validator to paste.
+  - **Selection.** Each changed file selects the entry with the longest
+    matching path prefix in `tools/check/round-checks.json`; that file is
+    meant to be edited. A changed lit test with no entry selects itself, and
+    a changed test helper selects its directory. The `always` entry is added
+    to any selection: `Lowering/Objects/`, `Lowering/Closures/`,
+    `Optimization/`, `Fixtures/` (with `ctcompile-fixture-inputs`) and the
+    `fixture` workload.
+  - **Focus.** It prints how many lit tests the filter selects. It refuses
+    (exit 2) a selection that names the whole tree or covers every lit test.
+  - **Unmapped files.** Files that select nothing are listed, so a gap in the
+    mapping is visible. It would have selected `Lowering/Objects/array/borrow.mlir`
+    for the queue/9 range (`e3482cd02..408583072`) that missed it.
+  - **Proof.** `--self-test` checks the selection on a planted mapping
+    without git or a build.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL and Boost.ProgramOptions
   for the llvm-mingw target into the cross sysroot. Boost.URL is the one COMPILED
   Boost library the engine links (it cannot be header-only); Boost.ProgramOptions
