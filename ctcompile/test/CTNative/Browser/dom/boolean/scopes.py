@@ -7,14 +7,12 @@ initialization, uses from a sibling arm or after the join, unknown effects)
 must be refused.
 """
 
-import subprocess
-
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.boolean import branches
 from CTNative.Browser.dom.boolean import cells
 from CTNative.Browser.dom.boolean import origins
 from CTNative.Browser.class_dom.callbacks import ELEMENT
-from CTNative.harness import run
+from CTNative.harness import run, slotted_run
 
 INITIAL = "%no = ctjs.constant #ctjs.boolean<false>\nctjs.cell_set %seen, %no"
 BEFORE = "%before = ctjs.call_direct @pending$2(%u, %u, %u, %seen)"
@@ -405,7 +403,7 @@ def main():
     }.items():
         path = args.work / f"verifier-{name}.mlir"
         path.write_text(text)
-        actual = subprocess.run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
+        actual = slotted_run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
         assert actual.returncode == 1 and "error:" in actual.stderr, actual.stderr
         refusals += 1
     print(

@@ -3,6 +3,7 @@
 // (timers.cpp) moves the clock and asks timers_report() what ran. timers.test
 // runs it on the interpreter and natively and compares the answers.
 var log = '';
+var cleared = '';
 
 // Handlers with no captures: one due later, one at once, and one whose
 // negative timeout counts as 0.
@@ -28,6 +29,31 @@ function later(label, ms) {
 }
 later('m', 5);
 
+// Handles kept and passed back: a timer cleared before it is due never runs,
+// clearing one that already ran does nothing, and an interval runs each time
+// its timeout passes until a later timer clears it.
+function schedule() {
+    var early = setTimeout(function () {
+        cleared = cleared + 'e';
+    }, 5);
+    clearTimeout(early);
+    var done = setTimeout(function () {
+        cleared = cleared + 'd';
+    }, 0);
+    var tick = setInterval(function () {
+        cleared = cleared + 'i';
+    }, 3);
+    if (tick) {
+        cleared = cleared + 't';
+    }
+    setTimeout(function () {
+        clearTimeout(done);
+        clearInterval(tick);
+        cleared = cleared + 'x';
+    }, 7);
+}
+schedule();
+
 function timers_report() {
-    return 'log=' + log;
+    return 'log=' + log + ' cleared=' + cleared;
 }

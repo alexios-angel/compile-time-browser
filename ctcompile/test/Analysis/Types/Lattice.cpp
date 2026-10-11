@@ -351,6 +351,12 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.event", "!ctnative.computed_style",
      "!ctnative.variant<!ctnative.computed_style, !ctnative.event>",
      "an event and another page object stay alternatives"},
+    {"!ctnative.timer", "!ctnative.timer", "!ctnative.timer", "idempotent"},
+    {"!ctnative.timer", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.timer>",
+     "a handle that may be null is an optional handle"},
+    {"!ctnative.timer", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.num<f64>, !ctnative.timer>",
+     "a handle is not a Number: the two stay alternatives"},
 
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
@@ -409,6 +415,7 @@ const char * const kSampleTypes[] = {
     "!ctnative.dom_rect",
     "!ctnative.computed_style",
     "!ctnative.event",
+    "!ctnative.timer",
 };
 
 //===--------------------------------------------------------------------===//
@@ -663,9 +670,9 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 76 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 79 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 171;
+    const int expectedChecks = 177;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

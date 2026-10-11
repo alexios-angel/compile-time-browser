@@ -228,7 +228,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
     /// function behind that no code reaches. This walk starts only from the
     /// script, the functions the embedder calls by name and what a module
     /// attribute names (reachability::roots::entries), and it never removes
-    /// an admitted function. Removal is never silent: each function gets a
+    /// an admitted function. A module with no top-level script also keeps
+    /// every public function, since it is not a whole script and something
+    /// outside it may call them. Removal is never silent: each function gets a
     /// row in `ctnative.unreachable_refusals`, which tools/check counts as
     /// removed, not as native. One walk finds every unreachable function, so
     /// nothing a removal orphans is left for a second round.
@@ -858,6 +860,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // Nor are `document` and `window` when only their
                         // page reads use them; those lower to runtime calls.
                         if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is a declared function's value handed to the
+                        // listener table: it becomes the declaration's
+                        // identity (EmitC/HostCallbacks.cpp).
+                        if (load->hasAttr(kNativeHostDeclared)) { return; }
                         // Nor is the global `undefined`, which is a constant.
                         if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();

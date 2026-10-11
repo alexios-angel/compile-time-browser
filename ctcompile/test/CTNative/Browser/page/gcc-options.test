@@ -1,0 +1,11 @@
+# The native page tests' GCC builds copy only the clang target's include
+# directories and definitions (cmake/NativeWorkloads.cmake), so
+# check-gcc-options.cmake refuses any other compile option than a warning,
+# -pedantic or -O2: an option such as -fno-exceptions would make the two
+# builds different programs without either failing.
+# RUN: cmake -DTARGET=t "-DOPTIONS=-O2|-pedantic|-Wall|-Wno-unused-parameter" -DSTAMP=%t.ok -P %S/../../../cmake/check-gcc-options.cmake
+# RUN: test -f %t.ok
+# RUN: not cmake -DTARGET=t "-DOPTIONS=-O2|-fno-exceptions" -DSTAMP=%t.bad -P %S/../../../cmake/check-gcc-options.cmake 2>&1 | FileCheck %s
+# RUN: not cmake -DTARGET=t "-DOPTIONS=-Wl,--as-needed" -DSTAMP=%t.bad -P %S/../../../cmake/check-gcc-options.cmake 2>&1 | FileCheck %s --check-prefix=PASSED
+# CHECK: t has the compile option `-fno-exceptions`, which its GCC build
+# PASSED: t has the compile option `-Wl,--as-needed`

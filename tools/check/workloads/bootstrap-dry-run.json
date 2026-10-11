@@ -1,0 +1,30 @@
+{
+  "title": "DRY RUN of Bootstrap's later stages (refused functions deleted; never DONE)",
+  "hidden": true,
+  "scripts": [
+    {"pattern": "ctbrowser/vendor/bootstrap/bootstrap.bundle.js",
+     "script-run": {"probe": "tools/check/workloads/bootstrap-probe.js"}},
+    {"pattern": "tools/check/css-dump.js", "string_entries": ["css_dump_table"],
+     "script-run": {"skip": "it only defines functions; bootstrap_layout calls its string entry",
+                    "covered_by": "bootstrap_layout"}}
+  ],
+  "pages": ["ctbrowser/examples/pages/bootstrap-*.html"],
+  "ctests": ["bootstrap_layout", "css_syntax"],
+  "stages": [
+    "discover",
+    "vm-reference",
+    "assume-admitted",
+    "build-native",
+    "no-vm-gate",
+    "script-run",
+    "native-run"
+  ],
+  "options": {
+    "build-native": {"dom": true},
+    "script-run": {"dry_run_allow_refused": true},
+    "native-run": {
+      "runner": ["ctest", "--test-dir", "{build}", "--output-on-failure", "--no-tests=error",
+                 "-R", "^{test}[.]native$"]
+    }
+  }
+}

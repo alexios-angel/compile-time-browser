@@ -1,0 +1,30 @@
+//===- ClosureLifting/ClassInheritance.h - Flattening `extends` -*- C++ -*-===//
+//
+// Declares the rewrite that turns each JavaScript class that extends another
+// class of the same module into a class that extends nothing, so the class
+// census (Classes.cpp) and the constructor, method and static-member rules
+// treat it like any other class. ClassInheritance.cpp describes the rewrite.
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
+#include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/StringRef.h"
+
+namespace ctcompile::ctnative::lowering_detail {
+
+/// On the constructor closure of a class that extends another and was left
+/// as it is: why, as a clause that completes "it extends another class: ...".
+inline constexpr llvm::StringLiteral kNativeInheritanceReason = "ctnative.inheritance_reason";
+
+/// On the module: {copies, erased}, how many functions flattening added as
+/// per-class copies and erased as unreachable, over every run.
+inline constexpr llvm::StringLiteral kNativeInheritanceSummary = "ctnative.inheritance_summary";
+
+/// Flattens every class whose parent is a class this module defines, parents
+/// first, and records kNativeInheritanceReason on each class it leaves alone.
+/// Runs before any closure-lifting census. Running it again changes nothing.
+void flattenClassInheritance(mlir::ModuleOp module);
+
+} // namespace ctcompile::ctnative::lowering_detail

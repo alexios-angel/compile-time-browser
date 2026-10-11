@@ -7,9 +7,8 @@ each unsafe variant of the hand-written guards.mlir is refused.
 import argparse
 from pathlib import Path
 import re
-import subprocess
 
-from CTNative.harness import CLEANUP, build_and_run, find_compilers, prepare_js, run
+from CTNative.harness import CLEANUP, build_and_run, find_compilers, prepare_js, run, slotted_run
 
 FUNCTION = re.compile(r"ctjs\.func (?:private )?@([^ (]+)\(.*?(?=\n  ctjs\.func |\n})", re.S)
 NATIVE_PIPELINE = f"builtin.module(ctnative-lower-to-emitc{{optimize=false}},{CLEANUP})"
@@ -227,7 +226,7 @@ def main():
     ]:
         file = args.work / f"{name}.mlir"
         file.write_text(source)
-        result = subprocess.run(
+        result = slotted_run(
             [args.opt, str(file), "--ctnative-lower-to-emitc=optimize=false"],
             text=True,
             capture_output=True,
