@@ -25,11 +25,15 @@ faithfully. Passes then try to prove facts about it:
 Every function those proofs cover is lowered to the `ctnative` dialect, then to
 MLIR's EmitC, and is finally printed as C++.
 
-The result looks like code a person would write. Numbers are doubles, strings
+The types and ownership in the result are ordinary C++. Numbers are doubles, strings
 are string values, arrays are `std::vector`s, objects with a fixed shape become
 structs, JavaScript classes become C++ classes, and a callback whose target
 is known becomes a direct call. DOM calls go straight into ctbrowser's C++
 libraries.
+
+The function bodies are harder to read. They come out of EmitC in single
+static assignment form, so every intermediate value gets its own variable
+(`v1`, `v2`, ...) rather than being folded into nested expressions.
 
 The main rule is that **there is no fallback**. The native output never
 links the VM or a garbage collector. If a function can't be proved, it's
