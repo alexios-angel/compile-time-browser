@@ -186,6 +186,7 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             if (!arrays.contains(read.getObject())) { return; }
             mark(op, ctjs::constantKey(read.getKey()) == "length"                   ? "length"
                      : TypeInference::isBoundedIndexRead(op)                        ? "element"
+                     : carrierOf(lower.typeOf(read.getResult())) == carrier::tuple  ? "row"
                      : carrierOf(lower.typeOf(read.getObject())) == carrier::vector ? "at_number"
                                                                                     : "at");
             return;
@@ -473,6 +474,13 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         // An index proved in bounds reads the element itself.
         swap(callValue(b, where, o->getResult(0).getType(), "ctnative::vec_element",
                        mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)}));
+        return true;
+    }
+    if (kind == "row") {
+        // A row every use of which reads a position (TypeInference::isRowRead).
+        swap(callValue(b, where, o->getResult(0).getType(), "ctnative::vec_row",
+                       mlir::ValueRange{place(o->getOperand(0)),
+                                        lower.convertScalar(b, where, o->getOperand(1), numeric)}));
         return true;
     }
     if (kind == "at" || kind == "at_number") {

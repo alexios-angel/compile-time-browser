@@ -437,6 +437,11 @@ public:
     /// non-negative integer constant and steps by 1. Element vectors never
     /// shrink, so the element exists when the body reads it.
     static bool isBoundedIndexRead(mlir::Operation * read);
+    /// Whether `read` is `rows[i]` with every use a read of a constant
+    /// position of the row (`rows[i][1]`). Past the end that next read
+    /// throws a TypeError, so the row is read as one that exists, and
+    /// ctnative::vec_row throws instead when it does not.
+    static bool isRowRead(mlir::Operation * read);
 
     /// A value that names a shared binding the closure lift made a
     /// frame-local variable: the `ctjs.create_cell` it marked

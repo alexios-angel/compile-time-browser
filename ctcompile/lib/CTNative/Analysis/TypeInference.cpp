@@ -470,8 +470,10 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         // An index proved in bounds reads the element; otherwise one past
         // the end, a fraction or a negative reads undefined.
         if (key.empty() && isProvedNumeric(operands[1])) {
-            return isBoundedIndexRead(op) ? vector.getElementType()
-                                          : meet(absentType(c), vector.getElementType());
+            const bool exists = isBoundedIndexRead(op) ||
+                                (llvm::isa<TupleType>(vector.getElementType()) && isRowRead(op));
+            return exists ? vector.getElementType()
+                          : meet(absentType(c), vector.getElementType());
         }
         return {};
     }

@@ -444,6 +444,19 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     return false;
 }
 
+bool TypeInference::isRowRead(mlir::Operation * op) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
+    if (!read || !ctjs::constantKey(read.getKey()).empty() || read.getResult().use_empty()) {
+        return false;
+    }
+    return llvm::all_of(read.getResult().getUses(), [](mlir::OpOperand & use) {
+        auto position = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+        if (!position || use.getOperandNumber() != 0) { return false; }
+        const int64_t index = constantIndex(position.getKey());
+        return index == 0 || index == 1;
+    });
+}
+
 bool TypeInference::elementParameterWritten(mlir::Value parameter) {
     llvm::SmallVector<mlir::Value, 4> pending{parameter};
     llvm::DenseSet<mlir::Value> seen{parameter};
