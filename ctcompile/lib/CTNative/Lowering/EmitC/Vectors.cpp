@@ -247,9 +247,9 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             std::string action = "static ";
             for (unsigned i = 0; i < row.arity; ++i) {
                 // A table (a dictionary) is passed as it is: `d`.
-                const bool table = row.params[i] == Param::record && i < call.getArgs().size() &&
-                                   carrierOf(lower.typeOf(call.getArgs()[i])) ==
-                                       carrier::dictionary;
+                const bool table =
+                    row.params[i] == Param::record && i < call.getArgs().size() &&
+                    carrierOf(lower.typeOf(call.getArgs()[i])) == carrier::dictionary;
                 action += row.params[i] == Param::string   ? 's'
                           : table                          ? 'd'
                           : row.params[i] == Param::record ? 'r'
