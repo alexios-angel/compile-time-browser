@@ -74,11 +74,11 @@ set_tests_properties(css_syntax_native_gate_control PROPERTIES WILL_FAIL TRUE)
 # check-workload.py's native-run stage asks (`ctest -R
 # '^bootstrap_layout[.]native$'`), through ${_native_gate} as css_syntax.native
 # is, with the environment and working directory ctbrowser_test() gives
-# bootstrap_layout. Until css-dump.js compiles natively, building it fails in
-# pipeline.cmake, so CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE keeps the target out of
-# `all` and the test unregistered; turn it on to try it.
+# bootstrap_layout. CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE=OFF keeps the target out
+# of `all` and the test unregistered, for a tree whose compiler cannot lower
+# css-dump.js (pipeline.cmake then fails the build).
 option(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE
-       "Build and register bootstrap_layout.native (css-dump.js compiled natively)" OFF)
+       "Build and register bootstrap_layout.native (css-dump.js compiled natively)" ON)
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set(_css_dump "${CTCOMPILE_MONOREPO_ROOT}/tools/check/css-dump.js")
   set(_css_dump_emitc "${CMAKE_CURRENT_BINARY_DIR}/css-dump.emitc.mlir")
