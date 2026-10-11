@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ClosureLifting/ClassInheritance.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -27,7 +28,8 @@ struct TestInstanceRegistries final
     void runOnOperation() override {
         if (lifted) {
             // The steps closureLifter::run() takes before its censuses, up to
-            // the object-table calls.
+            // the object-table calls, after flattening inheritance.
+            lowering_detail::flattenClassInheritance(getOperation());
             lowering_detail::closureLifter lifter{getOperation()};
             lowering_detail::liftReport out;
             lifter.indexAndNewTargets();
@@ -42,6 +44,16 @@ struct TestInstanceRegistries final
             registry.constructor->setAttr(
                 "ctnative.instance_registry",
                 builder.getStringAttr(registry.refusal.empty() ? "proved" : registry.refusal));
+            // A family's key per class, and the reads each key selects.
+            if (!registry.key.empty()) {
+                registry.constructor->setAttr("ctnative.instance_key",
+                                              builder.getStringAttr(registry.key));
+            }
+            ctjs::FuncOp constructor = registry.constructor;
+            for (mlir::Operation * read : registry.keyedReads) {
+                read->setAttr(kNativeInstanceKeyClass,
+                              builder.getStringAttr(constructor.getSymName()));
+            }
             // The declared positions of the non-null parameters, per function.
             llvm::MapVector<mlir::Operation *, llvm::SmallVector<int32_t>> positions;
             for (mlir::Value value : registry.nonNull) {
