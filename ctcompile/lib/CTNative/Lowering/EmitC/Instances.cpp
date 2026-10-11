@@ -42,6 +42,8 @@ bool lowering::isInstanceValue(mlir::Value v) const {
 mlir::Value lowering::receiverOperand(mlir::OpBuilder & b, mlir::Location where,
                                       ctjs::CallDirectOp call) {
     const mlir::Value receiver = call.getReceiver();
+    // A borrowed parameter forwards its pointer.
+    if (llvm::isa<ec::PointerType>(receiver.getType())) { return receiver; }
     // The callee is still a ctjs.func, or already the emitc.func lowered
     // from it (its symbol then names that), depending on which was visited
     // first.
@@ -131,6 +133,50 @@ void lowering::joinInstanceValues(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         for (mlir::Value member : all) { instanceGroups[member] = all; }
     }
     groups = &instanceGroups;
+}
+
+bool lowering::borrowsInstance(mlir::Value parameter) const {
+    auto argument = llvm::dyn_cast<mlir::BlockArgument>(parameter);
+    if (!argument || !argument.getOwner()->isEntryBlock() ||
+        argument.getArgNumber() < ctjs::implicit_arguments ||
+        !llvm::isa<ctjs::FuncOp>(argument.getOwner()->getParentOp()) ||
+        carrierOf(typeOf(parameter)) != carrier::instance) {
+        return false;
+    }
+    return llvm::all_of(parameter.getUses(), [](mlir::OpOperand & use) {
+        mlir::Operation * user = use.getOwner();
+        if (llvm::isa<ctjs::GetPropertyOp, ctjs::SetPropertyOp>(user)) {
+            return use.getOperandNumber() == 0;
+        }
+        if (llvm::isa<ctjs::TruthyOp>(user) || user->hasAttr(kNativeInstanceTest)) { return true; }
+        // A method of the class, not its constructor, which keeps `this`.
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+        return call && call->hasAttr(kNativeReceiver) && use.getOperandNumber() == 0 &&
+               call.getTarget() && !isIdentityClass(call.getTarget());
+    });
+}
+
+mlir::Value lowering::instanceArgument(mlir::OpBuilder & b, mlir::Location where,
+                                       ctjs::CallDirectOp call, unsigned index) {
+    const mlir::Value owner = call->getOperand(index);
+    if (llvm::isa<ec::PointerType>(owner.getType())) { return owner; }
+    // As for the receiver: the callee is a ctjs.func still, or its emitc.func.
+    mlir::Operation * callee =
+        mlir::SymbolTable::lookupNearestSymbolFrom(call, call.getCalleeAttr());
+    mlir::Type parameter;
+    if (auto fn = llvm::dyn_cast_or_null<ctjs::FuncOp>(callee)) {
+        const mlir::Value declared = fn.getBody().front().getArgument(index);
+        if (!borrowsInstance(declared)) { return owner; }
+        parameter = ec::PointerType::get(ec::OpaqueType::get(
+            context, instanceClassSpelling(instanceClassName(typeOf(declared)))));
+    } else if (auto lowered = llvm::dyn_cast_or_null<ec::FuncOp>(callee)) {
+        // The implicit operands are dropped; a receiver comes first.
+        const unsigned position =
+            index - ctjs::implicit_arguments + (call->hasAttr(kNativeReceiver) ? 1U : 0U);
+        parameter = lowered.getArgumentTypes()[position];
+    }
+    if (!llvm::isa_and_nonnull<ec::PointerType>(parameter)) { return owner; }
+    return memberCall(b, where, parameter, owner, "get");
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

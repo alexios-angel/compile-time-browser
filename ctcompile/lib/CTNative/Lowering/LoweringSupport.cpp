@@ -366,11 +366,14 @@ std::string instanceClassSpelling(llvm::StringRef className) {
     return admission::isReservedInCpp(className) ? "js_" + className.str() : className.str();
 }
 
-mlir::Type instanceCarrierType(mlir::Type type) {
+llvm::StringRef instanceClassName(mlir::Type type) {
     if (auto optional = llvm::dyn_cast<OptType>(type)) { type = optional.getElementType(); }
-    auto instance = llvm::cast<InstanceType>(type);
+    return llvm::cast<InstanceType>(type).getClassName();
+}
+
+mlir::Type instanceCarrierType(mlir::Type type) {
     return ec::OpaqueType::get(type.getContext(),
-                               "std::shared_ptr<" + instanceClassSpelling(instance.getClassName()) +
+                               "std::shared_ptr<" + instanceClassSpelling(instanceClassName(type)) +
                                    ">");
 }
 

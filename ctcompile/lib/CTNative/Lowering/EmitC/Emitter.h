@@ -105,6 +105,15 @@ struct lowering {
     /// borrowed with `owner.get()`, which is safe because the caller keeps its
     /// `std::shared_ptr` until the call returns.
     mlir::Value receiverOperand(mlir::OpBuilder & b, mlir::Location where, ctjs::CallDirectOp call);
+    /// Whether `parameter`, an instance parameter of a ctjs.func, is only
+    /// read through: field accesses, tests and method calls, never kept or
+    /// passed on. It is then a `C *` borrowed from the caller's owner, which
+    /// outlives the call.
+    [[nodiscard]] bool borrowsInstance(mlir::Value parameter) const;
+    /// Operand `index` of `call`, an instance: `owner.get()` for a borrowing
+    /// parameter, the owner otherwise.
+    mlir::Value instanceArgument(mlir::OpBuilder & b, mlir::Location where, ctjs::CallDirectOp call,
+                                 unsigned index);
     /// The joined type of every source store to each global, computed before
     /// any value is retyped. Observation requests and host categories never
     /// choose a global's output type.

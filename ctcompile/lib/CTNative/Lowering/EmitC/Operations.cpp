@@ -610,7 +610,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // innermost one. Operands 0-2 are the implicit arguments dropped above.
         for (unsigned i = 3; i < operands.size(); ++i) {
             const bool byAddress = admission::isObjectArg(o, i) || admission::isCellArg(o, i);
-            args.push_back(byAddress ? asPointer(operands[i]) : operands[i]);
+            args.push_back(byAddress                      ? asPointer(operands[i])
+                           : isInstanceValue(operands[i]) ? instanceArgument(b, where, call, i)
+                                                          : operands[i]);
         }
         const auto named = names.find(call.getCallee());
         const std::string target =

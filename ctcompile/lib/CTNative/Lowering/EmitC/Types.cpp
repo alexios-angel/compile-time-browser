@@ -155,7 +155,10 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         const carrier c = carrierOf(typeOf(v));
         if (c == carrier::instance) {
-            v.setType(instanceType(typeOf(v)));
+            v.setType(borrowsInstance(v)
+                          ? ec::PointerType::get(ec::OpaqueType::get(
+                                context, instanceClassSpelling(instanceClassName(typeOf(v)))))
+                          : instanceType(typeOf(v)));
             return;
         }
         if (c == carrier::objectIdentity) {

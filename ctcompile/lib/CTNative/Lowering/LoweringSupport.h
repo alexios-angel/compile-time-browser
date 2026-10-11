@@ -283,6 +283,8 @@ llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);
 /// The C++ name of an identity class's struct, as nameFamilies gives it.
 std::string instanceClassSpelling(llvm::StringRef className);
+/// The class C of `instance<C>` or `opt<instance<C>>`.
+llvm::StringRef instanceClassName(mlir::Type type);
 /// `std::shared_ptr<C>`, the carrier of `instance<C>` and `opt<instance<C>>`.
 mlir::Type instanceCarrierType(mlir::Type type);
 bool mapNeedsString(MapType type);
