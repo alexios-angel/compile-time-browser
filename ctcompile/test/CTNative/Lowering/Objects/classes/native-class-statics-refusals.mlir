@@ -30,8 +30,8 @@
 // RUN: %native_reference %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 
-// The class is passed to a function, which could read any static member.
-// ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.call{{(_direct)?}}` in `run${{[0-9]+}}`"
+// The class is passed to a function that returns it, so it leaves as a value.
+// ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.return` in `show${{[0-9]+}}`"
 //
 // `early` reads a static member and is called before the class statement
 // runs, when the binding is still uninitialized (JavaScript throws there).
@@ -63,10 +63,10 @@
 // GETORCREATE-RUN: r=34
 
 //--- escape.js
-function show(k) { return k.size; }
+function show(k) { return k; }
 function run() {
     class Box { constructor(v) { this.v = v; } static get size() { return 4; } }
-    return new Box(2).v + show(Box);
+    return new Box(2).v + show(Box).size;
 }
 var r = run();
 
