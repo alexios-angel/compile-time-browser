@@ -175,6 +175,10 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
     return true;
 }
 
+/// Admits a borrowed callback's closure or a call through a borrowed
+/// parameter (BorrowedCallbacks.cpp).
+bool borrowedCallbackOperation(admission & self, mlir::Operation * o);
+
 namespace {
 
 /// The refusal for a read of a run-once function's static variable whose type
@@ -244,6 +248,9 @@ bool admission::op(mlir::Operation * o) {
             return (table && table.getSite() == methodTableName(o)) ||
                    refuse("returned method table access has no single proved schema");
         }
+    }
+    if (o->hasAttr(kNativeBorrowedCallback) || o->hasAttr(kNativeBorrowedCall)) {
+        return borrowedCallbackOperation(*this, o);
     }
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {

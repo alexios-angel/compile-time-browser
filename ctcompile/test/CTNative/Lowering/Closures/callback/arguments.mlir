@@ -1,8 +1,8 @@
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../../../Fixtures/Closures/callback.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ESCAPE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.callback}
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURED --implicit-check-not=ctnative.callback}
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captured.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CAPTURED --implicit-check-not=ctnative.not_native
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/raw.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RAW --implicit-check-not=ctnative.callback}
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/open.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OPEN --implicit-check-not=ctnative.callback}
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/identity.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=IDENTITY
@@ -22,8 +22,12 @@
 // ESCAPE: ctjs.func @fn$2
 // ESCAPE-SAME: ctnative.not_native
 
-// MIXED: ctnative.callback_refusal = "callers do not supply one known capture-free callback target"
-// CAPTURED: ctnative.callback_refusal = "callers do not supply one known capture-free callback target"
+// Two different callbacks for one call-only parameter are borrowed instead
+// (ClosureLifting/BorrowedCallbacks.cpp): the wrapper takes a function_ref.
+// MIXED: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::function_ref<ctnative::js_num()>">)
+// A callback with a capture is borrowed too, bound to the captured value.
+// CAPTURED: call_opaque "std::bind_front"(%{{[0-9]+}}, %arg0)
+// CAPTURED: emitc.func @fn_{{[0-9]+}}(%arg0: !emitc.opaque<"ctnative::function_ref<ctnative::js_num()>">)
 // RAW: ctnative.callback_refusal = "the wrapper reads its raw argument window"
 // OPEN: ctnative.callback_refusal = "not every caller of the wrapper is a direct call of its closure"
 // IDENTITY: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"

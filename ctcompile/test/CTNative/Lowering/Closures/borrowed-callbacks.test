@@ -1,0 +1,101 @@
+# A closure passed to a parameter its callee only calls is a borrowed callback:
+# the callee takes a ctnative::function_ref and each caller binds the lifted
+# callback to its captures with std::bind_front, so different callers may pass
+# different closures. A callback stored by its callee, one that writes a
+# captured binding, and callbacks whose types disagree stay refused.
+# RUN: split-file %s %t
+# RUN: %node %t/expected.cjs %t/values.js
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/runtime.mlir | FileCheck %s --check-prefix=CPP --implicit-check-not=ctbrowser::script --implicit-check-not=ctbrowser::aot
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/optimized.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name borrowed_runtime_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name borrowed_runtime_clang --core-build %build
+# RUN: %compilation_unit --cxx g++ --module %t/optimized.mlir --js %t/values.js --work %t --name borrowed_optimized_gcc --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name borrowed_mutation --mutate labelled --mutate-as string 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/retained.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=RETAINED
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/written.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=WRITTEN
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=MIXED
+
+# NATIVE: ctnative::function_ref<
+# CPP-DAG: #include "ctcompile/CTNative/Runtime/Callable.hpp"
+# CPP-DAG: ctnative::function_ref<
+# CPP-DAG: std::bind_front(
+# MUTATION: global 'labelled' differs
+# RETAINED: it is passed as an argument
+# WRITTEN: the borrowed callback captures binding 0, which is written after it is captured
+# MIXED: ctnative.not_native = "{{.*}}{{one C\+\+ signature needs one type|a borrowed callback's result is}}
+
+#--- values.js
+function twice(callback, value) {
+    return callback(value) * 2;
+}
+function shift(by, value) {
+    return twice(function (v) {
+        return v + by;
+    }, value) + twice(function (v) {
+        return v - by;
+    }, value);
+}
+var shifted = shift(3, 10);
+function decorate(format, text) {
+    return format(text);
+}
+function label(prefix, text) {
+    return decorate(function (s) {
+        return prefix + s;
+    }, text) + "|" + decorate(function (s) {
+        return s + "!";
+    }, text);
+}
+var labelled = label("x-", "a");
+
+#--- expected.cjs
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const scope = {};
+vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
+assert.equal(scope.shifted, 40);
+assert.equal(scope.labelled, "x-a|a!");
+
+#--- retained.js
+var kept;
+function keep(callback) {
+    kept = callback;
+    return 1;
+}
+function retain(k) {
+    return keep(function () {
+        return k;
+    });
+}
+var retained = retain(2);
+
+#--- written.js
+function twice(callback, value) {
+    return callback(value) * 2;
+}
+function counter(n) {
+    var count = n;
+    var result = twice(function (v) {
+        count = count + v;
+        return count;
+    }, 1);
+    return result + count;
+}
+var counted = counter(4);
+
+#--- mixed.js
+function call(callback, value) {
+    return callback(value);
+}
+function mixed(n) {
+    return call(function (v) {
+        return v + 1;
+    }, n) + call(function (v) {
+        return "s" + v;
+    }, n);
+}
+var mixedResult = mixed(1);

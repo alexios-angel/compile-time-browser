@@ -440,6 +440,17 @@ private:
     /// values crossing a call boundary, and every operation the transfer
     /// function does not handle. `boxed` is the top of the lattice and always
     /// safe; the native compiler either proves a type or falls back to it.
+    // Borrowed callbacks (Inference/BorrowedCallbacks.cpp).
+    /// Whether `value` is a parameter of a borrowed callback, which the
+    /// closure and the calls through its callee's parameter type rather than
+    /// the entry state.
+    static bool isBorrowedCallbackParameter(mlir::Value value);
+    /// The transfer function of a borrowed callback's closure and of a call
+    /// through a borrowed parameter; nullopt for any other operation.
+    std::optional<mlir::LogicalResult> visitBorrowedCallback(
+        mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+        llvm::ArrayRef<TypeLattice *> results);
+
     void setToEntryState(TypeLattice * lattice) override;
 };
 
