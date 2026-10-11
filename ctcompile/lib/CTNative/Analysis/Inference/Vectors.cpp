@@ -490,8 +490,10 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
             if (first) { return mlir::WalkResult::interrupt(); }
             auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op);
             if ((read && read.getObject() == value && !ctjs::constantKey(read.getKey()).empty()) ||
                 (call && llvm::is_contained(call->getOperands().drop_front(3), value)) ||
+                (yield && llvm::is_contained(yield->getOperands(), value)) ||
                 builtinElementUse(op, value)) {
                 first = op;
                 return mlir::WalkResult::interrupt();
@@ -504,6 +506,15 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
         // A built-in that takes it as an Element reads it as its receiver,
         // `Element.prototype.querySelectorAll.call(root, s)`.
         if (first && builtinElementUse(first, value)) { return builtinStaticOf(first)->member; }
+        // Out of a branch it is yielded from, as a default parameter's value
+        // `e = document.documentElement` is, into the branch's result.
+        if (auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(first)) {
+            mlir::Operation * branch = yield->getParentOp();
+            const auto at = static_cast<unsigned>(
+                llvm::find(yield->getOperands(), value) - yield->getOperands().begin());
+            value = at < branch->getNumResults() ? branch->getResult(at) : mlir::Value{};
+            continue;
+        }
         auto call = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(first);
         ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
         if (!callee || callee.getBody().empty()) { return {}; }

@@ -315,6 +315,13 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
                                .str());
     }
     if (isPageGlobal(read.getObject().getDefiningOp())) {
+        // The native read throws where the interpreter would read a property
+        // of a null root, so it needs that property's name.
+        if (key == "documentElement" &&
+            TypeInference::firstPropertyRead(read.getResult()).empty()) {
+            return self.refuse("document.documentElement with no property read of it found - "
+                               "a null root would not throw where the native read does");
+        }
         return result == (key == "documentElement" ? carrier::domElement : carrier::number) ||
                self.refuse(("`" + key + "` lost its page type").str());
     }
