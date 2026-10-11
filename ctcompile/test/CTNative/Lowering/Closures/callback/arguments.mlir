@@ -32,7 +32,10 @@
 // OPEN: ctnative.callback_refusal = "not every caller of the wrapper is a direct call of its closure"
 // IDENTITY: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"
 // IDENTITY: ctjs.call_direct @fn$2({{.*}}) {ctnative.callback{{[,}]}}
-// LEXICAL: ctnative.callback_refusal = "callers do not supply one known capture-free callback target"
+// An arrow's `this` is a capture of the frame that makes it (ArrowThis.cpp),
+// here the script's own unproved `this`, so the program refuses with the
+// receiver rule's reason rather than the callback rule's.
+// LEXICAL: ctjs.func @_script_$0({{.*}}ctnative.not_native = "uses `this`"
 // SELF: ctnative.callback_refusal = "the callback value or its identity escapes the call-only parameter"
 // SELF: ctjs.call_direct @self$2({{.*}}) {ctnative.callback{{[,}]}}
 // NEW-TARGET: ctnative.callback_refusal = "the wrapper passes new.target"

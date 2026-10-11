@@ -198,7 +198,10 @@ bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
                listsObjectArg(call.getTarget(), use.getOperandNumber());
     }
     auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(user);
-    if (!cell || !cell->hasAttr(kLexicalThis)) { return false; }
+    // A cell makeRunOnceCellsStatic turned into a static variable is that
+    // variable's definition, read by name from other functions, not a box
+    // only these arrows read.
+    if (!cell || !cell->hasAttr(kLexicalThis) || cell->hasAttr(kNativeStaticCell)) { return false; }
     return llvm::all_of(cell.getResult().getUses(), [&](mlir::OpOperand & capture) {
         auto c = llvm::dyn_cast<ctjs::CreateClosureOp>(capture.getOwner());
         if (!c || !c->hasAttr(kNativeLifted) || c->hasAttr(kNativeBorrowedCallback)) {
