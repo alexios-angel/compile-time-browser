@@ -5,6 +5,8 @@
 // carrier (nullable_string, boolean_string, nullable_number_string, ...): one
 // std::variant-like member that keeps the JavaScript type of each value.
 // A component's options are such fields: `pause` is a String or a Boolean.
+// So is an element that may be null (`parent: null`, later an element), whose
+// carrier is the optional element view (nullable_element).
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,7 +25,10 @@ mlir::Type variantFieldType(llvm::ArrayRef<mlir::Operation *> accesses,
         joined = joined ? meet(joined, type) : type;
     }
     const carrier held = carrierOf(joined);
-    return held == carrier::nullableString || isStringUnionCarrier(held) ? joined : mlir::Type{};
+    return held == carrier::nullableString || held == carrier::nullableElement ||
+                   isStringUnionCarrier(held)
+               ? joined
+               : mlir::Type{};
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

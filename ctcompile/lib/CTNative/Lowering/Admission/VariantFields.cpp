@@ -28,7 +28,11 @@ std::optional<bool> admission::variantField(llvm::StringRef key, mlir::Operation
     if (!held) { return std::nullopt; }
     if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
         const mlir::Type stored = typeOf(set.getValue());
-        return isPrimitiveCarrier(carrierOf(stored)) ||
+        const carrier written = carrierOf(stored);
+        const bool element = carrierOf(held) == carrier::nullableElement &&
+                             (written == carrier::domElement ||
+                              written == carrier::nullableElement || onlyAbsent(stored));
+        return element || isPrimitiveCarrier(written) ||
                refuse(("field `" + key + "` holds a " + printed(held) + " and is stored a " +
                        printed(stored) + ", which has no conversion to it")
                           .str());
