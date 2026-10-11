@@ -199,6 +199,18 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
     set(gcc_flags -std=c++23 -O2 -Wall -Wextra -Wconversion -pedantic -Werror
         "-I$<JOIN:$<TARGET_PROPERTY:${native},INCLUDE_DIRECTORIES>,$<SEMICOLON>-I>"
         "-D$<JOIN:$<TARGET_PROPERTY:${native},COMPILE_DEFINITIONS>,$<SEMICOLON>-D>")
+    # The rest of the clang target's compile options are only warnings and
+    # the same -O2; check-gcc-options.cmake fails the build when that stops
+    # being so.
+    set(checked "${gcc_dir}/options.checked")
+    add_custom_command(
+      OUTPUT "${checked}"
+      COMMAND "${CMAKE_COMMAND}" -DTARGET=${native}
+              "-DOPTIONS=$<JOIN:$<TARGET_PROPERTY:${native},COMPILE_OPTIONS>,|>"
+              -DSTAMP=${checked} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gcc-options.cmake"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gcc-options.cmake"
+      COMMENT "Checking that ${native}-gcc copies every option of ${native}"
+      VERBATIM)
     set(objects)
     foreach(source "${_dom_reads_dir}/${name}.cpp" "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp")
       get_filename_component(stem "${source}" NAME_WE)
@@ -207,7 +219,7 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
         OUTPUT "${object}"
         COMMAND "${CTCOMPILE_CLEAN_GXX}" ${gcc_flags} -MD -MF "${object}.d" -c "${source}"
                 -o "${object}"
-        DEPENDS "${source}" "${cpp}"
+        DEPENDS "${source}" "${cpp}" "${checked}"
         DEPFILE "${object}.d"
         COMMENT "Compiling ${stem}.cpp with GCC"
         COMMAND_EXPAND_LISTS
