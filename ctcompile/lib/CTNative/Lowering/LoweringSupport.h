@@ -231,6 +231,13 @@ inline bool isIdentityCarrier(mlir::Type type) {
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
+/// The type a closed-shape field holds when its reads and writes join to an
+/// optional String or a union of String with Boolean or Number (and maybe
+/// absence), which a struct member stores as that union carrier; null for any
+/// other field. `accesses` are the field's reads and writes, `typeOf` the
+/// lattice type of a value (ObjectValues/VariantFields.cpp).
+mlir::Type variantFieldType(llvm::ArrayRef<mlir::Operation *> accesses,
+                            llvm::function_ref<mlir::Type(mlir::Value)> typeOf);
 /// A definite Number, Boolean or String lattice type.
 inline bool isPrimitive(mlir::Type type) {
     return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type);

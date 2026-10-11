@@ -1,0 +1,9 @@
+# Native differential test of variant-fields.js, in the same form as
+# struct.test: a field joining String with Boolean or with undefined is one
+# struct member of the union's carrier (Lowering/ObjectValues/VariantFields.cpp).
+
+# RUN: %compilation_unit --module %{obj}/variant_fields.pipeline.emitc.mlir --js %S/variant-fields.js --work %t --name variant_fields
+# RUN: not %compilation_unit --module %{obj}/variant_fields.pipeline.emitc.mlir --js %S/variant-fields.js --work %t --name variant_fields_off_by_one --mutate overridden 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'overridden' differs
+# RUN: %compilation_unit --module %{obj}/variant_fields.pipeline.deduced.emitc.mlir --js %S/variant-fields.js --work %t --name variant_fields_deduced
+# RUN: %compile_clean --module %{obj}/variant_fields.pipeline.emitc.mlir --work %t --name variant_fields
