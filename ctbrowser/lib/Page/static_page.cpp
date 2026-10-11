@@ -78,6 +78,7 @@ void static_page::load_html(std::string_view html) {
 }
 
 void static_page::frame() {
+    ++frames_;
     resolve();
     lay_out();
     // Container queries asked the previous layout's sizes; re-run until they
