@@ -35,6 +35,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/outside.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=OUTSIDE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nulling-miss.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
+// RUN:   | FileCheck %s --check-prefix=NULLING-MISS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captor.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=CAPTOR
@@ -125,6 +128,12 @@
 // Only the constructor and the methods write fields, so each field's native
 // type is the join of their stores.
 // OUTSIDE: ctnative.instance_registry = "a field of an instance read from the registry Map is written outside its class's constructor and methods"
+
+// --- An own-property loop over a field that may not exist yet ---------------
+// `for (const k of Object.getOwnPropertyNames(this)) this[k] = null` becomes
+// one store per field the constructor writes before anything else runs; a
+// field only a method writes may not be an own property yet.
+// NULLING-MISS: ctnative.instance_registry = "the own-property loop of `Widget` would miss `extra`, a field its constructor may not have written yet"
 
 // --- A field holding a function that captures the Map ----------------------
 // The binding `count` holds it, so whoever reads the binding holds it too.
@@ -670,5 +679,27 @@ function run() {
     new Widget("a");
     const found = registry.get("a");
     return found != undefined ? found.key.length : 0;
+}
+var result = run();
+
+//--- nulling-miss.js
+function run() {
+    const registry = new Map();
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            registry.set(key, this);
+        }
+        mark() {
+            this.extra = 1;
+        }
+        dispose() {
+            for (const name of Object.getOwnPropertyNames(this)) {
+                this[name] = null;
+            }
+        }
+    }
+    new Widget("a");
+    return registry.size;
 }
 var result = run();

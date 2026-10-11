@@ -71,6 +71,14 @@ struct InstanceRegistry {
     /// and operand: markInstanceRegistries yields null there instead, which
     /// every reader treats alike, so the join is an instance or neither.
     llvm::SmallVector<std::pair<mlir::Operation *, unsigned>> falsyYields;
+    /// Each method's `for (const k of Object.getOwnPropertyNames(this))
+    /// this[k] = null` loop: its first and last operation, in one block.
+    /// rewriteInstanceRegistries replaces it with one constant-key store of
+    /// null per field.
+    llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> ownNameNullings;
+    /// The class's fields, in the order its constructor first writes them:
+    /// the own properties every instance has.
+    llvm::SmallVector<std::string> fields;
 };
 
 /// The mark markInstanceRegistries puts on each method of a proved class: the
@@ -122,6 +130,12 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module);
 /// kNativeInstanceClass (clearing marks the input carried), and returns the
 /// proved registries only.
 std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module);
+
+/// markInstanceRegistries, after which each proved class's own-property
+/// nulling loops (Bootstrap's `dispose`) become one constant-key store of
+/// null per field. Runs in the closure lifter before its censuses, which
+/// index the operations this removes.
+void rewriteInstanceRegistries(mlir::ModuleOp module);
 
 /// Whether `fn` is the constructor of a class whose instances a registry
 /// Map owns: its JavaScript constructor becomes a factory returning

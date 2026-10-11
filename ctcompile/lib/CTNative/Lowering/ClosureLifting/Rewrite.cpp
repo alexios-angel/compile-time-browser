@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ClosureLifter.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -90,6 +91,10 @@ liftReport closureLifter::run() {
         locals.census();
         locals.unboxCells(out, true);
     }
+    // A registry Map's class: its `dispose` loop over its own property
+    // names becomes one store per field (Analysis/Instances.h), before the
+    // census below indexes the calls that loop makes.
+    rewriteInstanceRegistries(module);
     census();
     // Run the argument census before the method census, because methodCensus
     // reads closedAfterLift, which reads the argument slots. All censuses run

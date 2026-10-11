@@ -247,6 +247,76 @@ template <class Quiet> bool quietBefore(mlir::Operation * op, mlir::Operation * 
     return true;
 }
 
+/// A `for (const k of Object.getOwnPropertyNames(self)) self[k] = null` loop
+/// in `self`'s block, after --ctjs-lift-to-scf: the names call, then the
+/// iteration the importer spells with `__ctbrowser_*` helpers, up to the
+/// iterator's close. Nothing else may happen in between, and nothing the
+/// loop defines may be used after it. Its first and last operation, or none.
+std::optional<std::pair<mlir::Operation *, mlir::Operation *>> ownNameNulling(
+    mlir::OpOperand & use) {
+    auto names = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+    auto method = names ? ctjs::receiverMethod(names) : ctjs::GetPropertyOp{};
+    auto object =
+        method ? method.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+    if (!object || object.getName() != "Object" ||
+        ctjs::methodKey(names) != "getOwnPropertyNames" || names.getArgs().size() != 1 ||
+        names.getArgs()[0] != use.get()) {
+        return std::nullopt;
+    }
+    const mlir::Value self = use.get();
+    mlir::Operation * last = nullptr;
+    for (mlir::Operation * at = names->getNextNode(); at && !last; at = at->getNextNode()) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(at);
+        if (call && ctjs::calleeGlobalName(call) == "__ctbrowser_iter_close") { last = at; }
+    }
+    if (!last) { return std::nullopt; }
+    llvm::DenseSet<mlir::Operation *> inside;
+    unsigned stores = 0;
+    bool fits = true;
+    for (mlir::Operation * at = names;; at = at->getNextNode()) {
+        at->walk([&](mlir::Operation * op) {
+            inside.insert(op);
+            const llvm::StringRef dialect = op->getName().getDialectNamespace();
+            if (dialect == "arith" || dialect == "ub" || dialect == "scf") { return; }
+            if (llvm::isa<ctjs::ConstantOp, ctjs::CompareOp, ctjs::TruthyOp, ctjs::UnaryOp,
+                          ctjs::BinaryOp, ctjs::BinaryStaticOp>(op) ||
+                op->getName().getStringRef() == "ctjs.iterable") {
+                return;
+            }
+            if (auto global = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+                fits &= global.getName().starts_with("__ctbrowser_");
+                return;
+            }
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                fits &= read.getObject() != self;
+                return;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                fits &= op == names.getOperation() ||
+                        ctjs::calleeGlobalName(call).starts_with("__ctbrowser_");
+                return;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op)) {
+                ++stores;
+                fits &= store.getObject() == self && ctjs::constantKey(store.getKey()).empty() &&
+                        static_cast<bool>(ctjs::constantAttr<ctjs::NullAttr>(store.getValue()));
+                return;
+            }
+            fits = false;
+        });
+        if (at == last) { break; }
+    }
+    if (!fits || stores != 1) { return std::nullopt; }
+    for (mlir::Operation * op : inside) {
+        for (mlir::Value result : op->getResults()) {
+            for (mlir::Operation * user : result.getUsers()) {
+                if (!inside.contains(user)) { return std::nullopt; }
+            }
+        }
+    }
+    return std::make_pair(names.getOperation(), last);
+}
+
 /// The values that name one `new Map()`, the method calls made on them, and
 /// the first use that lets the Map escape.
 struct mapUses {
@@ -536,7 +606,12 @@ class registryProof {
         for (ctjs::FuncOp method : methods) {
             const mlir::Value self = method.getBody().front().getArgument(ctjs::arg_receiver);
             receivers.insert(self);
+            // The nulling loops first: a loop's own store is another use.
             for (mlir::OpOperand & use : self.getUses()) {
+                if (auto loop = ownNameNulling(use)) { out.ownNameNullings.push_back(*loop); }
+            }
+            for (mlir::OpOperand & use : self.getUses()) {
+                if (inNulling(use.getOwner())) { continue; }
                 if (!instanceUse(use)) {
                     return refuse("`this` in the method `" + jsName(method) + "` of `" + name +
                                   "` reaches " + named(use.getOwner()));
@@ -549,6 +624,53 @@ class registryProof {
                 if (!instanceUse(use)) {
                     return refuse("a new `" + name + "` reaches " + named(use.getOwner()) +
                                   " - only its fields and methods may use it");
+                }
+            }
+        }
+        return true;
+    }
+
+    /// Whether `op` sits in a nulling loop already recorded.
+    bool inNulling(mlir::Operation * op) {
+        return llvm::any_of(out.ownNameNullings, [&](const auto & loop) {
+            for (mlir::Operation * at = loop.first;; at = at->getNextNode()) {
+                if (at->isAncestor(op)) { return true; }
+                if (at == loop.second) { return false; }
+            }
+        });
+    }
+
+    /// The fields every instance has: those the constructor writes through
+    /// `this` at the top of its body, before any call. A nulling loop sets
+    /// own properties, so every field the class ever writes must be one.
+    bool collectFields() {
+        mlir::Block & entry = out.constructor.getBody().front();
+        const mlir::Value self = entry.getArgument(ctjs::arg_receiver);
+        for (mlir::Operation & op : entry) {
+            if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::ConstructOp>(op) ||
+                op.getNumRegions() != 0) {
+                break;
+            }
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+            const std::string key = store && store.getObject() == self
+                                        ? ctjs::constantKey(store.getKey()).str()
+                                        : std::string{};
+            if (!key.empty() && !llvm::is_contained(out.fields, key)) { out.fields.push_back(key); }
+        }
+        if (out.ownNameNullings.empty()) { return true; }
+        llvm::SmallVector<mlir::Value> selves{self};
+        for (ctjs::FuncOp method : methods) {
+            selves.push_back(method.getBody().front().getArgument(ctjs::arg_receiver));
+        }
+        for (mlir::Value receiver : selves) {
+            for (mlir::Operation * user : receiver.getUsers()) {
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                const llvm::StringRef key = store ? ctjs::constantKey(store.getKey()) : "";
+                if (store && store.getObject() == receiver && !key.empty() &&
+                    !llvm::is_contained(out.fields, key)) {
+                    return refuse(("the own-property loop of `" + name + "` would miss `" + key +
+                                   "`, a field its constructor may not have written yet")
+                                      .str());
                 }
             }
         }
@@ -896,7 +1018,9 @@ public:
             return refuse("the registry Map is iterated, and `delete` removes entries from it "
                           "- a removal during the iteration changes what it visits");
         }
-        if (!checkOuter() || !collectClass() || !checkReceivers()) { return false; }
+        if (!checkOuter() || !collectClass() || !checkReceivers() || !collectFields()) {
+            return false;
+        }
         // Instances read back: every flow followed, every dereference checked.
         for (ctjs::CallOp get : map.gets) { maybe.insert(get.getResult()); }
         for (std::size_t at = 0; at < maybe.size(); ++at) {
@@ -1184,6 +1308,44 @@ void TypeInference::joinInstanceReceivers(mlir::Operation * top,
         if (!mark) { mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod); }
         if (mark) { join(mark.getValue(), fn.getBody().front().getArgument(ctjs::arg_receiver)); }
     });
+}
+
+void rewriteInstanceRegistries(mlir::ModuleOp module) {
+    mlir::MLIRContext * context = module.getContext();
+    const auto value = ctjs::ValueType::get(context);
+    for (const InstanceRegistry & registry : markInstanceRegistries(module)) {
+        for (const auto & [first, last] : registry.ownNameNullings) {
+            auto names = llvm::cast<ctjs::CallOp>(first);
+            const mlir::Value self = names.getArgs()[0];
+            // One store of null per own property, where the loop began.
+            mlir::OpBuilder at(first);
+            for (const std::string & field : registry.fields) {
+                auto key = ctjs::ConstantOp::create(at, first->getLoc(), value,
+                                                    ctjs::StringAttr::get(context, field));
+                auto null = ctjs::ConstantOp::create(at, first->getLoc(), value,
+                                                     ctjs::NullAttr::get(context));
+                ctjs::SetPropertyOp::create(at, first->getLoc(), self, key, null);
+            }
+            // The loop, last operation first, then what only fed the names
+            // call (`Object.getOwnPropertyNames`).
+            mlir::Value callee = names.getCallee();
+            llvm::SmallVector<mlir::Operation *> loop;
+            for (mlir::Operation * op = first;; op = op->getNextNode()) {
+                loop.push_back(op);
+                if (op == last) { break; }
+            }
+            for (mlir::Operation * op : llvm::reverse(loop)) {
+                op->dropAllUses();
+                op->erase();
+            }
+            for (mlir::Operation * fed = callee.getDefiningOp(); fed && fed->use_empty();) {
+                mlir::Operation * next =
+                    fed->getNumOperands() ? fed->getOperand(0).getDefiningOp() : nullptr;
+                fed->erase();
+                fed = next;
+            }
+        }
+    }
 }
 
 } // namespace ctcompile::ctnative
