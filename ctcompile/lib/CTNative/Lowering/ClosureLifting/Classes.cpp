@@ -29,14 +29,17 @@
 // the class_defined call are class setup: they lower to nothing once the class
 // is proved, and those rules skip them. A class is proved when its prototype
 // and constructor are touched by nothing else, and every member closure only
-// by its definition and its `__home` edge. A class that `extends` another, or
-// has a static member or an accessor, is refused for now; `super(...)` is
-// spelled with load_home, get_proto, pass_new_target and a this-binding flag,
-// which the next slice lowers. The class_defined call is the VM's
-// engine-internal helper, which no script can replace (ctbrowser keeps it
-// apart from the globals table; see ctcompile/CTJS/Import/EngineGlobals.h),
-// so erasing it is exact. A refusal's reason is recorded on the constructor's
-// closure (ctnative.class_reason).
+// by its definition and its `__home` edge. Static members become direct
+// calls before this census runs (ClassStatics.cpp); a class whose static
+// members that rewrite left in place is refused with its reason. A class
+// that `extends` another class of the module has already been flattened into
+// one that extends nothing (ClassInheritance.cpp, which also lowers
+// `super`); one still extending another is refused with the reason that
+// rewrite recorded. A class with a prototype accessor is refused for now.
+// The class_defined call is the VM's engine-internal helper, which no script
+// can replace (ctbrowser keeps it apart from the globals table; see
+// ctcompile/CTJS/Import/EngineGlobals.h), so erasing it is exact. A refusal's
+// reason is recorded on the constructor's closure (ctnative.class_reason).
 //
 //===----------------------------------------------------------------------===//
 
@@ -96,8 +99,12 @@ void closureLifter::classCensus() {
         made.constructor = ctor;
         made.setup.insert(call.getOperation());
     });
+    // Why ClassStatics.cpp left a class's static members in place.
+    const auto staticRefusal = [&](mlir::Operation * key) -> std::string {
+        const auto found = staticRefusals.find(key);
+        return found == staticRefusals.end() ? "static members are the next slice" : found->second;
+    };
     for (auto & [key, cls] : jsClasses) {
-        (void)key;
         const auto refuse = [&](const llvm::Twine & why) {
             if (cls.reason.empty()) { cls.reason = why.str(); }
         };
@@ -118,8 +125,7 @@ void closureLifter::classCensus() {
                            set.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
                     cls.statics[name] = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
                     cls.definitions.insert(user);
-                    refuse("it has static method `" + name +
-                           "`; static members are the next slice");
+                    refuse("it has static method `" + name + "`; " + staticRefusal(key));
                 } else if (use.getOperandNumber() == 2 && name == "constructor") {
                     cls.setup.insert(user);
                 } else if (use.getOperandNumber() == 2 && name == "__home") {
@@ -136,8 +142,8 @@ void closureLifter::classCensus() {
                     getter && ctjs::isUndefinedConstant(accessor.getSetter())) {
                     cls.staticGetters[accessor.getName()] = getter;
                     cls.definitions.insert(user);
-                    refuse("it has static getter `" + accessor.getName() +
-                           "`; static members are the next slice");
+                    refuse("it has static getter `" + accessor.getName() + "`; " +
+                           staticRefusal(key));
                 } else {
                     refuse("its static accessor `" + accessor.getName() + "` has a setter");
                 }
