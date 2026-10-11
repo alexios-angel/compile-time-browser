@@ -29,6 +29,7 @@
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
+#include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -826,6 +827,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
 
+        // Which element-array parameters borrow by address, read while every
+        // function is still ctjs.
+        markWrittenArrays(accepted);
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }
         lower.finish();

@@ -27,6 +27,8 @@ constexpr llvm::StringLiteral kStringArrayAction = "ctnative.string_array";
 /// with no lattice type by the time the push is replaced.
 constexpr llvm::StringLiteral kStringArrayRow = "ctnative.string_array_row";
 constexpr llvm::StringLiteral kArrayHeader = "ctcompile/CTNative/Runtime/Array.hpp";
+/// markWrittenArrays' list (isWrittenArray).
+constexpr llvm::StringLiteral kWrittenArrays = "ctnative.written_arrays";
 
 /// Adds `#include "Runtime/Array.hpp"` once, at the top of the module. The
 /// runtime header and its defines are inserted in front of it later
@@ -192,6 +194,30 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
     return arrays;
 }
 
+void markWrittenArrays(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    for (ctjs::FuncOp fn : accepted) {
+        if (fn.getBody().empty()) { continue; }
+        llvm::SmallVector<int32_t> written;
+        for (mlir::BlockArgument argument : fn.getBody().front().getArguments().drop_front(3)) {
+            if (!TypeInference::elementVectorAliases(argument).empty() &&
+                TypeInference::elementParameterWritten(argument)) {
+                written.push_back(static_cast<int32_t>(argument.getArgNumber()));
+            }
+        }
+        if (written.empty()) { continue; }
+        const auto list = mlir::Builder(fn.getContext()).getDenseI32ArrayAttr(written);
+        fn->setAttr(kWrittenArrays, list);
+        fn->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::CallDirectOp call) {
+            if (call.getCallee() == fn.getSymName()) { call->setAttr(kWrittenArrays, list); }
+        });
+    }
+}
+
+bool isWrittenArray(mlir::Operation * op, unsigned index) {
+    auto list = op->getAttrOfType<mlir::DenseI32ArrayAttr>(kWrittenArrays);
+    return list && llvm::is_contained(list.asArrayRef(), static_cast<int32_t>(index));
+}
+
 void passElementArrays(lowering & lower, ctjs::FuncOp fn,
                        const llvm::DenseSet<mlir::Value> & arrays) {
     if (arrays.empty()) { return; }
@@ -217,10 +243,19 @@ void passElementArrays(lowering & lower, ctjs::FuncOp fn,
     };
     for (ctjs::CallDirectOp call : calls) {
         mlir::OpBuilder at(call);
-        // Operands 0-2 are the implicit arguments; the rest are lent as spans.
+        // Operands 0-2 are the implicit arguments; the rest are lent as spans,
+        // or by address to a callee that writes them.
         for (unsigned i = 3; i < call->getNumOperands(); ++i) {
             mlir::Value argument = call->getOperand(i);
             if (!isArray(argument) || isSpan(argument)) { continue; }
+            if (isWrittenArray(call, i)) {
+                if (auto local = llvm::dyn_cast<ec::LValueType>(argument.getType())) {
+                    call->setOperand(i, ec::AddressOfOp::create(
+                                            at, call.getLoc(),
+                                            ec::PointerType::get(local.getValueType()), argument));
+                }
+                continue;
+            }
             // The lattice still knows the source value's type (a local's comes
             // from the call result it holds): only operations are replaced
             // after this, never values.

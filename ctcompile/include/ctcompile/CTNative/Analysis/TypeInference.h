@@ -252,8 +252,9 @@ public:
     static llvm::SmallVector<mlir::Value, 4> elementVectorAliases(mlir::Value array,
                                                                   std::string * why = nullptr);
     /// Everything stored into the array `members` names: literal elements,
-    /// appends and pushed values. A split result's Strings are not listed;
-    /// splitsAString says whether there is one.
+    /// appends and pushed values, its own and those of every callee it is
+    /// lent to. A split result's Strings are not listed; splitsAString says
+    /// whether there is one.
     static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
         llvm::ArrayRef<mlir::Value> members);
     /// Whether `op` reads the global `undefined` in a program that never
@@ -279,9 +280,13 @@ public:
     /// to it, so the load is the realm's own binding of that name.
     static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
 
-    /// Whether the array `members` names is a function's parameter: a
-    /// read-only borrow of the caller's array, lowered as std::span.
+    /// Whether the array `members` names is a function's parameter: a borrow
+    /// of the caller's array, lowered as std::span, or as a pointer when
+    /// elementParameterWritten.
     static bool elementVectorParameter(llvm::ArrayRef<mlir::Value> members);
+    /// Whether the element-array parameter `parameter` is pushed to or sorted,
+    /// in its function or in a callee it is lent to.
+    static bool elementParameterWritten(mlir::Value parameter);
     /// Whether one owner in `members` is a split result.
     static bool splitsAString(llvm::ArrayRef<mlir::Value> members);
 
