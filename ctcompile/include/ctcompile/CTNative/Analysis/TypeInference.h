@@ -71,6 +71,11 @@ class DOMEntryAnalysis;
 /// and a mistyped attribute name is a silent narrowing nothing would catch.
 inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_before_read";
 
+/// Attribute on a function whose every return is an object literal it built,
+/// and on each direct call of it, when markRecordReturns proved that the call's
+/// result can receive a copy (Analysis/Inference/Records.cpp).
+inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
+
 /// One SSA value's inferred type, as a lattice element.
 ///
 /// A null type means "nothing known yet" and is not bottom. The framework
@@ -160,7 +165,9 @@ public:
     /// the join of every store of `k` to it, starting from undefined because
     /// nothing orders the read after a store. Any other use of the object (a
     /// call, a return, a dynamic key, `delete`, `in`, spread) makes its shape
-    /// open and every read of it `boxed`.
+    /// open and every read of it `boxed`. A data record (markRecordReturns) is
+    /// the exception: its literal may be returned, and the call's result is a
+    /// closed object of the same shape.
     static bool hasClosedShape(mlir::Value object);
 
     /// Whether `v` is the lifted `this` of a method. A method whose `this` uses
@@ -204,6 +211,20 @@ public:
     /// function, so they cannot disagree about what a field is.
     static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> groupReceivers(
         mlir::Operation * top);
+
+    /// Marks data records returned by value with kRecordReturn: a private
+    /// function, called only directly, whose every `ctjs.return` returns an
+    /// object literal it made, used otherwise only through constant keys, and
+    /// whose every call result is used only through constant keys or lent to
+    /// a record parameter. A record parameter belongs to a private function
+    /// called only directly, every call passes it a record, and it is used the
+    /// same way; its index joins `ctnative.object_args`. Run once, after
+    /// closure lifting and before groupReceivers.
+    static void markRecordReturns(mlir::Operation * top);
+    /// Whether `value` is the result of a call kRecordReturn marks.
+    static bool isRecordCall(mlir::Value value);
+    /// Whether `ret` is a `ctjs.return` of a function kRecordReturn marks.
+    static bool returnsRecord(mlir::Operation * ret);
 
     /// Whether `array` is a dense array literal that can be a `std::vector`:
     /// its uses keep it dense (no holes) and local. Allowed uses are appends,
@@ -256,6 +277,29 @@ public:
     /// splitsAString says whether there is one.
     static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
         llvm::ArrayRef<mlir::Value> members);
+    /// Whether `op` reads the global `undefined` in a program that never
+    /// stores to it. `undefined` is a non-writable, non-configurable property
+    /// of the global object (ECMA-262 19.1.4), so such a read is the undefined
+    /// value, whatever else writes the globals table.
+    static bool isUndefinedGlobal(mlir::Operation * op);
+    /// Whether `op` reads `x.getBoundingClientRect` only to test it.
+    static bool isRectTest(mlir::Operation * op);
+    /// Whether `op` is `x.getBoundingClientRect()`, its callee read for that
+    /// call alone.
+    static bool isRectCall(mlir::Operation * op);
+    /// When `op` is the null of `x.getBoundingClientRect ?
+    /// x.getBoundingClientRect() : null`, `x`; null otherwise. For an element
+    /// `x` the test is always true and the null never produced.
+    static mlir::Value deadRectReceiver(mlir::Operation * op);
+    /// Whether `op` calls the realm's own `getComputedStyle` with one argument.
+    static bool isStyleCall(mlir::Operation * op);
+    /// Whether `op` is `x.getPropertyValue(name)`, its callee read for that
+    /// call alone.
+    static bool isStylePropertyCall(mlir::Operation * op);
+    /// Whether `op` loads the global `name` in a program that never stores
+    /// to it, so the load is the realm's own binding of that name.
+    static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
+
     /// Whether the array `members` names is a function's parameter: a
     /// read-only borrow of the caller's array, lowered as std::span.
     static bool elementVectorParameter(llvm::ArrayRef<mlir::Value> members);
@@ -372,6 +416,14 @@ private:
     /// vector (elementVectorAliases), or calls split on a String; null when it
     /// does none of these. Sets `pending` when the answer has to wait for a
     /// stored value's lattice.
+    /// The type of a page read of an ordinary script: `document.documentElement`
+    /// (an element), an element's tagName, id and className (Strings),
+    /// children (a vector of elements), clientWidth and clientHeight, and
+    /// `window.devicePixelRatio` (Numbers); getBoundingClientRect (a rect, its
+    /// existence test a Boolean, the null of its guard the rect too), the
+    /// rect's left, top, width and height (Numbers), getComputedStyle(el) and
+    /// its getPropertyValue (a String). Null for anything else.
+    mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
 
@@ -425,7 +477,8 @@ private:
     /// function. Forwarded slots need their own check of every callable and
     /// use; cycles and the bounded walk's cutoff keep the seed. Field removal
     /// is ruled out by the closed-alias check, and every callee write stays in
-    /// the type join.
+    /// the type join. A data record's call result drops the seed when, in the
+    /// callee, a store of the key dominates every return of its literal.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every

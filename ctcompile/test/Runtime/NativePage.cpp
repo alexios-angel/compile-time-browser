@@ -79,6 +79,28 @@ void test_element_members_match_the_vm() {
     }
 }
 
+void test_document_element_is_required() {
+    // With a root, the unchecked read is the root element.
+    {
+        bound_page bound;
+        const ctnative::page_scope scope{bound.page};
+        CHECK_EQ(text(ctnative::require_document_element().tagName()), std::string{"HTML"});
+    }
+    // A document with no root element throws the VM's TypeError text, not
+    // std::bad_optional_access.
+    ctbrowser::atom_table atoms;
+    ctbrowser::document empty{atoms};
+    ctbrowser::style::engine styles{atoms};
+    const ctnative::document_scope scope{empty, styles};
+    bool threw = false;
+    try {
+        (void)ctnative::require_document_element();
+    } catch (const std::invalid_argument & error) {
+        threw = std::string{error.what()} == "TypeError: document.documentElement is null";
+    }
+    CHECK(threw);
+}
+
 void test_geometry_and_viewport() {
     bound_page bound;
     const ctnative::page_scope scope{bound.page};
@@ -91,6 +113,9 @@ void test_geometry_and_viewport() {
     // The same rectangle ctbrowser::page answers for the VM's binding.
     const ctbrowser::rect page_rect = bound.page.bounding_client_rect(box->value().id);
     CHECK(r.width.value() == static_cast<double>(page_rect.width));
+    // The field helpers generated code calls read the same fields.
+    CHECK(ctnative::rect_left(r).value() == 10 && ctnative::rect_top(r).value() == 0);
+    CHECK(ctnative::rect_width(r).value() == 50 && ctnative::rect_height(r).value() == 20);
 
     const auto root = *ctnative::document.documentElement();
     CHECK(ctnative::clientWidth(root).value() == 200);
@@ -153,6 +178,7 @@ void test_what_may_not_be_asked() {
 
 int main() {
     test_element_members_match_the_vm();
+    test_document_element_is_required();
     test_geometry_and_viewport();
     test_computed_style_is_live();
     test_what_may_not_be_asked();

@@ -1,0 +1,8 @@
+# The DOM reads of an ordinary script answer natively what they answer on the
+# interpreter, with no VM linked into the native build.
+# RUN: %{obj}/ctcompile-test-dom-reads %S/dom-reads.html %S/dom-reads.js > %t.vm
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-dom-reads-native %S/dom-reads.html %S/dom-reads.js > %t.native
+# RUN: diff %t.vm %t.native
+# RUN: FileCheck %s --input-file %t.native
+# RUN: %nm -C %{obj}/ctcompile-test-dom-reads-native | not grep -E "ctbrowser::script::"
+# CHECK: HTML top b a|HEAD#.>TITLE@0,0 0x0 none/0px|BODY#.page>DIV@10.25,16 33.29999923706055x10.5 block/2.25px>SECTION@8,26.5 384x0 block/0px|400x300@1

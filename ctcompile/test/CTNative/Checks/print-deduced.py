@@ -48,6 +48,8 @@ CARRIERS = [
     re.compile(
         r"^([ \t]*(constexpr )?)ctnative::ctn_env_[A-Za-z_0-9]+(( const)? [A-Za-z_0-9]+ = )"
     ),
+    # A data record returned by value: the object-literal shape's class.
+    re.compile(r"^([ \t]*(constexpr )?)ctn_[A-Za-z_0-9]+(<[^;=]+>)?(( const)? [A-Za-z_0-9]+ = )"),
     re.compile(
         r"^([ \t]*(constexpr )?)std::shared_ptr<ctnative::method_table_[A-Za-z_0-9]+>"
         r"(( const)? [A-Za-z_0-9]+ = )"
