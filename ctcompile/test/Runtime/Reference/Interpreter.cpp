@@ -144,11 +144,14 @@ void write_percent_encoded(const std::string & s) {
 int main(int argc, char ** argv) {
     namespace po = boost::program_options;
     std::string path;
-    po::options_description options{
-        "usage: ctcompile-test-native-reference [--page PAGE.html | PROGRAM.js]"};
+    std::vector<std::string> scripts;
+    po::options_description options{"usage: ctcompile-test-native-reference "
+                                    "[--page PAGE.html [--script SCRIPT.js]... | PROGRAM.js]"};
     auto add = options.add_options();
     // Either one fills `path`. Which one did is the mode, and it must be exactly one.
     add("page", po::value(&path), "load PAGE.html into a live document, print its console.log");
+    add("script", po::value(&scripts),
+        "with --page: then run SCRIPT.js in the page's context, in order");
     add("program", po::value(&path), "run PROGRAM.js, print the globals it created or changed");
     po::positional_options_description positional;
     positional.add("program", 1);
@@ -157,6 +160,10 @@ int main(int argc, char ** argv) {
     const bool page = args->count("page") != 0;
     if (page == (args->count("program") != 0)) {
         std::cerr << "give exactly one of --page PAGE.html and PROGRAM.js\n" << options;
+        return 2;
+    }
+    if (!page && !scripts.empty()) {
+        std::cerr << "--script needs --page\n" << options;
         return 2;
     }
     std::ifstream in{path, std::ios::binary};
@@ -168,7 +175,10 @@ int main(int argc, char ** argv) {
 
     // --page: the same VM behind a live document, for questions about the DOM
     // bindings themselves (element_names.py enumerates the element surface this
-    // way). Prints each console.log line; a script error fails.
+    // way). Each --script then runs in the page's own context, as a classic
+    // script would (check-workload.py's script-run loads a library and a probe
+    // that calls it on the page's elements). Prints each console.log line; a
+    // script error fails.
     if (page) {
         ctbrowser::shell::browser live{ctbrowser::shell::browser_options{400, 300}};
         live.load_html(source);
@@ -176,6 +186,20 @@ int main(int argc, char ** argv) {
             std::fprintf(stderr, "native reference: %s threw: %s\n", path.c_str(),
                          live.script_error().c_str());
             return 1;
+        }
+        for (const std::string & script : scripts) {
+            std::ifstream file{script, std::ios::binary};
+            if (!file) {
+                std::fprintf(stderr, "native reference: cannot read %s\n", script.c_str());
+                return 1;
+            }
+            const std::string text{std::istreambuf_iterator<char>{file},
+                                   std::istreambuf_iterator<char>{}};
+            if (!live.run_script(text) || !live.script_error().empty()) {
+                std::fprintf(stderr, "native reference: %s threw in %s: %s\n", script.c_str(),
+                             path.c_str(), live.script_error().c_str());
+                return 1;
+            }
         }
         for (const std::string & line : live.bindings().console_output()) {
             std::printf("%s\n", line.c_str());

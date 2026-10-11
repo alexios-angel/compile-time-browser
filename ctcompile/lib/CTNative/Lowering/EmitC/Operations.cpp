@@ -249,6 +249,8 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 }));
             } else if (isNullableCarrier(expected)) {
                 use.set(once(emptyNullable, [&] { return absentConstant(b, where); }));
+            } else if (expected == carrierType(context, carrier::nullableElement)) {
+                use.set(opaque(carrier::nullableElement, "std::nullopt"));
             } else if (expected == i1 || isBooleanCarrier(expected)) {
                 use.set(convertScalar(
                     b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),

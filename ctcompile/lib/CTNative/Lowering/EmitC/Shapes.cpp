@@ -148,6 +148,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     }
     // Every field, read-only ones included, with its joined carrier.
     for (const auto & entry : read) { join(stored, entry.getKey(), entry.getValue()); }
+    variantFields(object, stored);
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             const auto key = accessKey.find(user);

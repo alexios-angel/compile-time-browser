@@ -3,6 +3,7 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
   ArrayCallbacks.cpp
   HostCallbacks.cpp
+  Elements.cpp
   Shapes.cpp
   Records.cpp
   StringCallbacks.cpp
@@ -21,9 +22,11 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   SymbolTransport.cpp
   SymbolTransport.h
   Environments.cpp
+  ClosureSets.cpp
   MethodTables.cpp
   StaticTables.cpp
   Instances.cpp
+  VariantFields.cpp
   Emitter.h
   Runtime.h
 )

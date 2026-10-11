@@ -485,6 +485,18 @@ struct closureLifter {
     static mlir::ValueRange argsOfCallSite(mlir::Operation * user);
 
     void indexAndNewTargets();
+    /// Rewrites each arrow that reads its lexical `this` to capture it as a
+    /// constant cell (ArrowThis.cpp).
+    void captureLexicalThis();
+    /// The capture parameters of the lifted target of `made` that receive the
+    /// creating method's `this` as an object pointer (ArrowThis.cpp).
+    llvm::SmallVector<int32_t> lexicalThisObjectArgs(llvm::ArrayRef<ctjs::CreateClosureOp> made);
+    /// True when `use` of a method's `this` only hands it to such a lifted
+    /// arrow (ArrowThis.cpp).
+    bool passesLexicalThis(mlir::OpOperand & use);
+    /// Erases the cells captureLexicalThis made once only such arrows
+    /// capture them (ArrowThis.cpp).
+    void releaseLexicalThisCells();
 
     void specializeCallbacks(liftReport & out);
 
@@ -504,11 +516,12 @@ struct closureLifter {
     std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
     void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
-    /// Listeners handed to the host (HostCallbacks.cpp): each closure whose
-    /// one use is the listener argument of `el.addEventListener(type, f)`,
-    /// with that call. Judged by whyNotHostCallback and rewritten by
-    /// rewriteHostCallback, as arrayCallbacks are.
-    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    /// Callbacks handed to the host (HostCallbacks.cpp): each closure whose
+    /// one use is the handler argument of `setTimeout(f, delay)`, or whose
+    /// every use is the listener argument of an `addEventListener` or
+    /// `removeEventListener` call (at least one adding it), with those calls. Judged by
+    /// whyNotHostCallback and rewritten by rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallOp, 1>> hostCallbacks;
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -522,6 +535,8 @@ struct closureLifter {
     ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell);
 
     bool writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSetOp store);
+
+    bool holderReadsFollow(ctjs::CellSetOp store, mlir::Operation * at);
 
     bool isAssignedBeforeRead(ctjs::CreateCellOp cell) const;
 
@@ -669,6 +684,24 @@ struct closureLifter {
     /// into direct calls when nothing else reads it (Singletons.cpp). Returns
     /// whether it changed the module.
     bool bindSingletonMethods(liftReport & out);
+
+    /// What can start each function, and how many closures name it (see
+    /// indexStarters() in Singletons.cpp).
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> starters;
+    llvm::DenseMap<mlir::Operation *, unsigned> closuresOf;
+    void indexStarters();
+    bool runsAfter(
+        mlir::Operation * op, mlir::Operation * write,
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy);
+
+    /// Turns reads of a class's static members into direct calls and erases
+    /// their definitions (ClassStatics.cpp). Returns whether it changed the
+    /// module.
+    bool bindClassStatics(liftReport & out);
+    /// Why the static-member rewrite left a class's statics in place, keyed
+    /// by the constructor's ctjs.create_closure; classCensus() appends it to
+    /// the class's refusal.
+    llvm::DenseMap<mlir::Operation *, std::string> staticRefusals;
 
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 
@@ -871,6 +904,20 @@ struct closureLifter {
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
+
+    // --- Closure sets (ClosureSets.cpp) ----------------------------------------
+    //
+    // Closures whose values meet at scf.if results and are otherwise only
+    // called: each member, and every call through the set. Retaken each round.
+    struct closureSet {
+        llvm::SmallVector<ctjs::CreateClosureOp, 4> members;
+        llvm::SetVector<ctjs::CallOp> calls;
+    };
+    llvm::DenseMap<mlir::Operation *, std::shared_ptr<closureSet>> closureSets;
+    void closureSetCensus();
+    std::optional<std::string> whyNotClosureSetMember(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyNotInClosureSet(ctjs::CreateClosureOp c);
+    void rewriteClosureSetMember(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     // --- Borrowed callbacks (BorrowedCallbacks.cpp) ----------------------------
     //

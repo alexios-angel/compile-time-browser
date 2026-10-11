@@ -5,6 +5,25 @@
 // the answers.
 var clicks = 0;
 var order = '';
+var seen = '';
+var phases = '';
+var notes = '';
+var counted = '';
+var named = '';
+
+// Named top-level functions as listeners: onNamed is added twice to the root
+// (the second ignored), and onLeaf, on <body>, removes it when a click on the
+// leaf passes, so the root's step of that click no longer runs it.
+function onNamed(e) {
+    named = named + (e.target.id === 'top' ? 'n' : e.target.id);
+}
+function onLeaf(e) {
+    if (e.target.id === 'leaf') {
+        document.documentElement.removeEventListener('click', onNamed);
+    }
+}
+document.documentElement.addEventListener('click', onNamed);
+document.documentElement.addEventListener('click', onNamed);
 
 // A listener with no captures, on the root element.
 document.documentElement.addEventListener('click', function () {
@@ -23,11 +42,76 @@ function listen(name) {
             kid.addEventListener('click', function () {
                 order = order + name;
             });
+            kid.addEventListener('click', onLeaf);
+            // A listener that takes the event: it reads the event's type,
+            // target and current target, cancels it, and stops a click on the
+            // leaf from reaching the root.
+            kid.addEventListener('click', function (e) {
+                e.preventDefault();
+                seen = seen + e.type + ':' + e.target.id + '@' + e.currentTarget.id +
+                    (e.defaultPrevented ? '!' : '') + ' ';
+                if (e.target.id === 'leaf') {
+                    e.stopPropagation();
+                }
+            });
         }
     }
 }
 listen('b');
 
+// The capture phase, from the window down: a capturing listener on the
+// document and one on the root, and a bubbling one on the window, which a
+// click stopped at <body> never reaches.
+document.addEventListener('click', function (e) {
+    phases = phases + 'D' + e.target.id + ' ';
+}, true);
+document.documentElement.addEventListener('click', function () {
+    phases = phases + 'c ';
+}, true);
+window.addEventListener('click', function () {
+    phases = phases + 'W ';
+});
+
+// Events the script makes and dispatches itself: the root's listener cancels
+// each one, which only a cancelable event takes, and the script reads the
+// answer and defaultPrevented back afterwards.
+document.documentElement.addEventListener('note', function (e) {
+    e.preventDefault();
+    notes = notes + e.type + ':';
+});
+function announce() {
+    var root = document.documentElement;
+    var plain = new Event('note');
+    var heard = root.dispatchEvent(plain);
+    notes = notes + (heard ? 'heard' : 'canceled') + (plain.defaultPrevented ? '!' : '') + ' ';
+    var loud = new Event('note', {
+        bubbles: true,
+        cancelable: true
+    });
+    heard = root.dispatchEvent(loud);
+    notes = notes + (heard ? 'heard' : 'canceled') + (loud.defaultPrevented ? '!' : '') + ' ';
+}
+announce();
+
+// Listeners named by a variable, so the same function reaches addEventListener
+// twice (the second is ignored) and removeEventListener once: removal matches
+// the capture flag, so the capturing registration of `g` stays.
+function wire(mark) {
+    var root = document.documentElement;
+    var h = function () {
+        counted = counted + mark;
+    };
+    var g = function () {
+        counted = counted + 'g';
+    };
+    root.addEventListener('click', h);
+    root.addEventListener('click', h);
+    root.addEventListener('click', g);
+    root.addEventListener('click', g, true);
+    root.removeEventListener('click', g);
+}
+wire('h');
+
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted + '| named=' + named;
 }

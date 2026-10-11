@@ -169,6 +169,11 @@ struct admission {
     std::optional<bool> instanceOperation(mlir::Operation * o);
     bool nativeMapCall(mlir::Operation * o, llvm::StringRef action);
     bool closedObject(ctjs::CreateObjectOp object);
+    /// One access `user` to field `key` of a closed object whose field
+    /// accesses are `accesses`, when the field is stored as a String union
+    /// carrier; nullopt for any other field (Admission/VariantFields.cpp).
+    std::optional<bool> variantField(llvm::StringRef key, mlir::Operation * user,
+                                     llvm::ArrayRef<mlir::Operation *> accesses);
     bool directCall(ctjs::CallDirectOp call);
     bool returned(ctjs::ReturnOp ret);
 

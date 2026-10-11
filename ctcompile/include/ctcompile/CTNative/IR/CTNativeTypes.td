@@ -119,6 +119,29 @@ def CTNative_ComputedStyleType : CTNative_Type<"ComputedStyle", "computed_style"
   }];
 }
 
+def CTNative_EventType : CTNative_Type<"Event", "event"> {
+  let summary = "The Event a native listener receives, as ctnative::js_event";
+  let description = [{
+    The parameter of a listener an ordinary script hands to
+    `el.addEventListener(type, f)`: a view of the host's dispatch
+    (Runtime/Events.hpp), valid only while the listener runs. Admission lets
+    it be only the receiver of its type, target, currentTarget and
+    defaultPrevented reads and its preventDefault and stopPropagation calls,
+    so it never outlives the dispatch. It meets only itself.
+  }];
+}
+
+def CTNative_TimerType : CTNative_Type<"Timer", "timer"> {
+  let summary = "A timer's handle, as ctnative::timer_id";
+  let description = [{
+    What `setTimeout` and `setInterval` return in an ordinary script, which a
+    program may keep and pass to `clearTimeout` or `clearInterval`
+    (Runtime/Timers.hpp). The VM's handle is a Number, but its value counts
+    the host's own timers too, so the native one is opaque: admission refuses
+    every use that would read it as a Number. It meets only itself.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{
@@ -473,6 +496,29 @@ def CTNative_ClosureType
     parameters. They are not recursively embedded in this nominal type, so a
     recursive call graph cannot grow the type lattice indefinitely.
   }];
+}
+
+def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
+  let summary = "One of a finite, proved set of callables - a std::variant dispatched by std::visit";
+  let description = [{
+    Where two `closure` types meet, or a `closure` meets a `closure_set`: a
+    value that is one of several lifted callables, each bound to its own
+    captures, such as `c ? (x => x + k) : (x => x * 3)`. The targets are the
+    callables' nominal identities, sorted and distinct, so the meet of the
+    same targets in any order is one MLIR type.
+
+    IT IS CAPPED at `kMaxClosureSetTargets` (CTNativeLattice.h). A union of
+    more targets is `boxed`, in every bracketing, because the size of a union
+    of sets does not depend on the order it was formed in. The cap keeps the
+    lattice finite-height.
+
+    The closure-set lift (Lowering/ClosureLifting/ClosureSets.cpp) decides
+    which values may have this type; a call through one names every target
+    it may reach, and admission requires one signature for all of them.
+  }];
+  let parameters = (ins ArrayRefParameter<"::mlir::StringAttr">:$targets);
+  let assemblyFormat = "`<` $targets `>`";
+  let genVerifyDecl = 1;
 }
 
 //===----------------------------------------------------------------------===//

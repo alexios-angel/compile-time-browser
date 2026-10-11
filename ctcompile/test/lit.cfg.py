@@ -181,10 +181,41 @@ config.substitutions.insert(
         " --include %{monorepo}/ctbrowser/include --work %t --nm %nm",
     ),
 )
+
+
 # %{obj}: where the build writes each native fixture's modules (Native.cmake's
 # ctcompile_add_native_pipeline: <name>.pipeline{,.deduced,.mutated}.emitc.mlir).
 # docs/refactor-goldens.md compares a refactor against the same files.
-config.substitutions.append(("%{obj}", config.test_exec_root))
+#
+# Those modules are build outputs, not test outputs: a build of only ctjs-opt
+# and ctjs-translate leaves them from the previous compiler, and a fixture
+# would pass against them. The ctcompile-fixture-inputs target (Lit.cmake)
+# touches fixture-inputs.stamp once they are current. While the stamp is
+# missing or older than either tool, %{obj} names a directory that does not
+# exist and says which target to build, so every test that reads a module
+# fails with that path instead of passing on stale input.
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+_stamp = _mtime(os.path.join(config.test_exec_root, "fixture-inputs.stamp"))
+_tools = [
+    _mtime(os.path.join(directory, tool))
+    for directory in config.ctcompile_tools_dirs
+    for tool in ("ctjs-opt", "ctjs-translate")
+]
+if _stamp is not None and all(built is None or built <= _stamp for built in _tools):
+    _obj = config.test_exec_root
+else:
+    _obj = os.path.join(config.test_exec_root, "stale-inputs-build-target-ctcompile-fixture-inputs")
+    lit_config.note(
+        "native fixture modules are missing or older than ctjs-opt/ctjs-translate; "
+        "tests that read %{obj} fail until the ctcompile-fixture-inputs target is built"
+    )
+config.substitutions.append(("%{obj}", _obj))
 config.substitutions.append(("%{monorepo}", config.monorepo_root))
 config.substitutions.append(("%host_cxx", config.host_cxx))
 config.substitutions.append(("%nm", config.nm))

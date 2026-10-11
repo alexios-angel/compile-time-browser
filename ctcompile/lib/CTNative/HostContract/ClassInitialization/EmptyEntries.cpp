@@ -8,6 +8,10 @@
 
 #include "../../PartialEvaluation/Heap.h"
 #include "Proof.hpp"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
+
+#include <functional>
 
 namespace ctcompile::ctnative::class_detail {
 
@@ -93,9 +97,9 @@ std::optional<size_t> passedArguments(classInitialization & proof, ctjs::FuncOp 
 /// Runs `fn` on the only path its invocations can take and returns the
 /// constant it always returns, or refuses (nullopt). Formals that no call
 /// passes are undefined; receiver reads resolve to the proved constructor and
-/// getter records.
-// ponytail: only cf-dialect bodies (a for-of that can throw keeps its
-// branches); an scf body would need clearOwnFieldLoop's region evaluator.
+/// getter records. It runs cf branches, and the structured form a lifted
+/// entries loop takes: scf.if, an scf.while whose body never runs, and the
+/// cf.switch on its exit.
 std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncOp fn,
                                         const HostContract & contract) {
     using partial_eval::value;
@@ -108,9 +112,10 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
         entriesToken,
         openToken,
         closeToken,
-        constructorToken
+        constructorToken,
+        poisonToken
     };
-    unsigned next = constructorToken + 1;
+    unsigned next = poisonToken + 1;
     llvm::DenseSet<unsigned> fresh, arrays;
     llvm::DenseMap<mlir::Value, value> values;
     auto & entry = fn.getBody().front();
@@ -155,135 +160,237 @@ std::optional<mlir::Attribute> evaluate(classInitialization & proof, ctjs::FuncO
         std::initializer_list<llvm::StringRef>{"Array", "__ctbrowser_for_of_open",
                                                "__ctbrowser_iter_next", "__ctbrowser_iter_close"},
         [&](llvm::StringRef name) { return llvm::is_contained(contract.initialIntrinsics, name); });
-    mlir::Operation * op = &entry.front();
+    // Runs `block` from its first operation. A ctjs.return ends the method
+    // (`answer`); an scf.yield or scf.condition hands its operands back to the
+    // structured operation that ran the block (`yielded`).
+    enum class flow {
+        failed,
+        returned,
+        yielded
+    };
+    std::optional<mlir::Attribute> answer;
+    llvm::SmallVector<value> yielded;
+    // A ub.poison placeholder: carried through loop arguments, never read.
+    const auto poison = value::reference(poisonToken);
     // ponytail: at most 4096 executed operations. Loops over the empty entries
     // never run, so a real path is short; a longer one refuses.
-    for (unsigned executed = 0; executed != 4096; ++executed) {
-        if (!proof.step()) { return std::nullopt; }
-        mlir::Operation * following = op->getNextNode();
-        const auto jump = [&](mlir::Block * target, mlir::ValueRange operands) {
-            llvm::SmallVector<value> carried;
-            for (mlir::Value operand : operands) { carried.push_back(get(operand)); }
-            for (auto [argument, input] : llvm::zip(target->getArguments(), carried)) {
-                values[argument] = input;
+    unsigned executed = 0;
+    std::function<flow(mlir::Block &)> run = [&](mlir::Block & block) -> flow {
+        mlir::Operation * op = &block.front();
+        while (true) {
+            if (++executed > 4096) {
+                proof.refuse(closedPath);
+                return flow::failed;
             }
-            following = &target->front();
-        };
-        value result;
-        if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ConstantOp,
-                      mlir::arith::ConstantOp>(op)) {
-            op = following;
-            continue;
-        }
-        if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
-            jump(branch.getDest(), branch.getDestOperands());
-            op = following;
-            continue;
-        }
-        if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
-            auto bit =
-                llvm::dyn_cast_if_present<mlir::IntegerAttr>(get(branch.getCondition()).constant);
-            if (!bit) { return fail(*op); }
-            if (bit.getValue().isZero()) {
-                jump(branch.getFalseDest(), branch.getFalseDestOperands());
-            } else {
-                jump(branch.getTrueDest(), branch.getTrueDestOperands());
-            }
-            op = following;
-            continue;
-        }
-        if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
-            auto answer = get(returned.getValue());
-            if (answer.tag != value::kind::constant ||
-                llvm::isa<mlir::TypedAttr>(answer.constant)) {
-                return fail(*op);
-            }
-            return answer.constant;
-        }
-        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
-            result = partial_eval::compare(compare.getKind(), get(compare.getLhs()),
-                                           get(compare.getRhs()), context);
-        } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
-            result = partial_eval::binary(binary.getKind(), get(binary.getLhs()),
-                                          get(binary.getRhs()), context);
-        } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {
-            result = partial_eval::binary(binary.getKind(), get(binary.getLhs()),
-                                          get(binary.getRhs()), context, true);
-        } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
-            result = partial_eval::unary(unary.getKind(), get(unary.getOperand()), context);
-        } else if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
-            if (auto bit = partial_eval::truthy(get(truth.getValue()))) {
-                result = value::primitive(
-                    mlir::IntegerAttr::get(mlir::IntegerType::get(context, 1), *bit));
-            }
-        } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
-            const auto name = load.getName();
-            if (!iterators &&
-                (name == "__ctbrowser_for_of_open" || name == "__ctbrowser_iter_close")) {
-                proof.refuse("class own-key loop requires original Array iterator identities");
-                return std::nullopt;
-            }
-            result = value::reference(name == "Object"                    ? objectToken
-                                      : name == "__ctbrowser_for_of_open" ? openToken
-                                      : name == "__ctbrowser_iter_close"  ? closeToken
-                                                                          : 0);
-        } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
-            const auto object = get(read.getObject());
-            const auto key = ctjs::constantKey(read.getKey());
-            // Each getter read allocates its own object, as its expansion would.
-            bool getter = false, empty = true;
-            for (auto [site, callee] : proof.getterReads) {
-                if (site != read) { continue; }
-                if (proof.throwingGetters.contains(callee)) { return fail(*op); }
-                getter = true;
-                empty &= freshEmptyGetter(callee);
-            }
-            if (llvm::is_contained(proof.constructorReads, read)) {
-                result = value::reference(constructorToken);
-            } else if (getter && empty) {
-                fresh.insert(next);
-                result = value::reference(next++);
-            } else if (getter) {
-                values[read.getResult()] = value{}; // A proved closed getter: no effect.
+            if (!proof.step()) { return flow::failed; }
+            mlir::Operation * following = op->getNextNode();
+            const auto jump = [&](mlir::Block * target, mlir::ValueRange operands) {
+                llvm::SmallVector<value> carried;
+                for (mlir::Value operand : operands) { carried.push_back(get(operand)); }
+                for (auto [argument, input] : llvm::zip(target->getArguments(), carried)) {
+                    values[argument] = input;
+                }
+                following = &target->front();
+            };
+            const auto failAt = [&](mlir::Operation & at) {
+                (void)fail(at);
+                return flow::failed;
+            };
+            const auto bitOf = [&](mlir::Value condition) {
+                return llvm::dyn_cast_if_present<mlir::IntegerAttr>(get(condition).constant);
+            };
+            value result;
+            if (llvm::isa<ctjs::FrameEnterOp, ctjs::FrameExitOp, ctjs::RootOp, ctjs::ConstantOp,
+                          mlir::arith::ConstantOp>(op)) {
                 op = following;
                 continue;
-            } else if (is(object, objectToken) && key == "entries") {
-                result = value::reference(entriesToken);
-            } else if (in(object, arrays) && key == "length") {
-                result = partial_eval::numeric(context, 0);
             }
-        } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
-            const auto callee = get(call.getCallee());
-            const auto receiver = get(call.getReceiver());
-            llvm::SmallVector<value> arguments;
-            for (mlir::Value argument : call.getArgs()) { arguments.push_back(get(argument)); }
-            if (is(callee, entriesToken) && is(receiver, objectToken) && arguments.size() == 1) {
-                if (!in(arguments.front(), fresh)) {
-                    proof.refuse(freshObject);
-                    return std::nullopt;
+            if (llvm::isa<mlir::ub::PoisonOp>(op)) {
+                values[op->getResult(0)] = poison;
+                op = following;
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
+                jump(branch.getDest(), branch.getDestOperands());
+                op = following;
+                continue;
+            }
+            if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
+                auto bit = bitOf(branch.getCondition());
+                if (!bit) { return failAt(*op); }
+                if (bit.getValue().isZero()) {
+                    jump(branch.getFalseDest(), branch.getFalseDestOperands());
+                } else {
+                    jump(branch.getTrueDest(), branch.getTrueDestOperands());
                 }
-                arrays.insert(next);
-                result = value::reference(next++);
-            } else if (is(callee, openToken) && absent(receiver) && arguments.size() == 1 &&
-                       in(arguments.front(), arrays)) {
-                result = undefined; // An array iterates by index.
-            } else if (is(callee, closeToken) && absent(receiver) && arguments.size() == 2 &&
-                       absent(arguments.front()) &&
-                       partial_eval::truthy(arguments.back()) == false) {
-                result = undefined;
+                op = following;
+                continue;
             }
-        } else if (auto iterable = llvm::dyn_cast<ctjs::IterableOp>(op)) {
-            if (in(get(iterable->getOperand(0)), arrays)) { result = get(iterable->getOperand(0)); }
+            if (auto choice = llvm::dyn_cast<mlir::cf::SwitchOp>(op)) {
+                auto flag = bitOf(choice.getFlag());
+                if (!flag) { return failAt(*op); }
+                mlir::Block * target = choice.getDefaultDestination();
+                mlir::ValueRange operands = choice.getDefaultOperands();
+                if (auto cases = choice.getCaseValues()) {
+                    for (auto [index, label] : llvm::enumerate(cases->getValues<llvm::APInt>())) {
+                        if (label == flag.getValue()) {
+                            target = choice.getCaseDestinations()[index];
+                            operands = choice.getCaseOperands(static_cast<unsigned>(index));
+                        }
+                    }
+                }
+                jump(target, operands);
+                op = following;
+                continue;
+            }
+            if (auto returned = llvm::dyn_cast<ctjs::ReturnOp>(op)) {
+                auto constant = get(returned.getValue());
+                if (constant.tag != value::kind::constant ||
+                    llvm::isa<mlir::TypedAttr>(constant.constant)) {
+                    return failAt(*op);
+                }
+                answer = constant.constant;
+                return flow::returned;
+            }
+            if (llvm::isa<mlir::scf::YieldOp, mlir::scf::ConditionOp>(op)) {
+                yielded.clear();
+                for (mlir::Value operand : op->getOperands()) { yielded.push_back(get(operand)); }
+                return flow::yielded;
+            }
+            // Structured control flow runs the region its condition picks and
+            // takes what that region yields as its results.
+            if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(op)) {
+                auto bit = bitOf(branch.getCondition());
+                if (!bit) { return failAt(*op); }
+                mlir::Region & taken =
+                    bit.getValue().isZero() ? branch.getElseRegion() : branch.getThenRegion();
+                if (taken.empty()) {
+                    op = following;
+                    continue;
+                }
+                if (const flow inner = run(taken.front()); inner != flow::yielded) { return inner; }
+                for (auto [output, input] : llvm::zip(op->getResults(), yielded)) {
+                    values[output] = input;
+                }
+                op = following;
+                continue;
+            }
+            // A loop over the empty entries ends at its first test: the
+            // condition is false and the loop yields its arguments as they
+            // were. One whose body would run refuses.
+            if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(op)) {
+                mlir::Block & before = loop.getBefore().front();
+                for (auto [argument, input] : llvm::zip(before.getArguments(), loop.getInits())) {
+                    values[argument] = get(input);
+                }
+                if (const flow inner = run(before); inner != flow::yielded) { return inner; }
+                auto bit = llvm::dyn_cast_if_present<mlir::IntegerAttr>(yielded.front().constant);
+                if (!bit || !bit.getValue().isZero()) { return failAt(*op); }
+                for (auto [output, input] :
+                     llvm::zip(op->getResults(), llvm::ArrayRef(yielded).drop_front())) {
+                    values[output] = input;
+                }
+                op = following;
+                continue;
+            }
+            if (auto narrow = llvm::dyn_cast<mlir::arith::TruncIOp>(op)) {
+                auto bit = bitOf(narrow.getIn());
+                if (!bit) { return failAt(*op); }
+                const auto width = narrow.getType().getIntOrFloatBitWidth();
+                values[op->getResult(0)] = value::primitive(
+                    mlir::IntegerAttr::get(narrow.getType(), bit.getValue().trunc(width)));
+                op = following;
+                continue;
+            }
+            if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(op)) {
+                result = partial_eval::compare(compare.getKind(), get(compare.getLhs()),
+                                               get(compare.getRhs()), context);
+            } else if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op)) {
+                result = partial_eval::binary(binary.getKind(), get(binary.getLhs()),
+                                              get(binary.getRhs()), context);
+            } else if (auto binary = llvm::dyn_cast<ctjs::BinaryStaticOp>(op)) {
+                result = partial_eval::binary(binary.getKind(), get(binary.getLhs()),
+                                              get(binary.getRhs()), context, true);
+            } else if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(op)) {
+                result = partial_eval::unary(unary.getKind(), get(unary.getOperand()), context);
+            } else if (auto truth = llvm::dyn_cast<ctjs::TruthyOp>(op)) {
+                if (auto bit = partial_eval::truthy(get(truth.getValue()))) {
+                    result = value::primitive(
+                        mlir::IntegerAttr::get(mlir::IntegerType::get(context, 1), *bit));
+                }
+            } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+                const auto name = load.getName();
+                if (!iterators &&
+                    (name == "__ctbrowser_for_of_open" || name == "__ctbrowser_iter_close")) {
+                    proof.refuse("class own-key loop requires original Array iterator identities");
+                    return flow::failed;
+                }
+                result = value::reference(name == "Object"                    ? objectToken
+                                          : name == "__ctbrowser_for_of_open" ? openToken
+                                          : name == "__ctbrowser_iter_close"  ? closeToken
+                                                                              : 0);
+            } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op)) {
+                const auto object = get(read.getObject());
+                const auto key = ctjs::constantKey(read.getKey());
+                // Each getter read allocates its own object, as its expansion would.
+                bool getter = false, empty = true;
+                for (auto [site, callee] : proof.getterReads) {
+                    if (site != read) { continue; }
+                    if (proof.throwingGetters.contains(callee)) { return failAt(*op); }
+                    getter = true;
+                    empty &= freshEmptyGetter(callee);
+                }
+                if (llvm::is_contained(proof.constructorReads, read)) {
+                    result = value::reference(constructorToken);
+                } else if (getter && empty) {
+                    fresh.insert(next);
+                    result = value::reference(next++);
+                } else if (getter) {
+                    values[read.getResult()] = value{}; // A proved closed getter: no effect.
+                    op = following;
+                    continue;
+                } else if (is(object, objectToken) && key == "entries") {
+                    result = value::reference(entriesToken);
+                } else if (in(object, arrays) && key == "length") {
+                    result = partial_eval::numeric(context, 0);
+                }
+            } else if (auto call = llvm::dyn_cast<ctjs::CallOp>(op)) {
+                const auto callee = get(call.getCallee());
+                const auto receiver = get(call.getReceiver());
+                llvm::SmallVector<value> arguments;
+                for (mlir::Value argument : call.getArgs()) { arguments.push_back(get(argument)); }
+                if (is(callee, entriesToken) && is(receiver, objectToken) &&
+                    arguments.size() == 1) {
+                    if (!in(arguments.front(), fresh)) {
+                        proof.refuse(freshObject);
+                        return flow::failed;
+                    }
+                    arrays.insert(next);
+                    result = value::reference(next++);
+                } else if (is(callee, openToken) && absent(receiver) && arguments.size() == 1 &&
+                           in(arguments.front(), arrays)) {
+                    result = undefined; // An array iterates by index.
+                } else if (is(callee, closeToken) && absent(receiver) && arguments.size() == 2 &&
+                           absent(arguments.front()) &&
+                           partial_eval::truthy(arguments.back()) == false) {
+                    result = undefined;
+                }
+            } else if (auto iterable = llvm::dyn_cast<ctjs::IterableOp>(op)) {
+                if (in(get(iterable->getOperand(0)), arrays)) {
+                    result = get(iterable->getOperand(0));
+                }
+            }
+            if (result.tag == value::kind::unknown ||
+                (result.tag == value::kind::reference && result.node == 0) ||
+                op->getNumResults() != 1) {
+                return failAt(*op);
+            }
+            values[op->getResult(0)] = result;
+            op = following;
         }
-        if (result.tag == value::kind::unknown ||
-            (result.tag == value::kind::reference && result.node == 0) ||
-            op->getNumResults() != 1) {
-            return fail(*op);
-        }
-        values[op->getResult(0)] = result;
-        op = following;
-    }
-    proof.refuse(closedPath);
+    };
+    if (run(entry) == flow::returned) { return answer; }
+    if (proof.reason.empty()) { proof.refuse(closedPath); }
     return std::nullopt;
 }
 

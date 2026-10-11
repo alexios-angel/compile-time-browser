@@ -74,6 +74,9 @@ enum class carrier {
     nullableNumberString,
     map,
     closure,
+    /// One of a proved set of callables (Analysis lattice `closure_set`), a
+    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    closureSet,
     methodTable,
     objectIdentity,
     objectValue,
@@ -95,6 +98,12 @@ enum class carrier {
     /// A run-once static's constant table, or undefined before it is stored: a
     /// pointer to its namespace-scope struct (Runtime/StaticTable.hpp).
     staticTable,
+    /// The Event a native listener receives (Runtime/Events.hpp).
+    domEvent,
+    /// An ordinary script's element or null (Runtime/Browser.hpp).
+    nullableElement,
+    /// A timer's handle (Runtime/Timers.hpp).
+    timer,
     /// An instance of a class a registry Map owns, or null or undefined:
     /// `std::shared_ptr<C>`, spelled per class (EmitC/Instances.cpp).
     instance
@@ -126,6 +135,9 @@ inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrow
 inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t";
 inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
 inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed_style";
+inline constexpr llvm::StringLiteral kEventType = "ctnative::js_event";
+inline constexpr llvm::StringLiteral kNullableElementType = "std::optional<ctnative::js_element_t>";
+inline constexpr llvm::StringLiteral kTimerType = "ctnative::timer_id";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
@@ -154,6 +166,7 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::nullableNumberString, kNullableNumberStringType, true},
     {carrier::map, ""},
     {carrier::closure, ""},
+    {carrier::closureSet, ""},
     {carrier::methodTable, ""},
     {carrier::objectIdentity, kObjectIdentityType},
     {carrier::objectValue, kObjectValueType},
@@ -168,6 +181,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
     {carrier::staticTable, kStaticTableType},
+    {carrier::domEvent, kEventType},
+    {carrier::nullableElement, kNullableElementType},
+    {carrier::timer, kTimerType},
     {carrier::instance, ""},
 };
 static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::instance) + 1,
@@ -235,6 +251,13 @@ inline bool isIdentityCarrier(mlir::Type type) {
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
+/// The type a closed-shape field holds when its reads and writes join to an
+/// optional String or a union of String with Boolean or Number (and maybe
+/// absence), which a struct member stores as that union carrier; null for any
+/// other field. `accesses` are the field's reads and writes, `typeOf` the
+/// lattice type of a value (ObjectValues/VariantFields.cpp).
+mlir::Type variantFieldType(llvm::ArrayRef<mlir::Operation *> accesses,
+                            llvm::function_ref<mlir::Type(mlir::Value)> typeOf);
 /// A definite Number, Boolean or String lattice type.
 inline bool isPrimitive(mlir::Type type) {
     return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type);

@@ -47,6 +47,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <utility>
@@ -297,11 +298,54 @@ public:
         regexp,
         /// `a.includes(x)` on an array of Strings.
         includes,
+        /// A static method of a built-in namespace object, such as
+        /// `Number.parseInt(s, radix)` (builtinStaticOf).
+        builtinStatic,
         /// A callback method closure lifting specialised
         /// (Inference/ArrayCallbacks.cpp).
         callback
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
+
+    /// One built-in method native code calls as `<callee>(args...)`: a
+    /// static of a namespace object (`Number.parseInt(s)`), or a prototype
+    /// method called through `call` (`String.prototype.toLowerCase.call(s)`),
+    /// whose first argument is the receiver.
+    struct BuiltinStatic {
+        /// What an argument must be for the call to lower.
+        enum class Param {
+            string,
+            number,
+            element,
+            /// What console.log prints (Runtime/Console.hpp): a String, a
+            /// Number, a Boolean, null or undefined, or an optional of them.
+            printable
+        };
+        /// What the call answers.
+        enum class Result {
+            number,
+            string,
+            /// An ordinary script's elements (querySelectorAll's snapshot).
+            elementVector,
+            /// An ordinary script's element or null.
+            nullableElement,
+            undefined
+        };
+        llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
+        llvm::StringLiteral member; ///< `parseInt`, `min`, `toLowerCase`.
+        llvm::StringLiteral callee; ///< `ctnative::Number.parseInt`.
+        std::array<Param, 3> params;
+        unsigned arity;    ///< How many of `params` the method takes.
+        unsigned required; ///< How many of them a call must pass.
+        Result result = Result::number;
+        /// Called as `global.prototype.member.call(receiver, ...)`, with the
+        /// receiver as params[0].
+        bool prototype = false;
+    };
+    /// The row of the built-in statics table (Inference/BuiltinStatics.cpp)
+    /// that `op` calls, or null. The table is the one place built-in statics
+    /// are recognised; a new one is a row there plus its runtime member.
+    static const BuiltinStatic * builtinStaticOf(mlir::Operation * op);
 
     // Array-method callbacks (Inference/ArrayCallbacks.cpp).
     /// Whether `key` names an Array method the runtime calls back from.
@@ -313,17 +357,69 @@ public:
     /// Whether operand `index` of that call only lends an array to it: the
     /// receiver, or a captured value the callback reads.
     static bool arrayCallbackBorrows(mlir::Operation * op, unsigned index);
+    /// Whether `array` is a vector of Numbers the element-vector proof accepts
+    /// and no array literal owns (a map result, or an array a call returns
+    /// or lends): `std::vector<ctnative::js_num>`. Number literals keep the
+    /// dense proof (Shapes.cpp) and its `std::vector<double>`.
+    static bool isNumberElementVector(mlir::Value array);
     /// Whether `value` is a parameter of a specialised callback, which its
     /// call types rather than the entry state.
     static bool isArrayCallbackParameter(mlir::Value value);
 
-    // Listeners handed to the host (Inference/HostCallbacks.cpp).
-    /// Whether `op` is an `addEventListener` call closure lifting specialised
-    /// for its listener.
+    // Callbacks handed to the host (Inference/HostCallbacks.cpp).
+    /// Whether `op` is an `addEventListener` or `setTimeout` call closure
+    /// lifting specialised for its callback.
     static bool isHostCallbackCall(mlir::Operation * op);
-    /// Whether `value` is a parameter of such a listener, which its call
+    /// Whether `op` is a call of the realm's own `setTimeout` or
+    /// `setInterval`.
+    static bool isTimerCall(mlir::Operation * op);
+    /// Whether `op` is `clearTimeout(handle)` or `clearInterval(handle)` of
+    /// the realm's own function.
+    static bool isTimerClear(mlir::Operation * op);
+    /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
+    /// cannot write the globals table, so it leaves the globals typed
+    /// (Inference/HostCallbacks.cpp holds the one list of such uses).
+    static bool isInertWindowLoad(mlir::Operation * load);
+    /// Whether `op` is `new Event(type)` or `new Event(type, init)` of the
+    /// realm's own Event, with `init` an object literal eventInitFields reads.
+    static bool isEventConstruct(mlir::Operation * op);
+    /// The fields of such a construct's init, as (key, value) pairs in the
+    /// literal's order: an object literal used only for `bubbles` and
+    /// `cancelable` definitions and as the init. Empty with no init; nullopt
+    /// when the init is anything else.
+    static std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>>
+    eventInitFields(mlir::Operation * construct);
+    /// Whether `op` is the object literal of an Event construct's init, or one
+    /// of its field definitions.
+    static bool isEventInitPart(mlir::Operation * op);
+    /// Whether `op` is `x.dispatchEvent(e)` with the method read only for the
+    /// call; x is an element and e an Event when their types say so.
+    static bool isDispatchEventCall(mlir::Operation * op);
+    /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
+    /// method read only for the call; x is an Event when its type says so.
+    static bool isEventCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a callback, which its call
     /// types rather than the entry state.
     static bool isHostCallbackParameter(mlir::Value value);
+    /// The key of `el.key(args)` when it is an element method an ordinary
+    /// script calls, with its callee read only for the call
+    /// (Inference/Elements.cpp); empty otherwise.
+    static llvm::StringRef elementCallKey(mlir::Operation * op);
+    /// Whether `key` is previousElementSibling, nextElementSibling or
+    /// parentElement: a read that answers an element or null.
+    static bool isElementLink(llvm::StringRef key);
+    /// For `[].concat(...a)`, the array `a` that the spread loop filled:
+    /// the call makes a copy of it (Inference/Elements.cpp). Null otherwise.
+    static mlir::Value spreadCopySource(mlir::Operation * op);
+    /// Whether `op` is the empty literal of `[].concat(...a)` or its `concat`
+    /// read, which lower to nothing.
+    static bool isSpreadCopyPlumbing(mlir::Operation * op);
+    /// Whether `value`, an element that may be null, is known non-null where
+    /// `user` uses it (Inference/Elements.cpp): `user` sits in the
+    /// then-branch of `if (value)`, or `value` leaves a `for (; i;)` loop on
+    /// an exit that only the loop's truthy arm takes (SelectorEngine's prev
+    /// and next return `[i]` from inside the loop).
+    static bool presentElement(mlir::Value value, mlir::Operation * user);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -489,9 +585,20 @@ private:
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
-    /// The type of a specialised `addEventListener` call (undefined), after
-    /// joining its captured values into the listener's parameters.
+    /// The type of a specialised host-callback call (undefined for
+    /// `addEventListener`, a Number for `setTimeout`), after joining its
+    /// captured values (and a listener's Event) into the callback's
+    /// parameters; and the type of a read or call on such an Event.
     mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of an element member call or read (Inference/Elements.cpp),
+    /// or null.
+    mlir::Type elementMemberType(mlir::Operation * op,
+                                 llvm::ArrayRef<const TypeLattice *> operands);
+    /// `joined`, the element type of the array `members` names, narrowed
+    /// from an element or null to an element when every value stored into
+    /// it is an element or is present where it is stored (presentElement).
+    mlir::Type presentElements(mlir::Operation * op, llvm::ArrayRef<mlir::Value> members,
+                               mlir::Type joined);
     /// The type of a specialised Array-method call, after joining its
     /// receiver's element type, the index and its captured values into the
     /// callback's parameters.

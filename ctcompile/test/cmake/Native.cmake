@@ -31,6 +31,12 @@ ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 # Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-callable)
 
+# ctnative::dictionary, ctnative::Object (CTNative/Runtime/Dictionary.hpp,
+# Object.hpp) and ctnative::callable_identity (Handlers.hpp): an object used as
+# a string-keyed table, and `===` on function values. Header-only; String.hpp
+# needs ctbrowser's headers. Its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-handlers LIBS ctbrowser::ctbrowser)
+
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
 # reaches the interpreter, linked against the engine; it must fail the
@@ -162,6 +168,10 @@ ctcompile_native_fixture(numeric ControlFlow/globals.js)
 ctcompile_native_fixture(functions ControlFlow/functions.js)
 # Object literals with closed shapes, lowered to stack structs.
 ctcompile_native_fixture(structs Objects/struct.js)
+# Object spread of literals whose keys are known, written out key by key.
+ctcompile_native_fixture(spreads Objects/spread.js)
+# Fields holding a String union: String|Boolean and String|undefined.
+ctcompile_native_fixture(variant_fields Objects/variant-fields.js)
 # Object literals returned by value from the function that builds them.
 ctcompile_native_fixture(records Objects/records.js)
 # String.prototype.replace with a RegExp literal and a function.

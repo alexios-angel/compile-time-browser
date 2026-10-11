@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
+#include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 
@@ -119,11 +120,38 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> TypeInference::gr
 }
 
 namespace {
+/// The target of a borrowed callback, or null.
+ctjs::FuncOp borrowedFunction(ctjs::CreateClosureOp made) {
+    const llvm::StringRef name = borrowedTarget(made);
+    if (name.empty()) { return {}; }
+    return mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+        made, mlir::StringAttr::get(made.getContext(), name));
+}
+
+/// The entry-block index of the target parameter that borrowed callback
+/// capture \p use fills, when the target lists it in `ctnative.object_args`.
+/// The callee holds the callback as a ctnative::function_ref, which it can
+/// only call during the call, so the pointer the bound callable copies never
+/// outlives the frame that passed it.
+std::optional<unsigned> borrowedObjectCapture(mlir::OpOperand & use) {
+    auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+    ctjs::FuncOp fn = made ? borrowedFunction(made) : ctjs::FuncOp{};
+    auto listed = fn ? fn->getAttrOfType<mlir::DenseI32ArrayAttr>("ctnative.object_args") : nullptr;
+    const unsigned first = made ? made.getUpvalues().getBeginOperandIndex() : 0;
+    if (!listed || use.getOperandNumber() < first) { return std::nullopt; }
+    const unsigned index = ctjs::implicit_arguments + (use.getOperandNumber() - first);
+    if (!llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(index))) {
+        return std::nullopt;
+    }
+    return index;
+}
+
 /// True when \p use passes the object as a lifted method's `this` or as a listed
 /// object argument. Such a use keeps the shape closed: closure lifting proved
 /// the callee reaches the object only through constant keys, and it marked the
 /// call as well as the callee so this test is one attribute lookup.
 bool passesAReceiver(mlir::OpOperand & use) {
+    if (borrowedObjectCapture(use)) { return true; }
     auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
     if (!call) { return false; }
     if (use.getOperandNumber() == 0 && call->hasAttr("ctnative.receiver")) { return true; }
@@ -216,6 +244,17 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
         if (!isRecordCall(call.getResult())) { return; }
         call.getTarget().walk(
             [&](ctjs::ReturnOp ret) { classes.unionSets(call.getResult(), ret.getValue()); });
+    });
+
+    // A borrowed callback's captures are its target's leading parameters, as
+    // a direct call's operands are, so a listed object capture joins them too.
+    top->walk([&](ctjs::CreateClosureOp made) {
+        for (mlir::OpOperand & capture : made.getUpvaluesMutable()) {
+            if (const std::optional<unsigned> index = borrowedObjectCapture(capture)) {
+                classes.unionSets(capture.get(),
+                                  borrowedFunction(made).getBody().front().getArgument(*index));
+            }
+        }
     });
 
     top->walk([&](ctjs::CallOp call) {
