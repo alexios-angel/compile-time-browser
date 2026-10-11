@@ -1,10 +1,11 @@
 //===- Json.hpp - Native JSON.stringify ------------------------*- C++ -*-===//
 //
 // ctnative::JSON, whose stringify serializes the values native code builds as
-// ctbrowser::json_value trees, and json_record, which builds the tree of an
-// object literal's own properties. Only programs that call it include
-// this header; the quoting is ctbrowser core's, which the VM's JSON.stringify
-// also calls, so the two cannot escape a string differently.
+// ctbrowser::json_value trees and dictionaries (Dictionary.hpp), and
+// json_record, which builds the tree of an object literal's own properties.
+// Only programs that call it include this header; the quoting is ctbrowser
+// core's, which the VM's JSON.stringify also calls, so the two cannot escape
+// a string differently.
 //
 //===----------------------------------------------------------------------===//
 
@@ -19,12 +20,15 @@
 
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
 namespace ctnative {
+
+template <class V> class dictionary;
 
 namespace detail {
 /// SerializeJSONProperty (ECMA-262 25.5.2.2) for one node, with no replacer
@@ -80,6 +84,9 @@ inline ctbrowser::json_value to_json(js_boolean_t value) {
 inline ctbrowser::json_value to_json(const js_string & value) {
     return ctbrowser::json_value{value.value()};
 }
+inline ctbrowser::json_value to_json(const number_string & value) {
+    return std::visit([](const auto & alternative) { return to_json(alternative); }, value);
+}
 
 inline void define_json_properties(ctbrowser::json_value::object &) {}
 template <class Value, class... Rest>
@@ -109,6 +116,20 @@ struct stringify_method {
         std::string out;
         detail::json_write(value, out);
         return js_string{std::move(out)};
+    }
+    /// A dictionary (Dictionary.hpp) serializes its own keys in
+    /// OrdinaryOwnPropertyKeys order, as SerializeJSONObject (25.5.2.5)
+    /// enumerates them.
+    template <class V> js_string operator()(const dictionary<V> & table) const {
+        ctbrowser::json_value::object members;
+        for (const std::size_t at : table.order()) {
+            const auto & [key, value] = table.at(at);
+            members.push_back({key, detail::to_json(value)});
+        }
+        return (*this)(ctbrowser::json_value{std::move(members)});
+    }
+    template <class V> js_string operator()(const std::shared_ptr<dictionary<V>> & table) const {
+        return (*this)(*table);
     }
 };
 

@@ -37,6 +37,12 @@ ctcompile_unit_test(native-callable)
 # needs ctbrowser's headers. Its source is added by Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-handlers LIBS ctbrowser::ctbrowser)
 
+# ctnative::json_record and JSON.stringify of records and dictionaries
+# (Json.hpp), replace with a String replacement (RegExp.hpp) and vec_row
+# (Array.hpp). Header-only; Json.hpp's quoting is ctbrowser core's. Its source
+# is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-json LIBS ctbrowser::ctbrowser)
+
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
 # reaches the interpreter, linked against the engine; it must fail the
