@@ -247,6 +247,14 @@ struct lowering {
     bool replaceMethodTable(mlir::Operation * op);
     void censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted);
     bool replaceEnvironment(mlir::Operation * op);
+    /// Gives a borrowed parameter, and the closure of each callback it holds,
+    /// its ctnative::function_ref; false for any other value.
+    bool retypeBorrowed(mlir::Value v);
+    void censusBorrowedCallbacks(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    /// The function_ref spelling of each borrowed parameter, and of each
+    /// callback such a parameter holds, by the callback's symbol.
+    llvm::DenseMap<mlir::Value, std::string> borrowedSignatures;
+    llvm::StringMap<std::string> borrowedCallbackSignatures;
     static std::string spelled(mlir::Type type);
 
     std::string spelling(const siteShape & site) const;

@@ -26,6 +26,7 @@
 #include "../Analysis/OwnedGlobalRoots.h"
 #include "../Analysis/OwnedMethodTableSlots.h"
 #include "../HostContract/Preparation.h"
+#include "../Reachability/Analysis.h"
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
@@ -214,6 +215,57 @@ std::string prepareDOMMaps(mlir::ModuleOp module, std::optional<HostContract> & 
 
 struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerToEmitCPass> {
     using CTNativeLowerToEmitCBase::CTNativeLowerToEmitCBase;
+
+    /// Erases the refused functions that nothing able to run can create or
+    /// call, once admission has settled and before any function is lowered.
+    /// A module under a host contract keeps every function, as the default
+    /// optimizations do.
+    /// The default pruning before closure lifting keeps every function the
+    /// importer left public, and a closure's target is public until the lift
+    /// makes it private; so a closure made only in a branch precomputation
+    /// removed (a jQuery plugin when the page has no jQuery) leaves a refused
+    /// function behind that no code reaches. This walk starts only from the
+    /// script, the functions the embedder calls by name and what a module
+    /// attribute names (reachability::roots::entries), and it never removes
+    /// an admitted function. Removal is never silent: each function gets a
+    /// row in `ctnative.unreachable_refusals`, which tools/check counts as
+    /// removed, not as native. One walk finds every unreachable function, so
+    /// nothing a removal orphans is left for a second round.
+    void removeUnreachableRefusals(llvm::SmallVectorImpl<ctjs::FuncOp> & functions,
+                                   bool underHostContract) {
+        mlir::ModuleOp module = getOperation();
+        module->removeAttr("ctnative.unreachable_refusals");
+        module->removeAttr("ctnative.unreachable_reason");
+        if (underHostContract || !optimize || !pruneUnreachable) { return; }
+        const auto proof =
+            reachability::analyze(module, reachabilityMaxSteps, reachability::roots::entries);
+        mlir::Builder at(&getContext());
+        if (!proof.reason.empty()) {
+            module->setAttr("ctnative.unreachable_reason", at.getStringAttr(proof.reason));
+            return;
+        }
+        llvm::SmallVector<mlir::Attribute> rows;
+        for (ctjs::FuncOp fn : proof.dead) {
+            const auto refusal = fn->getAttrOfType<mlir::StringAttr>("ctnative.not_native");
+            if (!refusal) { continue; }
+            rows.push_back(at.getDictionaryAttr(
+                {at.getNamedAttr("function", at.getStringAttr(fn.getSymName())),
+                 at.getNamedAttr("reason",
+                                 at.getStringAttr(llvm::Twine("removed: unreachable (no function "
+                                                              "that can run creates or calls it; "
+                                                              "it was refused: ") +
+                                                  refusal.getValue() + ")"))}));
+            llvm::erase(functions, fn);
+            fn.erase();
+        }
+        if (!rows.empty()) {
+            module->setAttr("ctnative.unreachable_refusals", at.getArrayAttr(rows));
+        }
+        if (optimizationReport) {
+            module.emitRemark() << "reachability: " << rows.size()
+                                << " refused function(s) removed as unreachable after admission";
+        }
+    }
 
     void runOnOperation() override {
         mlir::ModuleOp module = getOperation();
@@ -655,6 +707,13 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     // A retained closure is an edge too: create_closure names its
                     // target even when the enclosing function never invokes it.
                     fn.getBody().walk([&](ctjs::CreateClosureOp made) {
+                        // A borrowed callback names its callback the same way.
+                        if (const auto target = borrowedTarget(made); !target.empty()) {
+                            edge(symbols.lookup(target),
+                                 "binds `" + target + "`, which is not native",
+                                 "bound by `" + fn.getSymName() + "`, which is not native");
+                            return;
+                        }
                         if (environmentTarget(made).empty()) { return; }
                         edge(symbols.lookup(environmentTarget(made)),
                              "retains `" + environmentTarget(made) + "`, which is not native",
@@ -820,6 +879,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
 
+        removeUnreachableRefusals(functions, hostContract.has_value());
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         if (!accepted.empty()) { lower.declareGlobals(); }
         lower.finish();

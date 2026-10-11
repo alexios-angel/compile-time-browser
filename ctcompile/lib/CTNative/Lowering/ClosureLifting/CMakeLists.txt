@@ -5,6 +5,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Classes.cpp
   ClassStatics.cpp
   Bindings.cpp
+  BorrowedCallbacks.cpp
   Captures.cpp
   Methods.cpp
   Diagnostics.cpp

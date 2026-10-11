@@ -6,7 +6,7 @@ it or the reason it was refused; the list of refusal reasons is the to-do list
 for widening the backend. Output is a table and, with --json, a JSON file.
 
 It runs the native pipeline (importer, closed world, closure lift, lowering)
-and sorts every function of the program into exactly one of four buckets:
+and sorts every function of the program into exactly one of five buckets:
 
   claimed   an `emitc.func`: proved, lowered, no interpreter and no collector
   refused   a `ctjs.func` still carrying `ctnative.not_native = "<reason>"`
@@ -15,13 +15,17 @@ and sorts every function of the program into exactly one of four buckets:
   pruned    an imported private function removed as provably unreachable by
             the default optimizations; counted in the denominator, never as
             claimed
+  removed   a refused function the lowering removed after admission because
+            nothing that can run creates or calls it (a row in
+            `ctnative.unreachable_refusals`); counted in the denominator,
+            never as claimed
 
 --no-default-optimizations measures admission without those optimizations
 (no precomputation, no reachability pruning).
 
 The skipped bucket matters most: a percentage over claimed + refused alone
 would flatter the compiler by exactly the functions it never looked at, which
-are the ones with the constructs it handles worst. The denominator is all four.
+are the ones with the constructs it handles worst. The denominator is all five.
 
 The buckets cannot see a collapse of the closed world: if global resolution
 stops working, functions that take parameters become unreachable, but those
@@ -49,7 +53,8 @@ Five invariants are asserted, numbered as in the code below:
      pass whose `report` option somebody deleted.
   4. the remark and the IR agree about the rewrite. A pass that counts a
      ctjs.call_direct it did not emit makes both floors below it worthless.
-  5. every imported function is accounted for as native, refused or pruned.
+  5. every imported function is accounted for as native, refused, pruned or
+     removed.
      Removing unreachable functions must not inflate the native percentage by
      silently shrinking the source denominator.
 
@@ -131,6 +136,15 @@ _LIFT_REPORT = re.compile(r"ctnative: lifted \d+ closure\(s\).*?rewrote (\d+) ca
 # `ctnative.reachability_summary = {removed = N : i64, ...}`: how many imported
 # functions the default reachability pruning removed.
 _REACHABILITY = re.compile(r"ctnative\.reachability_summary = \{removed = (\d+) : i64,")
+# `ctnative.reachability_pruned = ["f$1", ...]`: the names of those functions.
+_PRUNED_NAMES = re.compile(r"ctnative\.reachability_pruned = \[([^\]]*)\]")
+_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
+# `ctnative.unreachable_refusals = [{function = "f$3", reason = "removed:
+# unreachable (...)"}]`: the refused functions the lowering removed after
+# admission, one row each.
+_UNREACHABLE = re.compile(
+    r'\{function = "((?:[^"\\]|\\.)*)", reason = "(removed: unreachable (?:[^"\\]|\\.)*)"'
+)
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
 # the per-name verdict the pass writes on the module. Grouping the reasons
 # shows why globals failed to resolve, the same way `ctnative.not_native`
@@ -241,6 +255,10 @@ def run(argv: argparse.Namespace) -> dict:
     if argv.mutate_drop_one_reason:
         module = re.sub(r', ctnative\.not_native = "(?:[^"\\]|\\.)*"', "", module, count=1)
     claimed = len(_EMITC_FUNC.findall(module))
+    pruned_names = _PRUNED_NAMES.search(module)
+    pruned_names = _STRING.findall(pruned_names.group(1)) if pruned_names else []
+    removed_rows = _UNREACHABLE.findall(module)
+    removed = len(removed_rows)
     left = len(_CTJS_FUNC.findall(module))
     reasons = [m.group(1) for m in _REFUSAL.finditer(module)]
     skipped = [
@@ -255,11 +273,13 @@ def run(argv: argparse.Namespace) -> dict:
             f"{len(reasons)} carry `ctnative.not_native`; {left - len(reasons)} were "
             "dropped silently, which part 24 SS2 forbids"
         )
-    # Invariant 5: every imported function is claimed, refused or pruned.
-    if imported != claimed + left + pruned:
+    # Invariant 5: every imported function is claimed, refused, pruned or
+    # removed.
+    if imported != claimed + left + pruned + removed:
         sys.exit(
             f"native-claims ({argv.name}): source function conservation failed: "
-            f"{imported} imported, {claimed} claimed + {left} refused + {pruned} pruned"
+            f"{imported} imported, {claimed} claimed + {left} refused + {pruned} pruned + "
+            f"{removed} removed"
         )
     total = imported + len(skipped)
     # Invariant 2: the run is not vacuous.
@@ -289,11 +309,14 @@ def run(argv: argparse.Namespace) -> dict:
         "refused": left,
         "skipped": len(skipped),
         "pruned": pruned,
+        "removed": removed,
+        "pruned_names": pruned_names,
+        "removed_rows": [list(row) for row in removed_rows],
         "optimization_defaults": not argv.no_default_optimizations,
         "claimed_percent": round(100.0 * claimed / total, 2),
         "refusals": by_reason.most_common(),
         "skips": by_skip.most_common(),
-        # The closed world, which the four buckets above cannot see.
+        # The closed world, which the five buckets above cannot see.
         "globals": globals_total,
         "globals_resolved": globals_resolved,
         "call_direct": globals_rewritten,
@@ -308,7 +331,8 @@ def report(result: dict, top: int) -> None:
     print(
         f"native claims ({result['name']}): {result['claimed']} of {result['total']} "
         f"functions claimed ({result['claimed_percent']}%), {result['refused']} refused "
-        f"with a reason, {result['skipped']} never imported, {result['pruned']} pruned"
+        f"with a reason, {result['skipped']} never imported, {result['pruned']} pruned, "
+        f"{result['removed']} removed as unreachable after admission"
     )
     print(f"    optimization defaults: {'on' if result['optimization_defaults'] else 'off'}")
     print(
