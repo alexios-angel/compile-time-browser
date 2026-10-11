@@ -395,7 +395,16 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
     // Rewrite: name the variable, give each reader a reference cell, and
     // remove the slots, deepest closure first (see bindLocalFunctions for why
     // the order matters to removeCaptureSlots).
+    // Names given by an earlier call (run() makes one for data and one for
+    // functions) are taken too: static cells are attributes, not symbols, so
+    // the symbol table lookup below cannot see them, and two bindings sharing
+    // a name would be one variable to every later rule.
     llvm::StringSet<> taken;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (auto name = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+            taken.insert(name.getValue());
+        }
+    });
     const auto valueType = ctjs::ValueType::get(context);
     llvm::MapVector<mlir::Operation *, slotRemoval> removals;
     for (plan & p : plans) {
