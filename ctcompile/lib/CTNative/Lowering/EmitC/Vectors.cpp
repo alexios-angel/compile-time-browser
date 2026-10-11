@@ -515,8 +515,23 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         const auto [kinds, callee] = kind.split(' ');
         llvm::SmallVector<mlir::Value, 2> operands;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
-            operands.push_back(
-                kinds[index] == 'n' ? lower.convertScalar(b, where, argument, numeric) : argument);
+            mlir::Value operand =
+                kinds[index] == 'n' ? lower.convertScalar(b, where, argument, numeric) : argument;
+            if (kinds[index] == 'e' && opaqueSpelling(operand.getType()) == kNullableElementType) {
+                operand = callValue(b, where, ec::OpaqueType::get(context, kPageElementType),
+                                    "ctnative::present_element", operand);
+            }
+            operands.push_back(operand);
+        }
+        // A returned array (querySelectorAll's snapshot) lands in a local
+        // that owns it, as split's pieces do.
+        if (auto owner = llvm::dyn_cast<ec::LValueType>(o->getResult(0).getType())) {
+            mlir::Value local =
+                ec::VariableOp::create(b, where, owner, ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(b, where, local,
+                                 callValue(b, where, owner.getValueType(), callee, operands));
+            swap(local);
+            return true;
         }
         swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;

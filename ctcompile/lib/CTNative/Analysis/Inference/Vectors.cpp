@@ -158,6 +158,16 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                    read && ctjs::constantKey(read.getKey()) == "children") {
             collection = true;
             owners.push_back(definition);
+        } else if (vectorCallOf(definition) == VectorCall::builtinStatic) {
+            // querySelectorAll's snapshot (Inference/Elements.cpp): a NodeList,
+            // which has no push, join or sort.
+            collection = true;
+            owners.push_back(definition);
+        } else if (llvm::isa<ctjs::IterableOp>(definition)) {
+            add(definition->getOperand(0));
+        } else if (spreadCopySource(definition)) {
+            // `[].concat(...a)`: a new array (Inference/Elements.cpp).
+            owners.push_back(definition);
         } else if (const VectorCall made = vectorCallOf(definition);
                    made == VectorCall::split || made == VectorCall::splitSpace ||
                    (made == VectorCall::callback && arrayCallbackMakesArray(definition))) {
@@ -203,6 +213,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                 add(selected.getResult(use.getOperandNumber()));
                 continue;
             }
+            // The spread loop's iterator over the array, and the copy
+            // `[].concat(...a)` makes of it (Inference/Elements.cpp).
+            if (llvm::isa<ctjs::IterableOp>(user)) {
+                add(user->getResult(0));
+                continue;
+            }
+            if (spreadCopySource(user) == member) { continue; }
             if (llvm::isa<ctjs::AppendOp>(user)) {
                 // Operand 1 is the element: an array appended into another
                 // array has escaped into it.

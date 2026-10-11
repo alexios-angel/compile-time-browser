@@ -1,12 +1,16 @@
 // The element calls of Bootstrap's SelectorEngine (bootstrap.bundle.js's `R`)
 // and Manipulator (`H`) in an ordinary script, in a table of the same shape
-// held by a function that runs once: the element-sibling and parent links,
-// matches, closest, querySelector, and getAttribute, setAttribute and
-// removeAttribute.
+// held by a function that runs once: SelectorEngine's find and findOne
+// (Element.prototype.querySelectorAll and querySelector through `call`, the
+// document element as the default root, and the `[].concat(...nodes)` copy),
+// the element-sibling and parent links, matches, closest, querySelector, and
+// getAttribute, setAttribute and removeAttribute.
 // selectors.test runs selectors_report() on the interpreter and natively over
 // selectors.html and compares the answers.
 var selectorsAnswer = (function () {
     const R = {
+        find: (t, e = document.documentElement) => [].concat(...Element.prototype.querySelectorAll.call(e, t)),
+        findOne: (t, e = document.documentElement) => Element.prototype.querySelector.call(e, t),
         count(t, e) {
             let n = 0;
             let i = t.nextElementSibling;
@@ -21,6 +25,14 @@ var selectorsAnswer = (function () {
             return i ? i.id + ':' + i.matches(e) : 'none';
         }
     };
+
+    function ids(elements) {
+        let out = '';
+        for (let k = 0; k < elements.length; k++) {
+            out += elements[k].id + ',';
+        }
+        return out;
+    }
 
     function run() {
         const root = document.documentElement;
@@ -37,6 +49,9 @@ var selectorsAnswer = (function () {
             out += '/' + kid.getAttribute('data-bs-seen') + ';';
         }
         const top = root.parentElement;
+        const found = R.findOne('#list');
+        out += '|' + (found ? ids(R.find('.item', found)) : 'none') + '|' + ids(R.find('.item')) + '|' +
+            (R.findOne('#missing') ? 'found' : 'none') + '|';
         const list = root.querySelector('#list');
         const inside = list ? list.closest('body') : null;
         return out + (top ? 'parent' : 'no parent') + '|' + (list ? list.id : 'none') + '|' +

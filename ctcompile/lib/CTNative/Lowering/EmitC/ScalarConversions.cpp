@@ -221,7 +221,11 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                              const OwnedGlobalRoots * roots) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
-        if (!isPrimitiveCarrier(c) && !isObjectCarrier(c)) { return {}; }
+        // An element or null converts at a call edge like a scalar: an
+        // omitted argument is the empty optional.
+        if (!isPrimitiveCarrier(c) && !isObjectCarrier(c) && c != carrier::nullableElement) {
+            return {};
+        }
         needsObjectValue |= c == carrier::objectValue;
         return carrierType(context, c);
     };

@@ -40,6 +40,25 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
      1,
      Result::string,
      true},
+    // Element.prototype.querySelectorAll (DOM 4.2.6) and querySelector:
+    // Bootstrap's SelectorEngine calls them through the prototype on its root
+    // element, which may be the document element read as a default.
+    {"Element",
+     "querySelectorAll",
+     "ctnative::Element.prototype.querySelectorAll.call",
+     {Param::element, Param::string},
+     2,
+     2,
+     Result::elementVector,
+     true},
+    {"Element",
+     "querySelector",
+     "ctnative::Element.prototype.querySelector.call",
+     {Param::element, Param::string},
+     2,
+     2,
+     Result::nullableElement,
+     true},
 };
 
 /// Whether --ctjs-resolve-globals found that this program never binds

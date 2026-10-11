@@ -22,6 +22,16 @@ std::optional<std::string> elementAction(lowering & lower, mlir::Operation * o) 
         const carrier c = carrierOf(lower.typeOf(v));
         return c == carrier::domElement || c == carrier::nullableElement;
     };
+    if (carrierOf(lower.typeOf(o->getNumResults() == 1 ? o->getResult(0) : mlir::Value{})) ==
+        carrier::domElementVector) {
+        if (llvm::isa<ctjs::IterableOp>(o)) { return std::string{"element_iterable"}; }
+        if (TypeInference::spreadCopySource(o)) { return std::string{"element_copy"}; }
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(o);
+        compare && (carrierOf(lower.typeOf(compare.getLhs())) == carrier::nullableElement ||
+                    carrierOf(lower.typeOf(compare.getRhs())) == carrier::nullableElement)) {
+        return std::string{"element_absent"};
+    }
     // The names are recorded now: by replacement time the keys are emitc
     // constants.
     if (const llvm::StringRef key = TypeInference::elementCallKey(o);
@@ -49,6 +59,40 @@ bool replaceElement(mlir::Operation * o, llvm::StringRef kind) {
                          "ctnative::present_element", v);
     };
     const auto nullable = carrierType(context, carrier::nullableElement);
+    if (kind == "element_iterable") {
+        // Iterating an array of elements reads the array itself.
+        o->getResult(0).replaceAllUsesWith(o->getOperand(0));
+        lowering::eraseIfUnused(o);
+        return true;
+    }
+    if (kind == "element_copy") {
+        // `[].concat(...a)`: a new array holding a's elements, owned here.
+        auto spread = llvm::cast<ctjs::CallSpreadOp>(o);
+        const mlir::Type type = o->getResult(0).getType();
+        mlir::Value local =
+            ec::VariableOp::create(b, where, type, ec::OpaqueAttr::get(context, ""));
+        mlir::Value source = lowering::cellPlace(b, where, spread.getArgs());
+        if (auto lvalue = llvm::dyn_cast<ec::LValueType>(source.getType())) {
+            source = ec::LoadOp::create(b, where, lvalue.getValueType(), source);
+        }
+        ec::AssignOp::create(b, where, local, source);
+        o->getResult(0).replaceAllUsesWith(local);
+        lowering::eraseIfUnused(o);
+        return true;
+    }
+    if (kind == "element_absent") {
+        // `x === undefined` or `x == null` (admission proved which): the
+        // optional is empty.
+        auto compare = llvm::cast<ctjs::CompareOp>(o);
+        const mlir::Value tested =
+            opaqueSpelling(compare.getLhs().getType()) == kNullableElementType ? compare.getLhs()
+                                                                               : compare.getRhs();
+        const auto i1 = b.getI1Type();
+        mlir::Value present = ec::CastOp::create(b, where, i1, tested);
+        o->getResult(0).replaceAllUsesWith(ec::LogicalNotOp::create(b, where, i1, present));
+        lowering::eraseIfUnused(o);
+        return true;
+    }
     if (llvm::StringRef key = kind; key.consume_front("element_call:")) {
         auto call = llvm::cast<ctjs::CallOp>(o);
         const mlir::Value self = receiver(call.getReceiver());

@@ -11,13 +11,94 @@
 
 #include "Admission.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+
 namespace ctcompile::ctnative::lowering_detail {
+
+namespace {
+
+/// Whether `value` is known non-null at `user`: `user` sits in the
+/// then-branch of `if (value)`.
+bool testedPresent(mlir::Value value, mlir::Operation * user) {
+    for (mlir::Operation * at = user; at && at->getParentOp(); at = at->getParentOp()) {
+        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at->getParentOp());
+        if (!branch || at->getParentRegion() != &branch.getThenRegion()) { continue; }
+        auto test = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        if (test && test.getValue() == value) { return true; }
+    }
+    return false;
+}
+
+/// Why `x === undefined` cannot be told apart from `x === null` for
+/// `value`, an element or null, or empty when it can. The carrier holds null
+/// and undefined as one empty optional, so the test is exact only for a
+/// parameter whose every caller passes a proved element, one it has just
+/// tested, or nothing (the resolver pads a missing argument with
+/// undefined): SelectorEngine's
+/// `e = document.documentElement` default.
+std::string whyUndefinedIsAmbiguous(admission & self, mlir::Value value) {
+    auto parameter = llvm::dyn_cast<mlir::BlockArgument>(value);
+    auto function = parameter ? llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp())
+                              : ctjs::FuncOp{};
+    if (!function || !parameter.getOwner()->isEntryBlock() ||
+        parameter.getArgNumber() < ctjs::implicit_arguments) {
+        return "it is not a parameter";
+    }
+    auto module = function->getParentOfType<mlir::ModuleOp>();
+    const auto uses = mlir::SymbolTable::getSymbolUses(function, module);
+    if (!uses || uses->empty()) { return "its function has no direct caller"; }
+    for (const mlir::SymbolTable::SymbolUse & use : *uses) {
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+        if (!call) { return "its function is named by something other than a direct call"; }
+        const mlir::Value passed = call.getArgOperands()[parameter.getArgNumber()];
+        if (ctjs::isUndefinedConstant(passed) ||
+            carrierOf(self.typeOf(passed)) == carrier::domElement || testedPresent(passed, call)) {
+            continue;
+        }
+        return "a caller passes " + printed(self.typeOf(passed)) +
+               ", which may be null, and null and undefined are one empty optional";
+    }
+    return {};
+}
+
+} // namespace
 
 std::optional<bool> elementOperation(admission & self, mlir::Operation * o) {
     const auto element = [&](mlir::Value v) {
         const carrier c = carrierOf(self.typeOf(v));
         return c == carrier::domElement || c == carrier::nullableElement;
     };
+    // The spread loop's iterator and `[].concat(...a)`'s copy, over an array
+    // of elements the element-vector proof accepts.
+    if (llvm::isa<ctjs::IterableOp>(o) || TypeInference::spreadCopySource(o)) {
+        const mlir::Value array = o->getResult(0);
+        if (carrierOf(self.typeOf(array)) != carrier::domElementVector) { return std::nullopt; }
+        return isElementArray(array, self.typeOf(array), self.pageViews()) ||
+               self.refuse("a spread of an array of elements that is not an element vector");
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(o)) {
+        const bool strict = compare.getKind() == ctjs::CompareKind::StrictEq;
+        if (!strict && compare.getKind() != ctjs::CompareKind::Eq) { return std::nullopt; }
+        mlir::Value tested = compare.getLhs(), other = compare.getRhs();
+        if (carrierOf(self.typeOf(tested)) != carrier::nullableElement) {
+            std::swap(tested, other);
+        }
+        if (carrierOf(self.typeOf(tested)) != carrier::nullableElement) { return std::nullopt; }
+        // `x == null` and `x == undefined` ask the same question; `x ===
+        // undefined` holds only where no null can reach x.
+        const bool absent = ctjs::isUndefinedConstant(other) ||
+                            (!strict && ctjs::constantAttr<ctjs::NullAttr>(other));
+        if (!absent) {
+            return self.refuse("an element or null compared with " + printed(self.typeOf(other)) +
+                               " - only its absence is tested");
+        }
+        if (strict) {
+            if (const std::string why = whyUndefinedIsAmbiguous(self, tested); !why.empty()) {
+                return self.refuse("`=== undefined` on an element or null: " + why);
+            }
+        }
+        return true;
+    }
     const auto string = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::string; };
     if (const llvm::StringRef key = TypeInference::elementCallKey(o); !key.empty()) {
         auto call = llvm::cast<ctjs::CallOp>(o);

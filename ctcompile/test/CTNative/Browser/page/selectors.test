@@ -7,7 +7,7 @@
 # RUN: FileCheck %s --input-file %t.native
 # RUN: FileCheck %s --check-prefix=SPELLING --input-file %{obj}/selectors.generated.cpp
 # RUN: %nm -C %{obj}/ctcompile-test-selectors-native | not grep -E "ctbrowser::script::"
-# CHECK: {{^}}1none|top/h/null/yesnull/null;0h:true|top/b/null/yesnull/null;no parent|list|b|none{{$}}
+# CHECK: {{^}}1none|top/h/null/yesnull/null;0h:true|top/b/null/yesnull/null;|a,c,d,|a,c,d,tail,|none|no parent|list|b|none{{$}}
 # An element or null is the runtime's optional view, and a member of one goes
 # through present_element.
 # SPELLING: std::optional<ctnative::js_element_t>

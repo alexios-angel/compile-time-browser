@@ -49,6 +49,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             return TypeInference::isTupleLiteral(value) &&
                    carrierOf(self.typeOf(value)) == carrier::tuple;
         }
+        // An element into an array of elements (`[i]`, the spread loop).
+        if (vector && llvm::isa<DOMElementType>(vector.getElementType())) {
+            return carrierOf(self.typeOf(value)) == carrier::domElement;
+        }
         return isString(value);
     };
     if (isVectorCallPlumbing(o)) { return true; }
@@ -179,7 +183,11 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             const carrier wanted = kind == Param::string   ? carrier::string
                                    : kind == Param::number ? carrier::number
                                                            : carrier::domElement;
-            if (carrierOf(self.typeOf(argument)) != wanted) {
+            // An element that may be null is passed through present_element,
+            // which throws the VM's TypeError for null as the call would.
+            const bool nullable = kind == Param::element &&
+                                  carrierOf(self.typeOf(argument)) == carrier::nullableElement;
+            if (carrierOf(self.typeOf(argument)) != wanted && !nullable) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
                                    (kind == Param::string   ? "a String"

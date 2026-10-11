@@ -260,6 +260,7 @@ bool isPageMethodRead(mlir::Operation * o) {
 
 bool isVectorCallPlumbing(mlir::Operation * o) {
     using VectorCall = TypeInference::VectorCall;
+    if (TypeInference::isSpreadCopyPlumbing(o)) { return true; }
     const auto onlyUse = [](mlir::Value value) -> mlir::OpOperand * {
         return value.hasOneUse() ? &*value.getUses().begin() : nullptr;
     };

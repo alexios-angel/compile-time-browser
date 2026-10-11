@@ -508,7 +508,13 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                 return {};
             }
         }
-        return row.result == BuiltinStatic::Result::string ? stringType(c) : doubleType(c);
+        switch (row.result) {
+        case BuiltinStatic::Result::string: return stringType(c);
+        case BuiltinStatic::Result::elementVector: return VecType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::number: return doubleType(c);
+        }
+        return {};
     }
     case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
     case VectorCall::callback: return arrayCallbackType(op, operands, pending);
