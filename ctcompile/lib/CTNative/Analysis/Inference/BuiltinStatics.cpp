@@ -2,8 +2,8 @@
 //
 // The table of the realm's built-ins native code calls through the runtime's
 // built-in objects: statics of namespace objects (`Number.parseInt`,
-// `Math.min`, `JSON.stringify`), globals called themselves (`Number(s)`) and
-// prototype methods called through `call`
+// `Number.parseFloat`, `Math.min`, `JSON.stringify`), globals called
+// themselves (`Number(s)`) and prototype methods called through `call`
 // (`String.prototype.toLowerCase.call(s)`), and the recognition of a call of
 // one. Each lowers to its runtime spelling, `ctnative::Number.parseInt(s, r)`.
 //
@@ -30,6 +30,8 @@ using Result = TypeInference::BuiltinStatic::Result;
 constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     // Number.parseInt (ECMA-262 21.1.2.13); a missing radix is 0.
     {"Number", "parseInt", "ctnative::Number.parseInt", {Param::string, Param::number}, 2, 1},
+    // Number.parseFloat (21.1.2.12) of a String.
+    {"Number", "parseFloat", "ctnative::Number.parseFloat", {Param::string}, 1, 1},
     // Math.min (21.3.2.25) of exactly two Numbers.
     {"Math", "min", "ctnative::Math.min", {Param::number, Param::number}, 2, 2},
     // console.log (WHATWG Console 1.1.6) of up to three printable values,

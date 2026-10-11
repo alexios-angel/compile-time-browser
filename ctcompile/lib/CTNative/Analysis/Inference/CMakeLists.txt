@@ -6,6 +6,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Elements.cpp
   Initialization.cpp
   JsonRecords.cpp
+  Refinements.cpp
   Exceptions.cpp
   Instances.cpp
   Records.cpp

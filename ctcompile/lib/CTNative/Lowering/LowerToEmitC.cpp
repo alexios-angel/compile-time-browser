@@ -32,6 +32,8 @@
 #include "EmitC/Emitter.h"
 #include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
+#include "ForOf.h"
+#include "Refinements.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -460,6 +462,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             guards.addPass(createCTNativePrecompute(
                 {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
+        }
+        // Values a branch tested get a narrowed name in that branch, after the
+        // lift has unboxed the cells it could; a fresh census answers which of
+        // the remaining cells hold one value (Refinements.cpp).
+        // A for-of over an array keeps only its index loop (ForOf.cpp); a
+        // refused function gets its body back below.
+        ForOfOriginals forOfOriginals;
+        if (!hostContract) { forOfOriginals = foldArrayForOf(module); }
+        if (!hostContract) {
+            closureLifter cells{module};
+            cells.census();
+            insertRefinements(module,
+                              [&](ctjs::CreateCellOp cell) { return cells.isConstantCell(cell); });
         }
         // Exception recovery and structured-exit normalization are
         // speculative. They stay only if the function and its whole closed
@@ -915,6 +930,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             fn.getBody().takeBody(original->getBody());
             setOrRemoveAttr(fn, "ctjs.not_structured", (*original)->getAttr("ctjs.not_structured"));
         }
+        // After recovery's, which may hold the folded body.
+        for (auto & [fn, original] : forOfOriginals) {
+            if (!llvm::is_contained(accepted, fn)) { fn.getBody().takeBody(original->getBody()); }
+        }
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
             lower.censusDOM(*admittedDOM,
                             hostContract->provider == HostContract::Provider::ctbrowserDOMSession);
@@ -938,6 +957,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // function is still ctjs.
         markWrittenArrays(accepted);
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
+        dropRefinements(module);
         if (!accepted.empty()) { lower.declareGlobals(); }
         lower.finish();
     }

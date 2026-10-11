@@ -1486,3 +1486,6 @@ template <> struct map_key_less<ctbrowser::element_ref> {
 
 // The console object, whose members need the carriers above.
 #include "ctcompile/CTNative/Runtime/Console.hpp"
+
+// Needs the carriers above, so it comes last.
+#include "ctcompile/CTNative/Runtime/Narrowing.hpp"

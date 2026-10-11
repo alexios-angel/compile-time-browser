@@ -444,11 +444,75 @@ bool TypeInference::isTupleLiteral(mlir::Value array) {
     });
 }
 
+namespace {
+
+/// Whether every value `counter`, a before-region argument of an scf.while,
+/// can hold is an integer at least 0: following the loop's back edge and the
+/// structured results it passes through, each value that reaches it is a
+/// constant index at least 0, `counter + 1`, or `ub.poison`, which the
+/// structuring pass yields only on the path that leaves the loop.
+bool nonNegativeCounter(mlir::BlockArgument counter, mlir::scf::WhileOp loop) {
+    llvm::SmallVector<mlir::Value> work{loop.getInits()[counter.getArgNumber()],
+                                        loop.getYieldOp().getOperand(counter.getArgNumber())};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+        const mlir::Value value = work.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+            // The after-region receives what the condition forwards.
+            if (argument.getOwner()->getParent() != &loop.getAfter()) { return false; }
+            work.push_back(loop.getConditionOp().getArgs()[argument.getArgNumber()]);
+            continue;
+        }
+        mlir::Operation * producer = value.getDefiningOp();
+        const unsigned index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+        if (llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(producer)) {
+            for (mlir::Region & region : producer->getRegions()) {
+                if (region.empty()) { return false; }
+                work.push_back(region.front().getTerminator()->getOperand(index));
+            }
+            continue;
+        }
+        if (producer->getName().getStringRef() == "ub.poison" ||
+            TypeInference::constantIndex(value) >= 0) {
+            continue;
+        }
+        auto add = llvm::dyn_cast<ctjs::BinaryStaticOp>(producer);
+        if (!add || add.getKind() != ctjs::BinaryKind::Add || add.getLhs() != counter ||
+            TypeInference::constantIndex(add.getRhs()) != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
     auto counter = read ? llvm::dyn_cast<mlir::BlockArgument>(read.getKey()) : nullptr;
     if (!counter) { return false; }
     auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(counter.getOwner()->getParentOp());
+    // A folded for-of (Lowering/ForOf.cpp) reads in the before-region, under
+    // `counter < array.length`, with the counter stepped through the
+    // structured exits of its body.
+    if (loop && counter.getOwner()->getParent() == &loop.getBefore()) {
+        for (mlir::Operation * at = read->getParentOp(); at != loop; at = at->getParentOp()) {
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at);
+            if (!branch || !branch.getThenRegion().isAncestor(read->getParentRegion())) {
+                continue;
+            }
+            auto truthy = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            auto compare = truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : nullptr;
+            auto length = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : nullptr;
+            if (compare && compare.getKind() == ctjs::CompareKind::Lt &&
+                compare.getLhs() == counter && length && length.getObject() == read.getObject() &&
+                ctjs::constantKey(length.getKey()) == "length") {
+                return nonNegativeCounter(counter, loop);
+            }
+        }
+        return false;
+    }
     if (!loop || counter.getOwner()->getParent() != &loop.getAfter()) { return false; }
     const unsigned index = counter.getArgNumber();
     // The condition forwards the before-region counter unchanged ...

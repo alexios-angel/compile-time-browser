@@ -10,6 +10,7 @@
 #include "Dictionaries.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -166,6 +167,19 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (replaceStringCallback(o)) { return; }
     if (replaceStringValue(o)) { return; }
     if (replaceStringArray(*this, o)) { return; }
+    if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
+        // Admission allowed only the operand's own carrier or its String or
+        // Number alternative.
+        const mlir::Value value = refined.getValue();
+        const mlir::Type result = o->getResult(0).getType();
+        swap(value.getType() == result
+                 ? value
+                 : callValue(b, where, result,
+                             refined.getKind() == "number" ? "ctnative::as_number"
+                                                           : "ctnative::as_string",
+                             value));
+        return;
+    }
 
     // Frame bookkeeping lowers to nothing. frame_enter's result is used by
     // every frame_exit and root after it, and walk order visits it first, so
@@ -194,6 +208,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // inert value per destination instead of giving every use NaN.
         mlir::Value emptyString, emptyNullableString, emptyNullable, emptyBoolean, emptyObjectValue,
             emptyIdentity;
+        llvm::DenseMap<mlir::Type, mlir::Value> emptyPairs;
         // Each inert value is built once, at its first use.
         const auto once = [](mlir::Value & slot, auto make) {
             if (!slot) { slot = make(); }
@@ -257,6 +272,15 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 use.set(convertScalar(
                     b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),
                     expected));
+            } else if (auto pair = llvm::dyn_cast_or_null<ec::OpaqueType>(expected);
+                       pair && pair.getValue().starts_with("std::pair<")) {
+                // A row of a pair vector, such as a folded for-of's element.
+                use.set(once(emptyPairs[expected], [&] {
+                    return ec::ConstantOp::create(
+                               b, where, expected,
+                               ec::OpaqueAttr::get(context, (pair.getValue() + "{}").str()))
+                        .getResult();
+                }));
             }
         }
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));

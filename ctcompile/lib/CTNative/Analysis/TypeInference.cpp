@@ -43,6 +43,7 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -699,6 +700,12 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
         return mlir::success();
     };
+
+    if (auto refine = llvm::dyn_cast<RefineOp>(op)) {
+        const TypeValue & from = operands[0]->getValue();
+        if (from.isUninitialized() && refine.getKind() == "truthy") { return mlir::success(); }
+        return answer(refinedType(c, refine.getKind(), from.getType()));
+    }
 
     if (auto visited = visitBorrowedCallback(op, operands, results)) { return *visited; }
     // A run-once static's constant table (Inference/StaticTables.cpp): the

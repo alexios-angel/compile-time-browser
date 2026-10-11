@@ -1048,6 +1048,41 @@ int main() {
         CHECK(parse("10", 4294967312.0) == 16.0);
     }
 
+    // Number.parseFloat (19.2.4): the longest decimal prefix after leading
+    // whitespace, a sign and an exponent, -0 kept, and no prefix as NaN.
+    {
+        const auto parse = [](const char * text) {
+            return ctnative::Number.parseFloat(js_string{std::string{text}}).value();
+        };
+        CHECK(parse("3.5px") == 3.5);
+        CHECK(parse(" \t-12.5e1x") == -125.0);
+        CHECK(parse(".5") == 0.5);
+        CHECK(std::signbit(parse("-0")));
+        CHECK(std::isnan(parse("abc")));
+        CHECK(std::isnan(parse("")));
+    }
+
+    // as_string and as_number: the alternative a typeof or truthiness test
+    // proved, for each carrier that can hold one, including the empty String,
+    // -0 and NaN.
+    {
+        CHECK(ctnative::as_string(js_string{std::string{"a,b"}}).value() == "a,b");
+        CHECK(ctnative::as_string(ctnative::nullable_string{std::string{"x"}}).value() == "x");
+        CHECK(ctnative::as_string(ctnative::nullable_string{std::string{}}).value().empty());
+        CHECK(ctnative::as_string(ctnative::number_string{js_string{std::string{"7"}}}).value() ==
+              "7");
+        CHECK(ctnative::as_string(ctnative::nullable_number_string{js_string{std::string{"n"}}})
+                  .value() == "n");
+        CHECK(ctnative::as_string(ctnative::boolean_string{js_string{std::string{"t"}}}).value() ==
+              "t");
+        CHECK(ctnative::as_number(ctnative::number_string{ctnative::js_num{-0.0}}).value() == 0.0);
+        CHECK(std::signbit(
+            ctnative::as_number(ctnative::number_string{ctnative::js_num{-0.0}}).value()));
+        CHECK(std::isnan(
+            ctnative::as_number(ctnative::nullable_number_string{ctnative::js_num{js_nan_t{}}})
+                .value()));
+    }
+
     // Boolean(value) is ToBoolean for each carrier: NaN, 0 and -0, the empty
     // String, undefined and null are false; a String union follows its
     // alternative.

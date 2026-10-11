@@ -94,8 +94,18 @@ struct parse_int_function {
     }
 };
 
+/// Number.parseFloat (ECMA-262 21.1.2.12), the same function as the global
+/// parseFloat (19.2.4): the longest StrDecimalLiteral prefix of `text` after
+/// its leading whitespace, NaN when there is none. `text` is a String carrier.
+struct parse_float_function {
+    template <class String> js_num operator()(const String & text) const {
+        return js_num{ctbrowser::string_to_number_prefix(text.value())};
+    }
+};
+
 /// The Number constructor's members native code calls: generated code reads
-/// `ctnative::Number(s)` and `ctnative::Number.parseInt(s, 10)`.
+/// `ctnative::Number(s)`, `ctnative::Number.parseInt(s, 10)` and
+/// `ctnative::Number.parseFloat(s)`.
 /// `Number(value)` (ECMA-262 21.1.1.1) is ToNumber for every value a native
 /// carrier holds (none is a BigInt), so the call operator forwards to the
 /// to_number overload set, which ADL finds for each carrier at the call.
@@ -103,6 +113,7 @@ struct number_constructor {
     template <class T> js_num operator()(const T & value) const { return to_number(value); }
     /// Static, so the constructor stays an empty, stateless object.
     static constexpr parse_int_function parseInt{};
+    static constexpr parse_float_function parseFloat{};
 };
 inline constexpr number_constructor Number{};
 

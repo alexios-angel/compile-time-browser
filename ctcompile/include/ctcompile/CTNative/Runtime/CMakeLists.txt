@@ -7,6 +7,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Handlers.hpp
   Json.hpp
   Math.hpp
+  Narrowing.hpp
   Object.hpp
   RegExp.hpp
   StaticTable.hpp
