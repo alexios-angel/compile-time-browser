@@ -1000,7 +1000,7 @@ struct flattener {
                 auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(use.getOwner());
                 const bool definition = (set && use.getOperandNumber() == 2 &&
                                          (set.getObject() == proto || set.getObject() == ctor)) ||
-                                        (accessor && use.getOperandNumber() == 2);
+                                        (accessor && use.getOperandNumber() == 1);
                 const bool homeEdge = set && use.getOperandNumber() == 0 &&
                                       ctjs::constantKey(set.getKey()) == "__home" &&
                                       set.getValue() == home;
@@ -1021,6 +1021,10 @@ struct flattener {
                 } else if (use.getOperandNumber() == 2 && set.getObject() == proto &&
                            key == "constructor") {
                     doomed.insert(user);
+                } else if (use.getOperandNumber() == 2 && key == "__home") {
+                    // A static member's `__home` edge: memberOnly claims it
+                    // with its member, and the check below sees that it did.
+                    continue;
                 } else if (auto member = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
                            use.getOperandNumber() == 0 && member) {
                     doomed.insert(user);
