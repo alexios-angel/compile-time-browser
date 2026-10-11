@@ -1,0 +1,47 @@
+# String.prototype.replace with a RegExp literal and a String replacement,
+# as css-dump.js trims a line with `name.replace(/[\r ]+$/, '')`: a control
+# escape inside a class and a final `$` are in the subset std::regex runs as
+# JavaScript does, and the replacement's `$` patterns follow GetSubstitution
+# (Runtime/RegExp.hpp). The answers match the interpreter's under GCC and
+# Clang, and a mutation of `trimmed` must be caught. `\s`, a leading `^` and a
+# `$` before the end stay refused.
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name replace_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name replace_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name replace_mutation --mutate trimmed --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/refused.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=REFUSED
+
+# NATIVE: ctnative::String.prototype.replace.call
+# MUTATION: global 'trimmed' differs
+# REFUSED-DAG: ctnative.not_native = "String.prototype.replace with `\\s` - {{.*}}"
+# REFUSED-DAG: ctnative.not_native = "String.prototype.replace with the anchor `^` - it can match the empty string"
+# REFUSED-DAG: ctnative.not_native = "String.prototype.replace with the anchor `$` - it can match the empty string"
+
+#--- values.js
+function strip(s) {
+    return s.replace(/[\r ]+$/, '');
+}
+function each(s) {
+    return s.replace(/X/g, '-');
+}
+function patterns(s) {
+    return s.replace(/(b)/, "[$1|$&|$`|$'|$$|$2|$0|$01|$]");
+}
+var dashed = each('aXbX') + each('none');
+var substituted = patterns('abc');
+var trimmed = strip('a \nb \r ') + '|' + strip('  ') + '|' + strip('x');
+
+#--- refused.js
+function spaces(s) {
+    return s.replace(/\s+$/, '');
+}
+function leading(s) {
+    return s.replace(/^a/, '');
+}
+function middle(s) {
+    return s.replace(/a$b/, '');
+}
+var refused = spaces('a ') + leading('ab') + middle('ab');

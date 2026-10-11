@@ -874,6 +874,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
     // String.prototype.toLowerCase, and replace with a specialised function.
     if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    // `text[i]` with a Number index: a one-unit String, or undefined past the
+    // end (ECMA-262 10.4.3.5).
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && ctjs::constantKey(read.getKey()).empty() && isProvedString(operands[0]) &&
+        llvm::isa_and_nonnull<NumType>(operands[1]->getValue().getType())) {
+        return answer(meet(absentType(c), stringType(c)));
+    }
     if (isStringCallbackCall(op)) {
         bool pending = false;
         const mlir::Type replaced = stringCallbackType(op, operands, pending);

@@ -1,0 +1,45 @@
+# String methods on a proved String, as css-dump.js uses them: `trim()` and
+# `toLowerCase()` become ctnative::String.prototype.<name>.call, and `s[i]`
+# with a Number index becomes ctnative::string_at, which counts UTF-16 code
+# units (`é` is one) and answers undefined past the end. The answers match
+# the interpreter's under GCC and Clang, and a mutation of `tidied` must be
+# caught. A String indexed by a String stays refused.
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name strings_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name strings_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name strings_mutation --mutate tidied --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/key.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=KEY
+
+# NATIVE-DAG: ctnative::String.prototype.trim.call
+# NATIVE-DAG: ctnative::String.prototype.toLowerCase.call
+# NATIVE-DAG: ctnative::string_at
+# MUTATION: global 'tidied' differs
+# KEY: ctnative.not_native = "a String indexed by {{.*}}, not a Number"
+
+#--- values.js
+function tidy(s) {
+    return s.trim().toLowerCase();
+}
+function firsts(s) {
+    var out = '';
+    for (var i = 0; i < 6; i++) {
+        var c = s[i];
+        out += c === undefined ? '-' : c;
+    }
+    return out;
+}
+function marked(s) {
+    return s !== '' && s[0] === '#' ? 'y' : 'n';
+}
+var heads = firsts('héllo') + firsts('ab');
+var hashed = marked('#x') + ',' + marked('x#') + ',' + marked('');
+var tidied = tidy('  Hello World \n');
+
+#--- key.js
+function pick(s, k) {
+    return s[k];
+}
+var picked = pick('ab', 'x');

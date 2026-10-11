@@ -475,6 +475,13 @@ bool admission::op(mlir::Operation * o) {
             ctjs::constantKey(get.getKey()) == "length") {
             return true;
         }
+        // `text[i]`: ctnative::string_at takes a Number index.
+        if (carrierOf(typeOf(get.getObject())) == carrier::string &&
+            ctjs::constantKey(get.getKey()).empty()) {
+            return carrierOf(typeOf(get.getKey())) == carrier::number ||
+                   refuse("a String indexed by " + printed(typeOf(get.getKey())) +
+                          ", not a Number");
+        }
         if (isVectorSite(get.getObject())) {
             // `length` is exactly `size()`, because the site proof is what
             // rules out a hole; every other key is an index, and the index

@@ -71,7 +71,73 @@ template <class Callback> decltype(auto) call_replacer(Callback & callback, cons
         return callback();
     }
 }
+/// GetSubstitution (ECMA-262 22.1.3.19.1) of `replacement` for `match` in
+/// `text`, appended to `out`: `$$` is `$`, `$&` the match, `` $` `` and `$'`
+/// the text before and after it, `$n` and `$nn` a group (empty when it did not
+/// take part), preferring two digits that name a group. Any other `$` is
+/// itself. The compiler admits no named groups, so `$<` is literal too.
+inline void append_substitution(std::string & out, std::string_view replacement,
+                                const std::smatch & match, const std::string & text) {
+    const std::size_t groups = match.size() - 1;
+    const auto digit = [&](std::size_t at) {
+        return at < replacement.size() && replacement[at] >= '0' && replacement[at] <= '9'
+                   ? static_cast<std::size_t>(replacement[at] - '0')
+                   : std::string::npos;
+    };
+    for (std::size_t i = 0; i < replacement.size(); ++i) {
+        const char next = i + 1 < replacement.size() ? replacement[i + 1] : '\0';
+        if (replacement[i] != '$' || next == '\0') {
+            out += replacement[i];
+        } else if (next == '$') {
+            out += '$';
+            ++i;
+        } else if (next == '&') {
+            out += match[0].str();
+            ++i;
+        } else if (next == '`') {
+            out.append(text.cbegin(), match[0].first);
+            ++i;
+        } else if (next == '\'') {
+            out.append(match[0].second, text.cend());
+            ++i;
+        } else if (const std::size_t one = digit(i + 1); one != std::string::npos) {
+            const std::size_t two = digit(i + 2);
+            if (two != std::string::npos && one * 10 + two >= 1 && one * 10 + two <= groups) {
+                out += match[one * 10 + two].str();
+                i += 2;
+            } else if (one >= 1 && one <= groups) {
+                out += match[one].str();
+                ++i;
+            } else {
+                out += '$';
+            }
+        } else {
+            out += '$';
+        }
+    }
+}
 } // namespace detail
+
+/// String.prototype.replace (ECMA-262 22.1.3.19) with a RegExp and a String
+/// replacement, through RegExp.prototype[@@replace] (22.2.6.11): each match
+/// (every one with `g`, the first without) is replaced by GetSubstitution of
+/// the replacement, and the text between matches is kept.
+inline js_string replace_method::call(const js_string & self, const reg_exp & pattern,
+                                      const js_string & replacement) const {
+    const std::string & text = self.value();
+    std::string out;
+    auto kept = text.cbegin();
+    for (std::sregex_iterator it{text.cbegin(), text.cend(), pattern.engine()}, end; it != end;
+         ++it) {
+        const std::smatch & match = *it;
+        out.append(kept, match[0].first);
+        detail::append_substitution(out, replacement.value(), match, text);
+        kept = match[0].second;
+        if (!pattern.global()) { break; }
+    }
+    out.append(kept, text.cend());
+    return js_string{std::move(out)};
+}
 
 /// String.prototype.replace (ECMA-262 22.1.3.19) with a RegExp and a function
 /// replacement, through RegExp.prototype[@@replace] (22.2.6.11): each match
