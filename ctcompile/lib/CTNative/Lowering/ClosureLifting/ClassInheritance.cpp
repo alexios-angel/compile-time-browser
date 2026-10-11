@@ -41,7 +41,9 @@
 // or is not flattened, when it or a class in its chain declares fields (the
 // importer's `__fields`) or a prototype accessor, when its constructor reads
 // `super` other than as one `super(...)` call or reaches `this` from a nested
-// function, when a member reads `super` other than as a `super.m(...)` call
+// function that may run before it (an arrow made after `super(...)` sees the
+// importer's flag for `this` set, and its checks fold), when a member reads
+// `super` other than as a `super.m(...)` call
 // on `this`, when a constructor in the chain reads new.target or may return
 // an object (which `super(...)` would make `this`), or when an
 // `instanceof` test names a class of the chain, which a flattened class
