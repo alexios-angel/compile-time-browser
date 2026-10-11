@@ -394,7 +394,7 @@ bool admission::lowersToNothing(mlir::Value v) {
     if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
     if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
     if (isVectorCallPlumbing(o) || isPageGlobal(o) || isPageMethodRead(o) ||
-        TypeInference::isEventInitPart(o)) {
+        TypeInference::isEventInitPart(o) || o->hasAttr(kNativeHostDeclared)) {
         return true;
     }
     if (o->getName().getStringRef() == "ub.poison") { return true; }

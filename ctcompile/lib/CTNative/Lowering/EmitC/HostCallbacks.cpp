@@ -105,6 +105,9 @@ std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o) {
     // The closure of a listener that is removed or added twice is its
     // identity.
     if (o->hasAttr(kNativeHostIdentity)) { return std::string{"host_identity"}; }
+    if (auto declared = o->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostDeclared)) {
+        return ("host_declared:" + declared.getValue()).str();
+    }
     const auto event = [&](mlir::Value v) {
         return carrierOf(lower.typeOf(v)) == carrier::domEvent;
     };
@@ -151,6 +154,17 @@ bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind) {
     // An init literal and its definitions stay until their construct, which
     // comes after them, reads and erases them.
     if (kind == "event_init_object" || kind.starts_with("event_init:")) { return true; }
+    // A top-level declaration's value: one identity per declaration.
+    if (llvm::StringRef symbol = kind; symbol.consume_front("host_declared:")) {
+        const auto named = lower.names.find(symbol);
+        const std::string function =
+            named == lower.names.end() ? cIdentifier(symbol) : named->second;
+        o->getResult(0).replaceAllUsesWith(
+            callValue(b, where, ec::OpaqueType::get(context, "ctnative::callable_identity"),
+                      "ctnative::declared_identity<&" + function + ">", mlir::ValueRange{}));
+        lowering::eraseIfUnused(o);
+        return true;
+    }
     if (kind == "host_identity") {
         o->getResult(0).replaceAllUsesWith(
             callValue(b, where, ec::OpaqueType::get(context, "ctnative::callable_identity"),

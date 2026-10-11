@@ -38,6 +38,7 @@
 // EMIT-DAG: call_opaque "ctnative::new_callable_identity"
 // EMIT-DAG: call_opaque "ctnative::identified_listener"
 // EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.removeEventListener.call"
+// EMIT-DAG: call_opaque "ctnative::declared_identity<&{{.*}}>"
 
 // CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener captures binding 0, which is written after it is captured - the host keeps the listener, so it takes its captures by value"
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener reads `this`"
@@ -54,6 +55,7 @@
 // CHECK-DAG: @timerThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout reads `this`"
 // CHECK-DAG: @timerArgs${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: setTimeout with 3 arguments - only (handler, timeout) is native"
 // CHECK-DAG: @timerParameter${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout declares 1 parameters - only a handler that takes none is native"
+// CHECK-DAG: @readsOwnThis${{[0-9]+}}{{.*}}ctnative.not_native = "uses `this`"
 // CHECK-DAG: @clearNumber${{[0-9]+}}{{.*}}ctnative.not_native = "clearing a timer with !ctnative.num<{{.*}}>, not a handle setTimeout or setInterval made"
 // CHECK-DAG: @timerArithmetic${{[0-9]+}}{{.*}}ctnative.not_native = "binary operand is !ctnative.timer, not a number"
 // CHECK-DAG: @timerGlobal${{[0-9]+}}{{.*}}ctnative.not_native = "store to global `keptHandle` is !ctnative.timer; native global observations require a supported scalar type"
@@ -98,6 +100,11 @@ function toggle() {
     root.removeEventListener('click', listener, true);
 }
 toggle();
+function onRoot(event) {
+    seen = seen + event.type;
+}
+document.documentElement.addEventListener('click', onRoot, true);
+document.documentElement.removeEventListener('click', onRoot, true);
 setTimeout(function () {
     seen = seen + 't';
 }, 0);
@@ -212,6 +219,10 @@ function timerParameter() {
         seen = 'p';
     }, 0);
 }
+function readsOwnThis() {
+    seen = this.id;
+}
+document.documentElement.addEventListener('click', readsOwnThis);
 function timerArithmetic() {
     var id = setTimeout(function () {
         seen = 'h';

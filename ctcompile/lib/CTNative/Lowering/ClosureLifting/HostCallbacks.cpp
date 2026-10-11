@@ -46,8 +46,71 @@ bool isListenerCall(ctjs::CallOp call, llvm::StringRef method) {
 
 } // namespace
 
+/// Binds the calls ResolveGlobals marked with the closed top-level function
+/// their listener names (ctjs.host_listener): the call keeps its load of the
+/// binding as the listener's identity, which the lowering makes the
+/// declaration's (ctnative::declared_identity), and names the function as a
+/// lifted listener is named. A function the host cannot call as a listener
+/// leaves the call refused with the reason (ctnative.host_refusal).
+static void bindDeclaredListeners(mlir::ModuleOp module) {
+    mlir::MLIRContext * context = module.getContext();
+    module.walk([&](ctjs::CallOp call) {
+        auto named = call->getAttrOfType<mlir::FlatSymbolRefAttr>(kHostListener);
+        if (!named || call->hasAttr(kNativeHostCallback)) { return; }
+        auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(call, named);
+        const llvm::StringRef method = ctjs::methodKey(call);
+        const std::string listener = "the listener of EventTarget.prototype." + method.str();
+        std::optional<std::string> why;
+        if (call.getArgs().size() != 2 && call.getArgs().size() != 3) {
+            why = "EventTarget.prototype." + method.str() + " with " +
+                  std::to_string(call.getArgs().size()) +
+                  " arguments - only (type, listener, capture) is native";
+        } else if (!target || target.getBody().empty()) {
+            why = listener + " names no function this module defines";
+        } else {
+            mlir::Block & entry = target.getBody().front();
+            if (!entry.getArgument(ctjs::arg_receiver).use_empty()) {
+                why = listener + " reads `this`";
+            } else if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
+                why = listener + " reads new.target";
+            } else if (ctjs::readsRawArguments(target)) {
+                why = listener + " reads its `arguments`";
+            } else if (const unsigned declared = ctjs::parameterCount(entry); declared > 1) {
+                why = listener + " declares " + std::to_string(declared) +
+                      " parameters - only a listener that takes the event alone is native";
+            }
+        }
+        if (why) {
+            call->setAttr("ctnative.host_refusal", mlir::StringAttr::get(context, *why));
+            return;
+        }
+        const mlir::Value value = call.getArgs()[1];
+        if (auto load = value.getDefiningOp()) { load->setAttr(kNativeHostDeclared, named); }
+        llvm::SmallVector<mlir::Value> arguments{call.getArgs()[0], value};
+        const bool capture = call.getArgs().size() == 3;
+        if (capture) { arguments.push_back(call.getArgs()[2]); }
+        for (const llvm::StringRef name : {"document", "window"}) {
+            if (TypeInference::isRealmGlobal(call.getReceiver().getDefiningOp(), name)) {
+                call->setAttr(kNativeHostTarget, mlir::StringAttr::get(context, name));
+            }
+        }
+        call.getArgsMutable().assign(arguments);
+        call->setAttr(kNativeHostCallback, named);
+        call->setAttr(kNativeHostIdentified, mlir::UnitAttr::get(context));
+        if (method == "removeEventListener") {
+            call->setAttr(kNativeHostRemove, mlir::UnitAttr::get(context));
+        }
+        if (capture) { call->setAttr(kNativeHostCapture, mlir::UnitAttr::get(context)); }
+        target->setAttr(kNativeHostCallback, mlir::UnitAttr::get(context));
+        // Public for the reason rewriteArrayCallback gives: inference must
+        // visit its body, typed from these calls.
+        mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Public);
+    });
+}
+
 void closureLifter::hostCallbackCensus() {
     hostCallbacks.clear();
+    bindDeclaredListeners(module);
     for (ctjs::CreateClosureOp c : closures) {
         if (c.getResult().use_empty()) { continue; }
         // Operands are the callee, the receiver and the arguments; a timer's

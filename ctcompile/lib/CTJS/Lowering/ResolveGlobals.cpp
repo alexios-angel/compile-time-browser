@@ -1436,6 +1436,9 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 open = "the closure value has a use other than the store";
             }
             std::size_t rewritten = 0;
+            // Listener registrations that pass this function's value; see the
+            // use loop below.
+            llvm::SmallVector<CallOp> listeners;
             for (LoadGlobalOp load : facts.loads) {
                 // Importer checks retain the complete register file. Follow
                 // both register vectors to discover all escaping uses, then
@@ -1458,6 +1461,18 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                         continue;
                     }
                     auto call = mlir::dyn_cast<CallOp>(user);
+                    // The listener argument of addEventListener or
+                    // removeEventListener, read straight from the binding:
+                    // the host keeps the function, but only to call it or to
+                    // compare it, and the native lowering gives the one
+                    // declaration one identity (HostCallbacks.cpp), so the
+                    // world stays closed. Marked below once it is.
+                    if (call && use->getOperandNumber() == 3 && use->get() == load.getResult() &&
+                        (methodKey(call) == "addEventListener" ||
+                         methodKey(call) == "removeEventListener")) {
+                        listeners.push_back(call);
+                        continue;
+                    }
                     if (!call || use->getOperandNumber() != 0) {
                         if (!open) { open = "the binding is used by " + describe(user); }
                         continue;
@@ -1493,6 +1508,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 continue;
             }
             mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
+            for (CallOp call : listeners) {
+                call->setAttr("ctjs.host_listener",
+                              mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()));
+            }
             ++closedFunctions;
             ++closed_here;
             record(name, facts.stores.size(), target,

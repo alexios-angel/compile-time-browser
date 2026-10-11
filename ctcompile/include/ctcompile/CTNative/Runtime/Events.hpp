@@ -337,6 +337,14 @@ identified_callable<std::decay_t<F>> identified_listener(callable_identity ident
     return {identity, std::forward<F>(callback)};
 }
 
+/// The identity of a function declaration evaluated once, such as a top-level
+/// `function onClick() {}`: every value of `onClick` is that one function
+/// object, so every use of this names the same identity.
+template <auto Function> callable_identity declared_identity() {
+    static const callable_identity identity = new_callable_identity();
+    return identity;
+}
+
 /// Where generated code's EventTarget calls register: an element, or
 /// ctnative::document or ctnative::window.
 struct listener_sites {

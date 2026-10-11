@@ -795,6 +795,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // Nor are `document` and `window` when only their
                         // page reads use them; those lower to runtime calls.
                         if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is a declared function's value handed to the
+                        // listener table: it becomes the declaration's
+                        // identity (EmitC/HostCallbacks.cpp).
+                        if (load->hasAttr(kNativeHostDeclared)) { return; }
                         // Nor is the global `undefined`, which is a constant.
                         if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();

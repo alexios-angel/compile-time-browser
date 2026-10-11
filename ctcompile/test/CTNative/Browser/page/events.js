@@ -9,6 +9,21 @@ var seen = '';
 var phases = '';
 var notes = '';
 var counted = '';
+var named = '';
+
+// Named top-level functions as listeners: onNamed is added twice to the root
+// (the second ignored), and onLeaf, on <body>, removes it when a click on the
+// leaf passes, so the root's step of that click no longer runs it.
+function onNamed(e) {
+    named = named + (e.target.id === 'top' ? 'n' : e.target.id);
+}
+function onLeaf(e) {
+    if (e.target.id === 'leaf') {
+        document.documentElement.removeEventListener('click', onNamed);
+    }
+}
+document.documentElement.addEventListener('click', onNamed);
+document.documentElement.addEventListener('click', onNamed);
 
 // A listener with no captures, on the root element.
 document.documentElement.addEventListener('click', function () {
@@ -27,6 +42,7 @@ function listen(name) {
             kid.addEventListener('click', function () {
                 order = order + name;
             });
+            kid.addEventListener('click', onLeaf);
             // A listener that takes the event: it reads the event's type,
             // target and current target, cancels it, and stops a click on the
             // leaf from reaching the root.
@@ -97,5 +113,5 @@ function wire(mark) {
 wire('h');
 
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted + '| named=' + named;
 }

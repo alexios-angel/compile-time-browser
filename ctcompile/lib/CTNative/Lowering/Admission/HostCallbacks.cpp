@@ -97,6 +97,13 @@ bool registeredOnDocumentOrWindow(mlir::Operation * op) {
 } // namespace
 
 std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
+    // A declared function's value as a listener: its load is the
+    // declaration's identity; a registration it cannot make keeps the reason
+    // ClosureLifting/HostCallbacks.cpp found.
+    if (o->hasAttr(kNativeHostDeclared)) { return true; }
+    if (auto why = o->getAttrOfType<mlir::StringAttr>("ctnative.host_refusal")) {
+        return self.refuse(why.getValue().str());
+    }
     // clearTimeout(handle) and clearInterval(handle) take a handle a timer
     // call made.
     if (TypeInference::isTimerClear(o)) {
