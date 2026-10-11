@@ -108,6 +108,10 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
         if (auto closure = llvm::dyn_cast_or_null<ClosureType>(type)) {
             return closureCarrierType(closure);
         }
+        if (auto tag = llvm::dyn_cast_or_null<ClassTagType>(type)) {
+            classTags.insert(classTagSpelling(tag));
+            return classTagCarrierType(tag);
+        }
         return carrierType(context, carrierOf(type));
     };
     llvm::StringMap<mlir::Type> stored;

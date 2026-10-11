@@ -165,6 +165,12 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(closureCarrierType(llvm::cast<ClosureType>(typeOf(v))));
             return;
         }
+        if (c == carrier::classTag) {
+            const auto tag = llvm::cast<ClassTagType>(typeOf(v));
+            classTags.insert(classTagSpelling(tag));
+            v.setType(classTagCarrierType(tag));
+            return;
+        }
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
             needsObjectValue |= mapNeedsObjectValues(map);

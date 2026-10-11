@@ -427,6 +427,13 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
+        // A class tag: the empty struct, value-initialized.
+        if (auto tag = llvm::dyn_cast_or_null<ClassTagType>(typeOf(k.getResult()))) {
+            swap(ec::ConstantOp::create(
+                b, where, classTagCarrierType(tag),
+                ec::OpaqueAttr::get(context, classTagSpelling(tag) + "{}")));
+            return;
+        }
         if (auto n = llvm::dyn_cast<NumberAttr>(k.getValue())) {
             swap(numberConstant(b, where, n.getDouble()));
         } else if (auto bo = llvm::dyn_cast<BooleanAttr>(k.getValue())) {

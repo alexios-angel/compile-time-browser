@@ -12,6 +12,7 @@
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 
 #include <map>
+#include <set>
 
 namespace ctcompile::ctnative {
 class OwnedGlobalRoots;
@@ -224,6 +225,9 @@ struct lowering {
     void prepareExceptions(ctjs::FuncOp fn);
     bool replaceException(mlir::Operation * op);
     llvm::SmallVector<std::string> environments;
+    /// The class tag types a value has (`<Class>_class`), declared once each
+    /// as an empty struct: a class held as an object field carries no data.
+    std::set<std::string> classTags;
     llvm::SmallVector<std::string> methodTables;
     llvm::SmallVector<std::string> callableBuilders;
     llvm::StringMap<mlir::DictionaryAttr> callableBodies;

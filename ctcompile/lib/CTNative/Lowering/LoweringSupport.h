@@ -91,7 +91,10 @@ enum class carrier {
     /// An ordinary script's getBoundingClientRect answer (Runtime/Page.hpp).
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
-    computedStyle
+    computedStyle,
+    /// A class held as an object field: an empty struct named after the
+    /// class (classTagCarrierType), with no runtime data.
+    classTag
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -159,8 +162,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::tupleVector, ""},
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
+    {carrier::classTag, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::computedStyle) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::classTag) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -276,6 +280,10 @@ bool mapNeedsNullableStringKey(MapType type);
 bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
 mlir::Type closureCarrierType(ClosureType type);
+/// The C++ spelling of the class tag a field holding class `name` has:
+/// `<name>_class`, an empty struct the module declares once.
+std::string classTagSpelling(ClassTagType type);
+mlir::Type classTagCarrierType(ClassTagType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 /// `type` printed as text, or `<unvisited>` for a null type (a value the

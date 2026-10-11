@@ -60,7 +60,7 @@
 // SHOW: emitc.func @main
 // SHOW-RUN: r=6
 // GLOBAL: ctnative.not_native = "global `show` is !ctnative.boxed, not a number"
-// STORES: ctnative.class_reason = "it has static getter `NAME`; `A` is used as a value by `ctjs.set_property` in `keep${{[0-9]+}}`"
+// STORES: ctnative.class_reason = "it has static getter `NAME`; `A` is stored into something other than an object literal's own field in `keep${{[0-9]+}}`"
 // COMPARES: ctnative.class_reason = "it has static getter `NAME`; `A` is used as a value by `ctjs.compare` in `same${{[0-9]+}}`"
 // CAPTURES: ctnative.class_reason = "it has static getter `NAME`; `A` is passed to `keep${{[0-9]+}}`, which reads new.target or its own closure in `run${{[0-9]+}}`"
 
