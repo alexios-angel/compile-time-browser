@@ -7,8 +7,9 @@
 // ctjs.call_direct (ClosureLifting/ClassStatics.cpp), the definitions lower
 // to nothing, and the class census then proves the class: it lowers to a C++
 // class with no static data. The static method nothing reads (`unused`, which
-// calls an undeclared global and is refused) is left uncalled, so the
-// unreachable-refusal pass removes it and records the removal. The program
+// calls an undeclared global and relays its capture of `base` to an arrow
+// through its own closure) is left uncalled, so the unreachable-refusal pass removes it and
+// records the removal. The program
 // prints what Node and the interpreter print with both compilers.
 //
 // RUN: split-file %s %t
@@ -24,7 +25,7 @@
 // RUN: %native_reference %t/shape.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/shape.js | FileCheck %s --check-prefix=OBSERVATION
 
-// CHECK: ctnative.unreachable_refusals = [{function = "unused${{[0-9]+}}", reason = "removed: unreachable (no function that can run creates or calls it; it was refused: {{.*}})"}]
+// CHECK: ctnative.unreachable_refusals = [{{.*}}{function = "unused${{[0-9]+}}", reason = "removed: unreachable (no function that can run creates or calls it; it was refused: {{.*}}
 // CHECK: emitc.class @Shape
 // CHECK-NOT: ctjs.define_accessor
 // CPP: class Shape {
@@ -32,11 +33,13 @@
 
 //--- shape.js
 function run() {
+    let base = 1;
+    base += 1;
     class Shape {
         static get NAME() { return "shape"; }
         static twice(x) { return x * 2; }
         static quad(x) { return this.twice(this.twice(x)); }
-        static unused() { return missing(); }
+        static unused() { const relay = () => base; return missing() + relay(); }
         constructor(side) { this.side = side; }
         area() { return Shape.twice(this.side) + this.constructor.NAME.length; }
     }

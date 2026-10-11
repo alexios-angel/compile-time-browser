@@ -21,6 +21,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-this.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=NEWTHIS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relay.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=RELAY
 
 // The class is passed to a function, which could read any static member.
 // ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.call{{(_direct)?}}` in `run${{[0-9]+}}`"
@@ -38,6 +41,10 @@
 //
 // `new this(v)` in a static member: the direct call passes no `this`.
 // NEWTHIS: ctnative.class_reason = "it has static method `make`; it constructs `new this` or `new this.constructor` in `make${{[0-9]+}}`"
+//
+// A static member that is called and relays its capture of `base` to a
+// nested function through its own closure: the direct call passes no closure.
+// RELAY: ctnative.class_reason = "it has static method `make`; its static member `make` reads new.target or its own closure"
 
 //--- escape.js
 function show(k) { return k.size; }
@@ -74,5 +81,14 @@ var r = run();
 function run() {
     class Box { constructor(v) { this.v = v; } static make(v) { return new this(v); } }
     return Box.make(3).v;
+}
+var r = run();
+
+//--- relay.js
+function run() {
+    let base = 5;
+    base += 1;
+    class Box { constructor(v) { this.v = v; } static make(v) { function f() { return base + v; } return [f][0](); } }
+    return new Box(2).v + Box.make(1);
 }
 var r = run();

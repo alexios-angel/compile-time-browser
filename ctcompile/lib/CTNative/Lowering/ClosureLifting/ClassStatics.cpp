@@ -24,9 +24,10 @@
 //     of the binding or a capture of it; anything else could reach a static
 //     member this file does not see;
 //  2. each static member's closure is used only by its definition and its
-//     `__home` edge, and its function reads neither new.target nor its own
-//     closure (its `this` is checked as a name of the class, by rule 1), and
-//     none is named `__home`, which the engine reads as the home object;
+//     `__home` edge; a static member that a read outside the static members
+//     reaches reads neither new.target nor its own closure (its `this` is
+//     checked as a name of the class, by rule 1); and none is named `__home`,
+//     which the engine reads as the home object;
 //  3. every read runs after the class is defined (runsAfter, as for the
 //     singleton tables): before that, the static member does not exist yet;
 //  4. no class extends this one and it extends none, so `this` in a static
@@ -151,11 +152,6 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                            user->getName().getStringRef() + "`" + where(user));
                     break;
                 }
-            }
-            auto & entryBlock = m.target.getBody().front();
-            if (!entryBlock.getArgument(1).use_empty() || !entryBlock.getArgument(2).use_empty()) {
-                refuse("its static member `" + entry.getKey() +
-                       "` reads new.target or its own closure");
             }
         }
         if (staticRefusals.contains(key)) { continue; }
@@ -286,6 +282,24 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 }
             }
         };
+        // A use inside a static member is refused only if that member can
+        // run (see `reached` below); until then it waits here.
+        llvm::SmallPtrSet<mlir::Operation *, 8> staticTargets, reached;
+        for (auto & entry : statics) {
+            staticTargets.insert(entry.getValue().target.getOperation());
+        }
+        const auto holderOf = [](mlir::Operation * op) {
+            return op->getParentOfType<ctjs::FuncOp>().getOperation();
+        };
+        llvm::SmallVector<std::pair<mlir::Operation *, std::string>> deferred;
+        const auto refuseAt = [&](mlir::Operation * at, const llvm::Twine & why) {
+            if (staticTargets.contains(holderOf(at))) {
+                deferred.push_back({holderOf(at), why.str()});
+                return false;
+            }
+            refuse(why);
+            return true;
+        };
         for (size_t i = 0; i < names.size() && !staticRefusals.contains(key); ++i) {
             const mlir::Value name = names[i];
             for (mlir::OpOperand & use : name.getUses()) {
@@ -320,12 +334,15 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                                                   : llvm::StringRef{};
                 const auto found = statics.find(field);
                 if (field.empty() || found == statics.end()) {
-                    refuse(load && !field.empty()
-                               ? "it reads `" + className + "." + field.str() +
-                                     "`, which is not a static member" + where(user)
-                               : "`" + className + "` is used as a value by `" +
-                                     user->getName().getStringRef().str() + "`" + where(user));
-                    break;
+                    if (refuseAt(user, load && !field.empty()
+                                           ? "it reads `" + className + "." + field.str() +
+                                                 "`, which is not a static member" + where(user)
+                                           : "`" + className + "` is used as a value by `" +
+                                                 user->getName().getStringRef().str() + "`" +
+                                                 where(user))) {
+                        break;
+                    }
+                    continue;
                 }
                 member m = found->getValue();
                 if (m.getter) {
@@ -336,14 +353,19 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                     auto call = llvm::dyn_cast<ctjs::CallOp>(loaded.getOwner());
                     if (llvm::isa<ctjs::RootOp>(loaded.getOwner())) { continue; }
                     if (!call || loaded.getOperandNumber() != 0) {
-                        refuse("its static method `" + field + "` is read as a value" +
-                               where(loaded.getOwner()));
-                        break;
+                        if (refuseAt(loaded.getOwner(), "its static method `" + field +
+                                                            "` is read as a value" +
+                                                            where(loaded.getOwner()))) {
+                            break;
+                        }
+                        continue;
                     }
                     if (call.getArgs().size() > parametersOf(m.target)) {
-                        refuse("a call passes its static method `" + field +
-                               "` more arguments than it takes" + where(call));
-                        break;
+                        if (refuseAt(call, "a call passes its static method `" + field +
+                                               "` more arguments than it takes" + where(call))) {
+                            break;
+                        }
+                        continue;
                     }
                     calls.push_back({call, load, m.target});
                 }
@@ -355,15 +377,16 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (mlir::Operation * call : receiving) {
             const bool known =
                 llvm::any_of(calls, [&](staticCall s) { return s.call.getOperation() == call; });
-            if (!known) {
-                refuse("`" + className + "` is the receiver of a call through something else" +
-                       where(call));
+            if (!known && refuseAt(call, "`" + className +
+                                             "` is the receiver of a call through something else" +
+                                             where(call))) {
                 break;
             }
         }
         for (staticCall s : calls) {
-            if (!names.contains(s.call.getReceiver())) {
-                refuse("its static method is called with another receiver" + where(s.call));
+            if (!names.contains(s.call.getReceiver()) &&
+                refuseAt(s.call,
+                         "its static method is called with another receiver" + where(s.call))) {
                 break;
             }
         }
@@ -371,13 +394,6 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         // instance has no `constructor` field, so neither may be constructed
         // where it can run: in an instance method, or in a static member that
         // a read outside the static members reaches.
-        llvm::SmallPtrSet<mlir::Operation *, 8> staticTargets, reached;
-        for (auto & entry : statics) {
-            staticTargets.insert(entry.getValue().target.getOperation());
-        }
-        const auto holderOf = [](mlir::Operation * op) {
-            return op->getParentOfType<ctjs::FuncOp>().getOperation();
-        };
         for (bool grew = true; grew;) {
             grew = false;
             const auto reach = [&](mlir::Operation * read, ctjs::FuncOp target) {
@@ -389,6 +405,25 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             };
             for (staticCall & s : calls) { reach(s.call, s.target); }
             for (auto & [load, target] : getterReads) { reach(load, target); }
+        }
+        for (auto & [holder, why] : deferred) {
+            if (reached.contains(holder)) {
+                refuse(why);
+                break;
+            }
+        }
+        // A direct call passes no closure and no new.target, so a static
+        // member that can run must read neither: its captures would be gone.
+        // One nothing reads stays uncalled, whatever its body reads.
+        for (auto & entry : statics) {
+            ctjs::FuncOp target = entry.getValue().target;
+            mlir::Block & body = target.getBody().front();
+            if (reached.contains(target.getOperation()) &&
+                (!body.getArgument(1).use_empty() || !body.getArgument(2).use_empty())) {
+                refuse("its static member `" + entry.getKey() +
+                       "` reads new.target or its own closure");
+                break;
+            }
         }
         for (mlir::Operation * made : selfConstructs) {
             if (!staticTargets.contains(holderOf(made)) || reached.contains(holderOf(made))) {
