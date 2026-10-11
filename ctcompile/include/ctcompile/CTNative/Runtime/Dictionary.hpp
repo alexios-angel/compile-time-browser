@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "Error.hpp"
 #include "Object.hpp"
 #include "String.hpp"
 #include "ctnative.hpp"
@@ -136,6 +137,8 @@ template <class V> std::shared_ptr<dictionary<V>> make_dictionary() {
 //
 // Generated code holds a dictionary through a std::shared_ptr and calls these
 // with the carriers of its keys and values; each is one JavaScript operation.
+// A null pointer is a table read from another table that lacked the key:
+// undefined, on which each operation throws the interpreter's TypeError.
 
 /// ToPropertyKey (ECMA-262 7.1.19) of a String or Number key, as the text a
 /// dictionary keys by. Symbol keys are refused before code is generated.
@@ -176,7 +179,21 @@ template <> struct dictionary_read<number_string> {
     using type = nullable_number_string;
 };
 
+/// A table of tables reads a table, or undefined as a null pointer.
+template <class W> struct dictionary_read<std::shared_ptr<dictionary<W>>> {
+    using type = std::shared_ptr<dictionary<W>>;
+};
+
 namespace detail {
+template <class Read, class W>
+Read dictionary_read_of(const std::shared_ptr<dictionary<W>> & value) {
+    return value;
+}
+/// The TypeError a table operation on undefined throws, worded as the
+/// interpreter words it.
+template <class V> void require_table(const std::shared_ptr<dictionary<V>> & o, const char * what) {
+    if (o == nullptr) { throw type_error(what); }
+}
 template <class Read> Read dictionary_read_of(const js_num & value) {
     return Read{value};
 }
@@ -199,6 +216,9 @@ template <class V, class K>
 typename dictionary_read<V>::type dictionary_get(const std::shared_ptr<dictionary<V>> & o,
                                                  const K & key) {
     const std::string name = property_key(key);
+    if (o == nullptr) {
+        throw type_error("Cannot read properties of undefined (reading '" + name + "')");
+    }
     if (const V * found = o->get(name)) {
         return detail::dictionary_read_of<typename dictionary_read<V>::type>(*found);
     }
@@ -219,6 +239,9 @@ typename dictionary_read<V>::type dictionary_get(const std::shared_ptr<dictionar
 template <class V, class K, class T>
 void dictionary_set(const std::shared_ptr<dictionary<V>> & o, const K & key, T && value) {
     std::string name = property_key(key);
+    if (o == nullptr) {
+        throw type_error("Cannot set properties of undefined (setting '" + name + "')");
+    }
     if (name == "__proto__") { return; }
     o->set(name, V(std::forward<T>(value)));
 }
@@ -227,14 +250,22 @@ void dictionary_set(const std::shared_ptr<dictionary<V>> & o, const K & key, T &
 /// Object.prototype.
 template <class V, class K>
 js_boolean_t dictionary_has(const std::shared_ptr<dictionary<V>> & o, const K & key) {
+    detail::require_table(o, "Right-hand side of 'in' must be an object");
     const std::string name = property_key(key);
     return js_boolean_t{o->has(name) || object_prototype_key(name)};
+}
+
+/// `t === undefined` (and `t == undefined`, since a table is never null) for
+/// a table read from a table: a null pointer is undefined.
+template <class V> js_boolean_t dictionary_absent(const std::shared_ptr<dictionary<V>> & t) {
+    return js_boolean_t{t == nullptr};
 }
 
 /// `delete o[key]` (OrdinaryDelete): true, since every own property of a
 /// table is configurable and an absent one needs no removal.
 template <class V, class K>
 js_boolean_t dictionary_delete(const std::shared_ptr<dictionary<V>> & o, const K & key) {
+    detail::require_table(o, "Cannot convert undefined to object");
     return js_boolean_t{o->remove(property_key(key))};
 }
 

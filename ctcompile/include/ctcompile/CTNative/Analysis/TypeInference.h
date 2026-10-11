@@ -525,6 +525,10 @@ private:
     /// solver runs: the closure lift and every rewrite in
     /// `--ctnative-lower-to-emitc` happen before it is loaded.
     mlir::DominanceInfo dominance_{nullptr};
+    /// Each table family's stored values (Inference/Dictionaries.cpp), by
+    /// its ctnative.dict_group, indexed on the first visit of a table literal.
+    llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value>> dictionaryStores_;
+    bool dictionaryStoresIndexed_ = false;
     // array value -> everything appended or stored into it, for
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;

@@ -182,7 +182,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             if (row.params[index] == TypeInference::BuiltinStatic::Param::record) {
                 // A table serializes its own keys itself (Runtime/Json.hpp);
                 // its site's admission checked its values.
-                if (carrierOf(self.typeOf(argument)) == carrier::dictionary) { continue; }
+                if (auto table = llvm::dyn_cast_or_null<DictType>(self.typeOf(argument))) {
+                    if (carrierOf(table.getElementType()) != carrier::dictionary) { continue; }
+                    return self.refuse(name + " of a table of tables");
+                }
                 if (!admission::isClosedObject(argument)) {
                     return self.refuse(name +
                                        " of a value that is not a closed-shape object literal");

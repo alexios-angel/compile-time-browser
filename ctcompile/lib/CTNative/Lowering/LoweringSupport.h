@@ -287,9 +287,12 @@ bool mapNeedsNullableString(MapType type);
 bool mapNeedsNullableStringKey(MapType type);
 bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
-/// The C++ type of a table with values of `type`'s element type:
-/// std::shared_ptr<ctnative::dictionary<V>>, V the value's carrier.
-std::string dictionarySpelling(DictType type);
+/// The C++ type of a table, or of a table that may be undefined (null):
+/// std::shared_ptr<ctnative::dictionary<V>>, V its values' spelling.
+std::string dictionarySpelling(mlir::Type type);
+/// The C++ type of the values of a table: a scalar carrier, or a table's
+/// spelling for a table of tables.
+std::string dictionaryValueSpelling(DictType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);

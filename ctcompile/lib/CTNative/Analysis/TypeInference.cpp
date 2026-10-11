@@ -36,6 +36,7 @@
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
@@ -822,8 +823,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return answer(doubleType(c));
     }
 
-    if (op->getNumResults() == 1) {
-        if (const mlir::Type table = dictionaryType(op, operands)) { return answer(table); }
+    // A table operation answers only its own rule, and nothing while its
+    // table's type is pending: the general property read would answer boxed,
+    // which nothing can undo (Inference/Dictionaries.cpp).
+    if (isNativeDictionarySite(op) ||
+        (!nativeDictionaryAction(op).empty() && nativeDictionaryAction(op) != "plumbing")) {
+        const mlir::Type table = op->getNumResults() == 1 ? dictionaryType(op, operands) : nullptr;
+        return table ? answer(table) : mlir::success();
     }
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
