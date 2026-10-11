@@ -118,7 +118,11 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     const auto join = [&](llvm::StringMap<mlir::Type> & into, llvm::StringRef key,
                           mlir::Type type) {
         auto [at, fresh] = into.try_emplace(key, type);
-        if (!fresh && at->second != type) { at->second = carrierType(context, carrier::nullable); }
+        if (!fresh && at->second != type) {
+            // ClosureSets.cpp: a set and its possibly absent read join as optional.
+            const mlir::Type set = joinClosureSetCarriers(at->second, type);
+            at->second = set ? set : carrierType(context, carrier::nullable);
+        }
     };
     // Walk every alias in the group: a lifted method's `this.x` reads this
     // shape through a different value in a different function, and a field

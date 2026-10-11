@@ -49,6 +49,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/fieldunproved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=FIELDUNPROVED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unguarded.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=UNGUARDED
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arity.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ARITY
@@ -102,6 +105,10 @@
 
 // Negative: the field is assigned a function the caller passes.
 // FIELDUNPROVED: closure_reason = "it reaches `scf.yield`, which slice 1 does not lower"
+
+// Negative: a field only one branch writes may be absent where it is read,
+// so the read is opt<closure_set>, and calling it untested would throw.
+// UNGUARDED: ctnative.not_native = "it calls a field of a set of closures that may be absent - test it with `typeof f === \22function\22` first"
 
 // Negative: one member declares a parameter the call does not pass. One C++
 // signature serves the whole set, so both are refused.
@@ -211,3 +218,11 @@ function run(c, g) {
     return m.fn(5);
 }
 var r = run(true, function (x) { return x; });
+
+//--- unguarded.js
+function run(c, d) {
+    const m = { name: "m", fn: c ? x => x + 1 : x => x * 3 };
+    if (d) { m.effect = c ? x => x * 10 : x => x + 100; }
+    return m.fn(5) + m.effect(1);
+}
+var r = run(true, true);

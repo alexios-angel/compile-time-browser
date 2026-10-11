@@ -51,6 +51,8 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
                                           ec::OpaqueAttr::get(context, "std::nullopt"));
         }
     }
+    // ClosureSets.cpp: a set's variant where the set may be absent.
+    if (mlir::Value set = convertClosureSet(b, where, value, target)) { return set; }
     // Host null uses optional String storage. Preserve its exact null tag in
     // scalar joins, or convert it to positive zero for numeric consumers.
     // Region edges are converted before ctjs constants become EmitC constants.
