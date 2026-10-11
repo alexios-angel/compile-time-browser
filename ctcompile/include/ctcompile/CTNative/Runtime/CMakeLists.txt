@@ -3,6 +3,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Callable.hpp
   Json.hpp
   Math.hpp
+  Narrowing.hpp
   String.hpp
   ctnative.hpp
 )

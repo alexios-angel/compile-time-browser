@@ -282,6 +282,13 @@ public:
     /// are recognised; a new one is a row there plus its runtime member.
     static const BuiltinStatic * builtinStaticOf(mlir::Operation * op);
 
+    /// The type of `ctnative.refine` of a `from` value by `kind`
+    /// (Inference/Refinements.cpp): `"string"` and `"number"` are the String
+    /// or Number alternative of `from` (any String or Number when `from` has
+    /// none, since the test proved it), and `"truthy"` drops the null and
+    /// undefined of an optional. Any other kind leaves `from` as it is.
+    static mlir::Type refinedType(mlir::MLIRContext * c, llvm::StringRef kind, mlir::Type from);
+
     // Array-method callbacks (Inference/ArrayCallbacks.cpp).
     /// Whether `key` names an Array method the runtime calls back from.
     static bool isArrayCallbackMethod(llvm::StringRef key);

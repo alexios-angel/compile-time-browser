@@ -9,6 +9,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -158,6 +159,19 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (replaceIdentityField(o)) { return; }
     if (replaceStringValue(o)) { return; }
     if (replaceStringArray(*this, o)) { return; }
+    if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
+        // Admission allowed only the operand's own carrier or its String or
+        // Number alternative.
+        const mlir::Value value = refined.getValue();
+        const mlir::Type result = o->getResult(0).getType();
+        swap(value.getType() == result
+                 ? value
+                 : callValue(b, where, result,
+                             refined.getKind() == "number" ? "ctnative::as_number"
+                                                           : "ctnative::as_string",
+                             value));
+        return;
+    }
 
     // Frame bookkeeping lowers to nothing. frame_enter's result is used by
     // every frame_exit and root after it, and walk order visits it first, so

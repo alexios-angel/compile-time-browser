@@ -30,6 +30,7 @@
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
+#include "Refinements.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
@@ -404,6 +405,15 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             guards.addPass(createCTNativePrecompute(
                 {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
+        }
+        // Values a branch tested get a narrowed name in that branch, after the
+        // lift has unboxed the cells it could; a fresh census answers which of
+        // the remaining cells hold one value (Refinements.cpp).
+        if (!hostContract) {
+            closureLifter cells{module};
+            cells.census();
+            insertRefinements(module,
+                              [&](ctjs::CreateCellOp cell) { return cells.isConstantCell(cell); });
         }
         // Exception recovery and structured-exit normalization are
         // speculative. They stay only if the function and its whole closed
@@ -837,6 +847,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusMethodTables(accepted);
 
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
+        dropRefinements(module);
         if (!accepted.empty()) { lower.declareGlobals(); }
         lower.finish();
     }

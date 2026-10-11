@@ -49,4 +49,21 @@ def CTNative_CppTryEndOp : CTNative_Op<"cpp_try_end", [Terminator, HasParent<"Cp
   let assemblyFormat = "attr-dict";
 }
 
+def CTNative_RefineOp : CTNative_Op<"refine", [Pure, AllTypesMatch<["value", "result"]>]> {
+  let summary = "A value a dominating test proved to be of one kind";
+  let description = [{
+    The same JavaScript value as `value`, inside the region of a branch whose
+    condition proved what `kind` names: a `typeof` result (`"string"`,
+    `"number"`) for `typeof value == "<kind>"` and its `!=` else-region, or
+    `"truthy"` for a branch on the value itself. Type inference narrows the
+    result by the kind (TypeInference::refinedType); the native lowering
+    spells it as the operand or as a ctnative::as_<kind> conversion. It is
+    inserted by insertRefinements (Lowering/Refinements.cpp) and has no
+    effect, so a refused function's refinements are dropped again.
+  }];
+  let arguments = (ins AnyType:$value, StrAttr:$kind);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$value $kind attr-dict `:` type($value)";
+}
+
 #endif // CTCOMPILE_CTNATIVE_OPS

@@ -1476,3 +1476,6 @@ template <> struct map_key_less<ctbrowser::element_ref> {
 #endif
 
 } // namespace ctnative
+
+// Needs the carriers above, so it comes last.
+#include "ctcompile/CTNative/Runtime/Narrowing.hpp"

@@ -1,9 +1,10 @@
 //===- BuiltinStatics.cpp - Calls of built-in static methods --------------===//
 //
 // The table of static methods of the realm's built-in namespace objects
-// (`Number.parseInt`, `Math.min`) that native code calls through the runtime's
-// built-in objects, `ctnative::Number.parseInt(s, radix)` and
-// `ctnative::Math.min(a, b)`, and the recognition of a call of one.
+// (`Number.parseInt`, `Number.parseFloat`, `Math.min`) that native code calls
+// through the runtime's built-in objects, such as
+// `ctnative::Number.parseInt(s, radix)` and `ctnative::Math.min(a, b)`, and the
+// recognition of a call of one.
 //
 //===----------------------------------------------------------------------===//
 
@@ -29,6 +30,8 @@ using Result = TypeInference::BuiltinStatic::Result;
 constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     // Number.parseInt (ECMA-262 21.1.2.13); a missing radix is 0.
     {"Number", "parseInt", "ctnative::Number.parseInt", {Param::string, Param::number}, 2, 1},
+    // Number.parseFloat (21.1.2.12) of a String.
+    {"Number", "parseFloat", "ctnative::Number.parseFloat", {Param::string}, 1, 1},
     // Math.min (21.3.2.25) of exactly two Numbers.
     {"Math", "min", "ctnative::Math.min", {Param::number, Param::number}, 2, 2},
     // String.prototype.toLowerCase (22.1.3.28) of a String receiver.

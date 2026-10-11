@@ -12,6 +12,7 @@
 #include "../../Analysis/OwnedMethodTableSlots.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -252,6 +253,21 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
+    if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
+        // The same carrier, or the String or Number alternative of one that
+        // holds several kinds (Runtime/Narrowing.hpp spells the conversion).
+        const carrier from = carrierOf(typeOf(refined.getValue()));
+        const carrier to = carrierOf(typeOf(refined.getResult()));
+        const bool alternative =
+            (to == carrier::string &&
+             (from == carrier::nullableString || from == carrier::numberString ||
+              from == carrier::nullableNumberString || from == carrier::booleanString)) ||
+            (to == carrier::number &&
+             (from == carrier::numberString || from == carrier::nullableNumberString));
+        return (from == to && to != carrier::none) || alternative ||
+               refuse(("a value narrowed by `" + refined.getKind() + "` from ").str() +
+                      printed(typeOf(refined.getValue())));
+    }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
         auto object = edge->object;

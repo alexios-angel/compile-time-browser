@@ -8,6 +8,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "SymbolTransport.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -128,7 +129,9 @@ void lowering::lower(ctjs::FuncOp fn) {
 
     llvm::SmallVector<mlir::Operation *> ops;
     made.getBody().walk([&](mlir::Operation * o) {
-        if (o->getDialect() == fn->getDialect() || o->getName().getStringRef() == "ub.poison") {
+        // A ctnative.refine is a ctjs value too (Refinements.cpp).
+        if (o->getDialect() == fn->getDialect() || o->getName().getStringRef() == "ub.poison" ||
+            llvm::isa<RefineOp>(o)) {
             ops.push_back(o);
         }
     });
