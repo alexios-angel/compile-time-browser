@@ -59,13 +59,17 @@ inline constexpr llvm::StringLiteral kNativeSingletonReason = "ctnative.singleto
 /// attribute. Written by ClosureLifting/ArrayCallbacks.cpp and read by type
 /// inference, admission and the lowering.
 inline constexpr llvm::StringLiteral kNativeArrayCallback = "ctnative.array_callback";
-/// A listener handed to the host (`el.addEventListener(type, f)`) that closure
-/// lifting specialised for its one call. On the `ctjs.call` it is a symbol
-/// reference to the listener, whose captures follow the event type among the
-/// call's arguments; on the listener's `ctjs.func` it is a unit attribute.
+/// A callback handed to the host (`el.addEventListener(type, f)` or
+/// `setTimeout(f, delay)`) that closure lifting specialised for its one call.
+/// On the `ctjs.call` it is a symbol reference to the callback, whose captures
+/// follow the event type or the delay among the call's arguments; on the
+/// callback's `ctjs.func` it is a unit attribute.
 /// Written by ClosureLifting/HostCallbacks.cpp and read by type inference,
 /// admission and the lowering.
 inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callback";
+/// Marks such a call as `setTimeout(f, delay)`, since the lowering replaces
+/// the `setTimeout` load the call was recognised by before the call itself.
+inline constexpr llvm::StringLiteral kNativeHostTimer = "ctnative.host_timer";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

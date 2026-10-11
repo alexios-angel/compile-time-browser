@@ -201,6 +201,15 @@ std::string elementSpanSpelling(mlir::Type type) {
 bool isPageGlobal(mlir::Operation * o) {
     auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o);
     if (!load || load.getResult().use_empty()) { return false; }
+    // setTimeout only to call it with a callback closure lifting specialised
+    // (HostCallbacks.cpp): the call lowers to ctnative::setTimeout.
+    if (load.getName() == "setTimeout") {
+        return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+            return use.getOperandNumber() == 0 &&
+                   TypeInference::isHostCallbackCall(use.getOwner()) &&
+                   TypeInference::isTimerCall(use.getOwner());
+        });
+    }
     if (load.getName() == "getComputedStyle") {
         return TypeInference::isRealmGlobal(load, load.getName()) &&
                llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {

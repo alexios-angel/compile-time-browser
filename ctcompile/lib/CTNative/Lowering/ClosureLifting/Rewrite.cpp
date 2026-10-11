@@ -25,6 +25,7 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeTableField);
         op->removeAttr(kNativeArrayCallback);
         op->removeAttr(kNativeHostCallback);
+        op->removeAttr(kNativeHostTimer);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,

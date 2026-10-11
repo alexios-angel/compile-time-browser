@@ -1,14 +1,16 @@
-//===- HostCallbacks.cpp - Emission of listeners handed to the host -------===//
+//===- HostCallbacks.cpp - Emission of callbacks handed to the host -------===//
 //
-// Spells an `el.addEventListener(type, f)` call closure lifting specialised for
-// its listener with its JavaScript name and the lifted listener bound to
-// copies of its captures:
+// Spells an `el.addEventListener(type, f)` or `setTimeout(f, delay)` call
+// closure lifting specialised for its callback with its JavaScript name and
+// the lifted callback bound to copies of its captures:
 //
 //   ctnative::EventTarget.prototype.addEventListener.call(el, type,
 //                                                         std::bind_front(listener, label))
+//   ctnative::setTimeout(std::bind_front(handler, label), delay)
 //
-// or the bare listener when it captures nothing. The runtime's listener table
-// (Runtime/Events.hpp) owns the bound callable from then on.
+// or the bare callback when it captures nothing. The runtime's listener table
+// (Runtime/Events.hpp) or timer table (Runtime/Timers.hpp) owns the bound
+// callable from then on.
 //
 //===----------------------------------------------------------------------===//
 
@@ -32,11 +34,17 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
         llvm::append_range(captured, call.getArgs().drop_front());
         bound = callValue(b, where, any, "std::bind_front", captured);
     }
-    const mlir::Value operands[] = {lowering::cellPlace(b, where, call.getReceiver()),
-                                    call.getArgs().front(), bound};
-    callWithConstValueOperands(
-        b, where, mlir::TypeRange{},
-        b.getStringAttr("ctnative::EventTarget.prototype.addEventListener.call"), operands);
+    if (TypeInference::isTimerCall(call)) {
+        const mlir::Value operands[] = {bound, call.getArgs().front()};
+        callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                   b.getStringAttr("ctnative::setTimeout"), operands);
+    } else {
+        const mlir::Value operands[] = {lowering::cellPlace(b, where, call.getReceiver()),
+                                        call.getArgs().front(), bound};
+        callWithConstValueOperands(
+            b, where, mlir::TypeRange{},
+            b.getStringAttr("ctnative::EventTarget.prototype.addEventListener.call"), operands);
+    }
     lowering::eraseIfUnused(o);
     return true;
 }
