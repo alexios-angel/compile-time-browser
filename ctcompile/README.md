@@ -1,54 +1,95 @@
-# ctcompile 0.1.0 — developer preview
+# ctcompile 0.1.0 (alpha)
 
-ctcompile packages ctbrowser applications and develops a native C++ backend for
-JavaScript. These are currently two separate workflows:
+ctcompile does two separate jobs:
 
-| Tool | What it produces today |
+| Tool | What you get |
 | --- | --- |
-| `ctcompile` | An application bundle or launcher executable containing HTML, resources and precompiled JavaScript bytecode. JavaScript still runs in the ctbrowser VM. |
-| `ctjs-translate` + `ctjs-opt` | C++ for a proved JavaScript subset, with ordinary C++ ownership and no Script/VM dependency in native output. Unsupported functions receive diagnostics. |
+| `ctjs-translate` and `ctjs-opt` | The **JavaScript-to-C++ compiler**. They turn JavaScript into C++23 that uses ordinary C++ ownership and needs no VM. Anything they can't prove gets a compile-time diagnostic instead of code. |
+| `ctcompile` | The **app packager**. It bundles a page's HTML, resources and precompiled JavaScript bytecode into one executable or `.ctapp` file. The JavaScript in a packaged app still runs in ctbrowser's VM. |
 
-The native application driver and full native Bootstrap execution remain
-unfinished. Packaging does not yet compile HTML into a document blueprint or
-CSS into a style program; those are plan items. HTML/CSS parsing, layout and
-rendering remain runtime work. See the [release notes](docs/release-0.1.0.md)
-for the preview's limits and validation status.
+The two aren't connected yet. Packaging an app doesn't send its scripts through
+the native compiler, and the packager doesn't precompile HTML or CSS either.
+Both of those are on the plan, and neither is in this release.
+
+## How the native compiler works
+
+The input is ordinary JavaScript; you don't add type annotations. ctcompile
+imports the script into `ctjs`, an MLIR dialect that models JavaScript
+faithfully. Passes then try to prove facts about it:
+
+- what type each value has;
+- which function each call reaches;
+- who owns each object and when it dies;
+- what each call into the browser reads and writes.
+
+Every function those proofs cover is lowered to the `ctnative` dialect, then to
+MLIR's EmitC, and is finally printed as C++.
+
+The result looks like code a person would write. Numbers are doubles, strings
+are string values, arrays are `std::vector`s, objects with a fixed shape become
+structs, JavaScript classes become C++ classes, and a callback whose target
+is known becomes a direct call. DOM calls go straight into ctbrowser's C++
+libraries.
+
+The main rule is that **there is no fallback**. The native output never
+links the VM or a garbage collector. If a function can't be proved, it's
+refused, and the refusal names the function and the reason. Some examples:
+
+- "parameter 0 is boxed - no caller proves it"
+- "an object literal that escapes - it is returned"
+- "the callback of Array.prototype.forEach captures binding 0, which is written
+  after it is captured"
+
+A program counts as native only when nothing in it is refused.
+
+Correctness is checked by comparison. Most native tests run a script in
+ctbrowser's VM, compile the same script to C++, build it with GCC and with
+Clang, run both binaries, and require identical output.
+
+### What works and what doesn't
+
+Small programs and focused test pages compile completely. The project's yardstick
+is Bootstrap 5.3.8's JavaScript bundle, which is a real, minified library full
+of classes, closures, event handlers and DOM access. On this release, 21 of its
+574 functions compile natively. The rest are refused, each with a reason. Work
+on development branches gets further than that, but it hasn't been validated
+for release yet.
+
+Expect plenty of refusals on your own code. Arbitrary host APIs, many
+exception and iterator patterns, and dynamic code are out of reach for now. If
+a module comes out only partly lowered, it isn't a native program.
 
 ## Build and install
 
-Build on a sufficiently provisioned build host, from the monorepo root.
-Contributors using the shared devbox follow [CLAUDE.md](../CLAUDE.md).
-
 Requirements:
 
-- CMake 3.23+ (the engine uses header file sets), Ninja, a C++23 compiler and
-  initialized submodules.
-- LLVM **23**, tested with **23.1.0**, including `llvm-tblgen`. LLVM is required
-  even when MLIR is disabled. Native tools also require matching MLIR libraries,
-  headers and `mlir-tblgen`; other LLVM major versions are refused at configure.
-- ctbrowser dependencies: Boost 1.88+ with Boost.URL, libcurl, libpng/zlib,
-  libjpeg-turbo, simdutf, and mimalloc (or `-DCTBROWSER_USE_MIMALLOC=OFF`).
-  ctbrowser's tools, `ctrun` among them, and the tests also need
+- CMake 3.23 or newer, Ninja, a C++23 compiler and initialized submodules.
+- LLVM **23** (tested with **23.1.0**), including `llvm-tblgen`. LLVM is needed
+  even with the native compiler switched off. The native compiler also needs
+  the matching MLIR libraries, headers and `mlir-tblgen`. Other LLVM major
+  versions are refused at configure time.
+- The ctbrowser dependencies: Boost 1.88 or newer with Boost.URL, libcurl,
+  libpng and zlib, libjpeg-turbo, simdutf, and mimalloc (or
+  `-DCTBROWSER_USE_MIMALLOC=OFF`). The `ctrun` launcher and the tests also need
   Boost.ProgramOptions.
-- SDL3 for a windowed launcher; without it the launcher runs headlessly.
-  SDL3_ttf enables outline fonts, and plutosvg/plutovg enable SVG rendering.
-  [tools/Brewfile](../tools/Brewfile) records the development dependencies.
+- Optionally, SDL3 for a windowed launcher (it runs headlessly without it),
+  SDL3_ttf for outline fonts, and plutosvg/plutovg for SVG.
+  [tools/Brewfile](../tools/Brewfile) lists them all.
 
-Set the two prefixes to your installed dependencies. With Homebrew they are
-`brew --prefix` and `brew --prefix llvm`, respectively; check the LLVM version
-before configuring. The direct CMake command uses the system compiler; set
-`CXX` to select another C++23 compiler.
+With Homebrew, the two prefixes below are `brew --prefix` and
+`brew --prefix llvm`. Check that the LLVM version is 23 first. CMake uses your
+system compiler unless you set `CXX`.
 
 ```bash
 git submodule update --init --recursive
-ctcompile_deps_prefix=/path/to/dependencies
-ctcompile_llvm_prefix=/path/to/llvm-23.1.0
+deps=/path/to/dependencies
+llvm=/path/to/llvm-23.1.0
 cmake -S ctbrowser -B build-release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_SHARED_LIBS=OFF \
-  -DCMAKE_PREFIX_PATH="$ctcompile_deps_prefix" \
-  -DLLVM_DIR="$ctcompile_llvm_prefix/lib/cmake/llvm" \
-  -DMLIR_DIR="$ctcompile_llvm_prefix/lib/cmake/mlir" \
+  -DCMAKE_PREFIX_PATH="$deps" \
+  -DLLVM_DIR="$llvm/lib/cmake/llvm" \
+  -DMLIR_DIR="$llvm/lib/cmake/mlir" \
   -DCTBROWSER_ENABLE_PROJECTS=ctcompile \
   -DCTCOMPILE_ENABLE_MLIR=ON \
   -DCTBROWSER_BUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF
@@ -58,64 +99,35 @@ cmake --install build-release --prefix "$PWD/install" --component ctcompile-tool
 install/bin/ctcompile --version
 ```
 
-For packaging only, use `-DCTCOMPILE_ENABLE_MLIR=OFF`, omit `MLIR_DIR`, and build
-only `ctcompile-tool` and `ctbrowser-tool-ctrun`. The install component contains
-the compiler tools and, in a monorepo build, the matching `ctrun` launcher.
-It does not bundle external shared libraries, fonts or a compiler development
-SDK. Installed tools and packaged executables retain their host library
-requirements; this is not a portable binary distribution.
-If ANGLE was fetched, its libraries remain at `third-party/angle/linux-x86_64`
-in the checkout and that path is retained by the installation. Keep that
-directory, or configure with `-DCTBROWSER_WITH_ANGLE=OFF` to omit WebGL support.
-Moving a packaged executable to another machine requires matching host libraries.
+If you only want the packager, use `-DCTCOMPILE_ENABLE_MLIR=OFF`, leave out
+`MLIR_DIR`, and build just `ctcompile-tool` and `ctbrowser-tool-ctrun`.
 
-Standalone configuration against an installed engine is also supported. Using
-the dependency prefixes above and the engine's installation prefix:
+The install isn't a portable binary distribution. It doesn't bundle shared
+libraries or fonts, and a packaged app needs the same libraries on whatever
+machine runs it. If ANGLE was fetched, the installed tools keep pointing at
+`third-party/angle/linux-x86_64` in your checkout. Keep that directory, or
+configure with `-DCTBROWSER_WITH_ANGLE=OFF` to build without WebGL.
+
+You can also build ctcompile on its own against an installed engine:
 
 ```bash
 cmake -S ctcompile -B build-ctcompile -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
-  -DCMAKE_PREFIX_PATH="$ctcompile_deps_prefix" \
+  -DCMAKE_PREFIX_PATH="$deps" \
   -Dctbrowser_DIR=/path/to/engine/lib/cmake/ctbrowser \
-  -DLLVM_DIR="$ctcompile_llvm_prefix/lib/cmake/llvm"
+  -DLLVM_DIR="$llvm/lib/cmake/llvm"
 cmake --build build-ctcompile --target ctcompile-tool
 ```
 
-Add the MLIR options above and build `ctjs-opt` and `ctjs-translate` for native
-tools. Keep `BUILD_TESTING=OFF`: the regression suite uses the monorepo's test
-support and browser tools. A standalone compiler build does not build `ctrun`;
-supply a matching launcher with `--launcher` or use `--bundle`.
+For the native tools, add the MLIR options from the first command and build
+`ctjs-opt` and `ctjs-translate`. Keep `BUILD_TESTING=OFF` here, since the tests
+need the rest of the monorepo. A standalone build doesn't include `ctrun`, so
+either pass a launcher with `--launcher` or produce a bundle with `--bundle`.
 
-## Package an application
+## Compile JavaScript to C++
 
-This example uses the repository's small packaging fixture. Replace its path
-with your application directory; the default entry is `index.html`.
-
-```bash
-install/bin/ctcompile ctcompile/test/Packaging/app \
-  --fonts "$PWD/ctbrowser/resources/fonts" \
-  --manifest "$PWD/example-app.json" -o "$PWD/example-app"
-./example-app --info
-./example-app
-```
-
-For a separate bundle, add `--bundle -o example.ctapp`, then run
-`install/bin/ctrun example.ctapp`. Use `--entry page.html` for a different entry
-page. `ctcompile --help` lists the other options.
-
-Packaging executes the page to discover its scripts and resources. It stops
-after requests settle, with a 60-frame ceiling; resources requested only by
-later interactions can be absent. The packaged resource registry is sealed.
-Check warnings about missing resources or fallback fonts, and exercise the
-packaged application's actual interactions. Module scripts are currently
-refused. Classic scripts are stored as bytecode, and the launcher refuses a
-startup that would silently recompile them from source.
-
-## Compile a small native program
-
-The following source uses the native scalar subset. Run this from the checkout
-after installing the MLIR tools above. The generated program prints its global
-observations; this is the native development entry point, not a browser app.
+Here's the smallest example, run from the checkout after installing the tools
+above:
 
 ```bash
 mkdir -p native-example
@@ -135,20 +147,46 @@ c++ -std=c++23 -O2 -Wall -Wextra -Werror -pedantic -Wconversion \
 ./native-example/answer
 ```
 
-Expected output: `answer=42`. Keep `-ffp-contract=off` for JavaScript numeric
-semantics. More complex native output may require public ctbrowser subsystem
-libraries; browser APIs must call those libraries directly. An unproved type,
-ownership or host effect remains a compile-time refusal. The boxed EmitC
-pipeline is a separate development backend and retains a VM dependency.
+It prints `answer=42`. The program prints its global variables when it
+finishes, because this is the compiler's development entry point rather than a
+browser app. `answer.cpp` is worth opening to see what came out.
 
-## Development status
+Keep `-ffp-contract=off`. Without it, the C++ compiler may fuse floating-point
+operations and get answers JavaScript wouldn't. Bigger programs that touch the
+DOM also need ctbrowser's public libraries on the link line.
 
-[HANDOFF.md](docs/HANDOFF.md) records current measured native progress and the
-next boundary. The [Bootstrap Data probe](docs/bootstrap-data-probe.md)
-describes the application-derived scope. [Native optimization defaults](docs/native-optimization-defaults.md)
-documents the two default optimizations; the [optimization roadmap](docs/native-pe-roadmap.md)
-tracks opt-in work. See the [source layout](docs/source-layout.md) and
-[focused test instructions](test/README.md) for development.
+## Package an app
 
-The monorepo is licensed under [Apache-2.0](../LICENSE); see [NOTICE](../NOTICE)
-for third-party notices.
+This uses the small app in the test directory. Point it at your own app
+directory instead; the entry page defaults to `index.html`.
+
+```bash
+install/bin/ctcompile ctcompile/test/Packaging/app \
+  --fonts "$PWD/ctbrowser/resources/fonts" \
+  --manifest "$PWD/example-app.json" -o "$PWD/example-app"
+./example-app --info
+./example-app
+```
+
+To get a separate bundle instead, add `--bundle -o example.ctapp`, then run it
+with `install/bin/ctrun example.ctapp`. `--entry page.html` picks a different
+entry page, and `ctcompile --help` lists everything else.
+
+The packager finds an app's scripts and resources by actually running the
+page. It stops once network requests settle, or after 60 frames at most, so
+anything a page only loads after a click can be missed. Read the warnings about
+missing resources and fallback fonts, and click through the packaged app
+yourself. Module scripts aren't supported yet. Classic scripts are stored as
+bytecode, and the launcher refuses to start rather than quietly recompile them
+from source.
+
+## Development
+
+Tests live in [test/](test/README.md). Treat the compiler's flags, its MLIR
+dialects, the generated C++ and the packaged file formats as unstable in this
+release; any of them can change. Build the packager and the launcher together
+from the same tree.
+
+ctcompile is part of the monorepo and shares its license,
+[Apache-2.0 with LLVM Exceptions](../LICENSE). Third-party notices are in
+[NOTICE](../NOTICE).

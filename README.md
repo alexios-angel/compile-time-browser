@@ -1,79 +1,127 @@
 # compile-time-browser
 
-This repository contains a browser engine and an experimental application
-compiler, written in C++23.
+A browser engine written from scratch in C++23, and a compiler that turns
+JavaScript into plain C++.
 
-- **ctbrowser** parses HTML and CSS, runs JavaScript, and renders pages in a
-  window or without a display. You can embed it in a C++ application or open
-  local pages with the `ctbrowse` program.
-- **ctcompile** packages applications with their resources and JavaScript
-  bytecode. Its native compiler tools can also turn a proved subset of
-  JavaScript into C++ with ordinary ownership and no VM or garbage collector.
-  The packager still runs JavaScript in the browser's VM.
+This is an **alpha**. A lot works, a lot doesn't, and the interfaces will
+change. It's here so people can poke at it, not so they can ship on it.
 
-ctcompile 0.1.0 is a developer preview. The native application driver and full
-native Bootstrap execution are unfinished. See the [compiler README](ctcompile/README.md)
-for examples and the [release notes](ctcompile/docs/release-0.1.0.md) for its
-current limits.
+The repository holds two projects:
 
-## Build
+- **ctbrowser**, the browser engine. It parses HTML and CSS, runs JavaScript in
+  its own VM, lays out and paints pages, and draws them in an SDL3 window or
+  headlessly. You can open local pages with `ctbrowse` or embed the whole thing
+  in a C++ program.
+- **ctcompile**, the compiler. Its headline feature is a **JavaScript-to-C++
+  transcompiler**: it reads ordinary JavaScript and writes C++23 that you build
+  with GCC or Clang. The output has no VM, no garbage collector and no runtime
+  interpreter behind it. ctcompile can also package a web app, with its HTML,
+  resources and precompiled bytecode, into a single executable.
 
-You'll need CMake 3.23 or later, Ninja, and a C++23 compiler. The engine depends
-on Boost 1.88 or later with Boost.URL, libcurl, libpng/zlib, libjpeg-turbo,
-simdutf, and mimalloc. Use `-DCTBROWSER_USE_MIMALLOC=OFF` to use the system
-allocator instead. The command-line tools and the tests also need
-Boost.ProgramOptions. [tools/Brewfile](tools/Brewfile) lists the development
-packages.
+## The JavaScript-to-C++ compiler
 
-ctcompile requires LLVM 23, including its headers, libraries and `llvm-tblgen`,
-even when the native pipeline is disabled. The tested version is 23.1.0.
+Most ways of getting JavaScript into a native binary bundle an engine with the
+script. ctcompile does something else. It tries to prove what each function
+does: the type of every value, who owns every object, and what every call to
+the browser touches. Then it writes C++ that does the same thing with ordinary
+values, `std::vector`s, structs, classes and RAII.
 
-Run these commands from the repository root, replacing the two prefixes with
-your dependency locations. CMake uses the system compiler; set `CXX` to choose
-another one.
+If it can't prove something, it doesn't fall back to a slow path or tuck a
+garbage collector under the code. It stops and tells you which function it
+refused and why, as a compile-time error. A program is native only when every
+function in it is.
+
+The pipeline goes JavaScript, then an MLIR dialect for JavaScript (`ctjs`),
+then a typed native dialect (`ctnative`), then MLIR's EmitC, then C++. It
+covers numbers, strings, arrays, objects with a fixed shape, classes,
+closures and callbacks, `Map`s, and calls into the browser's DOM, which go
+straight to ctbrowser's C++ libraries. The tests check it the hard way: the
+generated program is built with both GCC and Clang, run, and its output
+compared with what the VM prints for the same script.
+
+How far it gets today: small programs and test pages compile completely. The
+target I'm working towards is Bootstrap 5.3's JavaScript bundle, and that is
+far from done. On this release, 21 of the bundle's 574 functions compile
+natively and the rest are refused with reasons. Much more is in progress on
+development branches.
+
+[ctcompile/README.md](ctcompile/README.md) shows how to compile a small
+program yourself.
+
+## The browser
+
+ctbrowser doesn't wrap Chromium, WebKit or Gecko. The parser, style system,
+layout, rasterizer and JavaScript VM are all written for this project, with
+the JavaScript parser coming from its sibling project,
+[compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript).
+
+Some numbers, measured in September 2026:
+
+- **test262:** 47,425 of the 49,377 tests that ran pass (96.0%).
+- **web-platform-tests, `css/`:** 1,596 of 2,926 runnable files pass, with
+  70,328 passing subtests.
+
+It runs real libraries. p5.js 2.3.1, Phaser 4.2.1, Babylon.js 9.18.2 and
+Bootstrap 5.3.8 are in the test corpora, and regression checks track specific
+behavior in each one. "Runs" is doing some work in that sentence: support for
+each library is partial and still growing. Pages are painted by a software tile
+rasterizer, and WebGL goes through ANGLE when it's available.
+
+## Building
+
+You need CMake 3.23 or newer, Ninja, and a C++23 compiler. The engine depends
+on Boost 1.88 or newer (with Boost.URL), libcurl, libpng and zlib,
+libjpeg-turbo, simdutf and mimalloc. Pass `-DCTBROWSER_USE_MIMALLOC=OFF` to use
+the system allocator instead. The command-line tools and the tests also want
+Boost.ProgramOptions. [tools/Brewfile](tools/Brewfile) lists everything I use
+for development.
+
+ctcompile needs LLVM 23, including its headers, libraries and `llvm-tblgen`,
+even if you never use the native compiler. It's tested against 23.1.0, and
+other major versions are refused at configure time.
+
+From the repository root, with your own dependency paths:
 
 ```bash
 git submodule update --init --recursive
-ctcompile_deps_prefix=/path/to/dependencies
-ctcompile_llvm_prefix=/path/to/llvm-23.1.0
+deps=/path/to/dependencies
+llvm=/path/to/llvm-23.1.0
 cmake -S ctbrowser -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH="$ctcompile_deps_prefix" \
-  -DLLVM_DIR="$ctcompile_llvm_prefix/lib/cmake/llvm" \
+  -DCMAKE_PREFIX_PATH="$deps" \
+  -DLLVM_DIR="$llvm/lib/cmake/llvm" \
   -DCTBROWSER_ENABLE_PROJECTS=ctcompile
 cmake --build build
 ```
 
-This builds the browser and bytecode packager. For the engine alone, set
-`-DCTBROWSER_ENABLE_PROJECTS=` and omit `LLVM_DIR`; the engine doesn't need LLVM.
-To build the native compiler tools, add `-DCTCOMPILE_ENABLE_MLIR=ON` and point
-`MLIR_DIR` at the matching MLIR package. The
-[compiler build instructions](ctcompile/README.md#build-and-install) cover
-installation and standalone builds against an installed engine.
+That builds the browser and the app packager. A few variations:
 
-[SDL3](https://libsdl.org) enables windows; without it, the browser runs
-headlessly. [SDL3_ttf](https://github.com/libsdl-org/SDL_ttf) enables outline
-fonts, with the public-domain [font8x8](https://github.com/dhepper/font8x8)
-bitmap text as the fallback. SVG rendering needs plutosvg. WebGL uses ANGLE
-when it has been fetched and enabled; see the
-[platform notes](ctbrowser/docs/platform.md) for setup and rendering details.
+- **Just the engine:** set `-DCTBROWSER_ENABLE_PROJECTS=` and leave out
+  `LLVM_DIR`. The engine itself doesn't need LLVM.
+- **The JavaScript-to-C++ compiler:** add `-DCTCOMPILE_ENABLE_MLIR=ON` and
+  point `MLIR_DIR` at the MLIR that matches your LLVM. The
+  [compiler README](ctcompile/README.md#build-and-install) has the full
+  command.
+- **A window:** [SDL3](https://libsdl.org) gives you one. Without it the
+  browser runs headlessly. [SDL3_ttf](https://github.com/libsdl-org/SDL_ttf)
+  adds outline fonts (otherwise you get the public-domain
+  [font8x8](https://github.com/dhepper/font8x8) bitmap font), and plutosvg adds
+  SVG.
 
-CMake presets live in `ctbrowser/` and require CMake 3.25 or later. The Linux
-presets select a development compiler under `tools/clang-std-embed/`. To use
-an installed compiler, pass `-DCMAKE_CXX_COMPILER="$(command -v c++)"` when
-configuring a preset. Windows cross-build instructions are in the
-[platform notes](ctbrowser/docs/platform.md); which DLLs need to ship depends
-on the libraries enabled in that build.
+The CMake presets in `ctbrowser/` need CMake 3.25. The Linux presets pick a
+development compiler from `tools/clang-std-embed/`. If you'd rather use the one
+you have, add `-DCMAKE_CXX_COMPILER="$(command -v c++)"`.
 
-## Open a page
+Linux is the main platform. A Windows build cross-compiles with llvm-mingw, but
+it gets less attention.
 
-After building, run:
+## Opening a page
 
 ```bash
 build/tools/ctbrowse/ctbrowse ctbrowser/examples/pages/widgets.html
 ```
 
-To render a fixed number of frames and save a PPM screenshot without a display:
+Or render 30 frames without a display and save a screenshot:
 
 ```bash
 SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
@@ -81,14 +129,15 @@ SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
   --size 900 700 --frames 30 --shot out.ppm
 ```
 
-The [example pages](ctbrowser/examples/pages) exercise forms, canvas, images
-and scripting. The [test corpora](ctbrowser/vendor/README.md) include p5.js 2.3.1,
-Phaser 4.2.1, Babylon.js 9.18.2 and Bootstrap 5.3.8. Their regression checks
-track specific behavior; support for a library is still a work in progress.
+There are more pages in [ctbrowser/examples/pages](ctbrowser/examples/pages):
+forms, canvas, images, scripting and the library demos. If you just want to see
+something run without building, there are
+[prebuilt Linux examples](https://github.com/alexios-angel/compile-time-browser/releases/tag/examples-linux-x64)
+from July 2026. They're older than this release, but they do run.
 
-## Embed the browser
+## Embedding the browser
 
-Include `<ctbrowser.hpp>` and link against `ctbrowser::ctbrowser`:
+Include `<ctbrowser.hpp>` and link `ctbrowser::ctbrowser`:
 
 ```cpp
 #include <ctbrowser.hpp>
@@ -114,52 +163,48 @@ int main() {
 }
 ```
 
-`run_app` owns the window, event loop, frame pacing and cleanup. Applications
-can set `app_options::max_fps` to limit redraws while a page is changing.
-See [counter.cpp](ctbrowser/examples/demos/counter.cpp) for a styled example.
+`run_app` takes care of the window, the event loop, frame pacing and cleanup.
+Set `app_options::max_fps` if you want to cap redraws while the page is
+changing. [counter.cpp](ctbrowser/examples/demos/counter.cpp) is the same idea
+with some styling.
 
-The engine is split into DOM, style, layout, paint, raster, script, shell and
-application libraries, with shared utilities in Core. Page rendering uses a
-software tile rasterizer. The shell provides browser APIs such as forms,
-canvas and `fetch`; the JavaScript VM handles script execution. Public headers
-live under `ctbrowser/include/ctbrowser/`, and implementations under
-`ctbrowser/lib/`. The [architecture guide](ctbrowser/docs/architecture.md)
-explains the boundaries.
+The engine is split into libraries for the DOM, style, layout, paint, raster,
+script, shell and app layers, plus shared utilities in Core. Public headers are
+in `ctbrowser/include/ctbrowser/` and the implementations in `ctbrowser/lib/`.
 
-## Development and tests
+## Tests
 
-Tests cover individual subsystems, application packaging, compiler behavior
-and rendered output. The browser also has runners for
-[web-platform-tests](ctbrowser/docs/wpt.md) and [test262](ctbrowser/docs/test262.md).
-Those documents record dated measurements and known gaps.
+There are tests for each subsystem, for app packaging, for the compiler, and
+for rendered output, plus runners for test262 and web-platform-tests. To see
+what your build registered:
 
-List the tests registered in your build with `ctest --test-dir build -N`.
-Follow the [focused test policy](CLAUDE.md#build--test) when selecting checks.
-Contributors using the shared devbox should read [CLAUDE.md](CLAUDE.md) before
-editing or building; it covers synchronization, build locks and validation.
+```bash
+ctest --test-dir build -N
+```
 
-Run `tools/format.sh --check` before committing. Render tests compare images
-with the files in `ctbrowser/test/golden/`; `CTBROWSER_FONTS=font8x8` fixes the
-font choice for repeatable comparisons. If you regenerate a golden with
-`REGOLDEN=1`, inspect the image before accepting it.
+The full suite is big. Run the tests for the part you changed.
 
-The [browser documentation](ctbrowser/docs/README.md) covers profiling,
-packaging checks and subsystem behavior. The [compiler handoff](ctcompile/docs/HANDOFF.md)
-records the latest native work and its next boundary.
+Render tests compare screenshots against `ctbrowser/test/golden/`. Setting
+`CTBROWSER_FONTS=font8x8` pins the font so the images come out the same
+everywhere. If you regenerate a golden with `REGOLDEN=1`, look at the image
+before you keep it. Before committing, run `tools/format.sh --check`.
 
-## History and credits
+## Where this came from
 
-The original engine parsed pages during C++ constant evaluation. It was
-retired in July 2026; the current browser parses pages at runtime. The
-[retirement notes](ctbrowser/docs/history/v1-retirement.md) explain the change
-and what remains in Git history.
+The name is historical. The first version of the engine parsed pages while the
+C++ compiler was running, as constant evaluation, so one HTML string compiled
+straight into the application. That design hit its limits and was retired in
+July 2026, and the browser now parses at runtime like any other. The compiler
+half of the project is where the "compile time" idea lives on.
 
+Sibling projects:
 [compile-time-javascript](https://github.com/alexios-angel/compile-time-javascript)
-supplies the JavaScript parser. Its older interpreter, retained for differential
-testing, uses [compile-time-containers](https://github.com/alexios-angel/compile-time-containers).
-[compile-time-css](https://github.com/alexios-angel/compile-time-css) remains a
-comparison implementation for an optional benchmark; the browser has its own
-CSS parser.
+provides the JavaScript parser. Its older interpreter, still used for
+differential testing, is built on
+[compile-time-containers](https://github.com/alexios-angel/compile-time-containers).
+[compile-time-css](https://github.com/alexios-angel/compile-time-css) stays
+around as a comparison point for one optional benchmark; the browser has its
+own CSS parser.
 
 Third-party libraries, fonts and test corpora are credited in [NOTICE](NOTICE).
 
