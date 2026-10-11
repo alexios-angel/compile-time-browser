@@ -12,6 +12,7 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
@@ -91,7 +92,10 @@ enum class carrier {
     /// An ordinary script's getBoundingClientRect answer (Runtime/Page.hpp).
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
-    computedStyle
+    computedStyle,
+    /// An object used as a table, std::shared_ptr<ctnative::dictionary<V>>
+    /// (Runtime/Dictionary.hpp), spelled by dictionarySpelling.
+    dictionary
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -159,8 +163,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::tupleVector, ""},
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
+    {carrier::dictionary, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::computedStyle) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::dictionary) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -275,6 +280,9 @@ bool mapNeedsNullableString(MapType type);
 bool mapNeedsNullableStringKey(MapType type);
 bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
+/// The C++ type of a table with values of `type`'s element type:
+/// std::shared_ptr<ctnative::dictionary<V>>, V the value's carrier.
+std::string dictionarySpelling(DictType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);

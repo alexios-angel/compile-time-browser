@@ -382,6 +382,21 @@ def CTNative_MapType : CTNative_Type<"Map", "map"> {
   let assemblyFormat = "`<` $keyType `,` $valueType `>`";
 }
 
+def CTNative_DictType : CTNative_WrapperType<"Dict", "dict", (ins "::mlir::Type":$elementType)> {
+  let summary = "`std::shared_ptr<ctnative::dictionary<V>>` - an object used as a table";
+  let description = [{
+    An object literal that a program uses only as a string-keyed table:
+    every key may be computed, every value has the one type V, and the
+    object is otherwise only deleted from, tested with `in` or enumerated.
+    Bootstrap's EventHandler keeps its listener registry this way. The
+    proof is prepareNativeDictionaries (Analysis/NativeDictionary.h); the
+    type records its conclusion, the value type V, which is the element
+    type here. A dictionary is an object, so a value of this type is a
+    reference to one table, never a copy. Two dictionaries meet value type
+    by value type, like the other one-element containers.
+  }];
+}
+
 def CTNative_SetType : CTNative_WrapperType<"Set", "set", (ins "::mlir::Type":$elementType)> {
   let summary = "`std::unordered_set<T>` - a JavaScript `Set`";
   let description = [{

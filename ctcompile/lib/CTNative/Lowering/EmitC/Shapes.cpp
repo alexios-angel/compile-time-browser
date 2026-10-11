@@ -177,6 +177,8 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) {
                 return;
             }
+            // A table is a dictionary, not a struct (EmitC/Dictionaries.cpp).
+            if (isNativeDictionarySite(object)) { return; }
             const auto fields = fieldsOf(object.getResult());
             std::string nameKey; // the family key: just the names
             std::string typeKey; // the instantiation key: names AND types

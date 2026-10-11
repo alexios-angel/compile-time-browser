@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
+#include "Dictionaries.h"
 #include "Emitter.h"
 #include "Vectors.h"
 #include "ctcompile/Support/CppLiterals.hpp"
@@ -155,6 +156,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     };
 
     if (replaceMap(o)) { return; }
+    if (replaceDictionary(*this, o)) { return; }
     if (replaceIdentityField(o)) { return; }
     if (replaceStringValue(o)) { return; }
     if (replaceStringArray(*this, o)) { return; }

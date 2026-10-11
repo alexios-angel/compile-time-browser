@@ -286,6 +286,11 @@ public:
         unsigned arity;    ///< How many of `params` the method takes.
         unsigned required; ///< How many of them a call must pass.
     };
+    /// The type of an operation of a proved dictionary (Analysis/
+    /// NativeDictionary.h), or null when `op` is not one or answers nothing
+    /// (Inference/Dictionaries.cpp).
+    mlir::Type dictionaryType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+
     /// The row of the built-in statics table (Inference/BuiltinStatics.cpp)
     /// that `op` calls, or null. The table is the one place built-in statics
     /// are recognised; a new one is a row there plus its runtime member.

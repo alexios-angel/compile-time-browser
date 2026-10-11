@@ -16,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Handlers.hpp"
 
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "check.hpp"
@@ -89,6 +90,38 @@ void test_a_nested_table_is_shared() {
     CHECK(*(*registry->get("1"))->get("click") == 7);
 }
 
+void test_generated_table_operations() {
+    using ctnative::js_num;
+    using ctnative::js_string;
+    const auto o = ctnative::make_dictionary<js_num>();
+    // ToPropertyKey: the Number 7 and the String "7" are one key.
+    ctnative::dictionary_set(o, js_num{7.0}, js_num{1.0});
+    ctnative::dictionary_set(o, js_string{"7"}, js_num{2.0});
+    CHECK(o->size() == 1);
+    const ctnative::nullable_scalar seven = ctnative::dictionary_get(o, js_num{7.0});
+    CHECK(seven.tag == ctnative::nullable_scalar::kind::number && seven.value == 2.0);
+    CHECK(ctnative::property_key(js_num{-0.0}) == "0");
+    CHECK(ctnative::property_key(js_num{1.5}) == "1.5");
+    // A missing key reads undefined.
+    CHECK(ctnative::dictionary_get(o, js_string{"x"}).tag ==
+          ctnative::nullable_scalar::kind::undefined);
+    // A read under `toString` the table lacks stops the program (it would be
+    // a function); the compiler refuses reads it cannot prove are not one.
+    // `in` sees Object.prototype's keys; `__proto__ = primitive` makes nothing.
+    CHECK(static_cast<bool>(ctnative::dictionary_has(o, js_string{"constructor"})));
+    CHECK(!static_cast<bool>(ctnative::dictionary_has(o, js_string{"x"})));
+    ctnative::dictionary_set(o, js_string{"__proto__"}, js_num{3.0});
+    CHECK(o->size() == 1);
+    CHECK(static_cast<bool>(ctnative::dictionary_delete(o, js_num{7.0})));
+    CHECK(static_cast<bool>(ctnative::dictionary_delete(o, js_num{7.0})));
+    CHECK(o->size() == 0);
+    // A Number|String table reads either back.
+    const auto mixed = ctnative::make_dictionary<ctnative::number_string>();
+    ctnative::dictionary_set(mixed, js_string{"w"}, js_string{"10px"});
+    const ctnative::nullable_number_string w = ctnative::dictionary_get(mixed, js_string{"w"});
+    CHECK(std::holds_alternative<js_string>(w) && std::get<js_string>(w).value() == "10px");
+}
+
 void test_copies_of_a_function_are_the_same_function() {
     const auto make = [] { return ctnative::identify([](double v) { return v + 1; }); };
     const auto first = make();
@@ -107,6 +140,7 @@ int main() {
     test_only_canonical_indices_are_indices();
     test_overwrite_keeps_position_and_delete_moves_it();
     test_a_nested_table_is_shared();
+    test_generated_table_operations();
     test_copies_of_a_function_are_the_same_function();
     REPORT("native_handlers");
 }

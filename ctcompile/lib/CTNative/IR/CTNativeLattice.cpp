@@ -227,6 +227,7 @@ static Type mergeSameFamily(Type a, Type b) {
         return TupleType::get(context, elements);
     }
     if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
+    if (llvm::isa<DictType>(a)) { return mergeElements<DictType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);
         if (!mapB) { return Type(); }

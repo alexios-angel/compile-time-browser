@@ -18,16 +18,21 @@
 
 #include "Object.hpp"
 #include "String.hpp"
+#include "ctnative.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ctnative {
@@ -125,6 +130,112 @@ private:
 /// `{}` for a dictionary: a new, empty table, held by reference.
 template <class V> std::shared_ptr<dictionary<V>> make_dictionary() {
     return std::make_shared<dictionary<V>>();
+}
+
+// --- Generated code's table operations ---------------------------------------
+//
+// Generated code holds a dictionary through a std::shared_ptr and calls these
+// with the carriers of its keys and values; each is one JavaScript operation.
+
+/// ToPropertyKey (ECMA-262 7.1.19) of a String or Number key, as the text a
+/// dictionary keys by. Symbol keys are refused before code is generated.
+inline std::string property_key(const js_string & key) {
+    return key.value();
+}
+inline std::string property_key(js_num key) {
+    return ctbrowser::number_to_string(key.value());
+}
+inline std::string property_key(const number_string & key) {
+    return std::visit([](const auto & alternative) { return property_key(alternative); }, key);
+}
+
+/// Whether Object.prototype has an own property named `key` (ECMA-262 20.1.3
+/// and B.2.2), which a key absent from an ordinary object inherits. The
+/// compiler's copy of this list is admission::namesObjectPrototypeMember.
+inline bool object_prototype_key(std::string_view key) {
+    static constexpr std::string_view inherited[] = {
+        "constructor",      "hasOwnProperty",   "isPrototypeOf",    "propertyIsEnumerable",
+        "toLocaleString",   "toString",         "valueOf",          "__proto__",
+        "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__",
+    };
+    return std::ranges::find(inherited, key) != std::end(inherited);
+}
+
+/// The carrier a read of a dictionary with values V answers: V or undefined.
+template <class V> struct dictionary_read {};
+template <> struct dictionary_read<js_num> {
+    using type = nullable_scalar;
+};
+template <> struct dictionary_read<js_boolean_t> {
+    using type = nullable_scalar;
+};
+template <> struct dictionary_read<js_string> {
+    using type = nullable_string;
+};
+template <> struct dictionary_read<number_string> {
+    using type = nullable_number_string;
+};
+
+namespace detail {
+template <class Read> Read dictionary_read_of(const js_num & value) {
+    return Read{value};
+}
+template <class Read> Read dictionary_read_of(const js_boolean_t & value) {
+    return Read{value};
+}
+template <class Read> Read dictionary_read_of(const js_string & value) {
+    return Read{value.value()};
+}
+template <class Read> Read dictionary_read_of(const number_string & value) {
+    return to_nullable_number_string(value);
+}
+} // namespace detail
+
+/// `o[key]` (OrdinaryGet, ECMA-262 10.1.8): the own value, or undefined. A
+/// key the table lacks but Object.prototype has reads a function or an
+/// object there, which no V holds; the compiler proves the key is never one,
+/// and this stops the program if that proof is ever wrong.
+template <class V, class K>
+typename dictionary_read<V>::type dictionary_get(const std::shared_ptr<dictionary<V>> & o,
+                                                 const K & key) {
+    const std::string name = property_key(key);
+    if (const V * found = o->get(name)) {
+        return detail::dictionary_read_of<typename dictionary_read<V>::type>(*found);
+    }
+    if (object_prototype_key(name)) {
+        // The compiler admitted this read only for keys it proved are never
+        // such a name (Admission/Dictionaries.cpp). Stop rather than answer:
+        // no catch may carry on with a wrong undefined.
+        std::fprintf(stderr, "ctnative: a table read under `%s`, which Object.prototype answers\n",
+                     name.c_str());
+        std::abort();
+    }
+    return {};
+}
+
+/// `o[key] = value` (OrdinarySet, ECMA-262 10.1.9). Setting `__proto__` to a
+/// primitive goes to Object.prototype's setter, which ignores it (B.2.2.1.2),
+/// so no own property is made.
+template <class V, class K, class T>
+void dictionary_set(const std::shared_ptr<dictionary<V>> & o, const K & key, T && value) {
+    std::string name = property_key(key);
+    if (name == "__proto__") { return; }
+    o->set(name, V(std::forward<T>(value)));
+}
+
+/// `key in o` (HasProperty, ECMA-262 7.3.12): own, or inherited from
+/// Object.prototype.
+template <class V, class K>
+js_boolean_t dictionary_has(const std::shared_ptr<dictionary<V>> & o, const K & key) {
+    const std::string name = property_key(key);
+    return js_boolean_t{o->has(name) || object_prototype_key(name)};
+}
+
+/// `delete o[key]` (OrdinaryDelete): true, since every own property of a
+/// table is configurable and an absent one needs no removal.
+template <class V, class K>
+js_boolean_t dictionary_delete(const std::shared_ptr<dictionary<V>> & o, const K & key) {
+    return js_boolean_t{o->remove(property_key(key))};
 }
 
 } // namespace ctnative
