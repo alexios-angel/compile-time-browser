@@ -2,23 +2,28 @@
   "about": "tools/check/round-checks.py's mapping from changed paths to the focused checks that cover them. `prefixes`: a changed file under `path` selects these lit paths (relative to ctcompile/test; a trailing / means a directory), CTests (exact names), build targets and commands. The longest matching prefix wins, so a shared helper can be given a narrow entry under a broad one. A changed lit test or test helper under ctcompile/test with no entry selects itself (a test file) or its directory (a helper). `always` is added whenever anything is selected. `heavy` tests are left out of every selection (a negative lookahead in the filter) unless a changed file starts with one of their `when` prefixes; then they run with their `lit_flags`. Edit freely; round-checks.py --self-test does not read this file.",
   "always": {
     "lit": [
-      "CTNative/Lowering/Objects/",
+      "CTNative/Fixtures/",
       "CTNative/Lowering/Closures/",
-      "CTNative/Optimization/",
-      "CTNative/Fixtures/"
+      "CTNative/Lowering/Maps/",
+      "CTNative/Lowering/Objects/",
+      "CTNative/Optimization/"
     ],
     "targets": [
-      "ctjs-opt",
-      "ctjs-translate",
-      "ctcompile-tool",
+      "ctcompile-fixture-inputs",
       "ctcompile-test-native-reference",
-      "ctcompile-fixture-inputs"
+      "ctcompile-test-native-values-vm-linked",
+      "ctcompile-test-native-vm-linked",
+      "ctcompile-test-type-oracle",
+      "ctcompile-tool",
+      "ctjs-opt",
+      "ctjs-translate"
     ],
     "commands": [
       "python3 tools/check/check-workload.py fixture"
     ],
     "notes": [
-      "CTNative/Fixtures reads build-time pipeline modules: build ctcompile-fixture-inputs, or the Fixtures tests fail on stale inputs (ctcompile/test/README.md)."
+      "CTNative/Fixtures reads build-time pipeline modules: build ctcompile-fixture-inputs, or the Fixtures tests fail on stale inputs (ctcompile/test/README.md).",
+      "Fixtures' hand-written emitc modules gate the prebuilt ctcompile-test-native-vm-linked and ctcompile-test-native-values-vm-linked binaries (with ctcompile-test-type-oracle): without them functions.emitc.mlir and values.emitc.mlir fail."
     ]
   },
   "prefixes": [
@@ -108,7 +113,9 @@
         "ctcompile_type_inference"
       ],
       "targets": [
-        "ctcompile-test-type-inference"
+        "ctcompile-test-type-claims",
+        "ctcompile-test-type-inference",
+        "ctcompile-test-type-oracle"
       ]
     },
     {
@@ -121,8 +128,10 @@
         "ctcompile_ctnative_lattice"
       ],
       "targets": [
+        "ctcompile-test-ctnative-lattice",
+        "ctcompile-test-type-claims",
         "ctcompile-test-type-inference",
-        "ctcompile-test-ctnative-lattice"
+        "ctcompile-test-type-oracle"
       ]
     },
     {
@@ -198,7 +207,9 @@
         "ctcompile_type_inference"
       ],
       "targets": [
-        "ctcompile-test-type-inference"
+        "ctcompile-test-type-claims",
+        "ctcompile-test-type-inference",
+        "ctcompile-test-type-oracle"
       ]
     },
     {
