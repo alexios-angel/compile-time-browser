@@ -25,6 +25,16 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn);
 void passElementArrays(lowering & lower, ctjs::FuncOp fn,
                        const llvm::DenseSet<mlir::Value> & arrays);
 
+/// On every accepted function and every direct call of it, the entry-block
+/// indices of the element-array parameters it pushes to or sorts
+/// (TypeInference::elementParameterWritten), which borrow the caller's array
+/// by address rather than as a span. Runs while the whole module is still
+/// ctjs, before the first function is lowered.
+void markWrittenArrays(llvm::ArrayRef<ctjs::FuncOp> accepted);
+/// Whether entry-block index `index` of `op` (a function or a direct call) is
+/// a written element-array parameter.
+bool isWrittenArray(mlir::Operation * op, unsigned index);
+
 /// Replaces one operation planStringArrays marked; false for any other.
 bool replaceStringArray(lowering & lower, mlir::Operation * o);
 

@@ -16,6 +16,10 @@ ctcompile_unit_test(native-page LIBS ctbrowser::page)
 # is added by Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-array-callbacks LIBS ctbrowser::core)
 
+# The native listener table (CTNative/Runtime/Events.hpp) over a static page;
+# its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-events LIBS ctbrowser::page)
+
 set(_native_ctbrowser "${CTCOMPILE_MONOREPO_ROOT}/ctbrowser")
 set(_native_gate "${_native_ctbrowser}/cmake/run-without-vm.cmake")
 set(_native_gate_nm "${CMAKE_NM}")
@@ -66,13 +70,15 @@ set_tests_properties(css_syntax_native_gate_control PROPERTIES WILL_FAIL TRUE)
 
 # bootstrap_layout.native: unittests/unit/bootstrap_layout.cpp on a VM-free
 # page (ctbrowser::page::static_page), with tools/check/css-dump.js compiled by
-# the native pipeline into the C++ its engine calls. The rule is complete, but
-# the target is EXCLUDE_FROM_ALL and its test is not registered yet:
-# css-dump.js does not compile natively yet, so building it fails in
-# pipeline.cmake, and `all` must keep working. Build it by name to try
-# (ctbrowser-test-bootstrap_layout-native). Once css-dump.js compiles, drop
-# EXCLUDE_FROM_ALL and register `bootstrap_layout.native` through
-# ${_native_gate}, as css_syntax.native is.
+# the native pipeline into the C++ its engine calls. It is registered as
+# check-workload.py's native-run stage asks (`ctest -R
+# '^bootstrap_layout[.]native$'`), through ${_native_gate} as css_syntax.native
+# is, with the environment and working directory ctbrowser_test() gives
+# bootstrap_layout. Until css-dump.js compiles natively, building it fails in
+# pipeline.cmake, so CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE keeps the target out of
+# `all` and the test unregistered; turn it on to try it.
+option(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE
+       "Build and register bootstrap_layout.native (css-dump.js compiled natively)" OFF)
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set(_css_dump "${CTCOMPILE_MONOREPO_ROOT}/tools/check/css-dump.js")
   set(_css_dump_emitc "${CMAKE_CURRENT_BINARY_DIR}/css-dump.emitc.mlir")
@@ -102,13 +108,25 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/bootstrap_layout_scripts.cpp"
                               PROPERTIES OBJECT_DEPENDS "${_css_dump_cpp}")
 
-  add_executable(ctbrowser-test-bootstrap_layout-native EXCLUDE_FROM_ALL
+  add_executable(ctbrowser-test-bootstrap_layout-native
     "${_native_ctbrowser}/unittests/unit/bootstrap_layout.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/bootstrap_layout_scripts.cpp")
   target_compile_definitions(ctbrowser-test-bootstrap_layout-native PRIVATE
     CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctbrowser-test-bootstrap_layout-native PRIVATE ctbrowser::page)
   ctcompile_target(ctbrowser-test-bootstrap_layout-native)
+  if(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE)
+    add_test(NAME bootstrap_layout.native
+             COMMAND "${CMAKE_COMMAND}" "-DNM=${_native_gate_nm}"
+                     "-DEXE=$<TARGET_FILE:ctbrowser-test-bootstrap_layout-native>"
+                     -P "${_native_gate}"
+             WORKING_DIRECTORY "${_native_ctbrowser}")
+    set_tests_properties(bootstrap_layout.native PROPERTIES ENVIRONMENT
+      "CTBROWSER_TEST_ENGINE=native;CTBROWSER_FONT_PATH=${_native_ctbrowser}/resources/fonts")
+  else()
+    set_target_properties(ctbrowser-test-bootstrap_layout-native PROPERTIES
+                          EXCLUDE_FROM_ALL TRUE)
+  endif()
 
   # dom-reads.test: CTNative/Browser/page/dom-reads.js over the interpreter
   # and compiled natively, through the same engine seam and wrapper as
@@ -145,4 +163,39 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   target_compile_definitions(ctcompile-test-dom-reads-native PRIVATE CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctcompile-test-dom-reads-native PRIVATE ctbrowser::page)
   ctcompile_target(ctcompile-test-dom-reads-native)
+
+  # events.test: CTNative/Browser/page/events.js, whose listeners run when the
+  # test clicks the page: dispatched by the browser over the interpreter, and
+  # by the native runtime's listener table (Runtime/Events.hpp) natively.
+  set(_events_emitc "${CMAKE_CURRENT_BINARY_DIR}/events.emitc.mlir")
+  set(_events_cpp "${CMAKE_CURRENT_BINARY_DIR}/events.generated.cpp")
+  add_custom_command(
+    OUTPUT "${_events_cpp}"
+    COMMAND "${CMAKE_COMMAND}" -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+            -DOPT=$<TARGET_FILE:ctjs-opt> -DSOURCE=${_dom_reads_dir}/events.js
+            -DSTRING_ENTRIES=events_report -DOUTPUT=${_events_emitc}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+    COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${_events_emitc}" -o "${_events_cpp}"
+    DEPENDS "${_dom_reads_dir}/events.js" ctjs-translate ctjs-opt
+            "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+    COMMENT "Compiling events.js to C++ through the native pipeline"
+    VERBATIM)
+  set(CTCOMPILE_WORKLOAD_SCRIPT "${_dom_reads_dir}/events.js")
+  set(CTCOMPILE_WORKLOAD_ENTRY events_report)
+  set(CTCOMPILE_WORKLOAD_GENERATED "${_events_cpp}")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Workloads/native-scripts.cpp.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/events_scripts.cpp" @ONLY)
+  unset(CTCOMPILE_WORKLOAD_SCRIPT)
+  unset(CTCOMPILE_WORKLOAD_ENTRY)
+  unset(CTCOMPILE_WORKLOAD_GENERATED)
+  set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/events_scripts.cpp"
+                              PROPERTIES OBJECT_DEPENDS "${_events_cpp}")
+  add_executable(ctcompile-test-events "${_dom_reads_dir}/events.cpp")
+  target_link_libraries(ctcompile-test-events PRIVATE ctbrowser::ctbrowser)
+  ctcompile_target(ctcompile-test-events)
+  add_executable(ctcompile-test-events-native "${_dom_reads_dir}/events.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/events_scripts.cpp")
+  target_compile_definitions(ctcompile-test-events-native PRIVATE CTBROWSER_TEST_NATIVE=1)
+  target_link_libraries(ctcompile-test-events-native PRIVATE ctbrowser::page)
+  ctcompile_target(ctcompile-test-events-native)
 endif()

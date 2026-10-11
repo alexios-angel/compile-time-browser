@@ -20,6 +20,9 @@ namespace ctcompile::ctnative::lowering_detail {
 std::optional<bool> dictionaryOperation(admission & self, mlir::Operation * o);
 /// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
 bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits an addEventListener call specialised for its listener
+/// (HostCallbacks.cpp).
+bool hostCallbackOperation(admission & self, ctjs::CallOp call);
 
 namespace {
 
@@ -48,10 +51,18 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     if (isVectorCallPlumbing(o)) { return true; }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
         literal && TypeInference::isTupleLiteral(literal.getResult())) {
+        // An element in a row is the runtime's view, which only an ordinary
+        // script's elements are.
+        auto row = llvm::dyn_cast_or_null<TupleType>(self.typeOf(literal.getResult()));
+        if (row && !self.pageViews() && llvm::any_of(row.getElements(), [](mlir::Type part) {
+                return carrierOf(part) == carrier::domElement;
+            })) {
+            return self.refuse("a row holding a DOM element under a host contract");
+        }
         return carrierOf(self.typeOf(literal.getResult())) == carrier::tuple ||
                self.refuse("a two-element row whose positions are " +
                            printed(self.typeOf(literal.getResult())) +
-                           ", not Strings, Numbers or Number|String");
+                           ", not Strings, Numbers, Number|String or elements");
     }
     if (auto append = llvm::dyn_cast<AppendOp>(o);
         append && TypeInference::isTupleLiteral(append.getArray())) {
@@ -165,8 +176,31 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     }
     case VectorCall::builtinStatic: {
         const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
-        const std::string name = (row.global + "." + row.member).str();
+        const std::string name =
+            row.member.empty() ? row.global.str() : (row.global + "." + row.member).str();
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            if (row.params[index] == TypeInference::BuiltinStatic::Param::record) {
+                if (!admission::isClosedObject(argument)) {
+                    return self.refuse(name +
+                                       " of a value that is not a closed-shape object literal");
+                }
+                if (const std::string why = TypeInference::stringifiedRecordProblem(argument, call);
+                    !why.empty()) {
+                    return self.refuse(name + " of an object literal: " + why);
+                }
+                for (mlir::Operation * user : argument.getUsers()) {
+                    auto write = llvm::dyn_cast<SetPropertyOp>(user);
+                    const carrier c =
+                        write ? carrierOf(self.typeOf(write.getValue())) : carrier::number;
+                    if (c != carrier::number && c != carrier::string && c != carrier::boolean) {
+                        return self.refuse(name + " of an object literal whose field `" +
+                                           ctjs::constantKey(write.getKey()).str() + "` is " +
+                                           printed(self.typeOf(write.getValue())) +
+                                           ", not a Number, String or Boolean");
+                    }
+                }
+                continue;
+            }
             const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
             if (string ? !isString(argument)
                        : carrierOf(self.typeOf(argument)) != carrier::number) {
@@ -200,6 +234,9 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     using namespace ctjs;
     if (!self.pageViews()) { return std::nullopt; }
     if (isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    if (TypeInference::isHostCallbackCall(o)) {
+        return hostCallbackOperation(self, llvm::cast<CallOp>(o));
+    }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -244,6 +281,13 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
                                .str());
     }
     if (isPageGlobal(read.getObject().getDefiningOp())) {
+        // The native read throws where the interpreter would read a property
+        // of a null root, so it needs that property's name.
+        if (key == "documentElement" &&
+            TypeInference::firstPropertyRead(read.getResult()).empty()) {
+            return self.refuse("document.documentElement with no property read of it found - "
+                               "a null root would not throw where the native read does");
+        }
         return result == (key == "documentElement" ? carrier::domElement : carrier::number) ||
                self.refuse(("`" + key + "` lost its page type").str());
     }
@@ -335,11 +379,16 @@ std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef
 }
 
 } // namespace
+/// Admits a String.prototype.replace call with a specialised callback and the
+/// plumbing it consumes (StringCallbacks.cpp).
+std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * o);
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    if (auto admitted = staticTableOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
+    if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (auto admitted = dictionaryOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
@@ -459,6 +508,13 @@ bool admission::op(mlir::Operation * o) {
         if (carrierOf(typeOf(get.getObject())) == carrier::string &&
             ctjs::constantKey(get.getKey()) == "length") {
             return true;
+        }
+        // `text[i]`: ctnative::string_at takes a Number index.
+        if (carrierOf(typeOf(get.getObject())) == carrier::string &&
+            ctjs::constantKey(get.getKey()).empty()) {
+            return carrierOf(typeOf(get.getKey())) == carrier::number ||
+                   refuse("a String indexed by " + printed(typeOf(get.getKey())) +
+                          ", not a Number");
         }
         if (isVectorSite(get.getObject())) {
             // `length` is exactly `size()`, because the site proof is what
@@ -1062,6 +1118,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
         if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
             !(carrierOf(typeOf(operands[i])) == carrier::domElement && ownedGlobals &&
               ownedGlobals->proved() && !ownedGlobals->domInputs().empty()) &&
+            // An ordinary script's element is the runtime's view, passed by value.
+            !(carrierOf(typeOf(operands[i])) == carrier::domElement && pageViews()) &&
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&

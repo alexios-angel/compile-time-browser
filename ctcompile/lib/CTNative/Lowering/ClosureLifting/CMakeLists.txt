@@ -10,10 +10,13 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Methods.cpp
   Diagnostics.cpp
   Constructors.cpp
+  HostCallbacks.cpp
   Rewrite.cpp
   ReturnedClosures.cpp
   MethodTables.cpp
   RunOnce.cpp
+  SelfCalls.cpp
   Singletons.cpp
+  StringCallbacks.cpp
   ClosureLifter.h
 )

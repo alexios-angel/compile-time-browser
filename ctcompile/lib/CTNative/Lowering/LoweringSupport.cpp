@@ -87,6 +87,13 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
     if (isObjectValueType(type)) { return carrier::objectValue; }
+    // The table, or undefined before the run-once function stores it: one
+    // pointer holds both.
+    if (llvm::isa<StaticTableType>(type)) { return carrier::staticTable; }
+    if (auto opt = llvm::dyn_cast<OptType>(type);
+        opt && llvm::isa<StaticTableType>(opt.getElementType())) {
+        return carrier::staticTable;
+    }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -149,11 +156,13 @@ carrier carrierOf(mlir::Type type) {
     // strings and of borrowed DOM elements have their own carriers and
     // admission rules.
     // A tuple has a carrier when it has two positions and each is a String, a
-    // Number or a Number|String, which is what a std::pair of them can hold.
+    // Number, a Number|String or an ordinary script's element (admission
+    // refuses one under a host contract), which a std::pair of them can hold.
     if (auto tuple = llvm::dyn_cast<TupleType>(type)) {
         const auto position = [](mlir::Type part) {
             const carrier c = carrierOf(part);
-            return c == carrier::string || c == carrier::number || c == carrier::numberString;
+            return c == carrier::string || c == carrier::number || c == carrier::numberString ||
+                   c == carrier::domElement;
         };
         return tuple.getElements().size() == 2 && llvm::all_of(tuple.getElements(), position)
                    ? carrier::tuple
@@ -232,7 +241,9 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o);
     if (!read || !read.getResult().hasOneUse()) { return false; }
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
-    return call && (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call)) &&
+    return call &&
+           (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
+            TypeInference::isHostCallbackCall(call)) &&
            ctjs::receiverMethod(call) == read;
 }
 
@@ -261,7 +272,8 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
     if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
         const auto staticUse = [&](mlir::OpOperand & use) {
             mlir::Operation * user = use.getOwner();
-            if (use.getOperandNumber() == 1 && TypeInference::builtinStaticOf(user)) {
+            // The receiver of `Number.parseInt(s)`, the callee of `Number(s)`.
+            if (use.getOperandNumber() <= 1 && TypeInference::builtinStaticOf(user)) {
                 return true;
             }
             return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&

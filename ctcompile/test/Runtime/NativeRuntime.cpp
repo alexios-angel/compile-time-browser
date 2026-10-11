@@ -16,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
+#include "ctcompile/CTNative/Runtime/RegExp.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
@@ -1210,6 +1211,44 @@ int main() {
         CHECK(ctnative::String.prototype.split.call(js_string{}, whitespace_run) == strings({""}));
         CHECK(ctnative::String.prototype.split.call(js_string{"\xC3\xA9"}, whitespace_run) ==
               strings({"\xC3\xA9"}));
+    }
+
+    // String.prototype.replace with a RegExp and a function (RegExp.hpp).
+    {
+        using ctnative::js_string;
+        using ctnative::RegExp;
+        const auto & replace = ctnative::String.prototype.replace;
+        const auto dashed = [](js_string m) { return js_string{"-"} + m; };
+        CHECK(replace.call(js_string{"fooBarBaz"}, RegExp("[A-Z]", "g"), dashed) ==
+              js_string{"foo-Bar-Baz"});
+        // Without `g` only the first match is replaced.
+        CHECK(replace.call(js_string{"aXbX"}, RegExp("X", ""), dashed) == js_string{"a-XbX"});
+        // Groups are passed after the match, in order.
+        CHECK(replace.call(js_string{"k=v;a=b"}, RegExp("([a-z])=([a-z])", "g"),
+                           [](js_string all, js_string key, js_string value) {
+                               return value + js_string{":"} + key + js_string{"/"} + all;
+                           }) == js_string{"v:k/k=v;b:a/a=b"});
+        // Alternatives are tried in order, as in JavaScript.
+        CHECK(replace.call(js_string{"top-start"}, RegExp("left|right|bottom|top", "g"),
+                           [](js_string m) {
+                               return m == js_string{"top"} ? js_string{"bottom"} : m;
+                           }) == js_string{"bottom-start"});
+        // No match leaves the text, multibyte characters included, unchanged.
+        CHECK(replace.call(js_string{"\xC3\xA9t\xC3\xA9"}, RegExp("[A-Z]", "g"), dashed) ==
+              js_string{"\xC3\xA9t\xC3\xA9"});
+        CHECK(replace.call(js_string{}, RegExp("[A-Z]", "g"), dashed) == js_string{});
+        // A Number result is converted with ToString.
+        CHECK(replace.call(js_string{"a1b"}, RegExp("[a-z]", "g"), [](js_string) {
+            return ctnative::js_num{2.5};
+        }) == js_string{"2.512.5"});
+        // An empty match advances one position, as AdvanceStringIndex does;
+        // the compiler refuses such patterns, but the runtime still agrees.
+        CHECK(replace.call(js_string{"ab"}, RegExp("x*", "g"), [](js_string m) {
+            return js_string{"["} + m + js_string{"]"};
+        }) == js_string{"[]a[]b[]"});
+        // `$` in the function's result is literal: no GetSubstitution.
+        CHECK(replace.call(js_string{"a"}, RegExp("a", "g"),
+                           [](js_string) { return js_string{"$&$1"}; }) == js_string{"$&$1"});
     }
 
     CHECK(unbound());

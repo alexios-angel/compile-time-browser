@@ -1,0 +1,58 @@
+# A named function expression that calls itself through its own name, as
+# css-dump.js's `(function walk(el, path) { ... walk(kid, ...); })(root, 'html')`
+# does: the lift makes each such call a direct call of the function, passing
+# its own captures on (a by-value capture and a mutated one carried by
+# address). The answers match the interpreter's under GCC and Clang. A
+# self-call with more arguments than the function declares, and the name used
+# as a value rather than called, stay refused.
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/values.js -o %t/input.mlir
+# RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc{optimize=false},emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name recursion_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/values.js --work %t --name recursion_clang --core-build %build
+# RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name recursion_mutation --mutate visited --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/surplus.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=SURPLUS
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=VALUE
+
+# NATIVE-DAG: emitc.func @down_
+# NATIVE-DAG: emitc.func @visit_
+# MUTATION: global 'visited' differs
+# SURPLUS: ctnative.not_native = "a closure used as a value: it calls itself with more arguments than it declares"
+# VALUE: ctnative.not_native = "a closure used as a value: its target's own closure escapes into `ctjs.compare`, so a call of it may come from somewhere this rewrite cannot see"
+
+#--- values.js
+function depth(n) {
+    var step = 2;
+    return (function down(k) {
+        return k > 0 ? down(k - 1) + step : 0;
+    })(n);
+}
+function visits(n) {
+    var seen = 0;
+    (function visit(k) {
+        seen = seen + k;
+        if (k > 0) {
+            visit(k - 1);
+        }
+    })(n);
+    return seen;
+}
+var depthSum = depth(4);
+var visited = visits(5);
+
+#--- surplus.js
+function count(n) {
+    return (function down(k) {
+        return k > 0 ? down(k - 1, k) : 0;
+    })(n);
+}
+var counted = count(3);
+
+#--- value.js
+function named(n) {
+    return (function self(k) {
+        return self === undefined ? k : k + 1;
+    })(n);
+}
+var compared = named(3);

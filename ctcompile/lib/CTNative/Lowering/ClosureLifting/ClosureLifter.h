@@ -497,6 +497,21 @@ struct closureLifter {
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+    /// Replacement functions of `text.replace(/pattern/g, f)`
+    /// (StringCallbacks.cpp), judged and rewritten as an Array callback is.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> stringCallbacks;
+    void stringCallbackCensus();
+    std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
+    void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
+    /// Listeners handed to the host (HostCallbacks.cpp): each closure whose
+    /// one use is the listener argument of `el.addEventListener(type, f)`,
+    /// with that call. Judged by whyNotHostCallback and rewritten by
+    /// rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    void hostCallbackCensus();
+    std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
+    void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     void census();
 
@@ -716,7 +731,10 @@ struct closureLifter {
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> chainedThrough;
     std::optional<std::string> whyCapturesDoNotLift(ctjs::CreateClosureOp c);
 
-    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target);
+    /// With `selfCalls`, a call the target makes of itself through its own
+    /// closure is not an escape: liftSelfCalls (SelfCalls.cpp) makes it direct.
+    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target, bool selfCalls = false);
+    void liftSelfCalls(ctjs::FuncOp target, unsigned captures, unsigned parameters);
 
     std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
                                                         ctjs::FuncOp target);

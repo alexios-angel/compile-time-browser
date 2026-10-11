@@ -433,6 +433,19 @@ def CTNative_GlobalObjectType
   }];
 }
 
+def CTNative_StaticTableType
+    : CTNative_WrapperType<"StaticTable", "static_table", (ins StringRefParameter<>:$binding)> {
+  let summary = "The constant table a run-once static variable holds";
+  let description = [{
+    The binding names one static variable of a run-once function that
+    markStaticTables (Analysis/Inference/StaticTables.cpp) proved holds one
+    object literal of constants, never written after it is made. Its C++
+    carrier is a pointer to the one namespace-scope `const` struct, so a copy
+    of the value is the same object, as in JavaScript. The variable holds
+    undefined, a null pointer, until the run-once function stores the table.
+  }];
+}
+
 def CTNative_MethodTableType
     : CTNative_WrapperType<"MethodTable", "method_table", (ins StringRefParameter<>:$site)> {
   let summary = "An owning closed table of immutable stored callable fields";

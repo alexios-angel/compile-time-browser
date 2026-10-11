@@ -8,6 +8,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -193,8 +194,20 @@ void lowering::retype(ctjs::FuncOp fn) {
             // ponytail: one alias query per value; cache the groups per
             // function if large functions make this slow.
             const auto members = TypeInference::elementVectorAliases(v);
-            // A parameter is a read-only borrow of the caller's array, held
-            // by value as a span, so scf carries the span itself.
+            // A parameter the function writes borrows the caller's array by
+            // address (markWrittenArrays), and scf carries that address.
+            const bool written = llvm::any_of(members, [&](mlir::Value member) {
+                auto argument = llvm::dyn_cast<mlir::BlockArgument>(member);
+                return argument && argument.getOwner() == &fn.getBody().front() &&
+                       isWrittenArray(fn, argument.getArgNumber());
+            });
+            if (written) {
+                v.setType(ec::PointerType::get(
+                    ec::OpaqueType::get(context, elementArraySpelling(typeOf(v)))));
+                return;
+            }
+            // Any other parameter is a read-only borrow of the caller's array,
+            // held by value as a span, so scf carries the span itself.
             if (TypeInference::elementVectorParameter(members)) {
                 v.setType(ec::OpaqueType::get(context, elementSpanSpelling(typeOf(v))));
                 return;
@@ -295,6 +308,8 @@ void lowering::retype(ctjs::FuncOp fn) {
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
         if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
+        // A static table's literal is its address (EmitC/StaticTables.cpp).
+        if (object->hasAttr(kNativeStaticTable)) { return; }
         // A table is a dictionary, not a struct (EmitC/Dictionaries.cpp).
         if (isNativeDictionarySite(object)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }

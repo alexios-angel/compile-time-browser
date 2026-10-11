@@ -12,6 +12,16 @@
       "build_jobs": 8
     },
     {
+      "name": "devbox-gcp",
+      "lock": "/tmp/ctbrowser-devbox-gcp-build.lock",
+      "round_marker": "/tmp/ctbrowser-queue-round-devbox-gcp",
+      "server": "../../infra/gcp-build-server/server.sh",
+      "running": "^RUNNING\\b",
+      "slots": 2,
+      "note": "t2d-standard-16, 16 Zen 3 cores without SMT, 64 GB: two slots of 8 build jobs",
+      "build_jobs": 8
+    },
+    {
       "name": "devbox",
       "lock": "/tmp/ctbrowser-devbox-build.lock",
       "round_marker": "/tmp/ctbrowser-queue-round-devbox",
