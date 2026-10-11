@@ -132,6 +132,64 @@ UNTRUSTED_NATIVE = {
     ),
 }
 
+# Inherited classes that ClosureLifting/ClassInheritance.cpp flattens per
+# concrete class now lower completely without preparation. Each prints Node's
+# value; override-ambient's uncalled Base.read goes with its class.
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "class-map-record-alias-method-inherited",
+            "inherited",
+            "inherited-base-instance",
+            "inherited-chain",
+            "inherited-dispatch",
+            "inherited-explicit",
+            "inherited-helper-chain",
+            "inherited-helper-constructor",
+            "inherited-helper-distinct",
+            "inherited-helper-method",
+            "inherited-helper-order-values",
+            "inherited-helper-siblings",
+            "inherited-method",
+            "inherited-method-chain",
+            "inherited-method-constructor",
+            "inherited-method-instances",
+            "inherited-method-leaf",
+            "inherited-method-override",
+            "inherited-nested-helper-distinct",
+            "inherited-number-return",
+            "inherited-order",
+            "inherited-post-super-chain",
+            "inherited-post-super-method",
+            "inherited-post-super-order",
+            "inherited-post-super-override",
+            "inherited-super-chain",
+            "inherited-super-helper",
+            "inherited-super-nearest",
+            "inherited-super-receiver",
+            "inherited-super-target-cfg",
+            "override-ambient",
+            "override-constructor",
+            "override-different-leaves",
+            "override-distinct",
+            "override-leaf",
+            "override-middle",
+            "override-unused-constructor",
+        ),
+        (False, True),
+    )
+)
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "inherited-helper-decided-leaf-built",
+            "inherited-helper-effect",
+            "inherited-helper-receiver",
+        ),
+        (True,),
+    )
+)
+
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
 CONFLICT_OBSERVATIONS = {

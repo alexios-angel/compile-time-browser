@@ -28,7 +28,10 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=RETURNED
 
-// EXTENDS: ctnative.class_reason = "it extends another class; super() and inherited members are the next slice"
+// A class that extends another is flattened (ClosureLifting/ClassInheritance.cpp)
+// and lowers like any other; inheritance-refusals.mlir lists what it refuses.
+// EXTENDS: emitc.class @Square
+// EXTENDS-NOT: ctnative.class_reason
 // STATIC: ctnative.class_reason = "it has static method `make`; static members are the next slice"
 // GETTER: ctnative.class_reason = "it has getter `size`; accessors are the next slice"
 // METHODVALUE: {{(observed|read) as a value}}
