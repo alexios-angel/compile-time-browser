@@ -1,6 +1,6 @@
 // RUN: split-file %s %t
 // RUN: ctjs-opt %t/roots.mlir --ctnative-prune-unreachable | FileCheck %s --check-prefix=ROOTS --implicit-check-not='ctjs.func private @dead'
-// RUN: ctjs-opt %t/roots.mlir --ctnative-prune-unreachable --ctnative-prune-unreachable | FileCheck %s --check-prefix=REPEAT --implicit-check-not='ctjs.func private @dead'
+// RUN: ctjs-opt %t/roots.mlir --ctnative-prune-unreachable --ctnative-prune-unreachable | FileCheck %s --check-prefix=REPEAT --implicit-check-not='ctjs.func private @dead' --implicit-check-not=reachability_pruned
 // RUN: ctjs-opt %t/roots.mlir '--ctnative-prune-unreachable=max-steps=0' | FileCheck %s --check-prefix=BUDGET
 // RUN: ctjs-opt %t/pe.mlir --ctnative-partial-evaluate --ctnative-prune-unreachable | FileCheck %s --check-prefix=PE --implicit-check-not='ctjs.func private @helper'
 // RUN: ctjs-opt %t/boxed.mlir --ctnative-prune-unreachable | FileCheck %s --check-prefix=BOXED --implicit-check-not='ctjs.func private @orphan'
@@ -15,6 +15,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/reachability.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-prune-unreachable | FileCheck %s --check-prefix=SOURCE --implicit-check-not='ctjs.func private @seed$1__specialized'
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %S/../Fixtures/Optimization/reachability.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-specialize --ctnative-partial-evaluate --ctnative-prune-unreachable --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func
 // Tests --ctnative-prune-unreachable: roots, unknown references, budgets, and partial evaluation.
+// ROOTS: ctnative.reachability_pruned = ["deadA", "deadB", "dead$3"]
 // ROOTS: ctnative.reachability_summary = {removed = 3 : i64, retained = 8 : i64
 // ROOTS: ctjs.func @entry
 // ROOTS: ctjs.store_global "published"
