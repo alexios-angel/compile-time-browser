@@ -56,7 +56,10 @@ std::optional<mlir::LogicalResult> TypeInference::visitBorrowedCallback(
                 op->emitError("borrowed callback names no function with a body"));
         }
         // The captures are the leading parameters after the implicit three.
-        const unsigned first = made.getUpvalues().getBeginOperandIndex();
+        // The captures are the trailing operands, counted from the end
+        // because an empty range has no first operand to ask for its index.
+        const unsigned first =
+            op->getNumOperands() - static_cast<unsigned>(made.getUpvalues().size());
         for (unsigned i = 0; i < made.getUpvalues().size(); ++i) {
             pass(callback, ctjs::implicit_arguments + i, first + i);
         }
@@ -68,7 +71,8 @@ std::optional<mlir::LogicalResult> TypeInference::visitBorrowedCallback(
     auto call = llvm::dyn_cast<ctjs::CallOp>(op);
     if (!callbacks || !call) { return std::nullopt; }
     llvm::SmallVector<mlir::Value> returned;
-    const unsigned first = call.getArgs().getBeginOperandIndex();
+    // The arguments are the trailing operands, after the callee and receiver.
+    const unsigned first = op->getNumOperands() - static_cast<unsigned>(call.getArgs().size());
     for (auto symbol : callbacks.getAsRange<mlir::FlatSymbolRefAttr>()) {
         ctjs::FuncOp callback = lookup(symbol.getValue());
         if (!callback || callback.getBody().empty()) {
