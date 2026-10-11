@@ -76,6 +76,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (retypeClosureSet(v)) { return; } // ClosureSets.cpp
         if (retypeBorrowed(v)) { return; }
         if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
             v.setType(ec::LValueType::get(carrierType(context, carrier::json)));

@@ -74,6 +74,9 @@ enum class carrier {
     nullableNumberString,
     map,
     closure,
+    /// One of a proved set of callables (Analysis lattice `closure_set`), a
+    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    closureSet,
     methodTable,
     objectIdentity,
     objectValue,
@@ -160,6 +163,7 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::nullableNumberString, kNullableNumberStringType, true},
     {carrier::map, ""},
     {carrier::closure, ""},
+    {carrier::closureSet, ""},
     {carrier::methodTable, ""},
     {carrier::objectIdentity, kObjectIdentityType},
     {carrier::objectValue, kObjectValueType},

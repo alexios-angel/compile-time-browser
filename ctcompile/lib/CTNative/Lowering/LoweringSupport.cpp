@@ -86,6 +86,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
+    if (llvm::isa<ClosureSetType>(type)) { return carrier::closureSet; }
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
     if (isObjectValueType(type)) { return carrier::objectValue; }

@@ -32,6 +32,14 @@ inline constexpr llvm::StringLiteral kNativeBorrowedCallback = "ctnative.borrowe
 /// array of symbol references.
 inline constexpr llvm::StringLiteral kNativeBorrowedCall = "ctnative.borrowed_call";
 
+/// A closure set (ClosureLifting/ClosureSets.cpp): on a member's
+/// ctjs.create_closure, every member's lifted function, sorted, as an array of
+/// symbol references; on a ctjs.call through the set, a unit attribute. The
+/// member also carries kNativeBorrowedCallback and the call
+/// kNativeBorrowedCall, which type inference and admission read as for a
+/// borrowed callback.
+inline constexpr llvm::StringLiteral kNativeClosureSet = "ctnative.closure_set";
+
 /// The callback a borrowed ctjs.create_closure names, or empty.
 inline llvm::StringRef borrowedTarget(mlir::Operation * op) {
     auto target = op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeBorrowedCallback);

@@ -267,6 +267,15 @@ struct lowering {
     /// callback such a parameter holds, by the callback's symbol.
     llvm::DenseMap<mlir::Value, std::string> borrowedSignatures;
     llvm::StringMap<std::string> borrowedCallbackSignatures;
+    /// Closure sets (ClosureSets.cpp): a set's value and each closure making
+    /// one of its members is a std::variant of ctnative::bound members.
+    bool retypeClosureSet(mlir::Value v);
+    bool replaceClosureSetMember(mlir::Operation * op);
+    std::string closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets);
+    std::string closureSetMemberSpelling(llvm::StringRef target);
+    llvm::StringMap<std::string> closureSetMembers;
+    /// Every target a closure-set member's closure names, once computed.
+    std::optional<llvm::StringSet<>> closureSetTargets;
     static std::string spelled(mlir::Type type);
 
     std::string spelling(const siteShape & site) const;
