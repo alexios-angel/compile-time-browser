@@ -1,12 +1,14 @@
 """The assume-admitted stage: a dry run of the stages after admission.
 
-check-workload.py loads this file with `stage`, `SetupError` and `StepTimeout`
-in its globals. A workload that names "assume-admitted" in place of "admission"
-and "emit-cpp" (bootstrap-dry-run.json) lowers each script through the native
-pipeline with -DALLOW_REFUSED=TRUE, deletes every refused ctjs.func, and hands
-the C++ of what is left to build-native, no-vm-gate and script-run. That shows
-what those stages will report once admission reaches 100%, while it is still
-short of it.
+check-workload.py loads this file with `stage`, `SetupError`, `StepTimeout`
+and `strip_refused` in its globals. A workload that names "assume-admitted"
+in place of "admission" and "emit-cpp" (bootstrap-dry-run.json) lowers each
+script through the native pipeline with -DALLOW_REFUSED=TRUE, deletes every
+refused ctjs.func, and hands the C++ of what is left to build-native,
+no-vm-gate and script-run (whose page-program probe it also lets through
+refusals, by the stage's "dry_run_allow_refused" option). That shows what
+those stages will report once admission reaches 100%, while it is still short
+of it.
 
 It is never evidence of DONE: the stage also records a MISSING item, so a dry
 run's verdict is at best NOT DONE.
@@ -15,28 +17,8 @@ run's verdict is at best NOT DONE.
 from pathlib import Path
 import re
 
-FUNC = re.compile(r"^  ctjs\.func ")
 EMITC_FUNC = re.compile(r"^  emitc\.func ", re.M)
 MAIN = re.compile(r"^(?:int|int32_t) main\(", re.M)
-
-
-def strip_refused(text):
-    """`text` without its top-level ctjs.func operations, and how many there were.
-
-    A refused function stays a ctjs.func; a native one became an emitc.func. A
-    body starts with a line ending in `{` and ends at the next line that starts
-    with `  }` (the module's own indentation, perhaps followed by a loc)."""
-    kept, removed, inside = [], 0, False
-    for line in text.splitlines(keepends=True):
-        if inside:
-            inside = not line.startswith("  }")
-            continue
-        if FUNC.match(line):
-            removed += 1
-            inside = line.rstrip().endswith("{")
-            continue
-        kept.append(line)
-    return "".join(kept), removed
 
 
 @stage(
@@ -92,7 +74,9 @@ def assume_admitted(ctx, name):
             # The top level was refused. An empty main() lets build-native link the
             # native part and no-vm-gate read it; script-run then reports every
             # global the top level would have printed as missing.
-            cpp.write_text(source + "\n// Dry run: the top level was refused.\nint main() {}\n")
+            cpp.write_text(
+                source + "\n// Dry run: the top level was refused.\nint main() { return 0; }\n"
+            )
             details.append("no main(): the top level was refused; an empty one was appended")
         ctx.artifacts[item] = {"cpp": cpp}
         summary = f"{native} native function(s), {removed} refused deleted, {lines} lines of C++"

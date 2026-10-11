@@ -460,6 +460,25 @@ def emit_cpp(ctx, name):
     ctx.each(name, list(ctx.scripts), body)
 
 
+def strip_refused(text):
+    """`text`, a lowered module, without its top-level ctjs.func operations, and
+    how many there were. A refused function stays a ctjs.func; a native one is
+    an emitc.func. A body starts with a line ending in `{` and ends at the next
+    line that starts with `  }` (the module's own indentation). Only a dry run
+    (never DONE evidence) uses this, to reach the stages after admission."""
+    kept, removed, inside = [], 0, False
+    for line in text.splitlines(keepends=True):
+        if inside:
+            inside = not line.startswith("  }")
+            continue
+        if line.startswith("  ctjs.func "):
+            removed += 1
+            inside = line.rstrip().endswith("{")
+            continue
+        kept.append(line)
+    return "".join(kept), removed
+
+
 # A VM-free test that links ctbrowser::page (ctcompile/test/cmake/
 # NativeWorkloads.cmake): its link line in build.ninja is the one CMake works
 # out for the page library and everything under it (raster's ANGLE, fonts,
@@ -592,7 +611,7 @@ def script_run(ctx, name):
         if not ctx.pages:
             ctx.add(name, item, "FAIL", "a script-run probe needs the workload's pages")
             return
-        lines, details = 0, []
+        expected, lines = {}, 0
         for page in ctx.pages:
             command = [reference, "--page", page, "--script", ctx.scripts[item]["path"]]
             code, output, notes = ctx.run_split([*command, "--script", probe], name, item)
@@ -600,16 +619,84 @@ def script_run(ctx, name):
                 summary = f"the VM reference failed probing {ctx.relative(page)}"
                 ctx.add(name, item, "FAIL", summary, tail(output + notes))
                 return
-            lines += len(output.splitlines())
-            details.append(f"{ctx.relative(page)}: {len(output.splitlines())} line(s)")
+            expected[page] = output.splitlines()
+            lines += len(expected[page])
         if not lines:
             ctx.add(name, item, "FAIL", "the probe printed nothing, so it would prove nothing")
             return
-        summary = (
-            f"the VM probe printed {lines} line(s) on {len(ctx.pages)} page(s); no native "
-            "build can load a page yet (it needs a native host)"
-        )
-        ctx.add(name, item, "MISSING", summary, details)
+        binaries = page_program(item, probe)
+        if binaries is None:
+            return
+        for binary in binaries:
+            for page, want in expected.items():
+                code, actual, errors = ctx.run_split([binary, page], name, item)
+                got = actual.splitlines()
+                if code or got != want:
+                    where = f"{binary.name} on {ctx.relative(page)}"
+                    summary = f"{where} exited {code}" if code else f"{where} differs"
+                    diff = [
+                        f"line {i + 1}: VM {want[i : i + 1]} native {got[i : i + 1]}"
+                        for i in range(max(len(got), len(want)))
+                        if got[i : i + 1] != want[i : i + 1]
+                    ]
+                    ctx.add(name, item, "FAIL", summary + " from the VM", diff[:6] or tail(errors))
+                    return
+        summary = f"{lines} probe line(s) on {len(ctx.pages)} page(s) match the VM"
+        ctx.add(name, item, "PASS", summary)
+
+    # The probe's native side (ctcompile/docs/native-page-programs.md): the
+    # script and the probe lowered as one program, wrapped by
+    # tools/check/workloads/page-program-main.cpp, which loads a page and runs
+    # the program's top level on it, and built as build-native builds a DOM
+    # script. Returns the binaries, or None after recording why there are none.
+    # The dry-run workload sets this stage's "dry_run_allow_refused" option:
+    # refused functions are then deleted, as assume-admitted deletes them.
+    def page_program(item, probe):
+        translate = ctx.tool("ctcompile/tools/ctjs-translate/ctjs-translate", "ctjs-translate")
+        opt = ctx.tool("ctcompile/tools/ctjs-opt/ctjs-opt", "ctjs-opt")
+        allow = bool(ctx.options(name).get("dry_run_allow_refused"))
+        base = ctx.build / "check-workload-page-programs" / ctx.scripts[item]["path"].stem
+        base.parent.mkdir(parents=True, exist_ok=True)
+        source, module, cpp = (Path(f"{base}{suffix}") for suffix in (".js", ".emitc.mlir", ".cpp"))
+        # One classic-script program: the library's statements, then the probe's.
+        source.write_text(ctx.scripts[item]["path"].read_text() + "\n;\n" + probe.read_text())
+        command = ["cmake", f"-DTRANSLATE={translate}", f"-DOPT={opt}", f"-DSOURCE={source}"]
+        command += [f"-DOUTPUT={module}", *(["-DALLOW_REFUSED=TRUE"] if allow else [])]
+        pipeline = ctx.root / "ctcompile/test/CTNative/Checks/pipeline.cmake"
+        code, output = ctx.run([*command, "-P", pipeline], name, item)
+        if code or not module.exists():
+            summary = "the page program (script + probe) is not native"
+            ctx.add(name, item, "FAIL", summary, tail(output))
+            return None
+        if allow:
+            module.write_text(strip_refused(module.read_text(errors="replace"))[0])
+        code, output = ctx.run([translate, "--mlir-to-cpp", module, "-o", cpp], name, item)
+        if code or not cpp.exists():
+            ctx.add(name, item, "FAIL", "--mlir-to-cpp failed on the page program", tail(output))
+            return None
+        if allow and not re.search(r"^(?:int|int32_t) main\(", cpp.read_text(), re.M):
+            cpp.write_text(
+                cpp.read_text()
+                + "\n// Dry run: the top level was refused.\nint main() { return 0; }\n"
+            )
+        clang, includes, libraries = dom_toolchain(ctx)
+        cpp_harness = harness("Target.Cpp.harness")
+        try:
+            compilers = [cpp_harness.find_compilers()[0], clang]
+        except RuntimeError as error:
+            raise SetupError(str(error))
+        main = ctx.root / "tools/check/workloads/page-program-main.cpp"
+        binaries = []
+        for compiler in compilers:
+            binary = base.with_suffix("." + Path(compiler).name)
+            command = [compiler, *cpp_harness.FLAGS, *includes, f'-DCTCOMPILE_PAGE_PROGRAM="{cpp}"']
+            code, output = ctx.run([*command, main, "-o", binary, *libraries], name, item)
+            if code:
+                summary = f"{Path(compiler).name} rejects the page program"
+                ctx.add(name, item, "FAIL", summary, tail(output))
+                return None
+            binaries.append(binary)
+        return binaries
 
     # A script whose globals say nothing (css-dump.js only defines functions) may
     # opt out, as {"skip": <why>, "covered_by": <CTest>}, only by naming the
@@ -746,6 +833,7 @@ def load(directory):
         spec = importlib.util.spec_from_file_location(f"workload_plugin_{plugin.stem}", plugin)
         module = importlib.util.module_from_spec(spec)
         module.__dict__.update(stage=stage, SetupError=SetupError, StepTimeout=StepTimeout)
+        module.__dict__.update(strip_refused=strip_refused)
         spec.loader.exec_module(module)
     defaults_file = directory / "defaults.json"
     defaults = json.loads(defaults_file.read_text()) if defaults_file.exists() else {}

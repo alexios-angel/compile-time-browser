@@ -21,6 +21,7 @@
   ],
   "options": {
     "build-native": {"dom": true},
+    "script-run": {"dry_run_allow_refused": true},
     "native-run": {
       "runner": ["ctest", "--test-dir", "{build}", "--output-on-failure", "--no-tests=error",
                  "-R", "^{test}[.]native$"]
