@@ -381,8 +381,8 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         return VecType::get(c, stored ? stored : stringType(c));
     }
     case VectorCall::builtinStatic: {
-        // Every row returns a Number once each String parameter is given a
-        // String; admission checks the Number parameters.
+        // The row's result once each String parameter is given a String;
+        // admission checks the others.
         const BuiltinStatic & row = *builtinStaticOf(op);
         for (std::size_t i = 2; i < operands.size(); ++i) {
             if (row.params[i - 2] == BuiltinStatic::Param::string &&
@@ -390,7 +390,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                 return {};
             }
         }
-        return doubleType(c);
+        return row.result == BuiltinStatic::Result::string ? stringType(c) : doubleType(c);
     }
     case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
     case VectorCall::callback: return arrayCallbackType(op, operands, pending);

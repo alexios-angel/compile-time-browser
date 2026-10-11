@@ -203,12 +203,28 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
     const auto onlyUse = [](mlir::Value value) -> mlir::OpOperand * {
         return value.hasOneUse() ? &*value.getUses().begin() : nullptr;
     };
+    // The reads a built-in call is recognised by: the namespace object, its
+    // `prototype` and the method, each used only by those reads and as the
+    // call's callee or receiver.
+    const auto builtinRead = [](mlir::Operation * read) {
+        const auto plumbing = [](mlir::OpOperand & use) {
+            mlir::Operation * user = use.getOwner();
+            if (use.getOperandNumber() <= 1 && TypeInference::builtinStaticOf(user)) {
+                return true;
+            }
+            return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&
+                   isVectorCallPlumbing(user);
+        };
+        return !read->getResult(0).use_empty() &&
+               llvm::all_of(read->getResult(0).getUses(), plumbing);
+    };
     if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o)) {
         mlir::OpOperand * use = onlyUse(read.getResult());
         const VectorCall kind =
             use ? TypeInference::vectorCallOf(use->getOwner()) : VectorCall::none;
-        return use && use->getOperandNumber() == 0 && kind != VectorCall::none &&
-               kind != VectorCall::regexp;
+        return (use && use->getOperandNumber() == 0 && kind != VectorCall::none &&
+                kind != VectorCall::regexp) ||
+               builtinRead(o);
     }
     // The RegExp call is plumbing only as split(/\s+/)'s separator.
     const auto separatesWhitespace = [&](mlir::Operation * call) {
@@ -218,21 +234,7 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
                TypeInference::vectorCallOf(use->getOwner()) == VectorCall::splitSpace;
     };
     if (llvm::isa_and_nonnull<ctjs::CallOp>(o)) { return separatesWhitespace(o); }
-    // The realm's namespace object is plumbing as the receiver of a built-in
-    // static call and the object its method is read from.
-    if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
-        const auto staticUse = [&](mlir::OpOperand & use) {
-            mlir::Operation * user = use.getOwner();
-            if (use.getOperandNumber() == 1 && TypeInference::builtinStaticOf(user)) {
-                return true;
-            }
-            return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&
-                   isVectorCallPlumbing(user);
-        };
-        if (!load.getResult().use_empty() && llvm::all_of(load.getResult().getUses(), staticUse)) {
-            return true;
-        }
-    }
+    if (llvm::isa_and_nonnull<ctjs::LoadGlobalOp>(o) && builtinRead(o)) { return true; }
     if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
         return load.getName() == "__ctbrowser_regexp" && !load.getResult().use_empty() &&
                llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {

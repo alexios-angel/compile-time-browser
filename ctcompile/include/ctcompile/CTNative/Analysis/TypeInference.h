@@ -250,20 +250,32 @@ public:
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
 
-    /// One static method of a built-in namespace object that native code
-    /// calls as `<callee>(args...)`. Every row returns a Number.
+    /// One built-in method native code calls as `<callee>(args...)`: a
+    /// static of a namespace object (`Number.parseInt(s)`), or a prototype
+    /// method called through `call` (`String.prototype.toLowerCase.call(s)`),
+    /// whose first argument is the receiver.
     struct BuiltinStatic {
         /// What an argument must be for the call to lower.
         enum class Param {
             string,
-            number
+            number,
+            element
         };
-        llvm::StringLiteral global; ///< `Number`, `Math`.
-        llvm::StringLiteral member; ///< `parseInt`, `min`.
+        /// What the call answers.
+        enum class Result {
+            number,
+            string
+        };
+        llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
+        llvm::StringLiteral member; ///< `parseInt`, `min`, `toLowerCase`.
         llvm::StringLiteral callee; ///< `ctnative::Number.parseInt`.
-        std::array<Param, 2> params;
+        std::array<Param, 3> params;
         unsigned arity;    ///< How many of `params` the method takes.
         unsigned required; ///< How many of them a call must pass.
+        Result result = Result::number;
+        /// Called as `global.prototype.member.call(receiver, ...)`, with the
+        /// receiver as params[0].
+        bool prototype = false;
     };
     /// The row of the built-in statics table (Inference/BuiltinStatics.cpp)
     /// that `op` calls, or null. The table is the one place built-in statics

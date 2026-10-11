@@ -155,14 +155,20 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     }
     case VectorCall::builtinStatic: {
         const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
-        const std::string name = (row.global + "." + row.member).str();
+        const std::string name =
+            (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
+        using Param = TypeInference::BuiltinStatic::Param;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
-            const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
-            if (string ? !isString(argument)
-                       : carrierOf(self.typeOf(argument)) != carrier::number) {
+            const Param kind = row.params[index];
+            const carrier wanted = kind == Param::string   ? carrier::string
+                                   : kind == Param::number ? carrier::number
+                                                           : carrier::domElement;
+            if (carrierOf(self.typeOf(argument)) != wanted) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
-                                   printed(self.typeOf(argument)) + ", not a " +
-                                   (string ? "String" : "Number"));
+                                   printed(self.typeOf(argument)) + ", not " +
+                                   (kind == Param::string   ? "a String"
+                                    : kind == Param::number ? "a Number"
+                                                            : "an Element"));
             }
         }
         return true;

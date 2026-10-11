@@ -130,13 +130,16 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             break;
         case VectorCall::builtinStatic: {
             // The row rides on the mark, as `static <kinds> <callee>` with one
-            // `s` (String) or `n` (Number) per parameter: the namespace object
-            // and method read it was recognised by are plumbing, replaced
-            // first, and so are String literal arguments.
+            // `s` (String), `n` (Number) or `e` (Element) per parameter: the
+            // reads it was recognised by are plumbing, replaced first, and so
+            // are String literal arguments.
+            using Param = TypeInference::BuiltinStatic::Param;
             const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
             std::string action = "static ";
             for (unsigned i = 0; i < row.arity; ++i) {
-                action += row.params[i] == TypeInference::BuiltinStatic::Param::string ? 's' : 'n';
+                action += row.params[i] == Param::string   ? 's'
+                          : row.params[i] == Param::number ? 'n'
+                                                           : 'e';
             }
             mark(op, action + " " + row.callee.str());
             break;
@@ -352,14 +355,14 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind.consume_front("static ")) {
         // `ctnative::Number.parseInt(s, radix)`: admission proved each
-        // argument a String or a Number, as its parameter asks.
+        // argument the kind its parameter asks; only a Number converts.
         const auto [kinds, callee] = kind.split(' ');
         llvm::SmallVector<mlir::Value, 2> operands;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
             operands.push_back(
-                kinds[index] == 's' ? argument : lower.convertScalar(b, where, argument, numeric));
+                kinds[index] == 'n' ? lower.convertScalar(b, where, argument, numeric) : argument);
         }
-        swap(callValue(b, where, numeric, callee, operands));
+        swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;
     }
     if (kind == "includes") {
