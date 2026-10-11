@@ -24,21 +24,24 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Summary (updated 2026-10-10)
 - Active goal: Bootstrap; status: in progress
-- Last verified commit on ctcompile-v1: 446f071bb Merge queue/5 into
-  ctcompile-v1: class helpers, classes, startup re-pin (each merge since
-  986ad747a was checked with focused tests only; no full suite ran)
-- Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE (2026-10-10);
-  `check-workload.py fixture` -> VERDICT: DONE; neither was re-run on 446f071bb
-- First gap and next step: admission. The bundle measured 21 of 574 functions
-  native and css-dump.js 1 of 6 before queue/5; JS classes now lower to C++
-  classes. Next layers in the queue: the Data-table singletons (author-1), DOM
-  reads for css-dump.js (author-2), parallel test drivers and uv (author-3),
-  array callbacks (author-4), object shapes (author-5), nested closures
-  (author-6). native-run: css_syntax.native passes; bootstrap_layout.native
-  still needs the generated css-dump.js plus static_page.
+- Last verified commit on ctcompile-v1: 8b3cf623b Merge queue/9 into
+  ctcompile-v1 (rounds queue/6 to queue/9; focused checks only, no full suite)
+- Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE; admission
+  41 of 574 at queue/10-int, 43 of 574 at queue/11-int (both stacked on 8b3cf623b,
+  not landed: a soundness regression in Objects/array/borrow.mlir is being
+  bisected); `check-workload.py fixture` -> VERDICT: DONE
+- Team (2026-10-11): 12 authors and 2 validators over three build boxes
+  (devbox, devbox-aws, devbox-gcp) pooled by tools/devbox-pool.py
+- First gap: admission. The largest blockers are class statics plus
+  inheritance (authors 1 and 9), callbacks passed as arguments (authors 4, 6,
+  8, 12), Popper's modifier engine (author-7) and component instances held in
+  the Data Map (author-5, std::shared_ptr<C> with an acyclic proof).
+  css-dump.js lowers 5 of 5 on author-2's branch once author-12's dictionary
+  layer lands; bootstrap_layout.native is registered behind
+  CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE until then.
 - Goals done: none
 - Open questions for the user: none
-- Decisions since the prompt revision (all 2026-10-10, by the user):
+- Decisions since the prompt revision (2026-10-10 and 2026-10-11, by the user):
   - built-ins are constexpr objects in the Element pattern (`ctnative::String`,
     `Array`, `Math`, `JSON`, `Number`, `Boolean`, `Symbol`; `Object` when used);
   - a `<name>.native` test may be a separate VM-free executable from the same
@@ -47,7 +50,26 @@ committing. There is no CI. Do not build on the small local machine.
     ctcompile; bootstrap_layout may parse CSS and HTML at run time;
   - the VM's `__ctbrowser_*` class helpers become engine-internal;
   - validation runs only targeted, focused tests;
-  - every commit carries a Co-Authored-By trailer; merges use a message file.
+  - every commit carries a Co-Authored-By trailer; merges use a message file;
+  - admission may count functions removed as unreachable (each with a
+    `removed: unreachable` row) and reachability-pruned ones; removal is only for
+    code nothing that can run reaches, never a way around a refusal;
+  - only Azure, AWS and GCP build boxes.
+
+### 2026-10-11 claude-ctcompile: rounds queue/6 to queue/9
+Merged as 8b3cf623b. Layers: author-2 8540e0b59, 47ba6ff19 (global
+undefined), e685ee1ae, d8bcd0b73, 8372c1d87 (page reads, rects, computed
+style); author-1 cb4a06a50, 94df8fb7b (run-once table calls), 29bbab638,
+a8140d15f (tools/check/root-reasons.py); author-3 9e496faff (global_maps
+re-pins, comment-only drift confirmed), uv, parallel Ownership drivers,
+lit.cfg for lit 23; author-6 1060e0726, be19a61fd, f0d4b39a2, 0c181f734,
+c4801d070 (run-once static refusal names, borrowed callbacks, window.X
+fold); author-5 d989f13c6, 7bc77e905 (records). Checks at 408583072:
+remote-build all, pipeline outputs fresh, focused lit 117 (three compile
+timeouts under load passed on re-run), classes/initialization.mlir PASS
+with --timeout=9000 (about 65 min under load), check-workload fixture DONE.
+Found: Closures/direct-callbacks.mlir red since 55ce26bd7 (fixed by
+author-11 fa5ebb11b, queued). No full suite ran.
 
 ### 2026-10-10 claude-ctcompile: classes, class helpers, function binding
 Commits (merge queue rounds queue/4 and queue/5, merged as 446f071bb):
