@@ -31,7 +31,22 @@ bool borrowedCallbackOperation(admission & self, mlir::Operation * o) {
                                .str());
     };
     if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(o)) {
+        auto callback = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
+            o, mlir::StringAttr::get(o->getContext(), borrowedTarget(o)));
         for (auto [i, captured] : llvm::enumerate(made.getUpvalues())) {
+            // An object the callback takes as a pointer (an arrow's lexical
+            // `this`, ClosureLifting/ArrowThis.cpp) is copied as that pointer.
+            // That is a borrow: the callee holds the callback as a
+            // ctnative::function_ref, which it can only call during the call,
+            // so the object outlives every call through it.
+            if (callback && admission::isObjectArg(callback, ctjs::implicit_arguments +
+                                                                 static_cast<unsigned>(i))) {
+                if (!admission::isClosedObject(captured)) {
+                    return self.refuse("a borrowed callback's capture " + std::to_string(i) +
+                                       " is an object whose shape is not closed");
+                }
+                continue;
+            }
             if (!byValue(self.typeOf(captured), "capture " + llvm::Twine(i))) { return false; }
         }
         return true;

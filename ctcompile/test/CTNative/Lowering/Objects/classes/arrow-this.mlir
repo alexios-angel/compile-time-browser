@@ -15,23 +15,42 @@
 // RUN: ctjs-opt %t/direct.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/direct.cpp
 // RUN: FileCheck %s --check-prefix=DIRECTCPP < %t/direct.cpp
 // RUN: %gxx -O2 %t/direct.cpp -o %t/direct-gcc
-// RUN: %t/direct-gcc | FileCheck %s --check-prefix=OBSERVATION
+// RUN: %t/direct-gcc | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: %clangxx -O2 %t/direct.cpp -o %t/direct-clang
-// RUN: %t/direct-clang | FileCheck %s --check-prefix=OBSERVATION
-// RUN: %native_reference %t/direct.js | FileCheck %s --check-prefix=OBSERVATION
-// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/direct.js | FileCheck %s --check-prefix=OBSERVATION
+// RUN: %t/direct-clang | FileCheck %s --check-prefix=DIRECTOUT
+// RUN: %native_reference %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/direct.js | FileCheck %s --check-prefix=DIRECTOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=NESTED --implicit-check-not="reads its lexical"
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/nested.mlir
+// RUN: FileCheck %s --check-prefix=NESTED --implicit-check-not=ctnative.not_native < %t/nested.mlir
+// RUN: ctjs-opt %t/nested.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/nested.cpp
+// RUN: FileCheck %s --check-prefix=NESTEDCPP < %t/nested.cpp
+// RUN: %gxx -O2 %t/nested.cpp -o %t/nested-gcc
+// RUN: %t/nested-gcc | FileCheck %s --check-prefix=NESTEDOUT
+// RUN: %clangxx -O2 %t/nested.cpp -o %t/nested-clang
+// RUN: %t/nested-clang | FileCheck %s --check-prefix=NESTEDOUT
+// RUN: %native_reference %t/nested.js | FileCheck %s --check-prefix=NESTEDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/nested.js | FileCheck %s --check-prefix=NESTEDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/borrowed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/borrowed.mlir
+// RUN: FileCheck %s --check-prefix=BORROWED --implicit-check-not=ctnative.not_native < %t/borrowed.mlir
+// RUN: ctjs-opt %t/borrowed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/borrowed.cpp
+// RUN: FileCheck %s --check-prefix=BORROWEDCPP < %t/borrowed.cpp
+// RUN: %gxx -O2 %t/borrowed.cpp -o %t/borrowed-gcc
+// RUN: %t/borrowed-gcc | FileCheck %s --check-prefix=BORROWEDOUT
+// RUN: %clangxx -O2 %t/borrowed.cpp -o %t/borrowed-clang
+// RUN: %t/borrowed-clang | FileCheck %s --check-prefix=BORROWEDOUT
+// RUN: %native_reference %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/borrowed.js | FileCheck %s --check-prefix=BORROWEDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stored.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORED --implicit-check-not="reads its lexical"
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nestedstored.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=NESTEDSTORED --implicit-check-not="reads its lexical"
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED --implicit-check-not="reads its lexical"
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/borrowed.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BORROWED --implicit-check-not="reads its lexical"
 
 // A method makes `() => this._x` and calls it twice in its own frame. The
 // arrow lifts with the instance as an object-pointer capture, the method
@@ -46,17 +65,19 @@
 // DIRECTCPP: fn_4([[SELF]])
 // DIRECTCPP: fn_4([[SELF]])
 // DIRECTCPP: fn_4(Box* const
-// OBSERVATION: r=8
+// DIRECTOUT: r=8
 
 // An arrow inside an arrow: the inner one's `$enclosing_this` is the outer
-// one's receiver, which the outer rewrite replaces with its own capture, so
-// both lift and read the method's `this` through one capture each. The inner
-// capture is relayed from the outer arrow rather than taken from a receiver,
-// so neither is an object pointer yet and the method still refuses.
-// NESTED: ctjs.func @total$3({{.*}}ctnative.not_native = "uses `this` - a method field: it passes `this` as an argument to another function
-// NESTED: ctjs.create_closure %arg2[4] this %{{.*}} captures %{{.*}} {ctnative.lifted
-// NESTED: ctjs.func private @fn$4(
-// NESTED: ctjs.create_closure %arg2[5] this %{{.*}} captures %{{.*}} {ctnative.lifted
+// one's receiver, which the outer rewrite replaces with its own capture. The
+// outer arrow lifts first and takes the method's `this` as a pointer; the
+// inner one then takes the outer one's pointer parameter, so both are native.
+// NESTED: emitc.func @total_3
+// NESTEDCPP: total_3(Box* const [[SELF:v[0-9]+]]) {
+// NESTEDCPP: fn_4([[SELF]])
+// NESTEDCPP: fn_4(Box* const [[OUTER:v[0-9]+]]) {
+// NESTEDCPP: fn_5([[OUTER]])
+// NESTEDCPP: fn_5(Box* const
+// NESTEDOUT: r=5
 
 // Negative: the arrow is stored on the instance and called later, so it is
 // a closure value with no call site to move its capture to. The constructor
@@ -73,12 +94,19 @@
 // UNPROVED: ctjs.func private @fn$2({{.*}}ctnative.not_native = "called by `read$1`, which is not native"
 
 // The arrow passed to `apply`, whose parameter is only called: it becomes a
-// borrowed callback bound to the instance, its one capture. A bound callable
-// holding an object pointer is not typed or grouped with the receiver yet, so
-// the capture stays boxed and the method refuses.
-// BORROWED: ctjs.func @get$4({{.*}}ctnative.not_native = "a closure used as a value - Phase 59"
-// BORROWED: ctjs.create_closure %{{.*}}[5] this %{{.*}} captures %arg0 {ctnative.borrowed_callback = @fn$5
-// BORROWED: ctjs.func @fn$5({{.*}}ctnative.borrowed_callback, ctnative.captures = 1 : i32, {{.*}}ctnative.not_native = "capture 0 is !ctnative.boxed - no caller proves it
+// borrowed callback bound to the instance pointer. `apply` takes it as a
+// ctnative::function_ref, which it can only call during the call, so the
+// pointer the bound callable holds never outlives `get`'s frame.
+// BORROWED: emitc.func @get_4
+// BORROWEDCPP: apply_1(ctnative::function_ref<ctnative::nullable_scalar()>
+// BORROWEDCPP: ctnative::nullable_scalar fn_5(Box* const
+// BORROWEDOUT: r=5
+
+// Negative: an inner arrow stored on the instance. It is not lifted, so the
+// cell holding the outer arrow's `this` stays, and the outer arrow, the
+// method and the program are refused.
+// NESTEDSTORED: ctjs.func private @fn$4({{.*}}ctnative.not_native = "a closure used as a value: it is stored into something that is not an object literal made here - Phase 59 slice 2"
+// NESTEDSTORED: ctjs.func @fn$5({{.*}}ctnative.not_native = "uses its own closure"
 
 //--- direct.js
 function run() {
@@ -96,6 +124,16 @@ function run() {
     class Box {
         constructor(x) { this._x = x; }
         total() { const outer = () => { const inner = () => this._x; return inner() + 1; }; return outer(); }
+    }
+    return new Box(4).total();
+}
+var r = run();
+
+//--- nestedstored.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; }
+        total() { const outer = () => { const inner = () => this._x; this.keep = inner; return this._x; }; return outer(); }
     }
     return new Box(4).total();
 }

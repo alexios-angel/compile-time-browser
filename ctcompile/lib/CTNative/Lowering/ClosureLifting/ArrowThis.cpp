@@ -28,9 +28,11 @@
 // cell, which nothing reads once every arrow capturing it is lifted, is
 // erased (releaseLexicalThisCells) so it does not open the receiver's shape.
 // The pointer is a borrow: a lifted closure is only ever called directly, in
-// a frame that holds its captures, so every call ends before the method that
-// made it returns, and the receiver outlives the method. An arrow that is
-// stored or passed on is not lifted and keeps its refusal.
+// a frame that holds its captures, and a borrowed callback only through a
+// ctnative::function_ref during its callee's call, so every call ends before
+// the method that made it returns, and the receiver outlives the method. An
+// arrow made inside such an arrow takes the outer one's pointer the same way.
+// An arrow that is stored is not lifted and keeps its refusal.
 //
 //===----------------------------------------------------------------------===//
 
@@ -123,10 +125,14 @@ void closureLifter::captureLexicalThis() {
 /// The lexical `this` slot of `made`'s target, as an entry-block index, when
 /// lift() can pass it as an object pointer: every closure captures the cell
 /// captureLexicalThis made from the receiver of the function that creates the
-/// closure, the slot is not carried by address, the closure is not a
-/// borrowed callback (which stores its captures), and the arrow uses `this`
+/// closure, the slot is not carried by address, and the arrow uses `this`
 /// only to read or write constant keys. Whether that receiver is a closed
 /// object is the method's own proof, made where the method lifts.
+///
+/// A borrowed callback qualifies too, although its bound callable copies the
+/// pointer: the callee takes it as a ctnative::function_ref, which it can only
+/// call during the call, never store, so the callable and every call through
+/// it end within the method's frame, and the receiver outlives that frame.
 llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
     llvm::ArrayRef<ctjs::CreateClosureOp> made) {
     if (made.empty()) { return {}; }
@@ -134,24 +140,34 @@ llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
     const std::optional<unsigned> slot = lexicalThisSlot(target);
     if (!slot) { return {}; }
     for (ctjs::CreateClosureOp c : made) {
-        if (*slot >= c.getUpvalues().size() || slotIsCarried(c, *slot) ||
-            borrowedCallbacks.contains(c.getOperation())) {
-            return {};
-        }
+        if (*slot >= c.getUpvalues().size() || slotIsCarried(c, *slot)) { return {}; }
         auto cell = c.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>();
         auto self = cell ? llvm::dyn_cast<mlir::BlockArgument>(cell.getInitial()) : nullptr;
         auto maker = c->getParentOfType<ctjs::FuncOp>();
         if (!cell || !cell->hasAttr(kLexicalThis) || !self || !maker ||
-            self.getOwner() != &maker.getBody().front() ||
-            self.getArgNumber() != ctjs::arg_receiver) {
+            self.getOwner() != &maker.getBody().front()) {
             return {};
         }
+        // The maker's receiver, or, for an arrow made inside an arrow, the
+        // maker's own lexical `this`, which its lift already made an object
+        // pointer: the enclosing arrow is lifted first, because this closure
+        // reads a capture it relays.
+        const std::optional<unsigned> relayed = lexicalThisSlot(maker);
+        const bool fromReceiver = self.getArgNumber() == ctjs::arg_receiver;
+        const bool fromArrow = relayed && self.getArgNumber() == captureArgument(*relayed) &&
+                               listsObjectArg(maker, self.getArgNumber());
+        if (!fromReceiver && !fromArrow) { return {}; }
     }
+    // Constant-key reads and writes, or the cell of an arrow made in here,
+    // which that arrow's own lift decides; if it does not take `this` as a
+    // pointer, the cell stays, opens this parameter's shape, and admission
+    // refuses this arrow.
     bool constantKeysOnly = true;
     target.getBody().walk([&](ctjs::LoadUpvalueOp read) {
         if (static_cast<unsigned>(read.getIndex()) != *slot) { return; }
         for (mlir::OpOperand & use : read.getResult().getUses()) {
-            constantKeysOnly &= isConstantKeyAccess(use);
+            auto inner = llvm::dyn_cast<ctjs::CreateCellOp>(use.getOwner());
+            constantKeysOnly &= isConstantKeyAccess(use) || (inner && inner->hasAttr(kLexicalThis));
         }
     });
     if (!constantKeysOnly) { return {}; }
@@ -159,11 +175,22 @@ llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
 }
 
 /// True when `use` of a function's receiver only hands it to an arrow lifted
-/// with lexicalThisObjectArgs: as that object argument of a direct call, or as
-/// the initial value of the arrow's cell while every closure capturing the
-/// cell is such a lifted arrow (releaseLexicalThisCells erases it later).
+/// with lexicalThisObjectArgs: as that object argument of a direct call, as
+/// that capture of a borrowed callback, or as the initial value of the
+/// arrow's cell while every closure capturing the cell is such a lifted arrow
+/// (releaseLexicalThisCells erases it later).
 bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
     mlir::Operation * user = use.getOwner();
+    // A borrowed callback's capture: rewriteBorrowedCallback replaced the cell
+    // with its value. The borrow ends within the method's frame (see
+    // lexicalThisObjectArgs), so the receiver outlives every call through it.
+    if (auto c = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
+        c && c->hasAttr(kNativeBorrowedCallback)) {
+        ctjs::FuncOp target = targetOf(c);
+        const std::optional<unsigned> slot = lexicalThisSlot(target);
+        return slot && use.getOperandNumber() == kFirstCapture + *slot &&
+               listsObjectArg(target, captureArgument(*slot));
+    }
     if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
         const std::optional<unsigned> slot = lexicalThisSlot(call.getTarget());
         return slot && use.getOperandNumber() == captureArgument(*slot) &&
