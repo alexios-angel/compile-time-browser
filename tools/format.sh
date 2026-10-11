@@ -49,12 +49,16 @@ if [[ ${#files[@]} -eq 0 ]]; then
     exit 1
 fi
 
-# Python: `ruff format` (pinned in tools/Brewfile, configured in
-# pyproject.toml) over the same tracked-or-untracked list. A missing ruff is an
-# error, not a skip, so a check never passes by formatting nothing.
-ruff=$(command -v ruff || true)
-if [[ -z $ruff ]]; then
-    echo "format.sh: no ruff found - brew install ruff (tools/Brewfile)" >&2
+# Python: `ruff format` (configured in pyproject.toml) over the same
+# tracked-or-untracked list. uv runs the ruff uv.lock pins, from the dev group it
+# installs by default; without uv, the ruff on PATH (tools/Brewfile). A missing
+# ruff is an error, not a skip, so a check never passes by formatting nothing.
+if command -v uv >/dev/null; then
+    ruff=(uv run --quiet --frozen ruff)
+elif command -v ruff >/dev/null; then
+    ruff=(ruff)
+else
+    echo "format.sh: no uv or ruff found - brew install uv (tools/Brewfile)" >&2
     exit 127
 fi
 mapfile -t pyfiles < <({ git ls-files '*.py'
@@ -99,7 +103,7 @@ if [[ ${1:-} == "--check" ]]; then
         echo "format.sh: the files above are not formatted. Run tools/format.sh" >&2
         exit 1
     fi
-    if ! "$ruff" format --check --quiet "${pyfiles[@]}"; then
+    if ! "${ruff[@]}" format --check --quiet "${pyfiles[@]}"; then
         echo >&2
         echo "format.sh: the python files above are not formatted. Run tools/format.sh" >&2
         exit 1
@@ -114,6 +118,6 @@ if [[ ${1:-} == "--check" ]]; then
 fi
 
 "$format" -i "${files[@]}"
-"$ruff" format --quiet "${pyfiles[@]}"
+"${ruff[@]}" format --quiet "${pyfiles[@]}"
 beautify replace "${webfiles[@]}"
 echo "format.sh: formatted ${#files[@]} files, ${#pyfiles[@]} python and ${#webfiles[@]} web files"

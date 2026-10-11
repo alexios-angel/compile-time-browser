@@ -8,7 +8,8 @@ add_library(ctcompile-ctnative-lowering
   LoweringSupport.cpp
   PrintDeduced.cpp
   PruneDeadStores.cpp
-  Refinements.cpp)
+  Refinements.cpp
+  TestInstances.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering CTNativeTransformsPassIncGen)
 

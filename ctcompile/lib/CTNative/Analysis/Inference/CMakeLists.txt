@@ -5,6 +5,11 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Initialization.cpp
   Refinements.cpp
   Exceptions.cpp
+  Instances.cpp
+  Records.cpp
+  HostCallbacks.cpp
   Shapes.cpp
+  StringCallbacks.cpp
+  StaticTables.cpp
   Vectors.cpp
 )

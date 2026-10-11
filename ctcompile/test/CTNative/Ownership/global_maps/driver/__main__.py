@@ -8,22 +8,10 @@ the lowering refuses what it cannot prove: no manifest, a stale fingerprint
 already-lowered output, and too small a step budget.
 """
 
-from concurrent.futures import ThreadPoolExecutor
-import os
+from CTNative.harness import run_parallel
 
 from .execution import *
 from ..harness.map_results import check_result_calls
-
-
-def parallel(function, items):
-    """`function` over `items` on every CPU, results in order. The first
-    failure is raised once the calls already running finish; the rest never
-    start."""
-    pool = ThreadPoolExecutor(os.cpu_count())
-    try:
-        return list(pool.map(function, items))
-    finally:
-        pool.shutdown(cancel_futures=True)
 
 
 def main():
@@ -40,16 +28,16 @@ def main():
     saved = dict(
         zip(
             positives,
-            parallel(
-                lambda item: check_positive(args, node, reference, compilers, nm, *item),
+            run_parallel(
                 positives.items(),
+                lambda item: check_positive(args, node, reference, compilers, nm, *item),
             ),
         )
     )
     # Every control reads only what the programs above left and writes only
     # files no other control reads or writes, so they run side by side too.
-    rollbacks = parallel(
-        lambda control: control(args, node, reference, compilers, nm, positives, saved), CONTROLS
+    rollbacks = run_parallel(
+        CONTROLS, lambda control: control(args, node, reference, compilers, nm, positives, saved)
     )
     report(
         positives, shared_refusals(), [budget for found in rollbacks if found for budget in found]

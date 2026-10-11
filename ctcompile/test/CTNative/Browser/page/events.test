@@ -1,0 +1,12 @@
+# Listeners an ordinary script registers run natively when the host dispatches
+# a click, as they run on the interpreter, with no VM linked into the native
+# build.
+# RUN: %{obj}/ctcompile-test-events %S/events.html %S/events.js > %t.vm
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-events-native %S/events.html %S/events.js > %t.native
+# RUN: diff %t.vm %t.native
+# RUN: FileCheck %s --input-file %t.native
+# RUN: %nm -C %{obj}/ctcompile-test-events-native | not grep -E "ctbrowser::script::"
+# CHECK: clicks=0 order= seen=| phases={{$}}
+# CHECK-NEXT: top: clicks=1 order=r seen=| phases=Dtop c W {{$}}
+# CHECK-NEXT: leaf: clicks=1 order=rb seen=click:leaf@page! | phases=Dtop c W Dleaf c {{$}}
+# CHECK-NEXT: page: clicks=2 order=rbbr seen=click:leaf@page! click:page@page! | phases=Dtop c W Dleaf c Dpage c W {{$}}

@@ -6,13 +6,20 @@
 # is the right tool.
 #
 # lit is not installed by Homebrew: the llvm bottle ships FileCheck but no
-# llvm-lit, and both Ubuntu's and Homebrew's Python refuse `pip install` under
-# PEP 668. It lives in a virtual environment instead, and tools/Brewfile says so
-# for whoever provisions a machine.
+# llvm-lit. It comes from the uv environment at the repository root instead:
+# pyproject.toml's `test` dependency group, pinned by uv.lock, which
+# tools/remote-build.sh syncs on the build box (`uv sync --frozen --group test`).
+# ~/.lit-venv, the hand-made virtual environment that came before it, is still
+# searched after it so boxes provisioned that way keep working.
+#
+# find_program caches what it finds, so a build tree configured before the uv
+# environment existed keeps its old lit until `cmake -U CTCOMPILE_LIT`.
 if(CTCOMPILE_ENABLE_MLIR)
+  cmake_path(SET _ctcompile_repo_root NORMALIZE "${CMAKE_CURRENT_LIST_DIR}/../../..")
   find_program(CTCOMPILE_LIT
     NAMES lit llvm-lit
-    HINTS "$ENV{HOME}/.lit-venv/bin" "${LLVM_TOOLS_BINARY_DIR}"
+    HINTS "${_ctcompile_repo_root}/.venv/bin" "$ENV{HOME}/.lit-venv/bin"
+          "${LLVM_TOOLS_BINARY_DIR}"
     DOC "The lit test runner, for check-ctcompile")
 
   if(NOT CTCOMPILE_LIT)
@@ -20,7 +27,7 @@ if(CTCOMPILE_ENABLE_MLIR)
     # target that quietly does not exist looks the same as one that passes.
     message(STATUS
       "ctcompile: lit not found - check-ctcompile is unavailable. "
-      "python3 -m venv ~/.lit-venv && ~/.lit-venv/bin/pip install lit")
+      "Run `uv sync --group test` at the repository root")
   else()
     message(STATUS "ctcompile: lit at ${CTCOMPILE_LIT}")
     # Point AddLLVM at this lit. add_lit_testsuite goes through

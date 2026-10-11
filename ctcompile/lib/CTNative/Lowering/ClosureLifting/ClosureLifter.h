@@ -497,6 +497,21 @@ struct closureLifter {
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+    /// Replacement functions of `text.replace(/pattern/g, f)`
+    /// (StringCallbacks.cpp), judged and rewritten as an Array callback is.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> stringCallbacks;
+    void stringCallbackCensus();
+    std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
+    void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
+    /// Callbacks handed to the host (HostCallbacks.cpp): each closure whose
+    /// one use is the listener argument of `el.addEventListener(type, f)` or
+    /// the handler argument of `setTimeout(f, delay)`, with that call. Judged by whyNotHostCallback
+    /// and rewritten by rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    void hostCallbackCensus();
+    std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
+    void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     void census();
 
@@ -649,6 +664,11 @@ struct closureLifter {
     bool makeRunOnceCellsStatic(liftReport & out, bool functions);
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
+
+    /// Turns calls of methods of an object literal held in a static variable
+    /// into direct calls when nothing else reads it (Singletons.cpp). Returns
+    /// whether it changed the module.
+    bool bindSingletonMethods(liftReport & out);
 
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 

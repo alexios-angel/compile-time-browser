@@ -404,4 +404,16 @@ def CTNativePruneDeadStores : Pass<"ctnative-prune-dead-stores"> {
   let dependentDialects = ["::mlir::emitc::EmitCDialect"];
 }
 
+def CTNativeTestInstanceRegistries : Pass<"ctnative-test-instance-registries", "mlir::ModuleOp"> {
+  let summary = "Test only: annotate each class instance registry with its proof or refusal";
+  let description = [{
+    Runs proveInstanceRegistries (Analysis/Instances.h) on importer IR after
+    --ctjs-lift-to-scf and records the answer on the constructor:
+    `ctnative.instance_registry` is "proved" or the refusal sentence, and
+    `ctnative.instance_non_null` on a function lists the declared parameters
+    proved to hold an instance. It changes nothing else, so the proof can be
+    tested before the lowering consumes it.
+  }];
+}
+
 #endif // CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD

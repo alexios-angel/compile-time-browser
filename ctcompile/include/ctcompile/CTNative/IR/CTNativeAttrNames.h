@@ -49,6 +49,9 @@ inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason
 /// (the constructor lift's `new K(...)`): the class's name, which the lowering
 /// gives the C++ class it emits for that shape.
 inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
+/// On the static box of a binding that holds an object literal: why calls of
+/// its methods stay calls through the literal (ClosureLifting/Singletons.cpp).
+inline constexpr llvm::StringLiteral kNativeSingletonReason = "ctnative.singleton_reason";
 /// A callback of an Array method (forEach, map, filter, some, every, find or
 /// reduce) that closure lifting specialised for its one call. On the
 /// `ctjs.call` it is a symbol reference to the callback, whose captures are
@@ -56,6 +59,23 @@ inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
 /// attribute. Written by ClosureLifting/ArrayCallbacks.cpp and read by type
 /// inference, admission and the lowering.
 inline constexpr llvm::StringLiteral kNativeArrayCallback = "ctnative.array_callback";
+/// A callback handed to the host (`el.addEventListener(type, f)` or
+/// `setTimeout(f, delay)`) that closure lifting specialised for its one call.
+/// On the `ctjs.call` it is a symbol reference to the callback, whose captures
+/// follow the event type or the delay among the call's arguments; on the
+/// callback's `ctjs.func` it is a unit attribute.
+/// Written by ClosureLifting/HostCallbacks.cpp and read by type inference,
+/// admission and the lowering.
+inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callback";
+/// Marks such a call as `setTimeout(f, delay)`, since the lowering replaces
+/// the `setTimeout` load the call was recognised by before the call itself.
+inline constexpr llvm::StringLiteral kNativeHostTimer = "ctnative.host_timer";
+/// On a specialised `addEventListener` call whose receiver is the realm's own
+/// `document` or `window`: that name, since the lowering replaces the load.
+inline constexpr llvm::StringLiteral kNativeHostTarget = "ctnative.host_target";
+/// On a specialised `addEventListener` call that passes a capture flag: the
+/// flag is its last argument, after the captures.
+inline constexpr llvm::StringLiteral kNativeHostCapture = "ctnative.host_capture";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

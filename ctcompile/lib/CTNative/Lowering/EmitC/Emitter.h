@@ -66,10 +66,22 @@ struct lowering {
     lowering(mlir::DataFlowSolver & s, mlir::MLIRContext * c, mlir::ModuleOp m)
         : solver(s), context(c), module(m), declarative(declarativePatterns(c)) {}
     llvm::StringSet<> globals; ///< Scalar globals the emitted unit declares.
+    /// An ordinary script (no host contract): its DOM elements are the
+    /// runtime's views and its page reads call Runtime/Page.hpp.
+    bool pageViews = false;
     /// Static cells (ClosureLifting/RunOnce.cpp): each namespace-scope variable
     /// a lowered function names, with its C++ type, declared by
     /// declareGlobals() in name order.
     std::map<std::string, mlir::Type> statics;
+    /// Each run-once static's constant table, by the static's name: its
+    /// namespace-scope struct and value (EmitC/StaticTables.cpp), declared by
+    /// declareGlobals() when a lowered function names the static.
+    std::map<std::string, std::string> staticTables;
+    /// Each proved read of a table -> the field it reads, taken while its key
+    /// is still a ctjs.constant.
+    llvm::DenseMap<mlir::Operation *, std::string> staticTableReads;
+    void censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    bool replaceStaticTable(mlir::Operation * o);
     /// The joined type of every source store to each global, computed before
     /// any value is retyped. Observation requests and host categories never
     /// choose a global's output type.
@@ -312,6 +324,14 @@ struct lowering {
                              mlir::Value exponent);
 
     void retype(ctjs::FuncOp fn);
+    /// Lowers a replace call with a specialised callback, and skips the plumbing
+    /// it consumes (EmitC/StringCallbacks.cpp). False for any other operation.
+    bool replaceStringCallback(mlir::Operation * o);
+    /// Gives each data-record call (TypeInference::markRecordReturns) its
+    /// class by value and moves the result into a local (EmitC/Records.cpp).
+    void passRecords(ctjs::FuncOp fn);
+    /// The class a data-record function returns by value, or null.
+    [[nodiscard]] mlir::Type recordReturnType(ctjs::FuncOp fn) const;
 
     static void eraseIfUnused(mlir::Operation * o);
 

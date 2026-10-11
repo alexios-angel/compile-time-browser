@@ -79,12 +79,22 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<BoolType>(type)) { return carrier::boolean; }
     if (llvm::isa<SymbolType>(type)) { return carrier::symbol; }
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
+    if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
+    if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
+    if (llvm::isa<EventType>(type)) { return carrier::domEvent; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
     if (isObjectValueType(type)) { return carrier::objectValue; }
+    // The table, or undefined before the run-once function stores it: one
+    // pointer holds both.
+    if (llvm::isa<StaticTableType>(type)) { return carrier::staticTable; }
+    if (auto opt = llvm::dyn_cast<OptType>(type);
+        opt && llvm::isa<StaticTableType>(opt.getElementType())) {
+        return carrier::staticTable;
+    }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -162,14 +172,15 @@ carrier carrierOf(mlir::Type type) {
     return carrier::none;
 }
 
-bool isElementArray(mlir::Value v, mlir::Type type) {
+bool isElementArray(mlir::Value v, mlir::Type type, bool pageViews) {
     const carrier c = carrierOf(type);
     if (c == carrier::vector) {
         auto vector = llvm::dyn_cast<VecType>(type);
         return vector && llvm::isa<NumType>(vector.getElementType()) &&
                TypeInference::isNumberElementVector(v);
     }
-    return (c == carrier::stringVector || c == carrier::tupleVector) &&
+    return (c == carrier::stringVector || c == carrier::tupleVector ||
+            (pageViews && c == carrier::domElementVector)) &&
            !TypeInference::elementVectorAliases(v).empty();
 }
 
@@ -178,6 +189,8 @@ std::string elementSpelling(mlir::Type type) {
     case carrier::string: return kStringType.str();
     case carrier::number: return kNumberType.str();
     case carrier::numberString: return kNumberStringType.str();
+    // An ordinary script's element is the runtime's view (Runtime/Browser.hpp).
+    case carrier::domElement: return kPageElementType.str();
     case carrier::tuple: {
         auto tuple = llvm::cast<TupleType>(type);
         return "std::pair<" + elementSpelling(tuple.getElements()[0]) + ", " +
@@ -196,6 +209,51 @@ std::string elementSpanSpelling(mlir::Type type) {
     auto vector = llvm::dyn_cast_or_null<VecType>(type);
     return vector ? "std::span<const " + elementSpelling(vector.getElementType()) + ">"
                   : std::string{};
+}
+
+bool isPageGlobal(mlir::Operation * o) {
+    auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o);
+    if (!load || load.getResult().use_empty()) { return false; }
+    // setTimeout only to call it with a callback closure lifting specialised
+    // (HostCallbacks.cpp): the call lowers to ctnative::setTimeout.
+    if (load.getName() == "setTimeout") {
+        return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+            return use.getOperandNumber() == 0 &&
+                   TypeInference::isHostCallbackCall(use.getOwner()) &&
+                   TypeInference::isTimerCall(use.getOwner());
+        });
+    }
+    if (load.getName() == "getComputedStyle") {
+        return TypeInference::isRealmGlobal(load, load.getName()) &&
+               llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+                   return use.getOperandNumber() == 0 && TypeInference::isStyleCall(use.getOwner());
+               });
+    }
+    const llvm::StringRef read = load.getName() == "document" ? "documentElement"
+                                 : load.getName() == "window" ? "devicePixelRatio"
+                                                              : "";
+    if (read.empty() || !TypeInference::isRealmGlobal(load, load.getName())) { return false; }
+    return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
+        // The receiver of a listener registration (HostCallbacks.cpp), and
+        // its method read.
+        mlir::Operation * user = use.getOwner();
+        if ((use.getOperandNumber() == 1 && TypeInference::isHostCallbackCall(user)) ||
+            isPageMethodRead(user)) {
+            return true;
+        }
+        auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+        return get && use.getOperandNumber() == 0 && ctjs::constantKey(get.getKey()) == read;
+    });
+}
+
+bool isPageMethodRead(mlir::Operation * o) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o);
+    if (!read || !read.getResult().hasOneUse()) { return false; }
+    auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
+    return call &&
+           (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
+            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call)) &&
+           ctjs::receiverMethod(call) == read;
 }
 
 bool isVectorCallPlumbing(mlir::Operation * o) {

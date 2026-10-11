@@ -7,6 +7,8 @@ lifetimes. Builders for the more specialised rows live in
 harness/nested_payloads.py.
 """
 
+from CTNative.harness import run_parallel
+
 from .common import observe
 from ..harness.map_results import run_sanitized_lifetime
 from ..harness.nested_payloads import *
@@ -621,12 +623,15 @@ def check_nested_maps(args, node, reference, compilers, nm):
     """Run every nested_map_cases() row: observations and mutations first, then
     each case's lowering, refusals, emitted C++ and child-Map lifetimes."""
     cases = nested_map_cases()
-    observations = mutations = 0
 
     def seen(name, source, expected, extra=()):
         observe(args, name, source, {"trace": expected, **dict(extra)})
 
-    for name, row in cases.items():
+    # Each row writes only files named after itself, so the rows run side by
+    # side (run_parallel), first their observations and then their checks.
+    def observe_row(item):
+        name, row = item
+        observations = mutations = 0
         extra = row.get("observations", {})
         seen(name, row["source"], row["expected_trace"], extra)
         observations += 1 + len(extra)
@@ -650,7 +655,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
             observations += 2
             mutations += 1
         if not row["admitted"] and not row["previous"] and not row["dynamic"]:
-            continue
+            return observations, mutations
         observer = caller_payload_observer if row.get("caller_payload") else nested_map_observer
         observed = observer(row["source"], row)
         seen(name + "-future", observed, 1, extra)
@@ -739,6 +744,11 @@ def check_nested_maps(args, node, reference, compilers, nm):
             if not result.returncode and result.stdout == "trace=1\n":
                 raise RuntimeError(f"{name}: observer cannot distinguish {replacement}")
             mutations += 1
+        return observations, mutations
+
+    counts = run_parallel(cases.items(), observe_row)
+    observations = sum(count[0] for count in counts)
+    mutations = sum(count[1] for count in counts)
 
     def check_case(item):
         name, row = item
@@ -883,8 +893,7 @@ def check_nested_maps(args, node, reference, compilers, nm):
         }:
             check_budgets(args, ir, config, name, functions=functions)
 
-    for item in cases.items():
-        check_case(item)
+    run_parallel(cases.items(), check_case)
     positives = sum(row["admitted"] for row in cases.values())
     print(
         f"nested Maps: {positives} native programs, {len(cases) - positives} refusals, "

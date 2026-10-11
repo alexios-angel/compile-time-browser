@@ -38,12 +38,14 @@
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/Support/raw_ostream.h"
@@ -165,10 +167,7 @@ bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
 /// it an int32 loses an observable difference. tools/check/type-oracle.py
 /// counts NUM_NEGATIVE_ZERO as not-an-i32 for the same reason, and the two
 /// must agree.
-mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
-    mlir::MLIRContext * c = constant.getContext();
-    mlir::Attribute value = constant.getValue();
-
+mlir::Type typeOfConstant(mlir::MLIRContext * c, mlir::Attribute value) {
     if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr>(value)) { return absentType(c); }
     if (llvm::isa<ctjs::BooleanAttr>(value)) { return boolType(c); }
     if (llvm::isa<ctjs::StringAttr>(value)) { return stringType(c); }
@@ -181,6 +180,10 @@ mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
     }
     // A BigInt literal. CTNative has no type for one, so no type is claimed.
     return {};
+}
+
+mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
+    return typeOfConstant(constant.getContext(), constant.getValue());
 }
 
 } // namespace
@@ -283,6 +286,118 @@ mlir::Type TypeInference::elementTypeOf(mlir::Operation * op, mlir::Value array)
     return appended == appends_.end() ? element : joinLattices(op, appended->second, element);
 }
 
+bool TypeInference::isRectTest(mlir::Operation * op) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
+    return read && ctjs::constantKey(read.getKey()) == "getBoundingClientRect" &&
+           !read.getResult().use_empty() &&
+           llvm::all_of(read.getResult().getUsers(),
+                        [](mlir::Operation * user) { return llvm::isa<ctjs::TruthyOp>(user); });
+}
+
+bool TypeInference::isRectCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || !call.getArgs().empty() || ctjs::methodKey(call) != "getBoundingClientRect") {
+        return false;
+    }
+    auto read = ctjs::receiverMethod(call);
+    return read.getObject() == call.getReceiver() && read.getResult().hasOneUse();
+}
+
+mlir::Value TypeInference::deadRectReceiver(mlir::Operation * op) {
+    auto null = llvm::dyn_cast_or_null<ctjs::ConstantOp>(op);
+    if (!null || !llvm::isa<ctjs::NullAttr>(null.getValue()) || !null.getResult().hasOneUse()) {
+        return {};
+    }
+    mlir::OpOperand & use = *null.getResult().getUses().begin();
+    auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+    auto selected =
+        yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp()) : mlir::scf::IfOp{};
+    if (!selected || yield->getParentRegion() != &selected.getElseRegion()) { return {}; }
+    auto truthy = selected.getCondition().getDefiningOp<ctjs::TruthyOp>();
+    auto test =
+        truthy ? truthy.getValue().getDefiningOp<ctjs::GetPropertyOp>() : ctjs::GetPropertyOp{};
+    if (!test || !isRectTest(test)) { return {}; }
+    mlir::Operation * made =
+        selected.thenYield().getOperand(use.getOperandNumber()).getDefiningOp();
+    if (!isRectCall(made) || llvm::cast<ctjs::CallOp>(made).getReceiver() != test.getObject()) {
+        return {};
+    }
+    return test.getObject();
+}
+
+bool TypeInference::isStyleCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    return call && call.getArgs().size() == 1 &&
+           isRealmGlobal(call.getCallee().getDefiningOp(), "getComputedStyle");
+}
+
+bool TypeInference::isStylePropertyCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || call.getArgs().size() != 1 || ctjs::methodKey(call) != "getPropertyValue") {
+        return false;
+    }
+    auto read = ctjs::receiverMethod(call);
+    return read.getObject() == call.getReceiver() && read.getResult().hasOneUse();
+}
+
+mlir::Type TypeInference::domReadType(mlir::Operation * op,
+                                      llvm::ArrayRef<const TypeLattice *> operands) {
+    mlir::MLIRContext * c = op->getContext();
+    const auto element = [&](mlir::Value value) {
+        return llvm::isa_and_nonnull<DOMElementType>(joinLattices(op, value, mlir::Type{}));
+    };
+    // `el.getBoundingClientRect ? el.getBoundingClientRect() : null` on an
+    // element: the method exists, so the test is true, the call answers a rect
+    // and the null is on a branch that never runs. Typing that null as the
+    // rect keeps the join a rect rather than an optional one.
+    if (isRectCall(op) && element(llvm::cast<ctjs::CallOp>(op).getReceiver())) {
+        return DOMRectType::get(c);
+    }
+    if (const mlir::Value receiver = deadRectReceiver(op); receiver && element(receiver)) {
+        return DOMRectType::get(c);
+    }
+    // getComputedStyle(el) and its getPropertyValue(name), a String.
+    if (isStyleCall(op) && element(llvm::cast<ctjs::CallOp>(op).getArgs()[0])) {
+        return ComputedStyleType::get(c);
+    }
+    if (isStylePropertyCall(op)) {
+        auto call = llvm::cast<ctjs::CallOp>(op);
+        const bool style = llvm::isa_and_nonnull<ComputedStyleType>(
+            joinLattices(op, call.getReceiver(), mlir::Type{}));
+        const bool name =
+            llvm::isa_and_nonnull<StrType>(joinLattices(op, call.getArgs()[0], mlir::Type{}));
+        if (style && name) { return stringType(c); }
+    }
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+    if (!read) { return {}; }
+    if (llvm::isa_and_nonnull<DOMRectType>(operands[0]->getValue().getType())) {
+        const llvm::StringRef field = ctjs::constantKey(read.getKey());
+        return field == "left" || field == "top" || field == "width" || field == "height"
+                   ? doubleType(c)
+                   : mlir::Type{};
+    }
+    const llvm::StringRef key = ctjs::constantKey(read.getKey());
+    if (key == "documentElement" && isRealmGlobal(read.getObject().getDefiningOp(), "document")) {
+        return DOMElementType::get(c);
+    }
+    if (key == "devicePixelRatio" && isRealmGlobal(read.getObject().getDefiningOp(), "window")) {
+        return doubleType(c);
+    }
+    if (!llvm::isa_and_nonnull<DOMElementType>(operands[0]->getValue().getType())) { return {}; }
+    if (key == "tagName" || key == "id" || key == "className") { return stringType(c); }
+    // The method itself, read only to test that it exists: a function, so true.
+    if (isRectTest(op)) { return boolType(c); }
+    if (key == "children") { return VecType::get(c, DOMElementType::get(c)); }
+    // Only the root's client size is native (Page.hpp's clientWidth throws
+    // for any other element), so only a read straight off documentElement.
+    auto root = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+    if ((key == "clientWidth" || key == "clientHeight") && root &&
+        ctjs::constantKey(root.getKey()) == "documentElement") {
+        return doubleType(c);
+    }
+    return {};
+}
+
 mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                                             llvm::ArrayRef<const TypeLattice *> operands,
                                             bool & pending) {
@@ -296,9 +411,12 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         return joined;
     };
     const auto typeOf = [](const TypeLattice * lattice) { return lattice->getValue().getType(); };
-    // The element types lowered this way: Strings and tuples.
-    const auto lowered = [](mlir::Type type) {
-        return llvm::isa_and_nonnull<StrType, TupleType>(type);
+    // The element types lowered this way: Strings, tuples, and an ordinary
+    // script's DOM elements (a host contract's elements are its own proof's).
+    const bool pageElements = !ownedRoots_ && !domEntry_;
+    const auto lowered = [pageElements](mlir::Type type) {
+        return llvm::isa_and_nonnull<StrType, TupleType>(type) ||
+               (pageElements && llvm::isa_and_nonnull<DOMElementType>(type));
     };
     if (auto array = llvm::dyn_cast<ctjs::CreateArrayOp>(op); array && isTupleLiteral(array)) {
         // One type per position, each the type of what that position holds.
@@ -436,6 +554,16 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
                 if (dominance_.properlyDominates(store, before)) { return true; }
             }
         }
+        // A record call's field is assigned when the callee stored it before
+        // every return of the literal it returns.
+        if (isRecordCall(value)) {
+            if (!active.insert(value).second) { return false; }
+            bool all = true;
+            value.getDefiningOp<ctjs::CallDirectOp>().getTarget().walk(
+                [&](ctjs::ReturnOp ret) { all = all && self(self, ret.getValue(), ret); });
+            active.erase(value);
+            return all;
+        }
         const auto callers = objectParameterCallSites_.find(value);
         if (callers == objectParameterCallSites_.end() || !active.insert(value).second) {
             return false;
@@ -445,7 +573,7 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
             const mlir::Value actual = call->getOperand(index);
             // Each forwarded slot needs its own complete callable census.
             // A schema group alone proves neither origin nor initialization.
-            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() &&
+            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() && !isRecordCall(actual) &&
                  !objectParameterCallSites_.contains(actual)) ||
                 !self(self, actual, call)) {
                 return false;
@@ -508,7 +636,9 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
-    if (isArrayCallbackParameter(value)) { return; }
+    if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
+    // A specialised replace callback's parameters come from its call.
+    if (isStringCallbackParameter(value)) { return; }
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
@@ -569,6 +699,16 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
 
     if (auto visited = visitBorrowedCallback(op, operands, results)) { return *visited; }
+    // A run-once static's constant table (Inference/StaticTables.cpp): the
+    // literal is the table, and a proved read is the constant in its field.
+    if (auto name = op->getAttrOfType<mlir::StringAttr>(kNativeStaticTable)) {
+        if (llvm::isa<ctjs::CreateObjectOp>(op)) {
+            return answer(StaticTableType::get(c, name.getValue()));
+        }
+        if (auto field = op->getAttr(kNativeStaticTableField)) {
+            return answer(typeOfConstant(c, field));
+        }
+    }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && domEntry_->isSymbolDescription(read)) {
@@ -730,6 +870,24 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return mlir::success();
     }
 
+    // The DOM reads of an ordinary script (no host contract): the page's root
+    // element, an element's text members and children, the root's client
+    // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
+    if (!ownedRoots_ && !domEntry_) {
+        if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
+        if (const mlir::Type registered = hostCallbackType(op, operands)) {
+            return answer(registered);
+        }
+    }
+    // String.prototype.toLowerCase, and replace with a specialised function.
+    if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    if (isStringCallbackCall(op)) {
+        bool pending = false;
+        const mlir::Type replaced = stringCallbackType(op, operands, pending);
+        if (pending) { return mlir::success(); }
+        if (replaced) { return answer(replaced); }
+    }
+
     // Vectors of one proved element type, and split on a String.
     bool pendingVector = false;
     if (const mlir::Type vectorAnswer = elementVectorType(op, operands, pendingVector)) {
@@ -811,7 +969,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // subscribes this load to every store's operand, so a store whose type
     // widens later re-visits the load.
     std::optional<mlir::Type> global;
-    if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
+    // Only on the ordinary closed-source path: a host contract's owner and DOM
+    // proofs settle `undefined` themselves (materializeHostPrimitives).
+    if (!ownedRoots_ && !domEntry_ && isUndefinedGlobal(op)) {
+        global = absentType(c);
+    } else if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
         const auto stores = globalStores_.find(load.getName());
         if (!globalsAreDynamic_ && stores != globalStores_.end() && !stores->second.empty()) {
             // A global can be read before its first store. Only the complete

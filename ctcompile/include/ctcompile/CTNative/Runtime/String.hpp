@@ -192,6 +192,15 @@ struct split_method {
     }
 };
 
+class reg_exp;
+
+/// String.prototype.replace with a RegExp and a function replacement, defined
+/// in RegExp.hpp, which only the programs that call it include.
+struct replace_method {
+    template <class Callback>
+    js_string call(const js_string & self, const reg_exp & pattern, Callback callback) const;
+};
+
 /// The String.prototype methods native code calls, as stateless method
 /// objects: generated code reads `ctnative::String.prototype.trim.call(s)`,
 /// the JavaScript spelling. Only the methods the compiler lowers are here.
@@ -199,6 +208,7 @@ struct string_prototype {
     to_lower_case_method toLowerCase;
     trim_method trim;
     split_method split;
+    replace_method replace;
 };
 /// The String constructor's members. `String(x)` conversion is not lowered,
 /// so it has no call operator.

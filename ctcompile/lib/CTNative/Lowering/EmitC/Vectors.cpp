@@ -21,6 +21,12 @@ namespace ctcompile::ctnative::lowering_detail {
 // Array-method callback calls (ArrayCallbacks.cpp).
 void planArrayCallback(lowering & lower, ctjs::CallOp call);
 bool replaceArrayCallback(lowering & lower, mlir::Operation * o);
+// Listeners handed to the host (HostCallbacks.cpp).
+bool replaceHostCallback(lowering & lower, mlir::Operation * o);
+/// The action for a read or call on a listener's Event, and its replacement
+/// (HostCallbacks.cpp).
+std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
+bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
 
 namespace {
 
@@ -52,7 +58,7 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
     using VectorCall = TypeInference::VectorCall;
     llvm::DenseSet<mlir::Value> arrays;
     const auto consider = [&](mlir::Value v) {
-        if (isElementArray(v, lower.typeOf(v))) { arrays.insert(v); }
+        if (isElementArray(v, lower.typeOf(v), lower.pageViews)) { arrays.insert(v); }
     };
     for (mlir::Block & block : fn.getBody()) {
         for (mlir::BlockArgument argument : block.getArguments()) { consider(argument); }
@@ -69,9 +75,80 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         op->setAttr(kStringArrayAction, mlir::StringAttr::get(op->getContext(), action));
     };
     fn.getBody().walk([&](mlir::Operation * op) {
-        if (isVectorCallPlumbing(op)) {
+        if (isVectorCallPlumbing(op) ||
+            (lower.pageViews && (isPageGlobal(op) || isPageMethodRead(op)))) {
             mark(op, "plumbing");
             return;
+        }
+        // An array or a rect is an object, so always truthy.
+        if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(op);
+            truthy && (arrays.contains(truthy.getValue()) ||
+                       carrierOf(lower.typeOf(truthy.getValue())) == carrier::domRect)) {
+            mark(op, "truthy");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isStyleCall(op) &&
+            carrierOf(lower.typeOf(op->getResult(0))) == carrier::computedStyle) {
+            mark(op, "computed_style");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isStylePropertyCall(op) &&
+            carrierOf(lower.typeOf(llvm::cast<ctjs::CallOp>(op).getReceiver())) ==
+                carrier::computedStyle) {
+            mark(op, "property_value");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isRectCall(op) &&
+            carrierOf(lower.typeOf(op->getResult(0))) == carrier::domRect) {
+            mark(op, "bounding_rect");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isHostCallbackCall(op)) {
+            mark(op, "host_callback");
+            return;
+        }
+        if (auto action = lower.pageViews ? eventAction(lower, op) : std::nullopt) {
+            mark(op, *action);
+            return;
+        }
+        // The null on the branch an element's getBoundingClientRect test never
+        // takes (TypeInference::deadRectReceiver): any rect will do.
+        if (lower.pageViews && TypeInference::deadRectReceiver(op) &&
+            carrierOf(lower.typeOf(op->getResult(0))) == carrier::domRect) {
+            mark(op, "dead_rect");
+            return;
+        }
+        if (auto negated = llvm::dyn_cast<ctjs::UnaryOp>(op);
+            negated && negated.getKind() == ctjs::UnaryKind::Not &&
+            arrays.contains(negated.getOperand())) {
+            mark(op, "falsy");
+            return;
+        }
+        // The page reads of an ordinary script (TypeInference::domReadType).
+        if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && lower.pageViews) {
+            const llvm::StringRef key = ctjs::constantKey(read.getKey());
+            if (isPageGlobal(read.getObject().getDefiningOp())) {
+                mark(op, key == "documentElement" ? "document_element" : "device_pixel_ratio");
+                return;
+            }
+            // The member is recorded now: by replacement time the key is an
+            // emitc constant.
+            if (carrierOf(lower.typeOf(read.getObject())) == carrier::domRect) {
+                mark(op, ("rect:" + key).str());
+                return;
+            }
+            // The method exists on every element, so the test is true.
+            if (TypeInference::isRectTest(op) &&
+                carrierOf(lower.typeOf(read.getObject())) == carrier::domElement) {
+                mark(op, "method_test");
+                return;
+            }
+            if (carrierOf(lower.typeOf(read.getObject())) == carrier::domElement) {
+                const bool client = key == "clientWidth" || key == "clientHeight";
+                mark(op, key == "children" ? std::string{"children"}
+                                           : ((client ? "client:" : "member:") + key).str());
+                return;
+            }
         }
         // A tuple literal and its appends lower to nothing until the push
         // that copies the tuple into its array builds the std::pair there.
@@ -261,6 +338,74 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         lowering::eraseIfUnused(o);
         return true;
     }
+    if (kind == "truthy" || kind == "falsy") {
+        const mlir::Value constant =
+            ec::ConstantOp::create(b, where, b.getI1Type(), b.getBoolAttr(kind == "truthy"));
+        // `!a` is a Boolean value; truthiness is the bare i1.
+        swap(isBooleanCarrier(o->getResult(0).getType())
+                 ? lower.convertScalar(b, where, constant, o->getResult(0).getType())
+                 : constant);
+        return true;
+    }
+    if (kind == "method_test") {
+        swap(lower.boolConstant(b, where, true));
+        return true;
+    }
+    if (kind == "bounding_rect") {
+        swap(callValue(b, where, o->getResult(0).getType(), "ctnative::getBoundingClientRect",
+                       llvm::cast<ctjs::CallOp>(o).getReceiver()));
+        return true;
+    }
+    if (kind == "computed_style") {
+        swap(callValue(b, where, o->getResult(0).getType(), "ctnative::getComputedStyle",
+                       llvm::cast<ctjs::CallOp>(o).getArgs()[0]));
+        return true;
+    }
+    if (kind == "property_value") {
+        auto call = llvm::cast<ctjs::CallOp>(o);
+        swap(memberCall(b, where, carrierType(context, carrier::string), call.getReceiver(),
+                        "getPropertyValue", call.getArgs()[0]));
+        return true;
+    }
+    if (kind == "dead_rect") {
+        swap(ec::ConstantOp::create(b, where, o->getResult(0).getType(),
+                                    ec::OpaqueAttr::get(context, "ctnative::js_dom_rect{}")));
+        return true;
+    }
+    if (llvm::StringRef field = kind; field.consume_front("rect:")) {
+        swap(callValue(b, where, numeric, "ctnative::rect_" + field, o->getOperand(0)));
+        return true;
+    }
+    if (kind == "document_element") {
+        // Null only for a document with no root element, where the
+        // interpreter throws a TypeError on the first member read.
+        swap(callValue(b, where, ec::OpaqueType::get(context, kPageElementType),
+                       "ctnative::require_document_element", mlir::ValueRange{}));
+        return true;
+    }
+    if (kind == "device_pixel_ratio") {
+        swap(ec::LiteralOp::create(b, where, numeric, "ctnative::window.devicePixelRatio"));
+        return true;
+    }
+    if (llvm::StringRef member = kind; member.consume_front("member:")) {
+        // tagName, id and className are the view's members of those names.
+        swap(memberCall(b, where, carrierType(context, carrier::string), o->getOperand(0), member));
+        return true;
+    }
+    if (llvm::StringRef size = kind; size.consume_front("client:")) {
+        swap(callValue(b, where, numeric, "ctnative::" + size, o->getOperand(0)));
+        return true;
+    }
+    if (kind == "children") {
+        // A snapshot the frame owns, like a split result.
+        mlir::Value local = ec::VariableOp::create(b, where, o->getResult(0).getType(),
+                                                   ec::OpaqueAttr::get(context, ""));
+        auto owner = llvm::cast<ec::LValueType>(o->getResult(0).getType()).getValueType();
+        ec::AssignOp::create(b, where, local,
+                             memberCall(b, where, owner, o->getOperand(0), "children"));
+        swap(local);
+        return true;
+    }
     if (kind == "length") {
         swap(callValue(b, where, numeric, "ctnative::vec_length", place(o->getOperand(0))));
         return true;
@@ -291,6 +436,8 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         return true;
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
+    if (kind == "host_callback") { return replaceHostCallback(lower, o); }
+    if (kind.starts_with("event")) { return replaceEvent(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];

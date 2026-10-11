@@ -8,6 +8,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -203,6 +204,11 @@ void lowering::retype(ctjs::FuncOp fn) {
                                : mlir::Type(ec::LValueType::get(owner)));
             return;
         }
+        // An ordinary script's DOM element is the runtime's view of it.
+        if (c == carrier::domElement && pageViews) {
+            v.setType(ec::OpaqueType::get(context, kPageElementType));
+            return;
+        }
         // A tuple (a tuple literal, or an element read from an array of them)
         // is a std::pair of its positions.
         if (carrierOf(typeOf(v)) == carrier::tuple) {
@@ -279,6 +285,8 @@ void lowering::retype(ctjs::FuncOp fn) {
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
         if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
+        // A static table's literal is its address (EmitC/StaticTables.cpp).
+        if (object->hasAttr(kNativeStaticTable)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });
@@ -300,6 +308,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             mlir::Value(call.getResult()).setType(receiverType(shapeAt(call.getResult())));
         }
     });
+    passRecords(fn);
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

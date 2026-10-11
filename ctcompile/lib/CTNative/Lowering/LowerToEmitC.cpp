@@ -26,12 +26,14 @@
 #include "../Analysis/OwnedGlobalRoots.h"
 #include "../Analysis/OwnedMethodTableSlots.h"
 #include "../HostContract/Preparation.h"
+#include "../Reachability/Analysis.h"
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
 #include "ForOf.h"
 #include "Refinements.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
@@ -216,6 +218,59 @@ std::string prepareDOMMaps(mlir::ModuleOp module, std::optional<HostContract> & 
 
 struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerToEmitCPass> {
     using CTNativeLowerToEmitCBase::CTNativeLowerToEmitCBase;
+
+    /// Erases the refused functions that nothing able to run can create or
+    /// call, once admission has settled and before any function is lowered.
+    /// A module under a host contract keeps every function, as the default
+    /// optimizations do.
+    /// The default pruning before closure lifting keeps every function the
+    /// importer left public, and a closure's target is public until the lift
+    /// makes it private; so a closure made only in a branch precomputation
+    /// removed (a jQuery plugin when the page has no jQuery) leaves a refused
+    /// function behind that no code reaches. This walk starts only from the
+    /// script, the functions the embedder calls by name and what a module
+    /// attribute names (reachability::roots::entries), and it never removes
+    /// an admitted function. A module with no top-level script also keeps
+    /// every public function, since it is not a whole script and something
+    /// outside it may call them. Removal is never silent: each function gets a
+    /// row in `ctnative.unreachable_refusals`, which tools/check counts as
+    /// removed, not as native. One walk finds every unreachable function, so
+    /// nothing a removal orphans is left for a second round.
+    void removeUnreachableRefusals(llvm::SmallVectorImpl<ctjs::FuncOp> & functions,
+                                   bool underHostContract) {
+        mlir::ModuleOp module = getOperation();
+        module->removeAttr("ctnative.unreachable_refusals");
+        module->removeAttr("ctnative.unreachable_reason");
+        if (underHostContract || !optimize || !pruneUnreachable) { return; }
+        const auto proof =
+            reachability::analyze(module, reachabilityMaxSteps, reachability::roots::entries);
+        mlir::Builder at(&getContext());
+        if (!proof.reason.empty()) {
+            module->setAttr("ctnative.unreachable_reason", at.getStringAttr(proof.reason));
+            return;
+        }
+        llvm::SmallVector<mlir::Attribute> rows;
+        for (ctjs::FuncOp fn : proof.dead) {
+            const auto refusal = fn->getAttrOfType<mlir::StringAttr>("ctnative.not_native");
+            if (!refusal) { continue; }
+            rows.push_back(at.getDictionaryAttr(
+                {at.getNamedAttr("function", at.getStringAttr(fn.getSymName())),
+                 at.getNamedAttr("reason",
+                                 at.getStringAttr(llvm::Twine("removed: unreachable (no function "
+                                                              "that can run creates or calls it; "
+                                                              "it was refused: ") +
+                                                  refusal.getValue() + ")"))}));
+            llvm::erase(functions, fn);
+            fn.erase();
+        }
+        if (!rows.empty()) {
+            module->setAttr("ctnative.unreachable_refusals", at.getArrayAttr(rows));
+        }
+        if (optimizationReport) {
+            module.emitRemark() << "reachability: " << rows.size()
+                                << " refused function(s) removed as unreachable after admission";
+        }
+    }
 
     void runOnOperation() override {
         mlir::ModuleOp module = getOperation();
@@ -543,6 +598,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
                 : nullptr;
+        // Data records returned by value join their callers' groups.
+        TypeInference::markRecordReturns(module);
+        TypeInference::markStringMethodCalls(module);
+        markStaticTables(module);
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -687,10 +746,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");
                     });
-                    // A specialised Array-method call names its callback.
+                    // A specialised Array-method call or replace call names its
+                    // callback, and an addEventListener call its listener.
                     fn.getBody().walk([&](ctjs::CallOp call) {
                         auto callback =
                             call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback);
+                        if (!callback) {
+                            callback =
+                                call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeStringCallback);
+                        }
+                        if (!callback) {
+                            callback =
+                                call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback);
+                        }
                         if (!callback) { return; }
                         edge(symbols.lookup(callback.getValue()),
                              "calls back `" + callback.getValue() + "`, which is not native",
@@ -713,6 +781,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
 
         lowering lower{solver, &getContext(), module};
+        lower.pageViews = !hostContract;
         lower.groups = &groups;
         if (domData) {
             if (!admittedGlobals || !admittedGlobals->proved() ||
@@ -726,6 +795,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 lower.domParameters.insert(parameter);
             }
         }
+        // A program with string entries is embedded: its host asks the
+        // entries, and its top level runs inside the host's own output, as a
+        // script's top level prints nothing in the VM. So it prints no
+        // globals.
+        if (!stringEntries.empty()) { lower.explicitObservations = true; }
         if (admittedGlobals && admittedGlobals->proved()) {
             lower.explicitObservations = true;
             for (const auto & name : hostContract->observations) {
@@ -791,9 +865,18 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
                         if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
                         if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
-                        // The RegExp literal factory behind split(/\s+/) lowers
-                        // to nothing; it is not a program global.
-                        if (isVectorCallPlumbing(load)) { return; }
+                        // The RegExp literal factory behind split(/\s+/) and a
+                        // specialised replace lowers to nothing; it is not a
+                        // program global.
+                        if (isVectorCallPlumbing(load) ||
+                            TypeInference::consumedByStringCallback(load)) {
+                            return;
+                        }
+                        // Nor are `document` and `window` when only their
+                        // page reads use them; those lower to runtime calls.
+                        if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is the global `undefined`, which is a constant.
+                        if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();
                     }
                     if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {
@@ -827,7 +910,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // not on its creation site, and whether a shape's definition is a
         // template depends on every site in the program, so no site's type can
         // be written until all of them have been seen. First, refused
-        // functions get back the bodies speculative recovery replaced.
+        // functions get back the bodies speculative recovery replaced. The
+        // static tables are read first: a refused run-once function's original
+        // body predates markStaticTables, so its literals carry no mark.
+        lower.censusStaticTables(accepted);
         for (auto & [fn, original] : recoveryOriginals) {
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());
@@ -855,6 +941,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusEnvironments(accepted);
         lower.censusMethodTables(accepted);
 
+        removeUnreachableRefusals(functions, hostContract.has_value());
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         dropRefinements(module);
         if (!accepted.empty()) { lower.declareGlobals(); }

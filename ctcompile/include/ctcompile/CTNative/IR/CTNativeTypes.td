@@ -87,13 +87,47 @@ def CTNative_BoxedType : CTNative_Type<"Boxed", "boxed"> {
 def CTNative_DOMElementType : CTNative_Type<"DOMElement", "dom_element"> {
   let summary = "A borrowed ctbrowser document and element node handle";
   let description = [{
-    Introduced only by a live, fingerprint-bound native DOM entry proof.
+    Introduced by a live, fingerprint-bound native DOM entry proof, or by an
+    ordinary script's page reads (TypeInference::domReadType), where the
+    carrier is the runtime's ctnative::js_element_t view instead.
     The document owns the node and outlives the call; identity includes both
     the document address and node_id. This is neither an owning JavaScript
     object nor a numeric node ID. A local closest result may be a canonical
     empty handle denoting null; live proof permits only identity comparisons
     of that nullable result, never dereference. Retention and borrowed function
     results are refused.
+  }];
+}
+
+def CTNative_DOMRectType : CTNative_Type<"DOMRect", "dom_rect"> {
+  let summary = "A DOMRect's geometry, as ctnative::js_dom_rect";
+  let description = [{
+    The answer of an ordinary script's `el.getBoundingClientRect()` on a
+    proved page element: left, top, width and height as Numbers, copied out
+    of the laid-out page (Runtime/Page.hpp). A snapshot, like the VM's DOMRect,
+    so it outlives later layout. It meets only itself.
+  }];
+}
+
+def CTNative_ComputedStyleType : CTNative_Type<"ComputedStyle", "computed_style"> {
+  let summary = "The result of getComputedStyle, as ctnative::js_computed_style";
+  let description = [{
+    The answer of an ordinary script's `getComputedStyle(el)` on a proved page
+    element. Live, like the VM's object: getPropertyValue computes from the
+    page as it stands (Runtime/Page.hpp). It borrows the page and names the
+    element. It meets only itself.
+  }];
+}
+
+def CTNative_EventType : CTNative_Type<"Event", "event"> {
+  let summary = "The Event a native listener receives, as ctnative::js_event";
+  let description = [{
+    The parameter of a listener an ordinary script hands to
+    `el.addEventListener(type, f)`: a view of the host's dispatch
+    (Runtime/Events.hpp), valid only while the listener runs. Admission lets
+    it be only the receiver of its type, target, currentTarget and
+    defaultPrevented reads and its preventDefault and stopPropagation calls,
+    so it never outlives the dispatch. It meets only itself.
   }];
 }
 
@@ -393,6 +427,19 @@ def CTNative_GlobalObjectType
     Native lowering must independently consume that query for each global
     load and field access; this type or an input annotation never authorizes
     ownership. The source allocation still escapes through StoredGlobal.
+  }];
+}
+
+def CTNative_StaticTableType
+    : CTNative_WrapperType<"StaticTable", "static_table", (ins StringRefParameter<>:$binding)> {
+  let summary = "The constant table a run-once static variable holds";
+  let description = [{
+    The binding names one static variable of a run-once function that
+    markStaticTables (Analysis/Inference/StaticTables.cpp) proved holds one
+    object literal of constants, never written after it is made. Its C++
+    carrier is a pointer to the one namespace-scope `const` struct, so a copy
+    of the value is the same object, as in JavaScript. The variable holds
+    undefined, a null pointer, until the run-once function stores the table.
   }];
 }
 
