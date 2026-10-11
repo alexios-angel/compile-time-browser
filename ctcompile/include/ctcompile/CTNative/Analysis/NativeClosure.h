@@ -23,6 +23,30 @@ inline constexpr llvm::StringLiteral kNativeStoredRead = "ctnative.stored_captur
 inline constexpr llvm::StringLiteral kNativeMethodTable = "ctnative.method_table";
 inline constexpr llvm::StringLiteral kNativeTableField = "ctnative.table_field";
 
+/// A borrowed callback (ClosureLifting/BorrowedCallbacks.cpp): a closure
+/// passed to a parameter its callee only calls. On the ctjs.create_closure it
+/// is a symbol reference to the lifted callback, whose captures are now the
+/// closure's operands; on that callback's ctjs.func it is a unit attribute.
+inline constexpr llvm::StringLiteral kNativeBorrowedCallback = "ctnative.borrowed_callback";
+/// On a ctjs.call through such a parameter: the callbacks it may call, as an
+/// array of symbol references.
+inline constexpr llvm::StringLiteral kNativeBorrowedCall = "ctnative.borrowed_call";
+
+/// The callback a borrowed ctjs.create_closure names, or empty.
+inline llvm::StringRef borrowedTarget(mlir::Operation * op) {
+    auto target = op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeBorrowedCallback);
+    return target ? target.getValue() : llvm::StringRef{};
+}
+
+/// Whether `value` is a parameter that only borrowed calls call through.
+inline bool isBorrowedParameter(mlir::Value value) {
+    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+    return argument && argument.getOwner()->isEntryBlock() && !argument.use_empty() &&
+           llvm::all_of(argument.getUses(), [](mlir::OpOperand & use) {
+               return use.getOperandNumber() == 0 && use.getOwner()->hasAttr(kNativeBorrowedCall);
+           });
+}
+
 /// The kNativeMethodTable name on `op`, or empty.
 inline llvm::StringRef methodTableName(mlir::Operation * op) {
     return ctjs::stringAttrOf(op, kNativeMethodTable);

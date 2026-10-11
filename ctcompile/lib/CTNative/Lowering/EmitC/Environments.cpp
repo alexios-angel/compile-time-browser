@@ -15,6 +15,7 @@ namespace ctcompile::ctnative::lowering_detail {
 // `environments`. Marks the matching reads and direct calls so
 // replaceEnvironment() can rewrite them.
 void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    censusBorrowedCallbacks(accepted);
     llvm::StringMap<unsigned> callables;
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateClosureOp made) {
@@ -94,6 +95,34 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
 // environment operation.
 bool lowering::replaceEnvironment(mlir::Operation * op) {
     if (op->hasAttr(kNativeStoredRead)) { return true; }
+    // A borrowed callback (ClosureLifting/BorrowedCallbacks.cpp): the closure
+    // binds the lifted callback to its captures, and a call through the
+    // parameter calls the ctnative::function_ref that borrows it.
+    if (const auto target = borrowedTarget(op); !target.empty()) {
+        mlir::OpBuilder at(op);
+        const auto any = ec::OpaqueType::get(context, "auto");
+        const auto named = names.find(target);
+        llvm::SmallVector<mlir::Value> bound{ec::LiteralOp::create(
+            at, op->getLoc(), any, named == names.end() ? cIdentifier(target) : named->second)};
+        llvm::append_range(bound, llvm::cast<ctjs::CreateClosureOp>(op).getUpvalues());
+        // The bound callable is a local of this frame, and the function_ref
+        // the callee receives refers to that local.
+        const mlir::Type lent = op->getResult(0).getType();
+        op->getResult(0).replaceAllUsesWith(
+            callValue(at, op->getLoc(), lent, opaqueSpelling(lent),
+                      callValue(at, op->getLoc(), any, "std::bind_front", bound)));
+        eraseIfUnused(op);
+        return true;
+    }
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(op); call && op->hasAttr(kNativeBorrowedCall)) {
+        mlir::OpBuilder at(op);
+        llvm::SmallVector<mlir::Value> operands{call.getCallee()};
+        llvm::append_range(operands, call.getArgs());
+        op->getResult(0).replaceAllUsesWith(callValue(at, op->getLoc(), op->getResult(0).getType(),
+                                                      "ctnative::invoke_callable", operands));
+        eraseIfUnused(op);
+        return true;
+    }
     const auto target = environmentTarget(op);
     if (target.empty()) { return false; }
     mlir::OpBuilder at(op);
@@ -118,6 +147,48 @@ bool lowering::replaceEnvironment(mlir::Operation * op) {
     }
     op->getResult(0).replaceAllUsesWith(result);
     eraseIfUnused(op);
+    return true;
+}
+
+// Spells the ctnative::function_ref of every borrowed parameter in the
+// accepted functions, before any of them is lowered: the result and argument
+// carriers of the calls through it, on which admission made every call and
+// every callback agree. Each callback the parameter holds gets the same
+// spelling, for the closure that binds it.
+void lowering::censusBorrowedCallbacks(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    for (ctjs::FuncOp fn : accepted) {
+        fn.getBody().walk([&](ctjs::CallOp call) {
+            auto callbacks = call->getAttrOfType<mlir::ArrayAttr>(kNativeBorrowedCall);
+            if (!callbacks || borrowedSignatures.contains(call.getCallee())) { return; }
+            llvm::SmallVector<std::string> arguments;
+            for (mlir::Value argument : call.getArgs()) {
+                arguments.push_back(callableTypeSpelling(typeOf(argument)));
+            }
+            const std::string spelling = "ctnative::function_ref<" +
+                                         callableTypeSpelling(typeOf(call.getResult())) + "(" +
+                                         llvm::join(arguments, ", ") + ")>";
+            borrowedSignatures[call.getCallee()] = spelling;
+            for (auto symbol : callbacks.getAsRange<mlir::FlatSymbolRefAttr>()) {
+                borrowedCallbackSignatures[symbol.getValue()] = spelling;
+            }
+        });
+    }
+}
+
+bool lowering::retypeBorrowed(mlir::Value v) {
+    std::string spelling;
+    if (mlir::Operation * made = v.getDefiningOp(); made && !borrowedTarget(made).empty()) {
+        spelling = borrowedCallbackSignatures.lookup(borrowedTarget(made));
+    } else if (const auto found = borrowedSignatures.find(v); found != borrowedSignatures.end()) {
+        spelling = found->second;
+    } else {
+        return false;
+    }
+    if (spelling.empty()) {
+        llvm::report_fatal_error("ctnative lowering: a borrowed callback was admitted with no call "
+                                 "through its parameter to spell its signature");
+    }
+    v.setType(ec::OpaqueType::get(context, spelling));
     return true;
 }
 
