@@ -10,8 +10,8 @@
 #
 # The negatives are refused by name: a promise of an object (unproved, and it
 # could have a `then` key) and a resolve function that leaves its executor.
-# Popper's memoised update stops at the same two rules: its resolve function
-# is captured by a handler, and the handler writes the memo it captures.
+# Popper's memoised update stops at the escaping-resolve rule: its resolve
+# function is captured by a handler, which therefore cannot lift either.
 #
 # RUN: split-file %s %t
 # RUN: %node %t/expected.cjs %t/witness.js sv2r
@@ -42,7 +42,7 @@
 # CHAINED-DAG: call_opaque "ctnative::Promise.prototype.then.call"{{.*}} -> !emitc.opaque<"ctnative::js_promise<ctnative::js_num>">
 # CHAINED-DAG: ctnative::Promise.resolve
 # POPPER-DAG: closure_reason = "the executor of new Promise uses its resolve function other than by calling it with one value
-# POPPER-DAG: closure_reason = "the handler of Promise.prototype.then captures binding 1, which is written after it is captured
+# POPPER-DAG: closure_reason = "capture 0 is filled from the enclosing closure, which did not lift: the executor of new Promise uses its resolve function other than by calling it with one value
 
 #--- witness.js
 var log = "";

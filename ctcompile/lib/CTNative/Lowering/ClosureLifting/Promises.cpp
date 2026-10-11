@@ -12,9 +12,10 @@
 // (Runtime/Promise.hpp).
 //
 // A handler runs from the microtask queue after the frame that made it has
-// returned, so every capture is copied into it, and a binding written after
-// the capture is refused. The executor runs during the construct, but takes
-// its captures the same way, which keeps one rule for both. Its resolve
+// returned, so every capture is copied into it, except a binding of that
+// frame written after the capture, which the two share through a
+// std::shared_ptr<ctnative::cell<T>> (rule 2b in ClosureLifter.h). The executor runs during the
+// construct, but takes its captures the same way, which keeps one rule for both. Its resolve
 // function may only be called, with one argument: a resolve function that is
 // stored or passed on would need the promise's value type wherever it goes.
 // Which values may be copied, and which promise values are native, is a type
@@ -118,12 +119,15 @@ std::optional<std::string> closureLifter::whyNotPromiseCallback(ctjs::CreateClos
             }
         }
     }
-    // A handler runs after this frame returns, with its captures copied in.
+    // A handler runs after this frame returns, with its captures copied in; a
+    // binding of this frame written after the capture is shared through a cell
+    // instead (rule 2b in ClosureLifter.h).
     for (unsigned i = 0; i < c.getUpvalues().size(); ++i) {
-        if (slotIsCarried(c, i)) {
+        if (slotIsCarried(c, i) && !slotIsShared(c, i)) {
             return callback + " captures binding " + std::to_string(i) +
-                   ", which is written after it is captured - the promise keeps the callback, "
-                   "so it takes its captures by value";
+                   ", which is written after it is captured and reaches it through an "
+                   "enclosing closure - the promise keeps the callback, and only a binding "
+                   "of the frame that makes it is shared";
         }
     }
     if (auto why = whyCapturesDoNotLift(c)) { return why; }

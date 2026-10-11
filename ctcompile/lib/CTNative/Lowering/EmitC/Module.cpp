@@ -123,15 +123,18 @@ void lowering::declareGlobals() {
     needsObjectIdentity |= needsObjectValue;
     // Snapshot projections remain ordered even after their producer has
     // been deforested. The choice only becomes more conservative here.
-    // Only programs that register listeners or timers, or use promises, parse
-    // their tables.
+    // Only programs that register listeners or timers, use promises or share
+    // a binding with a kept callback parse those headers.
     bool needsEvents = false;
     bool needsTimers = false;
     bool needsPromises = false;
+    bool needsCells = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
         needsTimers |= call.getCallee() == "ctnative::setTimeout";
         needsPromises |= call.getCallee().starts_with("ctnative::Promise.");
+        needsCells |= call.getCallee() == "ctnative::cell_place" ||
+                      call.getCallee().starts_with("std::make_shared<ctnative::cell<");
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");
@@ -162,6 +165,11 @@ void lowering::declareGlobals() {
     if (needsTimers) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Timers.hpp"),
+                              b.getUnitAttr());
+    }
+    if (needsCells) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Cell.hpp"),
                               b.getUnitAttr());
     }
     if (needsPromises) {

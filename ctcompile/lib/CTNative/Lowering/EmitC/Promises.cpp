@@ -53,7 +53,10 @@ bool replacePromise(lowering & lower, mlir::Operation * o) {
             construct ? construct.getArgs() : llvm::cast<ctjs::CallOp>(o).getArgs();
         if (!captures.empty()) {
             llvm::SmallVector<mlir::Value> bind{bound};
-            llvm::append_range(bind, captures);
+            // A shared cell is bound as its handle (rule 2b in ClosureLifter.h).
+            for (mlir::Value capture : captures) {
+                bind.push_back(loadedHandle(b, where, capture));
+            }
             bound = callValue(b, where, any, "std::bind_front", bind);
         }
         if (construct) {

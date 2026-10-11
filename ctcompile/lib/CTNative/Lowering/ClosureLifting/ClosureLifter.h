@@ -227,6 +227,28 @@ struct closureLifter {
     /// structural clause can fail here; the carrier is admission's question.
     llvm::DenseMap<mlir::Operation *, std::string> whyNotCarried;
 
+    // --- Rule 2b: a shared cell, kept by a callback the runtime holds -------
+    //
+    // A carried cell is a frame-local variable reached by pointer, which is
+    // sound only because every closure over it is called while the frame is
+    // live (rule 2, condition 1). A callback the runtime keeps (a timer
+    // handler, a listener, a promise handler; hostCallbacks and
+    // promiseCallbacks) runs after the frame has returned, so a carried cell
+    // such a callback captures directly becomes a std::shared_ptr to a
+    // ctnative::cell (Runtime/Cell.hpp) instead. The frame, the kept callback
+    // and every other closure over the binding hold the same handle, so the
+    // binding lives as long as its last holder. Admission limits the cell to
+    // values that reference no closure, which keeps it out of any cycle.
+    //
+    // A kept callback reaching the binding through an enclosing closure's
+    // capture is not taken yet: it is refused, as before.
+    llvm::DenseSet<mlir::Operation *> keptCells;
+    void keptCellCensus();
+    /// Whether capture slot i of `c` receives a shared cell's handle: its
+    /// operand is a kept cell of this frame, or the enclosing function
+    /// received the slot as a handle (`ctnative.shared_cell_args`).
+    bool slotIsShared(ctjs::CreateClosureOp c, unsigned i);
+
     // --- Rule 3: dropping the hoisted `undefined` from a carried cell's type ---
     //
     // Rule 2 emits the box as a frame-scope variable assigned the initial, so

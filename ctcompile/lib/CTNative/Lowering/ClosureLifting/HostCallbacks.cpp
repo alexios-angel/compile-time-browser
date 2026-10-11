@@ -12,8 +12,9 @@
 // (Runtime/Timers.hpp) owns that callable.
 //
 // The host keeps the callable after the frame that made it returns, so every
-// capture is copied into it: a binding written after the capture would need
-// the variable itself, which no longer exists, and is refused. Which values
+// capture is copied into it, except a binding of that frame written after the
+// capture, which the frame and the callable share through a
+// std::shared_ptr<ctnative::cell<T>> (rule 2b in ClosureLifter.h). Which values
 // may be copied at all is a type question admission asks
 // (Admission/HostCallbacks.cpp).
 //
@@ -77,12 +78,15 @@ std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosure
                       : " parameters - only a listener that takes no event is native");
     }
     // The host keeps the listener after this frame returns, with its captures
-    // copied into it.
+    // copied into it; a binding of this frame written after the capture is
+    // shared through a cell instead (rule 2b in ClosureLifter.h).
     for (unsigned i = 0; i < c.getUpvalues().size(); ++i) {
-        if (slotIsCarried(c, i)) {
+        if (slotIsCarried(c, i) && !slotIsShared(c, i)) {
             return callback + " captures binding " + std::to_string(i) +
-                   ", which is written after it is captured - the host keeps the " +
-                   (timer ? "handler" : "listener") + ", so it takes its captures by value";
+                   ", which is written after it is captured and reaches it through an "
+                   "enclosing closure - the host keeps the " +
+                   (timer ? "handler" : "listener") +
+                   ", and only a binding of the frame that registers it is shared";
         }
     }
     if (auto why = whyCapturesDoNotLift(c)) { return why; }

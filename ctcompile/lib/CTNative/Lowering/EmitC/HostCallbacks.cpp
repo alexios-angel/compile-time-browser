@@ -31,7 +31,10 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
     mlir::Value bound = ec::LiteralOp::create(b, where, any, listener);
     if (call.getArgs().size() > 1) {
         llvm::SmallVector<mlir::Value> captured{bound};
-        llvm::append_range(captured, call.getArgs().drop_front());
+        // A shared cell is bound as its handle (rule 2b in ClosureLifter.h).
+        for (mlir::Value capture : call.getArgs().drop_front()) {
+            captured.push_back(loadedHandle(b, where, capture));
+        }
         bound = callValue(b, where, any, "std::bind_front", captured);
     }
     if (TypeInference::isTimerCall(call)) {

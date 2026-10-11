@@ -22,6 +22,14 @@ inline constexpr llvm::StringLiteral kNativeCaptures = "ctnative.captures";
 inline constexpr llvm::StringLiteral kNativeLifted = "ctnative.lifted";
 inline constexpr llvm::StringLiteral kNativeUnboxed = "ctnative.unboxed";
 inline constexpr llvm::StringLiteral kNativeCarried = "ctnative.carried";
+/// On a carried `ctjs.create_cell`: a callback the runtime keeps (a timer
+/// handler, a listener, a promise handler) captures it, so the binding lives
+/// in a std::shared_ptr<ctnative::cell<T>> (Runtime/Cell.hpp) rather than a
+/// frame-local variable. On a ctjs.func or a call site, the entry-block
+/// indices among `ctnative.cell_args` that receive such a handle rather than
+/// a pointer.
+inline constexpr llvm::StringLiteral kNativeSharedCell = "ctnative.shared_cell";
+inline constexpr llvm::StringLiteral kNativeSharedCellArgs = "ctnative.shared_cell_args";
 inline constexpr llvm::StringLiteral kNativeClosureReason = "ctnative.closure_reason";
 inline constexpr llvm::StringLiteral kNativeCellReason = "ctnative.cell_reason";
 inline constexpr llvm::StringLiteral kNativeObjectReason = "ctnative.object_reason";

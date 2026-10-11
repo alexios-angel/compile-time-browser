@@ -7,7 +7,7 @@
 # RUN: FileCheck %s --input-file %t.native
 # RUN: %nm -C %{obj}/ctcompile-test-timers-native | not grep -E "ctbrowser::script::"
 # CHECK: log=
-# CHECK-NEXT: +0: log=zn
-# CHECK-NEXT: +5: log=znm
-# CHECK-NEXT: +0: log=znmm2
-# CHECK-NEXT: +5: log=znmm2a
+# CHECK-NEXT: +0: log=znt11
+# CHECK-NEXT: +5: log=znt11mt12
+# CHECK-NEXT: +0: log=znt11mt12m2
+# CHECK-NEXT: +5: log=znt11mt12m2a

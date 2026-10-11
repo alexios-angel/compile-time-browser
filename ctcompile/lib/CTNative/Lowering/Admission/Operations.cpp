@@ -458,6 +458,17 @@ bool admission::op(mlir::Operation * o) {
     // for passing the address are listed beside `carriedCells` in
     // ClosureLifter.h.)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
+        // A binding a kept callback shares (rule 2b in ClosureLifter.h) may
+        // hold only values that reference no closure, so no closure over the
+        // cell can be stored in it and the cell is never in a cycle.
+        if (o->hasAttr(kNativeSharedCell) &&
+            !isPrimitiveCarrier(carrierOf(typeOf(cell.getResult())))) {
+            return refuse("a binding a kept callback writes holds " +
+                          printed(typeOf(cell.getResult())) +
+                          " - its shared cell holds only a Number, a Boolean, a String or an "
+                          "optional one; a function there could capture the cell holding it, "
+                          "a reference cycle");
+        }
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
             return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
                           ", which has no native carrier - a variable this tier cannot "

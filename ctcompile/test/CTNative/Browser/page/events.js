@@ -28,6 +28,20 @@ function listen(name) {
 }
 listen('b');
 
+// A listener that writes a binding of the frame that registered it: the frame
+// and the listener share `on` through a cell, so each click flips the one
+// binding and the frame's own write after registering is what the first
+// click sees.
+function toggler() {
+    var on = true;
+    document.documentElement.addEventListener('click', function () {
+        on = !on;
+        order = order + (on ? '+' : '-');
+    });
+    on = false;
+}
+toggler();
+
 function events_report() {
     return 'clicks=' + clicks + ' order=' + order;
 }

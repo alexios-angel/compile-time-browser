@@ -16,12 +16,15 @@
 // EMIT-DAG: emitc.include <"ctcompile/CTNative/Runtime/Timers.hpp">
 // EMIT-DAG: call_opaque "ctnative::setTimeout"
 
-// CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener captures binding 0, which is written after it is captured - the host keeps the listener, so it takes its captures by value"
+// A listener and a timer handler that capture a binding their frame writes
+// afterwards (later, timerLater) lift: the binding becomes a shared cell
+// whose handle the callback takes (rule 2b in ClosureLifter.h).
+// CHECK-DAG: ctjs.func @fn${{[0-9]+}}({{.*}}ctnative.cell_args = array<i32: 3>, ctnative.host_callback, {{.*}}ctnative.shared_cell_args = array<i32: 3>
+// CHECK-DAG: ctjs.func @fn${{[0-9]+}}({{.*}}ctnative.cell_args = array<i32: 3>, ctnative.host_callback, {{.*}}ctnative.shared_cell_args = array<i32: 3>
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener reads `this`"
 // CHECK-DAG: @takesEvent${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener declares 1 parameters - only a listener that takes no event is native"
 // CHECK-DAG: @withOptions${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: EventTarget.prototype.addEventListener with options - only (type, listener) is native"
 // CHECK-DAG: @capturesArray${{[0-9]+}}{{.*}}ctnative.not_native = "an array of Strings: an array passed to a call the native runtime does not implement"
-// CHECK-DAG: @timerLater${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout captures binding 0, which is written after it is captured - the host keeps the handler, so it takes its captures by value"
 // CHECK-DAG: @timerThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout reads `this`"
 // CHECK-DAG: @timerArgs${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: setTimeout with 3 arguments - only (handler, timeout) is native"
 // CHECK-DAG: @timerParameter${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout declares 1 parameters - only a handler that takes none is native"

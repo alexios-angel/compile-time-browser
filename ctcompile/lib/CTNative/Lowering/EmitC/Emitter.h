@@ -44,6 +44,14 @@ void sessionInvoke(llvm::raw_ostream & out, llvm::StringRef entry, size_t count,
 /// or condition's result, a yield's parent result or before argument. Null
 /// otherwise.
 mlir::Type edgeTarget(mlir::Operation * op, unsigned index);
+/// The C++ type of a shared cell's handle holding a value spelled `value`:
+/// `std::shared_ptr<ctnative::cell<value>>` (Runtime/Cell.hpp).
+std::string sharedCellSpelling(llvm::StringRef value);
+/// The spelling of the value a shared cell's handle type (or a variable of
+/// one) holds, or empty for any other type.
+std::string sharedCellValue(mlir::Type type);
+/// `handle` as a value: loaded when it is the frame's variable.
+mlir::Value loadedHandle(mlir::OpBuilder & builder, mlir::Location where, mlir::Value handle);
 /// The single result of callWithConstValueOperands.
 mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
                       const llvm::Twine & callee, mlir::ValueRange operands);
