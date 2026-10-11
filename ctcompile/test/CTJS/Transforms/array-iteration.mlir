@@ -2,7 +2,7 @@
 // destructuring over an array made before the loop (Object.entries here), so
 // the loop is a plain index loop and a `throw` in its body no longer keeps
 // the function in CFG form behind the handler that closed the iterator
-// (lib/CTJS/Lowering/ArrayIteration.cpp). A loop over a value the caller
+// (lib/CTJS/Lowering/ArrayIteration.cpp). A for-of over a value the caller
 // passes keeps the protocol.
 
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %s \
@@ -49,6 +49,21 @@ function check(config) {
     return 1;
 }
 
+// Object.entries of any argument is a new Array (null and undefined throw at
+// the call), so a parameter's entries fold too.
+// CHECK-LABEL: ctjs.func {{.*}}@entries_of$
+// CHECK-NOT: __ctbrowser_
+// CHECK: scf.while
+// CHECK-NOT: __ctbrowser_
+// CHECK: ctjs.return
+function entries_of(o) {
+    var total = 0;
+    for (const [k, v] of Object.entries(o)) {
+        total = total + v;
+    }
+    return total;
+}
+
 // The caller's value may be any iterable: the protocol stays.
 // CHECK-LABEL: ctjs.func {{.*}}@passed$
 // CHECK: __ctbrowser_for_of_open
@@ -63,3 +78,4 @@ function passed(items) {
 var s = sum();
 var c = check({ a: 1, b: "x" });
 var p = passed([1, 2]);
+var e = entries_of({ a: 1 });

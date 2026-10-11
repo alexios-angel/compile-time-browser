@@ -14,10 +14,10 @@ namespace ctcompile::ctjs {
 
 /// Folds the protocol calls in \p body that iterate a known array, and returns
 /// how many operations it changed. A known array is the result of
-/// `Object.keys`, `Object.values` or `Object.entries` of an object literal
-/// (each makes a new Array), or an element of such an `Object.entries` (a new
-/// [key, value] pair). Array literals and other objects keep the protocol
-/// for now: the DOM and class-initialization proofs match it.
+/// `Object.keys`, `Object.values` or `Object.entries` (each makes a new Array,
+/// or throws at the call for null and undefined), or an element of an
+/// `Object.entries` result (a new [key, value] pair). Array literals keep the
+/// protocol here; Lowering/ForOf.cpp folds them on structured code.
 ///  - `__ctbrowser_for_of_open(a)` returns undefined for an array, which
 ///    sends the loop down its index path; `ctjs.iterable of a` is `a` itself.
 ///  - `__ctbrowser_iter_close(undefined, ...)` does nothing, so it goes, and
@@ -26,7 +26,8 @@ namespace ctcompile::ctjs {
 ///    pair and steps it; the n-th step is `pair[n]`, and its close does
 ///    nothing because an Array Iterator has no `return` method.
 /// The folds assume the realm's own Array iterator and `Object`, which native
-/// lowering assumes everywhere: a page that stores `Object` keeps the calls.
+/// lowering assumes everywhere: a page that stores `Object`, or writes one of
+/// these statics or a dynamic key on it, keeps the calls.
 unsigned foldArrayIteration(mlir::FunctionOpInterface body);
 
 /// Removes the exception handlers of \p body when no operation inside them

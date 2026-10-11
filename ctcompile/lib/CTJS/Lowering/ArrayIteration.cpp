@@ -54,6 +54,22 @@ bool neverStored(mlir::Operation * at, llvm::StringRef name) {
     return !stored.wasInterrupted();
 }
 
+/// True when the program writes no property of the global `Object` that
+/// could replace one of its statics: no write through a dynamic key, and none
+/// to `keys`, `values` or `entries`.
+bool objectStaticsIntact(mlir::Operation * at) {
+    const auto written = at->getParentOfType<mlir::ModuleOp>()->walk([](SetPropertyOp write) {
+        const mlir::Value object = globals_detail::registerFlowOrigin(write.getObject());
+        auto load = object ? object.getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
+        if (!load || load.getName() != "Object") { return mlir::WalkResult::advance(); }
+        const llvm::StringRef key = constantKey(write.getKey());
+        return key.empty() || key == "keys" || key == "values" || key == "entries"
+                   ? mlir::WalkResult::interrupt()
+                   : mlir::WalkResult::advance();
+    });
+    return !written.wasInterrupted();
+}
+
 /// "keys", "values" or "entries" when `value` is the result of that static
 /// method of the realm's `Object`, else empty.
 llvm::StringRef objectStatic(mlir::Value value) {
@@ -62,16 +78,11 @@ llvm::StringRef objectStatic(mlir::Value value) {
     GetPropertyOp read = call ? receiverMethod(call) : GetPropertyOp{};
     auto object = read ? read.getObject().getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
     if (!object || object.getName() != "Object" || call.getReceiver() != read.getObject() ||
-        !neverStored(call, "Object")) {
+        !neverStored(call, "Object") || !objectStaticsIntact(call)) {
         return {};
     }
-    // Only of an object literal: a getter's or a parameter's object is left
-    // to the analyses that prove what it holds (ClassInitialization's
-    // EmptyEntries proof walks the unfolded protocol).
-    const mlir::Value argument = call.getArgs().size() == 1
-                                     ? globals_detail::registerFlowOrigin(call.getArgs().front())
-                                     : mlir::Value{};
-    if (!argument || !argument.getDefiningOp<CreateObjectOp>()) { return {}; }
+    // Any argument: the result is always a new Array, and a null or
+    // undefined argument throws at the call, before any loop over it.
     const llvm::StringRef key = constantKey(read.getKey());
     return key == "keys" || key == "values" || key == "entries" ? key : llvm::StringRef{};
 }
