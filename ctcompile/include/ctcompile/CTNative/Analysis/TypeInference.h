@@ -259,12 +259,16 @@ public:
         enum class Param {
             string,
             number,
-            element
+            element,
+            /// What console.log prints (Runtime/Console.hpp): a String, a
+            /// Number, a Boolean, null or undefined, or an optional of them.
+            printable
         };
         /// What the call answers.
         enum class Result {
             number,
-            string
+            string,
+            undefined
         };
         llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
         llvm::StringLiteral member; ///< `parseInt`, `min`, `toLowerCase`.

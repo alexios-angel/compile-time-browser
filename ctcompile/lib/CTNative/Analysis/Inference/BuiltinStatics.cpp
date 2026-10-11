@@ -1,7 +1,7 @@
 //===- BuiltinStatics.cpp - Calls of built-in static methods --------------===//
 //
 // The table of static methods of the realm's built-in namespace objects
-// (`Number.parseInt`, `Math.min`) that native code calls through the runtime's
+// (`Number.parseInt`, `Math.min`, `console.log`) that native code calls through the runtime's
 // built-in objects, `ctnative::Number.parseInt(s, radix)` and
 // `ctnative::Math.min(a, b)`, and the recognition of a call of one.
 //
@@ -31,6 +31,15 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     {"Number", "parseInt", "ctnative::Number.parseInt", {Param::string, Param::number}, 2, 1},
     // Math.min (21.3.2.25) of exactly two Numbers.
     {"Math", "min", "ctnative::Math.min", {Param::number, Param::number}, 2, 2},
+    // console.log (WHATWG Console 1.1.6) of up to three printable values,
+    // one line in the VM's format (Runtime/Console.hpp).
+    {"console",
+     "log",
+     "ctnative::console.log",
+     {Param::printable, Param::printable, Param::printable},
+     3,
+     1,
+     Result::undefined},
     // String.prototype.toLowerCase (22.1.3.28) of a String receiver.
     {"String",
      "toLowerCase",

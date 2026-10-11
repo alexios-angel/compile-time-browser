@@ -137,9 +137,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
             std::string action = "static ";
             for (unsigned i = 0; i < row.arity; ++i) {
-                action += row.params[i] == Param::string   ? 's'
-                          : row.params[i] == Param::number ? 'n'
-                                                           : 'e';
+                action += row.params[i] == Param::string    ? 's'
+                          : row.params[i] == Param::number  ? 'n'
+                          : row.params[i] == Param::element ? 'e'
+                                                            : 'p';
             }
             mark(op, action + " " + row.callee.str());
             break;

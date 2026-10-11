@@ -1212,6 +1212,37 @@ int main() {
               strings({"\xC3\xA9"}));
     }
 
+    // console.log's line (Runtime/Console.hpp): ToString of each argument, as
+    // the VM's console binding writes it, joined by single spaces.
+    {
+        using ctnative::nullable_scalar;
+        using ctnative::nullable_string;
+        using ctnative::console_detail::line;
+        CHECK(line(js_string{"text"}) == "text");
+        CHECK(line(js_string{}) == "");
+        CHECK(line(js_string{"a\xC3\xA9"}) == "a\xC3\xA9");
+        CHECK(line(ctnative::js_num{1.5}) == "1.5");
+        CHECK(line(ctnative::js_num{-0.0}) == "0");
+        CHECK(line(ctnative::js_num{1e21}) == "1e+21");
+        CHECK(line(ctnative::js_num{0.1}) == "0.1");
+        CHECK(line(ctnative::js_num{std::numeric_limits<double>::infinity()}) == "Infinity");
+        CHECK(line(ctnative::js_num{-std::numeric_limits<double>::infinity()}) == "-Infinity");
+        CHECK(line(ctnative::js_num{std::numeric_limits<double>::quiet_NaN()}) == "NaN");
+        CHECK(line(std::int32_t{-7}) == "-7");
+        CHECK(line(js_boolean_t{true}) == "true");
+        CHECK(line(js_boolean_t{false}) == "false");
+        CHECK(line(ctnative::undefined_t{}) == "undefined");
+        CHECK(line(ctnative::js_null_t{}) == "null");
+        CHECK(line(nullable_scalar{}) == "undefined");
+        CHECK(line(nullable_scalar::null()) == "null");
+        CHECK(line(nullable_scalar{2.0}) == "2");
+        CHECK(line(nullable_scalar{js_boolean_t{true}}) == "true");
+        CHECK(line(nullable_string{}) == "undefined");
+        CHECK(line(nullable_string{std::string{"s"}}) == "s");
+        CHECK(line(js_string{"a"}, ctnative::js_num{2.0}, js_boolean_t{false}) == "a 2 false");
+        CHECK(line() == "");
+    }
+
     CHECK(unbound());
     REPORT("native_runtime");
 }
