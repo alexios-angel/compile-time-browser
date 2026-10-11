@@ -523,6 +523,8 @@ struct closureLifter {
 
     bool writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSetOp store);
 
+    bool holderReadsFollow(ctjs::CellSetOp store, mlir::Operation * at);
+
     bool isAssignedBeforeRead(ctjs::CreateCellOp cell) const;
 
     // --- Rule 4 (local function bindings): the check and the rewrite ----------
