@@ -50,7 +50,8 @@ std::optional<unsigned> lexicalThisSlot(ctjs::FuncOp target) {
     return static_cast<unsigned>(slot.getInt());
 }
 
-/// True when `target` takes entry argument `index` as an object pointer.
+/// True when `op` (a function or one of its direct calls) lists entry argument
+/// `index` as an object pointer.
 bool listsObjectArg(mlir::Operation * op, unsigned index) {
     auto listed = op ? op->getAttrOfType<mlir::DenseI32ArrayAttr>(kNativeObjectArgs) : nullptr;
     return listed && llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(index));
