@@ -5,6 +5,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   BorrowedCallbacks.cpp
   IdentityFields.cpp
   Objects.cpp
+  StaticTables.cpp
   Operations.cpp
   StringCallbacks.cpp
   Functions.cpp

@@ -165,6 +165,18 @@ void lowering::declareGlobals() {
     for (const std::string & definition : environments) { verbatim(b, definition); }
     for (const std::string & definition : methodTables) { verbatim(b, definition); }
     if (!domDataSession.empty()) { verbatim(b, domDataDefinition()); }
+    // A run-once static's constant table precedes the static that points at it.
+    bool tables = false;
+    for (const auto & [name, definition] : staticTables) {
+        if (!statics.contains(name)) { continue; }
+        if (!tables) {
+            ec::IncludeOp::create(b, module.getLoc(),
+                                  b.getStringAttr("ctcompile/CTNative/Runtime/StaticTable.hpp"),
+                                  b.getUnitAttr());
+            tables = true;
+        }
+        verbatim(b, definition);
+    }
     for (llvm::StringRef name : sortedKeys(globals)) {
         // Default tagged storage is undefined until the first generated
         // store. Each observation checks its exact tag, so a missing store

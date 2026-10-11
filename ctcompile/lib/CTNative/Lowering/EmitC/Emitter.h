@@ -73,6 +73,15 @@ struct lowering {
     /// a lowered function names, with its C++ type, declared by
     /// declareGlobals() in name order.
     std::map<std::string, mlir::Type> statics;
+    /// Each run-once static's constant table, by the static's name: its
+    /// namespace-scope struct and value (EmitC/StaticTables.cpp), declared by
+    /// declareGlobals() when a lowered function names the static.
+    std::map<std::string, std::string> staticTables;
+    /// Each proved read of a table -> the field it reads, taken while its key
+    /// is still a ctjs.constant.
+    llvm::DenseMap<mlir::Operation *, std::string> staticTableReads;
+    void censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    bool replaceStaticTable(mlir::Operation * o);
     /// The joined type of every source store to each global, computed before
     /// any value is retyped. Observation requests and host categories never
     /// choose a global's output type.

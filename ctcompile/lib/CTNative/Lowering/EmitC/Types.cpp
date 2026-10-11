@@ -8,6 +8,7 @@
 #include "../Admission/Admission.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -284,6 +285,8 @@ void lowering::retype(ctjs::FuncOp fn) {
     fn.getBody().walk([&](ctjs::CreateObjectOp object) {
         if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
+        // A static table's literal is its address (EmitC/StaticTables.cpp).
+        if (object->hasAttr(kNativeStaticTable)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });

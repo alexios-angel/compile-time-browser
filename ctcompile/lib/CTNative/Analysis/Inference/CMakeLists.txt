@@ -7,5 +7,6 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   HostCallbacks.cpp
   Shapes.cpp
   StringCallbacks.cpp
+  StaticTables.cpp
   Vectors.cpp
 )

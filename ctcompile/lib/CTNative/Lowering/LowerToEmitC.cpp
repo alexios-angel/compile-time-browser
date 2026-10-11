@@ -31,6 +31,7 @@
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
@@ -583,6 +584,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Data records returned by value join their callers' groups.
         TypeInference::markRecordReturns(module);
         TypeInference::markStringMethodCalls(module);
+        markStaticTables(module);
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -891,7 +893,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // not on its creation site, and whether a shape's definition is a
         // template depends on every site in the program, so no site's type can
         // be written until all of them have been seen. First, refused
-        // functions get back the bodies speculative recovery replaced.
+        // functions get back the bodies speculative recovery replaced. The
+        // static tables are read first: a refused run-once function's original
+        // body predates markStaticTables, so its literals carry no mark.
+        lower.censusStaticTables(accepted);
         for (auto & [fn, original] : recoveryOriginals) {
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());
