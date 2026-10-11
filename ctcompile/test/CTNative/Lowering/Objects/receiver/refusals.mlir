@@ -121,13 +121,13 @@
 // prints `a=undefined`. closureLifter's captureLexicalThis prevents that: the
 // arrow reads `arrowed`'s `this` from a capture instead of its receiver, so
 // the receiver lift has no use of `this` to bind. `arrowed`'s own `this` is
-// unproved, so both functions stay refused, with the receiver rule's reason
-// and with the capture's: a property read on a value that is not the literal.
+// unproved, so `arrowed` keeps the receiver rule's refusal, and the arrow,
+// which takes that `this` as an object pointer, is refused with it.
 //
 // ARROWTHIS: ctjs.func {{.*}}@arrowed$1
 // ARROWTHIS-SAME: ctnative.not_native = "uses `this`"
 // ARROWTHIS: ctjs.func private @fn$2
-// ARROWTHIS-SAME: ctnative.not_native = "a property read on an object that is not a closed-shape literal"
+// ARROWTHIS-SAME: ctnative.not_native = "called by `arrowed$1`, which is not native"
 
 // --- A method read as a value rather than called ---------------------------
 //

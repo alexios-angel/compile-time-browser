@@ -488,6 +488,15 @@ struct closureLifter {
     /// Rewrites each arrow that reads its lexical `this` to capture it as a
     /// constant cell (ArrowThis.cpp).
     void captureLexicalThis();
+    /// The capture parameters of the lifted target of `made` that receive the
+    /// creating method's `this` as an object pointer (ArrowThis.cpp).
+    llvm::SmallVector<int32_t> lexicalThisObjectArgs(llvm::ArrayRef<ctjs::CreateClosureOp> made);
+    /// True when `use` of a method's `this` only hands it to such a lifted
+    /// arrow (ArrowThis.cpp).
+    bool passesLexicalThis(mlir::OpOperand & use);
+    /// Erases the cells captureLexicalThis made once only such arrows
+    /// capture them (ArrowThis.cpp).
+    void releaseLexicalThisCells();
 
     void specializeCallbacks(liftReport & out);
 

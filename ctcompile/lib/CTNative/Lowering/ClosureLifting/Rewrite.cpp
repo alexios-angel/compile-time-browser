@@ -258,6 +258,7 @@ liftReport closureLifter::run() {
             op->setAttr(kNativeMethodRefusal, mlir::UnitAttr::get(context));
         }
     }
+    releaseLexicalThisCells(); // ArrowThis.cpp: before unboxCells sees the cells.
     unboxCells(out);
     return out;
 }
@@ -287,6 +288,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             objectArgs.push_back(static_cast<int32_t>(captureArgument(captures) + j));
         }
     }
+    // An arrow's lexical `this` capture may be an object pointer too (ArrowThis.cpp).
+    const llvm::SmallVector<int32_t> lexicalThis = lexicalThisObjectArgs(made);
+    objectArgs.insert(objectArgs.begin(), lexicalThis.begin(), lexicalThis.end());
 
     // Which captures are passed as a pointer to the owning frame's variable
     // rather than by value. Read before the capture parameters are inserted

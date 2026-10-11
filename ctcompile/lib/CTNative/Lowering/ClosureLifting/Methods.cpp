@@ -829,7 +829,10 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
         mlir::Operation * user = use.getOwner();
         // Reuse the settled argument census: a constructor's receiver may be
         // passed on only through a proved object-argument slot.
-        if ((constructed && carriesObjectArgument(use)) || isConstantKeyAccess(use)) { continue; }
+        if ((constructed && carriesObjectArgument(use)) || isConstantKeyAccess(use) ||
+            passesLexicalThis(use)) { // ArrowThis.cpp
+            continue;
+        }
         if (llvm::isa<ctjs::GetPropertyOp>(user)) {
             return "it reads `this` through a dynamic key";
         }

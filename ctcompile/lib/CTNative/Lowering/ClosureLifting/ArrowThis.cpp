@@ -20,11 +20,42 @@
 // any other. A `this` no rule can carry, such as the boxed receiver of a
 // function no caller proves, is refused there with that rule's reason.
 //
+// One case needs more than the capture rules: an arrow that reads its
+// method's (or constructor's) `this` through constant keys, as in
+// `total() { const f = () => this._x; return f(); }`. The capture is an
+// object, so the lift passes it as an object pointer (lexicalThisObjectArgs),
+// the method may hand its receiver to that call (passesLexicalThis), and the
+// cell, which nothing reads once every arrow capturing it is lifted, is
+// erased (releaseLexicalThisCells) so it does not open the receiver's shape.
+// The pointer is a borrow: a lifted closure is only ever called directly, in
+// a frame that holds its captures, so every call ends before the method that
+// made it returns, and the receiver outlives the method. An arrow that is
+// stored or passed on is not lifted and keeps its refusal.
+//
 //===----------------------------------------------------------------------===//
 
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
+
+namespace {
+/// On a rewritten arrow, the capture slot that holds its lexical `this`; on
+/// the cell captureLexicalThis made for it, a unit marker.
+constexpr llvm::StringLiteral kLexicalThis = "ctnative.lexical_this";
+
+/// The slot that `target`'s lexical `this` is captured in, if it has one.
+std::optional<unsigned> lexicalThisSlot(ctjs::FuncOp target) {
+    auto slot = target ? target->getAttrOfType<mlir::IntegerAttr>(kLexicalThis) : nullptr;
+    if (!slot) { return std::nullopt; }
+    return static_cast<unsigned>(slot.getInt());
+}
+
+/// True when `target` takes entry argument `index` as an object pointer.
+bool listsObjectArg(mlir::Operation * op, unsigned index) {
+    auto listed = op ? op->getAttrOfType<mlir::DenseI32ArrayAttr>(kNativeObjectArgs) : nullptr;
+    return listed && llvm::is_contained(listed.asArrayRef(), static_cast<int32_t>(index));
+}
+} // namespace
 
 /// Makes the lexical `this` of every arrow that reads it a constant capture.
 /// Needs `byIndex` (indexAndNewTargets). Idempotent: a rewritten closure's
@@ -56,6 +87,7 @@ void closureLifter::captureLexicalThis() {
         // the point it would capture it.
         mlir::OpBuilder at(c);
         auto cell = ctjs::CreateCellOp::create(at, c.getLoc(), valueType, c.getEnclosingThis());
+        cell->setAttr(kLexicalThis, mlir::UnitAttr::get(context));
         c.getUpvaluesMutable().append(cell.getResult());
         if (const mlir::DenseI32ArrayAttr indices = c.getEnclosingIndicesAttr()) {
             llvm::SmallVector<int32_t> extended(indices.asArrayRef());
@@ -82,6 +114,97 @@ void closureLifter::captureLexicalThis() {
         entry.getArgument(ctjs::arg_receiver).replaceAllUsesWith(read.getResult());
         target->setAttr("upvalue_count",
                         mlir::Builder(context).getI32IntegerAttr(static_cast<int32_t>(slot + 1)));
+        target->setAttr(kLexicalThis,
+                        mlir::Builder(context).getI32IntegerAttr(static_cast<int32_t>(slot)));
+    }
+}
+
+/// The lexical `this` slot of `made`'s target, as an entry-block index, when
+/// lift() can pass it as an object pointer: every closure captures the cell
+/// captureLexicalThis made from the receiver of the function that creates the
+/// closure, the slot is not carried by address, the closure is not a
+/// borrowed callback (which stores its captures), and the arrow uses `this`
+/// only to read or write constant keys. Whether that receiver is a closed
+/// object is the method's own proof, made where the method lifts.
+llvm::SmallVector<int32_t> closureLifter::lexicalThisObjectArgs(
+    llvm::ArrayRef<ctjs::CreateClosureOp> made) {
+    if (made.empty()) { return {}; }
+    ctjs::FuncOp target = targetOf(made.front());
+    const std::optional<unsigned> slot = lexicalThisSlot(target);
+    if (!slot) { return {}; }
+    for (ctjs::CreateClosureOp c : made) {
+        if (*slot >= c.getUpvalues().size() || slotIsCarried(c, *slot) ||
+            borrowedCallbacks.contains(c.getOperation())) {
+            return {};
+        }
+        auto cell = c.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>();
+        auto self = cell ? llvm::dyn_cast<mlir::BlockArgument>(cell.getInitial()) : nullptr;
+        auto maker = c->getParentOfType<ctjs::FuncOp>();
+        if (!cell || !cell->hasAttr(kLexicalThis) || !self || !maker ||
+            self.getOwner() != &maker.getBody().front() ||
+            self.getArgNumber() != ctjs::arg_receiver) {
+            return {};
+        }
+    }
+    bool constantKeysOnly = true;
+    target.getBody().walk([&](ctjs::LoadUpvalueOp read) {
+        if (static_cast<unsigned>(read.getIndex()) != *slot) { return; }
+        for (mlir::OpOperand & use : read.getResult().getUses()) {
+            constantKeysOnly &= isConstantKeyAccess(use);
+        }
+    });
+    if (!constantKeysOnly) { return {}; }
+    return {static_cast<int32_t>(captureArgument(*slot))};
+}
+
+/// True when `use` of a function's receiver only hands it to an arrow lifted
+/// with lexicalThisObjectArgs: as that object argument of a direct call, or as
+/// the initial value of the arrow's cell while every closure capturing the
+/// cell is such a lifted arrow (releaseLexicalThisCells erases it later).
+bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
+    mlir::Operation * user = use.getOwner();
+    if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user)) {
+        const std::optional<unsigned> slot = lexicalThisSlot(call.getTarget());
+        return slot && use.getOperandNumber() == captureArgument(*slot) &&
+               listsObjectArg(call, use.getOperandNumber()) &&
+               listsObjectArg(call.getTarget(), use.getOperandNumber());
+    }
+    auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(user);
+    if (!cell || !cell->hasAttr(kLexicalThis)) { return false; }
+    return llvm::all_of(cell.getResult().getUses(), [&](mlir::OpOperand & capture) {
+        auto c = llvm::dyn_cast<ctjs::CreateClosureOp>(capture.getOwner());
+        if (!c || !c->hasAttr(kNativeLifted) || c->hasAttr(kNativeBorrowedCallback)) {
+            return false;
+        }
+        ctjs::FuncOp target = targetOf(c);
+        const std::optional<unsigned> slot = lexicalThisSlot(target);
+        return slot && capture.getOperandNumber() == kFirstCapture + *slot &&
+               listsObjectArg(target, captureArgument(*slot));
+    });
+}
+
+/// Erases each cell captureLexicalThis made whose every capturing closure is
+/// an arrow lifted with its `this` as an object argument. Those closures
+/// lower to nothing and their targets read the capture from the call's
+/// argument, so the cell is never read; left in place it would be a use of
+/// the receiver that opens its shape. The capture operand becomes undefined.
+void closureLifter::releaseLexicalThisCells() {
+    llvm::SmallVector<ctjs::CreateCellOp> cells;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (cell->hasAttr(kLexicalThis)) { cells.push_back(cell); }
+    });
+    for (ctjs::CreateCellOp cell : cells) {
+        // The same rule the method's lift accepted this use of its receiver by.
+        if (!passesLexicalThis(cell->getOpOperand(0))) { continue; }
+        llvm::SmallVector<mlir::OpOperand *> captures;
+        for (mlir::OpOperand & capture : cell.getResult().getUses()) {
+            captures.push_back(&capture);
+        }
+        for (mlir::OpOperand * capture : captures) {
+            mlir::OpBuilder at(capture->getOwner());
+            capture->set(undefinedAt(at, capture->getOwner()->getLoc()));
+        }
+        cell.erase();
     }
 }
 
