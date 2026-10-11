@@ -21,7 +21,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import threading
 
 from CTNative.harness import (
@@ -33,6 +32,7 @@ from CTNative.harness import (
     forge_module,
     prepare_js,
     run,
+    slotted_run,
 )
 from CTNative.HostContract.contract import fingerprint
 
@@ -640,7 +640,7 @@ def lower(args, ir, contract, name, *, optimize=False, success=True, max_steps=N
     if success:
         run(command)
         return output
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = slotted_run(command, capture_output=True, text=True, timeout=120)
     if result.returncode not in (0, 1):
         raise RuntimeError(f"{name}: refusal crashed: {result.stderr}")
     text = output.read_text() if result.returncode == 0 else result.stderr
