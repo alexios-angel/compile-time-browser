@@ -1524,10 +1524,30 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
         if (family.selves.empty()) { return; }
         // A class nothing constructs has no instances; the copies of its
         // constructor its subclasses run belong to them.
+        // A class is constructed by a `new` of its closure or by a static
+        // member's `new this` (which the class's proof then refuses by name).
         const auto constructed = [&](ctjs::CreateClosureOp owner) {
             return llvm::any_of(owner.getResult().getUsers(), [&](mlir::Operation * user) {
-                auto made = llvm::dyn_cast<ctjs::ConstructOp>(user);
-                return made && made.getCallee() == owner.getResult();
+                if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(user)) {
+                    return made.getCallee() == owner.getResult();
+                }
+                mlir::Value member;
+                if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    store && store.getObject() == owner.getResult()) {
+                    member = store.getValue();
+                } else if (auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user);
+                           accessor && accessor.getTarget() == owner.getResult()) {
+                    member = accessor.getGetter();
+                }
+                auto closure = member ? member.getDefiningOp<ctjs::CreateClosureOp>()
+                                      : ctjs::CreateClosureOp{};
+                ctjs::FuncOp target = closure ? functions.targetOf(closure) : ctjs::FuncOp{};
+                if (!target || target.getBody().empty()) { return false; }
+                const mlir::Value self = target.getBody().front().getArgument(ctjs::arg_receiver);
+                return llvm::any_of(self.getUsers(), [&](mlir::Operation * use) {
+                    auto made = llvm::dyn_cast<ctjs::ConstructOp>(use);
+                    return made && made.getCallee() == self;
+                });
             });
         };
         llvm::SmallVector<ctjs::CreateClosureOp> live;
