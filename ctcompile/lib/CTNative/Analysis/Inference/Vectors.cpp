@@ -461,6 +461,22 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     return false;
 }
 
+namespace {
+/// Whether `op` is a built-in call (TypeInference::builtinStaticOf) that takes
+/// `value` as an Element argument.
+bool builtinElementUse(mlir::Operation * op, mlir::Value value) {
+    const TypeInference::BuiltinStatic * row = TypeInference::builtinStaticOf(op);
+    if (!row) { return false; }
+    auto args = llvm::cast<ctjs::CallOp>(op).getArgs();
+    for (unsigned i = 0; i < args.size() && i < row->arity; ++i) {
+        if (args[i] == value && row->params[i] == TypeInference::BuiltinStatic::Param::element) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
     llvm::DenseSet<mlir::Value> seen;
     while (value && seen.insert(value).second) {
@@ -475,7 +491,8 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
             auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
             if ((read && read.getObject() == value && !ctjs::constantKey(read.getKey()).empty()) ||
-                (call && llvm::is_contained(call->getOperands().drop_front(3), value))) {
+                (call && llvm::is_contained(call->getOperands().drop_front(3), value)) ||
+                builtinElementUse(op, value)) {
                 first = op;
                 return mlir::WalkResult::interrupt();
             }
@@ -484,6 +501,9 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
         if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(first)) {
             return ctjs::constantKey(read.getKey());
         }
+        // A built-in that takes it as an Element reads it as its receiver,
+        // `Element.prototype.querySelectorAll.call(root, s)`.
+        if (first && builtinElementUse(first, value)) { return builtinStaticOf(first)->member; }
         auto call = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(first);
         ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
         if (!callee || callee.getBody().empty()) { return {}; }
