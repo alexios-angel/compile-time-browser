@@ -74,6 +74,14 @@ projects/compile-time-browser/.venv/bin/lit -sv projects/compile-time-browser/bu
   --filter='^ctcompile :: CTNative/Browser/dom/assignment[.]test$'
 ```
 
+A `CTNative/Fixtures` test also reads the native pipeline modules the build
+writes (`%{obj}/<name>.pipeline*.emitc.mlir`) and runs nm on
+`ctcompile-test-type-oracle`; build `ctcompile-fixture-inputs` as well, which
+makes both. Until it has been built after the last `ctjs-opt` or `ctjs-translate`
+build, lit points `%{obj}` at a missing `stale-inputs-build-target-ctcompile-fixture-inputs`
+directory, so those tests fail instead of passing on a previous compiler's
+output.
+
 Use the generated build-tree lit configuration so substitutions and features
 are available. Adjust the targets, test selection, host and remote directory to
 the change; a selection that runs zero tests is not a pass. Full lit runs through
