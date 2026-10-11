@@ -619,7 +619,7 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
-    if (isArrayCallbackParameter(value)) { return; }
+    if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
     // A specialised replace callback's parameters come from its call.
     if (isStringCallbackParameter(value)) { return; }
     const bool domInput =
@@ -842,6 +842,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
     if (!ownedRoots_ && !domEntry_) {
         if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
+        if (const mlir::Type registered = hostCallbackType(op, operands)) {
+            return answer(registered);
+        }
     }
     // String.prototype.toLowerCase, and replace with a specialised function.
     if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }

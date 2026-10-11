@@ -17,6 +17,9 @@ namespace ctcompile::ctnative::lowering_detail {
 
 /// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
 bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits an addEventListener call specialised for its listener
+/// (HostCallbacks.cpp).
+bool hostCallbackOperation(admission & self, ctjs::CallOp call);
 
 namespace {
 
@@ -183,6 +186,9 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     using namespace ctjs;
     if (!self.pageViews()) { return std::nullopt; }
     if (isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    if (TypeInference::isHostCallbackCall(o)) {
+        return hostCallbackOperation(self, llvm::cast<CallOp>(o));
+    }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);

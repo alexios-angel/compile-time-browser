@@ -2,6 +2,7 @@
 # shared `lowering` state they all extend.
 target_sources(ctcompile-ctnative-lowering PRIVATE
   ArrayCallbacks.cpp
+  HostCallbacks.cpp
   Shapes.cpp
   Records.cpp
   StringCallbacks.cpp

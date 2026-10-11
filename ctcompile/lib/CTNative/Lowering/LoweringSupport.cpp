@@ -221,7 +221,9 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o);
     if (!read || !read.getResult().hasOneUse()) { return false; }
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
-    return call && (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call)) &&
+    return call &&
+           (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
+            TypeInference::isHostCallbackCall(call)) &&
            ctjs::receiverMethod(call) == read;
 }
 

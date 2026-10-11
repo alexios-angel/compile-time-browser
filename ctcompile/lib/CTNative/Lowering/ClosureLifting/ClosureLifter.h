@@ -504,6 +504,15 @@ struct closureLifter {
     std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
     void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
+    /// Listeners handed to the host (HostCallbacks.cpp): each closure whose
+    /// one use is the listener argument of `el.addEventListener(type, f)`,
+    /// with that call. Judged by whyNotHostCallback and rewritten by
+    /// rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    void hostCallbackCensus();
+    std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
+    void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
     void census();
 
     void singleWriteCensus();
