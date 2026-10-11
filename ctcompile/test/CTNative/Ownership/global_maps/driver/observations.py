@@ -5,24 +5,53 @@ Each positive program's traced value must change when one source fragment is
 Builds on driver/nullable_observations.py.
 """
 
+import argparse
+
+from CTNative.harness import run_parallel
+
 from .nullable_observations import *
 
 
 def check_source_observations(args, node, reference, positives):
-    """Run every observer and blinded-source check over the positive programs."""
-    check_leaf_object_observations(args, node, reference)
-    check_leaf_readback_observations(args, node, reference)
-    check_comparison_identity_observations(args, node, reference)
-    check_leaf_absence_observations(args, node, reference)
-    check_primitive_absence_observations(args, node, reference)
-    check_leaf_clear_observations(args, node, reference)
-    check_numeric_entry_observations(args, node, reference)
-    check_string_field_observations(args, node, reference)
-    check_zero_size_observations(args, node, reference)
-    check_one_size_observations(args, node, reference)
-    check_delete_size_observations(args, node, reference)
-    check_join_size_observations(args, node, reference)
-    check_mutation_size_observations(args, node, reference)
+    """Run every observer and blinded-source check over the positive programs.
+
+    The observer families and the positive-program witnesses run side by side
+    (run_parallel), each in its own work directory, so two families observing
+    the same case name cannot share a file; nothing reads these files
+    afterwards."""
+
+    def positive_witnesses(family_args, node, reference):
+        check_positive_witnesses(family_args, node, reference, positives)
+
+    def family(check):
+        work = args.work / f"observations-{check.__name__}"
+        work.mkdir(exist_ok=True)
+        check(argparse.Namespace(**dict(vars(args), work=work)), node, reference)
+
+    run_parallel(
+        (
+            check_leaf_object_observations,
+            check_leaf_readback_observations,
+            check_comparison_identity_observations,
+            check_leaf_absence_observations,
+            check_primitive_absence_observations,
+            check_leaf_clear_observations,
+            check_numeric_entry_observations,
+            check_string_field_observations,
+            check_zero_size_observations,
+            check_one_size_observations,
+            check_delete_size_observations,
+            check_join_size_observations,
+            check_mutation_size_observations,
+            positive_witnesses,
+        ),
+        family,
+    )
+
+
+def check_positive_witnesses(args, node, reference, positives):
+    """Blind one fragment of each listed positive program and require its
+    traced value to change."""
     overwrite_source, _, overwrite_value = positives["seeded_dynamic_overwrite"]
     blind = args.work / "seeded-dynamic-overwrite-blinded.js"
     blind.write_text(overwrite_source.replace("return state.get(1);", "return 1;"))
