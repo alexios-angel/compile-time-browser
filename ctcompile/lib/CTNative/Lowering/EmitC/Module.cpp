@@ -128,7 +128,9 @@ void lowering::declareGlobals() {
     bool needsTimers = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
-        needsTimers |= call.getCallee() == "ctnative::setTimeout";
+        needsTimers |= llvm::is_contained({"ctnative::setTimeout", "ctnative::setInterval",
+                                           "ctnative::clearTimeout", "ctnative::clearInterval"},
+                                          call.getCallee());
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");

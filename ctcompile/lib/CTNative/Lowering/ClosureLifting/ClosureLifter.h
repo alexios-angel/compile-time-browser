@@ -505,10 +505,11 @@ struct closureLifter {
     void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     /// Callbacks handed to the host (HostCallbacks.cpp): each closure whose
-    /// one use is the listener argument of `el.addEventListener(type, f)` or
-    /// the handler argument of `setTimeout(f, delay)`, with that call. Judged by whyNotHostCallback
-    /// and rewritten by rewriteHostCallback, as arrayCallbacks are.
-    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    /// one use is the handler argument of `setTimeout(f, delay)`, or whose
+    /// every use is the listener argument of an `addEventListener` or
+    /// `removeEventListener` call (at least one adding it), with those calls. Judged by
+    /// whyNotHostCallback and rewritten by rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallOp, 1>> hostCallbacks;
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -522,6 +523,8 @@ struct closureLifter {
     ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell);
 
     bool writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSetOp store);
+
+    bool holderReadsFollow(ctjs::CellSetOp store, mlir::Operation * at);
 
     bool isAssignedBeforeRead(ctjs::CreateCellOp cell) const;
 

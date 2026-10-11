@@ -131,6 +131,17 @@ def CTNative_EventType : CTNative_Type<"Event", "event"> {
   }];
 }
 
+def CTNative_TimerType : CTNative_Type<"Timer", "timer"> {
+  let summary = "A timer's handle, as ctnative::timer_id";
+  let description = [{
+    What `setTimeout` and `setInterval` return in an ordinary script, which a
+    program may keep and pass to `clearTimeout` or `clearInterval`
+    (Runtime/Timers.hpp). The VM's handle is a Number, but its value counts
+    the host's own timers too, so the native one is opaque: admission refuses
+    every use that would read it as a Number. It meets only itself.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{

@@ -1,12 +1,12 @@
 //===- Timers.hpp - Native setTimeout ---------------------------*- C++ -*-===//
 //
-// setTimeout for generated native code, and the timer pass a native host runs
-// when its clock moves. The deadlines are kept by ctbrowser's own timer_queue
-// (the bookkeeping the VM's bindings use), with the callback's C++ callable
-// beside it: the table owns each callback, and the captures bound into it,
-// until it has run or the program ends.
+// setTimeout, setInterval and their clear functions for generated native code,
+// and the timer pass a native host runs when its clock moves. The deadlines are kept by ctbrowser's
+// own timer_queue (the bookkeeping the VM's bindings use), with the callback's C++ callable beside
+// it: the table owns each callback, and the captures bound into it, until it has run or the program
+// ends.
 //
-// Only programs that call setTimeout include this header.
+// Only programs that use timers include this header.
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,6 +30,20 @@
 
 namespace ctnative {
 
+/// A timer's handle (HTML 8.6 "the handle"): what setTimeout and setInterval
+/// return and clearTimeout and clearInterval take. A program may keep it and
+/// pass it back; the native lowering refuses any use that would read it as a
+/// Number, since its value need not equal the VM's, whose host timers share
+/// the count. A default-constructed handle names no timer.
+struct timer_id {
+    std::uint32_t value = 0;
+
+    /// Whether the handle names a timer: every handle a program gets does,
+    /// as the VM's handles are all greater than zero.
+    [[nodiscard]] constexpr bool is_set() const noexcept { return value != 0; }
+    friend constexpr bool operator==(timer_id, timer_id) = default;
+};
+
 /// The timers a native program scheduled. One table per program
 /// (timers::program()), as a program is one realm with one clock.
 ///
@@ -47,16 +61,25 @@ public:
         return table;
     }
 
-    /// setTimeout(handler, timeout) (HTML 8.6, "timer initialisation steps")
-    /// with a Function handler: the timeout is converted as a `long`
-    /// (ToInt32), a negative one counts as 0, and the returned handle is
-    /// greater than zero. Returns the handle.
-    std::uint32_t add(callback run, double timeout_ms) {
+    /// setTimeout or, `repeating`, setInterval (HTML 8.6, "timer
+    /// initialisation steps") with a Function handler: the timeout is
+    /// converted as a `long` (ToInt32) and a negative one counts as 0. Returns
+    /// the handle. An interval runs again each time its timeout passes after
+    /// a run, until it is cleared.
+    timer_id add(callback run, double timeout_ms, bool repeating = false) {
         const std::uint32_t id = ++next_id_;
         callbacks_.emplace(id, std::make_unique<callback>(std::move(run)));
-        schedule_.schedule(id, now_ms_, ctbrowser::number_to_int32(timeout_ms), false,
+        schedule_.schedule(id, now_ms_, ctbrowser::number_to_int32(timeout_ms), repeating,
                            ctbrowser::shell::timer_source::page);
-        return id;
+        return timer_id{id};
+    }
+
+    /// clearTimeout(handle) and clearInterval(handle), which are one
+    /// operation (HTML 8.6): the timer, if still scheduled, never runs again.
+    /// A handle that names no timer, or one that ran or was cleared, does
+    /// nothing. A timer clearing itself finishes its run.
+    void clear(timer_id handle) noexcept {
+        if (handle.is_set()) { schedule_.cancel(handle.value); }
     }
 
     /// Moves the clock by `elapsed_ms`, then runs every timer due at the new
@@ -102,15 +125,24 @@ private:
     std::uint32_t next_id_ = 0;
 };
 
-/// setTimeout(handler, timeout) (HTML 8.6), as generated code spells it:
-/// `ctnative::setTimeout(f, delay)`. Returns the timer's handle as a Number.
-struct set_timeout_function {
-    template <std::invocable F> js_num operator()(F && handler, js_num timeout) const {
-        const std::uint32_t id =
-            timers::program().add(timers::callback{std::forward<F>(handler)}, timeout.value());
-        return js_num{static_cast<double>(id)};
+/// setTimeout(handler, timeout) and setInterval(handler, timeout) (HTML 8.6),
+/// as generated code spells them: `ctnative::setTimeout(f, delay)`. Each
+/// returns the timer's handle.
+template <bool Repeating> struct set_timer_function {
+    template <std::invocable F> timer_id operator()(F && handler, js_num timeout) const {
+        return timers::program().add(timers::callback{std::forward<F>(handler)}, timeout.value(),
+                                     Repeating);
     }
 };
-inline constexpr set_timeout_function setTimeout{};
+inline constexpr set_timer_function<false> setTimeout{};
+inline constexpr set_timer_function<true> setInterval{};
+
+/// clearTimeout(handle) and clearInterval(handle) (HTML 8.6):
+/// `ctnative::clearTimeout(id)`.
+struct clear_timer_function {
+    void operator()(timer_id handle) const noexcept { timers::program().clear(handle); }
+};
+inline constexpr clear_timer_function clearTimeout{};
+inline constexpr clear_timer_function clearInterval{};
 
 } // namespace ctnative

@@ -365,12 +365,31 @@ public:
     /// Whether `op` is an `addEventListener` or `setTimeout` call closure
     /// lifting specialised for its callback.
     static bool isHostCallbackCall(mlir::Operation * op);
-    /// Whether `op` is a call of the realm's own `setTimeout`.
+    /// Whether `op` is a call of the realm's own `setTimeout` or
+    /// `setInterval`.
     static bool isTimerCall(mlir::Operation * op);
+    /// Whether `op` is `clearTimeout(handle)` or `clearInterval(handle)` of
+    /// the realm's own function.
+    static bool isTimerClear(mlir::Operation * op);
     /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
     /// cannot write the globals table, so it leaves the globals typed
     /// (Inference/HostCallbacks.cpp holds the one list of such uses).
     static bool isInertWindowLoad(mlir::Operation * load);
+    /// Whether `op` is `new Event(type)` or `new Event(type, init)` of the
+    /// realm's own Event, with `init` an object literal eventInitFields reads.
+    static bool isEventConstruct(mlir::Operation * op);
+    /// The fields of such a construct's init, as (key, value) pairs in the
+    /// literal's order: an object literal used only for `bubbles` and
+    /// `cancelable` definitions and as the init. Empty with no init; nullopt
+    /// when the init is anything else.
+    static std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>>
+    eventInitFields(mlir::Operation * construct);
+    /// Whether `op` is the object literal of an Event construct's init, or one
+    /// of its field definitions.
+    static bool isEventInitPart(mlir::Operation * op);
+    /// Whether `op` is `x.dispatchEvent(e)` with the method read only for the
+    /// call; x is an element and e an Event when their types say so.
+    static bool isDispatchEventCall(mlir::Operation * op);
     /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
     /// method read only for the call; x is an Event when its type says so.
     static bool isEventCall(mlir::Operation * op);
