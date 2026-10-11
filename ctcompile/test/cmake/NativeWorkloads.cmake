@@ -16,6 +16,14 @@ ctcompile_unit_test(native-page LIBS ctbrowser::page)
 # is added by Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-array-callbacks LIBS ctbrowser::core)
 
+# The native listener table (CTNative/Runtime/Events.hpp) over a static page;
+# its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-events LIBS ctbrowser::page)
+
+# The native timer table (CTNative/Runtime/Timers.hpp); its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-timers LIBS ctbrowser::core)
+
 set(_native_ctbrowser "${CTCOMPILE_MONOREPO_ROOT}/ctbrowser")
 set(_native_gate "${_native_ctbrowser}/cmake/run-without-vm.cmake")
 set(_native_gate_nm "${CMAKE_NM}")
@@ -145,4 +153,44 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   target_compile_definitions(ctcompile-test-dom-reads-native PRIVATE CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctcompile-test-dom-reads-native PRIVATE ctbrowser::page)
   ctcompile_target(ctcompile-test-dom-reads-native)
+
+  # A page test built twice from CTNative/Browser/page/<name>.cpp: over the
+  # interpreter, and natively over <name>.js compiled through the native
+  # pipeline with `entry` as its string entry. <name>.test diffs the two.
+  function(ctcompile_page_workload name entry)
+    set(emitc "${CMAKE_CURRENT_BINARY_DIR}/${name}.emitc.mlir")
+    set(cpp "${CMAKE_CURRENT_BINARY_DIR}/${name}.generated.cpp")
+    add_custom_command(
+      OUTPUT "${cpp}"
+      COMMAND "${CMAKE_COMMAND}" -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+              -DOPT=$<TARGET_FILE:ctjs-opt> -DSOURCE=${_dom_reads_dir}/${name}.js
+              -DSTRING_ENTRIES=${entry} -DOUTPUT=${emitc}
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+      COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${emitc}" -o "${cpp}"
+      DEPENDS "${_dom_reads_dir}/${name}.js" ctjs-translate ctjs-opt
+              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+      COMMENT "Compiling ${name}.js to C++ through the native pipeline"
+      VERBATIM)
+    set(CTCOMPILE_WORKLOAD_SCRIPT "${_dom_reads_dir}/${name}.js")
+    set(CTCOMPILE_WORKLOAD_ENTRY ${entry})
+    set(CTCOMPILE_WORKLOAD_GENERATED "${cpp}")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Workloads/native-scripts.cpp.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp" @ONLY)
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp"
+                                PROPERTIES OBJECT_DEPENDS "${cpp}")
+    add_executable(ctcompile-test-${name} "${_dom_reads_dir}/${name}.cpp")
+    target_link_libraries(ctcompile-test-${name} PRIVATE ctbrowser::ctbrowser)
+    ctcompile_target(ctcompile-test-${name})
+    add_executable(ctcompile-test-${name}-native "${_dom_reads_dir}/${name}.cpp"
+      "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp")
+    target_compile_definitions(ctcompile-test-${name}-native PRIVATE CTBROWSER_TEST_NATIVE=1)
+    target_link_libraries(ctcompile-test-${name}-native PRIVATE ctbrowser::page)
+    ctcompile_target(ctcompile-test-${name}-native)
+  endfunction()
+  # Listeners run when the test clicks the page: dispatched by the browser,
+  # and by the native listener table (Runtime/Events.hpp).
+  ctcompile_page_workload(events events_report)
+  # Timers run when the test moves the clock: by the browser's tick, and by
+  # the native timer table (Runtime/Timers.hpp).
+  ctcompile_page_workload(timers timers_report)
 endif()

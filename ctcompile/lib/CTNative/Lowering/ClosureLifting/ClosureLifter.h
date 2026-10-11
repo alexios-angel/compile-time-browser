@@ -488,6 +488,31 @@ struct closureLifter {
 
     void specializeCallbacks(liftReport & out);
 
+    /// Array-method callbacks (ArrayCallbacks.cpp): each closure whose one use
+    /// is the callback argument of `a.forEach(f)`, `a.map(f)` and the like,
+    /// with that call. Such a closure is judged by whyNotArrayCallback and,
+    /// once lift() has made its captures parameters, its call is rewritten by
+    /// rewriteArrayCallback instead of lift()'s call-site loop.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> arrayCallbacks;
+    void arrayCallbackCensus();
+    std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
+    void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+    /// Replacement functions of `text.replace(/pattern/g, f)`
+    /// (StringCallbacks.cpp), judged and rewritten as an Array callback is.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> stringCallbacks;
+    void stringCallbackCensus();
+    std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
+    void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
+    /// Callbacks handed to the host (HostCallbacks.cpp): each closure whose
+    /// one use is the listener argument of `el.addEventListener(type, f)` or
+    /// the handler argument of `setTimeout(f, delay)`, with that call. Judged by whyNotHostCallback
+    /// and rewritten by rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    void hostCallbackCensus();
+    std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
+    void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
     void census();
 
     void singleWriteCensus();

@@ -119,6 +119,18 @@ def CTNative_ComputedStyleType : CTNative_Type<"ComputedStyle", "computed_style"
   }];
 }
 
+def CTNative_EventType : CTNative_Type<"Event", "event"> {
+  let summary = "The Event a native listener receives, as ctnative::js_event";
+  let description = [{
+    The parameter of a listener an ordinary script hands to
+    `el.addEventListener(type, f)`: a view of the host's dispatch
+    (Runtime/Events.hpp), valid only while the listener runs. Admission lets
+    it be only the receiver of its type, target, currentTarget and
+    defaultPrevented reads and its preventDefault and stopPropagation calls,
+    so it never outlives the dispatch. It meets only itself.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{
@@ -415,6 +427,19 @@ def CTNative_GlobalObjectType
     Native lowering must independently consume that query for each global
     load and field access; this type or an input annotation never authorizes
     ownership. The source allocation still escapes through StoredGlobal.
+  }];
+}
+
+def CTNative_StaticTableType
+    : CTNative_WrapperType<"StaticTable", "static_table", (ins StringRefParameter<>:$binding)> {
+  let summary = "The constant table a run-once static variable holds";
+  let description = [{
+    The binding names one static variable of a run-once function that
+    markStaticTables (Analysis/Inference/StaticTables.cpp) proved holds one
+    object literal of constants, never written after it is made. Its C++
+    carrier is a pointer to the one namespace-scope `const` struct, so a copy
+    of the value is the same object, as in JavaScript. The variable holds
+    undefined, a null pointer, until the run-once function stores the table.
   }];
 }
 

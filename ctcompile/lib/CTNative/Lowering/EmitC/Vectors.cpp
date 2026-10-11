@@ -18,6 +18,16 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+// Array-method callback calls (ArrayCallbacks.cpp).
+void planArrayCallback(lowering & lower, ctjs::CallOp call);
+bool replaceArrayCallback(lowering & lower, mlir::Operation * o);
+// Listeners handed to the host (HostCallbacks.cpp).
+bool replaceHostCallback(lowering & lower, mlir::Operation * o);
+/// The action for a read or call on a listener's Event, and its replacement
+/// (HostCallbacks.cpp).
+std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
+bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
+
 namespace {
 
 /// The attribute holding an operation's planned lowering.
@@ -91,6 +101,14 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         if (lower.pageViews && TypeInference::isRectCall(op) &&
             carrierOf(lower.typeOf(op->getResult(0))) == carrier::domRect) {
             mark(op, "bounding_rect");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isHostCallbackCall(op)) {
+            mark(op, "host_callback");
+            return;
+        }
+        if (auto action = lower.pageViews ? eventAction(lower, op) : std::nullopt) {
+            mark(op, *action);
             return;
         }
         // The null on the branch an element's getBoundingClientRect test never
@@ -182,6 +200,15 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             break;
         case VectorCall::sort:
             if (arrays.contains(call.getReceiver())) { mark(op, "sort"); }
+            break;
+        case VectorCall::includes:
+            if (arrays.contains(call.getReceiver())) { mark(op, "includes"); }
+            break;
+        case VectorCall::callback:
+            if (arrays.contains(call.getReceiver())) {
+                mark(op, "callback");
+                planArrayCallback(lower, call);
+            }
             break;
         case VectorCall::split: mark(op, "split"); break;
         case VectorCall::splitSpace: mark(op, "split_space"); break;
@@ -390,6 +417,9 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(lower.convertScalar(b, where, value, result));
         return true;
     }
+    if (kind == "callback") { return replaceArrayCallback(lower, o); }
+    if (kind == "host_callback") { return replaceHostCallback(lower, o); }
+    if (kind.starts_with("event")) { return replaceEvent(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];
@@ -450,6 +480,12 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(callValue(b, where, carrierType(context, carrier::string),
                        "ctnative::Array.prototype.join.call",
                        mlir::ValueRange{place(call.getReceiver()), separator}));
+        return true;
+    }
+    if (kind == "includes") {
+        swap(callValue(b, where, o->getResult(0).getType(),
+                       "ctnative::Array.prototype.includes.call",
+                       mlir::ValueRange{place(call.getReceiver()), call.getArgs()[0]}));
         return true;
     }
     if (kind == "sort") {
