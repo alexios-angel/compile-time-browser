@@ -1722,14 +1722,9 @@ def main():
                     if (
                         name.startswith("class-map-")
                         and not name.startswith("class-map-record-")
-                        and name != "class-map-inherited-base-string"
                         and f"!ctnative.map<{key_type}" not in native_text
                     ):
                         raise RuntimeError("class Map lost its key representation refusal")
-                    if name == "class-map-inherited-base-string" and (
-                        "string field requires definite string reads and writes" not in native_text
-                    ):
-                        raise RuntimeError("base publication lost its String field refusal")
                     if name == "inherited-helper-order" and (
                         "an object literal passed to a direct call as an argument"
                         not in native_text

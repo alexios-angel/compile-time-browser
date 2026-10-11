@@ -898,6 +898,9 @@ POSITIVES = GLOBAL_HOLDERS | {
     "class-map-inherited-base-overwrite",
     "class-map-inherited-base-delete",
     "class-map-inherited-base-constant-overwrite",
+    # `label` may be read before the leaf writes it, so it is a String or
+    # undefined: an optional String member (ObjectValues/VariantFields.cpp).
+    "class-map-inherited-base-string",
     "class-map-inherited-base-arithmetic",
     "class-map-inherited-base-numeric-arguments",
     "class-map-inherited-base-numeric-special",
@@ -1132,7 +1135,6 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "class-map-inherited-base-string",
     "class-map-optional-key-mixed-string",
     "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",
