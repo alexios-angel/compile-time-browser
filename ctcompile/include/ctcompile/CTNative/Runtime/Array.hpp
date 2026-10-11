@@ -62,19 +62,20 @@ template <class T> const T & vec_element(const std::vector<T> & values, js_num i
     return values[static_cast<std::size_t>(index.value())];
 }
 
-/// `rows[i]` of an array of rows where the program goes on to read a position
-/// of the row (`rows[i][1]`): the row, or, when `i` names no element, the
-/// TypeError that position read of undefined throws (ECMA-262 7.1.18
-/// ToObject).
-template <class T> const T & vec_row(std::span<const T> values, js_num key) {
+/// `rows[i]` of an array of rows where the program goes on to read position
+/// `reading` of the row (`rows[i][1]`): the row, or, when `i` names no
+/// element, the TypeError that position read of undefined throws (ECMA-262
+/// 7.1.18 ToObject), with the interpreter's message.
+template <class T> const T & vec_row(std::span<const T> values, js_num key, int reading) {
     std::size_t index = 0;
     if (!element_index(nullable_scalar{key}, values.size(), index)) {
-        throw std::invalid_argument("TypeError: Cannot read properties of undefined");
+        throw type_error("Cannot read properties of undefined (reading '" +
+                         std::to_string(reading) + "')");
     }
     return values[index];
 }
-template <class T> const T & vec_row(const std::vector<T> & values, js_num key) {
-    return vec_row(std::span<const T>{values}, key);
+template <class T> const T & vec_row(const std::vector<T> & values, js_num key, int reading) {
+    return vec_row(std::span<const T>{values}, key, reading);
 }
 
 // The same reads on an array a function borrows as a read-only span (a

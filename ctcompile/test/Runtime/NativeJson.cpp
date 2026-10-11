@@ -67,17 +67,18 @@ void test_replace_substitutes() {
 
 void test_row_past_the_end_throws() {
     const std::vector<std::pair<js_string, number>> rows{{text("a"), number{1.0}}};
-    CHECK(std::get<1>(ctnative::vec_row(rows, number{0.0})).value() == 1.0);
-    bool threw = false;
+    CHECK(std::get<1>(ctnative::vec_row(rows, number{0.0}, 1)).value() == 1.0);
+    // The interpreter's message for `rows[1][1]`.
+    std::string message;
     try {
-        (void)ctnative::vec_row(rows, number{1.0});
-    } catch (const std::invalid_argument &) { threw = true; }
-    CHECK(threw);
-    threw = false;
+        (void)ctnative::vec_row(rows, number{1.0}, 1);
+    } catch (const ctnative::type_error & thrown) { message = thrown.what(); }
+    CHECK(message == "Cannot read properties of undefined (reading '1')");
+    message.clear();
     try {
-        (void)ctnative::vec_row(rows, number{-1.0});
-    } catch (const std::invalid_argument &) { threw = true; }
-    CHECK(threw);
+        (void)ctnative::vec_row(rows, number{-1.0}, 0);
+    } catch (const ctnative::type_error & thrown) { message = thrown.what(); }
+    CHECK(message == "Cannot read properties of undefined (reading '0')");
 }
 
 } // namespace

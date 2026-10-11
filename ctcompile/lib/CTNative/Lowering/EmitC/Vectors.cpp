@@ -35,6 +35,8 @@ constexpr llvm::StringLiteral kStringArrayRow = "ctnative.string_array_row";
 constexpr llvm::StringLiteral kArrayHeader = "ctcompile/CTNative/Runtime/Array.hpp";
 /// markWrittenArrays' list (isWrittenArray).
 constexpr llvm::StringLiteral kWrittenArrays = "ctnative.written_arrays";
+/// On a row read (TypeInference::isRowRead), the position its first use reads.
+constexpr llvm::StringLiteral kRowReading = "ctnative.row_reading";
 /// On a built-in call taking a record, the record's keys in definition order.
 constexpr llvm::StringLiteral kRecordKeys = "ctnative.record_keys";
 constexpr llvm::StringLiteral kJsonHeader = "ctcompile/CTNative/Runtime/Json.hpp";
@@ -184,6 +186,19 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                 return;
             }
             if (!arrays.contains(read.getObject())) { return; }
+            // A row read records the position its first use reads, while the
+            // keys are still constants.
+            if (TypeInference::isRowRead(op)) {
+                mlir::Operation * first = *read.getResult().getUsers().begin();
+                for (mlir::Operation * user : read.getResult().getUsers()) {
+                    if (user->getBlock() == first->getBlock() && user->isBeforeInBlock(first)) {
+                        first = user;
+                    }
+                }
+                op->setAttr(kRowReading, mlir::IntegerAttr::get(
+                                             mlir::IntegerType::get(op->getContext(), 32),
+                                             TypeInference::constantIndex(first->getOperand(1))));
+            }
             mark(op, ctjs::constantKey(read.getKey()) == "length"                   ? "length"
                      : TypeInference::isBoundedIndexRead(op)                        ? "element"
                      : carrierOf(lower.typeOf(read.getResult())) == carrier::tuple  ? "row"
@@ -477,10 +492,15 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         return true;
     }
     if (kind == "row") {
-        // A row every use of which reads a position (TypeInference::isRowRead).
+        // A row every use of which reads a position (TypeInference::isRowRead);
+        // the position read first names the error past the end.
+        const auto reading = o->getAttrOfType<mlir::IntegerAttr>(kRowReading).getInt();
+        const mlir::Value position = ec::LiteralOp::create(
+            b, where, ec::OpaqueType::get(context, "int"), std::to_string(reading));
         swap(callValue(b, where, o->getResult(0).getType(), "ctnative::vec_row",
                        mlir::ValueRange{place(o->getOperand(0)),
-                                        lower.convertScalar(b, where, o->getOperand(1), numeric)}));
+                                        lower.convertScalar(b, where, o->getOperand(1), numeric),
+                                        position}));
         return true;
     }
     if (kind == "at" || kind == "at_number") {

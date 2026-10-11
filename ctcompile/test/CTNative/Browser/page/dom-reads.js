@@ -4,7 +4,7 @@
 // css-dump.js guards it, getComputedStyle(el).getPropertyValue(name), and
 // rows holding elements (dom_paths). dom-reads.test runs it on the interpreter and
 // natively over dom-reads.html and compares the answers.
-function dom_reads() {
+function dom_reads(from) {
     var root = document.documentElement;
     var out = root.tagName + ' ' + root.id + ' ' + root.className;
     var kids = root.children;
@@ -25,13 +25,16 @@ function dom_reads() {
         }
     }
     return out + '|' + root.clientWidth + 'x' + root.clientHeight + '@' +
-        (window.devicePixelRatio || 1) + '|' + dom_paths();
+        (window.devicePixelRatio || 1) + '|' + dom_paths(Number(from));
 }
 
 // Rows of a path and its element, made by a named function expression that
 // calls itself, as css-dump.js walks the page: the element is passed to the
-// recursive call and kept in the row, and the row read back by position.
-function dom_paths() {
+// recursive call and kept in the row, and rows from `from` on are read back by
+// position, up to a Math.min bound as css-dump.js reads them. A negative
+// `from` reads a row that does not exist: the TypeError of reading its
+// position.
+function dom_paths(from) {
     var els = [];
     (function walk(el, path) {
         els.push([path, el]);
@@ -44,7 +47,8 @@ function dom_paths() {
         }
     })(document.documentElement, 'html');
     var out = '';
-    for (var j = 0; j < els.length; j++) {
+    var last = Math.min(from + 4, els.length);
+    for (var j = from; j < last; j++) {
         out += ' ' + els[j][0] + '=' + els[j][1].tagName;
     }
     return out;
