@@ -199,6 +199,8 @@ origins receiverOrigins(mlir::Value value, mlir::ModuleOp module, const function
 struct mapUses {
     llvm::SetVector<mlir::Value> aliases;
     llvm::SmallVector<ctjs::CallOp> sets, gets, deletes;
+    // The closures that capture the binding holding the Map.
+    llvm::SmallVector<ctjs::CreateClosureOp> captors;
     bool iterated = false;
     std::string escape;
 };
@@ -285,6 +287,7 @@ mapUses usesOf(ctjs::ConstructOp map, mlir::ModuleOp module, const functionIndex
                             escape("the binding holding the registry Map reaches " + named(reader));
                             continue;
                         }
+                        out.captors.push_back(made);
                         const auto upvalues = made.getUpvalues();
                         for (unsigned slot = 0; slot < upvalues.size(); ++slot) {
                             if (upvalues[slot] == cell) { captured(target, slot); }
@@ -342,6 +345,9 @@ class registryProof {
     llvm::SmallVector<ctjs::ConstructOp> constructions;
     llvm::SmallVector<ctjs::FuncOp> methods;
     llvm::DenseSet<llvm::StringRef> methodNames;
+    // Whether the constructor or a method captures the Map: the class, read
+    // through `constructor`, then reaches the Map.
+    bool classCaptures = false;
     // Values that may hold an instance read back from the Map, or null or
     // undefined; for each, the values that flow into it and where; and which
     // of null and undefined each may be.
@@ -370,6 +376,7 @@ class registryProof {
             return refuse("the class `" + name + "` is not created exactly once");
         }
         ctjs::CreateClosureOp only = made.front();
+        classCaptures = llvm::is_contained(map.captors, only);
         const mlir::Value closure = only.getResult();
         mlir::Value prototype;
         for (mlir::OpOperand & use : closure.getUses()) {
@@ -417,6 +424,7 @@ class registryProof {
                 return refuse("the prototype of `" + name + "` reaches " + named(use.getOwner()));
             }
             methods.push_back(target);
+            classCaptures = classCaptures || llvm::is_contained(map.captors, method);
             methodNames.insert(key);
         }
         return true;
@@ -430,7 +438,7 @@ class registryProof {
         receivers.insert(self);
         for (const mlir::Value carrier : carriers) {
             for (mlir::OpOperand & use : carrier.getUses()) {
-                if (carrier == self && dereferences(use)) { continue; }
+                if (carrier == self && instanceUse(use)) { continue; }
                 if (llvm::is_contained(map.sets, use.getOwner()) && use.getOperandNumber() == 3) {
                     continue;
                 }
@@ -447,7 +455,7 @@ class registryProof {
             const mlir::Value self = method.getBody().front().getArgument(ctjs::arg_receiver);
             receivers.insert(self);
             for (mlir::OpOperand & use : self.getUses()) {
-                if (!dereferences(use)) {
+                if (!instanceUse(use)) {
                     return refuse("`this` in the method `" + jsName(method) + "` of `" + name +
                                   "` reaches " + named(use.getOwner()));
                 }
@@ -456,7 +464,7 @@ class registryProof {
         for (ctjs::ConstructOp made : constructions) {
             receivers.insert(made.getResult());
             for (mlir::OpOperand & use : made.getResult().getUses()) {
-                if (!dereferences(use)) {
+                if (!instanceUse(use)) {
                     return refuse("a new `" + name + "` reaches " + named(use.getOwner()) +
                                   " - only its fields and methods may use it");
                 }
@@ -477,7 +485,7 @@ class registryProof {
     bool follow(mlir::Value value) {
         for (mlir::OpOperand & use : value.getUses()) {
             mlir::Operation * user = use.getOwner();
-            if (dereferences(use) || llvm::isa<ctjs::TruthyOp>(user)) { continue; }
+            if (instanceUse(use) || llvm::isa<ctjs::TruthyOp>(user)) { continue; }
             if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
                 unary && unary.getKind() == ctjs::UnaryKind::Not) {
                 continue;
@@ -631,43 +639,67 @@ class registryProof {
         return false;
     }
 
-    /// Whether `value`, stored into a field of an instance, is a primitive:
-    /// so no instance owns the Map or another instance, and shared ownership
-    /// forms no cycle.
-    bool primitive(mlir::Value value, unsigned depth = 0) {
-        mlir::Operation * made = value.getDefiningOp();
-        if (llvm::isa_and_nonnull<ctjs::ConstantOp, ctjs::BinaryOp, ctjs::UnaryOp, ctjs::CompareOp>(
-                made)) {
-            return true;
+    /// Whether `use` reaches an instance only through its own fields and its
+    /// class's methods: a method call through any other key could run a
+    /// function that keeps `this`.
+    /// A method read from an instance must be called on it at once, and its
+    /// class read only when no class function captures the Map: either
+    /// function held as a value could own the Map (see checkCaptors).
+    bool instanceUse(mlir::OpOperand & use) {
+        if (!dereferences(use)) { return false; }
+        if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
+            return methodNames.contains(ctjs::methodKey(call));
         }
-        if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(made)) {
-            const llvm::StringRef key = ctjs::constantKey(read.getKey());
-            return receivers.contains(read.getObject()) && ctjs::ordinaryKey(key) &&
-                   !methodNames.contains(key);
-        }
-        auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
-        if (!argument || depth > 8 || argument.getArgNumber() < ctjs::implicit_arguments ||
-            argument.getOwner()->getParentOp() != out.constructor.getOperation()) {
-            return false;
-        }
-        const unsigned position = argument.getArgNumber() - ctjs::implicit_arguments;
-        return llvm::all_of(constructions, [&](ctjs::ConstructOp made) {
-            return position >= made.getArgs().size() ||
-                   primitive(made.getArgs()[position], depth + 1);
+        auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+        const llvm::StringRef key = read ? ctjs::constantKey(read.getKey()) : "";
+        if (key == "constructor") { return !classCaptures; }
+        if (!methodNames.contains(key)) { return true; }
+        return llvm::all_of(read.getResult().getUses(), [&](mlir::OpOperand & callee) {
+            auto call = llvm::dyn_cast<ctjs::CallOp>(callee.getOwner());
+            return call && callee.getOperandNumber() == 0 && call.getReceiver() == use.get();
         });
     }
 
-    /// What a field value that is not a primitive may hold, for the refusal.
-    std::string describe(mlir::Value value) {
-        if (map.aliases.contains(value)) { return "the registry Map"; }
-        if (receivers.contains(value)) { return "an instance of `" + name + "`"; }
-        mlir::Operation * made = value.getDefiningOp();
-        if (llvm::isa_and_nonnull<ctjs::CreateObjectOp, ctjs::CreateArrayOp, ctjs::ConstructOp>(
-                made)) {
-            return "an object";
+    /// Whether every function that captures the Map's binding is only called,
+    /// constructed or kept as a class method. Such a function held as a value
+    /// would let whatever holds it own the Map, and through the Map the
+    /// instances: if an instance held it, ownership would form a cycle.
+    bool checkCaptors() {
+        for (ctjs::CreateClosureOp made : map.captors) {
+            const mlir::Value closure = made.getResult();
+            for (mlir::OpOperand & use : closure.getUses()) {
+                mlir::Operation * user = use.getOwner();
+                const unsigned at = use.getOperandNumber();
+                if (llvm::isa<ctjs::CallOp>(user) &&
+                    (at == 0 || ctjs::calleeGlobalName(llvm::cast<ctjs::CallOp>(user)) ==
+                                    "__ctbrowser_class_defined")) {
+                    continue;
+                }
+                if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                    direct && closure == direct.getCalleeValue() && at == ctjs::arg_callee) {
+                    continue;
+                }
+                if (llvm::isa<ctjs::ConstructOp>(user) && at <= 1) { continue; }
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (store && at == 0) { continue; }
+                if (store && at == 2 && isPrototype(store.getObject())) { continue; }
+                return refuse("a function that captures the registry Map is used at " +
+                              named(user) +
+                              " as a value, so an instance holding it could own the Map - a "
+                              "cycle no destructor breaks");
+            }
         }
-        if (llvm::isa_and_nonnull<ctjs::CreateClosureOp>(made)) { return "a function"; }
-        return "a value this proof cannot show is a primitive";
+        return true;
+    }
+
+    /// Whether `object` is the `prototype` of some class.
+    static bool isPrototype(mlir::Value object) {
+        if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return false; }
+        return llvm::any_of(object.getUsers(), [&](mlir::Operation * user) {
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            return store && store.getValue() == object &&
+                   ctjs::constantKey(store.getKey()) == "prototype";
+        });
     }
 
 public:
@@ -718,18 +750,12 @@ public:
                 }
             }
         }
-        // Acyclic: every field of an instance holds a primitive.
-        for (mlir::Value receiver : receivers) {
-            for (mlir::Operation * user : receiver.getUsers()) {
-                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
-                if (!store || store.getObject() != receiver || primitive(store.getValue())) {
-                    continue;
-                }
-                return refuse("the field `" + ctjs::constantKey(store.getKey()).str() + "` of `" +
-                              name + "` can hold " + describe(store.getValue()) +
-                              ", so shared ownership could form a cycle no destructor breaks");
-            }
-        }
+        // Acyclic. Every value that can hold an instance is followed above
+        // and none is stored into an object, so no field reaches an instance
+        // but through the Map; and neither the Map nor a function capturing
+        // it can be stored anywhere. So no field of an instance can reach the
+        // Map or an instance, whatever else it holds.
+        if (!checkCaptors()) { return false; }
         return true;
     }
 };

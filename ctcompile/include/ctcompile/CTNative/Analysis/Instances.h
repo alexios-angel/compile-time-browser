@@ -62,19 +62,27 @@ struct InstanceRegistry {
 ///     methods and to pass it on, and those parameters only pass it on;
 ///   * the Map is a local `new Map()` held in a binding written once and read
 ///     directly, through closures that capture it, or by name once the
-///     binding is a static variable, and is used only
-///     through `get`, `set`, `has`, `delete`, `size` and the iteration
-///     methods;
+///     binding is a static variable, and is used only through `get`, `set`,
+///     `has`, `delete`, `size` and `keys` (`values`, `entries` and `forEach`
+///     would hand instances to code the proof does not follow);
 ///   * it is not iterated while `delete` can remove entries;
 ///   * every instance read back from it flows only through branches, returns
 ///     and calls whose callers are all known, is joined only with null or
 ///     undefined, and is dereferenced only under a check (`if (x)`,
 ///     `x !== null` once `|| null` has replaced undefined, `x != null`), or
 ///     in a parameter every caller passes a checked instance;
-///   * the class's methods use `this` only through its fields and methods;
-///   * every field stored on an instance holds a primitive: a constant, the
-///     result of an operator, another field of the instance, or a
-///     constructor argument every `new` passes such a value.
+///   * the class's methods use `this` only through its fields and methods, a
+///     method read from an instance is called on it at once, and the class is
+///     read through `constructor` only when none of its functions captures
+///     the Map;
+///   * every function that captures the Map's binding is only called,
+///     constructed or kept as a class method.
+///
+/// Together these make ownership acyclic without asking what a field holds:
+/// no value that can hold an instance is stored into any object, and neither
+/// the Map nor a function that captures it is held as data, so no field of an
+/// instance can reach the Map or an instance. Elements, configuration objects
+/// and strings in fields are all fine.
 llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctnative

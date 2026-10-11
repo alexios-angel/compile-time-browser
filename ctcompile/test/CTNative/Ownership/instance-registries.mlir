@@ -23,6 +23,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object-field.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=OBJECT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captor.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
+// RUN:   | FileCheck %s --check-prefix=CAPTOR
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/method-value.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
+// RUN:   | FileCheck %s --check-prefix=METHOD-VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/iterate.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=ITERATE
@@ -65,8 +71,18 @@
 // --- An instance stored into another instance ------------------------------
 // CYCLE: ctnative.instance_registry = "a value read from the registry Map is stored into an object, so shared ownership could form a cycle no destructor breaks"
 
-// --- A field holding an object, which could hold an instance ---------------
-// OBJECT: ctnative.instance_registry = "the field `box` of `Widget` can hold an object, so shared ownership could form a cycle no destructor breaks"
+// --- Fields holding objects ------------------------------------------------
+// No value that can hold an instance is ever stored into an object, so an
+// object field cannot reach one, whatever it holds: Bootstrap's `_element`
+// and `_config`.
+// OBJECT: ctnative.instance_registry = "proved"
+
+// --- A field holding a function that captures the Map ----------------------
+// The binding `count` holds it, so whoever reads the binding holds it too.
+// CAPTOR: ctnative.instance_registry = "a function that captures the registry Map is used at `ctjs.cell_set` as a value, so an instance holding it could own the Map - a cycle no destructor breaks"
+
+// --- A method read from an instance and kept --------------------------------
+// METHOD-VALUE: ctnative.instance_registry = "a value read from the registry Map reaches `ctjs.get_property`"
 
 // --- Iterating while `delete` can remove entries ---------------------------
 // ITERATE: ctnative.instance_registry = "the registry Map is iterated, and `delete` removes entries from it - a removal during the iteration changes what it visits"
@@ -183,14 +199,53 @@ var result = run();
 function run() {
     const registry = new Map();
     class Widget {
+        constructor(element, key, config) {
+            this._element = element;
+            this._config = { delay: config.delay, owner: null };
+            registry.set(key, this);
+        }
+    }
+    new Widget({ id: "x" }, "a", { delay: 5 });
+    const a = registry.get("a");
+    return a ? a._config.delay : 0;
+}
+var result = run();
+
+//--- captor.js
+function run() {
+    const registry = new Map();
+    const count = function () {
+        return registry.size;
+    };
+    class Widget {
         constructor(key) {
             this.key = key;
-            this.box = { owner: null };
+            this.count = count;
             registry.set(key, this);
         }
     }
     new Widget("a");
     return registry.size;
+}
+var result = run();
+
+//--- method-value.js
+function run() {
+    const registry = new Map();
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            registry.set(key, this);
+        }
+        size() {
+            return registry.size;
+        }
+    }
+    new Widget("a");
+    const a = registry.get("a");
+    let keep = null;
+    if (a) { keep = a.size; }
+    return keep === null ? 0 : 1;
 }
 var result = run();
 
