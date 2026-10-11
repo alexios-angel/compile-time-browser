@@ -1209,15 +1209,22 @@ def inheritance_delta(text):
     return int(found.group(1)) - int(found.group(2)) if found else 0
 
 
+# A function the removal pass erased as unreachable, listed on the module in
+# ctnative.unreachable_refusals with its earlier refusal.
+UNREACHABLE_ROW = re.compile(r'\{function = "[^"]+", reason = "removed: unreachable')
+
+
 def check_refusal(name, text, functions):
-    """Assert that every one of `functions` in `text` is native or a named refusal.
+    """Assert that every one of `functions` in `text` is native, a named refusal
+    or removed as unreachable, counting flattening's copies and erasures.
 
     The script entry must stay refused and no emitc main may be emitted.
     """
     remaining = len(FUNCTION.findall(text))
     reasons = REFUSAL.findall(text)
     if (
-        remaining + len(NATIVE.findall(text)) != functions + inheritance_delta(text)
+        remaining + len(NATIVE.findall(text)) + len(UNREACHABLE_ROW.findall(text))
+        != functions + inheritance_delta(text)
         or len(reasons) != remaining
         or not all(reasons)
         or not re.search(r"ctjs.func @_script_\$0\(.*ctnative.not_native", text)

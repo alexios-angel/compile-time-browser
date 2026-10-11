@@ -186,28 +186,6 @@ UNTRUSTED_NATIVE = {
     **dict.fromkeys(("static-dynamic",), (True,)),
 }
 
-# Unprepared modes that lower to a native program beside functions that stay
-# refused, because nothing removes unreachable code without optimization:
-# each refused function is a static member nothing reads.
-UNTRUSTED_PARTIAL = dict.fromkeys(
-    (
-        "static-call-ambient",
-        "static-call-unused",
-        "static-cycle",
-        "static-error-coercion",
-        "static-error-replaced",
-        "static-error-return",
-        "static-throw-ambient",
-        "static-throw-object",
-        "static-throw-unused",
-        "static-throw-unused-chain",
-        "static-unread-chain",
-        "static-unread-nested",
-        "static-unread-new-this",
-    ),
-    (False,),
-)
-
 # Inherited classes that ClosureLifting/ClassInheritance.cpp flattens per
 # concrete class now lower completely without preparation. Each prints Node's
 # value; override-ambient's uncalled Base.read goes with its class.
@@ -266,6 +244,68 @@ UNTRUSTED_NATIVE.update(
         (True,),
     )
 )
+# Unprepared modes that lower to a native program beside functions that stay
+# refused, because nothing removes unreachable code without optimization:
+# each refused function is a static member nothing reads.
+UNTRUSTED_PARTIAL = dict.fromkeys(
+    (
+        "static-call-ambient",
+        "static-call-unused",
+        "static-cycle",
+        "static-error-coercion",
+        "static-error-replaced",
+        "static-error-return",
+        "static-throw-ambient",
+        "static-throw-object",
+        "static-throw-unused",
+        "static-throw-unused-chain",
+        "static-unread-chain",
+        "static-unread-nested",
+        "static-unread-new-this",
+    ),
+    (False,),
+)
+
+# Inherited classes with static members: flattening copies the statics onto
+# each concrete class, and the static-member rewrite then resolves
+# `this.constructor.X` per class.
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "inherited-getter-constant",
+            "inherited-getter-constructor",
+            "inherited-getter-dependencies",
+            "inherited-getter-fresh-empty",
+            "inherited-getter-override",
+            "inherited-getter-override-dependency",
+            "inherited-getter-shared-receivers",
+            "inherited-getter-static-reads",
+            "inherited-getter-three-levels",
+            "inherited-method-getter",
+            "inherited-static-call",
+            "inherited-static-getters",
+            "inherited-static-getters-base-reads-leaf",
+            "inherited-static-getters-component",
+            "inherited-static-getters-component-method",
+            "inherited-static-getters-shadow",
+            "inherited-static-getters-shadow-both",
+            "inherited-static-getters-shadow-extended",
+            "inherited-static-getters-shadow-method",
+            "inherited-static-getters-shadow-method-both",
+            "inherited-static-getters-shadow-method-chain",
+            "receiver-default-inherited",
+        ),
+        (False, True),
+    )
+)
+UNTRUSTED_NATIVE.update(dict.fromkeys(("inherited-getter-unused-ambient",), (True,)))
+
+# Static-member fixtures the static-member rewrite completes in both modes;
+# each prints Node's value.
+UNTRUSTED_NATIVE.update(dict.fromkeys(("static-defaults", "static-default-fields"), (False, True)))
+# Without optimization, an inherited static getter nothing reads stays
+# refused beside the native program.
+UNTRUSTED_PARTIAL.update(dict.fromkeys(("inherited-getter-unused-ambient",), (False,)))
 
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.

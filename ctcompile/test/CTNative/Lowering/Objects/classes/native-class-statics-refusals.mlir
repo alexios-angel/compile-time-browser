@@ -55,10 +55,11 @@
 // override a static getter: `new this(e)` constructs the subclass that the
 // call names. Flattening (ClassInheritance.cpp) gives X and Y their own
 // constructor and their own copy of getOrCreateInstance, and erases the
-// original subclass constructors; each copy is called, and it calls `get`,
-// which it reaches through its own closure (a capture of `run`), so the
-// direct call that would replace it has no closure to pass.
-// GETORCREATE: ctnative.inheritance_erased = ["X${{[0-9]+}}", "Y${{[0-9]+}}"]
+// original subclass constructors and Base, which nothing reaches any more;
+// each copy is called, and it calls `get`, which it reaches through its own
+// closure (a capture of `run`), so the direct call that would replace it has
+// no closure to pass.
+// GETORCREATE: ctnative.inheritance_erased = ["X${{[0-9]+}}", "Y${{[0-9]+}}", {{.*}}"Base${{[0-9]+}}"]
 // GETORCREATE-COUNT-2: ctnative.class_reason = "it has static method `getOrCreateInstance`; its static member `getOrCreateInstance` reads new.target or its own closure"
 // GETORCREATE-RUN: r=34
 

@@ -926,6 +926,19 @@ struct flattener {
             copy->setAttr(kNativeCopyOf, mlir::StringAttr::get(context, ctorFn.getSymName()));
             copiesOf[copy.getSymName()] = mlir::StringAttr::get(context, ctorFn.getSymName());
             cls.constructor.setFunctionAttr(at.getI32IntegerAttr(static_cast<int32_t>(index)));
+            // The closure now names the parent's code, so it captures what
+            // the parent's closure captures: its upvalue operands follow the
+            // descriptors of the function it names. Both closures are made in
+            // the same frame, the parent's first.
+            llvm::SmallVector<mlir::Value> operands{cls.constructor.getEnclosingClosure(),
+                                                    cls.constructor.getEnclosingThis()};
+            llvm::append_range(operands, parent.constructor.getUpvalues());
+            cls.constructor->setOperands(operands);
+            if (auto indices = parent.constructor.getEnclosingIndicesAttr()) {
+                cls.constructor.setEnclosingIndicesAttr(indices);
+            } else {
+                cls.constructor.removeEnclosingIndicesAttr();
+            }
             // Nothing else names the forwarding function now.
             eraseIfUnnamed(ctorFn);
         }
@@ -1000,7 +1013,7 @@ struct flattener {
                 auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(use.getOwner());
                 const bool definition = (set && use.getOperandNumber() == 2 &&
                                          (set.getObject() == proto || set.getObject() == ctor)) ||
-                                        (accessor && use.getOperandNumber() == 2);
+                                        (accessor && use.getOperandNumber() == 1);
                 const bool homeEdge = set && use.getOperandNumber() == 0 &&
                                       ctjs::constantKey(set.getKey()) == "__home" &&
                                       set.getValue() == home;
@@ -1021,6 +1034,10 @@ struct flattener {
                 } else if (use.getOperandNumber() == 2 && set.getObject() == proto &&
                            key == "constructor") {
                     doomed.insert(user);
+                } else if (use.getOperandNumber() == 2 && key == "__home") {
+                    // A static member's `__home` edge: memberOnly claims it
+                    // with its member, and the check below sees that it did.
+                    continue;
                 } else if (auto member = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
                            use.getOperandNumber() == 0 && member) {
                     doomed.insert(user);
