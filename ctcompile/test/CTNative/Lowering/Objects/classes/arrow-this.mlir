@@ -21,6 +21,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unproved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=UNPROVED --implicit-check-not="lexical `this`"
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/borrowed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=BORROWED --implicit-check-not="lexical `this`"
 
 // A method makes `() => this._x` and calls it twice in its own frame. The
 // arrow lifts, with the instance as its one capture, and both calls become
@@ -57,6 +60,13 @@
 // UNPROVED: ctjs.create_closure %arg2[2] this %{{.*}} captures %{{.*}} {ctnative.lifted
 // UNPROVED: ctjs.func private @fn$2({{.*}}ctnative.not_native = "capture 0 is !ctnative.boxed - no caller proves it
 
+// The arrow passed to `apply`, whose parameter is only called: it becomes a
+// borrowed callback bound to the instance, its one capture. Like the direct
+// call, it then waits for a receiver to be accepted as an object capture.
+// BORROWED: ctjs.func @get$4({{.*}}ctnative.not_native = "a closure used as a value - Phase 59"
+// BORROWED: ctjs.create_closure %{{.*}}[5] this %{{.*}} captures %arg0 {ctnative.borrowed_callback = @fn$5
+// BORROWED: ctjs.func @fn$5({{.*}}ctnative.borrowed_callback, ctnative.captures = 1 : i32, ctnative.not_native = "capture 0 is !ctnative.boxed - no caller proves it
+
 //--- direct.js
 function run() {
     class Box {
@@ -92,3 +102,15 @@ var r = run();
 function read() { const g = () => this.x; return g() + 1; }
 var o = { x: 3 };
 var r = read.call(o);
+
+//--- borrowed.js
+function apply(f) { return f() + 1; }
+function run() {
+    class Box {
+        constructor(x) { this._x = x; }
+        get() { return apply(() => this._x); }
+    }
+    const b = new Box(4);
+    return b.get();
+}
+var r = run();
