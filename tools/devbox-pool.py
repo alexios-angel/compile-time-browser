@@ -70,7 +70,16 @@ def try_lock(path):
 
 
 def is_running(box):
-    out = subprocess.run([box["server"], "status"], check=False, capture_output=True, text=True)
+    # A cloud CLI can stall (a slow `terraform output`, a token refresh); a
+    # status that does not answer in time counts as not running, so `run`
+    # asks the server to start it, which is harmless on a running box.
+    try:
+        out = subprocess.run(
+            [box["server"], "status"], check=False, capture_output=True, text=True, timeout=90
+        )
+    except subprocess.TimeoutExpired:
+        print(f"devbox-pool: {box['name']} status timed out", file=sys.stderr)
+        return False
     return out.returncode == 0 and re.search(box["running"], out.stdout) is not None
 
 
