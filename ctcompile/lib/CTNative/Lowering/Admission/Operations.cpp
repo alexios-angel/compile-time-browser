@@ -15,6 +15,12 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
+bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits an addEventListener call specialised for its listener
+/// (HostCallbacks.cpp).
+bool hostCallbackOperation(admission & self, ctjs::CallOp call);
+
 namespace {
 
 /// Admits an operation on an element array (isElementArray: Strings or
@@ -165,6 +171,15 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::includes:
+        if (!array(call.getReceiver()) ||
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
+            return std::nullopt;
+        }
+        return isString(call.getArgs()[0]) ||
+               self.refuse("includes on an array of Strings is given " +
+                           printed(self.typeOf(call.getArgs()[0])) + ", not a String");
+    case VectorCall::callback: return arrayCallbackOperation(self, call);
     case VectorCall::regexp:
         // Plumbing returned above; every other RegExp literal is refused here.
         return self.refuse("a regular expression literal - only `text.split(/\\s+/)` is native");
@@ -179,6 +194,9 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     using namespace ctjs;
     if (!self.pageViews()) { return std::nullopt; }
     if (isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    if (TypeInference::isHostCallbackCall(o)) {
+        return hostCallbackOperation(self, llvm::cast<CallOp>(o));
+    }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -274,10 +292,56 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
     return true;
 }
 
+/// Admits a borrowed callback's closure or a call through a borrowed
+/// parameter (BorrowedCallbacks.cpp).
+bool borrowedCallbackOperation(admission & self, mlir::Operation * o);
+
+namespace {
+
+/// The refusal for a read of a run-once function's static variable whose type
+/// has no carrier: the variable's JavaScript name and what its owner stores in
+/// it, so the reason points at the binding rather than at this frame.
+std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef type) {
+    const auto name = reference->getAttrOfType<mlir::StringAttr>(kNativeStaticCell).getValue();
+    std::string holds;
+    reference->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::CreateCellOp owner) {
+        if (owner->hasAttr(kNativeStaticReference) ||
+            owner->getAttrOfType<mlir::StringAttr>(kNativeStaticCell) !=
+                reference->getAttr(kNativeStaticCell)) {
+            return;
+        }
+        for (mlir::Operation * user : owner.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
+            if (!store || store.getCell() != owner.getResult()) { continue; }
+            mlir::Operation * made = store.getValue().getDefiningOp();
+            const char * what =
+                llvm::isa_and_nonnull<ctjs::CreateObjectOp>(made)    ? "an object literal"
+                : llvm::isa_and_nonnull<ctjs::CreateArrayOp>(made)   ? "an array literal"
+                : llvm::isa_and_nonnull<ctjs::CreateClosureOp>(made) ? "a function"
+                                                                     : "a value";
+            if (holds.find(what) == std::string::npos) {
+                holds += holds.empty() ? what : std::string(" or ") + what;
+            }
+        }
+    });
+    return ("it reads `" + name.drop_front(llvm::StringRef("static_").size()) +
+            "`, a static variable of a function that runs once, which holds " +
+            (holds.empty() ? "nothing this frame can see" : holds) + " of type " + type +
+            " - that type has no native carrier")
+        .str();
+}
+
+} // namespace
+/// Admits a String.prototype.replace call with a specialised callback and the
+/// plumbing it consumes (StringCallbacks.cpp).
+std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * o);
+
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    if (auto admitted = staticTableOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
+    if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
@@ -307,6 +371,9 @@ bool admission::op(mlir::Operation * o) {
             return (table && table.getSite() == methodTableName(o)) ||
                    refuse("returned method table access has no single proved schema");
         }
+    }
+    if (o->hasAttr(kNativeBorrowedCallback) || o->hasAttr(kNativeBorrowedCall)) {
+        return borrowedCallbackOperation(*this, o);
     }
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
@@ -447,6 +514,9 @@ bool admission::op(mlir::Operation * o) {
     // ClosureLifter.h.)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
+            if (o->hasAttr(kNativeStaticReference)) {
+                return refuse(staticReferenceRefusal(cell, printed(typeOf(cell.getResult()))));
+            }
             return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
                           ", which has no native carrier - a variable this tier cannot "
                           "spell is not one it may point at");
@@ -1011,6 +1081,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
 }
 
 bool admission::returned(ctjs::ReturnOp ret) {
+    // A data record is returned by value as its class; closedObject checks it.
+    if (TypeInference::returnsRecord(ret)) { return true; }
     const carrier c = carrierOf(typeOf(ret.getValue()));
     if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
     returnedType =

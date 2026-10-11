@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How far is a Bootstrap page from Chrome? Per element, per property, in numbers.
 
-    tools/check/compare.py setup                 # once: the venv Playwright needs
+    tools/check/compare.py setup                 # once: Playwright via uv
     tools/check/css-parity.py                     # every fixture
     tools/check/css-parity.py --all ctbrowser/examples/pages/bootstrap-grid.html
     tools/check/css-parity.py --advance           # record the numbers, deliberately

@@ -30,6 +30,11 @@
 !/NOTICE
 !/pyproject.toml
 !/README.md
+!/uv.lock
+
+# The uv environment (pyproject.toml): machine-local, recreated by `uv sync`.
+# The whitelist above already leaves it out; this says so by name.
+/.venv/
 
 # Bytecode from importing a Python tool or test driver as a module; the
 # re-included directories above would otherwise show it.

@@ -26,6 +26,11 @@ ctcompile_target(ctcompile-test-native-reference)
 # ctbrowser for its DOM section.
 ctcompile_unit_test(native-runtime LIBS ctbrowser::ctbrowser)
 
+# ctnative::function_ref (CTNative/Runtime/Callable.hpp), the parameter type of
+# a borrowed callback. Header-only and library-free; its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-callable)
+
 # A VM-linked negative control: the C++ of <name>-fixture.emitc.mlir, emitted at
 # build time by the same emitter the native check uses, plus one object that
 # reaches the interpreter, linked against the engine; it must fail the
@@ -157,6 +162,10 @@ ctcompile_native_fixture(numeric ControlFlow/globals.js)
 ctcompile_native_fixture(functions ControlFlow/functions.js)
 # Object literals with closed shapes, lowered to stack structs.
 ctcompile_native_fixture(structs Objects/struct.js)
+# Object literals returned by value from the function that builds them.
+ctcompile_native_fixture(records Objects/records.js)
+# String.prototype.replace with a RegExp literal and a function.
+ctcompile_native_fixture(string_replace Objects/string-replace.js)
 # Dense, uniformly numeric array literals, as std::vector<double>.
 ctcompile_native_fixture(arrays Objects/array.js)
 # Array contents evidence currently admits only bounded local Number

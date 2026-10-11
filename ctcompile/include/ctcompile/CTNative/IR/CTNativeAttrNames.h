@@ -49,6 +49,23 @@ inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason
 /// (the constructor lift's `new K(...)`): the class's name, which the lowering
 /// gives the C++ class it emits for that shape.
 inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
+/// On the static box of a binding that holds an object literal: why calls of
+/// its methods stay calls through the literal (ClosureLifting/Singletons.cpp).
+inline constexpr llvm::StringLiteral kNativeSingletonReason = "ctnative.singleton_reason";
+/// A callback of an Array method (forEach, map, filter, some, every, find or
+/// reduce) that closure lifting specialised for its one call. On the
+/// `ctjs.call` it is a symbol reference to the callback, whose captures are
+/// the call's leading arguments; on the callback's `ctjs.func` it is a unit
+/// attribute. Written by ClosureLifting/ArrayCallbacks.cpp and read by type
+/// inference, admission and the lowering.
+inline constexpr llvm::StringLiteral kNativeArrayCallback = "ctnative.array_callback";
+/// A listener handed to the host (`el.addEventListener(type, f)`) that closure
+/// lifting specialised for its one call. On the `ctjs.call` it is a symbol
+/// reference to the listener, whose captures follow the event type among the
+/// call's arguments; on the listener's `ctjs.func` it is a unit attribute.
+/// Written by ClosureLifting/HostCallbacks.cpp and read by type inference,
+/// admission and the lowering.
+inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callback";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

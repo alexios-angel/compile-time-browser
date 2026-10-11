@@ -91,7 +91,10 @@ enum class carrier {
     /// An ordinary script's getBoundingClientRect answer (Runtime/Page.hpp).
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
-    computedStyle
+    computedStyle,
+    /// A run-once static's constant table, or undefined before it is stored: a
+    /// pointer to its namespace-scope struct (Runtime/StaticTable.hpp).
+    staticTable
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -123,6 +126,8 @@ inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
+/// A run-once static's constant table (Runtime/StaticTable.hpp).
+inline constexpr llvm::StringLiteral kStaticTableType = "ctnative::static_table_ptr";
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 /// One row per carrier, in enum order: its C++ spelling (empty when the
@@ -159,8 +164,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::tupleVector, ""},
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
+    {carrier::staticTable, kStaticTableType},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::computedStyle) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::staticTable) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -261,8 +267,9 @@ bool isVectorCallPlumbing(mlir::Operation * o);
 /// call, so the load lowers to nothing.
 bool isPageGlobal(mlir::Operation * o);
 /// Whether `o` reads a page method only to call it on the object it read it
-/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`). The call lowers to a
-/// runtime call, so the read lowers to nothing.
+/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`,
+/// `el.addEventListener(type, f)`). The call lowers to a runtime call, so the
+/// read lowers to nothing.
 bool isPageMethodRead(mlir::Operation * o);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);

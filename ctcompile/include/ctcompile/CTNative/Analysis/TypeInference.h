@@ -46,7 +46,9 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace ctcompile::ctnative {
 
@@ -70,6 +72,21 @@ class DOMEntryAnalysis;
 /// here, because the writer and the reader are in different translation units
 /// and a mistyped attribute name is a silent narrowing nothing would catch.
 inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_before_read";
+
+/// Attribute on a function whose every return is an object literal it built,
+/// and on each direct call of it, when markRecordReturns proved that the call's
+/// result can receive a copy (Analysis/Inference/Records.cpp).
+inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
+
+/// A callback of `text.replace(/pattern/g, fn)` that closure lifting
+/// specialised for its one call (Lowering/ClosureLifting/StringCallbacks.cpp).
+/// On the `ctjs.call` it is a symbol reference to the callback, whose captures
+/// follow the RegExp literal in the call's arguments; on the callback's
+/// `ctjs.func` it is a unit attribute.
+inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_callback";
+/// The String.prototype method a `ctjs.call` invokes on its receiver, written
+/// by TypeInference::markStringMethodCalls: only "toLowerCase" today.
+inline constexpr llvm::StringLiteral kNativeStringMethod = "ctnative.string_method";
 
 /// One SSA value's inferred type, as a lattice element.
 ///
@@ -160,7 +177,9 @@ public:
     /// the join of every store of `k` to it, starting from undefined because
     /// nothing orders the read after a store. Any other use of the object (a
     /// call, a return, a dynamic key, `delete`, `in`, spread) makes its shape
-    /// open and every read of it `boxed`.
+    /// open and every read of it `boxed`. A data record (markRecordReturns) is
+    /// the exception: its literal may be returned, and the call's result is a
+    /// closed object of the same shape.
     static bool hasClosedShape(mlir::Value object);
 
     /// Whether `v` is the lifted `this` of a method. A method whose `this` uses
@@ -205,6 +224,43 @@ public:
     static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> groupReceivers(
         mlir::Operation * top);
 
+    /// Marks data records returned by value with kRecordReturn: a private
+    /// function, called only directly, whose every `ctjs.return` returns an
+    /// object literal it made, used otherwise only through constant keys, and
+    /// whose every call result is used only through constant keys or lent to
+    /// a record parameter. A record parameter belongs to a private function
+    /// called only directly, every call passes it a record, and it is used the
+    /// same way; its index joins `ctnative.object_args`. Run once, after
+    /// closure lifting and before groupReceivers.
+    static void markRecordReturns(mlir::Operation * top);
+    /// Whether `value` is the result of a call kRecordReturn marks.
+    static bool isRecordCall(mlir::Value value);
+    /// Whether `ret` is a `ctjs.return` of a function kRecordReturn marks.
+    static bool returnsRecord(mlir::Operation * ret);
+
+    // String.prototype.replace with a function (Inference/StringCallbacks.cpp).
+    /// The pattern and flags of the RegExp literal `value` is, or none.
+    static std::optional<std::pair<std::string, std::string>> regExpLiteral(mlir::Value value);
+    /// Why the native runtime cannot run `pattern` with `flags` for a callback
+    /// that declares `declared` parameters the way JavaScript does, or empty.
+    static std::string replacePatternProblem(llvm::StringRef pattern, llvm::StringRef flags,
+                                             unsigned declared);
+    /// Whether `op` is a replace call closure lifting specialised.
+    static bool isStringCallbackCall(mlir::Operation * op);
+    /// Marks each `text.toLowerCase()` call with kNativeStringMethod, while its
+    /// key is still a constant the lowering has not rewritten.
+    static void markStringMethodCalls(mlir::Operation * top);
+    /// Whether `op` is a marked `text.toLowerCase()`, which the runtime spells
+    /// `ctnative::String.prototype.toLowerCase.call(text)` on a String.
+    static bool isStringMethodCall(mlir::Operation * op);
+    /// Whether `op` is the method read, the RegExp literal or the literal
+    /// factory's global that only such a call (or a toLowerCase call)
+    /// consumes; it lowers to nothing.
+    static bool consumedByStringCallback(mlir::Operation * op);
+    /// Whether `value` is a parameter of a specialised replace callback, which
+    /// its call types rather than the entry state.
+    static bool isStringCallbackParameter(mlir::Value value);
+
     /// Whether `array` is a dense array literal that can be a `std::vector`:
     /// its uses keep it dense (no holes) and local. Allowed uses are appends,
     /// index and length reads, overwrites of elements proved to exist, and
@@ -237,9 +293,36 @@ public:
         sort,
         split,
         splitSpace,
-        regexp
+        regexp,
+        /// `a.includes(x)` on an array of Strings.
+        includes,
+        /// A callback method closure lifting specialised
+        /// (Inference/ArrayCallbacks.cpp).
+        callback
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
+
+    // Array-method callbacks (Inference/ArrayCallbacks.cpp).
+    /// Whether `key` names an Array method the runtime calls back from.
+    static bool isArrayCallbackMethod(llvm::StringRef key);
+    /// Whether `op` is a call closure lifting specialised for its callback.
+    static bool isArrayCallbackCall(mlir::Operation * op);
+    /// Whether that call answers a new array (filter and map).
+    static bool arrayCallbackMakesArray(mlir::Operation * op);
+    /// Whether operand `index` of that call only lends an array to it: the
+    /// receiver, or a captured value the callback reads.
+    static bool arrayCallbackBorrows(mlir::Operation * op, unsigned index);
+    /// Whether `value` is a parameter of a specialised callback, which its
+    /// call types rather than the entry state.
+    static bool isArrayCallbackParameter(mlir::Value value);
+
+    // Listeners handed to the host (Inference/HostCallbacks.cpp).
+    /// Whether `op` is an `addEventListener` call closure lifting specialised
+    /// for its listener.
+    static bool isHostCallbackCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a listener, which its call
+    /// types rather than the entry state.
+    static bool isHostCallbackParameter(mlir::Value value);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -410,6 +493,18 @@ private:
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
+    /// The type of a specialised `addEventListener` call (undefined), after
+    /// joining its captured values into the listener's parameters.
+    mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of a specialised Array-method call, after joining its
+    /// receiver's element type, the index and its captured values into the
+    /// callback's parameters.
+    mlir::Type arrayCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+                                 bool & pending);
+    /// The type of a specialised replace call, after joining its captures, and
+    /// the match and groups (Strings), into the callback's parameters.
+    mlir::Type stringCallbackType(mlir::Operation * op,
+                                  llvm::ArrayRef<const TypeLattice *> operands, bool & pending);
 
     /// The element type of a dense array: the join over everything appended or
     /// stored into it, from `undefined`. `op` is the operation asking, so every
@@ -461,7 +556,8 @@ private:
     /// function. Forwarded slots need their own check of every callable and
     /// use; cycles and the bounded walk's cutoff keep the seed. Field removal
     /// is ruled out by the closed-alias check, and every callee write stays in
-    /// the type join.
+    /// the type join. A data record's call result drops the seed when, in the
+    /// callee, a store of the key dominates every return of its literal.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every
@@ -476,6 +572,17 @@ private:
     /// values crossing a call boundary, and every operation the transfer
     /// function does not handle. `boxed` is the top of the lattice and always
     /// safe; the native compiler either proves a type or falls back to it.
+    // Borrowed callbacks (Inference/BorrowedCallbacks.cpp).
+    /// Whether `value` is a parameter of a borrowed callback, which the
+    /// closure and the calls through its callee's parameter type rather than
+    /// the entry state.
+    static bool isBorrowedCallbackParameter(mlir::Value value);
+    /// The transfer function of a borrowed callback's closure and of a call
+    /// through a borrowed parameter; nullopt for any other operation.
+    std::optional<mlir::LogicalResult> visitBorrowedCallback(
+        mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+        llvm::ArrayRef<TypeLattice *> results);
+
     void setToEntryState(TypeLattice * lattice) override;
 };
 

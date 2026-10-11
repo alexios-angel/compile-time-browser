@@ -352,7 +352,7 @@ var trace = host.slot.get({});
         sha256=hashlib.sha256(historical.encode()).hexdigest(),
     )
     assert rows["parameter_object"]["sha256"] == (
-        "7b592b8354bb285a71e0b9fc72ab6f811c567156b1f6294f06bab9fcd0fa135c"
+        "15add302082de6b884092a337137ed0a056f41ea8d3ef43d9a1aa819041513e3"
     )
     # These sources are pinned by sha256 so that rows and recorded results keyed
     # on them cannot drift silently; editing a pinned source means updating its

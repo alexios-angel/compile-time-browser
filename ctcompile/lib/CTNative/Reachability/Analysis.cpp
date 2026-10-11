@@ -21,7 +21,8 @@ namespace {
 
 class graph {
 public:
-    graph(mlir::ModuleOp module, unsigned limit) : module(module), limit(limit) {}
+    graph(mlir::ModuleOp module, unsigned limit, roots from)
+        : module(module), limit(limit), from(from) {}
 
     result run() {
         for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
@@ -104,10 +105,15 @@ private:
                 const auto index = functionIndex(function);
                 if (index) { indexed[*index].push_back(function); }
                 // Roots: declarations without a body, the top-level script
-                // (function index 0), and anything not private.
-                if (function.getBody().empty() || index == 0 || !function.isPrivate()) {
-                    mark(function);
-                }
+                // (function index 0), and anything not private or, under
+                // roots::entries, what the embedder calls by name and every
+                // admitted function, so nothing a native function names is
+                // ever reported dead.
+                const bool named = from == roots::nonPrivate
+                                       ? !function.isPrivate()
+                                       : function->hasAttr("ctnative.string_entry") ||
+                                             !function->hasAttr("ctnative.not_native");
+                if (function.getBody().empty() || index == 0 || named) { mark(function); }
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
                 closures.push_back(closure);
@@ -154,6 +160,7 @@ private:
 
     mlir::ModuleOp module;
     unsigned limit;
+    roots from;
     result output;
     llvm::SmallVector<ctjs::FuncOp> functions;
     llvm::SmallVector<ctjs::CreateClosureOp> closures;
@@ -165,8 +172,8 @@ private:
 
 } // namespace
 
-result analyze(mlir::ModuleOp module, unsigned maxSteps) {
-    return graph(module, maxSteps).run();
+result analyze(mlir::ModuleOp module, unsigned maxSteps, roots from) {
+    return graph(module, maxSteps, from).run();
 }
 
 } // namespace ctcompile::ctnative::reachability

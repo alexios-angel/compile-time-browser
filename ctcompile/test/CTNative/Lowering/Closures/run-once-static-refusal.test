@@ -1,0 +1,21 @@
+# A function that reads a static variable of a run-once function whose value
+# has no carrier is refused with that variable's name and what its owner
+# stores in it, not as an anonymous shared binding of the reading frame.
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/config.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s
+
+# CHECK: ctnative.not_native = "it reads `config`, a static variable of a function that runs once, holding an object literal that is written after it is made"
+
+#--- config.js
+var read = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function update(next) {
+        config = next;
+    }
+    update({interval: 1, pause: "none"});
+    return function () {
+        return config;
+    };
+})();
+var interval = read().interval;

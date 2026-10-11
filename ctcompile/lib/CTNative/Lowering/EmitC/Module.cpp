@@ -123,7 +123,10 @@ void lowering::declareGlobals() {
     needsObjectIdentity |= needsObjectValue;
     // Snapshot projections remain ordered even after their producer has
     // been deforested. The choice only becomes more conservative here.
+    // Only programs that register listeners parse the listener table.
+    bool needsEvents = false;
     module.walk([&](ec::CallOpaqueOp call) {
+        needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");
@@ -146,11 +149,34 @@ void lowering::declareGlobals() {
                               b.getStringAttr("ctcompile/CTNative/Runtime/Browser.hpp"),
                               b.getUnitAttr());
     }
+    // A borrowed callback parameter is a ctnative::function_ref.
+    if (!borrowedSignatures.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Callable.hpp"),
+                              mlir::UnitAttr{});
+    }
+    if (needsEvents) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Events.hpp"),
+                              b.getUnitAttr());
+    }
     if (needsObjectIdentity) { verbatim(b, identityDefinition()); }
     if (!identityFields.empty()) { verbatim(b, identityFieldHelpers()); }
     for (const std::string & definition : environments) { verbatim(b, definition); }
     for (const std::string & definition : methodTables) { verbatim(b, definition); }
     if (!domDataSession.empty()) { verbatim(b, domDataDefinition()); }
+    // A run-once static's constant table precedes the static that points at it.
+    bool tables = false;
+    for (const auto & [name, definition] : staticTables) {
+        if (!statics.contains(name)) { continue; }
+        if (!tables) {
+            ec::IncludeOp::create(b, module.getLoc(),
+                                  b.getStringAttr("ctcompile/CTNative/Runtime/StaticTable.hpp"),
+                                  b.getUnitAttr());
+            tables = true;
+        }
+        verbatim(b, definition);
+    }
     for (llvm::StringRef name : sortedKeys(globals)) {
         // Default tagged storage is undefined until the first generated
         // store. Each observation checks its exact tag, so a missing store

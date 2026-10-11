@@ -12,7 +12,7 @@ import re
 import struct
 from urllib.parse import unquote_to_bytes
 
-from CTNative.harness import native_args, native_tools
+from CTNative.harness import native_args, native_tools, run_parallel
 from CTNative.Ownership import globals as owned
 
 boundary = owned.boundary
@@ -335,8 +335,10 @@ def main():
     compilers, nm = native_tools(args.reference)
     node, reference = args.node, args.reference
 
-    saved = {}
-    for name, (source, binding, expected) in POSITIVES.items():
+    # Each case below writes only files named after itself, so the cases of one
+    # loop run side by side (run_parallel).
+    def check_positive(item):
+        name, (source, binding, expected) = item
         js, ir, count = boundary.prepare(args, name, source)
         if count != 3:
             raise RuntimeError(f"{name}: changed source denominator")
@@ -391,7 +393,9 @@ def main():
             disabled = owned.lower(args, ir, name + "-disabled", config, options="optimize=false")
             if disabled.read_text() != text:
                 raise RuntimeError(f"{name}: typed admission changed with optimization policy")
-        saved[name] = ir, config, output
+        return ir, config, output
+
+    saved = dict(zip(POSITIVES, run_parallel(POSITIVES.items(), check_positive)))
 
     ir, config, output = saved["ordinary"]
     disabled = owned.lower(args, ir, "ordinary-disabled", config, options="optimize=false")
@@ -445,7 +449,8 @@ def main():
 
     # Getters returning null or undefined keep that exact tag through the owning
     # callable and the global observation, with optimization on and off.
-    for name, literal in (("null", "null"), ("undefined", "void 0")):
+    def check_nullish(item):
+        name, literal = item
         js, typed, count = boundary.prepare(
             args, f"typed-{name}", SOURCE.replace("return 42;", f"return {literal};")
         )
@@ -487,6 +492,8 @@ def main():
         if typed.read_text() != prepared_text or fresh.read_text() != manifest_text:
             raise RuntimeError(f"typed-{name}: preparation rewrote the supplied IR or manifest")
 
+    run_parallel((("null", "null"), ("undefined", "void 0")), check_nullish)
+
     # Preparation must check the manifest fingerprint before rewriting anything.
     # Changing the getter's literal from 42 to 43 leaves a valid ownership graph,
     # so only the fingerprint check can reject the old manifest; without it the
@@ -524,8 +531,8 @@ def main():
     if "ctnative.host_owner_proved = false" not in text or "fingerprint mismatch" not in text:
         raise RuntimeError("completed native output reused its original source proof")
 
-    sources = refusal_sources()
-    for name, source in sources.items():
+    def check_refusal(item):
+        name, source = item
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = owned.contract(args, rejected, name)
         refused(args, rejected, name, fresh, admitted=0 if name == "captured_map" else None)
@@ -549,6 +556,9 @@ def main():
             if "fingerprint mismatch" in first.read_text():
                 raise RuntimeError("fresh forgery did not reach live source-graph reanalysis")
             refused(args, first, "forged-fresh-rerun", checked)
+
+    sources = refusal_sources()
+    run_parallel(sources.items(), check_refusal)
     print(
         f"native owned global methods: {len(POSITIVES) + 2} complete 3/3 programs; "
         "Node/interpreter and explicit/deduced GCC/Clang agree; post-entry owner/table/callable "

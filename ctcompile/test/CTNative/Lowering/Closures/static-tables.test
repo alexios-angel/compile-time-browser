@@ -1,0 +1,108 @@
+# A static variable of a run-once function that holds an object literal of
+# constants, never written after it is made and read only through constant
+# keys or returned, becomes one namespace-scope `const` struct, and the
+# variable a pointer to it (Analysis/Inference/StaticTables.cpp).
+#
+# The positive lowers completely and prints the same `r` as Node and the
+# interpreter with both compilers. The negatives each break one condition and
+# name it at the reader.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/table.mlir
+# RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/table.mlir
+# RUN: ctjs-opt %t/table.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/table.cpp
+# RUN: FileCheck %s --check-prefix=CPP < %t/table.cpp
+# RUN: %gxx -O2 %t/table.cpp -o %t/table-gcc
+# RUN: %t/table-gcc | FileCheck %s --check-prefix=OBSERVATION
+# RUN: %clangxx -O2 %t/table.cpp -o %t/table-clang
+# RUN: %t/table-clang | FileCheck %s --check-prefix=OBSERVATION
+# RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=OBSERVATION
+# RUN: for name in written dynamic argument stored nested; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc; done \
+# RUN:   | FileCheck %s --check-prefix=REFUSED
+
+# TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">
+# TABLE: emitc.global static @static_config : !emitc.opaque<"ctnative::static_table_ptr">
+# TABLE: literal "&static_config_table"
+# TABLE: call_opaque "ctnative::table_field<&static_config_table_t::interval>"
+# CPP: struct static_config_table_t : ctnative::static_table {
+# CPP: ctnative::js_string field_74656d706c617465;
+# CPP: inline const static_config_table_t static_config_table{
+# CPP: static ctnative::static_table_ptr static_config;
+# CPP: ctnative::table_field<&static_config_table_t::interval>(
+# CPP: ctnative::table_field<&static_config_table_t::field_74656d706c617465>(
+# OBSERVATION: r=5010
+
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is written after it is made
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is read with a key that is not a constant
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is passed as an argument
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is stored into another object, array or variable
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that holds `allowList`, which is not a constant number, boolean, string, null or array of them
+
+#--- table.js
+var r = (function () {
+    var config = {interval: 5000, keyboard: true, pause: "hover", parent: null, offset: [0, 2], names: ["a", "b"], template: "<b>"};
+    function make() {
+        return () => config;
+    }
+    const get = make();
+    return get().interval + get().pause.length + (get().keyboard ? 2 : 0) + get().template.length;
+})();
+
+#--- written.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => config.interval;
+    }
+    const get = make();
+    config = {interval: 1, pause: "none"};
+    return get();
+})();
+
+#--- dynamic.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return (key) => config[key];
+    }
+    const get = make();
+    return get("interval");
+})();
+
+#--- argument.js
+function use(o) {
+    return o.interval;
+}
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => use(config);
+    }
+    const get = make();
+    return get();
+})();
+
+#--- stored.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => ({inner: config});
+    }
+    const get = make();
+    return get().inner.interval;
+})();
+
+#--- nested.js
+var r = (function () {
+    var allow = {a: [1]};
+    var config = {allowList: allow, interval: 5000};
+    function make() {
+        return () => config;
+    }
+    const get = make();
+    return get().interval;
+})();

@@ -17,9 +17,16 @@ config.suffixes = [".mlir", ".td", ".test"]
 # on input that never comes, a fixed point that does not converge) would
 # otherwise hold the whole run forever; this reports it as TIMEOUT, which fails
 # the run. lit enforces the limit through psutil, which the lit environment
-# must have (~/.lit-venv/bin/pip install psutil); without it lit stops at once
-# with that instruction rather than running without the limit.
-lit_config.maxIndividualTestTime = 3600
+# must have (pyproject.toml's test group installs it beside lit).
+#
+# Newer lit (23.1 from PyPI) takes the limit per suite on `config` and makes
+# lit_config's read-only once set; older lit only has lit_config's, which
+# stops at once without psutil rather than running without the limit. A
+# --timeout on the command line overrides either.
+if hasattr(config, "maxIndividualTestTime"):
+    config.maxIndividualTestTime = 3600
+else:
+    lit_config.maxIndividualTestTime = 3600
 config.excludes = ["Inputs"]
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
 
@@ -192,3 +199,10 @@ config.substitutions.append(("%build", config.build_root))
 # The Python drivers import each other across directories (CTNative/harness.py
 # explains how), and running one by hand needs the same path.
 config.environment["PYTHONPATH"] = config.test_source_root
+
+# A driver that loops over named fixtures runs only those CTCOMPILE_FIXTURES
+# selects (comma-separated globs; CTNative/harness.py selected_fixtures), so a
+# change can be checked on the fixtures it touches. lit clears the environment,
+# so the variable is passed through when set; unset, every fixture runs.
+if "CTCOMPILE_FIXTURES" in os.environ:
+    config.environment["CTCOMPILE_FIXTURES"] = os.environ["CTCOMPILE_FIXTURES"]

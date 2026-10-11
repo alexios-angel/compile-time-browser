@@ -348,7 +348,8 @@ def page_scripts(ctx, name):
 
 @stage(
     "admission",
-    "ctcompile claims every function natively: native-claims.py finds no refusal and no skip",
+    "ctcompile claims every function that can run natively: native-claims.py finds no refusal "
+    "and no skip, and every function it does not claim was removed as unreachable",
     "Take the most common refusal reason in DETAILS, find the lowering that refuses it, and "
     "teach it the construct under the native-output invariants; rerun to see the next reason.",
 )
@@ -374,17 +375,42 @@ def admission(ctx, name):
             ctx.add(name, item, "FAIL", "native-claims.py failed", tail(output))
             return
         claim = json.loads(out.read_text())
-        keep = ("claimed", "total", "refused", "skipped", "pruned", "globals", "globals_resolved")
+        keep = (
+            "claimed",
+            "total",
+            "refused",
+            "skipped",
+            "pruned",
+            "removed",
+            "globals",
+            "globals_resolved",
+        )
         metrics = {key: claim.get(key) for key in keep}
         summary = (
             f"{claim['claimed']} of {claim['total']} functions native "
             f"({claim['claimed_percent']}%), {claim['refused']} refused, "
-            f"{claim['skipped']} never imported"
+            f"{claim['skipped']} never imported, {claim['pruned']} pruned, "
+            f"{claim.get('removed', 0)} removed as unreachable"
         )
-        if claim["claimed"] == claim["total"] and not claim["refused"] and not claim["skipped"]:
-            ctx.add(name, item, "PASS", summary, metrics=metrics)
+        # A function removed as unreachable is not native: it cannot run, so
+        # it counts toward the total without being claimed, and each one is
+        # listed by name, on a pass too, rather than folded into the native
+        # count.
+        unreachable = [
+            f"pruned {function}: unreachable before admission"
+            for function in claim.get("pruned_names", [])
+        ]
+        unreachable += [
+            f"removed {function}: {reason}" for function, reason in claim.get("removed_rows", [])
+        ]
+        if (
+            claim["claimed"] + claim["pruned"] + claim.get("removed", 0) == claim["total"]
+            and not claim["refused"]
+            and not claim["skipped"]
+        ):
+            ctx.add(name, item, "PASS", summary, unreachable, metrics)
             return
-        details = ["most common refusal reasons (count, reason):"]
+        details = [*unreachable, "most common refusal reasons (count, reason):"]
         details += [f"  {count:6d}  {reason}" for reason, count in claim["refusals"][:8]]
         details += [
             f"  {count:6d}  [not imported] {reason}" for reason, count in claim["skips"][:4]
