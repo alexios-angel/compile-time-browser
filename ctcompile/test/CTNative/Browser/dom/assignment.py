@@ -39,6 +39,11 @@ BODIES = {
     "e['2'] = 2; return e;",
     "assign_spread": f"const i = {GET}; const e = {{...('object' == typeof i ? i : {{}})}}; "
     f"e.saved = {LATER}; e['2'] = 'last index'; return e;",
+    # A spread of a literal whose keys are known is a field copy (lifted by
+    # --ctjs-lift-to-scf): the copy keeps the value the source held, and the
+    # source's later write does not reach it.
+    "copy_then_mutate": f"const e = {{}}; e.saved = {GET}; const copied = {{...e}}; "
+    "e.saved = 1; return copied;",
     # Loops that write one dynamic key per dataset entry.
     "loop_dynamic_key": "const e = {}; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e[n] = M(t.dataset[n]); }} return e;",
@@ -214,7 +219,6 @@ REFUSALS = {
     "target_capture": f"const e = {{}}; e.saved = {GET}; return () => e;",
     "target_escape": f"const e = {{}}; e.saved = {GET}; t.saved = e; return e;",
     "source_alias_mutation": f"const saved = {GET}; const e = {{}}; e.saved = saved; saved.x = 1; return e;",
-    "copy_then_mutate": f"const e = {{}}; e.saved = {GET}; const copied = {{...e}}; e.saved = 1; return copied;",
     "loop_alias": "const e = {}, result = {}; let first = true; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e.saved = M(t.dataset[n]); "
     "if (first) { result.saved = e; first = false; } } return result;",
