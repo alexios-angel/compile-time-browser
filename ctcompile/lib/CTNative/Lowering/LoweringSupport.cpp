@@ -115,6 +115,9 @@ carrier carrierOf(mlir::Type type) {
         if (inner == carrier::numberString) { return carrier::nullableNumberString; }
         if (inner == carrier::string) { return carrier::nullableString; }
         if (inner == carrier::domElement) { return carrier::nullableElement; }
+        // A timer's handle that may be null or undefined: the empty
+        // ctnative::timer_id, which names no timer.
+        if (inner == carrier::timer) { return carrier::timer; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
         }

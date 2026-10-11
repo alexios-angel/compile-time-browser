@@ -4,6 +4,7 @@
 // runs it on the interpreter and natively and compares the answers.
 var log = '';
 var cleared = '';
+var armed = '';
 
 // Handlers with no captures: one due later, one at once, and one whose
 // negative timeout counts as 0.
@@ -54,6 +55,24 @@ function schedule() {
 }
 schedule();
 
+// A handle that may be null, as a field that starts null and is set later
+// is: clearing it clears the timer when there is one, and clearing null or
+// undefined does nothing.
+function arm(flag) {
+    var t = null;
+    if (flag) {
+        t = setTimeout(function () {
+            armed = armed + 'f';
+        }, 5);
+    }
+    armed = armed + (t ? 'S' : 'N');
+    clearTimeout(t);
+    clearTimeout(null);
+    clearTimeout(undefined);
+}
+arm(true);
+arm(false);
+
 function timers_report() {
-    return 'log=' + log + ' cleared=' + cleared;
+    return 'log=' + log + ' cleared=' + cleared + ' armed=' + armed;
 }

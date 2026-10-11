@@ -108,7 +108,10 @@ std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
     // call made.
     if (TypeInference::isTimerClear(o)) {
         const mlir::Value handle = llvm::cast<ctjs::CallOp>(o).getArgs()[0];
+        // null and undefined name no timer, so clearing with them does
+        // nothing (HTML 8.6 converts the handle to a long, 0).
         return carrierOf(self.typeOf(handle)) == carrier::timer ||
+               onlyAbsent(self.typeOf(handle)) ||
                self.refuse("clearing a timer with " + printed(self.typeOf(handle)) +
                            ", not a handle setTimeout or setInterval made");
     }
