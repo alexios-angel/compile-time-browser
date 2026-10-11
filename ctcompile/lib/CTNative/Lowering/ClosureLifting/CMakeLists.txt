@@ -5,9 +5,9 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Callbacks.cpp
   Cells.cpp
   Classes.cpp
-  ClassStatics.cpp
   ClassInheritance.cpp
   ClassInheritance.h
+  ClassStatics.cpp
   ClosureSets.cpp
   Bindings.cpp
   BorrowedCallbacks.cpp

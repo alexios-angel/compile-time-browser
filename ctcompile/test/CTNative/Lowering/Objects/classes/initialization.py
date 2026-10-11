@@ -730,7 +730,7 @@ def check_record_map_inputs(args, prepared):
                 )
 
 
-def untrusted_change(args, name, optimize, raw, native, functions, expected):
+def untrusted_change(args, name, optimize, raw, native, functions, expected, reference=None):
     """Lower the unprepared import of `name` and return None when it does what
     UNTRUSTED_NATIVE says (a complete native program printing Node's value, or
     else a named refusal boundary), else one line saying what changed: the
@@ -766,7 +766,7 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected):
             return None
         return f"CHANGED {label}: partial ({shape})"
     try:
-        check_executable(args, f"{name}.{optimize}.untrusted", native, expected)
+        check_executable(args, f"{name}.{optimize}.untrusted", native, expected, reference)
         return None if listed else f"CHANGED {label}: complete ({shape}), runs with a={expected}"
     except Exception as error:
         return f"CHANGED {label}: complete ({shape}), run failed: {str(error).splitlines()[0]}"
@@ -893,6 +893,9 @@ def main():
         # boundary, or its interpreter observation changed; every fixture's are
         # reported together at the end.
         untrusted_changes = []
+        # The interpreter's whole output for this fixture, which its native
+        # programs are compared with.
+        vm_output = {}
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
         reference = run([args.reference, str(source)], success=reference_expected is not None)
@@ -905,6 +908,9 @@ def main():
             reference_output = "Error=9\n" + reference_output
         if name == "class-map-record-nested-conditional-dead-escape":
             reference_output += "retained=undefined\n"
+        # A native program prints every global the interpreter prints, so it
+        # is compared with the interpreter's whole output, not with `a=` alone.
+        vm_output[name] = reference.stdout if reference_expected is not None else None
         if reference_expected is not None and reference.stdout != reference_output:
             # Reported with the untrusted changes; the rest of this fixture's
             # checks assume the old observation.
@@ -1669,7 +1675,9 @@ def main():
             preparation_refusals += 2
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
-            change = untrusted_change(args, name, optimize, raw, native, functions, node_expected)
+            change = untrusted_change(
+                args, name, optimize, raw, native, functions, node_expected, vm_output.get(name)
+            )
             if change:
                 untrusted_changes.append(change)
                 continue
@@ -1742,7 +1750,9 @@ def main():
                         raise RuntimeError(f"{name}: native refusal changed the source throw exits")
                     prepared_refusals += 1
                 else:
-                    checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+                    checked += check_executable(
+                        args, f"{name}.{optimize}", native, node_expected, vm_output.get(name)
+                    )
         return (
             refusals,
             preparation_refusals,

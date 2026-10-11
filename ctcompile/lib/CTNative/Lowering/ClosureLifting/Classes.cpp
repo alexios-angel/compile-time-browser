@@ -32,13 +32,14 @@
 // by its definition and its `__home` edge. Static members become direct
 // calls before this census runs (ClassStatics.cpp); a class whose static
 // members that rewrite left in place is refused with its reason. A class
-// that `extends` another, or has a prototype accessor, is refused for now;
-// `super(...)` is spelled with load_home, get_proto, pass_new_target and a
-// this-binding flag, which the next slice lowers. The class_defined call is the VM's
-// engine-internal helper, which no script can replace (ctbrowser keeps it
-// apart from the globals table; see ctcompile/CTJS/Import/EngineGlobals.h),
-// so erasing it is exact. A refusal's reason is recorded on the constructor's
-// closure (ctnative.class_reason).
+// that `extends` another class of the module is flattened before this census
+// (ClassInheritance.cpp), so it arrives extending nothing; one whose heritage
+// call remains is refused with the reason, and so is a class with a prototype
+// accessor. The class_defined call is the VM's engine-internal helper,
+// which no script can replace (ctbrowser keeps it apart from the globals
+// table; see ctcompile/CTJS/Import/EngineGlobals.h), so erasing it is exact.
+// A refusal's reason is recorded on the constructor's closure
+// (ctnative.class_reason).
 //
 //===----------------------------------------------------------------------===//
 
@@ -88,6 +89,10 @@ bool closureLifter::isHomeEdge(mlir::Operation * op) {
 /// `ctnative.class_setup`.
 void closureLifter::classCensus() {
     jsClasses.clear();
+    // The census runs more than once (the static-member rewrite runs it
+    // first), so a mark from an earlier run must not outlive a class that
+    // this run refuses.
+    module.walk([&](mlir::Operation * op) { op->removeAttr(kNativeClassSetup); });
     module.walk([&](ctjs::CallOp call) {
         if (!callsIntrinsic(call, "__ctbrowser_class_defined") || call.getArgs().size() != 1) {
             return;
