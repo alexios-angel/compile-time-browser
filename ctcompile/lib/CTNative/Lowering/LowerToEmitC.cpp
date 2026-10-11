@@ -679,6 +679,15 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "calls back `" + callback.getValue() + "`, which is not native",
                              "called back by `" + fn.getSymName() + "`, which is not native");
                     });
+                    // A promise operation names its executor or handler.
+                    fn.getBody().walk([&](mlir::Operation * op) {
+                        auto callback =
+                            op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativePromiseCallback);
+                        if (!callback) { return; }
+                        edge(symbols.lookup(callback.getValue()),
+                             "calls back `" + callback.getValue() + "`, which is not native",
+                             "called back by `" + fn.getSymName() + "`, which is not native");
+                    });
                 }
             }
             llvm::erase_if(accepted,

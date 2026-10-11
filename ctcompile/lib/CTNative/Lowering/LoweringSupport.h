@@ -91,7 +91,13 @@ enum class carrier {
     /// An ordinary script's getBoundingClientRect answer (Runtime/Page.hpp).
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
-    computedStyle
+    computedStyle,
+    /// A Promise of a Number, a Boolean or a String (Runtime/Promise.hpp),
+    /// spelled by promiseSpelling.
+    promise,
+    /// The resolve function `new Promise` hands its executor, spelled by
+    /// promiseSpelling.
+    promiseResolve
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -159,8 +165,10 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::tupleVector, ""},
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
+    {carrier::promise, ""},
+    {carrier::promiseResolve, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::computedStyle) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::promiseResolve) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -176,6 +184,9 @@ inline const carrierRow & carrierInfo(carrier which) {
 }
 /// Number, Boolean, or a nullable/Number|Boolean scalar.
 bool isScalarCarrier(carrier value);
+/// Whether a promise of a value with this carrier is native: a Number, a
+/// Boolean or a String (Runtime/Promise.hpp).
+bool isScalarPromiseValue(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
 /// The carriers a stored callable's concrete signature may use.
@@ -246,6 +257,10 @@ bool isElementArray(mlir::Value v, mlir::Type type, bool pageViews);
 /// ctnative::js_element_t, or std::pair of two of those for a tuple. Empty for
 /// anything else.
 std::string elementSpelling(mlir::Type type);
+/// The C++ spelling of a `promise<T>` or `promise_resolve<T>` whose carrier is
+/// carrier::promise or carrier::promiseResolve: `ctnative::js_promise<T>` or
+/// `ctnative::promise_resolve_function<T, ctnative::no_rejection>`.
+std::string promiseSpelling(mlir::Type type);
 /// `std::vector<elementSpelling(element)>` for an element array's VecType.
 std::string elementArraySpelling(mlir::Type type);
 /// `std::span<const elementSpelling(element)>`: how a function borrows an

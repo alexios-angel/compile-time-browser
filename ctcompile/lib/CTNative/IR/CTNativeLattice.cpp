@@ -227,6 +227,10 @@ static Type mergeSameFamily(Type a, Type b) {
         return TupleType::get(context, elements);
     }
     if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
+    // Promises and their resolve functions meet by value type
+    // (CTNativeTypes.td).
+    if (llvm::isa<PromiseType>(a)) { return mergeElements<PromiseType>(a, b); }
+    if (llvm::isa<PromiseResolveType>(a)) { return mergeElements<PromiseResolveType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);
         if (!mapB) { return Type(); }

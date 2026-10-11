@@ -123,12 +123,15 @@ void lowering::declareGlobals() {
     needsObjectIdentity |= needsObjectValue;
     // Snapshot projections remain ordered even after their producer has
     // been deforested. The choice only becomes more conservative here.
-    // Only programs that register listeners or timers parse their tables.
+    // Only programs that register listeners or timers, or use promises, parse
+    // their tables.
     bool needsEvents = false;
     bool needsTimers = false;
+    bool needsPromises = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
         needsTimers |= call.getCallee() == "ctnative::setTimeout";
+        needsPromises |= call.getCallee().starts_with("ctnative::Promise.");
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");
@@ -159,6 +162,11 @@ void lowering::declareGlobals() {
     if (needsTimers) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Timers.hpp"),
+                              b.getUnitAttr());
+    }
+    if (needsPromises) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Promise.hpp"),
                               b.getUnitAttr());
     }
     if (needsObjectIdentity) { verbatim(b, identityDefinition()); }

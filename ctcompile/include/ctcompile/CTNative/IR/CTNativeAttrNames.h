@@ -70,6 +70,18 @@ inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callba
 /// Marks such a call as `setTimeout(f, delay)`, since the lowering replaces
 /// the `setTimeout` load the call was recognised by before the call itself.
 inline constexpr llvm::StringLiteral kNativeHostTimer = "ctnative.host_timer";
+/// A callback a promise operation keeps: the executor of `new Promise(f)` or
+/// the handler of `p.then(f)`, which closure lifting specialised for that one
+/// construct or call. On the `ctjs.construct` or `ctjs.call` it is a symbol
+/// reference to the callback, whose captures are the operation's arguments.
+/// Written by ClosureLifting/Promises.cpp and read by type inference,
+/// admission and the lowering.
+inline constexpr llvm::StringLiteral kNativePromiseCallback = "ctnative.promise_callback";
+/// On such a callback's `ctjs.func`, the entry-block index of its JavaScript
+/// parameter (the executor's resolve function, or the handler's value),
+/// which follows the captures; a handler that declares none has no
+/// parameter at that index.
+inline constexpr llvm::StringLiteral kNativePromiseParameter = "ctnative.promise_parameter";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

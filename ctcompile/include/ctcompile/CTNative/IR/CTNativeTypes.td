@@ -496,6 +496,34 @@ def CTNative_WeakType : CTNative_WrapperType<"Weak", "weak", (ins "::mlir::Type"
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Promises (Runtime/Promise.hpp)
+//===----------------------------------------------------------------------===//
+
+def CTNative_PromiseType
+    : CTNative_WrapperType<"Promise", "promise", (ins "::mlir::Type":$elementType)> {
+  let summary = "`ctnative::js_promise<T>` - a Promise whose value is a `T`";
+  let description = [{
+    The element is the join of every value the promise can be fulfilled
+    with, so two promises meet elementwise, like `vec`. It is nominal
+    against everything else: a promise and its value are different things,
+    and meeting either with another kind gives a `variant`. Only a proved
+    element lowers; admission refuses the rest by name, an object among them
+    because it could carry a `then` key and so be adopted instead.
+  }];
+}
+
+def CTNative_PromiseResolveType
+    : CTNative_WrapperType<"PromiseResolve", "promise_resolve",
+                           (ins "::mlir::Type":$elementType)> {
+  let summary = "The resolve function of a `promise<T>`";
+  let description = [{
+    `ctnative::promise_resolve_function<T>`, the value `new Promise` hands
+    its executor. It meets elementwise with itself and is unordered against
+    `promise<T>` and every other type.
+  }];
+}
+
 // Where `!ctnative.struct<name, fields>` will go once a closed-shape proof can
 // introduce it: beside `map` in the lattice and strictly below it, since a
 // closed shape is an open one that something was proved about. Meeting two

@@ -507,6 +507,15 @@ struct closureLifter {
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
+    /// Callbacks a promise keeps (Promises.cpp): each closure whose one use is
+    /// the executor of `new Promise(f)` or the handler of `p.then(f)`, with
+    /// that construct or call. Judged by whyNotPromiseCallback and rewritten
+    /// by rewritePromiseCallback, as hostCallbacks are.
+    llvm::DenseMap<mlir::Operation *, mlir::Operation *> promiseCallbacks;
+    void promiseCallbackCensus();
+    std::optional<std::string> whyNotPromiseCallback(ctjs::CreateClosureOp c);
+    void rewritePromiseCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
     void census();
 
     void singleWriteCensus();

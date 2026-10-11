@@ -3,6 +3,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Initialization.cpp
   Exceptions.cpp
   HostCallbacks.cpp
+  Promises.cpp
   Shapes.cpp
   Vectors.cpp
 )

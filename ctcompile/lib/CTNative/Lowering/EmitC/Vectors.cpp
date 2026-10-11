@@ -23,6 +23,8 @@ void planArrayCallback(lowering & lower, ctjs::CallOp call);
 bool replaceArrayCallback(lowering & lower, mlir::Operation * o);
 // Listeners handed to the host (HostCallbacks.cpp).
 bool replaceHostCallback(lowering & lower, mlir::Operation * o);
+// Promise operations (Promises.cpp).
+bool replacePromise(lowering & lower, mlir::Operation * o);
 
 namespace {
 
@@ -101,6 +103,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         }
         if (lower.pageViews && TypeInference::isHostCallbackCall(op)) {
             mark(op, "host_callback");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isPromiseCall(op)) {
+            mark(op, "promise");
             return;
         }
         // The null on the branch an element's getBoundingClientRect test never
@@ -411,6 +417,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
+    if (kind == "promise") { return replacePromise(lower, o); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];

@@ -81,6 +81,15 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
     if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
+    // A promise, or its resolve function, of a scalar value
+    // (Runtime/Promise.hpp); any other value is refused.
+    if (llvm::isa<PromiseType, PromiseResolveType>(type)) {
+        const mlir::Type value = llvm::isa<PromiseType>(type)
+                                     ? llvm::cast<PromiseType>(type).getElementType()
+                                     : llvm::cast<PromiseResolveType>(type).getElementType();
+        if (!isScalarPromiseValue(carrierOf(value))) { return carrier::none; }
+        return llvm::isa<PromiseType>(type) ? carrier::promise : carrier::promiseResolve;
+    }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -210,6 +219,22 @@ bool isPageGlobal(mlir::Operation * o) {
                    TypeInference::isTimerCall(use.getOwner());
         });
     }
+    // Promise only as the callee and new.target of a `new Promise(f)` closure
+    // lifting specialised, or to read `Promise.resolve` for a call
+    // (Runtime/Promise.hpp).
+    if (load.getName() == "Promise") {
+        return TypeInference::isRealmGlobal(load, load.getName()) &&
+               llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+                   mlir::Operation * user = use.getOwner();
+                   if (llvm::isa<ctjs::ConstructOp>(user)) {
+                       return use.getOperandNumber() < 2 && TypeInference::isPromiseCall(user);
+                   }
+                   if (llvm::isa<ctjs::CallOp>(user)) {
+                       return use.getOperandNumber() == 1 && TypeInference::isPromiseCall(user);
+                   }
+                   return isPageMethodRead(user);
+               });
+    }
     if (load.getName() == "getComputedStyle") {
         return TypeInference::isRealmGlobal(load, load.getName()) &&
                llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
@@ -232,7 +257,7 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
     return call &&
            (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
-            TypeInference::isHostCallbackCall(call)) &&
+            TypeInference::isHostCallbackCall(call) || TypeInference::isPromiseCall(call)) &&
            ctjs::receiverMethod(call) == read;
 }
 
@@ -267,6 +292,21 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
 
 bool isScalarCarrier(carrier value) {
     return value == carrier::number || value == carrier::boolean || value == carrier::nullable;
+}
+
+bool isScalarPromiseValue(carrier value) {
+    return value == carrier::number || value == carrier::boolean || value == carrier::string;
+}
+
+std::string promiseSpelling(mlir::Type type) {
+    if (auto promise = llvm::dyn_cast_or_null<PromiseType>(type)) {
+        return "ctnative::js_promise<" +
+               carrierInfo(carrierOf(promise.getElementType())).spelling.str() + ">";
+    }
+    auto resolve = llvm::cast<PromiseResolveType>(type);
+    return "ctnative::promise_resolve_function<" +
+           carrierInfo(carrierOf(resolve.getElementType())).spelling.str() +
+           ", ctnative::no_rejection>";
 }
 
 bool isStringUnionCarrier(carrier value) {

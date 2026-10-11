@@ -164,6 +164,10 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(closureCarrierType(llvm::cast<ClosureType>(typeOf(v))));
             return;
         }
+        if (c == carrier::promise || c == carrier::promiseResolve) {
+            v.setType(ec::OpaqueType::get(context, promiseSpelling(typeOf(v))));
+            return;
+        }
         if (c == carrier::map) {
             auto map = llvm::cast<MapType>(typeOf(v));
             needsObjectValue |= mapNeedsObjectValues(map);

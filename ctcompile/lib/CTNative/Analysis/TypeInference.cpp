@@ -610,6 +610,7 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
     if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
+    if (isPromiseCallbackParameter(value)) { return; }
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
@@ -829,6 +830,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         if (const mlir::Type registered = hostCallbackType(op, operands)) {
             return answer(registered);
         }
+        if (const mlir::Type promised = promiseType(op, operands)) { return answer(promised); }
     }
 
     // Vectors of one proved element type, and split on a String.

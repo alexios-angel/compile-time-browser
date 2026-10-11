@@ -236,10 +236,11 @@ struct promise_then_method {
     template <class T, class E, class F>
     requires std::invocable<F &, const T &>
     auto call(const js_promise<T, E> & self, F on_fulfilled) const {
-        using R = std::invoke_result_t<F &, const T &>;
+        // A handler that returns nothing fulfills with undefined.
+        using returned = std::invoke_result_t<F &, const T &>;
+        using R = std::conditional_t<std::is_void_v<returned>, undefined_t, returned>;
         static_assert(promise_detail::rejects_as<R, E>,
                       "a then handler's promise must reject with the same reason type");
-        static_assert(!std::is_void_v<R>, "a then handler returns a value, undefined_t at least");
         using derived_t = typename promise_detail::then_result<R, E>::type;
         derived_t derived;
         promise_detail::perform_then(
@@ -253,11 +254,19 @@ struct promise_then_method {
                     }
                     return;
                 }
+                const auto run = [&] {
+                    if constexpr (std::is_void_v<returned>) {
+                        handler(*settled.value);
+                        settle.first(undefined_t{});
+                    } else {
+                        settle.first(handler(*settled.value));
+                    }
+                };
                 if constexpr (std::is_same_v<E, no_rejection>) {
-                    settle.first(handler(*settled.value));
+                    run();
                 } else {
                     try {
-                        settle.first(handler(*settled.value));
+                        run();
                     } catch (const js_exception<E> & thrown) { settle.second(thrown.value); }
                 }
             });

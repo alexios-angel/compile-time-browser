@@ -346,6 +346,21 @@ const MeetRow kMeetTable[] = {
      "!ctnative.variant<!ctnative.computed_style, !ctnative.dom_rect>",
      "two page objects of different kinds stay alternatives"},
 
+    // --- promises ----------------------------------------------------------
+    {"!ctnative.promise<!ctnative.num<i32>>", "!ctnative.promise<!ctnative.num<f64>>",
+     "!ctnative.promise<!ctnative.num<f64>>", "a promise's value meets elementwise"},
+    {"!ctnative.promise<!ctnative.bool>", "!ctnative.bool",
+     "!ctnative.variant<!ctnative.bool, !ctnative.promise<!ctnative.bool>>",
+     "a promise is not its value, so the two stay alternatives"},
+    {"!ctnative.promise_resolve<!ctnative.num<i32>>",
+     "!ctnative.promise_resolve<!ctnative.num<f64>>",
+     "!ctnative.promise_resolve<!ctnative.num<f64>>",
+     "a resolve function meets by the value it takes"},
+    {"!ctnative.promise<!ctnative.bool>", "!ctnative.promise_resolve<!ctnative.bool>",
+     "!ctnative.variant<!ctnative.promise<!ctnative.bool>, "
+     "!ctnative.promise_resolve<!ctnative.bool>>",
+     "a promise and its resolve function are different values"},
+
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
      "!ctnative.shared<!ctnative.bool>",
@@ -402,6 +417,9 @@ const char * const kSampleTypes[] = {
     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
     "!ctnative.dom_rect",
     "!ctnative.computed_style",
+    "!ctnative.promise<!ctnative.bool>",
+    "!ctnative.promise<!ctnative.num<i32>>",
+    "!ctnative.promise_resolve<!ctnative.bool>",
 };
 
 //===--------------------------------------------------------------------===//
@@ -656,9 +674,9 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 73 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 77 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 165;
+    const int expectedChecks = 173;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

@@ -624,6 +624,20 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
+            // The end of the script is a microtask checkpoint, so the promise
+            // jobs it queued run before its globals are observed, as the
+            // VM's context::run drains them.
+            bool promises = false;
+            module.walk([&](mlir::Operation * op) {
+                auto opaque = llvm::dyn_cast<ec::CallOpaqueOp>(op);
+                promises |= op->hasAttr(kNativePromiseCallback) ||
+                            (opaque && opaque.getCallee().starts_with("ctnative::Promise."));
+            });
+            if (promises) {
+                callWithConstValueOperands(
+                    b, where, mlir::TypeRange{},
+                    b.getStringAttr("ctnative::microtasks::program().checkpoint"), {});
+            }
             printObservations(b, where);
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));
