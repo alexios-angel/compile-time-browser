@@ -45,6 +45,16 @@ inline nullable_string vec_at(const std::vector<js_string> & values, nullable_sc
     return values[index].value();
 }
 
+/// `a[i]` of an array of Numbers (a map result): the element, else undefined.
+inline nullable_scalar vec_at(std::span<const js_num> values, nullable_scalar key) {
+    std::size_t index = 0;
+    if (!element_index(key, values.size(), index)) { return {}; }
+    return values[index];
+}
+inline nullable_scalar vec_at(const std::vector<js_num> & values, nullable_scalar key) {
+    return vec_at(std::span<const js_num>{values}, key);
+}
+
 /// `a[i]` where the compiler proved `i` an integer in [0, a.length) (a loop
 /// counter checked against this array's length; element arrays never shrink),
 /// so the read is the element itself rather than an optional.
@@ -370,6 +380,17 @@ struct sort_method {
     }
 };
 
+/// Array.prototype.includes (ECMA-262 23.1.3.16) with one argument: whether
+/// an element is SameValueZero to `value`. The compiler lowers it on arrays
+/// of Strings, for which that is equality of the code units.
+struct includes_method {
+    template <class Self, class T = typename Self::value_type>
+    requires detail::native_array<Self>
+    js_boolean_t call(const Self & self, const T & value) const {
+        return js_boolean_t{std::ranges::find(self, value) != self.end()};
+    }
+};
+
 /// The Array.prototype methods native code calls, as stateless method
 /// objects: generated code reads `ctnative::Array.prototype.push.call(a, x)`.
 /// Only the methods the compiler lowers are here.
@@ -377,6 +398,7 @@ struct array_prototype {
     push_method push;
     join_method join;
     sort_method sort;
+    includes_method includes;
     for_each_method forEach;
     map_method map;
     filter_method filter;

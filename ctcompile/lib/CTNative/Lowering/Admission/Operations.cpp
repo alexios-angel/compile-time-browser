@@ -15,6 +15,9 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
+bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
+
 namespace {
 
 /// Admits an operation on an element array (isElementArray: Strings or
@@ -157,6 +160,29 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::builtinStatic: {
+        const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+        const std::string name = (row.global + "." + row.member).str();
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
+            if (string ? !isString(argument)
+                       : carrierOf(self.typeOf(argument)) != carrier::number) {
+                return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
+                                   printed(self.typeOf(argument)) + ", not a " +
+                                   (string ? "String" : "Number"));
+            }
+        }
+        return true;
+    }
+    case VectorCall::includes:
+        if (!array(call.getReceiver()) ||
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
+            return std::nullopt;
+        }
+        return isString(call.getArgs()[0]) ||
+               self.refuse("includes on an array of Strings is given " +
+                           printed(self.typeOf(call.getArgs()[0])) + ", not a String");
+    case VectorCall::callback: return arrayCallbackOperation(self, call);
     case VectorCall::regexp:
         // Plumbing returned above; every other RegExp literal is refused here.
         return self.refuse("a regular expression literal - only `text.split(/\\s+/)` is native");

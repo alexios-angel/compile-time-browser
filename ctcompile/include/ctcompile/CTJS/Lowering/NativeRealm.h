@@ -43,4 +43,10 @@ namespace ctcompile::ctjs {
 /// argument is compiled as source.
 [[nodiscard]] bool nativeHostMethodKeepsGlobals(llvm::StringRef name);
 
+/// The unit field --ctjs-resolve-globals sets on a `ctjs.globals` row whose
+/// name the program never stores, when no dynamic global write can reach it:
+/// a read of that name is the realm's own binding. Code that relies on that
+/// matches this field, never the row's human-readable `reason`.
+inline constexpr llvm::StringLiteral kGlobalsHostBinding = "host_binding";
+
 } // namespace ctcompile::ctjs

@@ -46,6 +46,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <array>
 #include <string>
 
 namespace ctcompile::ctnative {
@@ -258,9 +259,56 @@ public:
         sort,
         split,
         splitSpace,
-        regexp
+        regexp,
+        /// `a.includes(x)` on an array of Strings.
+        includes,
+        /// A static method of a built-in namespace object, such as
+        /// `Number.parseInt(s, radix)` (builtinStaticOf).
+        builtinStatic,
+        /// A callback method closure lifting specialised
+        /// (Inference/ArrayCallbacks.cpp).
+        callback
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
+
+    /// One static method of a built-in namespace object that native code
+    /// calls as `<callee>(args...)`. Every row returns a Number.
+    struct BuiltinStatic {
+        /// What an argument must be for the call to lower.
+        enum class Param {
+            string,
+            number
+        };
+        llvm::StringLiteral global; ///< `Number`, `Math`.
+        llvm::StringLiteral member; ///< `parseInt`, `min`.
+        llvm::StringLiteral callee; ///< `ctnative::Number.parseInt`.
+        std::array<Param, 2> params;
+        unsigned arity;    ///< How many of `params` the method takes.
+        unsigned required; ///< How many of them a call must pass.
+    };
+    /// The row of the built-in statics table (Inference/BuiltinStatics.cpp)
+    /// that `op` calls, or null. The table is the one place built-in statics
+    /// are recognised; a new one is a row there plus its runtime member.
+    static const BuiltinStatic * builtinStaticOf(mlir::Operation * op);
+
+    // Array-method callbacks (Inference/ArrayCallbacks.cpp).
+    /// Whether `key` names an Array method the runtime calls back from.
+    static bool isArrayCallbackMethod(llvm::StringRef key);
+    /// Whether `op` is a call closure lifting specialised for its callback.
+    static bool isArrayCallbackCall(mlir::Operation * op);
+    /// Whether that call answers a new array (filter and map).
+    static bool arrayCallbackMakesArray(mlir::Operation * op);
+    /// Whether operand `index` of that call only lends an array to it: the
+    /// receiver, or a captured value the callback reads.
+    static bool arrayCallbackBorrows(mlir::Operation * op, unsigned index);
+    /// Whether `array` is a vector of Numbers the element-vector proof accepts
+    /// and no array literal owns (a map result, or an array a call returns
+    /// or lends): `std::vector<ctnative::js_num>`. Number literals keep the
+    /// dense proof (Shapes.cpp) and its `std::vector<double>`.
+    static bool isNumberElementVector(mlir::Value array);
+    /// Whether `value` is a parameter of a specialised callback, which its
+    /// call types rather than the entry state.
+    static bool isArrayCallbackParameter(mlir::Value value);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -425,6 +473,11 @@ private:
     /// its getPropertyValue (a String). Null for anything else.
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+                                 bool & pending);
+    /// The type of a specialised Array-method call, after joining its
+    /// receiver's element type, the index and its captured values into the
+    /// callback's parameters.
+    mlir::Type arrayCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
 
     /// The element type of a dense array: the join over everything appended or

@@ -1,0 +1,21 @@
+# Differential test of number-arrays.js: arrays of Numbers that map makes
+# are std::vector<ctnative::js_num>, and Number.parseInt and Math.min call
+# ctnative::Number.parseInt and ctnative::Math.min. The C++ is compiled
+# against public Core, checked for interpreter symbols with nm, run, and
+# every global compared with the interpreter's (compilation-unit.py). The
+# negative changes the global `offsets` and requires the comparison to fail
+# naming it. compile-clean.py checks a warning-free build on both
+# toolchains. string-arrays-calls.py is the generic pipeline driver for a
+# fixture that is not registered in NativeFixtures.cmake.
+
+# RUN: python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/number-arrays.js --out %t/number-arrays.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/number-arrays.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/number-arrays.emitc.mlir --js %S/number-arrays.js --work %t --name number_arrays --core-build %build
+# RUN: not %compilation_unit --module %t/number-arrays.emitc.mlir --js %S/number-arrays.js --work %t --name number_arrays_negative --core-build %build --mutate offsets 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# RUN: %compile_clean --module %t/number-arrays.emitc.mlir --work %t --name number_arrays
+
+# CHECK-DAG: std::vector<ctnative::js_num>
+# CHECK-DAG: ctnative::Number.parseInt(
+# CHECK-DAG: ctnative::Math.min(
+# CHECK-DAG: ctnative::Array.prototype.map.call(
+# NEGATIVE: global 'offsets' differs
