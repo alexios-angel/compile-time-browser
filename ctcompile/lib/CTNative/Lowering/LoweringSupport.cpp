@@ -104,6 +104,7 @@ carrier carrierOf(mlir::Type type) {
         if (inner == carrier::booleanString) { return carrier::nullableBooleanString; }
         if (inner == carrier::numberString) { return carrier::nullableNumberString; }
         if (inner == carrier::string) { return carrier::nullableString; }
+        if (inner == carrier::domElement) { return carrier::nullableElement; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
         }
@@ -247,7 +248,8 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
     return call &&
            (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
-            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call)) &&
+            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call) ||
+            !TypeInference::elementCallKey(call).empty()) &&
            ctjs::receiverMethod(call) == read;
 }
 

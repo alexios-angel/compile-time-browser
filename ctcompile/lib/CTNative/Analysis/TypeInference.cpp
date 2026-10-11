@@ -853,6 +853,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // element, an element's text members and children, the root's client
     // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
     if (!ownedRoots_ && !domEntry_) {
+        if (const mlir::Type member = elementMemberType(op, operands)) { return answer(member); }
         if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
         if (const mlir::Type registered = hostCallbackType(op, operands)) {
             return answer(registered);

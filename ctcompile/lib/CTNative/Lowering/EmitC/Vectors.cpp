@@ -27,6 +27,10 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o);
 /// (HostCallbacks.cpp).
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
 bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
+/// The action for an element member call or read, and its replacement
+/// (Elements.cpp).
+std::optional<std::string> elementAction(lowering & lower, mlir::Operation * o);
+bool replaceElement(mlir::Operation * o, llvm::StringRef kind);
 
 namespace {
 
@@ -108,6 +112,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             return;
         }
         if (auto action = lower.pageViews ? eventAction(lower, op) : std::nullopt) {
+            mark(op, *action);
+            return;
+        }
+        if (auto action = lower.pageViews ? elementAction(lower, op) : std::nullopt) {
             mark(op, *action);
             return;
         }
@@ -420,6 +428,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
     if (kind.starts_with("event")) { return replaceEvent(o, kind); }
+    if (kind.starts_with("element_")) { return replaceElement(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];

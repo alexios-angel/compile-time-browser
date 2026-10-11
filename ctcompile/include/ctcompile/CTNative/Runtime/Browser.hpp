@@ -263,6 +263,15 @@ inline js_element_t require_document_element() {
     return *std::move(root);
 }
 
+/// The element `element` holds, for a member of a value that may be null
+/// (`i.matches(s)` where `i` is an element sibling). Null throws the VM's
+/// TypeError text; like the other DOM errors in this header it is a C++
+/// exception native `catch` cannot see.
+inline const js_element_t & present_element(const std::optional<js_element_t> & element) {
+    if (!element) { throw std::invalid_argument("TypeError: Cannot read properties of null"); }
+    return *element;
+}
+
 /// Converts an optional view to the plain element_ref carrier, with an empty
 /// element_ref for null.
 inline ctbrowser::element_ref element_or_null(const std::optional<js_element_t> & element) {

@@ -1,6 +1,7 @@
 target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   ArrayCallbacks.cpp
   BorrowedCallbacks.cpp
+  Elements.cpp
   Initialization.cpp
   Exceptions.cpp
   Instances.cpp

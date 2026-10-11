@@ -23,6 +23,9 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits a use of a listener's Event (HostCallbacks.cpp); nullopt when `o`
 /// uses none.
 std::optional<bool> eventOperation(admission & self, mlir::Operation * o);
+/// Admits an element member call or read (Elements.cpp); nullopt when `o`
+/// is none.
+std::optional<bool> elementOperation(admission & self, mlir::Operation * o);
 
 namespace {
 
@@ -193,6 +196,7 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
         return hostCallbackOperation(self, llvm::cast<CallOp>(o));
     }
     if (auto admitted = eventOperation(self, o)) { return *admitted; }
+    if (auto admitted = elementOperation(self, o)) { return *admitted; }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -1067,6 +1071,9 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
             // An element array is lent to the callee as a std::span.
             !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
+            // An ordinary script's element (or element or null) is a copied view.
+            !(pageViews() && (carrierOf(typeOf(operands[i])) == carrier::domElement ||
+                              carrierOf(typeOf(operands[i])) == carrier::nullableElement)) &&
             !numeric(operands[i], "argument")) {
             return false;
         }

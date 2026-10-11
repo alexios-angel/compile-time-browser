@@ -332,6 +332,13 @@ public:
     /// Whether `value` is a parameter of such a callback, which its call
     /// types rather than the entry state.
     static bool isHostCallbackParameter(mlir::Value value);
+    /// The key of `el.key(args)` when it is an element method an ordinary
+    /// script calls, with its callee read only for the call
+    /// (Inference/Elements.cpp); empty otherwise.
+    static llvm::StringRef elementCallKey(mlir::Operation * op);
+    /// Whether `key` is previousElementSibling, nextElementSibling or
+    /// parentElement: a read that answers an element or null.
+    static bool isElementLink(llvm::StringRef key);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -502,6 +509,10 @@ private:
     /// captured values (and a listener's Event) into the callback's
     /// parameters; and the type of a read or call on such an Event.
     mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of an element member call or read (Inference/Elements.cpp),
+    /// or null.
+    mlir::Type elementMemberType(mlir::Operation * op,
+                                 llvm::ArrayRef<const TypeLattice *> operands);
     /// The type of a specialised Array-method call, after joining its
     /// receiver's element type, the index and its captured values into the
     /// callback's parameters.
