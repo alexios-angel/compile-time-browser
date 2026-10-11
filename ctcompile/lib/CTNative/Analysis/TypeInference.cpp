@@ -472,8 +472,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         if (key.empty() && isProvedNumeric(operands[1])) {
             const bool exists = isBoundedIndexRead(op) ||
                                 (llvm::isa<TupleType>(vector.getElementType()) && isRowRead(op));
-            return exists ? vector.getElementType()
-                          : meet(absentType(c), vector.getElementType());
+            return exists ? vector.getElementType() : meet(absentType(c), vector.getElementType());
         }
         return {};
     }
