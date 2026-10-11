@@ -166,6 +166,8 @@ ctcompile_native_fixture(structs Objects/struct.js)
 ctcompile_native_fixture(spreads Objects/spread.js)
 # Object literals returned by value from the function that builds them.
 ctcompile_native_fixture(records Objects/records.js)
+# String.prototype.replace with a RegExp literal and a function.
+ctcompile_native_fixture(string_replace Objects/string-replace.js)
 # Dense, uniformly numeric array literals, as std::vector<double>.
 ctcompile_native_fixture(arrays Objects/array.js)
 # Array contents evidence currently admits only bounded local Number

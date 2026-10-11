@@ -87,6 +87,13 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
     if (isObjectValueType(type)) { return carrier::objectValue; }
+    // The table, or undefined before the run-once function stores it: one
+    // pointer holds both.
+    if (llvm::isa<StaticTableType>(type)) { return carrier::staticTable; }
+    if (auto opt = llvm::dyn_cast<OptType>(type);
+        opt && llvm::isa<StaticTableType>(opt.getElementType())) {
+        return carrier::staticTable;
+    }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
         return carrier::string;
@@ -221,7 +228,9 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o);
     if (!read || !read.getResult().hasOneUse()) { return false; }
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
-    return call && (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call)) &&
+    return call &&
+           (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
+            TypeInference::isHostCallbackCall(call)) &&
            ctjs::receiverMethod(call) == read;
 }
 

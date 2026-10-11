@@ -161,6 +161,9 @@ struct admission {
     bool op(mlir::Operation * o);
     // op()'s larger arms, one member each.
     std::optional<bool> domOperation(mlir::Operation * o);
+    /// A run-once static's constant table: its literal, fields and reads, and a
+    /// read of a static whose literal is not one (Admission/StaticTables.cpp).
+    std::optional<bool> staticTableOperation(mlir::Operation * o);
     bool nativeMapCall(mlir::Operation * o, llvm::StringRef action);
     bool closedObject(ctjs::CreateObjectOp object);
     bool directCall(ctjs::CallDirectOp call);

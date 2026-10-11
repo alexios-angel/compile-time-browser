@@ -15,6 +15,12 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
+bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits an addEventListener call specialised for its listener
+/// (HostCallbacks.cpp).
+bool hostCallbackOperation(admission & self, ctjs::CallOp call);
+
 namespace {
 
 /// Admits an operation on an element array (isElementArray: Strings or
@@ -157,6 +163,15 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::includes:
+        if (!array(call.getReceiver()) ||
+            carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
+            return std::nullopt;
+        }
+        return isString(call.getArgs()[0]) ||
+               self.refuse("includes on an array of Strings is given " +
+                           printed(self.typeOf(call.getArgs()[0])) + ", not a String");
+    case VectorCall::callback: return arrayCallbackOperation(self, call);
     case VectorCall::regexp:
         // Plumbing returned above; every other RegExp literal is refused here.
         return self.refuse("a regular expression literal - only `text.split(/\\s+/)` is native");
@@ -171,6 +186,9 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     using namespace ctjs;
     if (!self.pageViews()) { return std::nullopt; }
     if (isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    if (TypeInference::isHostCallbackCall(o)) {
+        return hostCallbackOperation(self, llvm::cast<CallOp>(o));
+    }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -306,11 +324,16 @@ std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef
 }
 
 } // namespace
+/// Admits a String.prototype.replace call with a specialised callback and the
+/// plumbing it consumes (StringCallbacks.cpp).
+std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * o);
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    if (auto admitted = staticTableOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
+    if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {

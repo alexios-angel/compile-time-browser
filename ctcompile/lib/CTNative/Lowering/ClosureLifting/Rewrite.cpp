@@ -23,8 +23,10 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeStoredRead);
         op->removeAttr(kNativeMethodTable);
         op->removeAttr(kNativeTableField);
+        op->removeAttr(kNativeArrayCallback);
         op->removeAttr(kNativeBorrowedCallback);
         op->removeAttr(kNativeBorrowedCall);
+        op->removeAttr(kNativeHostCallback);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -99,6 +101,9 @@ liftReport closureLifter::run() {
     constructorCensus();
     argumentCensus();
     methodCensus();
+    arrayCallbackCensus();
+    stringCallbackCensus();
+    hostCallbackCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // Closure -> its own reason.
     // The closure that names each function, for the chained reason below: a
     // capture filled from the enclosing closure is refused with that
@@ -163,7 +168,10 @@ liftReport closureLifter::run() {
                 returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
                 : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
+                : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
+                : hostCallbacks.contains(c.getOperation())       ? whyNotHostCallback(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -396,8 +404,19 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
     ++out.functions;
 
+    if (arrayCallbacks.contains(made.front())) {
+        rewriteArrayCallback(made.front(), target, out);
+        return;
+    }
     if (borrowedCallbacks.contains(made.front())) {
         rewriteBorrowedCallback(made.front(), target, out);
+        return;
+    }
+    if (stringCallbacks.contains(made.front())) {
+        return rewriteStringCallback(made.front(), target, out);
+    }
+    if (hostCallbacks.contains(made.front())) {
+        rewriteHostCallback(made.front(), target, out);
         return;
     }
 
