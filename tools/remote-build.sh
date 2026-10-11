@@ -83,10 +83,11 @@ repo_root=$(git rev-parse --show-toplevel)
 # Directories created on the box itself are excluded and protected from
 # --delete, so a sync from a checkout that lacks them does not wipe them:
 # third-party/angle/ (~34 MB fetched by tools/fetch-angle.sh from a pinned
-# release) and tools/.venv/ (~400 MB with Playwright's browsers, created by
-# `tools/check/compare.py setup`; losing it makes css-parity.py report
-# "playwright not installed"). Windows toolchains and packaged executables
-# are cached build assets too.
+# release), the uv environment /.venv/ (lit for the lit suite, and Playwright
+# once `tools/check/compare.py setup` has run there; a local one holds this
+# machine's interpreter paths and must not travel) and tools/.venv/, where
+# Playwright lived before the uv environment. Windows toolchains and packaged
+# executables are cached build assets too.
 #
 # Switching worktrees can replace a file with an older version than the last
 # build saw. --no-times gives changed files fresh destination mtimes so Ninja
@@ -98,12 +99,13 @@ rsync -az --checksum --no-times --delete \
   --exclude 'tools/clang-std-embed/' \
   --exclude 'tools/llvm-mingw/' \
   --exclude 'examples-windows/' \
+  --exclude '/.venv/' \
   --exclude 'tools/.venv/' \
   --exclude 'third-party/angle/' \
   --exclude '*.d' \
   --filter 'protect *.pch' --filter 'protect *.gch' --filter 'protect build*/' \
   --filter 'protect tools/clang-std-embed/' --filter 'protect third-party/angle/' \
-  --filter 'protect tools/.venv/' \
+  --filter 'protect /.venv/' --filter 'protect tools/.venv/' \
   --filter 'protect tools/llvm-mingw/' --filter 'protect examples-windows/' \
   --filter 'protect *.d' \
   "$repo_root"/ "$host:$remote_dir/"
@@ -117,6 +119,14 @@ if [ -x "$BREW" ]; then
   export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1
   "$BREW" bundle check --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile" >/dev/null 2>&1 \
     || "$BREW" bundle install --file="$HOME/$CT_REMOTE_DIR/tools/Brewfile"
+fi
+# lit (and psutil, for its time limit) from pyproject.toml's test group, at the
+# versions uv.lock pins, into /.venv where ctcompile/test/cmake/Lit.cmake looks
+# first. --inexact keeps what other groups installed there (compare.py setup's
+# Playwright); --frozen fails rather than re-resolving a stale lock.
+UV=/home/linuxbrew/.linuxbrew/bin/uv
+if [ -x "$UV" ]; then
+  (cd "$HOME/$CT_REMOTE_DIR" && "$UV" sync --quiet --frozen --inexact --group test)
 fi
 tool="$HOME/$CT_REMOTE_DIR/tools/clang-std-embed"
 # Reinstall whenever the pinned release changes, not only when the binary is

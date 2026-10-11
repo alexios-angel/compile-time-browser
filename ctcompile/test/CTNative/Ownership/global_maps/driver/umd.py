@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 
 from CTNative.HostContract.prefix import specialize as specialize_prefix
+from CTNative.harness import run_parallel
 
 from .common import *
 from .recorder import recorder_future_source, recorder_lifetime_cpp
@@ -419,43 +420,57 @@ def check_umd(args, node, reference, compilers, nm):
         return specialized_mutant, umd_contract(args, specialized_mutant, name, values)
 
     mismatches = []
+
     # The source mutations: the absent-load edits go into the raw import, so
     # that the fold sees them as the source would put them, and run through
     # the whole pipeline; the fallback edits go into the specialized IR,
     # reprinted through opt so SSA names are canonical (otherwise a mutation
     # that inserts a result before existing calls would break the
     # operand-preservation comparison).
-    mutants = {}
-    for name, (text, reason) in umd_mutations(raw.read_text(), "absent").items():
+    # Each mutant and each expectation writes only files named after itself,
+    # so they run side by side (run_parallel).
+    def absent_mutant(item):
+        name, (text, reason) = item
         try:
-            mutants[name] = (*mutant(f"umd-{name}", text), reason)
+            return name, (*mutant(f"umd-{name}", text), reason)
         except Exception as error:
-            mismatches.append(f"umd-{name}: pipeline failed: {error}")
-    for name, (text, reason) in umd_mutations(specialized.read_text(), "fallback").items():
+            return name, f"umd-{name}: pipeline failed: {error}"
+
+    def fallback_mutant(item):
+        name, (text, reason) = item
         subject = args.work / f"umd-{name}.mlir"
         unprinted = subject.with_suffix(".unprinted.mlir")
         unprinted.write_text(text)
         host.run([args.opt, str(unprinted), "-o", str(subject)])
-        mutants[name] = (subject, umd_contract(args, subject, f"umd-{name}", values), reason)
+        return name, (subject, umd_contract(args, subject, f"umd-{name}", values), reason)
+
+    mutants = {}
+    for name, built in [
+        *run_parallel(umd_mutations(raw.read_text(), "absent").items(), absent_mutant),
+        *run_parallel(umd_mutations(specialized.read_text(), "fallback").items(), fallback_mutant),
+    ]:
+        if isinstance(built, str):
+            mismatches.append(built)
+        else:
+            mutants[name] = built
+    expectations = []
     for policy, options in (("default", ""), ("disabled", "optimize=false")):
         flags = options + " host-max-steps=1000000"
         for field, admitted in (("absent_bindings", True), ("undefined_bindings", False)):
             name = f"umd-{policy}-missing-{field}"
-            mismatches.append(
-                expect(specialized, name, without(config, field, name), flags, admitted)
-            )
+            expectations.append((specialized, name, without(config, field, name), flags, admitted))
         for name, (subject, manifest, reason) in mutants.items():
             stale = f"umd-{policy}-{name}-stale"
-            mismatches.append(expect(subject, stale, config, flags, False, "fingerprint mismatch"))
-            mismatches.append(
-                expect(subject, f"umd-{policy}-{name}", manifest, flags, False, reason)
-            )
+            expectations.append((subject, stale, config, flags, False, "fingerprint mismatch"))
+            expectations.append((subject, f"umd-{policy}-{name}", manifest, flags, False, reason))
+    mismatches += run_parallel(expectations, lambda expectation: expect(*expectation))
     # Every variant runs before any fails, so one run reports all of them.
     mismatches = [mismatch for mismatch in mismatches if mismatch]
     if mismatches:
         raise RuntimeError("umd contract variants:\n" + "\n".join(mismatches))
 
-    for policy, options in (("default", ""), ("disabled", "optimize=false")):
+    def check_policy(policy_options):
+        policy, options = policy_options
         flags = options + " host-max-steps=1000000"
         refused(prepared, "umd-raw-" + policy, raw_config, flags)
         output = native(specialized, "umd-" + policy, config, flags)
@@ -480,6 +495,8 @@ def check_umd(args, node, reference, compilers, nm):
             host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, specialized
         ):
             raise RuntimeError(f"umd-{policy}: fresh forged reports changed emitted C++")
+
+    run_parallel((("default", ""), ("disabled", "optimize=false")), check_policy)
 
     # The host-prefix pass may fold `typeof exports` only when the load is in
     # typeof mode, where an absent global gives "undefined". A plain read of an

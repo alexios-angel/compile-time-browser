@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 import sys
 
-from CTNative.harness import native_args, native_tools, run_sanitized
+from CTNative.harness import native_args, native_tools, run_parallel, run_sanitized
 from CTNative.Ownership.global_maps.driver.common import (
     comparable_provenance,
     forge_leaf_evidence,
@@ -54,7 +54,10 @@ def main():
                 "Data must separate element/other/absent keys from its object payload"
             )
 
-    for policy, options in (("default", ""), ("disabled", "optimize=false")):
+    # The two policies, and the two layouts within each, write only files named
+    # after themselves, so they run side by side (run_parallel).
+    def check_policy(item):
+        policy, options = item
         name = "session-" + policy
         flags = options + " host-max-steps=1000000"
         output = owned.lower(args, subject, name, config, options=flags)
@@ -62,7 +65,9 @@ def main():
         check_keys(output)
         deduced = args.work / f"{name}.deduced.mlir"
         host.run([args.opt, str(output), "--ctnative-print-deduced", "-o", str(deduced)])
-        for mode, ir in (("explicit", output), ("deduced", deduced)):
+
+        def check_layout(item):
+            mode, ir = item
             host.run(
                 [
                     sys.executable,
@@ -169,6 +174,8 @@ int main() {
             if result.returncode or result.stdout != expected * 2 or result.stderr:
                 raise RuntimeError("session reentry/lifetime check failed")
 
+        run_parallel((("explicit", output), ("deduced", deduced)), check_layout)
+
         def refuse(ir, manifest, label, extra=flags):
             """Require that lowering `ir` with `manifest` refuses the session."""
             result = host.run(
@@ -224,6 +231,8 @@ int main() {
         escaped.write_text(text)
         fresh = configure(args, escaped, name + "-escaped", values)
         refuse(escaped, fresh, name + "-escaped")
+
+    run_parallel((("default", ""), ("disabled", "optimize=false")), check_policy)
     print(
         "Data session: pinned 3218-byte source, 7/7 functions, 23 direct calls, 19 observations; "
         "3 source-derived outer-key objects; both policies/layouts/GCC/Clang; "
