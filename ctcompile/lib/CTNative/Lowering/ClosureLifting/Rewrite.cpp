@@ -24,6 +24,8 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeMethodTable);
         op->removeAttr(kNativeTableField);
         op->removeAttr(kNativeArrayCallback);
+        op->removeAttr(kNativeBorrowedCallback);
+        op->removeAttr(kNativeBorrowedCall);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -134,6 +136,7 @@ liftReport closureLifter::run() {
         returnedClosures.clear();
         returnedClosureCensus();
         returnedMethodTableCensus();
+        borrowedCallbackCensus();
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so one unliftable creation site blocks every other.
@@ -159,6 +162,7 @@ liftReport closureLifter::run() {
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
                 : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
+                : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -393,6 +397,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
 
     if (arrayCallbacks.contains(made.front())) {
         rewriteArrayCallback(made.front(), target, out);
+        return;
+    }
+    if (borrowedCallbacks.contains(made.front())) {
+        rewriteBorrowedCallback(made.front(), target, out);
         return;
     }
 

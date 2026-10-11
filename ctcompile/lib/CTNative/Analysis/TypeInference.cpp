@@ -523,6 +523,8 @@ void TypeInference::setToEntryState(TypeLattice * lattice) {
         case HostIntrinsicParameter::symbol: type = SymbolType::get(value.getContext()); break;
         }
     }
+    // A borrowed callback's parameters are joined from its closure and calls.
+    if (isBorrowedCallbackParameter(value)) { return; }
     propagateIfChanged(lattice, lattice->join(TypeValue{type}));
 }
 
@@ -544,6 +546,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
         return mlir::success();
     };
+
+    if (auto visited = visitBorrowedCallback(op, operands, results)) { return *visited; }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && domEntry_->isSymbolDescription(read)) {
