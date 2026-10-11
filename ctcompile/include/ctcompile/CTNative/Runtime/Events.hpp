@@ -45,17 +45,18 @@ struct window_object;
 /// definition.
 struct event_extra;
 
-/// The Event a native listener receives (DOM §2.2) while the host dispatches
-/// it: a view of the event's state, so preventDefault, stopPropagation and the
-/// extra fields reach the dispatch and every later listener. It is one
-/// pointer and owns nothing, so generated listeners take it by value. It is
-/// valid only during the listener call; the native lowering admits a
-/// listener's event parameter only as the receiver of the reads and calls
-/// below, so no copy outlives that call.
+/// An Event (DOM §2.2): the one a native listener receives while the host
+/// dispatches it, or one the program made with `new Event`. A handle to the
+/// event's state, which every copy names, so preventDefault, stopPropagation
+/// and the extra fields reach the dispatch, every later listener and the code
+/// that dispatched it; generated code passes it by value. The handle shares
+/// its state through std::shared_ptr because emitted code copies values
+/// between locals, and each copy must still be the same event. The native
+/// lowering admits an event only as the receiver of the reads and calls below
+/// and as dispatchEvent's argument, so no copy escapes its function.
 class js_event {
 public:
-    /// An event's state: owned by the host's dispatch for an event the host
-    /// fires, or by a js_event_object for one the program made.
+    /// An event's state.
     struct state {
         std::string type;
         bool bubbles = true;
@@ -72,7 +73,7 @@ public:
         std::shared_ptr<event_extra> extra;
     };
 
-    explicit js_event(state & shared) noexcept : shared_(&shared) {}
+    explicit js_event(std::shared_ptr<state> shared) noexcept : shared_(std::move(shared)) {}
 
     /// Event.type, .target and .currentTarget (DOM §2.2). The target is a page
     /// element, since the host dispatches only at elements. The current target
@@ -86,8 +87,8 @@ public:
 
     /// The program's extra fields of this event, made on the first write.
     /// Const because listeners receive `const js_event &`; the fields belong
-    /// to the event's state, which the view does not own. A template so that
-    /// the struct is complete where it is made (in generated code).
+    /// to the event's state, not to the handle. A template so that the struct
+    /// is complete where it is made (in generated code).
     template <class Extra = event_extra> Extra & extra() const {
         if (!shared_->extra) { shared_->extra = std::make_shared<Extra>(); }
         return *shared_->extra;
@@ -98,7 +99,8 @@ public:
 private:
     friend struct prevent_default_method;
     friend struct stop_propagation_method;
-    state * shared_;
+    friend class event_listeners;
+    std::shared_ptr<state> shared_;
 };
 
 /// Event.prototype.preventDefault (DOM §2.2): cancels a cancelable event.
@@ -121,29 +123,6 @@ struct event_prototype {
     stop_propagation_method stopPropagation;
 };
 
-/// An Event the program made with `new Event(type, init)`: it owns its state,
-/// and view() is the js_event its listeners receive when it is dispatched.
-/// Move-only: it is one event, and the program refers to it through this
-/// owner or, inside its dispatch, through the view.
-class js_event_object {
-public:
-    js_event_object(std::string type, bool bubbles, bool cancelable)
-        : state_(std::make_unique<js_event::state>()) {
-        state_->type = std::move(type);
-        state_->bubbles = bubbles;
-        state_->cancelable = cancelable;
-    }
-
-    [[nodiscard]] js_event view() const noexcept { return js_event{*state_}; }
-    [[nodiscard]] js_event::state & state() const noexcept { return *state_; }
-    /// Event.type and Event.defaultPrevented, read back after a dispatch.
-    [[nodiscard]] js_string type() const { return view().type(); }
-    [[nodiscard]] js_boolean_t defaultPrevented() const { return view().defaultPrevented(); }
-
-private:
-    std::unique_ptr<js_event::state> state_;
-};
-
 /// The EventInit dictionary (DOM §2.2): both flags default to false.
 struct event_init {
     js_boolean_t bubbles{};
@@ -155,9 +134,12 @@ struct event_init {
 struct event_constructor {
     event_prototype prototype;
 
-    js_event_object operator()(const js_string & type, event_init init = {}) const {
-        return js_event_object{std::string{type.value()}, static_cast<bool>(init.bubbles),
-                               static_cast<bool>(init.cancelable)};
+    js_event operator()(const js_string & type, event_init init = {}) const {
+        auto made = std::make_shared<js_event::state>();
+        made->type = std::string{type.value()};
+        made->bubbles = static_cast<bool>(init.bubbles);
+        made->cancelable = static_cast<bool>(init.cancelable);
+        return js_event{std::move(made)};
     }
 };
 inline constexpr event_constructor Event{};
@@ -226,23 +208,24 @@ public:
     /// dom_bindings is the one to lift when they can.
     std::size_t dispatch(const js_element_t & target, std::string_view type, bool bubbles = true,
                          bool cancelable = true, bool * canceled = nullptr) {
-        js_event::state shared;
-        shared.type = std::string{type};
-        shared.bubbles = bubbles;
-        shared.cancelable = cancelable;
-        const std::size_t ran = dispatch(target, shared);
-        if (canceled != nullptr) { *canceled = shared.canceled; }
+        auto shared = std::make_shared<js_event::state>();
+        shared->type = std::string{type};
+        shared->bubbles = bubbles;
+        shared->cancelable = cancelable;
+        const std::size_t ran = dispatch(target, js_event{shared});
+        if (canceled != nullptr) { *canceled = shared->canceled; }
         return ran;
     }
 
-    /// Dispatches the event whose state is `shared` at `target`, as
-    /// dispatchEvent does for an event the program made (DOM §2.9): the same
-    /// path and phases, with the event's own bubbles and cancelable flags.
+    /// Dispatches `event` at `target`, as dispatchEvent does for an event the
+    /// program made (DOM §2.9): the same path and phases, with the event's own
+    /// bubbles and cancelable flags.
     /// Afterwards the event keeps its target and canceled flag, and its
     /// stop-propagation flag is cleared. Throws for an event already being
     /// dispatched, as DOM §2.7 dispatchEvent step 1 does.
-    std::size_t dispatch(const js_element_t & target, js_event::state & shared) {
+    std::size_t dispatch(const js_element_t & target, const js_event & event) {
         using ctbrowser::shell::event_target_kind;
+        js_event::state & shared = *event.shared_;
         if (shared.dispatching) {
             throw std::invalid_argument("InvalidStateError: the event is already being dispatched");
         }
@@ -262,7 +245,6 @@ public:
         path.push_back({event_target_kind::document, 0});
         path.push_back({event_target_kind::window, 0});
         const std::string type = shared.type;
-        const js_event event{shared};
         shared.dispatching = true;
         std::size_t ran = 0;
         // Runs one step's listeners of one phase; false once propagation
@@ -376,9 +358,9 @@ private:
 /// code spells it: `ctnative::EventTarget.prototype.dispatchEvent.call(el, e)`
 /// for an event the program made. Returns false when a listener canceled it.
 struct dispatch_event_method {
-    js_boolean_t call(const js_element_t & target, const js_event_object & event) const {
-        (void)event_listeners::program().dispatch(target, event.state());
-        return js_boolean_t{!event.state().canceled};
+    js_boolean_t call(const js_element_t & target, const js_event & event) const {
+        (void)event_listeners::program().dispatch(target, event);
+        return js_boolean_t{!static_cast<bool>(event.defaultPrevented())};
     }
 };
 

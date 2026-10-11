@@ -9,7 +9,7 @@
 # RUN: FileCheck %s --input-file %t.native
 # RUN: %nm -C %{obj}/ctcompile-test-events-native | not grep -E "ctbrowser::script::"
 # RUN: %nm -C %{obj}/ctcompile-test-events-native-gcc | not grep -E "ctbrowser::script::"
-# CHECK: clicks=0 order= seen=| phases={{$}}
-# CHECK-NEXT: top: clicks=1 order=r seen=| phases=Dtop c W {{$}}
-# CHECK-NEXT: leaf: clicks=1 order=rb seen=click:leaf@page! | phases=Dtop c W Dleaf c {{$}}
-# CHECK-NEXT: page: clicks=2 order=rbbr seen=click:leaf@page! click:page@page! | phases=Dtop c W Dleaf c Dpage c W {{$}}
+# CHECK: clicks=0 order= seen=| phases=| notes=note:heard note:canceled! {{$}}
+# CHECK-NEXT: top: clicks=1 order=r seen=| phases=Dtop c W | notes=note:heard note:canceled! {{$}}
+# CHECK-NEXT: leaf: clicks=1 order=rb seen=click:leaf@page! | phases=Dtop c W Dleaf c | notes=note:heard note:canceled! {{$}}
+# CHECK-NEXT: page: clicks=2 order=rbbr seen=click:leaf@page! click:page@page! | phases=Dtop c W Dleaf c Dpage c W | notes=note:heard note:canceled! {{$}}

@@ -28,13 +28,19 @@
 // EMIT-DAG: !emitc.opaque<"ctnative::js_event">
 // EMIT-DAG: literal "ctnative::document"
 // EMIT-DAG: literal "ctnative::window"
+// EMIT-DAG: call_opaque "ctnative::Event"
+// EMIT-DAG: call_opaque "ctnative::event_init"
+// EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.dispatchEvent.call"
 
 // CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener captures binding 0, which is written after it is captured - the host keeps the listener, so it takes its captures by value"
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener reads `this`"
 // CHECK-DAG: @takesTwo${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener declares 2 parameters - only a listener that takes the event alone is native"
-// CHECK-DAG: ctnative.not_native = "a listener's Event used other than through its reads and its preventDefault and stopPropagation calls - it lives only while the listener runs"
 // CHECK-DAG: ctnative.not_native = "an Event read through `clientX` - only type, target, currentTarget and defaultPrevented are native"
 // CHECK-DAG: ctnative.not_native = "addEventListener with options of {{.*}} - only a Boolean capture flag is native"
+// CHECK-DAG: @composedInit${{[0-9]+}}{{.*}}ctnative.not_native = "new Event with an init that is not an object literal of `bubbles` and `cancelable` - only that EventInit is native"
+// CHECK-DAG: @initEscapes${{[0-9]+}}{{.*}}ctnative.not_native = "new Event with an init that is not an object literal of `bubbles` and `cancelable` - only that EventInit is native"
+// CHECK-DAG: @returnsMade${{[0-9]+}}{{.*}}ctnative.not_native = "an Event used other than through its reads, its preventDefault and stopPropagation calls and dispatchEvent - it does not leave its function"
+// CHECK-DAG: ctnative.not_native = "an Event used other than through its reads, its preventDefault and stopPropagation calls and dispatchEvent - it does not leave its function"
 // CHECK-DAG: ctnative.not_native = "currentTarget of a listener on the document or the window - only an element's listener reads it natively"
 // CHECK-DAG: @capturesArray${{[0-9]+}}{{.*}}ctnative.not_native = "an array of Strings: an array passed to a call the native runtime does not implement"
 // CHECK-DAG: @timerLater${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout captures binding 0, which is written after it is captured - the host keeps the handler, so it takes its captures by value"
@@ -66,6 +72,14 @@ document.addEventListener('click', function (event) {
 window.addEventListener('click', function () {
     seen = 'w';
 });
+function fire() {
+    var root = document.documentElement;
+    var heard = root.dispatchEvent(new Event('note', {cancelable: true}));
+    var made = new Event('note');
+    root.dispatchEvent(made);
+    seen = seen + (made.defaultPrevented ? '!' : '') + (heard ? 'h' : '');
+}
+fire();
 setTimeout(function () {
     seen = seen + 't';
 }, 0);
@@ -115,6 +129,18 @@ function withOptions() {
     document.documentElement.addEventListener('click', function () {
         seen = 'o';
     }, 'capture');
+}
+function composedInit() {
+    document.documentElement.dispatchEvent(new Event('x', {composed: true}));
+}
+function returnsMade() {
+    return new Event('x');
+}
+var keptInit;
+function initEscapes() {
+    var init = {bubbles: true};
+    keptInit = init;
+    document.documentElement.dispatchEvent(new Event('x', init));
 }
 function documentCurrentTarget() {
     document.addEventListener('click', function (event) {
@@ -174,6 +200,9 @@ returnsEvent();
 readsClientX();
 withOptions();
 documentCurrentTarget();
+composedInit();
+returnsMade();
+initEscapes();
 capturesArray();
 capturesStyle();
 

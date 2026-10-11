@@ -211,6 +211,16 @@ bool isPageGlobal(mlir::Operation * o) {
                    TypeInference::isTimerCall(use.getOwner());
         });
     }
+    // The realm's Event only as the constructor and new.target of a
+    // `new Event`, which the lowering spells ctnative::Event or admission
+    // refuses with its own reason (HostCallbacks.cpp).
+    if (load.getName() == "Event") {
+        return TypeInference::isRealmGlobal(load, load.getName()) &&
+               llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+                   return use.getOperandNumber() <= 1 &&
+                          llvm::isa<ctjs::ConstructOp>(use.getOwner());
+               });
+    }
     if (load.getName() == "getComputedStyle") {
         return TypeInference::isRealmGlobal(load, load.getName()) &&
                llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
@@ -240,7 +250,8 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
     return call &&
            (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
-            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call)) &&
+            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call) ||
+            TypeInference::isDispatchEventCall(call)) &&
            ctjs::receiverMethod(call) == read;
 }
 

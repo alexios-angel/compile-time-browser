@@ -10,10 +10,10 @@
 // only values with no identity to share qualify: Numbers, Booleans, Strings,
 // and element views, whose copies name the same node.
 //
-// A listener's Event (`!ctnative.event`) is a view of the dispatch that calls
-// the listener, so it is admitted only as the receiver of its typed reads and
-// calls (TypeInference::hostCallbackType); any other use could keep it past
-// the dispatch.
+// An Event (`!ctnative.event`), a listener's or one `new Event` made, is
+// admitted only as the receiver of its typed reads and calls
+// (TypeInference::hostCallbackType) and as dispatchEvent's argument: it never
+// leaves the function that has it, as the VM's object could.
 //
 //===----------------------------------------------------------------------===//
 
@@ -93,6 +93,48 @@ std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
     const auto event = [&](mlir::Value v) {
         return carrierOf(self.typeOf(v)) == carrier::domEvent;
     };
+    // new Event(type, {bubbles, cancelable}): the literal lowers into the
+    // construct's event_init, so its fields are Booleans and it has no other
+    // use (TypeInference::eventInitFields).
+    if (TypeInference::isEventInitPart(o)) {
+        auto define = llvm::dyn_cast<ctjs::SetPropertyOp>(o);
+        if (!define || carrierOf(self.typeOf(define.getValue())) == carrier::boolean) {
+            return true;
+        }
+        return self.refuse(("new Event with `" + ctjs::constantKey(define.getKey()) + "` of " +
+                            printed(self.typeOf(define.getValue())) + ", not a Boolean")
+                               .str());
+    }
+    if (TypeInference::isEventConstruct(o)) {
+        auto construct = llvm::cast<ctjs::ConstructOp>(o);
+        if (carrierOf(self.typeOf(construct.getArgs()[0])) != carrier::string) {
+            return self.refuse("new Event with a type of " +
+                               printed(self.typeOf(construct.getArgs()[0])) + ", not a String");
+        }
+        return event(construct.getResult()) || self.refuse("new Event lost its Event type");
+    }
+    // A `new Event` whose init is anything else, refused at the construct or,
+    // when the init is a literal that would be refused first, at the literal.
+    const auto refusedNewEvent = [](mlir::Operation * user) {
+        auto construct = llvm::dyn_cast<ctjs::ConstructOp>(user);
+        return construct &&
+               TypeInference::isRealmGlobal(construct.getCallee().getDefiningOp(), "Event");
+    };
+    if (refusedNewEvent(o) || (llvm::isa<ctjs::CreateObjectOp>(o) &&
+                               llvm::any_of(o->getResult(0).getUsers(), refusedNewEvent))) {
+        return self.refuse("new Event with an init that is not an object literal of `bubbles` "
+                           "and `cancelable` - only that EventInit is native");
+    }
+    if (TypeInference::isDispatchEventCall(o)) {
+        auto call = llvm::cast<ctjs::CallOp>(o);
+        if (carrierOf(self.typeOf(call.getReceiver())) != carrier::domElement) {
+            return self.refuse("dispatchEvent on " + printed(self.typeOf(call.getReceiver())) +
+                               ", not a proved page element");
+        }
+        return event(call.getArgs()[0]) ||
+               self.refuse("dispatchEvent of " + printed(self.typeOf(call.getArgs()[0])) +
+                           ", not an Event made with new Event");
+    }
     if (TypeInference::isEventCall(o)) {
         auto call = llvm::cast<ctjs::CallOp>(o);
         if (!event(call.getReceiver())) {
@@ -119,9 +161,8 @@ std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
                             "` - only type, target, currentTarget and defaultPrevented are native")
                                .str());
     }
-    return self.refuse("a listener's Event used other than through its reads and its "
-                       "preventDefault and stopPropagation calls - it lives only while the "
-                       "listener runs");
+    return self.refuse("an Event used other than through its reads, its preventDefault and "
+                       "stopPropagation calls and dispatchEvent - it does not leave its function");
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

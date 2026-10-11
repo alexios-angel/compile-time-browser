@@ -212,19 +212,19 @@ void test_a_program_made_event_and_its_extra_fields() {
             order += e.extra_if() ? e.extra_if()->written_by : std::string{"none"};
         });
     // new Event(type) neither bubbles nor can be canceled.
-    ctnative::js_event_object quiet = ctnative::Event(js_string{"custom"});
+    ctnative::js_event quiet = ctnative::Event(js_string{"custom"});
     CHECK(static_cast<bool>(EventTarget.prototype.dispatchEvent.call(leaf, quiet)));
     CHECK(!static_cast<bool>(quiet.defaultPrevented()));
     CHECK_EQ(order, std::string{});
     // With both flags the root hears it, and the cancel and the field are read
     // back from the same object afterwards.
-    ctnative::js_event_object loud = ctnative::Event(
+    ctnative::js_event loud = ctnative::Event(
         js_string{"custom"}, ctnative::event_init{js_boolean_t{true}, js_boolean_t{true}});
     CHECK(!static_cast<bool>(EventTarget.prototype.dispatchEvent.call(leaf, loud)));
     CHECK(static_cast<bool>(loud.defaultPrevented()));
     CHECK_EQ(order, std::string{"leaf"});
-    CHECK(loud.view().extra_if() != nullptr);
-    CHECK_EQ(loud.view().extra().written_by, std::string{"leaf"});
+    CHECK(loud.extra_if() != nullptr);
+    CHECK_EQ(loud.extra().written_by, std::string{"leaf"});
     event_listeners::program().forget(bound.page.doc());
 }
 
