@@ -30,6 +30,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/replaced.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=REPLACED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow-before.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=ARROWBEFORE
 
 // DYNAMIC: ctnative.inheritance_reason = "its parent is not one class this module defines"
 // SUPERWRITE: ctnative.inheritance_reason = "`n` uses `super` other than to call a method of the parent"
@@ -41,6 +44,7 @@
 // NEWTARGET: ctnative.inheritance_reason = "its parent's constructor reads new.target"
 // SUPERSTATIC: ctnative.inheritance_reason = "its static member `s` reads `super`"
 // SPREAD: ctnative.inheritance_reason = "its constructor calls `super(...)` with a spread argument"
+// ARROWBEFORE: ctnative.inheritance_reason = "its constructor's `this` is reached from a nested function that may run before `super(...)`"
 // REPLACED: ctnative.inheritance_reason = "its parent's constructor may return an object, which would replace `this`"
 
 //--- dynamic.js
@@ -115,5 +119,15 @@ function run() {
     class P { constructor(n) { this.n = n; return {n: 9}; } }
     class D extends P { constructor(n) { super(n); } }
     return new D(7).n;
+}
+var r = run();
+
+//--- arrow-before.js
+function run() {
+    class P { constructor(n) { this.n = n; } }
+    class D extends P {
+        constructor(n) { const f = () => this.n + 1; super(n); this.m = f(); }
+    }
+    return new D(4).m;
 }
 var r = run();
