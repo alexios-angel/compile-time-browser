@@ -35,6 +35,18 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-escapes.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=THIS
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=TABLE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table-other.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=TABLE-OTHER
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table-kept.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=TABLE-KEPT
 
 // --- The accepted shape ----------------------------------------------------
 // `getInstance` reads back with `|| null`, so `!== null` is a check; a
@@ -67,6 +79,19 @@
 
 // --- `this` handed to code the proof cannot see ----------------------------
 // THIS: ctnative.instance_registry = "`this` in the method `leak` of `Widget` reaches `ctjs.store_global`"
+
+// --- Through a table method, as Bootstrap's Data.set --------------------
+// The module function runs once, so the Map and the table become static
+// variables and `Data.set(key, this)` a direct call (ClosureLifting/
+// Singletons.cpp); `this` reaches the Map through the parameter `instance`.
+// TABLE: ctnative.instance_registry = "proved"
+
+// --- The table method also stores something else ---------------------------
+// TABLE-OTHER: ctnative.instance_registry = "the registry Map also holds a value that is not a new `Widget`"
+
+// --- The table method keeps the instance elsewhere too ---------------------
+// The importer names an object-literal method `fn`.
+// TABLE-KEPT: ctnative.instance_registry = "`this` of `Widget`, passed on as a parameter of `fn`, also reaches `ctjs.store_global`"
 
 //--- proved.js
 function run() {
@@ -235,3 +260,77 @@ function run() {
     return registry.size;
 }
 var result = run();
+
+//--- table.js
+var result = (function () {
+    const registry = new Map();
+    const Data = {
+        set(key, instance) {
+            registry.set(key, instance);
+        },
+        get(key) {
+            return registry.get(key) || null;
+        },
+        remove(key) {
+            registry.delete(key);
+        }
+    };
+    class Widget {
+        constructor(key, size) {
+            this.key = key;
+            this.size = size;
+            Data.set(key, this);
+        }
+        dispose() {
+            Data.remove(this.key);
+            return this.size;
+        }
+    }
+    new Widget("a", 3);
+    new Widget("b", 10);
+    let total = 0;
+    const a = Data.get("a");
+    if (a !== null) { total = total + a.size; }
+    const b = Data.get("b");
+    if (b) { total = total + b.dispose(); }
+    return total + registry.size;
+})();
+
+//--- table-other.js
+var result = (function () {
+    const registry = new Map();
+    const Data = {
+        set(key, instance) {
+            registry.set(key, instance);
+        }
+    };
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            Data.set(key, this);
+        }
+    }
+    new Widget("a");
+    Data.set("b", 2);
+    return registry.size;
+})();
+
+//--- table-kept.js
+var kept = null;
+var result = (function () {
+    const registry = new Map();
+    const Data = {
+        set(key, instance) {
+            registry.set(key, instance);
+            kept = instance;
+        }
+    };
+    class Widget {
+        constructor(key) {
+            this.key = key;
+            Data.set(key, this);
+        }
+    }
+    new Widget("a");
+    return registry.size;
+})();

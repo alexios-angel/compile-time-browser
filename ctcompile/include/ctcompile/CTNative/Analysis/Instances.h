@@ -17,9 +17,11 @@
 // which unique ownership could not express.
 //
 // The proof runs on the importer's IR after --ctjs-lift-to-scf and before
-// closure lifting, because the constructor lift needs its answer to let
-// `this` reach the Map. The Map must live in a function-local binding (a
-// cell), as Bootstrap's module scope is the body of its wrapper function.
+// the constructor lift, because that lift needs its answer to let `this`
+// reach the Map. It runs after the closure lifter's binding steps, so a call
+// through a run-once table of methods is already a direct call. The Map must
+// live in a function-local binding, as Bootstrap's module scope is the body
+// of its wrapper function.
 //
 //===----------------------------------------------------------------------===//
 
@@ -53,11 +55,14 @@ struct InstanceRegistry {
 /// function: one entry per such Map.
 ///
 /// The proof holds when:
-///   * every value stored into the Map is the `this` of one constructor, and
-///     that constructor uses `this` only for constant-key field accesses and
-///     as that value;
+///   * every value stored into the Map is the `this` of one constructor,
+///     directly or through parameters of functions whose callers are all
+///     known (Bootstrap's `Data.set(element, key, this)` once the table call
+///     is direct); the constructor uses `this` only through its fields and
+///     methods and to pass it on, and those parameters only pass it on;
 ///   * the Map is a local `new Map()` held in a binding written once and read
-///     directly or through closures that capture it, and is used only
+///     directly, through closures that capture it, or by name once the
+///     binding is a static variable, and is used only
 ///     through `get`, `set`, `has`, `delete`, `size` and the iteration
 ///     methods;
 ///   * it is not iterated while `delete` can remove entries;
