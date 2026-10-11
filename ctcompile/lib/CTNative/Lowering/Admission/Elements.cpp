@@ -76,6 +76,14 @@ std::optional<bool> elementOperation(admission & self, mlir::Operation * o) {
         return isElementArray(array, self.typeOf(array), self.pageViews()) ||
                self.refuse("a spread of an array of elements that is not an element vector");
     }
+    // `[i]` with `i` an element or null: admitted where it is present.
+    if (auto append = llvm::dyn_cast<ctjs::AppendOp>(o);
+        append && carrierOf(self.typeOf(append.getElement())) == carrier::nullableElement &&
+        carrierOf(self.typeOf(append.getArray())) == carrier::domElementVector) {
+        return TypeInference::presentElement(append.getElement(), o) ||
+               self.refuse("an element or null stored into an array of elements where it may "
+                           "be null");
+    }
     if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(o)) {
         const bool strict = compare.getKind() == ctjs::CompareKind::StrictEq;
         if (!strict && compare.getKind() != ctjs::CompareKind::Eq) { return std::nullopt; }
@@ -124,6 +132,11 @@ std::optional<bool> elementOperation(admission & self, mlir::Operation * o) {
     if (!read || !element(read.getObject())) { return std::nullopt; }
     const llvm::StringRef key = ctjs::constantKey(read.getKey());
     const carrier result = carrierOf(self.typeOf(read.getResult()));
+    if (key == "parentNode") {
+        return self.refuse("an element's parentNode, which is the Document for the document "
+                           "element - no native carrier holds a node that is not an element "
+                           "(parentElement is native)");
+    }
     if (TypeInference::isElementLink(key)) {
         return result == carrier::nullableElement ||
                self.refuse(("an element's " + key + " that is not an element or null").str());

@@ -13,6 +13,8 @@
 
 #include "Vectors.h"
 
+#include "mlir/Interfaces/FunctionInterfaces.h"
+
 #include <array>
 #include <limits>
 
@@ -334,7 +336,16 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         // The vector, by value, in this frame (or in the region that made
         // it, when nothing carries it out), filled by the appends below.
         auto literal = llvm::cast<ctjs::CreateArrayOp>(o);
-        mlir::Value local = ec::VariableOp::create(b, where, literal.getResult().getType(),
+        // An empty literal carried out of a branch takes its slot at the
+        // function's entry (TypeInference::elementVectorAliases).
+        mlir::OpBuilder slot = b;
+        if (literal.getElements().empty()) {
+            if (auto fn = o->getParentOfType<mlir::FunctionOpInterface>();
+                fn && o->getBlock() != &fn.getFunctionBody().front()) {
+                slot.setInsertionPointToStart(&fn.getFunctionBody().front());
+            }
+        }
+        mlir::Value local = ec::VariableOp::create(slot, where, literal.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
         for (mlir::Value element : literal.getElements()) { lower.push(b, where, local, element); }
         swap(local);

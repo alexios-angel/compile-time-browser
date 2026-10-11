@@ -3,7 +3,8 @@
 // held by a function that runs once: SelectorEngine's find and findOne
 // (Element.prototype.querySelectorAll and querySelector through `call`, the
 // document element as the default root, and the `[].concat(...nodes)` copy),
-// the element-sibling and parent links, matches, closest, querySelector, and
+// prev and next (the element-sibling walks with matches, returning `[i]` or
+// `[]`), parentElement, closest, querySelector, and
 // getAttribute, setAttribute and removeAttribute.
 // selectors.test runs selectors_report() on the interpreter and natively over
 // selectors.html and compares the answers.
@@ -11,18 +12,21 @@ var selectorsAnswer = (function () {
     const R = {
         find: (t, e = document.documentElement) => [].concat(...Element.prototype.querySelectorAll.call(e, t)),
         findOne: (t, e = document.documentElement) => Element.prototype.querySelector.call(e, t),
-        count(t, e) {
-            let n = 0;
+        prev(t, e) {
+            let i = t.previousElementSibling;
+            for (; i;) {
+                if (i.matches(e)) return [i];
+                i = i.previousElementSibling;
+            }
+            return [];
+        },
+        next(t, e) {
             let i = t.nextElementSibling;
             for (; i;) {
-                if (i.matches(e)) n++;
+                if (i.matches(e)) return [i];
                 i = i.nextElementSibling;
             }
-            return n;
-        },
-        before(t, e) {
-            const i = t.previousElementSibling;
-            return i ? i.id + ':' + i.matches(e) : 'none';
+            return [];
         }
     };
 
@@ -40,7 +44,7 @@ var selectorsAnswer = (function () {
         let out = '';
         for (let k = 0; k < kids.length; k++) {
             const kid = kids[k];
-            out += R.count(kid, 'body') + R.before(kid, 'head') + '|';
+            out += ids(R.next(kid, 'body')) + ids(R.prev(kid, 'head')) + ids(R.next(kid, 'p')) + '|';
             const up = kid.parentElement;
             out += (up ? up.id : 'none') + '/' + kid.getAttribute('id') + '/' + kid.getAttribute('lang');
             kid.setAttribute('data-bs-seen', 'yes');
@@ -49,6 +53,10 @@ var selectorsAnswer = (function () {
             out += '/' + kid.getAttribute('data-bs-seen') + ';';
         }
         const top = root.parentElement;
+        const b2 = R.findOne('#b2');
+        if (b2) {
+            out += ids(R.prev(b2, '.item')) + '/' + ids(R.next(b2, '.item')) + '/' + ids(R.next(b2, 'p')) + '|';
+        }
         const found = R.findOne('#list');
         out += '|' + (found ? ids(R.find('.item', found)) : 'none') + '|' + ids(R.find('.item')) + '|' +
             (R.findOne('#missing') ? 'found' : 'none') + '|';
