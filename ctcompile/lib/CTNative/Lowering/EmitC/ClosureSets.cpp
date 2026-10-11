@@ -80,10 +80,13 @@ mlir::Type lowering::closureSetCarrierOf(mlir::Value v) {
         });
     }
     std::string spelling;
+    mlir::Type type = typeOf(v);
+    const bool absent = llvm::isa_and_nonnull<OptType>(type);
+    if (absent) { type = llvm::cast<OptType>(type).getElementType(); }
     if (auto made = v.getDefiningOp<ctjs::CreateClosureOp>();
         made && made->hasAttr(kNativeClosureSet)) {
         spelling = closureSetGroups->lookup(borrowedTarget(made));
-    } else if (auto set = llvm::dyn_cast_or_null<ClosureSetType>(typeOf(v))) {
+    } else if (auto set = llvm::dyn_cast_or_null<ClosureSetType>(type)) {
         for (mlir::StringAttr target : set.getTargets()) {
             const auto group = closureSetGroups->find(target.getValue());
             if (group == closureSetGroups->end() ||
@@ -94,7 +97,39 @@ mlir::Type lowering::closureSetCarrierOf(mlir::Value v) {
         }
     }
     if (spelling.empty()) { return {}; }
+    // A field read no write dominates may find the field absent.
+    if (absent) { spelling = "std::optional<" + spelling + ">"; }
     return ec::OpaqueType::get(context, spelling);
+}
+
+/// The join of two field carriers when both are one closure set's variant,
+/// possibly absent: the set itself, or std::optional of it. Null otherwise.
+mlir::Type lowering::joinClosureSetCarriers(mlir::Type a, mlir::Type b) {
+    auto left = llvm::dyn_cast<ec::OpaqueType>(a);
+    auto right = llvm::dyn_cast<ec::OpaqueType>(b);
+    if (!left || !right) { return {}; }
+    const auto present = [](llvm::StringRef spelling) {
+        spelling.consume_front("std::optional<") && spelling.consume_back(">");
+        return spelling;
+    };
+    const llvm::StringRef set = present(left.getValue());
+    if (!set.starts_with("std::variant<ctnative::bound<") || set != present(right.getValue())) {
+        return {};
+    }
+    return ec::OpaqueType::get(context, ("std::optional<" + set + ">").str());
+}
+
+/// A set's variant stored where the set may be absent becomes the engaged
+/// std::optional of it. Null for any other conversion.
+mlir::Value lowering::convertClosureSet(mlir::OpBuilder & b, mlir::Location where,
+                                        mlir::Value value, mlir::Type target) {
+    auto from = llvm::dyn_cast<ec::OpaqueType>(value.getType());
+    auto to = llvm::dyn_cast<ec::OpaqueType>(target);
+    if (!from || !to || !from.getValue().starts_with("std::variant<ctnative::bound<") ||
+        to.getValue() != ("std::optional<" + from.getValue() + ">").str()) {
+        return {};
+    }
+    return callValue(b, where, target, to.getValue(), value);
 }
 
 bool lowering::retypeClosureSet(mlir::Value v) {

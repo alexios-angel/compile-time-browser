@@ -97,6 +97,9 @@ carrier carrierOf(mlir::Type type) {
         if (inner == carrier::booleanString) { return carrier::nullableBooleanString; }
         if (inner == carrier::numberString) { return carrier::nullableNumberString; }
         if (inner == carrier::string) { return carrier::nullableString; }
+        // A possibly absent member of a closure set: std::optional of its
+        // variant (EmitC/ClosureSets.cpp).
+        if (inner == carrier::closureSet) { return carrier::closureSet; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
         }
