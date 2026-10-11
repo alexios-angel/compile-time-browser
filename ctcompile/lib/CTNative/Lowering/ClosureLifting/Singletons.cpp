@@ -45,6 +45,112 @@ mlir::Operation * enclosingIn(mlir::Operation * op, mlir::Block * block) {
 
 } // namespace
 
+/// What can start each function: each call of a closure of it, each call
+/// through a static variable it is stored in when that variable is only
+/// ever called, the closure's creation when it is used any other way
+/// (whoever receives it may call it from then on), and each call of the
+/// function by symbol. Fills `starters` and `closuresOf`; a rewrite that
+/// erases calls rebuilds them.
+void closureLifter::indexStarters() {
+    starters.clear();
+    closuresOf.clear();
+    const auto onlyCallee = [](mlir::OpOperand & use) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+        return (call && use.getOperandNumber() == 0 && call.getReceiver() != use.get() &&
+                !llvm::is_contained(call.getArgs(), use.get())) ||
+               (direct && use.get() == direct.getCalleeValue() &&
+                direct.getReceiver() != use.get() &&
+                !llvm::is_contained(direct.getArgs(), use.get()));
+    };
+    llvm::DenseMap<mlir::Attribute, std::optional<llvm::SmallVector<mlir::Operation *>>> through;
+    module.walk([&](ctjs::CellGetOp read) {
+        auto cell = read.getCell().getDefiningOp<ctjs::CreateCellOp>();
+        auto symbol = cell ? cell->getAttr(kNativeStaticCell) : mlir::Attribute{};
+        if (!symbol) { return; }
+        auto & calls =
+            through.try_emplace(symbol, llvm::SmallVector<mlir::Operation *>{}).first->second;
+        for (mlir::OpOperand & use : read.getResult().getUses()) {
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (calls && onlyCallee(use)) {
+                calls->push_back(use.getOwner());
+            } else {
+                calls.reset();
+            }
+        }
+    });
+    module.walk([&](ctjs::CreateClosureOp made) {
+        ctjs::FuncOp target = targetOf(made);
+        if (!target) { return; }
+        ++closuresOf[target.getOperation()];
+        auto & into = starters[target.getOperation()];
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
+            if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+            if (onlyCallee(use)) {
+                into.push_back(user);
+                continue;
+            }
+            mlir::Operation * box = llvm::isa<ctjs::CreateCellOp>(user) ? user : nullptr;
+            if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                set && use.getOperandNumber() == 1) {
+                box = set.getCell().getDefiningOp();
+            }
+            const auto calls = box && box->getAttr(kNativeStaticCell)
+                                   ? through.find(box->getAttr(kNativeStaticCell))
+                                   : through.end();
+            if (calls != through.end() && calls->second) {
+                llvm::append_range(into, *calls->second);
+            } else {
+                into.push_back(made.getOperation());
+            }
+        }
+    });
+    if (auto uses = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
+        for (const mlir::SymbolTable::SymbolUse & use : *uses) {
+            if (auto * named = mlir::SymbolTable::lookupNearestSymbolFrom(module.getOperation(),
+                                                                          use.getSymbolRef())) {
+                starters[named].push_back(use.getUser());
+            }
+        }
+    }
+}
+
+/// Whether `op` can run only after `write`, which sits in the body of the
+/// function that owns it. Climbs from `op` to that body through what starts
+/// each function on the way (`starters`); a function `startedBy` lists is
+/// started only by the operations it lists there, which are climbed instead.
+bool closureLifter::runsAfter(
+    mlir::Operation * op, mlir::Operation * write,
+    const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy) {
+    auto function = write->getParentOfType<ctjs::FuncOp>();
+    mlir::Block * body = write->getBlock();
+    llvm::SmallVector<mlir::Operation *> pending{op};
+    llvm::DenseSet<mlir::Operation *> seen;
+    while (!pending.empty()) {
+        mlir::Operation * at = pending.pop_back_val();
+        if (!seen.insert(at).second) { continue; }
+        if (seen.size() > 256) { return false; }
+        auto holder = at->getParentOfType<ctjs::FuncOp>();
+        if (!holder) { return false; }
+        if (holder == function) {
+            mlir::Operation * level = enclosingIn(at, body);
+            if (!level || level == write || !write->isBeforeInBlock(level)) { return false; }
+            continue;
+        }
+        if (const auto field = startedBy.find(holder.getOperation()); field != startedBy.end()) {
+            pending.append(field->second.begin(), field->second.end());
+            continue;
+        }
+        // Nothing known starts it: the script entry, or a function the host
+        // may call.
+        const auto found = starters.find(holder.getOperation());
+        if (found == starters.end()) { return false; }
+        pending.append(found->second.begin(), found->second.end());
+    }
+    return true;
+}
+
 bool closureLifter::bindSingletonMethods(liftReport & out) {
     llvm::MapVector<mlir::StringAttr, llvm::SmallVector<ctjs::CreateCellOp>> bySymbol;
     module.walk([&](ctjs::CreateCellOp cell) {
@@ -54,79 +160,7 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
     });
     if (bySymbol.empty()) { return false; }
 
-    // What can start each function: each call of a closure of it, each call
-    // through a static variable it is stored in when that variable is only
-    // ever called, the closure's creation when it is used any other way
-    // (whoever receives it may call it from then on), and each call of the
-    // function by symbol. Rebuilt after every rewrite, which erases calls.
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> starters;
-    llvm::DenseMap<mlir::Operation *, unsigned> closuresOf;
-    const auto index = [&] {
-        starters.clear();
-        closuresOf.clear();
-        const auto onlyCallee = [](mlir::OpOperand & use) {
-            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-            auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
-            return (call && use.getOperandNumber() == 0 && call.getReceiver() != use.get() &&
-                    !llvm::is_contained(call.getArgs(), use.get())) ||
-                   (direct && use.get() == direct.getCalleeValue() &&
-                    direct.getReceiver() != use.get() &&
-                    !llvm::is_contained(direct.getArgs(), use.get()));
-        };
-        llvm::DenseMap<mlir::Attribute, std::optional<llvm::SmallVector<mlir::Operation *>>>
-            through;
-        module.walk([&](ctjs::CellGetOp read) {
-            auto cell = read.getCell().getDefiningOp<ctjs::CreateCellOp>();
-            auto symbol = cell ? cell->getAttr(kNativeStaticCell) : mlir::Attribute{};
-            if (!symbol) { return; }
-            auto & calls =
-                through.try_emplace(symbol, llvm::SmallVector<mlir::Operation *>{}).first->second;
-            for (mlir::OpOperand & use : read.getResult().getUses()) {
-                if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
-                if (calls && onlyCallee(use)) {
-                    calls->push_back(use.getOwner());
-                } else {
-                    calls.reset();
-                }
-            }
-        });
-        module.walk([&](ctjs::CreateClosureOp made) {
-            ctjs::FuncOp target = targetOf(made);
-            if (!target) { return; }
-            ++closuresOf[target.getOperation()];
-            auto & into = starters[target.getOperation()];
-            for (mlir::OpOperand & use : made.getResult().getUses()) {
-                mlir::Operation * user = use.getOwner();
-                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
-                if (onlyCallee(use)) {
-                    into.push_back(user);
-                    continue;
-                }
-                mlir::Operation * box = llvm::isa<ctjs::CreateCellOp>(user) ? user : nullptr;
-                if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
-                    set && use.getOperandNumber() == 1) {
-                    box = set.getCell().getDefiningOp();
-                }
-                const auto calls = box && box->getAttr(kNativeStaticCell)
-                                       ? through.find(box->getAttr(kNativeStaticCell))
-                                       : through.end();
-                if (calls != through.end() && calls->second) {
-                    llvm::append_range(into, *calls->second);
-                } else {
-                    into.push_back(made.getOperation());
-                }
-            }
-        });
-        if (auto uses = mlir::SymbolTable::getSymbolUses(&module.getBodyRegion())) {
-            for (const mlir::SymbolTable::SymbolUse & use : *uses) {
-                if (auto * named = mlir::SymbolTable::lookupNearestSymbolFrom(module.getOperation(),
-                                                                              use.getSymbolRef())) {
-                    starters[named].push_back(use.getUser());
-                }
-            }
-        }
-    };
-    index();
+    indexStarters();
 
     bool changed = false;
     for (auto & [symbol, cells] : bySymbol) {
@@ -283,38 +317,8 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
                 fieldCalls[m.target.getOperation()].push_back(m.call);
             }
         }
-        mlir::Block * body = write->getBlock();
-        const auto after = [&](mlir::Operation * op) {
-            llvm::SmallVector<mlir::Operation *> pending{op};
-            llvm::DenseSet<mlir::Operation *> seen;
-            while (!pending.empty()) {
-                mlir::Operation * at = pending.pop_back_val();
-                if (!seen.insert(at).second) { continue; }
-                if (seen.size() > 256) { return false; }
-                auto holder = at->getParentOfType<ctjs::FuncOp>();
-                if (!holder) { return false; }
-                if (holder == function) {
-                    mlir::Operation * level = enclosingIn(at, body);
-                    if (!level || level == write || !write->isBeforeInBlock(level)) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (const auto field = fieldCalls.find(holder.getOperation());
-                    field != fieldCalls.end()) {
-                    pending.append(field->second.begin(), field->second.end());
-                    continue;
-                }
-                // Nothing known starts it: the script entry, or a function
-                // the host may call.
-                const auto found = starters.find(holder.getOperation());
-                if (found == starters.end()) { return false; }
-                pending.append(found->second.begin(), found->second.end());
-            }
-            return true;
-        };
-        if (const auto early =
-                llvm::find_if(reads, [&](ctjs::CellGetOp read) { return !after(read); });
+        if (const auto early = llvm::find_if(
+                reads, [&](ctjs::CellGetOp read) { return !runsAfter(read, write, fieldCalls); });
             early != reads.end()) {
             refuse("a read in `" +
                    early->getOperation()->getParentOfType<ctjs::FuncOp>().getSymName() +
@@ -368,7 +372,7 @@ bool closureLifter::bindSingletonMethods(liftReport & out) {
             }
         }
         changed = true;
-        index();
+        indexStarters();
     }
     return changed;
 }

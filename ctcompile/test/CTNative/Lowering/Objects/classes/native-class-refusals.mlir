@@ -2,9 +2,11 @@
 //
 // The class census (ClosureLifting/Classes.cpp) proves a class whose prototype
 // and constructor are touched only by its own definitions and setup. This
-// slice lowers a class without `extends`, static members or accessors; each
-// of those is refused on the constructor's closure with the reason, so the
-// next slice has a list to work from. A method read as a value keeps the
+// slice lowers a class without `extends` or accessors; each of those is
+// refused on the constructor's closure with the reason, so the next slice has
+// a list to work from. Static members lower when every read of them can be a
+// direct call (native-class-statics.mlir); a static read as a value is
+// refused with the static rewrite's reason. A method read as a value keeps the
 // method rule's own refusal, and an instance that leaves its frame keeps the
 // constructor rule's.
 //
@@ -29,7 +31,7 @@
 // RUN:   | FileCheck %s --check-prefix=RETURNED
 
 // EXTENDS: ctnative.class_reason = "it extends another class; super() and inherited members are the next slice"
-// STATIC: ctnative.class_reason = "it has static method `make`; static members are the next slice"
+// STATIC: ctnative.class_reason = "it has static method `make`; its static method `make` is read as a value in `run$1`"
 // GETTER: ctnative.class_reason = "it has getter `size`; accessors are the next slice"
 // METHODVALUE: {{(observed|read) as a value}}
 // RETURNED: ctnative.not_native
@@ -53,7 +55,8 @@ var r = run();
 //--- static.js
 function run() {
     class Box { constructor(v) { this.v = v; } static make() { return 1; } }
-    return new Box(2).v;
+    const f = Box.make;
+    return new Box(2).v + (f ? 1 : 0);
 }
 var r = run();
 

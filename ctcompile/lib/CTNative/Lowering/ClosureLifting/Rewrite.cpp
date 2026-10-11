@@ -77,6 +77,9 @@ liftReport closureLifter::run() {
     // directly (Singletons.cpp). After the binding rule, which removes the
     // methods' captures of the functions it binds.
     bindSingletonMethods(out);
+    // Static members of a class are called directly (ClassStatics.cpp), so
+    // that the class census below can prove the class.
+    bindClassStatics(out);
     // Unbox object literals that are proved uncaptured before the
     // argument/receiver census. A separate lifter does this because the
     // rewrite erases stores its census points at; the main census below then
