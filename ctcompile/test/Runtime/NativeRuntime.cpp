@@ -1293,15 +1293,19 @@ int main() {
         ctnative::static_table_ptr table = &sample_table;
         const ctnative::static_table_ptr copy = table;
         CHECK(copy == table);
-        CHECK(ctnative::table_field<&sample_table_t::interval>(table) == ctnative::js_num{5000.0});
-        CHECK(ctnative::table_field<&sample_table_t::pause>(copy) ==
+        CHECK(ctnative::table_field<&sample_table_t::interval>(table, "interval") ==
+              ctnative::js_num{5000.0});
+        CHECK(ctnative::table_field<&sample_table_t::pause>(copy, "pause") ==
               ctnative::js_string("hover", 5));
-        CHECK(&ctnative::table_field<&sample_table_t::interval>(table) == &sample_table.interval);
+        CHECK(&ctnative::table_field<&sample_table_t::interval>(table, "interval") ==
+              &sample_table.interval);
         const auto throwsTypeError = [](ctnative::static_table_ptr undefined) {
             try {
-                (void)ctnative::table_field<&sample_table_t::interval>(undefined);
-            } catch (const std::invalid_argument & error) {
-                return std::string_view(error.what()).starts_with("TypeError");
+                (void)ctnative::table_field<&sample_table_t::interval>(undefined, "interval");
+            } catch (const ctnative::type_error & error) {
+                // The interpreter's message for `undefined.interval`.
+                return std::string_view(error.what()) ==
+                       "Cannot read properties of undefined (reading 'interval')";
             }
             return false;
         };

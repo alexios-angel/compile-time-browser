@@ -153,21 +153,21 @@ void test_document_element_is_required() {
     {
         bound_page bound;
         const ctnative::page_scope scope{bound.page};
-        CHECK_EQ(text(ctnative::require_document_element().tagName()), std::string{"HTML"});
+        CHECK_EQ(text(ctnative::require_document_element("tagName").tagName()),
+                 std::string{"HTML"});
     }
-    // A document with no root element throws the VM's TypeError text, not
+    // A document with no root element throws the TypeError the VM throws at
+    // the first read of the null root, with its message, not
     // std::bad_optional_access.
     ctbrowser::atom_table atoms;
     ctbrowser::document empty{atoms};
     ctbrowser::style::engine styles{atoms};
     const ctnative::document_scope scope{empty, styles};
-    bool threw = false;
+    std::string message;
     try {
-        (void)ctnative::require_document_element();
-    } catch (const std::invalid_argument & error) {
-        threw = std::string{error.what()} == "TypeError: document.documentElement is null";
-    }
-    CHECK(threw);
+        (void)ctnative::require_document_element("children");
+    } catch (const ctnative::type_error & error) { message = error.what(); }
+    CHECK_EQ(message, std::string{"Cannot read properties of null (reading 'children')"});
 }
 
 void test_geometry_and_viewport() {

@@ -1,9 +1,9 @@
 // Arrays of Strings that stay refused, each with its reason: an array made in
 // a loop body and read after the loop (so its variable is carried out of the
 // loop with its hoisted undefined), an array whose elements are not all
-// Strings, and split by a RegExp literal other than /\s+/. An array used only
-// inside the loop that made it is not carried at all: --ctjs-lift-to-scf drops
-// the unread loop argument.
+// Strings, split by a RegExp literal other than /\s+/, and a parameter array
+// returned from its function. An array used only inside the loop that made it
+// is not carried at all: --ctjs-lift-to-scf drops the unread loop argument.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/loop.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=LOOP
@@ -30,16 +30,16 @@
 // A parameter is a read-only borrow of the caller's array: a callee that
 // pushes to it is refused with the proof's reason, and its caller with it.
 // PARAMWRITE: ctjs.func private @addTo$1
-// PARAMWRITE-SAME: ctnative.not_native = "an element array: a parameter array the function pushes to or sorts - a parameter is a read-only borrow"
+// PARAMWRITE-SAME: ctnative.not_native = "an element array: a parameter array returned from the function"
 
 //--- paramwrite.js
 function addTo(list) {
     list.push('x');
-    return list.length;
+    return list;
 }
 function caller() {
     var words = ['q'];
-    return addTo(words);
+    return addTo(words).length;
 }
 var count = caller();
 

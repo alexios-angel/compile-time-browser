@@ -88,6 +88,10 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         fn.walk([&](ctjs::GetPropertyOp read) {
             if (read->hasAttr(kNativeStaticTable)) {
                 staticTableReads[read] = tableMember(ctjs::constantKey(read.getKey()));
+                // The key itself, which a read of an unset table's error names.
+                read->setAttr(
+                    "ctnative.static_table_key",
+                    mlir::StringAttr::get(read.getContext(), ctjs::constantKey(read.getKey())));
             }
         });
     }
@@ -177,14 +181,25 @@ bool lowering::replaceStaticTable(mlir::Operation * o) {
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o)) {
         const std::string member =
             "&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o);
-        // A spread's read names its result type, which also holds undefined
-        // for a table not stored yet.
         const mlir::Type type = read.getResult().getType();
-        const std::string callee = o->hasAttr(kNativeStaticTableSpread)
-                                       ? "ctnative::table_field_or_undefined<" + member + ", " +
-                                             llvm::cast<ec::OpaqueType>(type).getValue().str() + ">"
-                                       : "ctnative::table_field<" + member + ">";
-        mlir::Value value = callValue(at, o->getLoc(), type, callee, read.getObject());
+        mlir::Value value;
+        if (o->hasAttr(kNativeStaticTableSpread)) {
+            // A spread's read names its result type, which also holds
+            // undefined for a table not stored yet.
+            value = callValue(at, o->getLoc(), type,
+                              "ctnative::table_field_or_undefined<" + member + ", " +
+                                  llvm::cast<ec::OpaqueType>(type).getValue().str() + ">",
+                              read.getObject());
+        } else {
+            // The key, which the error of a read of an unset table names.
+            const llvm::StringRef key =
+                o->getAttrOfType<mlir::StringAttr>("ctnative.static_table_key").getValue();
+            const mlir::Value named = ec::LiteralOp::create(
+                at, o->getLoc(), ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                cpp::c_string_literal(std::string_view(key.data(), key.size())));
+            value = callValue(at, o->getLoc(), type, "ctnative::table_field<" + member + ">",
+                              mlir::ValueRange{read.getObject(), named});
+        }
         read.getResult().replaceAllUsesWith(value);
         eraseIfUnused(o);
         return true;

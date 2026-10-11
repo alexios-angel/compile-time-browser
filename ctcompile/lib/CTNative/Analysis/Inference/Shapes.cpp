@@ -184,7 +184,8 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
                 constantKey(key) == "__proto__") {
                 return false;
             }
-        } else if (!passesAReceiver(use) && !isNativeMapRecordStore(use) && !returnsRecord(user)) {
+        } else if (!passesAReceiver(use) && !isNativeMapRecordStore(use) && !returnsRecord(user) &&
+                   !passesARecord(use)) {
             return false;
         }
     }

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ctcompile/CTNative/Runtime/Error.hpp"
 #include "ctcompile/CTNative/Runtime/Math.hpp"
 #include "ctcompile/CTNative/Runtime/Number.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
