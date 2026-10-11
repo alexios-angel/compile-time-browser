@@ -89,10 +89,39 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             ownConstructor = true;
         }
     });
-    llvm::DenseSet<mlir::Operation *> parents;
-    for (auto & [key, cls] : jsClasses) {
-        if (cls.parent) { parents.insert(cls.parent.getOperation()); }
-    }
+    // Rule 4, from every heritage call in the module, including the ones
+    // whose shape the class census does not recognise (and so records no
+    // parent for): each side is the class a binding or closure names, and a
+    // side naming none makes every class suspect.
+    llvm::DenseSet<mlir::Operation *> derived, parents;
+    bool unnamedHeritage = false;
+    const auto classNamed = [](mlir::Value value) -> mlir::Operation * {
+        if (auto made = value.getDefiningOp<ctjs::CreateClosureOp>()) { return made; }
+        auto read = value.getDefiningOp<ctjs::CellGetOp>();
+        auto cell =
+            read ? read.getCell().getDefiningOp<ctjs::CreateCellOp>() : ctjs::CreateCellOp{};
+        if (!cell) { return nullptr; }
+        mlir::Operation * held = nullptr;
+        for (mlir::Operation * user : cell.getResult().getUsers()) {
+            auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
+            if (!set) { continue; }
+            auto made = set.getValue().getDefiningOp<ctjs::CreateClosureOp>();
+            if (!made || (held && held != made)) { return nullptr; }
+            held = made;
+        }
+        return held;
+    };
+    module.walk([&](ctjs::CallOp call) {
+        auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+        if (!load || load.getName() != "__ctbrowser_class_heritage") { return; }
+        mlir::Operation * child =
+            call.getArgs().size() > 0 ? classNamed(call.getArgs()[0]) : nullptr;
+        mlir::Operation * parent =
+            call.getArgs().size() > 1 ? classNamed(call.getArgs()[1]) : nullptr;
+        if (!child || !parent) { unnamedHeritage = true; }
+        if (child) { derived.insert(child); }
+        if (parent) { parents.insert(parent); }
+    });
     indexStarters();
 
     bool changed = false;
@@ -101,11 +130,17 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         const auto refuse = [&](const llvm::Twine & why) {
             staticRefusals.try_emplace(key, why.str());
         };
-        if (cls.parent || parents.contains(key)) {
-            refuse(cls.parent ? "it extends another class, so `this` in a static member is "
-                                "not one class; inherited statics are the next slice"
-                              : "another class extends it, so `this` in a static member is "
-                                "not one class; inherited statics are the next slice");
+        if (cls.parent || cls.heritage || derived.contains(key) || parents.contains(key)) {
+            refuse(cls.parent || cls.heritage || derived.contains(key)
+                       ? "it extends another class, so `this` in a static member is "
+                         "not one class; inherited statics are the next slice"
+                       : "another class extends it, so `this` in a static member is "
+                         "not one class; inherited statics are the next slice");
+            continue;
+        }
+        if (unnamedHeritage) {
+            refuse("a class in this module extends a value this rewrite cannot name, so `this` "
+                   "in a static member may not be one class");
             continue;
         }
         if (ownConstructor) {
