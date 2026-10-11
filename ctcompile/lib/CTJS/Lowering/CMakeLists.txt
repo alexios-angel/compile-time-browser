@@ -1,6 +1,7 @@
 # CTJS -> EmitC lowering passes. A plain add_library rather than an MLIR
 # TableGen library: every source is hand-written and nothing is generated.
 add_library(ctcompile-ctjs-lowering
+  ArrayIteration.cpp
   CTJSToEmitC.cpp
   DropUncompiled.cpp
   EmitCBlockArguments.cpp

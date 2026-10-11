@@ -14,6 +14,7 @@
 // (Spreads.h).
 //
 //===----------------------------------------------------------------------===//
+#include "ArrayIteration.h"
 #include "Globals/RegisterFlow.h"
 #include "Spreads.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
@@ -356,6 +357,13 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
             getOperation()->walk([&](mlir::FunctionOpInterface body) -> mlir::WalkResult {
                 if (body.getFunctionBody().empty()) { return mlir::WalkResult::advance(); }
 
+                // Iterating an array made before the loop needs none of the
+                // iteration protocol, nor the handler that guarded its close,
+                // and without them the function can be structured
+                // (ArrayIteration.h).
+                const bool iterationFolded = foldArrayIteration(body) != 0;
+                changed |= iterationFolded;
+
                 if (const std::optional<std::string> kept = handlerRefusal(body)) {
                     body->setAttr("ctjs.not_structured",
                                   mlir::StringAttr::get(&getContext(), *kept));
@@ -419,6 +427,16 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                 // Once structured, a literal and the spread that copies it
                 // sit in one block, where the copied keys can be read off.
                 changed |= expandKnownSpreads(body) != 0;
+                // A native the folded protocol read in one block and called
+                // in another is left unread once the lift drops the register
+                // it travelled in. Reading one cannot throw.
+                if (iterationFolded) {
+                    body->walk([&](LoadGlobalOp load) {
+                        if (load.getName().starts_with("__ctbrowser_") && load->use_empty()) {
+                            rewriter.eraseOp(load);
+                        }
+                    });
+                }
                 const auto normalized = recoverLoopGuards(body, rewriter);
                 if (mlir::failed(normalized)) { return mlir::WalkResult::interrupt(); }
                 changed |= *normalized;

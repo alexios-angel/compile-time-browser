@@ -88,6 +88,14 @@ def CTJSLiftToSCF : Pass<"ctjs-lift-to-scf", "mlir::ModuleOp"> {
     keys before the copy, the copy is rewritten as one read and one own
     definition per key, in property order, and a null or undefined source is
     dropped (lib/CTJS/Lowering/Spreads.h).
+
+    And one fold runs before it: a for-of over `Object.keys`, `Object.values`
+    or `Object.entries` of an object literal, with `[k, v]` destructuring of
+    the entries, needs none of the iteration protocol the importer emits (an
+    array takes the index path, and closing its iterator does nothing). The
+    protocol calls, the branches that chose between the paths, and a handler
+    that only guarded the close are removed, so a loop whose body throws can
+    be structured (lib/CTJS/Lowering/ArrayIteration.h).
   }];
   let dependentDialects = ["::mlir::scf::SCFDialect", "::mlir::ub::UBDialect",
                            "::mlir::arith::ArithDialect",
