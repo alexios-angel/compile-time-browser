@@ -1717,10 +1717,12 @@ def check_class_capture_inputs(args, source, manifest):
     return len(variants)
 
 
-def check_executable(args, name, native, expected):
+def check_executable(args, name, native, expected, reference=None):
     """Compile fully lowered `native` to C++ with every compiler and run it.
 
-    Both the explicit and the deduced-type layouts must print `a=<expected>`
+    Both the explicit and the deduced-type layouts must print what the
+    reference interpreter printed for the fixture (`reference`, its stdout),
+    or `a=<expected>` when there is no interpreter output to compare,
     and keep no ctbrowser runtime or prototype storage. Returns the number of
     binaries run.
     """
@@ -1763,7 +1765,7 @@ def check_executable(args, name, native, expected):
         for index, compiler in enumerate(find_compilers()):
             binary = file.with_suffix(f".{index}")
             run([compiler, *FLAGS, str(file), "-o", str(binary)])
-            if run([str(binary.resolve())]).stdout != f"a={expected}\n":
+            if run([str(binary.resolve())]).stdout != (reference or f"a={expected}\n"):
                 raise RuntimeError(f"{name}/{layout}: native class observations differ")
             checked += 1
     return checked
