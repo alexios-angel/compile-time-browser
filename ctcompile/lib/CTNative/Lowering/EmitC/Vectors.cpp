@@ -246,12 +246,17 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             using Param = TypeInference::BuiltinStatic::Param;
             std::string action = "static ";
             for (unsigned i = 0; i < row.arity; ++i) {
+                // A table (a dictionary) is passed as it is: `d`.
+                const bool table =
+                    row.params[i] == Param::record && i < call.getArgs().size() &&
+                    carrierOf(lower.typeOf(call.getArgs()[i])) == carrier::dictionary;
                 action += row.params[i] == Param::string   ? 's'
+                          : table                          ? 'd'
                           : row.params[i] == Param::record ? 'r'
                                                            : 'n';
                 // A record's keys, in definition order, read now while its
                 // writes are still ctjs.
-                if (row.params[i] == Param::record && i < call.getArgs().size()) {
+                if (row.params[i] == Param::record && !table && i < call.getArgs().size()) {
                     llvm::SmallVector<mlir::Attribute> keys;
                     for (llvm::StringRef key : TypeInference::recordKeys(call.getArgs()[i])) {
                         keys.push_back(mlir::StringAttr::get(op->getContext(), key));
@@ -602,6 +607,11 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         const auto [kinds, callee] = kind.split(' ');
         llvm::SmallVector<mlir::Value, 2> operands;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            if (kinds[index] == 'd') {
+                includeHeader(o->getParentOfType<mlir::ModuleOp>(), kJsonHeader);
+                operands.push_back(argument);
+                continue;
+            }
             if (kinds[index] == 'r') {
                 includeHeader(o->getParentOfType<mlir::ModuleOp>(), kJsonHeader);
                 const auto text = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));

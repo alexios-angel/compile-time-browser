@@ -32,8 +32,11 @@ inline constexpr llvm::StringLiteral kNativeDictionaryReason = "ctnative.dict_re
 ///   - `delete o[k]`, as `__ctbrowser_delete`'s object;
 ///   - `k in o`, as `__ctbrowser_in_object`'s operand, whose result is only
 ///     the object of `has_property`;
-/// and at least one of those uses has a computed key, a delete or an `in`, so
-/// a literal that a struct can hold stays a struct (TypeInference::
+///   - the argument of JSON.stringify (a Param::record of the built-in
+///     statics table), which serializes the table's own keys;
+/// and at least one of those uses has a computed (not literal) key, a delete
+/// or an `in`, so a literal with only literal keys stays a record's to prove
+/// or refuse (TypeInference::
 /// hasClosedShape). A literal with any other use records why in
 /// kNativeDictionaryReason, when some use treats it as a table, and is left
 /// alone. The value type, the key types and Object.prototype's own keys are
