@@ -6,6 +6,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   IdentityFields.cpp
   Objects.cpp
   StaticTables.cpp
+  Instances.cpp
   Operations.cpp
   StringCallbacks.cpp
   Functions.cpp

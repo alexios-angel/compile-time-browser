@@ -23,6 +23,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Environments.cpp
   MethodTables.cpp
   StaticTables.cpp
+  Instances.cpp
   Emitter.h
   Runtime.h
 )

@@ -82,6 +82,29 @@ struct lowering {
     llvm::DenseMap<mlir::Operation *, std::string> staticTableReads;
     void censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted);
     bool replaceStaticTable(mlir::Operation * o);
+    /// Instances of a class a registry Map owns, as `std::shared_ptr<C>`
+    /// (EmitC/Instances.cpp): whether `v` is one, the `std::make_shared`
+    /// results that stand for a `new`, and the lowering of the `new` and of
+    /// an exact test against null or undefined.
+    [[nodiscard]] bool isInstanceValue(mlir::Value v) const;
+    llvm::DenseSet<mlir::Value> madeInstances;
+    /// `std::shared_ptr<C>` for `instance<C>` or `opt<instance<C>>`; each
+    /// spelling handed out is remembered, so a value an operation has already
+    /// replaced is still known to be an instance by its C++ type.
+    mlir::Type instanceType(mlir::Type type);
+    llvm::StringSet<> instanceSpellings;
+    /// Adds every value of an identity class to the alias group of its
+    /// struct, so the shape census records the member of each field access
+    /// on a value read back from the Map (`groups` then points at
+    /// instanceGroups, a copy of the receiver groups with these added).
+    void joinInstanceValues(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    receiverGroups instanceGroups;
+    bool replaceInstance(mlir::Operation * o);
+    /// The receiver operand of `call` when the receiver is an instance: the
+    /// owner itself for an identity class's constructor, else a `C *`
+    /// borrowed with `owner.get()`, which is safe because the caller keeps its
+    /// `std::shared_ptr` until the call returns.
+    mlir::Value receiverOperand(mlir::OpBuilder & b, mlir::Location where, ctjs::CallDirectOp call);
     /// The joined type of every source store to each global, computed before
     /// any value is retyped. Observation requests and host categories never
     /// choose a global's output type.

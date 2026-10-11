@@ -94,7 +94,10 @@ enum class carrier {
     computedStyle,
     /// A run-once static's constant table, or undefined before it is stored: a
     /// pointer to its namespace-scope struct (Runtime/StaticTable.hpp).
-    staticTable
+    staticTable,
+    /// An instance of a class a registry Map owns, or null or undefined:
+    /// `std::shared_ptr<C>`, spelled per class (EmitC/Instances.cpp).
+    instance
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -165,8 +168,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
     {carrier::staticTable, kStaticTableType},
+    {carrier::instance, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::staticTable) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::instance) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -277,6 +281,10 @@ llvm::StringRef mixedMapKeySpelling(mlir::Type type);
 llvm::StringRef nullableMapSpelling(mlir::Type type);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);
+/// The C++ name of an identity class's struct, as nameFamilies gives it.
+std::string instanceClassSpelling(llvm::StringRef className);
+/// `std::shared_ptr<C>`, the carrier of `instance<C>` and `opt<instance<C>>`.
+mlir::Type instanceCarrierType(mlir::Type type);
 bool mapNeedsString(MapType type);
 bool mapNeedsNullableString(MapType type);
 bool mapNeedsNullableStringKey(MapType type);

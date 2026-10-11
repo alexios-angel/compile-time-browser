@@ -47,6 +47,7 @@ bool lowering::replaceMap(mlir::Operation * o) {
                       .str()
             : (llvm::isa<MapType, BoolType, StrType>(map.getValueType()) ||
                isObjectValueType(map.getValueType()) ||
+               carrierOf(map.getValueType()) == carrier::instance ||
                !mixedMapSpelling(map.getValueType()).empty() ||
                !nullableMapSpelling(map.getValueType()).empty())
                 ? ("ctnative::make_map<" + mapKeySpelling(map.getKeyType()) + ", " +

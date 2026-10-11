@@ -166,6 +166,8 @@ ctcompile_native_fixture(structs Objects/struct.js)
 ctcompile_native_fixture(records Objects/records.js)
 # String.prototype.replace with a RegExp literal and a function.
 ctcompile_native_fixture(string_replace Objects/string-replace.js)
+# Class instances a registry Map owns, as std::shared_ptr.
+ctcompile_native_fixture(instance_registry Objects/instance-registry.js)
 # Dense, uniformly numeric array literals, as std::vector<double>.
 ctcompile_native_fixture(arrays Objects/array.js)
 # Array contents evidence currently admits only bounded local Number

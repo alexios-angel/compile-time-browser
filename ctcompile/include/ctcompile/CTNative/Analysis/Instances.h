@@ -54,13 +54,26 @@ struct InstanceRegistry {
     /// The parameters proved never null or undefined: every call passes them
     /// an instance it has already checked.
     llvm::DenseSet<mlir::Value> nonNull;
+    /// The class's prototype methods.
+    llvm::SmallVector<ctjs::FuncOp> methods;
     /// The `new` results of the class.
     llvm::SmallVector<mlir::Value> instances;
     /// The values read back from the Map that may hold an instance: `get`
     /// results and every branch result, call result and parameter they flow
     /// into.
     llvm::SmallVector<mlir::Value> readBack;
+    /// The comparisons of a read-back value with null or undefined whose
+    /// answer does not depend on which of the two an absent instance is, so a
+    /// null `std::shared_ptr` answers them.
+    llvm::SmallVector<mlir::Operation *> exactTests;
 };
+
+/// The mark markInstanceRegistries puts on each method of a proved class: the
+/// class's name. Only the constructor and these write the class's fields.
+inline constexpr llvm::StringLiteral kNativeInstanceMethod = "ctnative.instance_method";
+
+/// The mark markInstanceRegistries puts on each of those comparisons.
+inline constexpr llvm::StringLiteral kNativeInstanceTest = "ctnative.instance_test";
 
 /// The attribute markInstanceRegistries puts on a proved constructor: the
 /// class's name, which its instances' C++ class is named after.

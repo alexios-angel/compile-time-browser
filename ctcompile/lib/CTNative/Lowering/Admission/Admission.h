@@ -164,6 +164,9 @@ struct admission {
     /// A run-once static's constant table: its literal, fields and reads, and a
     /// read of a static whose literal is not one (Admission/StaticTables.cpp).
     std::optional<bool> staticTableOperation(mlir::Operation * o);
+    /// An instance of a class a registry Map owns: its fields and its tests
+    /// against null or undefined (Admission/Instances.cpp).
+    std::optional<bool> instanceOperation(mlir::Operation * o);
     bool nativeMapCall(mlir::Operation * o, llvm::StringRef action);
     bool closedObject(ctjs::CreateObjectOp object);
     bool directCall(ctjs::CallDirectOp call);

@@ -183,6 +183,19 @@ const MeetRow kMeetTable[] = {
      "json absorbs everything below it - a value it could not type does not "
      "become typeable because one path was a bool"},
 
+    // --- instances a registry Map owns ---------------------------------------
+    {"!ctnative.instance<\"Widget\">", "!ctnative.instance<\"Widget\">",
+     "!ctnative.instance<\"Widget\">", "an instance of one class stays one"},
+    {"!ctnative.opt<!ctnative.bottom>", "!ctnative.instance<\"Widget\">",
+     "!ctnative.opt<!ctnative.instance<\"Widget\">>",
+     "`map.get(k) || null`: an instance or neither, one null shared_ptr for both"},
+    {"!ctnative.instance<\"Widget\">", "!ctnative.instance<\"Alert\">",
+     "!ctnative.variant<!ctnative.instance<\"Alert\">, !ctnative.instance<\"Widget\">>",
+     "two classes are two structs, not a base and a derived one"},
+    {"!ctnative.instance<\"Widget\">", "!ctnative.bool",
+     "!ctnative.variant<!ctnative.bool, !ctnative.instance<\"Widget\">>",
+     "the `false` of `has(k) && get(k)` is not an absent instance"},
+
     // --- nominal callables --------------------------------------------------
     {"!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">",
      "the same target retains its nominal callable type"},
@@ -656,9 +669,9 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 73 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 77 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 165;
+    const int expectedChecks = 173;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

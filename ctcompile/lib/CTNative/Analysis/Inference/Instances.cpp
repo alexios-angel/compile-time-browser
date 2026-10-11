@@ -8,7 +8,10 @@
 
 #include "ctcompile/CTNative/Analysis/Instances.h"
 
+#include "ctcompile/CTNative/Analysis/NativeMap.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+#include "ctcompile/CTNative/IR/CTNativeDialect.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
@@ -627,6 +630,10 @@ class registryProof {
                 }
                 continue;
             }
+            if (llvm::isa<ctjs::SetPropertyOp>(user) && use.getOperandNumber() == 0) {
+                return refuse("a field of an instance read from the registry Map is written "
+                              "outside its class's constructor and methods");
+            }
             if (llvm::isa<ctjs::SetPropertyOp, ctjs::ConstructOp>(user)) {
                 return refuse("a value read from the registry Map is stored into an object, so "
                               "shared ownership could form a cycle no destructor breaks");
@@ -712,6 +719,9 @@ class registryProof {
     /// function held as a value could own the Map (see checkCaptors).
     bool instanceUse(mlir::OpOperand & use) {
         if (!dereferences(use)) { return false; }
+        // Only the class's own code writes its fields, so the native type
+        // of each field is the join of the stores through `this`.
+        if (llvm::isa<ctjs::SetPropertyOp>(use.getOwner())) { return isReceiver(use.get()); }
         if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner())) {
             return methodNames.contains(ctjs::methodKey(call));
         }
@@ -896,7 +906,28 @@ public:
         // Map or an instance, whatever else it holds.
         if (!checkCaptors()) { return false; }
         for (ctjs::ConstructOp made : constructions) { out.instances.push_back(made.getResult()); }
+        out.methods = methods;
         llvm::append_range(out.readBack, maybe);
+        // The tests against null or undefined that a null pointer answers
+        // exactly: a loose one on a value that is an instance, null or
+        // undefined, or a strict one on a value that can only be the nullish
+        // value it names.
+        for (mlir::Value value : maybe) {
+            for (mlir::Operation * user : value.getUsers()) {
+                auto compare = llvm::dyn_cast<ctjs::CompareOp>(user);
+                if (!compare) { continue; }
+                const mlir::Value other =
+                    compare.getLhs() == value ? compare.getRhs() : compare.getLhs();
+                // A falsy non-nullish value (mayBeFalsy) is also a null
+                // pointer, and no comparison with null answers true for it.
+                const unsigned against = nullishBits(other);
+                const unsigned may = nullish.lookup(value);
+                if (compare.getKind() == ctjs::CompareKind::Eq ? (may & mayBeFalsy) == 0
+                                                               : (may & ~against) == 0) {
+                    out.exactTests.push_back(compare);
+                }
+            }
+        }
         return true;
     }
 };
@@ -963,13 +994,24 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
 }
 
 std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
-    module.walk([](ctjs::FuncOp fn) { fn->removeAttr(kNativeInstanceClass); });
+    module.walk([](mlir::Operation * op) {
+        op->removeAttr(kNativeInstanceClass);
+        op->removeAttr(kNativeInstanceTest);
+        op->removeAttr(kNativeInstanceMethod);
+    });
     std::vector<InstanceRegistry> proved;
     for (InstanceRegistry & registry : proveInstanceRegistries(module)) {
         if (!registry.refusal.empty()) { continue; }
         registry.constructor->setAttr(
             kNativeInstanceClass,
             mlir::StringAttr::get(module.getContext(), jsName(registry.constructor)));
+        for (ctjs::FuncOp method : registry.methods) {
+            method->setAttr(kNativeInstanceMethod,
+                            registry.constructor->getAttr(kNativeInstanceClass));
+        }
+        for (mlir::Operation * test : registry.exactTests) {
+            test->setAttr(kNativeInstanceTest, mlir::UnitAttr::get(module.getContext()));
+        }
         proved.push_back(std::move(registry));
     }
     return proved;
@@ -977,6 +1019,141 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
 
 bool isIdentityClass(ctjs::FuncOp fn) {
     return fn && fn->hasAttr(kNativeInstanceClass);
+}
+
+namespace {
+
+/// The identity class a `ctjs.create_object` is a `new` of: the constructor
+/// lift (ClosureLifting/Constructors.cpp) turns `new C(...)` into an empty
+/// literal and a receiver call of C's constructor, whose mark names it.
+llvm::StringRef instanceClassOf(ctjs::CreateObjectOp object) {
+    if (!object->hasAttr(kNativeClassName)) { return {}; }
+    for (mlir::Operation * user : object.getResult().getUsers()) {
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+        if (!call || !call->hasAttr(kNativeReceiver) || call.getReceiver() != object.getResult()) {
+            continue;
+        }
+        if (auto mark = call.getTarget() ? call.getTarget()->getAttrOfType<mlir::StringAttr>(
+                                               kNativeInstanceClass)
+                                         : mlir::StringAttr{}) {
+            return mark.getValue();
+        }
+    }
+    return {};
+}
+
+/// The identity class of a value of type `instance<C>` or `opt<instance<C>>`.
+llvm::StringRef instanceClassOf(mlir::Type type) {
+    if (auto optional = llvm::dyn_cast_or_null<OptType>(type)) { type = optional.getElementType(); }
+    auto instance = llvm::dyn_cast_or_null<InstanceType>(type);
+    return instance ? instance.getClassName() : llvm::StringRef{};
+}
+
+/// The constructor of identity class `name`, or null.
+ctjs::FuncOp constructorOf(mlir::ModuleOp module, llvm::StringRef name) {
+    ctjs::FuncOp found;
+    module.walk([&](ctjs::FuncOp fn) {
+        auto mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass);
+        if (mark && mark.getValue() == name) { found = fn; }
+    });
+    return found;
+}
+
+/// Whether the constructor writes field `key` before anything else can see
+/// the instance: a store to `this` at the top of its body, before any call.
+/// Every instance a registry hands out has then been through that store.
+bool assignedInConstructor(ctjs::FuncOp constructor, llvm::StringRef key) {
+    if (!constructor || constructor.getBody().empty()) { return false; }
+    mlir::Block & entry = constructor.getBody().front();
+    const mlir::Value self = entry.getArgument(ctjs::arg_receiver);
+    for (mlir::Operation & op : entry) {
+        if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp, ctjs::ConstructOp>(op) ||
+            op.getNumRegions() != 0) {
+            return false;
+        }
+        auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+        if (store && store.getObject() == self && ctjs::constantKey(store.getKey()) == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+std::optional<mlir::Type> TypeInference::instanceTypeOf(
+    mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands) {
+    mlir::MLIRContext * context = op->getContext();
+    if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
+        const llvm::StringRef name = instanceClassOf(object);
+        if (name.empty()) { return std::nullopt; }
+        return InstanceType::get(context, name);
+    }
+    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+    if (!read || operands.empty()) { return std::nullopt; }
+    // A Map's `get` is absent alone until a value stored in the Map is
+    // visited; answering now would let the generic field rule box the read
+    // before the instance arrives.
+    const mlir::Type object = operands[0]->getValue().getType();
+    if (object == OptType::get(context, BottomType::get(context)) &&
+        read.getObject().getDefiningOp() &&
+        nativeMapAction(read.getObject().getDefiningOp()) == "get") {
+        return mlir::Type{};
+    }
+    const llvm::StringRef name = instanceClassOf(object);
+    const llvm::StringRef key = ctjs::constantKey(read.getKey());
+    if (name.empty() || !ctjs::ordinaryKey(key)) { return std::nullopt; }
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    if (!instanceStoresBuilt_) {
+        instanceStoresBuilt_ = true;
+        module.walk([&](ctjs::FuncOp fn) {
+            auto mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass);
+            if (!mark) { mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod); }
+            if (!mark || fn.getBody().empty()) { return; }
+            const mlir::Value self = fn.getBody().front().getArgument(ctjs::arg_receiver);
+            for (mlir::Operation * user : self.getUsers()) {
+                auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (!store || store.getObject() != self) { continue; }
+                instanceStores_[(mark.getValue() + llvm::Twine('\0') +
+                                 ctjs::constantKey(store.getKey()))
+                                    .str()]
+                    .push_back(store.getValue());
+            }
+        });
+    }
+    // The class's stores of `key`. A field the constructor writes first is
+    // never read absent; any other may be.
+    mlir::Type field = assignedInConstructor(constructorOf(module, name), key)
+                           ? mlir::Type{}
+                           : OptType::get(context, BottomType::get(context));
+    const auto stores = instanceStores_.find((name + llvm::Twine('\0') + key).str());
+    if (stores != instanceStores_.end()) { field = joinLattices(op, stores->second, field); }
+    return field;
+}
+
+void TypeInference::joinInstanceReceivers(mlir::Operation * top,
+                                          llvm::EquivalenceClasses<mlir::Value> & classes) {
+    llvm::StringMap<mlir::Value> leader; // Per class, the first member seen.
+    const auto join = [&](llvm::StringRef name, mlir::Value member) {
+        auto [entry, fresh] = leader.try_emplace(name, member);
+        if (fresh) {
+            classes.insert(member);
+        } else {
+            classes.unionSets(entry->second, member);
+        }
+    };
+    top->walk([&](mlir::Operation * op) {
+        if (auto object = llvm::dyn_cast<ctjs::CreateObjectOp>(op)) {
+            const llvm::StringRef name = instanceClassOf(object);
+            if (!name.empty()) { join(name, object.getResult()); }
+            return;
+        }
+        auto fn = llvm::dyn_cast<ctjs::FuncOp>(op);
+        if (!fn || fn.getBody().empty()) { return; }
+        auto mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceClass);
+        if (!mark) { mark = fn->getAttrOfType<mlir::StringAttr>(kNativeInstanceMethod); }
+        if (mark) { join(mark.getValue(), fn.getBody().front().getArgument(ctjs::arg_receiver)); }
+    });
 }
 
 } // namespace ctcompile::ctnative
