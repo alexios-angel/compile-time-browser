@@ -40,6 +40,13 @@ bool isFalse(mlir::Value value) {
     return flag && !flag.getValue();
 }
 
+/// Whether a key operand is a literal (`o.a`, `o[1]`): a literal with only
+/// such keys is a record's to prove (or refuse), not a table.
+bool constantKeyOperand(mlir::Value key) {
+    return static_cast<bool>(ctjs::constantAttr<ctjs::StringAttr>(key)) ||
+           static_cast<bool>(ctjs::constantAttr<ctjs::NumberAttr>(key));
+}
+
 /// One proved use of a dictionary: the operation and what it does.
 struct tableUse {
     mlir::Operation * op;
@@ -47,20 +54,20 @@ struct tableUse {
 };
 
 /// The table operations `object` reaches, or why one of its uses is not one.
-/// `computed` is set when some use is not a constant-key get or set: a literal
-/// with only those is a struct's (TypeInference::hasClosedShape).
+/// `computed` is set when some use is not a get or set under a literal key: a
+/// literal with only those is a record's (TypeInference::hasClosedShape).
 std::string tableUses(mlir::Value object, llvm::SmallVectorImpl<tableUse> & uses, bool & computed) {
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
             if (use.getOperandNumber() != 0) { return "it is stored as a value or used as a key"; }
-            computed |= ctjs::constantKey(set.getKey()).empty();
+            computed |= !constantKeyOperand(set.getKey());
             uses.push_back({user, "set"});
             continue;
         }
         if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user)) {
             if (use.getOperandNumber() != 0) { return "it is used as a key"; }
-            computed |= ctjs::constantKey(get.getKey()).empty();
+            computed |= !constantKeyOperand(get.getKey());
             uses.push_back({user, "get"});
             continue;
         }
@@ -97,6 +104,9 @@ std::string tableUses(mlir::Value object, llvm::SmallVectorImpl<tableUse> & uses
             uses.push_back({user, "object"});
             continue;
         }
+        // JSON.stringify(o): the runtime serializes a table's own keys
+        // (Runtime/Json.hpp); the call is the built-in statics row's.
+        if (TypeInference::passesARecord(use)) { continue; }
         return ("it reaches `" + user->getName().getStringRef() + "`").str();
     }
     return {};

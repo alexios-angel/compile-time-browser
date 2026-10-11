@@ -180,6 +180,9 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             row.member.empty() ? row.global.str() : (row.global + "." + row.member).str();
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
             if (row.params[index] == TypeInference::BuiltinStatic::Param::record) {
+                // A table serializes its own keys itself (Runtime/Json.hpp);
+                // its site's admission checked its values.
+                if (carrierOf(self.typeOf(argument)) == carrier::dictionary) { continue; }
                 if (!admission::isClosedObject(argument)) {
                     return self.refuse(name +
                                        " of a value that is not a closed-shape object literal");
