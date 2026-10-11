@@ -183,9 +183,10 @@ struct census {
 /// The answer bound_closure() gives for one name: the function it is bound to,
 /// or the reason there is none.
 struct verdict {
-    FuncOp target;           ///< Null unless the name is bound to exactly one closure.
-    CreateClosureOp closure; ///< The ctjs.create_closure the store bound, for clause 4.
-    std::string reason;      ///< Why not, when the target is null.
+    FuncOp target;            ///< Null unless the name is bound to exactly one closure.
+    CreateClosureOp closure;  ///< The ctjs.create_closure the store bound, for clause 4.
+    std::string reason;       ///< Why not, when the target is null.
+    bool hostBinding = false; ///< Never stored: a read is the realm's own value.
 };
 
 /// Checks clauses 1-3 and 6 for \p name: everything the census proves that
@@ -204,7 +205,10 @@ verdict bound_closure(const census & world, mlir::StringAttr name, const binding
         return no("a function the importer refused (ctjs.skipped) stores this name, so the "
                   "binding this pass can see is not the only one");
     }
-    if (facts.stores.empty()) { return no("never stored in this program - a host binding"); }
+    if (facts.stores.empty()) {
+        return verdict{FuncOp{}, CreateClosureOp{}, "never stored in this program - a host binding",
+                       true};
+    }
     if (facts.stores.size() != 1) {
         return no("stored " + std::to_string(facts.stores.size()) + " times");
     }
@@ -1370,8 +1374,8 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
 
         llvm::SmallVector<mlir::Attribute> rows;
         const auto record = [&](mlir::StringAttr name, std::size_t stores, FuncOp resolved,
-                                const std::string & reason) {
-            rows.push_back(builder.getDictionaryAttr({
+                                const std::string & reason, bool hostBinding = false) {
+            llvm::SmallVector<mlir::NamedAttribute, 5> fields{
                 builder.getNamedAttr("name", name),
                 builder.getNamedAttr("stores",
                                      builder.getI32IntegerAttr(static_cast<std::int32_t>(stores))),
@@ -1380,7 +1384,11 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                                                     resolved.getSymNameAttr())}
                                               : mlir::Attribute{builder.getStringAttr("none")}),
                 builder.getNamedAttr("reason", builder.getStringAttr(reason)),
-            }));
+            };
+            if (hostBinding) {
+                fields.push_back(builder.getNamedAttr(kGlobalsHostBinding, builder.getUnitAttr()));
+            }
+            rows.push_back(builder.getDictionaryAttr(fields));
         };
 
         for (auto & [name, facts] : world.bindings) {
@@ -1421,7 +1429,7 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
             // Clauses 1-3 and 6, which known_callee() also asks.
             const verdict answer = bound_closure(world, name, facts);
             if (!answer.target) {
-                record(name, facts.stores.size(), FuncOp{}, answer.reason);
+                record(name, facts.stores.size(), FuncOp{}, answer.reason, answer.hostBinding);
                 continue;
             }
             FuncOp target = answer.target;

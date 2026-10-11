@@ -132,10 +132,13 @@ _LIFT_REPORT = re.compile(r"ctnative: lifted \d+ closure\(s\).*?rewrote (\d+) ca
 # functions the default reachability pruning removed.
 _REACHABILITY = re.compile(r"ctnative\.reachability_summary = \{removed = (\d+) : i64,")
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
-# the per-name verdict the pass writes on the module. Grouping the reasons
+# the per-name verdict the pass writes on the module; a host binding's row
+# starts with its unit `host_binding` field. Grouping the reasons
 # shows why globals failed to resolve, the same way `ctnative.not_native`
 # shows why functions were refused.
-_GLOBAL_REASON = re.compile(r'\{name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"')
+_GLOBAL_REASON = re.compile(
+    r'\{(?:host_binding, )?name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"'
+)
 
 
 def shape_of(reason: str) -> str:
