@@ -485,6 +485,9 @@ struct closureLifter {
     static mlir::ValueRange argsOfCallSite(mlir::Operation * user);
 
     void indexAndNewTargets();
+    /// Rewrites each arrow that reads its lexical `this` to capture it as a
+    /// constant cell (ArrowThis.cpp).
+    void captureLexicalThis();
 
     void specializeCallbacks(liftReport & out);
 

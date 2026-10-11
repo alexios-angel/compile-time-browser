@@ -14,8 +14,8 @@
 // One program per file: a refused callee refuses its caller and a refused
 // caller its callee, so a file pinning an acceptance and a refusal pins neither.
 //
-// Some pinned messages still say "this slice", "this tier", "Phase 63" or
-// "Stage 59B". They come from ClosureLifting/{Methods,Captures}.cpp; change
+// Some pinned messages still say "this slice", "this tier" or "Phase 63".
+// They come from ClosureLifting/{Methods,Captures}.cpp; change
 // them there and in the FileCheck lines here together.
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/returns_this.js 2>/dev/null \
@@ -115,17 +115,19 @@
 
 // --- An arrow method reading its lexical `this` ----------------------------
 //
-// The other guard whose removal gives a wrong answer rather than a refusal
-// (checked by disabling it). `{ get: () => this.x }` reads the enclosing
-// function's `this`, not the object, and every use of it is a constant-key read
-// that CONDITION 3 admits. With the arrow clause disabled this program compiles
-// with no refusal, binds `this` to the literal, and the binary prints `a=1`
-// where the interpreter prints `a=undefined`. That is why the arrow clause is
-// checked first, before any rule that admits a use of `this`.
-//
+// `{ get: () => this.x }` reads the enclosing function's `this`, not the
+// object, and every use of it is a constant-key read that CONDITION 3 admits.
+// Bound to the literal, this program would print `a=1` where the interpreter
+// prints `a=undefined`. closureLifter's captureLexicalThis prevents that: the
+// arrow reads `arrowed`'s `this` from a capture instead of its receiver, so
+// the receiver lift has no use of `this` to bind. `arrowed`'s own `this` is
+// unproved, so both functions stay refused, with the receiver rule's reason
+// and with the capture's: a property read on a value that is not the literal.
 //
 // ARROWTHIS: ctjs.func {{.*}}@arrowed$1
-// ARROWTHIS-SAME: ctnative.not_native = "a method field: it is an arrow function that reads its lexical `this` - Stage 59B"
+// ARROWTHIS-SAME: ctnative.not_native = "uses `this`"
+// ARROWTHIS: ctjs.func private @fn$2
+// ARROWTHIS-SAME: ctnative.not_native = "a property read on an object that is not a closed-shape literal"
 
 // --- A method read as a value rather than called ---------------------------
 //

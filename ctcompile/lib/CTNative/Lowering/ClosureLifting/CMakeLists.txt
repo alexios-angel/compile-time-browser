@@ -1,4 +1,5 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
+  ArrowThis.cpp
   Calls.cpp
   Callbacks.cpp
   Cells.cpp

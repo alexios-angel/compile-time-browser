@@ -223,7 +223,7 @@
 // really does read its own closure).
 //
 // The plan labels at the end of some messages ("Phase 59 slice 2" here,
-// "Phase 63" and "Stage 59B" elsewhere) are the lowering's own wording,
+// and "Phase 63" elsewhere) are the lowering's own wording,
 // emitted from ClosureLifting/Captures.cpp and Methods.cpp, and are pinned
 // verbatim.
 //
@@ -268,17 +268,18 @@
 // A lifted call passes the call's receiver as %arg0. For an arrow that is not
 // what the interpreter reads: `context::effective_this` answers the
 // captured_this recorded where the arrow was written (make_closure in
-// ctbrowser/lib/Script/vm/call/coroutines.cpp), so an arrow may be lifted only
-// when it never reads `this`. Fixtures/Closures/closure.js has an arrow that
-// does not, and it lifts like any other function.
-//
-// The rule relies on the importer: `$enclosing_this` is `undefined` for every
-// non-arrow target, so an operand that is not undefined is the only place the
-// IR says a target is an arrow. Without that importer behaviour this rule has
-// nothing to test.
+// ctbrowser/lib/Script/vm/call/coroutines.cpp). closureLifter's
+// captureLexicalThis therefore makes that value a capture before any rule
+// runs: the arrow reads it with ctjs.load_upvalue and no longer reads %arg0,
+// so it lifts like any other closure. Here the captured value is `holder`'s
+// own `this`, which no caller proves, so `holder` keeps the receiver rule's
+// refusal and the lifted arrow the capture rule's.
 //
 // ARROWTHIS: ctjs.func {{.*}}@holder$1
-// ARROWTHIS-SAME: ctnative.not_native = "a closure used as a value: it is an arrow function that reads its lexical `this` - Stage 59B"
+// ARROWTHIS-SAME: ctnative.not_native = "uses `this`"
+// ARROWTHIS: ctjs.create_closure %arg2[2] this %{{.*}} captures %{{.*}} {ctnative.lifted
+// ARROWTHIS: ctjs.func private @fn$2
+// ARROWTHIS-SAME: ctnative.not_native = "capture 0 is !ctnative.boxed - no caller proves it
 
 // --- A refusal that lands on the box ----------------------------------------
 //

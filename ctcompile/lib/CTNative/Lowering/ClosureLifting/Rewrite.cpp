@@ -30,6 +30,7 @@ liftReport closureLifter::run() {
     // before them would describe operations that no longer exist.
     // indexAndNewTargets() supplies the two census walks they need.
     indexAndNewTargets();
+    captureLexicalThis(); // ArrowThis.cpp: an arrow's `this` becomes a capture.
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
     // closures no longer capture them. Boxes holding a function wait for a
