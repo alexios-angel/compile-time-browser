@@ -23,11 +23,13 @@ namespace ctcompile::ctnative::lowering_detail {
 
 bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
     const bool timer = TypeInference::isTimerCall(call);
-    const llvm::StringRef method = timer                              ? "setTimeout"
-                                   : call->hasAttr(kNativeHostRemove) ? "removeEventListener"
-                                                                      : "addEventListener";
-    // ponytail: nothing reads a timer's handle until clearTimeout is native.
-    if (!call.getResult().use_empty()) {
+    const llvm::StringRef method =
+        timer ? call->getAttrOfType<mlir::StringAttr>(kNativeHostTimer).getValue()
+        : call->hasAttr(kNativeHostRemove) ? "removeEventListener"
+                                           : "addEventListener";
+    // A timer's handle is typed (!ctnative.timer), and each use of it is
+    // admitted on its own; a listener registration answers undefined.
+    if (!timer && !call.getResult().use_empty()) {
         return self.refuse("the result of " + method.str() + " is read");
     }
     const mlir::Value first = call.getArgs().front();
@@ -65,12 +67,13 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
         case carrier::number:
         case carrier::boolean:
         case carrier::string:
-        case carrier::domElement: break;
+        case carrier::domElement:
+        case carrier::timer: break;
         default:
             return self.refuse("the " + std::string{timer ? "handler" : "listener"} + " of " +
                                method.str() + " captures " + printed(self.typeOf(capture)) +
                                " - the host keeps a copy, which only a Number, a Boolean, a "
-                               "String or an element shares");
+                               "String, an element or a timer's handle shares");
         }
     }
     return true;
@@ -94,6 +97,14 @@ bool registeredOnDocumentOrWindow(mlir::Operation * op) {
 } // namespace
 
 std::optional<bool> eventOperation(admission & self, mlir::Operation * o) {
+    // clearTimeout(handle) and clearInterval(handle) take a handle a timer
+    // call made.
+    if (TypeInference::isTimerClear(o)) {
+        const mlir::Value handle = llvm::cast<ctjs::CallOp>(o).getArgs()[0];
+        return carrierOf(self.typeOf(handle)) == carrier::timer ||
+               self.refuse("clearing a timer with " + printed(self.typeOf(handle)) +
+                           ", not a handle setTimeout or setInterval made");
+    }
     const auto event = [&](mlir::Value v) {
         return carrierOf(self.typeOf(v)) == carrier::domEvent;
     };

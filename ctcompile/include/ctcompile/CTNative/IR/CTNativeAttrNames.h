@@ -67,8 +67,9 @@ inline constexpr llvm::StringLiteral kNativeArrayCallback = "ctnative.array_call
 /// Written by ClosureLifting/HostCallbacks.cpp and read by type inference,
 /// admission and the lowering.
 inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callback";
-/// Marks such a call as `setTimeout(f, delay)`, since the lowering replaces
-/// the `setTimeout` load the call was recognised by before the call itself.
+/// Marks such a call as `setTimeout(f, delay)` or `setInterval(f, delay)`,
+/// naming which, since the lowering replaces the load the call was recognised
+/// by before the call itself.
 inline constexpr llvm::StringLiteral kNativeHostTimer = "ctnative.host_timer";
 /// On a specialised `addEventListener` call whose receiver is the realm's own
 /// `document` or `window`: that name, since the lowering replaces the load.

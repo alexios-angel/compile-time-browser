@@ -29,8 +29,17 @@ bool TypeInference::isHostCallbackCall(mlir::Operation * op) {
 
 bool TypeInference::isTimerCall(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
-    return call && (call->hasAttr(kNativeHostTimer) ||
-                    isRealmGlobal(call.getCallee().getDefiningOp(), "setTimeout"));
+    if (!call) { return false; }
+    if (call->hasAttr(kNativeHostTimer)) { return true; }
+    mlir::Operation * callee = call.getCallee().getDefiningOp();
+    return isRealmGlobal(callee, "setTimeout") || isRealmGlobal(callee, "setInterval");
+}
+
+bool TypeInference::isTimerClear(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || call.getArgs().size() != 1) { return false; }
+    mlir::Operation * callee = call.getCallee().getDefiningOp();
+    return isRealmGlobal(callee, "clearTimeout") || isRealmGlobal(callee, "clearInterval");
 }
 
 bool TypeInference::isHostCallbackParameter(mlir::Value value) {
@@ -166,6 +175,7 @@ mlir::Type TypeInference::hostCallbackType(mlir::Operation * op,
         if (key == "defaultPrevented") { return BoolType::get(c); }
         return {};
     }
+    if (isTimerClear(op)) { return OptType::get(c, BottomType::get(c)); }
     if (!isHostCallbackCall(op)) { return {}; }
     auto listener = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         op, op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback));
@@ -192,8 +202,8 @@ mlir::Type TypeInference::hostCallbackType(mlir::Operation * op,
         TypeLattice * lattice = getLatticeElement(entry.getArgument(index));
         propagateIfChanged(lattice, lattice->join(TypeValue{EventType::get(c)}));
     }
-    // setTimeout answers the timer's handle.
-    if (isTimerCall(op)) { return NumType::getDouble(c); }
+    // setTimeout and setInterval answer the timer's handle.
+    if (isTimerCall(op)) { return TimerType::get(c); }
     return OptType::get(c, BottomType::get(c));
 }
 

@@ -82,6 +82,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
     if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
     if (llvm::isa<EventType>(type)) { return carrier::domEvent; }
+    if (llvm::isa<TimerType>(type)) { return carrier::timer; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -202,13 +203,20 @@ std::string elementSpanSpelling(mlir::Type type) {
 bool isPageGlobal(mlir::Operation * o) {
     auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o);
     if (!load || load.getResult().use_empty()) { return false; }
-    // setTimeout only to call it with a callback closure lifting specialised
-    // (HostCallbacks.cpp): the call lowers to ctnative::setTimeout.
-    if (load.getName() == "setTimeout") {
+    // setTimeout and setInterval only to call them with a callback closure
+    // lifting specialised, and clearTimeout and clearInterval only to call
+    // them (HostCallbacks.cpp): the calls lower to the ctnative functions of
+    // the same names.
+    if (load.getName() == "setTimeout" || load.getName() == "setInterval") {
         return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
             return use.getOperandNumber() == 0 &&
                    TypeInference::isHostCallbackCall(use.getOwner()) &&
                    TypeInference::isTimerCall(use.getOwner());
+        });
+    }
+    if (load.getName() == "clearTimeout" || load.getName() == "clearInterval") {
+        return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+            return use.getOperandNumber() == 0 && TypeInference::isTimerClear(use.getOwner());
         });
     }
     // The realm's Event only as the constructor and new.target of a

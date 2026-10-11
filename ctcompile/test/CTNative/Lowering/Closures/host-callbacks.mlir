@@ -21,6 +21,10 @@
 // EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.addEventListener.call"
 // EMIT-DAG: emitc.include <"ctcompile/CTNative/Runtime/Timers.hpp">
 // EMIT-DAG: call_opaque "ctnative::setTimeout"
+// EMIT-DAG: call_opaque "ctnative::setInterval"
+// EMIT-DAG: call_opaque "ctnative::clearTimeout"
+// EMIT-DAG: call_opaque "ctnative::clearInterval"
+// EMIT-DAG: member_call_opaque {{.*}} "is_set"()
 // EMIT-DAG: call_opaque "ctnative::Event.prototype.preventDefault.call"
 // EMIT-DAG: call_opaque "ctnative::Event.prototype.stopPropagation.call"
 // EMIT-DAG: member_call_opaque {{.*}} "type"()
@@ -50,8 +54,10 @@
 // CHECK-DAG: @timerThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout reads `this`"
 // CHECK-DAG: @timerArgs${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: setTimeout with 3 arguments - only (handler, timeout) is native"
 // CHECK-DAG: @timerParameter${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout declares 1 parameters - only a handler that takes none is native"
-// CHECK-DAG: @timerHandle${{[0-9]+}}{{.*}}ctnative.not_native = "the result of setTimeout is read"
-// CHECK-DAG: @capturesStyle${{[0-9]+}}{{.*}}ctnative.not_native = "the listener of addEventListener captures {{.*}}computed_style{{.*}} - the host keeps a copy, which only a Number, a Boolean, a String or an element shares"
+// CHECK-DAG: @clearNumber${{[0-9]+}}{{.*}}ctnative.not_native = "clearing a timer with !ctnative.num<{{.*}}>, not a handle setTimeout or setInterval made"
+// CHECK-DAG: @timerArithmetic${{[0-9]+}}{{.*}}ctnative.not_native = "binary operand is !ctnative.timer, not a number"
+// CHECK-DAG: @timerGlobal${{[0-9]+}}{{.*}}ctnative.not_native = "store to global `keptHandle` is !ctnative.timer; native global observations require a supported scalar type"
+// CHECK-DAG: @capturesStyle${{[0-9]+}}{{.*}}ctnative.not_native = "the listener of addEventListener captures {{.*}}computed_style{{.*}} - the host keeps a copy, which only a Number, a Boolean, a String, an element or a timer's handle shares"
 
 //--- emit.js
 var seen = '';
@@ -95,6 +101,19 @@ toggle();
 setTimeout(function () {
     seen = seen + 't';
 }, 0);
+function keep() {
+    var once = setTimeout(function () {
+        seen = seen + 'o';
+    }, 5);
+    var every = setInterval(function () {
+        seen = seen + 'v';
+    }, 5);
+    if (every) {
+        clearTimeout(once);
+    }
+    clearInterval(every);
+}
+keep();
 function wait(name) {
     setTimeout(function () {
         seen = seen + name;
@@ -193,18 +212,29 @@ function timerParameter() {
         seen = 'p';
     }, 0);
 }
-function timerHandle() {
+function timerArithmetic() {
     var id = setTimeout(function () {
         seen = 'h';
     }, 0);
-    return id;
+    return id + 1;
+}
+var keptHandle;
+function timerGlobal() {
+    keptHandle = setInterval(function () {
+        seen = 'k';
+    }, 5);
+}
+function clearNumber() {
+    clearTimeout(5);
 }
 later();
 timerLater();
 timerThis();
 timerArgs();
 timerParameter();
-timerHandle();
+timerArithmetic();
+timerGlobal();
+clearNumber();
 readsThis();
 takesTwo();
 storesEvent();

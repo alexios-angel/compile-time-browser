@@ -287,8 +287,12 @@ public:
     /// Whether `op` is an `addEventListener` or `setTimeout` call closure
     /// lifting specialised for its callback.
     static bool isHostCallbackCall(mlir::Operation * op);
-    /// Whether `op` is a call of the realm's own `setTimeout`.
+    /// Whether `op` is a call of the realm's own `setTimeout` or
+    /// `setInterval`.
     static bool isTimerCall(mlir::Operation * op);
+    /// Whether `op` is `clearTimeout(handle)` or `clearInterval(handle)` of
+    /// the realm's own function.
+    static bool isTimerClear(mlir::Operation * op);
     /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
     /// cannot write the globals table, so it leaves the globals typed
     /// (Inference/HostCallbacks.cpp holds the one list of such uses).

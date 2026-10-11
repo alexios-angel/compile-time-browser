@@ -93,7 +93,9 @@ enum class carrier {
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
     computedStyle,
     /// The Event a native listener receives (Runtime/Events.hpp).
-    domEvent
+    domEvent,
+    /// A timer's handle (Runtime/Timers.hpp).
+    timer
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -123,6 +125,7 @@ inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t"
 inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
 inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed_style";
 inline constexpr llvm::StringLiteral kEventType = "ctnative::js_event";
+inline constexpr llvm::StringLiteral kTimerType = "ctnative::timer_id";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
@@ -163,8 +166,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
     {carrier::domEvent, kEventType},
+    {carrier::timer, kTimerType},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::domEvent) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::timer) + 1,
               "a carrier without a row");
 static_assert(
     [] {

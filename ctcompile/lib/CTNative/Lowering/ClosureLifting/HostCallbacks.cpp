@@ -31,6 +31,13 @@ namespace {
 
 /// Whether `call` is `x.addEventListener(...)` or `x.removeEventListener(...)`
 /// (as `method` names) with the method read only for the call.
+/// The realm function a timer call names: setTimeout or setInterval.
+llvm::StringRef timerName(ctjs::CallOp call) {
+    return TypeInference::isRealmGlobal(call.getCallee().getDefiningOp(), "setInterval")
+               ? "setInterval"
+               : "setTimeout";
+}
+
 bool isListenerCall(ctjs::CallOp call, llvm::StringRef method) {
     auto read = ctjs::receiverMethod(call);
     return read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
@@ -73,7 +80,8 @@ void closureLifter::hostCallbackCensus() {
 std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosureOp c) {
     const auto & calls = hostCallbacks.find(c.getOperation())->second;
     const bool timer = TypeInference::isTimerCall(calls.front());
-    const std::string method = timer ? "setTimeout" : "EventTarget.prototype.addEventListener";
+    const std::string method =
+        timer ? timerName(calls.front()).str() : "EventTarget.prototype.addEventListener";
     // A listener may be given a capture flag; admission checks that it is a
     // Boolean, not an options object.
     for (ctjs::CallOp call : calls) {
@@ -148,7 +156,9 @@ void closureLifter::rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp ta
         }
         call.getArgsMutable().assign(arguments);
         call->setAttr(kNativeHostCallback, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()));
-        if (timer) { call->setAttr(kNativeHostTimer, mlir::UnitAttr::get(context)); }
+        if (timer) {
+            call->setAttr(kNativeHostTimer, mlir::StringAttr::get(context, timerName(call)));
+        }
         if (capture) { call->setAttr(kNativeHostCapture, mlir::UnitAttr::get(context)); }
         if (identified) { call->setAttr(kNativeHostIdentified, mlir::UnitAttr::get(context)); }
         if (remove) { call->setAttr(kNativeHostRemove, mlir::UnitAttr::get(context)); }

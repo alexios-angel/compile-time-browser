@@ -26,7 +26,7 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o);
 /// The action for a read or call on a listener's Event, and its replacement
 /// (HostCallbacks.cpp).
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
-bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
+bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind);
 
 namespace {
 
@@ -419,7 +419,9 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
-    if (kind.starts_with("event") || kind == "host_identity") { return replaceEvent(o, kind); }
+    if (kind.starts_with("event") || kind.starts_with("timer_") || kind == "host_identity") {
+        return replaceEvent(lower, o, kind);
+    }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];

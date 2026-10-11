@@ -62,8 +62,16 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
     }
     if (TypeInference::isTimerCall(call)) {
         const mlir::Value operands[] = {bound, call.getArgs().front()};
-        callWithConstValueOperands(b, where, mlir::TypeRange{},
-                                   b.getStringAttr("ctnative::setTimeout"), operands);
+        const std::string function =
+            ("ctnative::" + o->getAttrOfType<mlir::StringAttr>(kNativeHostTimer).getValue()).str();
+        if (call.getResult().use_empty()) {
+            callWithConstValueOperands(b, where, mlir::TypeRange{}, b.getStringAttr(function),
+                                       operands);
+        } else {
+            // The handle, kept to clear the timer.
+            call.getResult().replaceAllUsesWith(
+                callValue(b, where, carrierType(context, carrier::timer), function, operands));
+        }
     } else {
         // The realm's document or window by its runtime name, or the element.
         const auto host = o->getAttrOfType<mlir::StringAttr>(kNativeHostTarget);
@@ -83,6 +91,17 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
 }
 
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o) {
+    // clearTimeout(handle), with its name recorded now: by replacement time
+    // the load that names it is gone. A handle's truthiness is whether it
+    // names a timer.
+    if (TypeInference::isTimerClear(o)) {
+        auto load = llvm::cast<ctjs::CallOp>(o).getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+        return ("timer_clear:" + load.getName()).str();
+    }
+    if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(o);
+        truthy && carrierOf(lower.typeOf(truthy.getValue())) == carrier::timer) {
+        return std::string{"timer_truthy"};
+    }
     // The closure of a listener that is removed or added twice is its
     // identity.
     if (o->hasAttr(kNativeHostIdentity)) { return std::string{"host_identity"}; }
@@ -109,10 +128,26 @@ std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o) {
     return std::nullopt;
 }
 
-bool replaceEvent(mlir::Operation * o, llvm::StringRef kind) {
+bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind) {
     mlir::MLIRContext * context = o->getContext();
     mlir::OpBuilder b(o);
     const mlir::Location where = o->getLoc();
+    if (llvm::StringRef function = kind; function.consume_front("timer_clear:")) {
+        const mlir::Value operands[] = {llvm::cast<ctjs::CallOp>(o).getArgs()[0]};
+        callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                   b.getStringAttr(("ctnative::" + function).str()), operands);
+        lowering::eraseIfUnused(o);
+        return true;
+    }
+    if (kind == "timer_truthy") {
+        mlir::Value set = memberCall(b, where, b.getI1Type(), o->getOperand(0), "is_set");
+        if (isBooleanCarrier(o->getResult(0).getType())) {
+            set = lower.convertScalar(b, where, set, o->getResult(0).getType());
+        }
+        o->getResult(0).replaceAllUsesWith(set);
+        lowering::eraseIfUnused(o);
+        return true;
+    }
     // An init literal and its definitions stay until their construct, which
     // comes after them, reads and erases them.
     if (kind == "event_init_object" || kind.starts_with("event_init:")) { return true; }
