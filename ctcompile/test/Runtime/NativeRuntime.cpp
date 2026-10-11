@@ -16,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
+#include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
@@ -27,6 +28,16 @@
 namespace ctnative {
 struct identity_object {};
 } // namespace ctnative
+
+namespace {
+/// A constant table as ctcompile emits one (EmitC/StaticTables.cpp).
+struct sample_table_t : ctnative::static_table {
+    ctnative::js_num interval;
+    ctnative::js_string pause;
+};
+inline const sample_table_t sample_table{
+    {}, ctnative::js_num{5000.0}, ctnative::js_string("hover", 5)};
+} // namespace
 
 namespace {
 template <class T>
@@ -1180,6 +1191,27 @@ int main() {
         CHECK(ctnative::String.prototype.split.call(js_string{}, whitespace_run) == strings({""}));
         CHECK(ctnative::String.prototype.split.call(js_string{"\xC3\xA9"}, whitespace_run) ==
               strings({"\xC3\xA9"}));
+    }
+
+    {
+        // A table's fields read through its static, and a static the run-once
+        // function has not stored yet is undefined: reading it throws.
+        ctnative::static_table_ptr table = &sample_table;
+        const ctnative::static_table_ptr copy = table;
+        CHECK(copy == table);
+        CHECK(ctnative::table_field<&sample_table_t::interval>(table) == ctnative::js_num{5000.0});
+        CHECK(ctnative::table_field<&sample_table_t::pause>(copy) ==
+              ctnative::js_string("hover", 5));
+        CHECK(&ctnative::table_field<&sample_table_t::interval>(table) == &sample_table.interval);
+        const auto throwsTypeError = [](ctnative::static_table_ptr undefined) {
+            try {
+                (void)ctnative::table_field<&sample_table_t::interval>(undefined);
+            } catch (const std::invalid_argument & error) {
+                return std::string_view(error.what()).starts_with("TypeError");
+            }
+            return false;
+        };
+        CHECK(throwsTypeError(nullptr));
     }
 
     CHECK(unbound());
