@@ -535,6 +535,16 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
                 if (dominance_.properlyDominates(store, before)) { return true; }
             }
         }
+        // A record call's field is assigned when the callee stored it before
+        // every return of the literal it returns.
+        if (isRecordCall(value)) {
+            if (!active.insert(value).second) { return false; }
+            bool all = true;
+            value.getDefiningOp<ctjs::CallDirectOp>().getTarget().walk(
+                [&](ctjs::ReturnOp ret) { all = all && self(self, ret.getValue(), ret); });
+            active.erase(value);
+            return all;
+        }
         const auto callers = objectParameterCallSites_.find(value);
         if (callers == objectParameterCallSites_.end() || !active.insert(value).second) {
             return false;
@@ -544,7 +554,7 @@ bool TypeInference::fieldIsAssignedBefore(mlir::Value object, llvm::StringRef ke
             const mlir::Value actual = call->getOperand(index);
             // Each forwarded slot needs its own complete callable census.
             // A schema group alone proves neither origin nor initialization.
-            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() &&
+            if ((!actual.getDefiningOp<ctjs::CreateObjectOp>() && !isRecordCall(actual) &&
                  !objectParameterCallSites_.contains(actual)) ||
                 !self(self, actual, call)) {
                 return false;
