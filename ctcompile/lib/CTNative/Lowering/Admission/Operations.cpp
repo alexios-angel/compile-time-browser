@@ -1041,6 +1041,14 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                 if (!ownedTableField(set)) { return false; }
                 continue;
             }
+            // A field one of a proved set of closures (ClosureSets.cpp) is
+            // stored as that set's std::variant, whether the stored value is
+            // the set or one member's closure.
+            if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
+                (c == carrier::closure && set.getValue().getDefiningOp() &&
+                 set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
+                continue;
+            }
             if (!isScalarCarrier(c) && c != carrier::string) {
                 return refuse(("field `" + key + "` is stored a " +
                                printed(typeOf(set.getValue())) + ", not a number or a boolean")

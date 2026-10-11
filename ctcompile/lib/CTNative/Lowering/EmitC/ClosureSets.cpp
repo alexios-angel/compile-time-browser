@@ -56,41 +56,69 @@ std::string lowering::closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets
     return spelling + ">";
 }
 
-bool lowering::retypeClosureSet(mlir::Value v) {
-    // Gathered on the first value of the first function lowered, before any
-    // member's closure has been replaced.
-    if (!closureSetTargets) {
-        closureSetTargets.emplace();
+/// The std::variant carrier of `v` when it is one of a proved closure set:
+/// a member's closure, or a value (a merge, a field read, a struct field's
+/// write) whose type is a set of members. Null otherwise; a borrowed
+/// parameter that callers fill with different callbacks has a `closure_set`
+/// type too, and stays the borrowed function_ref.
+mlir::Type lowering::closureSetCarrierOf(mlir::Value v) {
+    // Gathered on the first query, from the shape census or the first value
+    // lowered, before any member's closure has been replaced. Every value of
+    // a set gets the variant of the whole set, which each member's closure
+    // names: a merge of two members has a type naming only those two, and a
+    // field holds every member any of its writes stores.
+    if (!closureSetGroups) {
+        closureSetGroups.emplace();
         module.walk([&](ctjs::CreateClosureOp c) {
-            if (auto members = c->getAttrOfType<mlir::ArrayAttr>(kNativeClosureSet)) {
-                for (auto symbol : members.getAsRange<mlir::FlatSymbolRefAttr>()) {
-                    closureSetTargets->insert(symbol.getValue());
-                }
-                // Spell the member while its closure still exists.
-                (void)closureSetMemberSpelling(borrowedTarget(c));
+            auto members = c->getAttrOfType<mlir::ArrayAttr>(kNativeClosureSet);
+            if (!members) { return; }
+            llvm::SmallVector<llvm::StringRef> names;
+            for (auto symbol : members.getAsRange<mlir::FlatSymbolRefAttr>()) {
+                names.push_back(symbol.getValue());
             }
+            (*closureSetGroups)[borrowedTarget(c)] = closureSetSpelling(names);
         });
     }
-    llvm::SmallVector<llvm::StringRef> targets;
+    std::string spelling;
     if (auto made = v.getDefiningOp<ctjs::CreateClosureOp>();
         made && made->hasAttr(kNativeClosureSet)) {
-        for (auto symbol : made->getAttrOfType<mlir::ArrayAttr>(kNativeClosureSet)
-                               .getAsRange<mlir::FlatSymbolRefAttr>()) {
-            targets.push_back(symbol.getValue());
-        }
+        spelling = closureSetGroups->lookup(borrowedTarget(made));
     } else if (auto set = llvm::dyn_cast_or_null<ClosureSetType>(typeOf(v))) {
-        // Only a set of closure-set members is this variant. A borrowed
-        // parameter that callers fill with different callbacks has a
-        // `closure_set` type too, and stays the borrowed function_ref.
         for (mlir::StringAttr target : set.getTargets()) {
-            if (!closureSetTargets->contains(target.getValue())) { return false; }
-            targets.push_back(target.getValue());
+            const auto group = closureSetGroups->find(target.getValue());
+            if (group == closureSetGroups->end() ||
+                (!spelling.empty() && spelling != group->second)) {
+                return {};
+            }
+            spelling = group->second;
         }
-    } else {
-        return false;
     }
-    v.setType(ec::OpaqueType::get(context, closureSetSpelling(targets)));
-    return true;
+    if (spelling.empty()) { return {}; }
+    return ec::OpaqueType::get(context, spelling);
+}
+
+bool lowering::retypeClosureSet(mlir::Value v) {
+    const mlir::Type set = closureSetCarrierOf(v);
+    if (set) { v.setType(set); }
+    return static_cast<bool>(set);
+}
+
+/// Declares each closure-set member's function ahead of the shape classes:
+/// a class field of a set's variant names them, and the prototypes that
+/// follow the classes come too late for it. A second prototype of the same
+/// function is valid C++.
+void lowering::declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered) {
+    if (!closureSetGroups || closureSetGroups->empty()) { return; }
+    llvm::StringSet<> members;
+    for (const auto & target : *closureSetGroups) {
+        const auto named = names.find(target.getKey());
+        members.insert(named == names.end() ? cIdentifier(target.getKey()) : named->second);
+    }
+    for (ec::FuncOp f : lowered) {
+        if (!members.contains(f.getSymName())) { continue; }
+        ec::DeclareFuncOp::create(b, f.getLoc(),
+                                  mlir::FlatSymbolRefAttr::get(context, f.getSymName()));
+    }
 }
 
 bool lowering::replaceClosureSetMember(mlir::Operation * op) {

@@ -16,9 +16,11 @@
 //   ctnative::invoke_callable(v8, 5.0);
 //
 // Closure lifting decides the structure: every value in the group is a
-// closure or an scf.if result fed only by the group's values, and every use is
-// a call through it or another such merge, so no value leaves the frame and
-// the bound copies of the captures are all any call reads. Each member lifts
+// closure, an scf.if result or a read of an object-literal field, each fed
+// only by the group's values, and every use is a call through it, another
+// such merge or a write of such a field. No value leaves the objects and
+// frames the group proves, so the bound copies of the captures are all any
+// call reads. Each member lifts
 // the way a borrowed callback does (BorrowedCallbacks.cpp) and carries the
 // same attributes, so type inference types the members and the calls, and
 // admission requires one signature for all of them. The `ctnative.closure_set`
@@ -57,46 +59,123 @@ std::array<mlir::Value, 2> sourcesOf(mlir::OpResult merge) {
 
 } // namespace
 
-/// Groups the closures whose values meet at scf.if results and are otherwise
-/// only called, and keeps the groups of two or more closures with at least
-/// one call.
+/// Groups the closures whose values meet at scf.if results or in a field of
+/// an object literal, and are otherwise only called, and keeps the groups of
+/// two or more closures with at least one call.
+///
+/// A field counts when the object is a literal of this program used only
+/// through constant keys, so every write of the field is visible: its writes
+/// are the group's values, the literal's own initialization dominates every
+/// read, and each read is one of the group's values. A call through a read
+/// with the object as its receiver passes the object only as `this`, which no
+/// member reads; rewriteClosureSetMember drops it, so the object stays a
+/// closed shape.
 void closureLifter::closureSetCensus() {
     closureSets.clear();
     llvm::DenseSet<mlir::Operation *> seen;
+    // The constant key of a property access on an object literal, or empty.
+    const auto fieldOf = [](mlir::Operation * access, mlir::Value & object) -> llvm::StringRef {
+        mlir::Value key;
+        if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(access)) {
+            object = get.getObject();
+            key = get.getKey();
+        } else if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(access)) {
+            object = set.getObject();
+            key = set.getKey();
+        } else {
+            return {};
+        }
+        if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return {}; }
+        return ctjs::constantKey(key);
+    };
     for (ctjs::CreateClosureOp start : closures) {
         if (seen.contains(start.getOperation()) || lifted.contains(start.getOperation()) ||
             isDeclarationClosure(start)) {
             continue;
         }
-        // Grow the group from both ends: forward through the merges a value
-        // feeds, backward through the values a merge is fed by.
+        // Grow the group from both ends: forward through the merges and
+        // fields a value feeds, backward through the values a merge or a
+        // field is fed by.
         closureSet group;
         llvm::SetVector<mlir::Value> values;
-        values.insert(start.getResult());
+        llvm::SetVector<std::pair<mlir::Value, llvm::StringRef>> fields;
         bool closed = true;
-        for (size_t i = 0; i < values.size() && closed; ++i) {
-            const mlir::Value v = values[i];
+        // A value of the group is a closure, a merge or a read of a field.
+        const auto add = [&](mlir::Value v) {
+            mlir::Operation * def = v ? v.getDefiningOp() : nullptr;
+            mlir::Value object;
+            if (!llvm::isa_and_nonnull<ctjs::CreateClosureOp, mlir::scf::IfOp>(def) &&
+                !(llvm::isa_and_nonnull<ctjs::GetPropertyOp>(def) &&
+                  !fieldOf(def, object).empty())) {
+                closed = false;
+                return;
+            }
+            values.insert(v);
+        };
+        add(start.getResult());
+        for (size_t i = 0, f = 0; closed && (i < values.size() || f < fields.size());) {
+            if (f < fields.size()) {
+                const auto [object, key] = fields[f++];
+                for (mlir::Operation * user : object.getUsers()) {
+                    mlir::Value on;
+                    if (fieldOf(user, on) != key || on != object) { continue; }
+                    if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
+                        add(set.getValue());
+                    } else {
+                        add(user->getResult(0));
+                    }
+                }
+                continue;
+            }
+            const mlir::Value v = values[i++];
             for (mlir::OpOperand & use : v.getUses()) {
+                mlir::Value object;
                 if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                     call && use.getOperandNumber() == 0) {
                     group.calls.insert(call);
                 } else if (const mlir::Value merged = mergedBy(use)) {
-                    values.insert(merged);
+                    add(merged);
+                } else if (llvm::isa<ctjs::SetPropertyOp>(use.getOwner()) &&
+                           use.getOperandNumber() == 2 &&
+                           !fieldOf(use.getOwner(), object).empty()) {
+                    fields.insert({object, fieldOf(use.getOwner(), object)});
                 } else {
                     closed = false;
                     break;
                 }
             }
             if (auto merge = llvm::dyn_cast<mlir::OpResult>(v);
-                merge && llvm::isa<mlir::scf::IfOp>(merge.getOwner())) {
-                for (mlir::Value source : sourcesOf(merge)) {
-                    if (!source ||
-                        (!source.getDefiningOp<ctjs::CreateClosureOp>() &&
-                         !llvm::isa_and_nonnull<mlir::scf::IfOp>(source.getDefiningOp()))) {
-                        closed = false;
-                        break;
-                    }
-                    values.insert(source);
+                closed && merge && llvm::isa<mlir::scf::IfOp>(merge.getOwner())) {
+                for (mlir::Value source : sourcesOf(merge)) { add(source); }
+            }
+        }
+        // Each field's object: used only through constant keys, or as the
+        // receiver of a call through the group; initialized by the literal
+        // before every read.
+        for (const auto & [object, key] : fields) {
+            if (!closed) { break; }
+            ctjs::SetPropertyOp initialization;
+            for (mlir::OpOperand & use : object.getUses()) {
+                mlir::Operation * user = use.getOwner();
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
+                    closed &= use.getOperandNumber() == 1 && group.calls.contains(call);
+                    continue;
+                }
+                mlir::Value on;
+                if (use.getOperandNumber() != 0 || fieldOf(user, on).empty()) {
+                    closed = false;
+                    break;
+                }
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    set && fieldOf(user, on) == key && set->hasAttr("ctjs.define_own")) {
+                    initialization = set;
+                }
+            }
+            closed &= static_cast<bool>(initialization);
+            for (mlir::Operation * user : object.getUsers()) {
+                mlir::Value on;
+                if (closed && llvm::isa<ctjs::GetPropertyOp>(user) && fieldOf(user, on) == key) {
+                    closed &= reachesInFrame(initialization.getOperation(), user);
                 }
             }
         }
@@ -107,11 +186,16 @@ void closureLifter::closureSetCensus() {
             }
         }
         if (!closed || group.members.size() < 2 || group.calls.empty()) { continue; }
+        // A member that reads its receiver is a method: `o.f = function ()
+        // { return this.x; }` keeps the method rule and its reason, which
+        // names the second write.
         bool eligible = true;
         for (ctjs::CreateClosureOp c : group.members) {
             ctjs::FuncOp target = targetOf(c);
             eligible &= target && !lifted.contains(c.getOperation()) && !isDeclarationClosure(c) &&
-                        uniqueClosureByTarget.lookup(target.getOperation()) == c;
+                        uniqueClosureByTarget.lookup(target.getOperation()) == c &&
+                        !target.getBody().empty() &&
+                        target.getBody().front().getArgument(ctjs::arg_receiver).use_empty();
         }
         if (!eligible) { continue; }
         auto shared = std::make_shared<closureSet>(std::move(group));
@@ -212,7 +296,15 @@ void closureLifter::rewriteClosureSetMember(ctjs::CreateClosureOp c, ctjs::FuncO
         callbacks.push_back(symbol);
         call->setAttr(kNativeBorrowedCall, mlir::ArrayAttr::get(context, callbacks));
         call->setAttr(kNativeClosureSet, mlir::UnitAttr::get(context));
+        // `m.fn(x)` passes `m` as `this`, which no member reads
+        // (whyNotClosureSetMember), so the call passes undefined instead and
+        // `m` keeps a closed shape.
+        if (!ctjs::isUndefinedConstant(call.getReceiver())) {
+            mlir::OpBuilder before(call);
+            call.getReceiverMutable().assign(undefinedAt(before, call.getLoc()));
+        }
     }
+    target->setAttr(kNativeClosureSet, mlir::UnitAttr::get(context));
     // No ctjs.call_direct names the member, and MLIR's DeadCodeAnalysis treats
     // a private function nothing calls as dead, so it stays public, as a
     // borrowed callback does; its parameters are typed from the closure and
