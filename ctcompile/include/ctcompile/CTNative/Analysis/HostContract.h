@@ -440,12 +440,21 @@ public:
         std::vector<ctjs::SetPropertyOp> jsonAssignments, snapshotAssignments;
     };
 
+    /// `inputFingerprint`, when given, is the hostContractFingerprint() an
+    /// earlier analysis took of the module as it arrived (fingerprint()), and
+    /// is compared with the contract instead of hashing `module` again: the
+    /// lowering's own passes annotate the module between its first analysis
+    /// and the admission-time one, and the fingerprint states which input the
+    /// contract was written for. Every other check runs on `module` as it is.
     DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                     unsigned maxSteps = 100000);
+                     unsigned maxSteps = 100000, llvm::StringRef inputFingerprint = {});
     [[nodiscard]] bool proved() const { return refusal.empty(); }
     [[nodiscard]] llvm::StringRef reason() const { return refusal; }
     [[nodiscard]] unsigned steps() const { return workSteps; }
     [[nodiscard]] bool exhausted() const { return budgetExhausted; }
+    /// The fingerprint this analysis compared with the contract; empty when it
+    /// refused before reaching that check.
+    [[nodiscard]] llvm::StringRef fingerprint() const { return moduleFingerprint; }
     [[nodiscard]] ctjs::FuncOp entry() const { return proof.entry; }
     [[nodiscard]] bool returnsUndefined() const { return proof.undefinedReturn; }
     [[nodiscard]] ctjs::FuncOp wrapper() const { return proof.wrapper; }
@@ -524,6 +533,7 @@ private:
     Evidence proof;
     unsigned workSteps = 0;
     bool budgetExhausted = false;
+    std::string moduleFingerprint;
 };
 
 /// A write to a host slot and a read that is proved to see that write.

@@ -315,7 +315,10 @@ public:
         enum class Param {
             string,
             number,
-            element
+            element,
+            /// What console.log prints (Runtime/Console.hpp): a String, a
+            /// Number, a Boolean, null or undefined, or an optional of them.
+            printable
         };
         /// What the call answers.
         enum class Result {
@@ -324,7 +327,8 @@ public:
             /// An ordinary script's elements (querySelectorAll's snapshot).
             elementVector,
             /// An ordinary script's element or null.
-            nullableElement
+            nullableElement,
+            undefined
         };
         llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
         llvm::StringLiteral member; ///< `parseInt`, `min`, `toLowerCase`.

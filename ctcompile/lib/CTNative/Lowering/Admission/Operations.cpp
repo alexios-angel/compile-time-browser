@@ -180,19 +180,26 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         using Param = TypeInference::BuiltinStatic::Param;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
             const Param kind = row.params[index];
-            const carrier wanted = kind == Param::string   ? carrier::string
-                                   : kind == Param::number ? carrier::number
-                                                           : carrier::domElement;
+            const carrier held = carrierOf(self.typeOf(argument));
+            // The carriers Runtime/Console.hpp's console_detail::append takes.
+            const bool printable = held == carrier::string || held == carrier::number ||
+                                   held == carrier::boolean || held == carrier::nullable ||
+                                   held == carrier::nullableString;
             // An element that may be null is passed through present_element,
             // which throws the VM's TypeError for null as the call would.
-            const bool nullable = kind == Param::element &&
-                                  carrierOf(self.typeOf(argument)) == carrier::nullableElement;
-            if (carrierOf(self.typeOf(argument)) != wanted && !nullable) {
+            const bool nullable = kind == Param::element && held == carrier::nullableElement;
+            const bool fits = kind == Param::string    ? held == carrier::string
+                              : kind == Param::number  ? held == carrier::number
+                              : kind == Param::element ? held == carrier::domElement
+                                                       : printable;
+            if (!fits && !nullable) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
-                                   (kind == Param::string   ? "a String"
-                                    : kind == Param::number ? "a Number"
-                                                            : "an Element"));
+                                   (kind == Param::string    ? "a String"
+                                    : kind == Param::number  ? "a Number"
+                                    : kind == Param::element ? "an Element"
+                                                             : "a String, Number, Boolean, null "
+                                                               "or undefined"));
             }
         }
         return true;
