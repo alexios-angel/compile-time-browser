@@ -31,6 +31,9 @@
 // EMIT-DAG: call_opaque "ctnative::Event"
 // EMIT-DAG: call_opaque "ctnative::event_init"
 // EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.dispatchEvent.call"
+// EMIT-DAG: call_opaque "ctnative::new_callable_identity"
+// EMIT-DAG: call_opaque "ctnative::identified_listener"
+// EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.removeEventListener.call"
 
 // CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener captures binding 0, which is written after it is captured - the host keeps the listener, so it takes its captures by value"
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener reads `this`"
@@ -80,6 +83,15 @@ function fire() {
     seen = seen + (made.defaultPrevented ? '!' : '') + (heard ? 'h' : '');
 }
 fire();
+function toggle() {
+    var root = document.documentElement;
+    var listener = function (event) {
+        seen = seen + event.type;
+    };
+    root.addEventListener('click', listener, true);
+    root.removeEventListener('click', listener, true);
+}
+toggle();
 setTimeout(function () {
     seen = seen + 't';
 }, 0);

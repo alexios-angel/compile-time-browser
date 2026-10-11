@@ -27,40 +27,64 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+namespace {
+
+/// Whether `call` is `x.addEventListener(...)` or `x.removeEventListener(...)`
+/// (as `method` names) with the method read only for the call.
+bool isListenerCall(ctjs::CallOp call, llvm::StringRef method) {
+    auto read = ctjs::receiverMethod(call);
+    return read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
+           ctjs::methodKey(call) == method;
+}
+
+} // namespace
+
 void closureLifter::hostCallbackCensus() {
     hostCallbacks.clear();
     for (ctjs::CreateClosureOp c : closures) {
-        if (!c.getResult().hasOneUse()) { continue; }
-        mlir::OpOperand & use = *c.getResult().getUses().begin();
-        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
-        if (!call) { continue; }
+        if (c.getResult().use_empty()) { continue; }
         // Operands are the callee, the receiver and the arguments; a timer's
         // handler is the first argument, a listener the second.
-        if (use.getOperandNumber() == 2 && TypeInference::isTimerCall(call)) {
-            hostCallbacks[c.getOperation()] = call;
+        if (mlir::OpOperand & first = *c.getResult().getUses().begin();
+            c.getResult().hasOneUse() && first.getOperandNumber() == 2) {
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(first.getOwner());
+                call && TypeInference::isTimerCall(call)) {
+                hostCallbacks[c.getOperation()].push_back(call);
+            }
             continue;
         }
-        if (use.getOperandNumber() != 3) { continue; }
-        auto read = ctjs::receiverMethod(call);
-        if (!read || read.getObject() != call.getReceiver() || !read.getResult().hasOneUse() ||
-            ctjs::methodKey(call) != "addEventListener") {
-            continue;
+        llvm::SmallVector<ctjs::CallOp, 1> calls;
+        bool adds = false;
+        bool all = true;
+        for (mlir::OpOperand & use : c.getResult().getUses()) {
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            const bool add = call && isListenerCall(call, "addEventListener");
+            all = all && use.getOperandNumber() == 3 &&
+                  (add || (call && isListenerCall(call, "removeEventListener"))) &&
+                  !llvm::is_contained(calls, call);
+            if (!all) { break; }
+            adds = adds || add;
+            calls.push_back(call);
         }
-        hostCallbacks[c.getOperation()] = call;
+        if (all && adds) { hostCallbacks[c.getOperation()] = std::move(calls); }
     }
 }
 
 std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosureOp c) {
-    ctjs::CallOp call = hostCallbacks.lookup(c.getOperation());
-    const bool timer = TypeInference::isTimerCall(call);
+    const auto & calls = hostCallbacks.find(c.getOperation())->second;
+    const bool timer = TypeInference::isTimerCall(calls.front());
     const std::string method = timer ? "setTimeout" : "EventTarget.prototype.addEventListener";
     // A listener may be given a capture flag; admission checks that it is a
     // Boolean, not an options object.
-    if (call.getArgs().size() != 2 && (timer || call.getArgs().size() != 3)) {
-        return timer ? method + " with " + std::to_string(call.getArgs().size()) +
-                           " arguments - only (handler, timeout) is native"
-                     : method + " with " + std::to_string(call.getArgs().size()) +
-                           " arguments - only (type, listener, capture) is native";
+    for (ctjs::CallOp call : calls) {
+        if (call.getArgs().size() != 2 && (timer || call.getArgs().size() != 3)) {
+            const std::string name =
+                timer ? method : "EventTarget.prototype." + ctjs::methodKey(call).str();
+            return timer ? name + " with " + std::to_string(call.getArgs().size()) +
+                               " arguments - only (handler, timeout) is native"
+                         : name + " with " + std::to_string(call.getArgs().size()) +
+                               " arguments - only (type, listener, capture) is native";
+        }
     }
     if (auto why = whyTargetIsNotLiftable(c)) { return why; }
     ctjs::FuncOp target = targetOf(c);
@@ -90,36 +114,51 @@ std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosure
         }
     }
     if (auto why = whyCapturesDoNotLift(c)) { return why; }
-    return whyLiftTailFails(c, target, std::array<mlir::Operation *, 1>{call.getOperation()});
+    llvm::SmallVector<mlir::Operation *> sites;
+    for (ctjs::CallOp call : calls) { sites.push_back(call.getOperation()); }
+    return whyLiftTailFails(c, target, sites);
 }
 
 void closureLifter::rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target,
                                         liftReport & out) {
-    ctjs::CallOp call = hostCallbacks.lookup(c.getOperation());
-    // The call passes the event type or the delay, then the captured values,
-    // then a listener's capture flag.
-    const bool timer = TypeInference::isTimerCall(call);
-    const bool capture = !timer && call.getArgs().size() == 3;
-    llvm::SmallVector<mlir::Value> arguments{call.getArgs()[timer ? 1 : 0]};
-    llvm::append_range(arguments, liftedCaptures(c));
-    const auto captured = static_cast<unsigned>(arguments.size() - 1);
-    if (capture) { arguments.push_back(call.getArgs()[2]); }
-    // The receiver's name, for the realm's own document and window.
-    for (const llvm::StringRef name : {"document", "window"}) {
-        if (!timer && TypeInference::isRealmGlobal(call.getReceiver().getDefiningOp(), name)) {
-            call->setAttr(kNativeHostTarget, mlir::StringAttr::get(context, name));
+    const auto & calls = hostCallbacks.find(c.getOperation())->second;
+    // A listener that is removed, or added twice, needs the identity of its
+    // closure creation: the closure value itself stays, and becomes that
+    // identity in the lowering.
+    const bool identified = calls.size() > 1 || llvm::any_of(calls, [](ctjs::CallOp call) {
+                                return isListenerCall(call, "removeEventListener");
+                            });
+    if (identified) { c->setAttr(kNativeHostIdentity, mlir::UnitAttr::get(context)); }
+    const llvm::SmallVector<mlir::Value> captures = liftedCaptures(c);
+    for (ctjs::CallOp call : calls) {
+        // The call passes the event type or the delay, the identity, the
+        // captured values (none to a removal), then a listener's capture flag.
+        const bool timer = TypeInference::isTimerCall(call);
+        const bool remove = isListenerCall(call, "removeEventListener");
+        const bool capture = !timer && call.getArgs().size() == 3;
+        llvm::SmallVector<mlir::Value> arguments{call.getArgs()[timer ? 1 : 0]};
+        if (identified) { arguments.push_back(c.getResult()); }
+        if (!remove) { llvm::append_range(arguments, captures); }
+        if (capture) { arguments.push_back(call.getArgs()[2]); }
+        // The receiver's name, for the realm's own document and window.
+        for (const llvm::StringRef name : {"document", "window"}) {
+            if (!timer && TypeInference::isRealmGlobal(call.getReceiver().getDefiningOp(), name)) {
+                call->setAttr(kNativeHostTarget, mlir::StringAttr::get(context, name));
+            }
         }
+        call.getArgsMutable().assign(arguments);
+        call->setAttr(kNativeHostCallback, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()));
+        if (timer) { call->setAttr(kNativeHostTimer, mlir::UnitAttr::get(context)); }
+        if (capture) { call->setAttr(kNativeHostCapture, mlir::UnitAttr::get(context)); }
+        if (identified) { call->setAttr(kNativeHostIdentified, mlir::UnitAttr::get(context)); }
+        if (remove) { call->setAttr(kNativeHostRemove, mlir::UnitAttr::get(context)); }
+        ++out.calls;
     }
-    call.getArgsMutable().assign(arguments);
-    call->setAttr(kNativeHostCallback, mlir::FlatSymbolRefAttr::get(target.getSymNameAttr()));
-    if (timer) { call->setAttr(kNativeHostTimer, mlir::UnitAttr::get(context)); }
-    if (capture) { call->setAttr(kNativeHostCapture, mlir::UnitAttr::get(context)); }
     target->setAttr(kNativeHostCallback, mlir::UnitAttr::get(context));
     // Public for the reason rewriteArrayCallback gives: no ctjs.call_direct
     // names the callback, and type inference must still visit its body.
     mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Public);
-    markLifted(c, out, captured);
-    ++out.calls;
+    markLifted(c, out, static_cast<unsigned>(captures.size()));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

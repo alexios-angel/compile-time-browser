@@ -419,7 +419,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
-    if (kind.starts_with("event")) { return replaceEvent(o, kind); }
+    if (kind.starts_with("event") || kind == "host_identity") { return replaceEvent(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];

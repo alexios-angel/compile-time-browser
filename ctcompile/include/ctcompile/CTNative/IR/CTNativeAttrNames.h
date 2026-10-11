@@ -76,6 +76,16 @@ inline constexpr llvm::StringLiteral kNativeHostTarget = "ctnative.host_target";
 /// On a specialised `addEventListener` call that passes a capture flag: the
 /// flag is its last argument, after the captures.
 inline constexpr llvm::StringLiteral kNativeHostCapture = "ctnative.host_capture";
+/// On the `ctjs.create_closure` of a listener that is also passed to
+/// removeEventListener, or added more than once: the lowering makes it the
+/// closure's callable_identity (Runtime/Handlers.hpp), and each of its
+/// specialised calls (marked ctnative.host_identified) passes that value as
+/// its second argument, before the captures.
+inline constexpr llvm::StringLiteral kNativeHostIdentity = "ctnative.host_identity";
+inline constexpr llvm::StringLiteral kNativeHostIdentified = "ctnative.host_identified";
+/// On a specialised `removeEventListener` call: its arguments are the type,
+/// the listener's identity and the capture flag, with no captures.
+inline constexpr llvm::StringLiteral kNativeHostRemove = "ctnative.host_remove";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

@@ -28,6 +28,9 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeHostTimer);
         op->removeAttr(kNativeHostTarget);
         op->removeAttr(kNativeHostCapture);
+        op->removeAttr(kNativeHostIdentity);
+        op->removeAttr(kNativeHostIdentified);
+        op->removeAttr(kNativeHostRemove);
         op->removeAttr(kNativeBorrowedCallback);
         op->removeAttr(kNativeBorrowedCall);
     });

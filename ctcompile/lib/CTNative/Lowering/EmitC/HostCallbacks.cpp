@@ -40,14 +40,25 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
     const std::string listener = named == lower.names.end() ? cIdentifier(symbol) : named->second;
     const auto any = ec::OpaqueType::get(context, "auto");
     mlir::Value bound = ec::LiteralOp::create(b, where, any, listener);
-    // The captures, without a listener's capture flag.
+    // The captures, without a listener's identity and capture flag.
     auto captures = call.getArgs().drop_front();
+    const bool identified = o->hasAttr(kNativeHostIdentified);
+    const bool removal = o->hasAttr(kNativeHostRemove);
     const bool flagged = o->hasAttr(kNativeHostCapture);
+    if (identified) { captures = captures.drop_front(); }
     if (flagged) { captures = captures.drop_back(); }
     if (!captures.empty()) {
         llvm::SmallVector<mlir::Value> captured{bound};
         llvm::append_range(captured, captures);
         bound = callValue(b, where, any, "std::bind_front", captured);
+    }
+    // A removal names the listener by its identity; an addition of a listener
+    // that has one carries it.
+    if (removal) {
+        bound = call.getArgs()[1];
+    } else if (identified) {
+        const mlir::Value made[] = {call.getArgs()[1], bound};
+        bound = callValue(b, where, any, "ctnative::identified_listener", made);
     }
     if (TypeInference::isTimerCall(call)) {
         const mlir::Value operands[] = {bound, call.getArgs().front()};
@@ -63,13 +74,18 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
         if (flagged) { operands.push_back(call.getArgs().back()); }
         callWithConstValueOperands(
             b, where, mlir::TypeRange{},
-            b.getStringAttr("ctnative::EventTarget.prototype.addEventListener.call"), operands);
+            b.getStringAttr(removal ? "ctnative::EventTarget.prototype.removeEventListener.call"
+                                    : "ctnative::EventTarget.prototype.addEventListener.call"),
+            operands);
     }
     lowering::eraseIfUnused(o);
     return true;
 }
 
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o) {
+    // The closure of a listener that is removed or added twice is its
+    // identity.
+    if (o->hasAttr(kNativeHostIdentity)) { return std::string{"host_identity"}; }
     const auto event = [&](mlir::Value v) {
         return carrierOf(lower.typeOf(v)) == carrier::domEvent;
     };
@@ -100,6 +116,13 @@ bool replaceEvent(mlir::Operation * o, llvm::StringRef kind) {
     // An init literal and its definitions stay until their construct, which
     // comes after them, reads and erases them.
     if (kind == "event_init_object" || kind.starts_with("event_init:")) { return true; }
+    if (kind == "host_identity") {
+        o->getResult(0).replaceAllUsesWith(
+            callValue(b, where, ec::OpaqueType::get(context, "ctnative::callable_identity"),
+                      "ctnative::new_callable_identity", mlir::ValueRange{}));
+        lowering::eraseIfUnused(o);
+        return true;
+    }
     if (kind == "event_new") {
         auto construct = llvm::cast<ctjs::ConstructOp>(o);
         const auto boolean = carrierType(context, carrier::boolean);

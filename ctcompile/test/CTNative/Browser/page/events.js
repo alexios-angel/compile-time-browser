@@ -8,6 +8,7 @@ var order = '';
 var seen = '';
 var phases = '';
 var notes = '';
+var counted = '';
 
 // A listener with no captures, on the root element.
 document.documentElement.addEventListener('click', function () {
@@ -76,6 +77,25 @@ function announce() {
 }
 announce();
 
+// Listeners named by a variable, so the same function reaches addEventListener
+// twice (the second is ignored) and removeEventListener once: removal matches
+// the capture flag, so the capturing registration of `g` stays.
+function wire(mark) {
+    var root = document.documentElement;
+    var h = function () {
+        counted = counted + mark;
+    };
+    var g = function () {
+        counted = counted + 'g';
+    };
+    root.addEventListener('click', h);
+    root.addEventListener('click', h);
+    root.addEventListener('click', g);
+    root.addEventListener('click', g, true);
+    root.removeEventListener('click', g);
+}
+wire('h');
+
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted;
 }

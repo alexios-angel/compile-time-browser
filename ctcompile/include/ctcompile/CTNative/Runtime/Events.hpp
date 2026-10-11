@@ -18,6 +18,7 @@
 #endif
 
 #include "Browser.hpp"
+#include "Handlers.hpp"
 
 #include <ctbrowser/shell/listener_registry.hpp>
 
@@ -31,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -147,13 +149,28 @@ inline constexpr event_constructor Event{};
 /// The event listeners a native program registered, per document. One table
 /// per program (event_listeners::program()), as a program is one realm.
 ///
-/// Each listener is a std::move_only_function the table owns through a
-/// unique_ptr, so the callable stays at one address while it runs even if it
-/// registers another listener. Nothing removes a listener yet, since
-/// removeEventListener is not native: a listener lives until forget() or the
-/// end of the program.
+/// Each listener is a std::move_only_function the table holds through a
+/// shared_ptr: the dispatch holds it too while it runs, so the callable stays
+/// at one address and alive even if it registers another listener or removes
+/// itself. A listener lives until removeEventListener, forget() or the end of
+/// the program.
+///
+/// A registration's callback id is the closure's callable_identity
+/// (Handlers.hpp) when generated code passes an identified_callable, so adding
+/// the same function twice is ignored and removeEventListener finds it (DOM
+/// §2.7.3 step 4 and §2.7.7). A callback without one gets an id no identity
+/// can equal: nothing can name it again.
 class event_listeners {
 public:
+    /// Where a listener is registered: a document, a target in it, and the
+    /// element that is currentTarget there (none for the document and the
+    /// window).
+    struct site {
+        const ctbrowser::document * document;
+        ctbrowser::shell::listener_target target;
+        std::optional<js_element_t> current_target;
+    };
+
     /// A listener as the table calls it, with the event being dispatched.
     using listener = std::move_only_function<void(const js_event &)>;
 
@@ -173,21 +190,31 @@ public:
         return table;
     }
 
-    /// EventTarget.addEventListener(type, callback, capture) (DOM §2.7) on an
-    /// element, not once and not passive. Each call adds a new listener, since
-    /// every native callback is a fresh function object (the lowering admits
-    /// only a closure created for this call), so the duplicate check of step 4
-    /// never matches.
-    void add(const js_element_t & target, std::string type, listener callback, bool capture) {
-        const ctbrowser::element_ref element = target.value();
-        add(*element.owner, {ctbrowser::shell::event_target_kind::node, element.id.key()}, target,
-            std::move(type), std::move(callback), capture);
+    /// EventTarget.addEventListener(type, callback, capture) (DOM §2.7.3), not
+    /// once and not passive. `identity` is the callback's, when it has one;
+    /// an equal registration (same site, type, capture and identity) is
+    /// ignored.
+    void add(site at, std::string type, listener callback, bool capture,
+             std::optional<callable_identity> identity = std::nullopt) {
+        per_document & listeners = documents_[at.document];
+        ctbrowser::shell::listener_registry<registration>::entry made;
+        made.target = at.target;
+        made.type = std::move(type);
+        made.callback_id = identity ? identity->value : anonymous | ++listeners.next_callback;
+        made.capture = capture;
+        made.payload = registration{std::move(at.current_target),
+                                    std::make_shared<listener>(std::move(callback))};
+        (void)listeners.registry.add(std::move(made));
     }
-    /// The same on `document`'s Document node or its window, which are past
-    /// the document element on every element's propagation path.
-    void add(const ctbrowser::document & document, ctbrowser::shell::event_target_kind kind,
-             std::string type, listener callback, bool capture) {
-        add(document, {kind, 0}, std::nullopt, std::move(type), std::move(callback), capture);
+
+    /// EventTarget.removeEventListener(type, callback, capture) (DOM §2.7.7):
+    /// drops the registration with that site, type, capture flag and callback
+    /// identity, if there is one. A dispatch in progress skips it from then
+    /// on.
+    void remove(const site & at, std::string_view type, callable_identity identity, bool capture) {
+        const auto found = documents_.find(at.document);
+        if (found == documents_.end()) { return; }
+        found->second.registry.remove(at.target, type, identity.value, capture);
     }
 
     /// Dispatches an event of `type` at `target` (DOM §2.9), as the host does
@@ -254,11 +281,12 @@ public:
                 const auto * entry = listeners.registry.begin(at, type, id, capture);
                 if (entry == nullptr) { continue; }
                 shared.current_target = entry->payload.current_target;
-                // The payload's address survives the listener adding another.
-                listener & callback = *entry->payload.callback;
+                // Held for the call: the listener may add another, which moves
+                // the registry's rows, or remove itself, which drops its row.
+                const std::shared_ptr<listener> callback = entry->payload.callback;
                 ++ran;
                 try {
-                    callback(event);
+                    (*callback)(event);
                 } catch (const std::exception & thrown) { reported_.emplace_back(thrown.what()); }
             }
             return !shared.stop_propagation;
@@ -288,69 +316,86 @@ private:
     /// the listener.
     struct registration {
         std::optional<js_element_t> current_target;
-        std::unique_ptr<listener> callback;
+        std::shared_ptr<listener> callback;
     };
     struct per_document {
         ctbrowser::shell::listener_registry<registration> registry;
         std::uint64_t next_callback = 0;
     };
+    /// The top bit marks a callback with no identity; identities count up
+    /// from 1 and never reach it.
+    static constexpr std::uint64_t anonymous = std::uint64_t{1} << 63;
     std::unordered_map<const ctbrowser::document *, per_document> documents_;
     std::vector<std::string> reported_;
-
-    void add(const ctbrowser::document & document, ctbrowser::shell::listener_target target,
-             std::optional<js_element_t> current_target, std::string type, listener callback,
-             bool capture) {
-        per_document & listeners = documents_[&document];
-        ctbrowser::shell::listener_registry<registration>::entry made;
-        made.target = target;
-        made.type = std::move(type);
-        made.callback_id = ++listeners.next_callback;
-        made.capture = capture;
-        made.payload = registration{std::move(current_target),
-                                    std::make_unique<listener>(std::move(callback))};
-        (void)listeners.registry.add(std::move(made));
-    }
 };
 
-/// EventTarget.prototype.addEventListener (DOM §2.7), as generated code spells
-/// it: `ctnative::EventTarget.prototype.addEventListener.call(el, type, f)`,
-/// with `ctnative::document` or `ctnative::window` for `el` on those targets,
-/// and an optional fourth argument, the capture flag. `f` takes the event or
-/// declares no parameter.
-struct add_event_listener_method {
-    template <class F>
-    requires std::invocable<F &, const js_event &> || std::invocable<F &>
-    undefined_t call(const js_element_t & target, const js_string & type, F && callback,
-                     js_boolean_t capture = js_boolean_t{}) const {
-        event_listeners::program().add(target, std::string{type.value()},
-                                       event_listeners::wrap(std::forward<F>(callback)),
-                                       static_cast<bool>(capture));
-        return {};
+/// The listener `callback` that the closure creation `identity` made, for an
+/// addEventListener whose function is also passed to removeEventListener.
+template <class F>
+identified_callable<std::decay_t<F>> identified_listener(callable_identity identity,
+                                                         F && callback) {
+    return {identity, std::forward<F>(callback)};
+}
+
+/// Where generated code's EventTarget calls register: an element, or
+/// ctnative::document or ctnative::window.
+struct listener_sites {
+    static event_listeners::site of(const js_element_t & target) {
+        const ctbrowser::element_ref element = target.value();
+        return {
+            element.owner, {ctbrowser::shell::event_target_kind::node, element.id.key()}, target};
     }
-    template <class F>
-    requires std::invocable<F &, const js_event &> || std::invocable<F &>
-    undefined_t call(const document_object &, const js_string & type, F && callback,
-                     js_boolean_t capture = js_boolean_t{}) const {
-        event_listeners::program().add(
-            page_document(), ctbrowser::shell::event_target_kind::document,
-            std::string{type.value()}, event_listeners::wrap(std::forward<F>(callback)),
-            static_cast<bool>(capture));
-        return {};
+    static event_listeners::site of(const document_object &) {
+        return {page_document(), {ctbrowser::shell::event_target_kind::document, 0}, std::nullopt};
     }
-    template <class F>
-    requires std::invocable<F &, const js_event &> || std::invocable<F &>
-    undefined_t call(const window_object &, const js_string & type, F && callback,
-                     js_boolean_t capture = js_boolean_t{}) const {
-        event_listeners::program().add(
-            page_document(), ctbrowser::shell::event_target_kind::window, std::string{type.value()},
-            event_listeners::wrap(std::forward<F>(callback)), static_cast<bool>(capture));
-        return {};
+    static event_listeners::site of(const window_object &) {
+        return {page_document(), {ctbrowser::shell::event_target_kind::window, 0}, std::nullopt};
     }
 
 private:
     /// The document of the active document scope, through its element.
-    static const ctbrowser::document & page_document() {
-        return *require_document_element().value().owner;
+    static const ctbrowser::document * page_document() {
+        return require_document_element().value().owner;
+    }
+};
+
+template <class T>
+concept event_target_value = requires(const T & target) { listener_sites::of(target); };
+
+template <class F> inline constexpr bool is_identified_v = false;
+template <class F> inline constexpr bool is_identified_v<identified_callable<F>> = true;
+
+/// EventTarget.prototype.addEventListener (DOM §2.7.3), as generated code
+/// spells it: `ctnative::EventTarget.prototype.addEventListener.call(el, type,
+/// f)`, with `ctnative::document` or `ctnative::window` for `el` on those
+/// targets, and an optional fourth argument, the capture flag. `f` takes the
+/// event or declares no parameter; an identified_callable registers under its
+/// identity.
+struct add_event_listener_method {
+    template <event_target_value T, class F>
+    requires std::invocable<F &, const js_event &> || std::invocable<F &>
+    undefined_t call(const T & target, const js_string & type, F && callback,
+                     js_boolean_t capture = js_boolean_t{}) const {
+        std::optional<callable_identity> identity;
+        if constexpr (is_identified_v<std::remove_cvref_t<F>>) { identity = callback.identity; }
+        event_listeners::program().add(listener_sites::of(target), std::string{type.value()},
+                                       event_listeners::wrap(std::forward<F>(callback)),
+                                       static_cast<bool>(capture), identity);
+        return {};
+    }
+};
+
+/// EventTarget.prototype.removeEventListener (DOM §2.7.7), as generated code
+/// spells it: `ctnative::EventTarget.prototype.removeEventListener.call(el,
+/// type, identity)`, with the identity of the closure creation that made the
+/// function, and an optional capture flag.
+struct remove_event_listener_method {
+    template <event_target_value T>
+    undefined_t call(const T & target, const js_string & type, callable_identity identity,
+                     js_boolean_t capture = js_boolean_t{}) const {
+        event_listeners::program().remove(listener_sites::of(target), type.value(), identity,
+                                          static_cast<bool>(capture));
+        return {};
     }
 };
 
@@ -366,6 +411,7 @@ struct dispatch_event_method {
 
 struct event_target_prototype {
     add_event_listener_method addEventListener;
+    remove_event_listener_method removeEventListener;
     dispatch_event_method dispatchEvent;
 };
 struct event_target_constructor {

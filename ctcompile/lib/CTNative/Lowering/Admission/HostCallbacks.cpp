@@ -23,7 +23,9 @@ namespace ctcompile::ctnative::lowering_detail {
 
 bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
     const bool timer = TypeInference::isTimerCall(call);
-    const llvm::StringRef method = timer ? "setTimeout" : "addEventListener";
+    const llvm::StringRef method = timer                              ? "setTimeout"
+                                   : call->hasAttr(kNativeHostRemove) ? "removeEventListener"
+                                                                      : "addEventListener";
     // ponytail: nothing reads a timer's handle until clearTimeout is native.
     if (!call.getResult().use_empty()) {
         return self.refuse("the result of " + method.str() + " is read");
@@ -39,19 +41,21 @@ bool hostCallbackOperation(admission & self, ctjs::CallOp call) {
         // element.
         if (!call->hasAttr(kNativeHostTarget) &&
             carrierOf(self.typeOf(call.getReceiver())) != carrier::domElement) {
-            return self.refuse("addEventListener on " + printed(self.typeOf(call.getReceiver())) +
+            return self.refuse(method.str() + " on " + printed(self.typeOf(call.getReceiver())) +
                                ", not a proved page element, document or window");
         }
         if (carrierOf(self.typeOf(first)) != carrier::string) {
-            return self.refuse("addEventListener with an event type of " +
+            return self.refuse(method.str() + " with an event type of " +
                                printed(self.typeOf(first)) + ", not a String");
         }
     }
     auto captures = call.getArgs().drop_front();
+    // The listener's identity, which the lowering makes from its closure.
+    if (call->hasAttr(kNativeHostIdentified)) { captures = captures.drop_front(); }
     if (call->hasAttr(kNativeHostCapture)) {
         const mlir::Value flag = captures.back();
         if (carrierOf(self.typeOf(flag)) != carrier::boolean) {
-            return self.refuse("addEventListener with options of " + printed(self.typeOf(flag)) +
+            return self.refuse(method.str() + " with options of " + printed(self.typeOf(flag)) +
                                " - only a Boolean capture flag is native");
         }
         captures = captures.drop_back();
