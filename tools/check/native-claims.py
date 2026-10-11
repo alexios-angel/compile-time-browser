@@ -136,10 +136,15 @@ _LIFT_REPORT = re.compile(r"ctnative: lifted \d+ closure\(s\).*?rewrote (\d+) ca
 # `ctnative.reachability_summary = {removed = N : i64, ...}`: how many imported
 # functions the default reachability pruning removed.
 _REACHABILITY = re.compile(r"ctnative\.reachability_summary = \{removed = (\d+) : i64,")
+# `ctnative.reachability_pruned = ["f$1", ...]`: the names of those functions.
+_PRUNED_NAMES = re.compile(r"ctnative\.reachability_pruned = \[([^\]]*)\]")
+_STRING = re.compile(r'"((?:[^"\\]|\\.)*)"')
 # `ctnative.unreachable_refusals = [{function = "f$3", reason = "removed:
 # unreachable (...)"}]`: the refused functions the lowering removed after
 # admission, one row each.
-_UNREACHABLE = re.compile(r'\{function = "(?:[^"\\]|\\.)*", reason = "removed: unreachable ')
+_UNREACHABLE = re.compile(
+    r'\{function = "((?:[^"\\]|\\.)*)", reason = "(removed: unreachable (?:[^"\\]|\\.)*)"'
+)
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
 # the per-name verdict the pass writes on the module. Grouping the reasons
 # shows why globals failed to resolve, the same way `ctnative.not_native`
@@ -250,7 +255,10 @@ def run(argv: argparse.Namespace) -> dict:
     if argv.mutate_drop_one_reason:
         module = re.sub(r', ctnative\.not_native = "(?:[^"\\]|\\.)*"', "", module, count=1)
     claimed = len(_EMITC_FUNC.findall(module))
-    removed = len(_UNREACHABLE.findall(module))
+    pruned_names = _PRUNED_NAMES.search(module)
+    pruned_names = _STRING.findall(pruned_names.group(1)) if pruned_names else []
+    removed_rows = _UNREACHABLE.findall(module)
+    removed = len(removed_rows)
     left = len(_CTJS_FUNC.findall(module))
     reasons = [m.group(1) for m in _REFUSAL.finditer(module)]
     skipped = [
@@ -302,6 +310,8 @@ def run(argv: argparse.Namespace) -> dict:
         "skipped": len(skipped),
         "pruned": pruned,
         "removed": removed,
+        "pruned_names": pruned_names,
+        "removed_rows": [list(row) for row in removed_rows],
         "optimization_defaults": not argv.no_default_optimizations,
         "claimed_percent": round(100.0 * claimed / total, 2),
         "refusals": by_reason.most_common(),

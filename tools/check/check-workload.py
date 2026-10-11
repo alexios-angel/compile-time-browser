@@ -389,21 +389,28 @@ def admission(ctx, name):
         summary = (
             f"{claim['claimed']} of {claim['total']} functions native "
             f"({claim['claimed_percent']}%), {claim['refused']} refused, "
-            f"{claim['skipped']} never imported, "
-            f"{claim['pruned'] + claim.get('removed', 0)} removed as unreachable"
+            f"{claim['skipped']} never imported, {claim['pruned']} pruned, "
+            f"{claim.get('removed', 0)} removed as unreachable"
         )
         # A function removed as unreachable is not native: it cannot run, so
-        # it counts toward the total without being claimed, and it is listed
-        # here rather than folded into the native count.
-        unreachable = claim["pruned"] + claim.get("removed", 0)
+        # it counts toward the total without being claimed, and each one is
+        # listed by name, on a pass too, rather than folded into the native
+        # count.
+        unreachable = [
+            f"pruned {function}: unreachable before admission"
+            for function in claim.get("pruned_names", [])
+        ]
+        unreachable += [
+            f"removed {function}: {reason}" for function, reason in claim.get("removed_rows", [])
+        ]
         if (
-            claim["claimed"] + unreachable == claim["total"]
+            claim["claimed"] + claim["pruned"] + claim.get("removed", 0) == claim["total"]
             and not claim["refused"]
             and not claim["skipped"]
         ):
-            ctx.add(name, item, "PASS", summary, metrics=metrics)
+            ctx.add(name, item, "PASS", summary, unreachable, metrics)
             return
-        details = ["most common refusal reasons (count, reason):"]
+        details = [*unreachable, "most common refusal reasons (count, reason):"]
         details += [f"  {count:6d}  {reason}" for reason, count in claim["refusals"][:8]]
         details += [
             f"  {count:6d}  [not imported] {reason}" for reason, count in claim["skips"][:4]
