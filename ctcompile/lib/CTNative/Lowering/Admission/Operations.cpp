@@ -268,7 +268,7 @@ bool admission::op(mlir::Operation * o) {
         return refuse("array destructuring of " + printed(typeOf(read.getObject())) +
                       ", not a tuple or an array this tier holds");
     }
-    if (auto why = o->getAttrOfType<mlir::StringAttr>(kDestructureRefusal)) {
+    if (auto why = o->getAttrOfType<mlir::StringAttr>(kIterationRefusal)) {
         return refuse(why.str());
     }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }

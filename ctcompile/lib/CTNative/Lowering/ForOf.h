@@ -15,6 +15,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace ctcompile::ctnative {
@@ -28,10 +30,10 @@ inline constexpr llvm::StringLiteral kForOfArray = "ctnative.for_of_array";
 /// tier holds.
 inline constexpr llvm::StringLiteral kDestructureArray = "ctnative.destructure_array";
 
-/// The attribute on an `__ctbrowser_iter_open` call foldArrayForOf did not
-/// fold, and on the load of its helper, holding why; admission refuses the
-/// function with it.
-inline constexpr llvm::StringLiteral kDestructureRefusal = "ctnative.destructure_refusal";
+/// The attribute on an `__ctbrowser_for_of_open` or `__ctbrowser_iter_open`
+/// call foldArrayForOf did not fold, and on the load of its helper, holding
+/// why; admission refuses the function with it.
+inline constexpr llvm::StringLiteral kIterationRefusal = "ctnative.iteration_refusal";
 
 /// Each function foldArrayForOf rewrote, with its body as it was.
 using ForOfOriginals =
@@ -48,10 +50,23 @@ using ForOfOriginals =
 /// `__ctbrowser_iter_open` stepped once per binding and closed) into `row[0]`,
 /// `row[1]`, ...: the array iterator yields the elements in order and its
 /// close does nothing. Those reads carry kDestructureArray. A default, a rest
-/// element or a nested pattern keeps the helpers, with kDestructureRefusal.
+/// element or a nested pattern keeps the helpers, with kIterationRefusal.
+///
+/// Both folds take the realm's Array iteration to be the original, so they
+/// run only when arrayIterationUnproved finds nothing; otherwise every open
+/// keeps its helpers and carries that reason.
 ///
 /// The caller gives a refused function back its body from the returned
 /// originals.
 ForOfOriginals foldArrayForOf(mlir::ModuleOp module);
+
+/// Why the program may change how an array iterates, or nothing: `Array` or
+/// `Symbol` may be rebound (no `host_binding` row, or a dynamic global write
+/// when it has no row), a `Symbol.iterator` value is used other than as a
+/// read's key, `Array.prototype` is used other than as the object of a
+/// constant-key read, or the program reads a path that reaches a prototype
+/// without naming it (`__proto__`, `getPrototypeOf`, `setPrototypeOf`,
+/// `constructor.prototype`).
+std::optional<std::string> arrayIterationUnproved(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctnative

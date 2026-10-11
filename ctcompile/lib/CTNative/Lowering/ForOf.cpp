@@ -10,13 +10,18 @@
 //
 // An array destructuring is an `__ctbrowser_iter_open`, one
 // `__ctbrowser_iter_next` per binding and a close; over an array that is its
-// elements in order, so a flat pattern becomes index reads. Like the rest of
-// the native tier (push, map and split are lowered as the built-ins), this
-// takes the realm's Array iterator to be the original one.
+// elements in order, so a flat pattern becomes index reads.
+//
+// Both rely on the realm's Array iteration being the original: the
+// destructuring calls Array.prototype[Symbol.iterator] and its iterator's
+// `next`. arrayIterationUnproved proves the program cannot change them before
+// either fold runs.
 //
 //===----------------------------------------------------------------------===//
 
 #include "ForOf.h"
+
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -183,9 +188,66 @@ std::optional<std::string> foldDestructuring(ctjs::CallOp open) {
     return std::nullopt;
 }
 
+/// The value `global.key` reads, when `read` is that read of a load of the
+/// realm's `global`.
+bool readsGlobalMember(ctjs::GetPropertyOp read, llvm::StringRef global, llvm::StringRef key) {
+    auto load = read.getObject().getDefiningOp<ctjs::LoadGlobalOp>();
+    return load && load.getName() == global && ctjs::constantKey(read.getKey()) == key;
+}
+
 } // namespace
 
+std::optional<std::string> arrayIterationUnproved(mlir::ModuleOp module) {
+    auto rows = module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
+    const bool dynamicWrites = module->hasAttr("ctjs.global_escapes");
+    for (llvm::StringRef name : {"Array", "Symbol"}) {
+        // A name the program mentions has a row; one it never mentions is
+        // the realm's unless a dynamic global write could bind it.
+        std::optional<bool> host;
+        for (auto row : rows ? rows.getAsRange<mlir::DictionaryAttr>()
+                             : mlir::ArrayAttr::get(module.getContext(), {})
+                                   .getAsRange<mlir::DictionaryAttr>()) {
+            auto bound = row.getAs<mlir::StringAttr>("name");
+            if (bound && bound.getValue() == name) {
+                host = row.contains(ctjs::kGlobalsHostBinding);
+            }
+        }
+        if (host ? !*host : dynamicWrites || !rows) {
+            return ("`" + name + "` may be rebound").str();
+        }
+    }
+    std::optional<std::string> why;
+    module.walk([&](ctjs::GetPropertyOp read) {
+        const llvm::StringRef key = ctjs::constantKey(read.getKey());
+        if (key == "__proto__" || key == "getPrototypeOf" || key == "setPrototypeOf") {
+            why = ("the program reads `" + key + "`, which reaches a prototype").str();
+        } else if (auto owner = read.getObject().getDefiningOp<ctjs::GetPropertyOp>();
+                   key == "prototype" && owner &&
+                   ctjs::constantKey(owner.getKey()) == "constructor") {
+            why = "the program reads `constructor.prototype`, which can be Array.prototype";
+        } else if (readsGlobalMember(read, "Array", "prototype")) {
+            for (mlir::OpOperand & use : read.getResult().getUses()) {
+                auto member = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+                if (!member || use.getOperandNumber() != 0 ||
+                    ctjs::constantKey(member.getKey()).empty()) {
+                    why = "the program uses Array.prototype other than to read a method";
+                }
+            }
+        } else if (readsGlobalMember(read, "Symbol", "iterator")) {
+            for (mlir::OpOperand & use : read.getResult().getUses()) {
+                if (!llvm::isa<ctjs::GetPropertyOp>(use.getOwner()) ||
+                    use.getOperandNumber() != 1) {
+                    why = "the program uses Symbol.iterator other than to read an iterator";
+                }
+            }
+        }
+        return why ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
+    });
+    return why;
+}
+
 ForOfOriginals foldArrayForOf(mlir::ModuleOp module) {
+    const std::optional<std::string> unproved = arrayIterationUnproved(module);
     ForOfOriginals originals;
     module.walk([&](ctjs::FuncOp fn) {
         llvm::SmallVector<ctjs::CallOp> opens;
@@ -198,6 +260,17 @@ ForOfOriginals foldArrayForOf(mlir::ModuleOp module) {
             if (helperOf(call) == "__ctbrowser_iter_open") { patterns.push_back(call); }
         });
         if (opens.empty() && patterns.empty()) { return; }
+        // Without the proof nothing folds, and every open says why.
+        if (unproved) {
+            const auto reason = mlir::StringAttr::get(
+                fn.getContext(),
+                "array iteration needs the realm's own Array iterator: " + *unproved);
+            for (ctjs::CallOp open : llvm::concat<ctjs::CallOp>(opens, patterns)) {
+                open->setAttr(kIterationRefusal, reason);
+                open.getCallee().getDefiningOp()->setAttr(kIterationRefusal, reason);
+            }
+            return;
+        }
         mlir::OwningOpRef<ctjs::FuncOp> original(llvm::cast<ctjs::FuncOp>(fn->clone()));
         bool changed = false;
         for (ctjs::CallOp open : opens) { changed |= fold(open); }
@@ -207,8 +280,8 @@ ForOfOriginals foldArrayForOf(mlir::ModuleOp module) {
             if (auto why = foldDestructuring(open)) {
                 // On the helper's load too, which admission meets first.
                 const auto reason = mlir::StringAttr::get(open.getContext(), *why);
-                open->setAttr(kDestructureRefusal, reason);
-                open.getCallee().getDefiningOp()->setAttr(kDestructureRefusal, reason);
+                open->setAttr(kIterationRefusal, reason);
+                open.getCallee().getDefiningOp()->setAttr(kIterationRefusal, reason);
             } else {
                 changed = true;
             }
