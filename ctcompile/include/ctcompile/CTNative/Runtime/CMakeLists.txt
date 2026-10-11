@@ -4,6 +4,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Json.hpp
   Math.hpp
   RegExp.hpp
+  StaticTable.hpp
   String.hpp
   ctnative.hpp
 )
