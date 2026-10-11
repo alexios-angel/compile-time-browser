@@ -29,9 +29,10 @@ void planArrayCallback(lowering & lower, ctjs::CallOp call) {
     const std::size_t captures = call.getArgs().size() - (method == "reduce" ? 1 : 0);
     llvm::SmallVector<mlir::Attribute> spans;
     for (mlir::Value capture : call.getArgs().take_front(captures)) {
-        spans.push_back(b.getStringAttr(isElementArray(capture, lower.typeOf(capture))
-                                            ? elementSpanSpelling(lower.typeOf(capture))
-                                            : std::string{}));
+        spans.push_back(
+            b.getStringAttr(isElementArray(capture, lower.typeOf(capture), lower.pageViews)
+                                ? elementSpanSpelling(lower.typeOf(capture))
+                                : std::string{}));
     }
     call->setAttr(kMethod, b.getStringAttr(method));
     call->setAttr(kSpans, b.getArrayAttr(spans));

@@ -19,7 +19,7 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
     const std::string method = ("Array.prototype." + key).str();
     const mlir::Value receiver = call.getReceiver();
     const mlir::Type array = self.typeOf(receiver);
-    if (!isElementArray(receiver, array)) {
+    if (!isElementArray(receiver, array, self.pageViews())) {
         std::string why;
         if (llvm::isa_and_nonnull<VecType>(array) &&
             TypeInference::elementVectorAliases(receiver, &why).empty()) {
@@ -48,7 +48,7 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call) {
         if (TypeInference::elementVectorAliases(result, &why).empty()) {
             return self.refuse("the result of " + method + " is " + why);
         }
-        return isElementArray(result, self.typeOf(result)) ||
+        return isElementArray(result, self.typeOf(result), self.pageViews()) ||
                self.refuse("the result of " + method + " is " + printed(self.typeOf(result)) +
                            ", not an array of Strings, Numbers or rows");
     }
