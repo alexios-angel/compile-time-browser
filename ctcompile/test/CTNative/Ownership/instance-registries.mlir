@@ -53,6 +53,22 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
 // RUN:   | FileCheck %s --check-prefix=TABLE-KEPT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=NESTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/family.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=FAMILY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-unchecked.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=NESTED-UNCHECKED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-removed.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=NESTED-REMOVED
 
 // --- The accepted shape ----------------------------------------------------
 // `getInstance` reads back with `|| null`, so `!== null` is a check; a
@@ -108,6 +124,22 @@
 // --- The table method keeps the instance elsewhere too ---------------------
 // The importer names an object-literal method `fn`.
 // TABLE-KEPT: ctnative.instance_registry = "`this` of `Widget`, passed on as a parameter of `fn`, also reaches `ctjs.store_global`"
+
+// --- A Map of Maps, as Bootstrap's Data -------------------------------------
+// The outer Map, keyed by element, owns one inner Map per element, keyed by
+// component name, which holds the instances. An inner Map is read only where
+// `has` just found it or `has(k) || set(k, new Map())` just made it, and
+// `remove` drops the outer entry once the inner Map is empty.
+// NESTED: ctnative.instance_registry = "proved"
+
+// --- A class family, as Bootstrap's BaseComponent and its subclasses ---------
+// FAMILY: ctnative.instance_registry = "the class `Base` is extended, or held in a binding through which subclasses and static methods reach it - a class family this proof does not follow yet"
+
+// --- An inner Map read without `has` ---------------------------------------
+// NESTED-UNCHECKED: ctnative.instance_registry = "an inner Map is read from the outer registry Map where `has` did not just find or make it - `get` answers undefined for a missing key"
+
+// --- An inner Map read after a call that could remove it --------------------
+// NESTED-REMOVED: ctnative.instance_registry = "an inner Map is read from the outer registry Map where `has` did not just find or make it - `get` answers undefined for a missing key"
 
 //--- proved.js
 function run() {
@@ -387,5 +419,177 @@ var result = (function () {
         }
     }
     new Widget("a");
+    return registry.size;
+})();
+
+//--- nested.js
+var result = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            const instances = elements.get(element);
+            if (!instances.has(key) && instances.size !== 0) {
+                return;
+            }
+            instances.set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    class Widget {
+        constructor(element, size) {
+            this._element = element;
+            this.size = size;
+            Data.set(element, "widget", this);
+        }
+        dispose() {
+            Data.remove(this._element, "widget");
+            return this.size;
+        }
+    }
+    const first = { id: 1 };
+    const second = { id: 2 };
+    new Widget(first, 3);
+    new Widget(second, 10);
+    let total = 0;
+    const a = Data.get(first, "widget");
+    if (a !== null) { total = total + a.size; }
+    const b = Data.get(second, "widget");
+    if (b) { total = total + b.dispose(); }
+    if (Data.get(second, "widget") === null) { total = total + 100; }
+    return total;
+})();
+
+//--- nested-unchecked.js
+var result = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            const instances = elements.get(element);
+            if (!instances.has(key) && instances.size !== 0) {
+                return;
+            }
+            instances.set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            elements.get(element).delete(key);
+            const instances = elements.get(element);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    class Widget {
+        constructor(element, size) {
+            this._element = element;
+            this.size = size;
+            Data.set(element, "widget", this);
+        }
+        dispose() {
+            Data.remove(this._element, "widget");
+            return this.size;
+        }
+    }
+    const first = { id: 1 };
+    const second = { id: 2 };
+    new Widget(first, 3);
+    new Widget(second, 10);
+    let total = 0;
+    const a = Data.get(first, "widget");
+    if (a !== null) { total = total + a.size; }
+    const b = Data.get(second, "widget");
+    if (b) { total = total + b.dispose(); }
+    if (Data.get(second, "widget") === null) { total = total + 100; }
+    return total;
+})();
+
+//--- nested-removed.js
+var result = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            Data.remove(element, key);
+            const instances = elements.get(element);
+            if (!instances.has(key) && instances.size !== 0) {
+                return;
+            }
+            instances.set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    class Widget {
+        constructor(element, size) {
+            this._element = element;
+            this.size = size;
+            Data.set(element, "widget", this);
+        }
+        dispose() {
+            Data.remove(this._element, "widget");
+            return this.size;
+        }
+    }
+    const first = { id: 1 };
+    const second = { id: 2 };
+    new Widget(first, 3);
+    new Widget(second, 10);
+    let total = 0;
+    const a = Data.get(first, "widget");
+    if (a !== null) { total = total + a.size; }
+    const b = Data.get(second, "widget");
+    if (b) { total = total + b.dispose(); }
+    if (Data.get(second, "widget") === null) { total = total + 100; }
+    return total;
+})();
+
+//--- family.js
+var result = (function () {
+    const registry = new Map();
+    class Base {
+        constructor(key) {
+            this.key = key;
+            registry.set(key, this);
+        }
+    }
+    class Alert extends Base {
+        close() {
+            return this.key;
+        }
+    }
+    new Alert("a");
     return registry.size;
 })();

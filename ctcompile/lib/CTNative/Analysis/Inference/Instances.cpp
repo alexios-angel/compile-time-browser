@@ -40,9 +40,12 @@ bool isReceiver(mlir::Value value) {
 }
 
 /// The null or undefined constant `value` is, as a nullishness bit, or 0.
+/// mayBeFalsy stands for another falsy value, such as the `false` of
+/// `map.has(k) && ...`.
 enum : unsigned {
     mayBeUndefined = 1,
-    mayBeNull = 2
+    mayBeNull = 2,
+    mayBeFalsy = 4
 };
 unsigned nullishBits(mlir::Value value) {
     if (ctjs::constantAttr<ctjs::UndefinedAttr>(value)) { return mayBeUndefined; }
@@ -194,25 +197,87 @@ origins receiverOrigins(mlir::Value value, mlir::ModuleOp module, const function
     return out;
 }
 
+/// Calls `visit(condition, holds, arm)` for each scf.if around `op`, from the
+/// innermost out: `condition` is the value whose truthiness selects the arm
+/// `op` sits in (seen through `!`), `holds` whether that arm runs when it is
+/// truthy, and `arm` the operation of that arm that contains `op`. Stops when
+/// `visit` returns true, and returns whether it did.
+template <class Visit> bool anyTest(mlir::Operation * op, Visit visit) {
+    for (mlir::Operation * child = op; child && !llvm::isa<ctjs::FuncOp>(child);
+         child = child->getParentOp()) {
+        auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(child->getParentOp());
+        if (!branch) { continue; }
+        bool holds = child->getParentRegion() == &branch.getThenRegion();
+        mlir::Value condition = branch.getCondition();
+        for (;;) {
+            if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+                condition = truthy.getValue();
+            } else if (auto unary = condition.getDefiningOp<ctjs::UnaryOp>();
+                       unary && unary.getKind() == ctjs::UnaryKind::Not) {
+                holds = !holds;
+                condition = unary.getOperand();
+            } else {
+                break;
+            }
+        }
+        if (visit(condition, holds, child)) { return true; }
+    }
+    return false;
+}
+
+/// Whether `op` runs only where `value` is falsy.
+bool falsyAt(mlir::Value value, mlir::Operation * op) {
+    return anyTest(op, [&](mlir::Value condition, bool holds, mlir::Operation *) {
+        return condition == value && !holds;
+    });
+}
+
+/// Whether nothing from `from` up to `op`, in one block, can run code or
+/// change a Map, except the calls `quiet` accepts.
+template <class Quiet> bool quietBefore(mlir::Operation * op, mlir::Operation * from, Quiet quiet) {
+    for (mlir::Operation * at = from; at && at != op; at = at->getNextNode()) {
+        if (at->getNumRegions() != 0 || llvm::isa<ctjs::SetPropertyOp, ctjs::ConstructOp>(at)) {
+            return false;
+        }
+        if (llvm::isa<ctjs::CallOp, ctjs::CallDirectOp>(at) && !quiet(at)) { return false; }
+    }
+    return true;
+}
+
 /// The values that name one `new Map()`, the method calls made on them, and
 /// the first use that lets the Map escape.
 struct mapUses {
     llvm::SetVector<mlir::Value> aliases;
-    llvm::SmallVector<ctjs::CallOp> sets, gets, deletes;
+    llvm::SmallVector<ctjs::CallOp> sets, gets, deletes, has;
     // The closures that capture the binding holding the Map.
     llvm::SmallVector<ctjs::CreateClosureOp> captors;
     bool iterated = false;
     std::string escape;
 };
 
-/// Follows `map` through the one binding it is stored in and the closures
-/// that capture that binding. A binding of a run-once function may be a
-/// static variable (ClosureLifting/RunOnce.cpp): one cell per function that
-/// uses it, all naming the same symbol. A Map reached any other way, or used
-/// other than through the methods the proof models, escapes.
-mapUses usesOf(ctjs::ConstructOp map, mlir::ModuleOp module, const functionIndex & functions) {
+/// Whether `iterator`, the result of a Map's `keys()`, is only copied at once
+/// by `Array.from`, so no code runs while it is live.
+bool copiedAtOnce(mlir::Value iterator) {
+    return llvm::all_of(iterator.getUses(), [](mlir::OpOperand & use) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+        auto from = call ? ctjs::receiverMethod(call) : ctjs::GetPropertyOp{};
+        auto array =
+            from ? from.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+        return array && array.getName() == "Array" && ctjs::methodKey(call) == "from" &&
+               call.getArgs().size() == 1 && use.get() == call.getArgs()[0];
+    });
+}
+
+/// Follows the values in `roots`, which name Maps, and with `bindings`
+/// through the one binding they are stored in and the closures that capture
+/// that binding. A binding of a run-once function may be a static variable
+/// (ClosureLifting/RunOnce.cpp): one cell per function that uses it, all
+/// naming the same symbol. A Map reached any other way, or used other than
+/// through the methods the proof models, escapes.
+mapUses usesOf(llvm::ArrayRef<mlir::Value> roots, bool bindings, mlir::ModuleOp module,
+               const functionIndex & functions) {
     mapUses out;
-    out.aliases.insert(map.getResult());
+    out.aliases.insert(roots.begin(), roots.end());
     const auto escape = [&](const std::string & why) {
         if (out.escape.empty()) { out.escape = why; }
     };
@@ -246,7 +311,7 @@ mapUses usesOf(ctjs::ConstructOp map, mlir::ModuleOp module, const functionIndex
             if (auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
                 store && use.getOperandNumber() == 1) {
                 auto binding = store.getCell().getDefiningOp<ctjs::CreateCellOp>();
-                if (!binding) {
+                if (!binding || !bindings) {
                     escape("the registry Map is stored into a binding this proof cannot follow");
                     continue;
                 }
@@ -267,7 +332,7 @@ mapUses usesOf(ctjs::ConstructOp map, mlir::ModuleOp module, const functionIndex
                         cells.push_back(other.getResult());
                     });
                 }
-                for (const mlir::Value cell : cells)
+                for (const mlir::Value cell : cells) {
                     for (mlir::OpOperand & cellUse : cell.getUses()) {
                         mlir::Operation * reader = cellUse.getOwner();
                         if (auto other = llvm::dyn_cast<ctjs::CellSetOp>(reader)) {
@@ -293,6 +358,7 @@ mapUses usesOf(ctjs::ConstructOp map, mlir::ModuleOp module, const functionIndex
                             if (upvalues[slot] == cell) { captured(target, slot); }
                         }
                     }
+                }
                 continue;
             }
             // The receiver of `alias.method(...)`, seen from the method read.
@@ -322,8 +388,10 @@ mapUses usesOf(ctjs::ConstructOp map, mlir::ModuleOp module, const functionIndex
             } else if (key == "delete" && arity == 1) {
                 out.deletes.push_back(call);
             } else if (key == "keys" && arity == 0) {
-                out.iterated = true;
-            } else if (key != "has" || arity != 1) {
+                out.iterated = out.iterated || !copiedAtOnce(call.getResult());
+            } else if (key == "has" && arity == 1) {
+                out.has.push_back(call);
+            } else {
                 escape(
                     ("the registry Map's `" + key + "` is not a method this proof models").str());
             }
@@ -337,6 +405,7 @@ class registryProof {
     mlir::ModuleOp module;
     const functionIndex & functions;
     const mapUses & map;
+    const mapUses * outer; // For a Map of Maps, the outer Map; `map` is then the inner ones.
     InstanceRegistry & out;
     std::string name; // The class's JavaScript name.
     // The constructor's `this` and the parameters it is passed through on its
@@ -400,6 +469,16 @@ class registryProof {
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user);
                 call && ctjs::calleeGlobalName(call) == "__ctbrowser_class_defined") {
                 continue;
+            }
+            auto heritage = llvm::dyn_cast<ctjs::CallOp>(user);
+            if (llvm::isa<ctjs::CellSetOp>(user) ||
+                (heritage && ctjs::calleeGlobalName(heritage) == "__ctbrowser_class_heritage")) {
+                // Bootstrap's BaseComponent: subclasses extend it and static
+                // methods construct it through the binding.
+                return refuse("the class `" + name +
+                              "` is extended, or held in a binding through which subclasses "
+                              "and static methods reach it - a class family this proof does not "
+                              "follow yet");
             }
             return refuse("the class `" + name + "` reaches " + named(user) +
                           ", so this proof cannot see every `new`");
@@ -562,7 +641,8 @@ class registryProof {
     bool checkJoins() {
         for (mlir::Value value : maybe) {
             for (const source & from : sources.lookup(value)) {
-                if (!from.value || nullishBits(from.value) || maybe.contains(from.value)) {
+                if (!from.value || nullishBits(from.value) || maybe.contains(from.value) ||
+                    falsyAt(from.value, from.site)) {
                     continue;
                 }
                 return refuse("a value read from the registry Map is joined with a value that "
@@ -587,7 +667,11 @@ class registryProof {
                 for (const source & from : sources.lookup(value)) {
                     if (!from.value) {
                         joined |= mayBeUndefined;
-                    } else if (!guardedAt(from.value, from.site, reference)) {
+                    } else if (guardedAt(from.value, from.site, reference)) {
+                        // Checked there: an instance.
+                    } else if (!maybe.contains(from.value) && !nullishBits(from.value)) {
+                        joined |= mayBeFalsy; // Falsy at its site (checkJoins).
+                    } else {
                         joined |= nullishBits(from.value) | bits.lookup(from.value);
                     }
                 }
@@ -605,38 +689,19 @@ class registryProof {
     /// test of it against null or undefined that rules out every nullish
     /// value `reference` says it may hold, selects.
     bool guardedAt(mlir::Value value, mlir::Operation * op, const nullishMap * reference) {
-        for (mlir::Operation * child = op; child && !llvm::isa<ctjs::FuncOp>(child);
-             child = child->getParentOp()) {
-            auto branch = llvm::dyn_cast_or_null<mlir::scf::IfOp>(child->getParentOp());
-            if (!branch) { continue; }
-            bool positive = child->getParentRegion() == &branch.getThenRegion();
-            mlir::Value condition = branch.getCondition();
-            for (;;) {
-                if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
-                    condition = truthy.getValue();
-                } else if (auto unary = condition.getDefiningOp<ctjs::UnaryOp>();
-                           unary && unary.getKind() == ctjs::UnaryKind::Not) {
-                    positive = !positive;
-                    condition = unary.getOperand();
-                } else {
-                    break;
-                }
-            }
-            if (condition == value && positive) { return true; }
+        return anyTest(op, [&](mlir::Value condition, bool holds, mlir::Operation *) {
+            if (condition == value) { return holds; }
             auto compare = condition.getDefiningOp<ctjs::CompareOp>();
-            if (!compare || positive) { continue; } // `x == null` holds an instance when false.
+            if (!compare || holds) { return false; } // `x == null` holds an instance when false.
             const mlir::Value other = compare.getLhs() == value   ? compare.getRhs()
                                       : compare.getRhs() == value ? compare.getLhs()
                                                                   : mlir::Value{};
             const unsigned against = other ? nullishBits(other) : 0;
-            if (!against) { continue; }
-            if (compare.getKind() == ctjs::CompareKind::Eq) { return true; }
-            if (compare.getKind() == ctjs::CompareKind::StrictEq && reference &&
-                (reference->lookup(value) & ~against) == 0) {
-                return true;
-            }
-        }
-        return false;
+            if (!against || !reference) { return false; }
+            const unsigned may = reference->lookup(value);
+            if (compare.getKind() == ctjs::CompareKind::Eq) { return (may & mayBeFalsy) == 0; }
+            return compare.getKind() == ctjs::CompareKind::StrictEq && (may & ~against) == 0;
+        });
     }
 
     /// Whether `use` reaches an instance only through its own fields and its
@@ -658,6 +723,79 @@ class registryProof {
             auto call = llvm::dyn_cast<ctjs::CallOp>(callee.getOwner());
             return call && callee.getOperandNumber() == 0 && call.getReceiver() == use.get();
         });
+    }
+
+    /// Whether `call`, an outer `has` or `get`, asks about `key`.
+    bool asks(mlir::Operation * call, llvm::ArrayRef<ctjs::CallOp> calls, mlir::Value key) {
+        auto found = llvm::find(calls, call);
+        if (found == calls.end()) { return false; }
+        ctjs::CallOp asked = *found;
+        return asked.getArgs()[0] == key;
+    }
+
+    /// Whether `get`, a read of the outer Map, finds an inner Map: it runs
+    /// where `has` of the same key held, or right after the entry was made
+    /// when missing (`has(k) || set(k, new Map())`), with nothing between
+    /// that could remove it.
+    bool presentAt(ctjs::CallOp get) {
+        const mlir::Value key = get.getArgs()[0];
+        const auto quiet = [&](mlir::Operation * call) {
+            return llvm::is_contained(outer->has, call) || llvm::is_contained(outer->gets, call);
+        };
+        // Under `if (outer.has(key))`, from the start of that arm.
+        mlir::Block * block = get->getBlock();
+        const bool tested =
+            anyTest(get, [&](mlir::Value condition, bool holds, mlir::Operation * arm) {
+                return holds && arm->getBlock() == block &&
+                       asks(condition.getDefiningOp(), outer->has, key);
+            });
+        if (tested && quietBefore(get, &block->front(), quiet)) { return true; }
+        // After `if (!outer.has(key)) outer.set(key, new Map())`.
+        for (mlir::Operation * at = get->getPrevNode(); at; at = at->getPrevNode()) {
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at);
+            if (!branch) { continue; }
+            // The condition, seen through `!`; `missing` is the arm that runs
+            // when `has` answered false.
+            mlir::Value condition = branch.getCondition();
+            bool flipped = false;
+            for (;;) {
+                if (auto truthy = condition.getDefiningOp<ctjs::TruthyOp>()) {
+                    condition = truthy.getValue();
+                } else if (auto unary = condition.getDefiningOp<ctjs::UnaryOp>();
+                           unary && unary.getKind() == ctjs::UnaryKind::Not) {
+                    flipped = !flipped;
+                    condition = unary.getOperand();
+                } else {
+                    break;
+                }
+            }
+            mlir::Region & missing = flipped ? branch.getThenRegion() : branch.getElseRegion();
+            mlir::Region & found = flipped ? branch.getElseRegion() : branch.getThenRegion();
+            bool made = false;
+            missing.walk([&](ctjs::CallOp set) { made = made || asks(set, outer->sets, key); });
+            const bool foundEmpty = found.empty() || found.front().getOperations().size() == 1;
+            return made && foundEmpty && asks(condition.getDefiningOp(), outer->has, key) &&
+                   quietBefore(get, branch->getNextNode(), quiet);
+        }
+        return false;
+    }
+
+    /// The outer Map of a Map of Maps: it does not escape, is not iterated
+    /// while entries can go, and every inner Map read from it is present.
+    bool checkOuter() {
+        if (!outer) { return true; }
+        if (outer->iterated && !outer->deletes.empty()) {
+            return refuse("the outer registry Map is iterated, and `delete` removes entries "
+                          "from it - a removal during the iteration changes what it visits");
+        }
+        for (ctjs::CallOp get : outer->gets) {
+            if (!presentAt(get)) {
+                return refuse("an inner Map is read from the outer registry Map where `has` "
+                              "did not just find or make it - `get` answers undefined for a "
+                              "missing key");
+            }
+        }
+        return true;
     }
 
     /// Whether every function that captures the Map's binding is only called,
@@ -704,8 +842,9 @@ class registryProof {
 
 public:
     registryProof(mlir::ModuleOp module, const functionIndex & functions, const mapUses & map,
-                  InstanceRegistry & out)
-        : module(module), functions(functions), map(map), out(out), name(jsName(out.constructor)) {}
+                  const mapUses * outer, InstanceRegistry & out)
+        : module(module), functions(functions), map(map), outer(outer), out(out),
+          name(jsName(out.constructor)) {}
 
     bool run() {
         if (!map.escape.empty()) { return refuse(map.escape); }
@@ -725,7 +864,7 @@ public:
             return refuse("the registry Map is iterated, and `delete` removes entries from it "
                           "- a removal during the iteration changes what it visits");
         }
-        if (!collectClass() || !checkReceivers()) { return false; }
+        if (!checkOuter() || !collectClass() || !checkReceivers()) { return false; }
         // Instances read back: every flow followed, every dereference checked.
         for (ctjs::CallOp get : map.gets) { maybe.insert(get.getResult()); }
         for (std::size_t at = 0; at < maybe.size(); ++at) {
@@ -760,6 +899,22 @@ public:
     }
 };
 
+/// The fresh `new Map()` each `set` of `outer` stores, when every one stores
+/// such a Map used for nothing else: the inner Maps of a Map of Maps.
+std::optional<llvm::SmallVector<mlir::Value>> innerMaps(const mapUses & outer) {
+    llvm::SmallVector<mlir::Value> made;
+    for (ctjs::CallOp set : outer.sets) {
+        auto inner = set.getArgs()[1].getDefiningOp<ctjs::ConstructOp>();
+        if (!inner || ctjs::calleeGlobalName(inner) != "Map" || !inner.getArgs().empty() ||
+            !inner.getResult().hasOneUse()) {
+            return std::nullopt;
+        }
+        made.push_back(inner.getResult());
+    }
+    if (made.empty()) { return std::nullopt; }
+    return made;
+}
+
 } // namespace
 
 llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
@@ -767,7 +922,23 @@ llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp modul
     llvm::SmallVector<InstanceRegistry> out;
     module.walk([&](ctjs::ConstructOp made) {
         if (ctjs::calleeGlobalName(made) != "Map" || !made.getArgs().empty()) { return; }
-        const mapUses uses = usesOf(made, module, functions);
+        mapUses uses = usesOf({made.getResult()}, /*bindings=*/true, module, functions);
+        // A Map of Maps: the instances live in the inner Maps, which are the
+        // values read back from the outer one.
+        std::optional<mapUses> outer;
+        llvm::SmallVector<mlir::Value> inner;
+        if (auto fresh = innerMaps(uses)) {
+            inner = std::move(*fresh);
+            llvm::SmallVector<mlir::Value> reads;
+            for (ctjs::CallOp get : uses.gets) { reads.push_back(get.getResult()); }
+            mapUses values = usesOf(reads, /*bindings=*/false, module, functions);
+            values.aliases.insert(uses.aliases.begin(), uses.aliases.end());
+            values.aliases.insert(inner.begin(), inner.end());
+            values.captors = uses.captors;
+            if (values.escape.empty()) { values.escape = uses.escape; }
+            outer = std::move(uses);
+            uses = std::move(values);
+        }
         // A registry Map stores the `this` of some function.
         mlir::Value self;
         for (ctjs::CallOp set : uses.sets) {
@@ -779,9 +950,12 @@ llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp modul
         if (!self) { return; }
         InstanceRegistry & proof = out.emplace_back();
         proof.map = made;
+        for (mlir::Value map : inner) {
+            proof.innerMaps.push_back(map.getDefiningOp<ctjs::ConstructOp>());
+        }
         proof.constructor = llvm::cast<ctjs::FuncOp>(
             llvm::cast<mlir::BlockArgument>(self).getOwner()->getParentOp());
-        registryProof(module, functions, uses, proof).run();
+        registryProof(module, functions, uses, outer ? &*outer : nullptr, proof).run();
     });
     return out;
 }

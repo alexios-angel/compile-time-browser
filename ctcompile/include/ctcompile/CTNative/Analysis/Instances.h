@@ -42,8 +42,12 @@ namespace ctcompile::ctnative {
 struct InstanceRegistry {
     /// The constructor whose `this` the Map stores.
     ctjs::FuncOp constructor;
-    /// The `new Map()` that holds the instances.
+    /// The `new Map()` that holds the instances, or for a Map of Maps the
+    /// outer one, keyed by element in Bootstrap.
     ctjs::ConstructOp map;
+    /// For a Map of Maps, the `new Map()` of each inner Map, which holds the
+    /// instances and which the outer Map owns; empty otherwise.
+    llvm::SmallVector<ctjs::ConstructOp> innerMaps;
     /// Why the proof fails, or empty when it holds.
     std::string refusal;
     /// The parameters proved never null or undefined: every call passes them
