@@ -266,6 +266,47 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
     return true;
 }
 
+/// Admits a borrowed callback's closure or a call through a borrowed
+/// parameter (BorrowedCallbacks.cpp).
+bool borrowedCallbackOperation(admission & self, mlir::Operation * o);
+
+namespace {
+
+/// The refusal for a read of a run-once function's static variable whose type
+/// has no carrier: the variable's JavaScript name and what its owner stores in
+/// it, so the reason points at the binding rather than at this frame.
+std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef type) {
+    const auto name = reference->getAttrOfType<mlir::StringAttr>(kNativeStaticCell).getValue();
+    std::string holds;
+    reference->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::CreateCellOp owner) {
+        if (owner->hasAttr(kNativeStaticReference) ||
+            owner->getAttrOfType<mlir::StringAttr>(kNativeStaticCell) !=
+                reference->getAttr(kNativeStaticCell)) {
+            return;
+        }
+        for (mlir::Operation * user : owner.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
+            if (!store || store.getCell() != owner.getResult()) { continue; }
+            mlir::Operation * made = store.getValue().getDefiningOp();
+            const char * what =
+                llvm::isa_and_nonnull<ctjs::CreateObjectOp>(made)    ? "an object literal"
+                : llvm::isa_and_nonnull<ctjs::CreateArrayOp>(made)   ? "an array literal"
+                : llvm::isa_and_nonnull<ctjs::CreateClosureOp>(made) ? "a function"
+                                                                     : "a value";
+            if (holds.find(what) == std::string::npos) {
+                holds += holds.empty() ? what : std::string(" or ") + what;
+            }
+        }
+    });
+    return ("it reads `" + name.drop_front(llvm::StringRef("static_").size()) +
+            "`, a static variable of a function that runs once, which holds " +
+            (holds.empty() ? "nothing this frame can see" : holds) + " of type " + type +
+            " - that type has no native carrier")
+        .str();
+}
+
+} // namespace
+
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
@@ -299,6 +340,9 @@ bool admission::op(mlir::Operation * o) {
             return (table && table.getSite() == methodTableName(o)) ||
                    refuse("returned method table access has no single proved schema");
         }
+    }
+    if (o->hasAttr(kNativeBorrowedCallback) || o->hasAttr(kNativeBorrowedCall)) {
+        return borrowedCallbackOperation(*this, o);
     }
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
@@ -439,6 +483,9 @@ bool admission::op(mlir::Operation * o) {
     // ClosureLifter.h.)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
+            if (o->hasAttr(kNativeStaticReference)) {
+                return refuse(staticReferenceRefusal(cell, printed(typeOf(cell.getResult()))));
+            }
             return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
                           ", which has no native carrier - a variable this tier cannot "
                           "spell is not one it may point at");

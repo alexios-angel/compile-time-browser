@@ -5,6 +5,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Cells.cpp
   Classes.cpp
   Bindings.cpp
+  BorrowedCallbacks.cpp
   Captures.cpp
   Methods.cpp
   Diagnostics.cpp

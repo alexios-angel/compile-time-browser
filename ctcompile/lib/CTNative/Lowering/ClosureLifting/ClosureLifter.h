@@ -850,6 +850,20 @@ struct closureLifter {
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
 
+    // --- Borrowed callbacks (BorrowedCallbacks.cpp) ----------------------------
+    //
+    // A closure passed to a parameter that its callee only calls, where every
+    // caller of that callee passes one. Each such closure maps to all the
+    // closures passed to the same parameter (including itself), because that
+    // parameter has one C++ type for all of them. The census is retaken each
+    // round, as lifting a callee changes its operand positions.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp, 2>>
+        borrowedCallbacks;
+    void borrowedCallbackCensus();
+    std::optional<std::string> whyNotBorrowedMember(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyNotBorrowedCallback(ctjs::CreateClosureOp c);
+    void rewriteBorrowedCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
     liftReport run();
 
     void lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosureOp> made, liftReport & out,
