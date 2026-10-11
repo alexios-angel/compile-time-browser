@@ -173,7 +173,8 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     }
     case VectorCall::builtinStatic: {
         const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
-        const std::string name = (row.global + "." + row.member).str();
+        const std::string name =
+            row.member.empty() ? row.global.str() : (row.global + "." + row.member).str();
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
             const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
             if (string ? !isString(argument)

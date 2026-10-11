@@ -1,9 +1,10 @@
 //===- BuiltinStatics.cpp - Calls of built-in static methods --------------===//
 //
 // The table of static methods of the realm's built-in namespace objects
-// (`Number.parseInt`, `Math.min`) that native code calls through the runtime's
-// built-in objects, `ctnative::Number.parseInt(s, radix)` and
-// `ctnative::Math.min(a, b)`, and the recognition of a call of one.
+// (`Number.parseInt`, `Math.min`) and of the globals themselves (`Number(s)`)
+// that native code calls through the runtime's built-in objects,
+// `ctnative::Number.parseInt(s, radix)`, `ctnative::Math.min(a, b)` and
+// `ctnative::Number(s)`, and the recognition of a call of one.
 //
 //===----------------------------------------------------------------------===//
 
@@ -27,6 +28,9 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     {"Number", "parseInt", "ctnative::Number.parseInt", {Param::string, Param::number}, 2, 1},
     // Math.min (21.3.2.25) of exactly two Numbers.
     {"Math", "min", "ctnative::Math.min", {Param::number, Param::number}, 2, 2},
+    // Number(value) (21.1.1.1) of a String: ToNumber. An empty member is a
+    // call of the global itself.
+    {"Number", "", "ctnative::Number", {Param::string, Param::number}, 1, 1},
 };
 
 /// Whether --ctjs-resolve-globals found that this program never binds
@@ -53,15 +57,25 @@ bool realmBinding(mlir::Operation * op, llvm::StringRef name) {
 const TypeInference::BuiltinStatic * TypeInference::builtinStaticOf(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
     if (!call) { return nullptr; }
+    const std::size_t count = call.getArgs().size();
+    // A call of the global itself, `Number(s)`.
+    if (auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()) {
+        for (const BuiltinStatic & row : builtinStatics) {
+            if (row.member.empty() && callee.getName() == row.global && count >= row.required &&
+                count <= row.arity) {
+                return realmBinding(call, row.global) ? &row : nullptr;
+            }
+        }
+        return nullptr;
+    }
     auto read = ctjs::receiverMethod(call);
     auto global = read ? read.getObject().getDefiningOp<ctjs::LoadGlobalOp>() : nullptr;
     if (!global || read.getObject() != call.getReceiver() || !read.getResult().hasOneUse()) {
         return nullptr;
     }
-    const std::size_t count = call.getArgs().size();
     for (const BuiltinStatic & row : builtinStatics) {
-        if (global.getName() == row.global && ctjs::methodKey(call) == row.member &&
-            count >= row.required && count <= row.arity) {
+        if (!row.member.empty() && global.getName() == row.global &&
+            ctjs::methodKey(call) == row.member && count >= row.required && count <= row.arity) {
             return realmBinding(call, row.global) ? &row : nullptr;
         }
     }

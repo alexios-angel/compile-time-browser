@@ -1,7 +1,8 @@
 # String methods on a proved String, as css-dump.js uses them: `trim()` and
 # `toLowerCase()` become ctnative::String.prototype.<name>.call, and `s[i]`
 # with a Number index becomes ctnative::string_at, which counts UTF-16 code
-# units (`é` is one) and answers undefined past the end. The answers match
+# units (`é` is one) and answers undefined past the end. `Number(s)` is
+# ctnative::Number(s), ToNumber of the String. The answers match
 # the interpreter's under GCC and Clang, and a mutation of `tidied` must be
 # caught. A String indexed by a String stays refused.
 # RUN: split-file %s %t
@@ -16,6 +17,7 @@
 # NATIVE-DAG: ctnative::String.prototype.trim.call
 # NATIVE-DAG: ctnative::String.prototype.toLowerCase.call
 # NATIVE-DAG: ctnative::string_at
+# NATIVE-DAG: "ctnative::Number"
 # MUTATION: global 'tidied' differs
 # KEY: ctnative.not_native = "a String indexed by {{.*}}, not a Number"
 
@@ -36,6 +38,10 @@ function marked(s) {
 }
 var heads = firsts('héllo') + firsts('ab');
 var hashed = marked('#x') + ',' + marked('x#') + ',' + marked('');
+function num(s) {
+    return Number(s);
+}
+var numbers = num(' 12 ') + num('0x1f') + num('') + num('-1e2');
 var tidied = tidy('  Hello World \n');
 
 #--- key.js

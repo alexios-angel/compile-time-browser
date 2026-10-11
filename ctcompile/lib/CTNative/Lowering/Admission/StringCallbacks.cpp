@@ -34,7 +34,9 @@ std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * 
                                printed(replacement) + ", not a String or a function");
         }
         const auto literal = TypeInference::regExpLiteral(call.getArgs()[0]);
-        if (!literal) { return self.refuse("a String.prototype.replace call that lost its RegExp"); }
+        if (!literal) {
+            return self.refuse("a String.prototype.replace call that lost its RegExp");
+        }
         const std::string why =
             TypeInference::replacePatternProblem(literal->first, literal->second, 0);
         return why.empty() || self.refuse("String.prototype.replace " + why);

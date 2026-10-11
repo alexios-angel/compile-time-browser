@@ -308,8 +308,9 @@ public:
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
 
-    /// One static method of a built-in namespace object that native code
-    /// calls as `<callee>(args...)`. Every row returns a Number.
+    /// One static method of a built-in namespace object, or the global itself,
+    /// that native code calls as `<callee>(args...)`. Every row returns a
+    /// Number.
     struct BuiltinStatic {
         /// What an argument must be for the call to lower.
         enum class Param {
@@ -317,7 +318,7 @@ public:
             number
         };
         llvm::StringLiteral global; ///< `Number`, `Math`.
-        llvm::StringLiteral member; ///< `parseInt`, `min`.
+        llvm::StringLiteral member; ///< `parseInt`, `min`; empty for `Number(s)`.
         llvm::StringLiteral callee; ///< `ctnative::Number.parseInt`.
         std::array<Param, 2> params;
         unsigned arity;    ///< How many of `params` the method takes.

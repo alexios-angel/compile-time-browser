@@ -266,7 +266,8 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
     if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
         const auto staticUse = [&](mlir::OpOperand & use) {
             mlir::Operation * user = use.getOwner();
-            if (use.getOperandNumber() == 1 && TypeInference::builtinStaticOf(user)) {
+            // The receiver of `Number.parseInt(s)`, the callee of `Number(s)`.
+            if (use.getOperandNumber() <= 1 && TypeInference::builtinStaticOf(user)) {
                 return true;
             }
             return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&
