@@ -113,8 +113,9 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         });
         const std::string type = staticTableStruct(name.getValue());
         std::string members, values, keys, listed;
+        llvm::SmallVector<std::string> defined;
         for (ctjs::SetPropertyOp store : stores) {
-            const llvm::StringRef key = ctjs::constantKey(store.getKey());
+            const std::string key = tableKey(store.getKey());
             std::string spelled, value;
             if (auto array = store.getValue().getDefiningOp<ctjs::CreateArrayOp>()) {
                 // The literal's own elements, then its appends in program order.
@@ -143,12 +144,17 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             }
             members += "    " + spelled + " " + tableMember(key) + ";\n";
             values += ", " + value;
+            defined.push_back(key);
+        }
+        // An enumerated table (all Strings, proved by the table proof) names
+        // its keys and values for object_table (Runtime/StaticTable.hpp), in
+        // property order: array indices ascending, then definition order.
+        sortOwnKeyOrder(defined, [](const std::string & key) { return llvm::StringRef(key); });
+        for (const std::string & key : defined) {
             keys += (keys.empty() ? "" : ", ") +
                     cpp::c_string_literal(std::string_view(key.data(), key.size()));
             listed += (listed.empty() ? "" : ", ") + tableMember(key);
         }
-        // An enumerated table (all Strings, proved by the table proof) names
-        // its keys and values for Runtime/Object.hpp's object_table.
         if (enumeratedTables.contains(name.getValue())) {
             members += "    using value_type = " + kStringType.str() +
                        ";\n    static constexpr std::array<std::string_view, " +

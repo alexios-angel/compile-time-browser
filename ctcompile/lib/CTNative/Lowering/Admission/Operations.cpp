@@ -189,6 +189,9 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             // An element that may be null is passed through present_element,
             // which throws the VM's TypeError for null as the call would.
             const bool nullable = kind == Param::element && held == carrier::nullableElement;
+            if (auto why = call->getAttrOfType<mlir::StringAttr>(kNativeStaticTableLoopRefusal)) {
+                return self.refuse(why.getValue().str());
+            }
             // A constant table only where its proof marked the call.
             const bool table =
                 held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
