@@ -186,28 +186,6 @@ UNTRUSTED_NATIVE = {
     **dict.fromkeys(("static-dynamic",), (True,)),
 }
 
-# Unprepared modes that lower to a native program beside functions that stay
-# refused, because nothing removes unreachable code without optimization:
-# each refused function is a static member nothing reads.
-UNTRUSTED_PARTIAL = dict.fromkeys(
-    (
-        "static-call-ambient",
-        "static-call-unused",
-        "static-cycle",
-        "static-error-coercion",
-        "static-error-replaced",
-        "static-error-return",
-        "static-throw-ambient",
-        "static-throw-object",
-        "static-throw-unused",
-        "static-throw-unused-chain",
-        "static-unread-chain",
-        "static-unread-nested",
-        "static-unread-new-this",
-    ),
-    (False,),
-)
-
 # Inherited classes that ClosureLifting/ClassInheritance.cpp flattens per
 # concrete class now lower completely without preparation. Each prints Node's
 # value; override-ambient's uncalled Base.read goes with its class.
@@ -266,6 +244,68 @@ UNTRUSTED_NATIVE.update(
         (True,),
     )
 )
+# Unprepared modes that lower to a native program beside functions that stay
+# refused, because nothing removes unreachable code without optimization:
+# each refused function is a static member nothing reads.
+UNTRUSTED_PARTIAL = dict.fromkeys(
+    (
+        "static-call-ambient",
+        "static-call-unused",
+        "static-cycle",
+        "static-error-coercion",
+        "static-error-replaced",
+        "static-error-return",
+        "static-throw-ambient",
+        "static-throw-object",
+        "static-throw-unused",
+        "static-throw-unused-chain",
+        "static-unread-chain",
+        "static-unread-nested",
+        "static-unread-new-this",
+    ),
+    (False,),
+)
+
+# Inherited classes with static members: flattening copies the statics onto
+# each concrete class, and the static-member rewrite then resolves
+# `this.constructor.X` per class.
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        (
+            "inherited-getter-constant",
+            "inherited-getter-constructor",
+            "inherited-getter-dependencies",
+            "inherited-getter-fresh-empty",
+            "inherited-getter-override",
+            "inherited-getter-override-dependency",
+            "inherited-getter-shared-receivers",
+            "inherited-getter-static-reads",
+            "inherited-getter-three-levels",
+            "inherited-method-getter",
+            "inherited-static-call",
+            "inherited-static-getters",
+            "inherited-static-getters-base-reads-leaf",
+            "inherited-static-getters-component",
+            "inherited-static-getters-component-method",
+            "inherited-static-getters-shadow",
+            "inherited-static-getters-shadow-both",
+            "inherited-static-getters-shadow-extended",
+            "inherited-static-getters-shadow-method",
+            "inherited-static-getters-shadow-method-both",
+            "inherited-static-getters-shadow-method-chain",
+            "receiver-default-inherited",
+        ),
+        (False, True),
+    )
+)
+UNTRUSTED_NATIVE.update(dict.fromkeys(("inherited-getter-unused-ambient",), (True,)))
+
+# Static-member fixtures the static-member rewrite completes in both modes;
+# each prints Node's value.
+UNTRUSTED_NATIVE.update(dict.fromkeys(("static-defaults", "static-default-fields"), (False, True)))
+# Without optimization, an inherited static getter nothing reads stays
+# refused beside the native program.
+UNTRUSTED_PARTIAL.update(dict.fromkeys(("inherited-getter-unused-ambient",), (False,)))
 
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
@@ -730,7 +770,7 @@ def check_record_map_inputs(args, prepared):
                 )
 
 
-def untrusted_change(args, name, optimize, raw, native, functions, expected):
+def untrusted_change(args, name, optimize, raw, native, functions, expected, reference=None):
     """Lower the unprepared import of `name` and return None when it does what
     UNTRUSTED_NATIVE says (a complete native program printing Node's value, or
     else a named refusal boundary), else one line saying what changed: the
@@ -766,7 +806,7 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected):
             return None
         return f"CHANGED {label}: partial ({shape})"
     try:
-        check_executable(args, f"{name}.{optimize}.untrusted", native, expected)
+        check_executable(args, f"{name}.{optimize}.untrusted", native, expected, reference)
         return None if listed else f"CHANGED {label}: complete ({shape}), runs with a={expected}"
     except Exception as error:
         return f"CHANGED {label}: complete ({shape}), run failed: {str(error).splitlines()[0]}"
@@ -893,6 +933,9 @@ def main():
         # boundary, or its interpreter observation changed; every fixture's are
         # reported together at the end.
         untrusted_changes = []
+        # The interpreter's whole output for this fixture, which its native
+        # programs are compared with.
+        vm_output = {}
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
         reference = run([args.reference, str(source)], success=reference_expected is not None)
@@ -905,6 +948,9 @@ def main():
             reference_output = "Error=9\n" + reference_output
         if name == "class-map-record-nested-conditional-dead-escape":
             reference_output += "retained=undefined\n"
+        # A native program prints every global the interpreter prints, so it
+        # is compared with the interpreter's whole output, not with `a=` alone.
+        vm_output[name] = reference.stdout if reference_expected is not None else None
         if reference_expected is not None and reference.stdout != reference_output:
             # Reported with the untrusted changes; the rest of this fixture's
             # checks assume the old observation.
@@ -1669,7 +1715,9 @@ def main():
             preparation_refusals += 2
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
-            change = untrusted_change(args, name, optimize, raw, native, functions, node_expected)
+            change = untrusted_change(
+                args, name, optimize, raw, native, functions, node_expected, vm_output.get(name)
+            )
             if change:
                 untrusted_changes.append(change)
                 continue
@@ -1742,7 +1790,9 @@ def main():
                         raise RuntimeError(f"{name}: native refusal changed the source throw exits")
                     prepared_refusals += 1
                 else:
-                    checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+                    checked += check_executable(
+                        args, f"{name}.{optimize}", native, node_expected, vm_output.get(name)
+                    )
         return (
             refusals,
             preparation_refusals,

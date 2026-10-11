@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ClosureLifting/ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/Instances.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 
@@ -21,7 +22,21 @@ namespace {
 
 struct TestInstanceRegistries final
     : impl::CTNativeTestInstanceRegistriesBase<TestInstanceRegistries> {
+    using CTNativeTestInstanceRegistriesBase::CTNativeTestInstanceRegistriesBase;
+
     void runOnOperation() override {
+        if (lifted) {
+            // The steps closureLifter::run() takes before its censuses, up to
+            // the object-table calls.
+            lowering_detail::closureLifter lifter{getOperation()};
+            lowering_detail::liftReport out;
+            lifter.indexAndNewTargets();
+            lifter.makeRunOnceCellsStatic(out, /*functions=*/false);
+            lifter.makeRunOnceCellsStatic(out, /*functions=*/true);
+            lifter.specializeCallbacks(out);
+            lifter.bindLocalFunctions(out);
+            lifter.bindSingletonMethods(out);
+        }
         mlir::Builder builder(&getContext());
         for (const InstanceRegistry & registry : proveInstanceRegistries(getOperation())) {
             registry.constructor->setAttr(

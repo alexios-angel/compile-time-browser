@@ -42,6 +42,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -396,12 +397,31 @@ public:
     /// Whether `op` is an `addEventListener` or `setTimeout` call closure
     /// lifting specialised for its callback.
     static bool isHostCallbackCall(mlir::Operation * op);
-    /// Whether `op` is a call of the realm's own `setTimeout`.
+    /// Whether `op` is a call of the realm's own `setTimeout` or
+    /// `setInterval`.
     static bool isTimerCall(mlir::Operation * op);
+    /// Whether `op` is `clearTimeout(handle)` or `clearInterval(handle)` of
+    /// the realm's own function.
+    static bool isTimerClear(mlir::Operation * op);
     /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
     /// cannot write the globals table, so it leaves the globals typed
     /// (Inference/HostCallbacks.cpp holds the one list of such uses).
     static bool isInertWindowLoad(mlir::Operation * load);
+    /// Whether `op` is `new Event(type)` or `new Event(type, init)` of the
+    /// realm's own Event, with `init` an object literal eventInitFields reads.
+    static bool isEventConstruct(mlir::Operation * op);
+    /// The fields of such a construct's init, as (key, value) pairs in the
+    /// literal's order: an object literal used only for `bubbles` and
+    /// `cancelable` definitions and as the init. Empty with no init; nullopt
+    /// when the init is anything else.
+    static std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>>
+    eventInitFields(mlir::Operation * construct);
+    /// Whether `op` is the object literal of an Event construct's init, or one
+    /// of its field definitions.
+    static bool isEventInitPart(mlir::Operation * op);
+    /// Whether `op` is `x.dispatchEvent(e)` with the method read only for the
+    /// call; x is an element and e an Event when their types say so.
+    static bool isDispatchEventCall(mlir::Operation * op);
     /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
     /// method read only for the call; x is an Event when its type says so.
     static bool isEventCall(mlir::Operation * op);
@@ -421,6 +441,12 @@ public:
     /// Whether `op` is the empty literal of `[].concat(...a)` or its `concat`
     /// read, which lower to nothing.
     static bool isSpreadCopyPlumbing(mlir::Operation * op);
+    /// Whether `value`, an element that may be null, is known non-null where
+    /// `user` uses it (Inference/Elements.cpp): `user` sits in the
+    /// then-branch of `if (value)`, or `value` leaves a `for (; i;)` loop on
+    /// an exit that only the loop's truthy arm takes (SelectorEngine's prev
+    /// and next return `[i]` from inside the loop).
+    static bool presentElement(mlir::Value value, mlir::Operation * user);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -610,6 +636,11 @@ private:
     /// or null.
     mlir::Type elementMemberType(mlir::Operation * op,
                                  llvm::ArrayRef<const TypeLattice *> operands);
+    /// `joined`, the element type of the array `members` names, narrowed
+    /// from an element or null to an element when every value stored into
+    /// it is an element or is present where it is stored (presentElement).
+    mlir::Type presentElements(mlir::Operation * op, llvm::ArrayRef<mlir::Value> members,
+                               mlir::Type joined);
     /// The type of a specialised Array-method call, after joining its
     /// receiver's element type, the index and its captured values into the
     /// callback's parameters.
@@ -628,6 +659,23 @@ private:
     /// `seed` met with the type of every value after `op`, subscribing `op` to
     /// each. A value not visited yet contributes nothing now and revisits `op`.
     mlir::Type joinLattices(mlir::Operation * op, mlir::ValueRange values, mlir::Type seed);
+
+    /// Instances of a class a registry Map owns (Inference/Instances.cpp):
+    /// the `new` of such a class is `instance<C>`, and a field read on any
+    /// value of that type is the join of the class's field stores. Nullopt
+    /// when `op` is none of these; a null Type while a store is pending.
+    std::optional<mlir::Type> instanceTypeOf(mlir::Operation * op,
+                                             llvm::ArrayRef<const TypeLattice *> operands);
+    /// Joins the `this` of an identity class's constructor and methods with
+    /// its `new` objects, so the class has one struct holding every field
+    /// they write, whichever instance a method is called on.
+    static void joinInstanceReceivers(mlir::Operation * top,
+                                      llvm::EquivalenceClasses<mlir::Value> & classes);
+    /// Per identity class and field (`class` NUL `key`), every value its
+    /// constructor and methods store into that field of `this`, the only
+    /// writes the registry proof allows; built on first use.
+    llvm::StringMap<llvm::SmallVector<mlir::Value, 2>> instanceStores_;
+    bool instanceStoresBuilt_ = false;
 
     /// What a shared (carried) binding holds. The closure lift marks a
     /// `ctjs.create_cell` it can make a frame-local variable

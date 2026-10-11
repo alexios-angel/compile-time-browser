@@ -106,6 +106,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     const auto carried = [&](mlir::Value v) {
         auto type = typeOf(v);
         if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) { return tableType(table); }
+        if (mlir::Type set = closureSetCarrierOf(v)) { return set; } // ClosureSets.cpp
         if (auto closure = llvm::dyn_cast_or_null<ClosureType>(type)) {
             return closureCarrierType(closure);
         }
@@ -148,6 +149,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     }
     // Every field, read-only ones included, with its joined carrier.
     for (const auto & entry : read) { join(stored, entry.getKey(), entry.getValue()); }
+    variantFields(object, stored);
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             const auto key = accessKey.find(user);
@@ -171,6 +173,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
 /// every site in the program, so no site can be spelled until all of them
 /// have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    joinInstanceValues(accepted);
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {

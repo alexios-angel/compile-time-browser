@@ -27,6 +27,11 @@ inline constexpr llvm::StringLiteral kNativeStaticTable = "ctnative.static_table
 /// the read's type is the constant's.
 inline constexpr llvm::StringLiteral kNativeStaticTableField = "ctnative.static_table_field";
 
+/// On a proved field read that a spread of the table wrote out (`{...table}`):
+/// the table may still be undefined there, which copies nothing, so the read is
+/// the field's constant or undefined. A unit attribute.
+inline constexpr llvm::StringLiteral kNativeStaticTableSpread = "ctnative.static_table_spread";
+
 /// On every cell of a static whose stored object literal is not a constant
 /// table: why not, as a clause that completes "it reads `x`, a run-once static
 /// holding an object literal that ...".
@@ -48,6 +53,14 @@ inline constexpr llvm::StringLiteral kNativeStaticTableReason = "ctnative.static
 ///     A function that returns it may be called directly or through a closure
 ///     the program cannot follow (a class getter); either way the caller holds
 ///     a pointer to a `const` object.
+///  4. A read may also be the source of an object spread into a fresh literal,
+///     when the table has no array field. The spread is then written out as
+///     one marked read (kNativeStaticTableSpread) and one own definition per
+///     field, in the literal's order. A table that is still undefined copies
+///     nothing, and those reads give undefined instead: the target can only
+///     hold an undefined field where JavaScript has no field at all, which is
+///     unobservable because native lowering gives the target a struct only
+///     when its keys are never enumerated, tested or copied again.
 void markStaticTables(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctnative

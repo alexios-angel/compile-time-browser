@@ -4,7 +4,8 @@
 // scheduled the way generated code schedules them run when the host's clock
 // reaches them, in the order they were scheduled as the VM runs them; a timer
 // scheduled by a callback waits for the next advance; timeouts convert as a
-// `long`; and a throwing callback is reported without stopping the rest.
+// `long`; a throwing callback is reported without stopping the rest; and a
+// cleared timer never runs, while an interval runs until it is cleared.
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,10 +26,10 @@ using ctnative::timers;
 
 void test_timers_run_when_due_in_schedule_order() {
     std::string order;
-    const js_num first = setTimeout([&] { order += 'a'; }, js_num{10.0});
-    const js_num second = setTimeout([&] { order += 'b'; }, js_num{0.0});
-    CHECK(first.value() > 0);
-    CHECK(second.value() > first.value());
+    const ctnative::timer_id first = setTimeout([&] { order += 'a'; }, js_num{10.0});
+    const ctnative::timer_id second = setTimeout([&] { order += 'b'; }, js_num{0.0});
+    CHECK(first.is_set() && second.is_set());
+    CHECK(second.value > first.value);
     timers & table = timers::program();
     CHECK_EQ(table.advance(0), std::size_t{1});
     CHECK_EQ(order, std::string{"b"});
@@ -78,6 +79,38 @@ void test_a_throwing_callback_is_reported() {
     CHECK_EQ(table.reported().back(), std::string{"TypeError: boom"});
 }
 
+void test_clear_and_intervals() {
+    std::string order;
+    timers & table = timers::program();
+    // Cleared before it is due: never runs. Cleared after it ran: nothing.
+    const ctnative::timer_id early = setTimeout([&] { order += 'e'; }, js_num{5.0});
+    const ctnative::timer_id done = setTimeout([&] { order += 'd'; }, js_num{0.0});
+    ctnative::clearTimeout(early);
+    CHECK_EQ(table.advance(0), std::size_t{1});
+    ctnative::clearTimeout(done);
+    ctnative::clearTimeout(ctnative::timer_id{});
+    CHECK_EQ(table.advance(10), std::size_t{0});
+    CHECK_EQ(order, std::string{"d"});
+    // An interval runs each time its timeout passes, until it clears itself
+    // on its third run, which still finishes.
+    order.clear();
+    int runs = 0;
+    ctnative::timer_id tick{};
+    tick = ctnative::setInterval(
+        [&] {
+            order += 'i';
+            if (++runs == 3) { ctnative::clearInterval(tick); }
+        },
+        js_num{3.0});
+    CHECK_EQ(table.advance(2), std::size_t{0});
+    CHECK_EQ(table.advance(1), std::size_t{1});
+    CHECK_EQ(table.advance(3), std::size_t{1});
+    CHECK_EQ(table.advance(3), std::size_t{1});
+    CHECK_EQ(table.advance(3), std::size_t{0});
+    CHECK_EQ(order, std::string{"iii"});
+    CHECK_EQ(table.pending(), std::size_t{0});
+}
+
 } // namespace
 
 int main() {
@@ -85,5 +118,6 @@ int main() {
     test_a_timer_scheduled_by_a_callback_waits();
     test_timeouts_convert_as_a_long();
     test_a_throwing_callback_is_reported();
+    test_clear_and_intervals();
     REPORT("native_timers");
 }

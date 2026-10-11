@@ -14,6 +14,8 @@
 #include "Vectors.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
+#include "mlir/Interfaces/FunctionInterfaces.h"
+
 #include <array>
 #include <limits>
 
@@ -27,7 +29,7 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o);
 /// The action for a read or call on a listener's Event, and its replacement
 /// (HostCallbacks.cpp).
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
-bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
+bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind);
 /// The action for an element member call or read, and its replacement
 /// (Elements.cpp).
 std::optional<std::string> elementAction(lowering & lower, mlir::Operation * o);
@@ -425,7 +427,16 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         // The vector, by value, in this frame (or in the region that made
         // it, when nothing carries it out), filled by the appends below.
         auto literal = llvm::cast<ctjs::CreateArrayOp>(o);
-        mlir::Value local = ec::VariableOp::create(b, where, literal.getResult().getType(),
+        // An empty literal carried out of a branch takes its slot at the
+        // function's entry (TypeInference::elementVectorAliases).
+        mlir::OpBuilder slot = b;
+        if (literal.getElements().empty()) {
+            if (auto fn = o->getParentOfType<mlir::FunctionOpInterface>();
+                fn && o->getBlock() != &fn.getFunctionBody().front()) {
+                slot.setInsertionPointToStart(&fn.getFunctionBody().front());
+            }
+        }
+        mlir::Value local = ec::VariableOp::create(slot, where, literal.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
         for (mlir::Value element : literal.getElements()) { lower.push(b, where, local, element); }
         swap(local);
@@ -552,7 +563,9 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
-    if (kind.starts_with("event")) { return replaceEvent(o, kind); }
+    if (kind.starts_with("event") || kind.starts_with("timer_") || kind.starts_with("host_")) {
+        return replaceEvent(lower, o, kind);
+    }
     if (kind.starts_with("element_")) { return replaceElement(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {

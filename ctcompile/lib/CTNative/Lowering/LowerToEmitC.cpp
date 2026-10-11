@@ -620,8 +620,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
                 : nullptr;
+        // The fingerprint is checked against the module as it arrived (the
+        // first analysis, above); the lowering's markers have annotated the
+        // module since, and every other DOM check reruns here on it as it is.
         auto admittedDOM =
-            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps)
+            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps,
+                                                          domEntry->fingerprint())
                      : nullptr;
         if (admittedDOM && !admittedDOM->proved()) {
             return fail("native DOM entry admission: " + admittedDOM->reason());
@@ -863,6 +867,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // Nor are `document` and `window` when only their
                         // page reads use them; those lower to runtime calls.
                         if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is a declared function's value handed to the
+                        // listener table: it becomes the declaration's
+                        // identity (EmitC/HostCallbacks.cpp).
+                        if (load->hasAttr(kNativeHostDeclared)) { return; }
                         // Nor is the global `undefined`, which is a constant.
                         if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();

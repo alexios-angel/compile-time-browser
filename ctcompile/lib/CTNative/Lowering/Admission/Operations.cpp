@@ -421,6 +421,7 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
     if (auto admitted = staticTableOperation(o)) { return *admitted; }
+    if (auto admitted = instanceOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
@@ -1072,6 +1073,12 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                            "would find undefined")
                               .str());
         }
+        // A field joining String with absence, Boolean or Number is a union
+        // member (Admission/VariantFields.cpp).
+        if (auto admitted = variantField(key, user, accesses)) {
+            if (!*admitted) { return false; }
+            continue;
+        }
         // The existing shape census already spells one definite string as
         // std::string. Mixed or possibly absent reads need a different join;
         // do not route them through the numeric nullable carrier.
@@ -1086,6 +1093,14 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
             const carrier c = carrierOf(typeOf(set.getValue()));
             if (c == carrier::methodTable) {
                 if (!ownedTableField(set)) { return false; }
+                continue;
+            }
+            // A field one of a proved set of closures (ClosureSets.cpp) is
+            // stored as that set's std::variant, whether the stored value is
+            // the set or one member's closure.
+            if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
+                (c == carrier::closure && set.getValue().getDefiningOp() &&
+                 set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
                 continue;
             }
             if (!isScalarCarrier(c) && c != carrier::string) {
@@ -1119,7 +1134,10 @@ bool admission::directCall(ctjs::CallDirectOp call) {
     // is the generated class, so it must really be a closed-shape object and
     // not some other value the lift never looked at.
     const auto operands = call.getArgOperands();
-    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver())) {
+    // An instance a registry Map owns is passed as its owner or borrowed
+    // (EmitC/Instances.cpp).
+    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver()) &&
+        carrierOf(typeOf(call.getReceiver())) != carrier::instance) {
         return refuse("a method call whose receiver is not a closed-shape object");
     }
     for (unsigned i = 3; i < operands.size(); ++i) {
@@ -1157,6 +1175,7 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&
+            carrierOf(typeOf(operands[i])) != carrier::instance &&
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&

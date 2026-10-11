@@ -1,13 +1,16 @@
 # Handlers an ordinary script schedules with setTimeout run natively when the
 # host moves its clock, as they run on the interpreter, with no VM linked into
-# the native build.
+# the native builds (clang and GCC).
 # RUN: %{obj}/ctcompile-test-timers %S/timers.html %S/timers.js > %t.vm
 # RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-timers-native %S/timers.html %S/timers.js > %t.native
 # RUN: diff %t.vm %t.native
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-timers-native-gcc %S/timers.html %S/timers.js > %t.gcc
+# RUN: diff %t.vm %t.gcc
 # RUN: FileCheck %s --input-file %t.native
 # RUN: %nm -C %{obj}/ctcompile-test-timers-native | not grep -E "ctbrowser::script::"
-# CHECK: log=
-# CHECK-NEXT: +0: log=zn
-# CHECK-NEXT: +5: log=znm
-# CHECK-NEXT: +0: log=znmm2
-# CHECK-NEXT: +5: log=znmm2a
+# RUN: %nm -C %{obj}/ctcompile-test-timers-native-gcc | not grep -E "ctbrowser::script::"
+# CHECK: log= cleared=t{{$}}
+# CHECK-NEXT: +0: log=zn cleared=td{{$}}
+# CHECK-NEXT: +5: log=znm cleared=tdi{{$}}
+# CHECK-NEXT: +0: log=znmm2 cleared=tdi{{$}}
+# CHECK-NEXT: +5: log=znmm2a cleared=tdiix{{$}}

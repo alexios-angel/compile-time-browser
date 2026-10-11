@@ -284,6 +284,13 @@ inline void vec_push(std::vector<js_element_t> & elements, const js_element_t & 
     elements.push_back(element);
 }
 
+/// Appends an element or null that the program proved present (`[i]` inside
+/// `for (; i;)`); a null throws as present_element does.
+inline void vec_push(std::vector<js_element_t> & elements,
+                     const std::optional<js_element_t> & element) {
+    elements.push_back(present_element(element));
+}
+
 /// Converts an optional view to the plain element_ref carrier, with an empty
 /// element_ref for null.
 inline ctbrowser::element_ref element_or_null(const std::optional<js_element_t> & element) {

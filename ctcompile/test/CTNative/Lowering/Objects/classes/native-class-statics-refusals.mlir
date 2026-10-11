@@ -30,8 +30,8 @@
 // RUN: %native_reference %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 
-// The class is passed to a function, which could read any static member.
-// ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.call{{(_direct)?}}` in `run${{[0-9]+}}`"
+// The class is passed to a function that returns it, so it leaves as a value.
+// ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.return` in `show${{[0-9]+}}`"
 //
 // `early` reads a static member and is called before the class statement
 // runs, when the binding is still uninitialized (JavaScript throws there).
@@ -53,16 +53,21 @@
 //
 // Bootstrap's BaseComponent.getOrCreateInstance on two subclasses that
 // override a static getter: `new this(e)` constructs the subclass that the
-// call names. Inheritance and `new this` are refused for now, on both
-// subclasses (the parent keeps the class census's heritage reason).
-// GETORCREATE-COUNT-2: ctnative.class_reason = "it has static getter `NAME`; it extends another class, so `this` in a static member is not one class; inherited statics are the next slice"
+// call names. Flattening (ClassInheritance.cpp) gives X and Y their own
+// constructor and their own copy of getOrCreateInstance, and erases the
+// original subclass constructors and Base, which nothing reaches any more;
+// each copy is called, and it calls `get`, which it reaches through its own
+// closure (a capture of `run`), so the direct call that would replace it has
+// no closure to pass.
+// GETORCREATE: ctnative.inheritance_erased = ["X${{[0-9]+}}", "Y${{[0-9]+}}", {{.*}}"Base${{[0-9]+}}"]
+// GETORCREATE-COUNT-2: ctnative.class_reason = "it has static method `getOrCreateInstance`; its static member `getOrCreateInstance` reads new.target or its own closure"
 // GETORCREATE-RUN: r=34
 
 //--- escape.js
-function show(k) { return k.size; }
+function show(k) { return k; }
 function run() {
     class Box { constructor(v) { this.v = v; } static get size() { return 4; } }
-    return new Box(2).v + show(Box);
+    return new Box(2).v + show(Box).size;
 }
 var r = run();
 

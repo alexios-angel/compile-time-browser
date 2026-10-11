@@ -179,17 +179,27 @@ bool lowering::replaceStaticTable(mlir::Operation * o) {
         return true;
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o)) {
-        const std::string field =
-            "<&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o) + ">";
-        // The key, which the error of a read of an unset table names.
-        const llvm::StringRef key =
-            o->getAttrOfType<mlir::StringAttr>("ctnative.static_table_key").getValue();
-        const mlir::Value named = ec::LiteralOp::create(
-            at, o->getLoc(), ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
-            cpp::c_string_literal(std::string_view(key.data(), key.size())));
-        mlir::Value value =
-            callValue(at, o->getLoc(), read.getResult().getType(), "ctnative::table_field" + field,
-                      mlir::ValueRange{read.getObject(), named});
+        const std::string member =
+            "&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o);
+        // A spread's read names its result type, which also holds undefined
+        // for a table not stored yet. Any other read throws for one, naming
+        // the key.
+        const mlir::Type type = read.getResult().getType();
+        mlir::Value value;
+        if (o->hasAttr(kNativeStaticTableSpread)) {
+            value = callValue(at, o->getLoc(), type,
+                              "ctnative::table_field_or_undefined<" + member + ", " +
+                                  llvm::cast<ec::OpaqueType>(type).getValue().str() + ">",
+                              read.getObject());
+        } else {
+            const llvm::StringRef key =
+                o->getAttrOfType<mlir::StringAttr>("ctnative.static_table_key").getValue();
+            const mlir::Value named = ec::LiteralOp::create(
+                at, o->getLoc(), ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                cpp::c_string_literal(std::string_view(key.data(), key.size())));
+            value = callValue(at, o->getLoc(), type, "ctnative::table_field<" + member + ">",
+                              mlir::ValueRange{read.getObject(), named});
+        }
         read.getResult().replaceAllUsesWith(value);
         eraseIfUnused(o);
         return true;

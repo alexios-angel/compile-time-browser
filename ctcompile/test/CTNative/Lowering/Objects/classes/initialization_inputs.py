@@ -1209,15 +1209,22 @@ def inheritance_delta(text):
     return int(found.group(1)) - int(found.group(2)) if found else 0
 
 
+# A function the removal pass erased as unreachable, listed on the module in
+# ctnative.unreachable_refusals with its earlier refusal.
+UNREACHABLE_ROW = re.compile(r'\{function = "[^"]+", reason = "removed: unreachable')
+
+
 def check_refusal(name, text, functions):
-    """Assert that every one of `functions` in `text` is native or a named refusal.
+    """Assert that every one of `functions` in `text` is native, a named refusal
+    or removed as unreachable, counting flattening's copies and erasures.
 
     The script entry must stay refused and no emitc main may be emitted.
     """
     remaining = len(FUNCTION.findall(text))
     reasons = REFUSAL.findall(text)
     if (
-        remaining + len(NATIVE.findall(text)) != functions + inheritance_delta(text)
+        remaining + len(NATIVE.findall(text)) + len(UNREACHABLE_ROW.findall(text))
+        != functions + inheritance_delta(text)
         or len(reasons) != remaining
         or not all(reasons)
         or not re.search(r"ctjs.func @_script_\$0\(.*ctnative.not_native", text)
@@ -1734,10 +1741,12 @@ def check_class_capture_inputs(args, source, manifest):
     return len(variants)
 
 
-def check_executable(args, name, native, expected):
+def check_executable(args, name, native, expected, reference=None):
     """Compile fully lowered `native` to C++ with every compiler and run it.
 
-    Both the explicit and the deduced-type layouts must print `a=<expected>`
+    Both the explicit and the deduced-type layouts must print what the
+    reference interpreter printed for the fixture (`reference`, its stdout),
+    or `a=<expected>` when there is no interpreter output to compare,
     and keep no ctbrowser runtime or prototype storage. Returns the number of
     binaries run.
     """
@@ -1780,7 +1789,7 @@ def check_executable(args, name, native, expected):
         for index, compiler in enumerate(find_compilers()):
             binary = file.with_suffix(f".{index}")
             run([compiler, *FLAGS, str(file), "-o", str(binary)])
-            if run([str(binary.resolve())]).stdout != f"a={expected}\n":
+            if run([str(binary.resolve())]).stdout != (reference or f"a={expected}\n"):
                 raise RuntimeError(f"{name}/{layout}: native class observations differ")
             checked += 1
     return checked
