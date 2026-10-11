@@ -34,6 +34,12 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
+    // Joined into an instance (EmitC/Instances.cpp), anything that is not one
+    // is null, undefined or a falsy `has` result: the registry proof allows no
+    // other, and a null pointer stands for each.
+    if (instanceSpellings.contains(opaqueSpelling(target)) && !isInstanceValue(value)) {
+        return ec::LiteralOp::create(b, where, target, b.getStringAttr("nullptr"));
+    }
     // An ordinary script's element or null: an element view converts, and an
     // absent scalar (null or undefined) is the empty optional.
     if (target == carrierType(context, carrier::nullableElement)) {
@@ -44,12 +50,6 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
             return ec::ConstantOp::create(b, where, target,
                                           ec::OpaqueAttr::get(context, "std::nullopt"));
         }
-    }
-    // Joined into an instance (EmitC/Instances.cpp), anything that is not one
-    // is null, undefined or a falsy `has` result: the registry proof allows no
-    // other, and a null pointer stands for each.
-    if (instanceSpellings.contains(opaqueSpelling(target)) && !isInstanceValue(value)) {
-        return ec::LiteralOp::create(b, where, target, b.getStringAttr("nullptr"));
     }
     // Host null uses optional String storage. Preserve its exact null tag in
     // scalar joins, or convert it to positive zero for numeric consumers.

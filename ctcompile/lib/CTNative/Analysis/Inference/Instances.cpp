@@ -70,6 +70,32 @@ bool dereferences(mlir::OpOperand & use) {
     return method && use.getOperandNumber() == 1 && method.getObject() == use.get();
 }
 
+/// The class a static method `made` is stored on, by `set_property
+/// C[key] = made` with C a class's closure and the key stored once; null
+/// otherwise.
+std::pair<mlir::Value, llvm::StringRef> staticSlot(ctjs::CreateClosureOp made) {
+    for (mlir::OpOperand & use : made.getResult().getUses()) {
+        auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+        if (!store || use.getOperandNumber() != 2) { continue; }
+        const mlir::Value owner = store.getObject();
+        const llvm::StringRef key = ctjs::constantKey(store.getKey());
+        const bool isClass = llvm::any_of(owner.getUsers(), [&](mlir::Operation * user) {
+            auto attach = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            return attach && attach.getObject() == owner &&
+                   ctjs::constantKey(attach.getKey()) == "prototype";
+        });
+        const unsigned writes = llvm::count_if(owner.getUsers(), [&](mlir::Operation * user) {
+            auto other = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            return other && other.getObject() == owner && ctjs::constantKey(other.getKey()) == key;
+        });
+        if (isClass && ctjs::ordinaryKey(key) && writes == 1 &&
+            owner.getDefiningOp<ctjs::CreateClosureOp>()) {
+            return {owner, key};
+        }
+    }
+    return {};
+}
+
 /// The functions each create_closure names and the closures naming each
 /// function, by the importer's function index.
 class functionIndex {
@@ -103,7 +129,20 @@ public:
         auto plain = llvm::dyn_cast<ctjs::CallOp>(call);
         auto made = plain ? plain.getCallee().getDefiningOp<ctjs::CreateClosureOp>()
                           : ctjs::CreateClosureOp{};
-        return made ? targetOf(made) : ctjs::FuncOp{};
+        if (made) { return targetOf(made); }
+        // `C.key(...)` of a static method stored once on class C.
+        auto read = plain ? ctjs::receiverMethod(plain) : ctjs::GetPropertyOp{};
+        if (!read || read.getObject() != plain.getReceiver()) { return {}; }
+        for (mlir::Operation * user : read.getObject().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+            auto member =
+                store && store.getObject() == read.getObject() &&
+                        ctjs::constantKey(store.getKey()) == ctjs::constantKey(read.getKey())
+                    ? store.getValue().getDefiningOp<ctjs::CreateClosureOp>()
+                    : ctjs::CreateClosureOp{};
+            if (member && staticSlot(member).first == read.getObject()) { return targetOf(member); }
+        }
+        return {};
     }
 };
 
@@ -132,7 +171,32 @@ std::optional<llvm::SmallVector<mlir::Operation *>> callersOf(ctjs::FuncOp fn,
                 calls.push_back(use.getOwner());
                 continue;
             }
+            // A static method: stored on its class (and its `__home` edge
+            // set), then called as `C.key(...)`.
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+            const auto [owner, key] = staticSlot(closure);
+            if (store && owner &&
+                ((use.getOperandNumber() == 2 && store.getObject() == owner) ||
+                 (use.getOperandNumber() == 0 && ctjs::constantKey(store.getKey()) == "__home"))) {
+                continue;
+            }
             return std::nullopt;
+        }
+        // The calls of a static method through its class.
+        const auto [owner, key] = staticSlot(closure);
+        if (!owner) { continue; }
+        for (mlir::Operation * user : owner.getUsers()) {
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+            if (!read || read.getObject() != owner || ctjs::constantKey(read.getKey()) != key) {
+                continue;
+            }
+            for (mlir::OpOperand & use : read.getResult().getUses()) {
+                auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+                if (!call || use.getOperandNumber() != 0 || call.getReceiver() != owner) {
+                    return std::nullopt;
+                }
+                calls.push_back(call);
+            }
         }
     }
     return calls;
@@ -473,13 +537,150 @@ mapUses usesOf(llvm::ArrayRef<mlir::Value> roots, bool bindings, mlir::ModuleOp 
     return out;
 }
 
+/// Whether `key` names a per-class copy of a parent's constructor that
+/// inheritance flattening (ClosureLifting/ClassInheritance.cpp) put on a
+/// prototype: `super:<parent>:constructor`.
+bool superConstructorKey(llvm::StringRef key) {
+    return key.starts_with("super:") && key.ends_with(":constructor");
+}
+
+/// The class `fn` builds instances of: the class whose constructor it is,
+/// or, for a per-class copy of a parent's constructor, the class whose
+/// prototype holds it under a `super:` key. Null otherwise.
+ctjs::CreateClosureOp classOfConstructor(ctjs::FuncOp fn, const functionIndex & functions) {
+    for (ctjs::CreateClosureOp made : functions.closuresOf(fn)) {
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+            if (!store) { continue; }
+            const llvm::StringRef key = ctjs::constantKey(store.getKey());
+            if (use.getOperandNumber() == 0 && key == "prototype") { return made; }
+            if (use.getOperandNumber() != 2 || !superConstructorKey(key)) { continue; }
+            // The prototype holding the copy, and the class it belongs to.
+            for (mlir::Operation * user : store.getObject().getUsers()) {
+                auto attach = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (attach && attach.getValue() == store.getObject() &&
+                    ctjs::constantKey(attach.getKey()) == "prototype") {
+                    if (auto owner = attach.getObject().getDefiningOp<ctjs::CreateClosureOp>()) {
+                        return owner;
+                    }
+                }
+            }
+        }
+    }
+    return {};
+}
+
+/// Whether `value` is a class's closure (it has a `prototype`).
+bool isClassClosure(mlir::Value value) {
+    return value && value.getDefiningOp<ctjs::CreateClosureOp>() &&
+           llvm::any_of(value.getUsers(), [&](mlir::Operation * user) {
+               auto attach = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+               return attach && attach.getObject() == value &&
+                      ctjs::constantKey(attach.getKey()) == "prototype";
+           });
+}
+
+/// The class a value names when it is the class itself: the closure, the
+/// `constructor` of a constructor function's `this`, or the `this` of a
+/// static member stored on the class (inheritance flattening copies a
+/// parent's statics onto each class, so that `this` is that class).
+mlir::Value classNamedBy(mlir::Value value, const functionIndex & functions) {
+    if (isClassClosure(value)) { return value; }
+    if (auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+        read && ctjs::constantKey(read.getKey()) == "constructor" && isReceiver(read.getObject())) {
+        auto fn = llvm::cast<ctjs::FuncOp>(
+            llvm::cast<mlir::BlockArgument>(read.getObject()).getOwner()->getParentOp());
+        if (auto owner = classOfConstructor(fn, functions)) { return owner.getResult(); }
+        return {};
+    }
+    if (!isReceiver(value)) { return {}; }
+    auto fn =
+        llvm::cast<ctjs::FuncOp>(llvm::cast<mlir::BlockArgument>(value).getOwner()->getParentOp());
+    for (ctjs::CreateClosureOp made : functions.closuresOf(fn)) {
+        if (mlir::Value owner = staticSlot(made).first) { return owner; }
+        for (mlir::Operation * user : made.getResult().getUsers()) {
+            auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user);
+            if (accessor && accessor.getGetter() == made.getResult() &&
+                isClassClosure(accessor.getTarget())) {
+                return accessor.getTarget();
+            }
+        }
+    }
+    return {};
+}
+
+/// The string `value` always is, read through constants, concatenation and
+/// the static getters and fields of a class (Bootstrap's
+/// `static get DATA_KEY() { return `bs.${this.NAME}` }`); none otherwise.
+std::optional<std::string> constantString(mlir::Value value, const functionIndex & functions,
+                                          unsigned depth = 0) {
+    if (depth > 8) { return std::nullopt; }
+    if (auto text = ctjs::constantAttr<ctjs::StringAttr>(value)) { return text.getValue().str(); }
+    if (auto binary = value.getDefiningOp<ctjs::BinaryOp>()) {
+        // `+` of two Strings, or the concatenation a template literal is.
+        if (binary.getKind() != ctjs::BinaryKind::Add &&
+            binary.getKind() != ctjs::BinaryKind::Concat) {
+            return std::nullopt;
+        }
+        auto left = constantString(binary.getLhs(), functions, depth + 1);
+        auto right = left ? constantString(binary.getRhs(), functions, depth + 1) : std::nullopt;
+        if (!left || !right) { return std::nullopt; }
+        return *left + *right;
+    }
+    auto read = value.getDefiningOp<ctjs::GetPropertyOp>();
+    const mlir::Value owner = read ? classNamedBy(read.getObject(), functions) : mlir::Value{};
+    const llvm::StringRef key = read ? ctjs::constantKey(read.getKey()) : "";
+    if (!owner || key.empty()) { return std::nullopt; }
+    std::optional<std::string> found;
+    unsigned definitions = 0;
+    for (mlir::Operation * user : owner.getUsers()) {
+        if (auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user);
+            accessor && accessor.getTarget() == owner && accessor.getName() == key) {
+            ++definitions;
+            auto getter = accessor.getGetter().getDefiningOp<ctjs::CreateClosureOp>();
+            ctjs::FuncOp target = getter ? functions.targetOf(getter) : ctjs::FuncOp{};
+            llvm::SmallVector<ctjs::ReturnOp> exits;
+            if (target) {
+                target.walk([&](ctjs::ReturnOp exit) { exits.push_back(exit); });
+            }
+            if (exits.size() == 1) {
+                found = constantString(exits.front().getValue(), functions, depth + 1);
+            }
+        } else if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                   store && store.getObject() == owner &&
+                   ctjs::constantKey(store.getKey()) == key) {
+            ++definitions;
+            found = constantString(store.getValue(), functions, depth + 1);
+        }
+    }
+    return definitions == 1 ? found : std::nullopt;
+}
+
+/// The class family sharing one registry Map: every class some instance of
+/// which the Map stores. Each class is proved on its own; these are the
+/// facts the proofs share.
+struct familyContext {
+    /// The `this` of every function that may store into the Map: each
+    /// class's constructor and its copies of parent constructors.
+    llvm::DenseSet<mlir::Value> selves;
+    /// Every method name of every class: a value read back from the Map may
+    /// be an instance of any of them.
+    llvm::DenseSet<llvm::StringRef> methodNames;
+    /// The classes, by their closure, in the order first seen.
+    llvm::SmallVector<ctjs::CreateClosureOp> classes;
+};
+
 /// The registry proof for one Map whose `set` stores a constructor's `this`.
 class registryProof {
     mlir::ModuleOp module;
     const functionIndex & functions;
     const mapUses & map;
     const mapUses * outer; // For a Map of Maps, the outer Map; `map` is then the inner ones.
+    const familyContext & family;
     InstanceRegistry & out;
+    // The constructor and the copies of parent constructors it runs on the
+    // same instance (`super:<parent>:constructor` methods).
+    llvm::SmallVector<ctjs::FuncOp> constructors;
     std::string name; // The class's JavaScript name.
     // The constructor's `this` and the parameters it is passed through on its
     // way to the Map's `set`.
@@ -512,12 +713,33 @@ class registryProof {
 
     /// The class around the constructor: its closure, its `new` sites and
     /// its prototype methods.
+    /// The closure that is the class; collectClass checks there is one.
+    mlir::Value classClosure() {
+        const auto made = functions.closuresOf(out.constructor);
+        if (made.size() != 1) { return {}; }
+        ctjs::CreateClosureOp only = made.front();
+        return only.getResult();
+    }
+
+    /// Whether a static member `fn` of the class constructs `this`, the
+    /// class itself, which makes instances no `new` of the closure shows
+    /// (`getOrCreateInstance`'s `new this(...)`).
+    static bool constructsThis(ctjs::FuncOp fn) {
+        if (fn.getBody().empty()) { return false; }
+        const mlir::Value self = fn.getBody().front().getArgument(ctjs::arg_receiver);
+        return llvm::any_of(self.getUsers(), [&](mlir::Operation * user) {
+            auto made = llvm::dyn_cast<ctjs::ConstructOp>(user);
+            return made && made.getCallee() == self;
+        });
+    }
+
     bool collectClass() {
         const auto made = functions.closuresOf(out.constructor);
         if (made.size() != 1) {
             return refuse("the class `" + name + "` is not created exactly once");
         }
         ctjs::CreateClosureOp only = made.front();
+        methodNames.insert(family.methodNames.begin(), family.methodNames.end());
         classCaptures = llvm::is_contained(map.captors, only);
         const mlir::Value closure = only.getResult();
         mlir::Value prototype;
@@ -527,12 +749,49 @@ class registryProof {
             if (store && use.getOperandNumber() == 0) {
                 if (ctjs::constantKey(store.getKey()) == "prototype") {
                     prototype = store.getValue();
+                } else if (auto member = store.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                    ctjs::FuncOp target = functions.targetOf(member);
+                    if (target && constructsThis(target)) {
+                        return refuse("the static method `" +
+                                      ctjs::constantKey(store.getKey()).str() + "` of `" + name +
+                                      "` constructs `this`, which this proof does not follow yet");
+                    }
                 }
                 continue;
             }
             if (store && use.getOperandNumber() == 2 &&
                 ctjs::constantKey(store.getKey()) == "constructor") {
                 continue; // The prototype's `constructor` slot, checked below.
+            }
+            // Static members: a static method's `__home`, a static accessor,
+            // and reads and calls of them on the class. None makes an
+            // instance unless it constructs `this`, checked below.
+            if (store && use.getOperandNumber() == 2 &&
+                ctjs::constantKey(store.getKey()) == "__home") {
+                continue;
+            }
+            if (auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user);
+                accessor && use.getOperandNumber() == 0) {
+                for (mlir::Value side : {accessor.getGetter(), accessor.getSetter()}) {
+                    auto member = side.getDefiningOp<ctjs::CreateClosureOp>();
+                    ctjs::FuncOp target = member ? functions.targetOf(member) : ctjs::FuncOp{};
+                    if (target && constructsThis(target)) {
+                        return refuse("a static member of `" + name +
+                                      "` constructs `this`, which this proof does not follow "
+                                      "yet");
+                    }
+                }
+                continue;
+            }
+            if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                read && use.getOperandNumber() == 0 && !ctjs::constantKey(read.getKey()).empty() &&
+                ctjs::constantKey(read.getKey()) != "prototype") {
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                call && use.getOperandNumber() == 1) {
+                auto method = ctjs::receiverMethod(call);
+                if (method && method.getObject() == closure) { continue; }
             }
             if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(user);
                 made && made.getCallee() == closure && made.getNewTarget() == closure) {
@@ -576,6 +835,7 @@ class registryProof {
                 return refuse("the prototype of `" + name + "` reaches " + named(use.getOwner()));
             }
             methods.push_back(target);
+            if (superConstructorKey(key)) { constructors.push_back(target); }
             classCaptures = classCaptures || llvm::is_contained(map.captors, method);
             methodNames.insert(key);
         }
@@ -586,24 +846,32 @@ class registryProof {
     /// of the registry `set` only. In a method: field accesses and method
     /// calls only.
     bool checkReceivers() {
-        const mlir::Value self = out.constructor.getBody().front().getArgument(ctjs::arg_receiver);
-        receivers.insert(self);
+        // The `this` of the constructor and of each parent constructor copy
+        // it runs on the instance: these may also hand `this` to the Map.
+        llvm::DenseSet<mlir::Value> selves;
+        for (ctjs::FuncOp constructor : constructors) {
+            const mlir::Value self = constructor.getBody().front().getArgument(ctjs::arg_receiver);
+            selves.insert(self);
+            receivers.insert(self);
+            carriers.insert(self);
+        }
         for (const mlir::Value carrier : carriers) {
+            const bool self = selves.contains(carrier);
             for (mlir::OpOperand & use : carrier.getUses()) {
-                if (carrier == self && instanceUse(use)) { continue; }
+                if (self && instanceUse(use)) { continue; }
                 if (llvm::is_contained(map.sets, use.getOwner()) && use.getOperandNumber() == 3) {
                     continue;
                 }
                 if (carriers.contains(parameterFilledBy(use, module, functions))) { continue; }
-                return refuse(carrier == self
-                                  ? "`this` in the constructor of `" + name + "` also reaches " +
-                                        named(use.getOwner())
-                                  : "`this` of `" + name + "`, passed on as a parameter of `" +
-                                        jsName(use.getOwner()->getParentOfType<ctjs::FuncOp>()) +
-                                        "`, also reaches " + named(use.getOwner()));
+                return refuse(self ? "`this` in the constructor of `" + name + "` also reaches " +
+                                         named(use.getOwner())
+                                   : "`this` of `" + name + "`, passed on as a parameter of `" +
+                                         jsName(use.getOwner()->getParentOfType<ctjs::FuncOp>()) +
+                                         "`, also reaches " + named(use.getOwner()));
             }
         }
         for (ctjs::FuncOp method : methods) {
+            if (llvm::is_contained(constructors, method)) { continue; }
             const mlir::Value self = method.getBody().front().getArgument(ctjs::arg_receiver);
             receivers.insert(self);
             // The nulling loops first: a loop's own store is another use.
@@ -996,22 +1264,34 @@ class registryProof {
 
 public:
     registryProof(mlir::ModuleOp module, const functionIndex & functions, const mapUses & map,
-                  const mapUses * outer, InstanceRegistry & out)
-        : module(module), functions(functions), map(map), outer(outer), out(out),
-          name(jsName(out.constructor)) {}
+                  const mapUses * outer, const familyContext & family, InstanceRegistry & out)
+        : module(module), functions(functions), map(map), outer(outer), family(family), out(out),
+          name(jsName(out.constructor)) {
+        constructors.push_back(out.constructor);
+    }
 
     bool run() {
         if (!map.escape.empty()) { return refuse(map.escape); }
-        const mlir::Value self = out.constructor.getBody().front().getArgument(ctjs::arg_receiver);
         for (ctjs::CallOp set : map.sets) {
             const origins from = receiverOrigins(set.getArgs()[1], module, functions);
             const bool only = !from.other && llvm::all_of(from.seen, [&](mlir::Value v) {
-                return v == self || !isReceiver(v);
+                return !isReceiver(v) || family.selves.contains(v);
             });
-            if (only) { carriers.insert(from.seen.begin(), from.seen.end()); }
             if (!only) {
                 return refuse("the registry Map also holds a value that is not a new `" + name +
                               "`");
+            }
+            // This class's own selves and the parameters on the way; another
+            // class's `this` is that class's proof's to check.
+            for (mlir::Value v : from.seen) {
+                if (!isReceiver(v) ||
+                    classOfConstructor(
+                        llvm::cast<ctjs::FuncOp>(
+                            llvm::cast<mlir::BlockArgument>(v).getOwner()->getParentOp()),
+                        functions)
+                            .getResult() == classClosure()) {
+                    carriers.insert(v);
+                }
             }
         }
         if (map.iterated && !map.deletes.empty()) {
@@ -1097,6 +1377,108 @@ std::optional<llvm::SmallVector<mlir::Value>> innerMaps(const mapUses & outer) {
 
 } // namespace
 
+/// The key a family's class registers under and the reads each class's key
+/// selects (InstanceRegistry::key, keyedReads). Each `set` of the Map stores
+/// a `this` passed with its key into a helper (Bootstrap's
+/// `Data.set(element, this.constructor.DATA_KEY, this)`), or directly; each
+/// key must be one constant string per class, and no two classes may share
+/// one, or a read could not know which class it finds.
+static void keyFamily(llvm::MutableArrayRef<InstanceRegistry> family, const mapUses & map,
+                      mlir::ModuleOp module, const functionIndex & functions) {
+    const auto refuseAll = [&](const std::string & why) {
+        for (InstanceRegistry & registry : family) { registry.refusal = why; }
+    };
+    // The class whose constructor function's `this` is `value`, by name.
+    const auto classOf = [&](mlir::Value value) -> InstanceRegistry * {
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        auto fn = argument ? llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp())
+                           : ctjs::FuncOp{};
+        ctjs::CreateClosureOp owner =
+            fn ? classOfConstructor(fn, functions) : ctjs::CreateClosureOp{};
+        for (InstanceRegistry & registry : family) {
+            if (owner && functions.targetOf(owner) == registry.constructor) { return &registry; }
+        }
+        return nullptr;
+    };
+    // The pairs (key, value) that reach each `set`, through one helper's
+    // parameters when the set stores its parameters.
+    const auto parameterIndex = [](mlir::Value value) -> std::optional<unsigned> {
+        auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+        if (!argument || !argument.getOwner()->isEntryBlock() ||
+            argument.getArgNumber() < ctjs::implicit_arguments) {
+            return std::nullopt;
+        }
+        return argument.getArgNumber();
+    };
+    for (ctjs::CallOp set : map.sets) {
+        llvm::SmallVector<std::pair<mlir::Value, mlir::Value>> pairs;
+        const mlir::Value key = set.getArgs()[0], value = set.getArgs()[1];
+        const auto keyAt = parameterIndex(key), valueAt = parameterIndex(value);
+        auto helper = set->getParentOfType<ctjs::FuncOp>();
+        if (keyAt && valueAt) {
+            const auto callers = callersOf(helper, module, functions);
+            if (!callers) {
+                return refuseAll("the registry Map's key comes from a helper whose callers are "
+                                 "not all known");
+            }
+            for (mlir::Operation * call : *callers) {
+                pairs.emplace_back(actualOf(call, *keyAt), actualOf(call, *valueAt));
+            }
+        } else {
+            pairs.emplace_back(key, value);
+        }
+        for (const auto & [actualKey, actualValue] : pairs) {
+            InstanceRegistry * owner = actualValue ? classOf(actualValue) : nullptr;
+            // A class nothing constructs (a parent whose subclasses run their
+            // own copies of its constructor) never registers anything.
+            if (!owner && actualValue && isReceiver(actualValue)) {
+                auto fn = llvm::cast<ctjs::FuncOp>(
+                    llvm::cast<mlir::BlockArgument>(actualValue).getOwner()->getParentOp());
+                ctjs::CreateClosureOp unused = classOfConstructor(fn, functions);
+                if (unused && llvm::none_of(unused.getResult().getUsers(), [](mlir::Operation * u) {
+                        return llvm::isa<ctjs::ConstructOp>(u);
+                    })) {
+                    continue;
+                }
+            }
+            const auto text = actualKey ? constantString(actualKey, functions) : std::nullopt;
+            if (!owner || !text) {
+                return refuseAll("a class of the registry Map's family registers under a key "
+                                 "that is not one constant string");
+            }
+            if (!owner->key.empty() && owner->key != *text) {
+                return refuseAll("the class `" + jsName(owner->constructor) +
+                                 "` registers under two keys");
+            }
+            owner->key = *text;
+        }
+    }
+    for (InstanceRegistry & registry : family) {
+        for (InstanceRegistry & other : family) {
+            if (&other != &registry && !registry.key.empty() && other.key == registry.key) {
+                return refuseAll("the classes `" + jsName(registry.constructor) + "` and `" +
+                                 jsName(other.constructor) + "` both register under the key `" +
+                                 registry.key + "`, so a read cannot know which it finds");
+            }
+        }
+    }
+    // The reads: a `get` whose key is a helper's parameter, at each call of
+    // the helper with a constant key.
+    for (ctjs::CallOp get : map.gets) {
+        const auto keyAt = parameterIndex(get.getArgs()[0]);
+        auto helper = get->getParentOfType<ctjs::FuncOp>();
+        const auto callers = keyAt ? callersOf(helper, module, functions) : std::nullopt;
+        if (!callers) { continue; }
+        for (mlir::Operation * call : *callers) {
+            const mlir::Value actual = actualOf(call, *keyAt);
+            const auto text = actual ? constantString(actual, functions) : std::nullopt;
+            for (InstanceRegistry & registry : family) {
+                if (text && registry.key == *text) { registry.keyedReads.push_back(call); }
+            }
+        }
+    }
+}
+
 std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
     const functionIndex functions(module);
     std::vector<InstanceRegistry> out;
@@ -1119,23 +1501,116 @@ std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
             outer = std::move(uses);
             uses = std::move(values);
         }
-        // A registry Map stores the `this` of some function.
-        mlir::Value self;
+        // A registry Map stores the `this` of some function: one class's
+        // constructor, or, for a family of classes, each class's own
+        // constructor or its copy of their parent's (inheritance flattening).
+        familyContext family;
+        llvm::SmallVector<ctjs::FuncOp> unknown;
         for (ctjs::CallOp set : uses.sets) {
-            if (self) { break; }
             const origins from = receiverOrigins(set.getArgs()[1], module, functions);
-            auto found = llvm::find_if(from.seen, isReceiver);
-            if (found != from.seen.end()) { self = *found; }
+            for (mlir::Value v : from.seen) {
+                if (!isReceiver(v)) { continue; }
+                auto fn = llvm::cast<ctjs::FuncOp>(
+                    llvm::cast<mlir::BlockArgument>(v).getOwner()->getParentOp());
+                family.selves.insert(v);
+                ctjs::CreateClosureOp owner = classOfConstructor(fn, functions);
+                if (!owner) {
+                    unknown.push_back(fn);
+                } else if (!llvm::is_contained(family.classes, owner)) {
+                    family.classes.push_back(owner);
+                }
+            }
         }
-        if (!self) { return; }
-        InstanceRegistry & proof = out.emplace_back();
-        proof.map = made;
-        for (mlir::Value map : inner) {
-            proof.innerMaps.push_back(map.getDefiningOp<ctjs::ConstructOp>());
+        if (family.selves.empty()) { return; }
+        // A class nothing constructs has no instances; the copies of its
+        // constructor its subclasses run belong to them.
+        // A class is constructed by a `new` of its closure or by a static
+        // member's `new this` (which the class's proof then refuses by name).
+        const auto constructed = [&](ctjs::CreateClosureOp owner) {
+            return llvm::any_of(owner.getResult().getUsers(), [&](mlir::Operation * user) {
+                if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(user)) {
+                    return made.getCallee() == owner.getResult();
+                }
+                mlir::Value member;
+                if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    store && store.getObject() == owner.getResult()) {
+                    member = store.getValue();
+                } else if (auto accessor = llvm::dyn_cast<ctjs::DefineAccessorOp>(user);
+                           accessor && accessor.getTarget() == owner.getResult()) {
+                    member = accessor.getGetter();
+                }
+                auto closure = member ? member.getDefiningOp<ctjs::CreateClosureOp>()
+                                      : ctjs::CreateClosureOp{};
+                ctjs::FuncOp target = closure ? functions.targetOf(closure) : ctjs::FuncOp{};
+                if (!target || target.getBody().empty()) { return false; }
+                const mlir::Value self = target.getBody().front().getArgument(ctjs::arg_receiver);
+                return llvm::any_of(self.getUsers(), [&](mlir::Operation * use) {
+                    auto made = llvm::dyn_cast<ctjs::ConstructOp>(use);
+                    return made && made.getCallee() == self;
+                });
+            });
+        };
+        llvm::SmallVector<ctjs::CreateClosureOp> live;
+        for (ctjs::CreateClosureOp owner : family.classes) {
+            if (constructed(owner)) { live.push_back(owner); }
         }
-        proof.constructor = llvm::cast<ctjs::FuncOp>(
-            llvm::cast<mlir::BlockArgument>(self).getOwner()->getParentOp());
-        registryProof(module, functions, uses, outer ? &*outer : nullptr, proof).run();
+        // Every method name of every class, for the reads that may be any.
+        for (ctjs::CreateClosureOp owner : live) {
+            for (mlir::Operation * user : owner.getResult().getUsers()) {
+                auto attach = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                if (!attach || attach.getObject() != owner.getResult() ||
+                    ctjs::constantKey(attach.getKey()) != "prototype") {
+                    continue;
+                }
+                for (mlir::Operation * member : attach.getValue().getUsers()) {
+                    auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(member);
+                    if (store && store.getObject() == attach.getValue() &&
+                        store.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                        family.methodNames.insert(ctjs::constantKey(store.getKey()));
+                    }
+                }
+            }
+        }
+        const auto record = [&](ctjs::FuncOp constructor) -> InstanceRegistry & {
+            InstanceRegistry & proof = out.emplace_back();
+            proof.map = made;
+            for (mlir::Value map : inner) {
+                proof.innerMaps.push_back(map.getDefiningOp<ctjs::ConstructOp>());
+            }
+            proof.constructor = constructor;
+            return proof;
+        };
+        if (!unknown.empty()) {
+            record(unknown.front()).refusal =
+                "the registry Map holds the `this` of `" + jsName(unknown.front()) +
+                "`, which is neither a class's constructor nor a class's copy of its parent's";
+            return;
+        }
+        const std::size_t first = out.size();
+        for (ctjs::CreateClosureOp owner : live) {
+            ctjs::FuncOp constructor = functions.targetOf(owner);
+            if (!constructor) { continue; }
+            registryProof(module, functions, uses, outer ? &*outer : nullptr, family,
+                          record(constructor))
+                .run();
+        }
+        // One Map: if any class of the family is refused, so is every other.
+        std::string refused;
+        for (std::size_t at = first; at < out.size() && refused.empty(); ++at) {
+            if (!out[at].refusal.empty()) {
+                refused = "`" + jsName(out[at].constructor) + "`: " + out[at].refusal;
+            }
+        }
+        if (out.size() - first > 1 && !refused.empty()) {
+            for (std::size_t at = first; at < out.size(); ++at) {
+                if (out[at].refusal.empty()) {
+                    out[at].refusal = "it shares the registry Map with " + refused;
+                }
+            }
+        }
+        if (out.size() - first > 1 && refused.empty()) {
+            keyFamily(llvm::MutableArrayRef(out).drop_front(first), uses, module, functions);
+        }
     });
     return out;
 }
@@ -1145,6 +1620,7 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         op->removeAttr(kNativeInstanceClass);
         op->removeAttr(kNativeInstanceTest);
         op->removeAttr(kNativeInstanceMethod);
+        op->removeAttr(kNativeInstanceKeyClass);
     });
     std::vector<InstanceRegistry> proved;
     for (InstanceRegistry & registry : proveInstanceRegistries(module)) {
@@ -1152,6 +1628,10 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         registry.constructor->setAttr(
             kNativeInstanceClass,
             mlir::StringAttr::get(module.getContext(), jsName(registry.constructor)));
+        for (mlir::Operation * read : registry.keyedReads) {
+            read->setAttr(kNativeInstanceKeyClass,
+                          mlir::StringAttr::get(module.getContext(), jsName(registry.constructor)));
+        }
         for (ctjs::FuncOp method : registry.methods) {
             method->setAttr(kNativeInstanceMethod,
                             registry.constructor->getAttr(kNativeInstanceClass));
@@ -1167,6 +1647,17 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
             test->setAttr(kNativeInstanceTest, mlir::UnitAttr::get(module.getContext()));
         }
         proved.push_back(std::move(registry));
+    }
+    // A value read back from a family's Map may be an instance of any of its
+    // classes.
+    for (InstanceRegistry & registry : proved) {
+        llvm::SetVector<mlir::Value> all;
+        for (const InstanceRegistry & other : proved) {
+            if (other.map == registry.map) {
+                all.insert(other.instances.begin(), other.instances.end());
+            }
+        }
+        registry.instances.assign(all.begin(), all.end());
     }
     return proved;
 }

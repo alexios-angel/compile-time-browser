@@ -76,6 +76,10 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
 // RUN:   | FileCheck %s --check-prefix=FAMILY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/family-same-key.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
+// RUN:              --ctnative-test-instance-registries=lifted=true \
+// RUN:   | FileCheck %s --check-prefix=SAME-KEY
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/nested-unchecked.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf \
 // RUN:              --ctnative-test-instance-registries=lifted=true \
@@ -175,7 +179,19 @@
 // NESTED: ctnative.instance_registry = "proved"
 
 // --- A class family, as Bootstrap's BaseComponent and its subclasses ---------
-// FAMILY: ctnative.instance_registry = "the class `Base` is extended, or held in a binding through which subclasses and static methods reach it - a class family this proof does not follow yet"
+// Inheritance flattening (ClosureLifting/ClassInheritance.cpp) gives each
+// subclass its own copy of Base's constructor, which hands `this` to
+// Data.set with `this.constructor.DATA_KEY`. Each class is proved on its own;
+// its key is evaluated through its static getter, and each `getInstance`
+// copy's Data.get, keyed with `this.DATA_KEY`, is marked with the one class
+// its key selects. Base itself is never constructed and holds no instance.
+// FAMILY-DAG: ctjs.call_direct {{.*}}ctnative.instance_key_class = "Alert$
+// FAMILY-DAG: ctjs.call_direct {{.*}}ctnative.instance_key_class = "Button$
+// FAMILY-DAG: ctjs.func @Alert${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.alert", ctnative.instance_registry = "proved"
+// FAMILY-DAG: ctjs.func @Button${{[0-9]+}}({{.*}}ctnative.instance_key = "bs.button", ctnative.instance_registry = "proved"
+
+// --- Two classes of a family under one key ----------------------------------
+// SAME-KEY: ctnative.instance_registry = "the classes `{{Alert|Button}}` and `{{Alert|Button}}` both register under the key `bs.shared`, so a read cannot know which it finds"
 
 // --- An inner Map read without `has` ---------------------------------------
 // NESTED-UNCHECKED: ctnative.instance_registry = "an inner Map is read from the outer registry Map where `has` did not just find or make it - `get` answers undefined for a missing key"
@@ -618,21 +634,67 @@ var result = (function () {
 })();
 
 //--- family.js
-var result = (function () {
-    const registry = new Map();
+var total = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            elements.get(element).set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
     class Base {
-        constructor(key) {
-            this.key = key;
-            registry.set(key, this);
+        constructor(element) {
+            this._element = element;
+            Data.set(element, this.constructor.DATA_KEY, this);
+        }
+        dispose() {
+            Data.remove(this._element, this.constructor.DATA_KEY);
+        }
+        static getInstance(element) {
+            return Data.get(element, this.DATA_KEY);
         }
     }
     class Alert extends Base {
-        close() {
-            return this.key;
+        constructor(element) {
+            super(element);
+            this.kind = 1;
         }
+        static get DATA_KEY() { return "bs.alert"; }
+        close() { return 1; }
     }
-    new Alert("a");
-    return registry.size;
+    class Button extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 2;
+        }
+        static get DATA_KEY() { return "bs.button"; }
+        toggle() { return 2; }
+    }
+    const el = { id: 1 };
+    new Alert(el);
+    new Button(el);
+    let t = 0;
+    const a = Alert.getInstance(el);
+    if (a) { t = t + a.close(); }
+    const b = Button.getInstance(el);
+    if (b) { t = t + b.toggle(); b.dispose(); }
+    if (Button.getInstance(el) === null) { t = t + 10; }
+    return t;
 })();
 
 //--- outside.js
@@ -703,3 +765,67 @@ function run() {
     return registry.size;
 }
 var result = run();
+
+//--- family-same-key.js
+var total = (function () {
+    const elements = new Map();
+    const Data = {
+        set(element, key, instance) {
+            if (!elements.has(element)) {
+                elements.set(element, new Map());
+            }
+            elements.get(element).set(key, instance);
+        },
+        get(element, key) {
+            return (elements.has(element) && elements.get(element).get(key)) || null;
+        },
+        remove(element, key) {
+            if (!elements.has(element)) {
+                return;
+            }
+            const instances = elements.get(element);
+            instances.delete(key);
+            if (instances.size === 0) {
+                elements.delete(element);
+            }
+        }
+    };
+    class Base {
+        constructor(element) {
+            this._element = element;
+            Data.set(element, this.constructor.DATA_KEY, this);
+        }
+        dispose() {
+            Data.remove(this._element, this.constructor.DATA_KEY);
+        }
+        static getInstance(element) {
+            return Data.get(element, this.DATA_KEY);
+        }
+    }
+    class Alert extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 1;
+        }
+        static get DATA_KEY() { return "bs.shared"; }
+        close() { return 1; }
+    }
+    class Button extends Base {
+        constructor(element) {
+            super(element);
+            this.kind = 2;
+        }
+        static get DATA_KEY() { return "bs.shared"; }
+        toggle() { return 2; }
+    }
+    const el = { id: 1 };
+    new Alert(el);
+    new Button(el);
+    let t = 0;
+    const a = Alert.getInstance(el);
+    if (a) { t = t + a.close(); }
+    const b = Button.getInstance(el);
+    if (b) { t = t + b.toggle(); b.dispose(); }
+    if (Button.getInstance(el) === null) { t = t + 10; }
+    return t;
+})();
