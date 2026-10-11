@@ -10,10 +10,12 @@
 // func::FuncOp, so on ctjs.func it matches nothing and silently changes
 // nothing. This pass is the FunctionOpInterface walk around the upstream
 // utility, plus clean-ups that make the lifted loops usable by native
-// lowering.
+// lowering, and the expansion of object spreads whose keys are known
+// (Spreads.h).
 //
 //===----------------------------------------------------------------------===//
 #include "Globals/RegisterFlow.h"
+#include "Spreads.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
@@ -414,6 +416,9 @@ struct CTJSLiftToSCFPass : impl::CTJSLiftToSCFBase<CTJSLiftToSCFPass> {
                     }
                     changed |= *lifted;
                 }
+                // Once structured, a literal and the spread that copies it
+                // sit in one block, where the copied keys can be read off.
+                changed |= expandKnownSpreads(body) != 0;
                 const auto normalized = recoverLoopGuards(body, rewriter);
                 if (mlir::failed(normalized)) { return mlir::WalkResult::interrupt(); }
                 changed |= *normalized;
