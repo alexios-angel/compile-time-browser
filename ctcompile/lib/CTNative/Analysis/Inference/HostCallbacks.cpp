@@ -69,6 +69,9 @@ bool TypeInference::isInertWindowLoad(mlir::Operation * op) {
                   load.getName() != "globalThis")) {
         return false;
     }
+    // Only the listed uses are inert: a load with no use at all is still a
+    // read of the global object, which keeps the globals dynamic.
+    if (load.getResult().use_empty()) { return false; }
     return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
         mlir::Operation * user = use.getOwner();
         if (use.getOperandNumber() == 1 && isHostCallbackCall(user)) { return true; }
