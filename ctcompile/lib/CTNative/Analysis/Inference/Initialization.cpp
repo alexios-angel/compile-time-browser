@@ -244,7 +244,8 @@ mlir::LogicalResult TypeInference::initialize(mlir::Operation * top) {
         // object. Its binding name alone does not make it the realm object.
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op)) {
             if ((load.getName() == "globalThis" || load.getName() == "window") &&
-                !(ownedRoots_ && ownedRoots_->proved() && ownedRoots_->lookup(load))) {
+                !(ownedRoots_ && ownedRoots_->proved() && ownedRoots_->lookup(load)) &&
+                !isInertWindowLoad(load)) {
                 globalsAreDynamic_ = true;
             }
         }

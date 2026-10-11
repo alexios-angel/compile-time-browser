@@ -20,6 +20,9 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits an addEventListener call specialised for its listener
 /// (HostCallbacks.cpp).
 bool hostCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits a use of a listener's Event (HostCallbacks.cpp); nullopt when `o`
+/// uses none.
+std::optional<bool> eventOperation(admission & self, mlir::Operation * o);
 
 namespace {
 
@@ -189,6 +192,7 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     if (TypeInference::isHostCallbackCall(o)) {
         return hostCallbackOperation(self, llvm::cast<CallOp>(o));
     }
+    if (auto admitted = eventOperation(self, o)) { return *admitted; }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);

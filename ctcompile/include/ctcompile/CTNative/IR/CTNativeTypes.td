@@ -119,6 +119,18 @@ def CTNative_ComputedStyleType : CTNative_Type<"ComputedStyle", "computed_style"
   }];
 }
 
+def CTNative_EventType : CTNative_Type<"Event", "event"> {
+  let summary = "The Event a native listener receives, as ctnative::js_event";
+  let description = [{
+    The parameter of a listener an ordinary script hands to
+    `el.addEventListener(type, f)`: a view of the host's dispatch
+    (Runtime/Events.hpp), valid only while the listener runs. Admission lets
+    it be only the receiver of its type, target, currentTarget and
+    defaultPrevented reads and its preventDefault and stopPropagation calls,
+    so it never outlives the dispatch. It meets only itself.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{

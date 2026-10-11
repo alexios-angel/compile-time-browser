@@ -316,11 +316,20 @@ public:
     /// call types rather than the entry state.
     static bool isArrayCallbackParameter(mlir::Value value);
 
-    // Listeners handed to the host (Inference/HostCallbacks.cpp).
-    /// Whether `op` is an `addEventListener` call closure lifting specialised
-    /// for its listener.
+    // Callbacks handed to the host (Inference/HostCallbacks.cpp).
+    /// Whether `op` is an `addEventListener` or `setTimeout` call closure
+    /// lifting specialised for its callback.
     static bool isHostCallbackCall(mlir::Operation * op);
-    /// Whether `value` is a parameter of such a listener, which its call
+    /// Whether `op` is a call of the realm's own `setTimeout`.
+    static bool isTimerCall(mlir::Operation * op);
+    /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
+    /// cannot write the globals table, so it leaves the globals typed
+    /// (Inference/HostCallbacks.cpp holds the one list of such uses).
+    static bool isInertWindowLoad(mlir::Operation * load);
+    /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
+    /// method read only for the call; x is an Event when its type says so.
+    static bool isEventCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a callback, which its call
     /// types rather than the entry state.
     static bool isHostCallbackParameter(mlir::Value value);
 
@@ -488,8 +497,10 @@ private:
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
-    /// The type of a specialised `addEventListener` call (undefined), after
-    /// joining its captured values into the listener's parameters.
+    /// The type of a specialised host-callback call (undefined for
+    /// `addEventListener`, a Number for `setTimeout`), after joining its
+    /// captured values (and a listener's Event) into the callback's
+    /// parameters; and the type of a read or call on such an Event.
     mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     /// The type of a specialised Array-method call, after joining its
     /// receiver's element type, the index and its captured values into the
