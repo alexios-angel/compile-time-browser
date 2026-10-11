@@ -229,6 +229,9 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             const bool printable = held == carrier::string || held == carrier::number ||
                                    held == carrier::boolean || held == carrier::nullable ||
                                    held == carrier::nullableString;
+            if (auto why = call->getAttrOfType<mlir::StringAttr>(kNativeStaticTableLoopRefusal)) {
+                return self.refuse(why.getValue().str());
+            }
             // A constant table only where its proof marked the call.
             const bool table =
                 held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);

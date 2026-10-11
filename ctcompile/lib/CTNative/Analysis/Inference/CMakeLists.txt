@@ -14,5 +14,6 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Shapes.cpp
   StringCallbacks.cpp
   StaticTables.cpp
+  TableLoops.cpp
   Vectors.cpp
 )

@@ -219,6 +219,10 @@ REFUSALS = {
     "target_capture": f"const e = {{}}; e.saved = {GET}; return () => e;",
     "target_escape": f"const e = {{}}; e.saved = {GET}; t.saved = e; return e;",
     "source_alias_mutation": f"const saved = {GET}; const e = {{}}; e.saved = saved; saved.x = 1; return e;",
+    # The witness copy_then_mutate used to be: a spread whose source's keys are
+    # not known (parsed JSON), and the source written after the copy.
+    "copy_unknown_then_mutate": f"const i = {GET}; "
+    "const copied = {...('object' == typeof i ? i : {})}; i.saved = 1; return copied;",
     "loop_alias": "const e = {}, result = {}; let first = true; "
     f"for (const n of {BOOTSTRAP_FILTER}) {{ e.saved = M(t.dataset[n]); "
     "if (first) { result.saved = e; first = false; } } return result;",

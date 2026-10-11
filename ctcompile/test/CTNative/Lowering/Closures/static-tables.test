@@ -33,13 +33,21 @@
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/entries.mlir
 # RUN: FileCheck %s --check-prefix=ENTRIES --implicit-check-not=ctnative.not_native < %t/entries.mlir
 # RUN: ctjs-opt %t/entries.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/entries.cpp
-# RUN: FileCheck %s --check-prefix=ENTRIES-CPP < %t/entries.cpp
 # RUN: %gxx -O2 %t/entries.cpp -o %t/entries-gcc
 # RUN: %t/entries-gcc | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
 # RUN: %clangxx -O2 %t/entries.cpp -o %t/entries-clang
 # RUN: %t/entries-clang | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
 # RUN: %native_reference %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
-# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION-NODE
+# RUN: for name in checked; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/checked.mlir
+# RUN: %gxx -O2 %t/checked.cpp -o %t/checked-gcc && %t/checked-gcc | FileCheck %s --check-prefix=CHECKED
+# RUN: %clangxx -O2 %t/checked.cpp -o %t/checked-clang && %t/checked-clang | FileCheck %s --check-prefix=CHECKED
+# RUN: %native_reference %t/checked.js | FileCheck %s --check-prefix=CHECKED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/checked.js | FileCheck %s --check-prefix=CHECKED-NODE
 # RUN: for name in written dynamic argument stored nested spread-array spread-enumerated entries-mixed; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc; done \
@@ -77,12 +85,22 @@
 # REFUSED: an object literal that escapes - it is passed to a call
 # REFUSED: it reads `{{[a-z]+}}`, a static variable of a function that runs once, holding an object literal that is passed as an argument
 
-# A for-of over Object.entries of a table of Strings is an index loop over
-# object_table's pairs, in definition order. A table with a field that is not
-# a String keeps the refusal above (entries-mixed.js).
-# ENTRIES: call_opaque "ctnative::object_table<static_types_table_t>::entries"
-# ENTRIES-CPP: static constexpr std::array<std::string_view, 2> keys{"interval", "pause"};
-# ENTRIES-OBSERVATION: r=29
+# A for-of over Object.entries of a table of Strings is written out once per
+# key (Inference/TableLoops.cpp), in property order: the array index 7 comes
+# first, then the other keys as the literal defines them. A table with a field
+# that is not a String keeps the refusal above (entries-mixed.js).
+# ENTRIES: emitc.func @main
+# ENTRIES-NOT: object_table
+
+# The shape of Config's type check: each key's read of the config is typed by
+# its own field. An early return on the second key and a check that fails on
+# it leave after that key, as in JavaScript (checked.js).
+# UNROLLED: emitc.func @main
+# UNROLLED-NOT: object_table
+# CHECKED: r="interval%3Bpause%3Bwrap%3B%7Cinterval%3Bearly%7Cinterval%3Bbad%20pause"
+# CHECKED-NODE: r=interval;pause;wrap;|interval;early|interval;bad pause
+# ENTRIES-OBSERVATION: r="7%3Dx%3Binterval%3Dnumber%3Bpause%3Dstring%3B"
+# ENTRIES-OBSERVATION-NODE: r=7=x;interval=number;pause=string;
 
 #--- table.js
 var r = (function () {
@@ -186,7 +204,7 @@ var r = (function () {
 
 #--- entries.js
 var r = (function () {
-    var types = {interval: "number", pause: "string"};
+    var types = {interval: "number", pause: "string", 7: "x"};
     function make() {
         return () => types;
     }
@@ -195,7 +213,7 @@ var r = (function () {
     for (const [k, v] of Object.entries(get())) {
         out = out + k + "=" + v + ";";
     }
-    return out.length;
+    return out;
 })();
 
 #--- entries-mixed.js
@@ -210,4 +228,27 @@ var r = (function () {
         out = out + k + ";";
     }
     return out.length;
+})();
+
+#--- checked.js
+var r = (function () {
+    var types = {interval: "number", pause: "string", wrap: "boolean"};
+    function make() {
+        return (mode) => {
+            var config = {interval: 5, pause: mode === 3 ? 7 : "hover", wrap: mode > 0};
+            var out = "";
+            for (const [k, v] of Object.entries(types)) {
+                if (mode === 2 && k === "pause") {
+                    return out + "early";
+                }
+                if (typeof config[k] !== v) {
+                    return out + "bad " + k;
+                }
+                out = out + k + ";";
+            }
+            return out;
+        };
+    }
+    const check = make();
+    return check(0) + "|" + check(2) + "|" + check(3);
 })();

@@ -14,7 +14,14 @@
 #pragma once
 
 #include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <string>
 
 namespace ctcompile::ctnative {
 
@@ -44,10 +51,43 @@ inline constexpr llvm::StringLiteral kNativeStaticTableEnumeration =
 /// "values"), kept because the method read is lowered before the call.
 inline constexpr llvm::StringLiteral kNativeStaticTableMethod = "ctnative.static_table_method";
 
+/// On a marked enumeration whose for-of unrollTableLoops matched but did not
+/// unroll: why, which admission reports.
+inline constexpr llvm::StringLiteral kNativeStaticTableLoopRefusal =
+    "ctnative.static_table_loop_refusal";
+
 /// On every cell of a static whose stored object literal is not a constant
 /// table: why not, as a clause that completes "it reads `x`, a run-once static
 /// holding an object literal that ...".
 inline constexpr llvm::StringLiteral kNativeStaticTableReason = "ctnative.static_table_reason";
+
+/// The array index `key` names (a canonical numeric string below 2^32 - 1,
+/// ECMA-262 6.1.7), or nullopt for any other key.
+inline std::optional<std::uint32_t> arrayIndexKey(llvm::StringRef key) {
+    if (key.empty() || key.size() > 10 || !llvm::all_of(key, llvm::isDigit) ||
+        (key.size() > 1 && key.front() == '0')) {
+        return std::nullopt;
+    }
+    std::uint64_t value = 0;
+    if (key.getAsInteger(10, value) || value >= 4294967295ULL) { return std::nullopt; }
+    return static_cast<std::uint32_t>(value);
+}
+
+/// The property key a literal's constant key operand names: a String
+/// constant's text, or the decimal of a Number that is an array index
+/// (`{7: "x"}` imports its key as the Number 7). Empty for anything else.
+std::string tableKey(mlir::Value key);
+
+/// Sorts `keys`, given in definition order, into OrdinaryOwnPropertyKeys
+/// order (ECMA-262 10.1.11.1): array indices ascending first, then the other
+/// keys in definition order. `keyOf` gives an element's key.
+template <class T, class KeyOf> void sortOwnKeyOrder(llvm::SmallVectorImpl<T> & keys, KeyOf keyOf) {
+    std::stable_sort(keys.begin(), keys.end(), [&](const T & a, const T & b) {
+        const auto left = arrayIndexKey(keyOf(a)), right = arrayIndexKey(keyOf(b));
+        if (left && right) { return *left < *right; }
+        return left.has_value() && !right.has_value();
+    });
+}
 
 /// Proves which run-once statics hold a constant table and writes the
 /// attributes above. Runs once per module after closure lifting, before type
@@ -79,5 +119,12 @@ inline constexpr llvm::StringLiteral kNativeStaticTableReason = "ctnative.static
 ///     The table holds no array-index key, so definition order is property
 ///     order.
 void markStaticTables(mlir::ModuleOp module);
+
+/// Writes out, once per key, each for-of over a marked enumeration of a table
+/// (Object.entries, keys or values) in the shape the importer and
+/// --ctjs-lift-to-scf make, with the key and value as constants in each
+/// iteration (Inference/TableLoops.cpp). At most 64 keys; a larger table's
+/// loop gets kNativeStaticTableLoopRefusal. Run by markStaticTables.
+void unrollTableLoops(mlir::ModuleOp module);
 
 } // namespace ctcompile::ctnative
