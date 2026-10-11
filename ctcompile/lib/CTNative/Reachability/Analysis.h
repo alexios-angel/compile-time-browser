@@ -37,9 +37,12 @@ enum class roots {
     /// may name it. The default optimizations use this.
     nonPrivate,
     /// Only functions the embedder calls by name (`ctnative.string_entry`)
-    /// and functions admission accepted (no `ctnative.not_native`). A
-    /// function the importer left public because a ctjs.create_closure
-    /// makes it is reached only through that closure. The native lowering
+    /// and functions admission accepted (no `ctnative.not_native`), when the
+    /// module holds a top-level script (function index 0): the importer
+    /// emits a whole script, whose only outside caller is its embedder, and
+    /// leaves a function public because a ctjs.create_closure makes it, so
+    /// it is reached only through that closure. A module with no top-level
+    /// script keeps every non-private function a root. The native lowering
     /// uses this, after admission, to find refused functions nothing that
     /// can run creates or calls; an admitted function is a root so that no
     /// removal leaves native code naming an erased function.
