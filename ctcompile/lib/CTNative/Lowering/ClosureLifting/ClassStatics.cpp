@@ -544,34 +544,9 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                                                        mlir::SymbolTable::Visibility::Private);
             }
         }
-        // A static member that no direct call outside the unread members
-        // names can no longer run: nothing else held its closure (rule 2).
-        // ponytail: functions nested in an erased member stay behind
-        // uncalled; erase them too if they ever show up as refusals.
-        llvm::SmallPtrSet<mlir::Operation *, 8> uncalled;
-        for (auto & entry : statics) { uncalled.insert(entry.getValue().target.getOperation()); }
-        for (bool shrank = true; shrank;) {
-            shrank = false;
-            for (mlir::Operation * fn : llvm::to_vector(uncalled)) {
-                auto uses = mlir::SymbolTable::getSymbolUses(fn, module.getOperation());
-                const bool called =
-                    !uses || llvm::any_of(*uses, [&](const mlir::SymbolTable::SymbolUse & use) {
-                        auto holder = use.getUser()->getParentOfType<ctjs::FuncOp>();
-                        return !holder || !uncalled.contains(holder.getOperation());
-                    });
-                if (called) {
-                    uncalled.erase(fn);
-                    shrank = true;
-                }
-            }
-        }
-        for (mlir::Operation * fn : uncalled) {
-            if (const std::optional<unsigned> index = functionIndex(llvm::cast<ctjs::FuncOp>(fn))) {
-                byIndex.erase(*index);
-            }
-            passesNewTarget.erase(fn);
-            fn->erase();
-        }
+        // A static member nothing reads stays as a function nobody calls.
+        // If it is refused, the unreachable-refusal pass in LowerToEmitC.cpp
+        // removes it and records a row in ctnative.unreachable_refusals.
         cls.statics.clear();
         cls.staticGetters.clear();
         changed = true;

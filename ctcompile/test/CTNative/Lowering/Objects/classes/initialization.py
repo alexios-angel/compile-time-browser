@@ -133,9 +133,7 @@ UNTRUSTED_NATIVE = {
     # Static members: when the class is never used as a value, every read of
     # a static member becomes a direct call, `this` in a static member and
     # `this.constructor` in a method name the class itself, and a static
-    # member nothing reads is erased with its definition
-    # (ClosureLifting/ClassStatics.cpp). The getter cycles, throwing getters
-    # and ambient calls here sit in members that are never read.
+    # member nothing reads is left uncalled (ClosureLifting/ClassStatics.cpp).
     **dict.fromkeys(
         (
             "class-map-mixed-method",
@@ -144,26 +142,35 @@ UNTRUSTED_NATIVE = {
             "receiver-default-dispatch",
             "static-arguments",
             "static-branch",
-            "static-call-ambient",
             "static-call-arguments",
             "static-call-capture",
             "static-call-getter",
             "static-call-this-getter-chain",
             "static-call-this-method",
-            "static-call-unused",
             "static-caller",
             "static-chain",
             "static-constant",
-            "static-cycle",
-            "static-error-coercion",
-            "static-error-replaced",
-            "static-error-return",
             "static-forward-chain",
             "static-length",
             "static-methods",
             "static-name",
             "static-order",
             "static-repeated",
+        ),
+        (False, True),
+    ),
+    # The same, where a static member nothing reads is refused (a getter
+    # cycle, a throwing getter, an ambient call): optimization removes it as
+    # unreachable and records the removal, and without optimization it stays,
+    # refused, beside the native program (UNTRUSTED_PARTIAL).
+    **dict.fromkeys(
+        (
+            "static-call-ambient",
+            "static-call-unused",
+            "static-cycle",
+            "static-error-coercion",
+            "static-error-replaced",
+            "static-error-return",
             "static-throw-ambient",
             "static-throw-object",
             "static-throw-unused",
@@ -171,12 +178,33 @@ UNTRUSTED_NATIVE = {
             "static-unread-chain",
             "static-unread-new-this",
         ),
-        (False, True),
+        (True,),
     ),
     # The same, once optimization folds the computed key `"NA" + "ME"` to a
     # constant.
     **dict.fromkeys(("static-dynamic",), (True,)),
 }
+
+# Unprepared modes that lower to a native program beside functions that stay
+# refused, because nothing removes unreachable code without optimization:
+# each refused function is a static member nothing reads.
+UNTRUSTED_PARTIAL = dict.fromkeys(
+    (
+        "static-call-ambient",
+        "static-call-unused",
+        "static-cycle",
+        "static-error-coercion",
+        "static-error-replaced",
+        "static-error-return",
+        "static-throw-ambient",
+        "static-throw-object",
+        "static-throw-unused",
+        "static-throw-unused-chain",
+        "static-unread-chain",
+        "static-unread-new-this",
+    ),
+    (False,),
+)
 
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
@@ -673,6 +701,8 @@ def untrusted_change(args, name, optimize, raw, native, functions, expected):
     refused = len(FUNCTION.findall(text))
     shape = f"{native_count}/{functions} native, {refused} refused"
     if refused or "emitc.func @main(" not in text:
+        if refused and "emitc.func @main(" in text and optimize in UNTRUSTED_PARTIAL.get(name, ()):
+            return None
         return f"CHANGED {label}: partial ({shape})"
     try:
         check_executable(args, f"{name}.{optimize}.untrusted", native, expected)

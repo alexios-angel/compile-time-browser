@@ -5,10 +5,11 @@
 // both through the class binding it captures and through
 // `this.constructor`. Every read names one function, so each becomes a
 // ctjs.call_direct (ClosureLifting/ClassStatics.cpp), the definitions lower
-// to nothing, the static method nothing reads (`unused`, which calls an
-// undeclared global) is erased with them, and the class census then proves the class: it lowers to a C++
-// class with no static data. The program prints what Node and the
-// interpreter print with both compilers.
+// to nothing, and the class census then proves the class: it lowers to a C++
+// class with no static data. The static method nothing reads (`unused`, which
+// calls an undeclared global and is refused) is left uncalled, so the
+// unreachable-refusal pass removes it and records the removal. The program
+// prints what Node and the interpreter print with both compilers.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/shape.js 2>/dev/null \
@@ -23,6 +24,7 @@
 // RUN: %native_reference %t/shape.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/shape.js | FileCheck %s --check-prefix=OBSERVATION
 
+// CHECK: ctnative.unreachable_refusals = [{function = "unused${{[0-9]+}}", reason = "removed: unreachable (no function that can run creates or calls it; it was refused: {{.*}})"}]
 // CHECK: emitc.class @Shape
 // CHECK-NOT: ctjs.define_accessor
 // CPP: class Shape {
