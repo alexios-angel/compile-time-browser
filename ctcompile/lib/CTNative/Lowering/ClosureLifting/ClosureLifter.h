@@ -670,6 +670,24 @@ struct closureLifter {
     /// whether it changed the module.
     bool bindSingletonMethods(liftReport & out);
 
+    /// What can start each function, and how many closures name it (see
+    /// indexStarters() in Singletons.cpp).
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> starters;
+    llvm::DenseMap<mlir::Operation *, unsigned> closuresOf;
+    void indexStarters();
+    bool runsAfter(
+        mlir::Operation * op, mlir::Operation * write,
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy);
+
+    /// Turns reads of a class's static members into direct calls and erases
+    /// their definitions (ClassStatics.cpp). Returns whether it changed the
+    /// module.
+    bool bindClassStatics(liftReport & out);
+    /// Why the static-member rewrite left a class's statics in place, keyed
+    /// by the constructor's ctjs.create_closure; classCensus() appends it to
+    /// the class's refusal.
+    llvm::DenseMap<mlir::Operation *, std::string> staticRefusals;
+
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 
     bool byValueMissesACall(ctjs::CreateCellOp cell);
