@@ -12,11 +12,18 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    find_compilers,
+    run,
+    slotted_run,
+    threshold,
+    without_intrinsic,
+)
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
 # Fixture name -> expected `a=<value>` output as (under Node, under the
@@ -1484,7 +1491,7 @@ def check_proof_budget(args, source, manifest, prepared, name):
 
     def complete(limit):
         output = args.work / f"cutoff-{limit}.mlir"
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(source),

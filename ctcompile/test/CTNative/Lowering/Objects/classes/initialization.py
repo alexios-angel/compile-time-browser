@@ -8,11 +8,11 @@ lower completely and run natively with Node's result; fixtures in
 PREPARED_ONLY prepare but native lowering must still refuse them.
 """
 
-import sys
+import argparse
 
 from CTNative.Lowering.Objects.classes.initialization_inputs import *
 
-from CTNative.harness import native_args, without_intrinsic
+from CTNative.harness import native_args, run_parallel, selected_fixtures, without_intrinsic
 
 # OBSERVATIONS maps a fixture name to (Node result, reference-interpreter
 # result): the value each engine prints as `a=`, or None if that run must fail
@@ -733,17 +733,29 @@ def main():
         declaration + "function probe() { class Shape { read(t) { return r(t); } } "
         "var instance = new Shape(); return instance.read(null) ? 9 : 7; } var a = probe();\n"
     )
-    helper_checked, helper_refused = check_helper_guards(args, declaration)
-    key_checked = key_refused = 0
-    refusals = 0
-    preparation_refusals = 0
-    checked = prepared_refusals = 0
-    cutoffs = {}
-    # Fixtures whose untrusted lowering no longer keeps the refusal boundary,
-    # or whose interpreter observation changed, collected across the whole run
-    # and reported together at the end.
-    untrusted_changes = []
-    for name, (node_expected, reference_expected) in OBSERVATIONS.items():
+    # CTCOMPILE_FIXTURES selects fixtures by name; the two checks outside the
+    # fixture loop are named "@helper-guards" and "@constructed-methods".
+    chosen = selected_fixtures([*OBSERVATIONS, "@helper-guards", "@constructed-methods"])
+    helper_checked, helper_refused = (
+        check_helper_guards(args, declaration) if "@helper-guards" in chosen else (0, 0)
+    )
+    # Each fixture runs in its own work directory, so the helpers' fixed file
+    # names cannot collide, and the fixtures run side by side (run_parallel).
+    # Its counts and changes are returned and summed in OBSERVATIONS order, so
+    # the summary does not depend on scheduling.
+    shared = args
+
+    def check_fixture(name):
+        node_expected, reference_expected = OBSERVATIONS[name]
+        args = argparse.Namespace(**dict(vars(shared), work=shared.work / name))
+        args.work.mkdir(parents=True, exist_ok=True)
+        refusals = preparation_refusals = checked = prepared_refusals = 0
+        cutoffs = {}
+        key_counts = None
+        # Whether this fixture's untrusted lowering no longer keeps the refusal
+        # boundary, or its interpreter observation changed; every fixture's are
+        # reported together at the end.
+        untrusted_changes = []
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
         reference = run([args.reference, str(source)], success=reference_expected is not None)
@@ -763,9 +775,16 @@ def main():
                 f"CHANGED {name}: interpreter prints {reference.stdout.strip()!r},"
                 f" expected {reference_output.strip()!r}"
             )
-            print(change, file=sys.stderr, flush=True)
             untrusted_changes.append(change)
-            continue
+            return (
+                refusals,
+                preparation_refusals,
+                checked,
+                prepared_refusals,
+                cutoffs,
+                untrusted_changes,
+                key_counts,
+            )
         raw = args.work / f"{name}.raw.mlir"
         imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         text = raw.read_text()
@@ -1270,7 +1289,7 @@ def main():
                 success=True,
             )
         if name == "bootstrap-r":
-            key_checked, key_refused = check_prototype_keys(args, prepared)
+            key_counts = check_prototype_keys(args, prepared)
         if name == "global-holder-chain":
             for label, request in (
                 ("root", {"roots": [{"binding": "H", "properties": ["read"]}]}),
@@ -1515,7 +1534,6 @@ def main():
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
             change = untrusted_change(args, name, optimize, raw, native, functions, node_expected)
             if change:
-                print(change, file=sys.stderr, flush=True)
                 untrusted_changes.append(change)
                 continue
             if name == "helper-global-alias":
@@ -1588,14 +1606,33 @@ def main():
                     prepared_refusals += 1
                 else:
                     checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+        return (
+            refusals,
+            preparation_refusals,
+            checked,
+            prepared_refusals,
+            cutoffs,
+            untrusted_changes,
+            key_counts,
+        )
+
+    results = run_parallel([name for name in chosen if name in OBSERVATIONS], check_fixture)
+    refusals, preparation_refusals, checked, prepared_refusals = (
+        sum(result[index] for result in results) for index in range(4)
+    )
+    cutoffs = {name: cutoff for result in results for name, cutoff in result[4].items()}
+    untrusted_changes = [change for result in results for change in result[5]]
+    key_checked, key_refused = next((result[6] for result in results if result[6]), (0, 0))
     if untrusted_changes:
         raise RuntimeError(
             f"{len(untrusted_changes)} class fixture result(s) changed:\n"
             + "\n".join(untrusted_changes)
         )
-    plain_checked, plain_refused = check_constructed_methods(args)
+    plain_checked, plain_refused = (
+        check_constructed_methods(args) if "@constructed-methods" in chosen else (0, 0)
+    )
     print(
-        f"class initialization controls: {len(OBSERVATIONS)} source observations, "
+        f"class initialization controls: {len(results)} source observations, "
         f"{checked} native executions, {refusals} unprepared refusals, "
         f"{preparation_refusals} preparation refusals, first complete budgets {cutoffs}"
     )

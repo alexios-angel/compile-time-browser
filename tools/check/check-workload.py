@@ -229,6 +229,7 @@ def discover(ctx, name):
         for entry in ctx.workload.get(kind, []):
             ((pattern, optional),) = patterns([entry])
             entries = [] if isinstance(entry, str) else entry.get("string_entries", [])
+            opt_out = None if isinstance(entry, str) else entry.get("script-run")
             matches = sorted(path for path in ctx.root.glob(pattern) if path.is_file())
             if not matches:
                 status = "PASS" if optional else "ERROR"
@@ -243,6 +244,7 @@ def discover(ctx, name):
                     "origin": "declared",
                     "module": False,
                     "string_entries": entries,
+                    "script_run": opt_out,
                 }
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
                 ctx.add(name, item, "PASS", f"{path.stat().st_size} bytes, sha256 {digest}")
@@ -458,6 +460,50 @@ def emit_cpp(ctx, name):
     ctx.each(name, list(ctx.scripts), body)
 
 
+# A VM-free test that links ctbrowser::page (ctcompile/test/cmake/
+# NativeWorkloads.cmake): its link line in build.ninja is the one CMake works
+# out for the page library and everything under it (raster's ANGLE, fonts,
+# simdutf, mimalloc), which a hand-written list would get wrong.
+PAGE_LINKED = "ctcompile/test/ctcompile-test-native-page"
+
+
+def dom_toolchain(ctx):
+    """For build-native's "dom" option: the Clang the build chose for programs
+    that use ctbrowser's DOM (Native.cmake's %dom_clang, recorded in the
+    generated lit.site.cfg.py; never a fallback such as /usr/bin/clang++, whose
+    libstdc++ pairing has no std::expected), the include flags that
+    ctcompile/test/CTNative/Browser/dom/dom.py's link_options() gives the lit
+    drivers (Boost and simdutf headers), and PAGE_LINKED's libraries."""
+    site = ctx.build / "ctcompile/test/lit.site.cfg.py"
+    match = site.exists() and re.search(r'^config\.dom_clang = "([^"]+)"', site.read_text(), re.M)
+    if not match:
+        raise SetupError(
+            f"{site} names no dom_clang; configure the build: tools/remote-build.sh ctjs-opt"
+        )
+    dom = harness("CTNative.Browser.dom.dom")
+    paths = argparse.Namespace(build=ctx.build, include=ctx.root / "ctbrowser/include")
+    try:
+        includes, _ = dom.link_options(paths, selectors=True)
+    except (RuntimeError, OSError) as error:
+        raise SetupError(f"{error}; build it first: tools/remote-build.sh ctbrowser-dom")
+    ninja = ctx.build / "build.ninja"
+    rule = re.search(
+        rf"^build {re.escape(PAGE_LINKED)}: [^\n]*(?:\n  [^\n]*)*?\n  LINK_LIBRARIES = ([^\n]*)",
+        ninja.read_text() if ninja.exists() else "",
+        re.M,
+    )
+    built = (ctx.build / PAGE_LINKED).exists()
+    if not rule or not built:
+        raise SetupError(
+            f"{PAGE_LINKED} is not built, and build-native takes the page library's link "
+            "line from it: tools/remote-build.sh ctcompile-test-native-page"
+        )
+    libraries = [
+        str(ctx.build / part) if part.startswith("lib/") else part for part in rule[1].split()
+    ]
+    return match[1], includes, libraries
+
+
 @stage(
     "build-native",
     "the C++ compiles with GCC and Clang under the gate's flags (-std=c++23 -Werror ...)",
@@ -472,6 +518,10 @@ def build_native(ctx, name):
         raise SetupError(str(error))
     flags = [*cpp_harness.FLAGS, *ctx.options(name).get("flags", [])]
     link = ctx.options(name).get("link", [])
+    if ctx.options(name).get("dom"):
+        clang, includes, libraries = dom_toolchain(ctx)
+        compilers = [compilers[0], clang]
+        flags, link = [*flags, *includes], [*link, *libraries]
 
     def body(item):
         cpp, binaries = ctx.artifacts[item]["cpp"], []
@@ -523,7 +573,8 @@ def no_vm_gate(ctx, name):
 
 @stage(
     "script-run",
-    "every native binary prints the same globals as the VM (ctcompile-test-native-reference)",
+    "every native binary prints the same globals as the VM (ctcompile-test-native-reference), "
+    "and the VM prints at least one",
     "The native program computes something the VM does not; reduce the script to the first "
     "differing global and compare the lowering with the interpreter's semantics.",
     needs="build-native",
@@ -533,6 +584,50 @@ def script_run(ctx, name):
         "ctcompile/test/ctcompile-test-native-reference", "ctcompile-test-native-reference"
     )
 
+    # A library whose globals say nothing (bootstrap.bundle.js publishes one
+    # object) is checked by behaviour instead: {"probe": <a .js file>} runs the
+    # script and then the probe in each of the workload's pages, and compares
+    # the console.log lines the probe prints.
+    def probed(item, probe):
+        if not ctx.pages:
+            ctx.add(name, item, "FAIL", "a script-run probe needs the workload's pages")
+            return
+        lines, details = 0, []
+        for page in ctx.pages:
+            command = [reference, "--page", page, "--script", ctx.scripts[item]["path"]]
+            code, output, notes = ctx.run_split([*command, "--script", probe], name, item)
+            if code:
+                summary = f"the VM reference failed probing {ctx.relative(page)}"
+                ctx.add(name, item, "FAIL", summary, tail(output + notes))
+                return
+            lines += len(output.splitlines())
+            details.append(f"{ctx.relative(page)}: {len(output.splitlines())} line(s)")
+        if not lines:
+            ctx.add(name, item, "FAIL", "the probe printed nothing, so it would prove nothing")
+            return
+        summary = (
+            f"the VM probe printed {lines} line(s) on {len(ctx.pages)} page(s); no native "
+            "build can load a page yet (it needs a native host)"
+        )
+        ctx.add(name, item, "MISSING", summary, details)
+
+    # A script whose globals say nothing (css-dump.js only defines functions) may
+    # opt out, as {"skip": <why>, "covered_by": <CTest>}, only by naming the
+    # workload CTest whose native variant runs it; the opt-out holds only while
+    # that variant passes.
+    def covered(item, opt_out):
+        test, why = opt_out.get("covered_by"), opt_out.get("skip")
+        if not why or test not in ctx.ctests:
+            summary = f"the script-run opt-out names {test!r}, not one of this workload's CTests"
+            ctx.add(name, item, "FAIL", summary)
+            return
+        result = run_native_test(ctx, test, name, item)
+        if result is None or result[0] != 0:
+            state = "has no native runner" if result is None else f"exited {result[0]}"
+            ctx.add(name, item, "FAIL", f"skipped ({why}), but {test}.native {state}")
+            return
+        ctx.add(name, item, "PASS", f"skipped: {why}; {test}.native passes", metrics={"skip": why})
+
     # Compare stdout only, in order, as Checks/compilation-unit.py does: the reference's
     # stderr carries its counts, which the native program does not print. A NaN's
     # sign is unobservable in JavaScript, so "=-nan" reads as "=nan" there too.
@@ -541,12 +636,24 @@ def script_run(ctx, name):
 
     def body(item):
         source = ctx.scripts[item]["path"]
+        opt_out = ctx.scripts[item].get("script_run") or {}
+        if opt_out.get("probe"):
+            probed(item, ctx.root / opt_out["probe"])
+            return
+        if opt_out:
+            covered(item, opt_out)
+            return
         code, expected, notes = ctx.run_split([reference, source], name, item)
         if code:
             details = tail(expected + notes)
             ctx.add(name, item, "FAIL", "the VM reference failed on this script", details)
             return
         want = globals_of(expected)
+        if not want:
+            # Nothing to compare: a native program that printed nothing would match.
+            summary = "the VM printed no globals, so the comparison would prove nothing"
+            ctx.add(name, item, "FAIL", summary, tail(notes))
+            return
         for binary in ctx.artifacts[item]["binaries"]:
             code, actual, errors = ctx.run_split([binary], name, item)
             got = globals_of(actual)
@@ -589,6 +696,19 @@ NO_RUNNER = [
 ]
 
 
+def run_native_test(ctx, test, name, item):
+    """Run `test`'s native variant with native-run's runner, once per check:
+    (exit code, output), or None when no runner is configured."""
+    runner = ctx.options("native-run").get("runner")
+    if not runner:
+        return None
+    key = f"native-run:{test}"
+    if key not in ctx.artifacts:
+        values = {"test": test, "build": ctx.build, "root": ctx.root, "scratch": ctx.scratch}
+        ctx.artifacts[key] = ctx.run([part.format(**values) for part in runner], name, item)
+    return ctx.artifacts[key]
+
+
 @stage(
     "native-run",
     "each CTest runs on native C++ from ctcompile, with no VM, and passes its own checks",
@@ -604,9 +724,7 @@ def native_run(ctx, name):
             details = ["(the same gap as the first native-run item above)"] if told else NO_RUNNER
             ctx.add(name, item, "MISSING", "no native variant of this test exists yet", details)
             return
-        values = {"test": item.split(":", 1)[1], "build": ctx.build}
-        values.update(root=ctx.root, scratch=ctx.scratch)
-        code, output = ctx.run([part.format(**values) for part in runner], name, item)
+        code, output = run_native_test(ctx, item.split(":", 1)[1], name, item)
         status = "PASS" if code == 0 else "FAIL"
         ctx.add(name, item, status, f"native run exited {code}", [] if code == 0 else tail(output))
 
@@ -679,6 +797,8 @@ def summarize(ctx):
         summary = tally + (
             f"; first: {first['item']}: {first['summary']}" if status != "PASS" else ""
         )
+        skips = [f"{r['item']}: {r['metrics']['skip']}" for r in mine if r["metrics"].get("skip")]
+        summary += "".join(f"; skipped {skip}" for skip in skips)
         info = STAGES.get(name, {})
         entry = {"name": name, "status": status, "summary": summary, "counts": dict(counts)}
         stages.append(
@@ -801,6 +921,14 @@ def probe_sleep(ctx, name):
     ctx.each(name, list(ctx.scripts), body)
 
 
+@stage("probe-binary", "a native binary that prints a=1", "write it", needs="discover")
+def probe_binary(ctx, name):
+    def body(item):
+        ctx.artifacts[item] = {"binaries": [ctx.root / "native.sh"]}
+        ctx.add(name, item, "PASS", "probe")
+    ctx.each(name, list(ctx.scripts), body)
+
+
 @stage("probe-missing", "a capability that does not exist yet", "build it", needs="discover")
 def probe_missing(ctx, name):
     ctx.each(name, list(ctx.scripts), lambda item: ctx.add(name, item, "MISSING", "absent"))
@@ -828,7 +956,21 @@ def self_test():
             "stale": {"scripts": ["missing.js"]},
             "gap": {"scripts": ["a.js"], "stages": ["discover", "probe-missing"]},
             "entry": {"scripts": [{"pattern": "a.js", "string_entries": ["f", "g"]}]},
+            "globals": {"scripts": ["a.js"], "stages": ["discover", "probe-binary", "script-run"]},
+            "vacuous": {"scripts": ["b.js"], "stages": ["discover", "probe-binary", "script-run"]},
+            "unnamed-skip": {
+                "scripts": [{"pattern": "b.js", "script-run": {"skip": "no globals"}}],
+                "stages": ["discover", "probe-binary", "script-run"],
+            },
         }
+        # script-run's reference prints a=1 for a.js and nothing for b.js; the
+        # native binary prints a=1.
+        reference = root / "ctcompile/test/ctcompile-test-native-reference"
+        reference.parent.mkdir(parents=True)
+        reference.write_text('#!/bin/sh\ncase "$1" in */a.js) echo a=1;; esac\n')
+        (root / "native.sh").write_text("#!/bin/sh\necho a=1\n")
+        for program in (reference, root / "native.sh"):
+            program.chmod(0o755)
         workloads["slow"]["options"] = {"probe-sleep": {"timeout": 0.5}}
         for name, body in workloads.items():
             (defs / f"{name}.json").write_text(json.dumps(body))
@@ -851,6 +993,12 @@ def self_test():
         assert blocked and blocked[0]["status"] == "BLOCKED", slow["results"]
         assert results["unknown"]["verdict"] == "CANNOT CHECK", results["unknown"]
         assert results["stale"]["verdict"] == "CANNOT CHECK", results["stale"]
+        assert results["globals"]["verdict"] == "DONE", results["globals"]
+        vacuous = [r for r in results["vacuous"]["results"] if r["stage"] == "script-run"]
+        assert vacuous[0]["status"] == "FAIL" and "no globals" in vacuous[0]["summary"], vacuous
+        # An opt-out that names no CTest of the workload is refused.
+        skip = [r for r in results["unnamed-skip"]["results"] if r["stage"] == "script-run"]
+        assert skip[0]["status"] == "FAIL" and "opt-out" in skip[0]["summary"], skip
         gap = results["gap"]
         assert gap["verdict"] == "NOT DONE" and gap["first_gap"]["status"] == "MISSING", gap
         spent = check(loaded["slow"], root, time.monotonic() + 0.3, root)
