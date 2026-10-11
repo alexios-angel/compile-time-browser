@@ -895,6 +895,8 @@ public:
         // it can be stored anywhere. So no field of an instance can reach the
         // Map or an instance, whatever else it holds.
         if (!checkCaptors()) { return false; }
+        for (ctjs::ConstructOp made : constructions) { out.instances.push_back(made.getResult()); }
+        llvm::append_range(out.readBack, maybe);
         return true;
     }
 };
@@ -917,9 +919,9 @@ std::optional<llvm::SmallVector<mlir::Value>> innerMaps(const mapUses & outer) {
 
 } // namespace
 
-llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
+std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module) {
     const functionIndex functions(module);
-    llvm::SmallVector<InstanceRegistry> out;
+    std::vector<InstanceRegistry> out;
     module.walk([&](ctjs::ConstructOp made) {
         if (ctjs::calleeGlobalName(made) != "Map" || !made.getArgs().empty()) { return; }
         mapUses uses = usesOf({made.getResult()}, /*bindings=*/true, module, functions);
@@ -958,6 +960,23 @@ llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp modul
         registryProof(module, functions, uses, outer ? &*outer : nullptr, proof).run();
     });
     return out;
+}
+
+std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
+    module.walk([](ctjs::FuncOp fn) { fn->removeAttr(kNativeInstanceClass); });
+    std::vector<InstanceRegistry> proved;
+    for (InstanceRegistry & registry : proveInstanceRegistries(module)) {
+        if (!registry.refusal.empty()) { continue; }
+        registry.constructor->setAttr(
+            kNativeInstanceClass,
+            mlir::StringAttr::get(module.getContext(), jsName(registry.constructor)));
+        proved.push_back(std::move(registry));
+    }
+    return proved;
+}
+
+bool isIdentityClass(ctjs::FuncOp fn) {
+    return fn && fn->hasAttr(kNativeInstanceClass);
 }
 
 } // namespace ctcompile::ctnative

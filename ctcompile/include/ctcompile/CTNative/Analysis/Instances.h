@@ -34,6 +34,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <string>
+#include <vector>
 
 namespace ctcompile::ctnative {
 
@@ -53,7 +54,17 @@ struct InstanceRegistry {
     /// The parameters proved never null or undefined: every call passes them
     /// an instance it has already checked.
     llvm::DenseSet<mlir::Value> nonNull;
+    /// The `new` results of the class.
+    llvm::SmallVector<mlir::Value> instances;
+    /// The values read back from the Map that may hold an instance: `get`
+    /// results and every branch result, call result and parameter they flow
+    /// into.
+    llvm::SmallVector<mlir::Value> readBack;
 };
+
+/// The attribute markInstanceRegistries puts on a proved constructor: the
+/// class's name, which its instances' C++ class is named after.
+inline constexpr llvm::StringLiteral kNativeInstanceClass = "ctnative.instance_class";
 
 /// Proves or refuses every Map in `module` that stores the `this` of a
 /// function: one entry per such Map.
@@ -87,6 +98,16 @@ struct InstanceRegistry {
 /// the Map nor a function that captures it is held as data, so no field of an
 /// instance can reach the Map or an instance. Elements, configuration objects
 /// and strings in fields are all fine.
-llvm::SmallVector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module);
+std::vector<InstanceRegistry> proveInstanceRegistries(mlir::ModuleOp module);
+
+/// Runs proveInstanceRegistries, marks each proved constructor with
+/// kNativeInstanceClass (clearing marks the input carried), and returns the
+/// proved registries only.
+std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module);
+
+/// Whether `fn` is the constructor of a class whose instances a registry
+/// Map owns: its JavaScript constructor becomes a factory returning
+/// `std::shared_ptr<C>` instead of initialising a frame-local struct.
+bool isIdentityClass(ctjs::FuncOp fn);
 
 } // namespace ctcompile::ctnative

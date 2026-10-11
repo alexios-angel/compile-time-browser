@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClosureLifter.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 #include <ctbrowser/core/number_format.hpp>
 
@@ -226,6 +227,9 @@ std::optional<std::string> closureLifter::whyNotLiftableConstructor(ctjs::Create
             }
         }
     }
+    // A registry Map's class passes `this` to the Map, which the registry
+    // proof (Analysis/Instances.h) checked instead.
+    if (isIdentityClass(targetOf(c))) { return std::nullopt; }
     return whyThisLeaks(targetOf(c));
 }
 

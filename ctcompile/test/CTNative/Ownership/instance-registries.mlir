@@ -11,6 +11,9 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=PROVED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/proved.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=LIFT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/unchecked.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-test-instance-registries \
 // RUN:   | FileCheck %s --check-prefix=UNCHECKED
@@ -77,6 +80,14 @@
 // `dispose` removes the entry and goes on using `this`.
 // PROVED: ctjs.func @sizeOf{{.*}}ctnative.instance_non_null = array<i32: 0>
 // PROVED: ctjs.func @Widget{{.*}}ctnative.instance_registry = "proved"
+
+// In the lowering, the closure lifter marks the proved constructor, lifts it
+// although it passes `this` to the Map, and resolves the method calls on the
+// instances read back, so `grow` and `dispose` become direct calls.
+// LIFT-DAG: ctjs.call_direct @Widget${{[0-9]+}}({{.*}}{ctnative.receiver
+// LIFT-DAG: ctjs.call_direct @grow${{[0-9]+}}({{.*}}{ctnative.receiver
+// LIFT-DAG: ctjs.call_direct @dispose${{[0-9]+}}({{.*}}{ctnative.receiver
+// LIFT-DAG: ctjs.func private @Widget${{[0-9]+}}({{.*}}ctnative.instance_class = "Widget"
 
 // --- A read used without a check -------------------------------------------
 // UNCHECKED: ctnative.instance_registry = "a value read from the registry Map is used at `ctjs.get_property` without a check - `get` answers undefined for a missing key"
