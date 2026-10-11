@@ -8,7 +8,9 @@
 # The frontend's cell-before-closure order exposes D$8 -> fn$9, outside startup.
 # The absent-global fold leaves one call of the factory fn$2 (the CommonJS arm
 # is gone), and closures over static variables add fn$66 and fn$544 as targets.
-# BOOTSTRAP: post-native graph: 66 distinct targets over 227 ctjs.call_direct and 0 emitc.call site(s)
+# Function declarations of the factory whose captures became static are bound
+# as local functions, so their calls are direct: 14 more targets, 38 more calls.
+# BOOTSTRAP: post-native graph: 80 distinct targets over 265 ctjs.call_direct and 0 emitc.call site(s)
 # BOOTSTRAP: entry _script_$0: 6 function(s) on static direct-call paths
 # BOOTSTRAP: reachable: _script_$0, bi$88, fn$1, fn$125, fn$178, fn$2
 # UNREACHABLE: named-callees: fn$463 is not reachable by direct calls from _script_$0

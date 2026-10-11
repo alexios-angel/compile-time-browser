@@ -38,6 +38,17 @@ inline constexpr llvm::StringLiteral kNativeStaticReference = "ctnative.static_r
 /// On a ctjs.func whose boxed bindings could not become static: why its body
 /// is not proved to run at most once.
 inline constexpr llvm::StringLiteral kNativeNotRunOnce = "ctnative.not_run_once";
+/// On the operations that set up a proved JavaScript class (its prototype,
+/// constructor and `__home` edges, member definitions and the class helper
+/// calls): they lower to nothing. Written by the class census
+/// (ClosureLifting/Classes.cpp).
+inline constexpr llvm::StringLiteral kNativeClassSetup = "ctnative.class_setup";
+/// On a class constructor's closure: why the class census did not prove it.
+inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason";
+/// On the object literal that stands for an instance of a JavaScript class
+/// (the constructor lift's `new K(...)`): the class's name, which the lowering
+/// gives the C++ class it emits for that shape.
+inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
 
 /// Written by the lowering and read by the C++ emitter (lib/Target/Cpp).
 inline constexpr llvm::StringLiteral kNativeCallableBody = "ctnative.callable_body";

@@ -8,6 +8,8 @@ lower completely and run natively with Node's result; fixtures in
 PREPARED_ONLY prepare but native lowering must still refuse them.
 """
 
+import sys
+
 from CTNative.Lowering.Objects.classes.initialization_inputs import *
 
 from CTNative.harness import native_args, without_intrinsic
@@ -36,6 +38,99 @@ POSITIVES.update(
         "primitive-capture-loop",
     }
 )
+
+# Fixtures whose unprepared import now lowers to a complete native program:
+# class lowering handles their classes without
+# --ctnative-specialize-class-initialization. Each listed mode must lower
+# completely and print Node's value; every other fixture and mode keeps its
+# refusal boundary. The optimized-only entries need optimization first: it
+# removes an uncalled helper, or folds a dead arm (an untaken receiver read or
+# an unknown call behind a constant test) that their preparation still
+# refuses.
+UNTRUSTED_NATIVE = {
+    **dict.fromkeys(
+        (
+            "class-map-record-alias-method-read",
+            "class-map-record-alias-method-write",
+            "class-map-record-alias-method-overwrite-delete",
+            "class-map-record-alias-method-distinct",
+            "class-map-record-shared-owner",
+            "class-map-record-owner-method-write",
+            "class-map-record-reinsert-aliases",
+            "class-map-record-direct",
+            "class-map-record-overwrite",
+            "class-map-record-delete",
+            "class-map-record-clear",
+            "class-map-record-payloads",
+            "class-map-record-alias-write",
+            "class-map-record-alias-method",
+            "class-map-optional-key-tags",
+            "class-map-optional-key-missing",
+            "class-map-optional-key-booleans",
+            "class-map-optional-key-nan",
+            "class-map-optional-key-signed-zero",
+            "class-map-direct-string-keys",
+            "class-map-distinct-string-keys",
+            "class-map-direct",
+            "class-map-shared",
+            "class-map-distinct",
+            "class-map-method-loop",
+            "nested-helper-constructor",
+            "nested-helper-method",
+            "nested-helper-chain",
+            "nested-helper-shared",
+            "nested-helper-diamond",
+            "nested-helper-order",
+            "captured-helper-method",
+            "captured-helper-constructor",
+            "captured-helper-order",
+            "local-holder-method",
+            "local-holder-arrow",
+            "local-holder-branches",
+            "local-holder-order",
+            "local-holder-receiver",
+            "local-helper-arguments",
+            "local-helper-branches",
+            "local-helper-order",
+            "local-helper-values",
+            "empty",
+            "number",
+            "method",
+            "method-arguments",
+            "method-branches",
+            "method-loop",
+            "method-dispatch",
+            "method-increment-dispatch",
+            "method-decrement-dispatch",
+            "constructor-branch",
+            "method-empty",
+            "method-chain",
+            "method-chain-empty",
+            "method-chain-effects",
+            "method-chain-order",
+            "method-chain-cycle",
+            "method-constructor-call",
+            "method-constructor-order",
+            "method-constructor-chain",
+            "method-constructor-constant",
+            "method-captured",
+            "primitive-capture-loop",
+        ),
+        (False, True),
+    ),
+    **dict.fromkeys(
+        (
+            "nested-helper-receiver",
+            "nested-helper-effect",
+            "bootstrap-r",
+            "method-branch-ambient",
+            "helper-decided-uncalled",
+            "helper-decided-nested-uncalled",
+            "helper-decided-live-result",
+        ),
+        (True,),
+    ),
+}
 
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
@@ -500,6 +595,46 @@ def check_record_map_inputs(args, prepared):
                 )
 
 
+def untrusted_change(args, name, optimize, raw, native, functions, expected):
+    """Lower the unprepared import of `name` and return None when it does what
+    UNTRUSTED_NATIVE says (a complete native program printing Node's value, or
+    else a named refusal boundary), else one line saying what changed: the
+    lowering failed, or how many functions became native and whether the
+    complete program ran with Node's result."""
+    listed = optimize in UNTRUSTED_NATIVE.get(name, ())
+    label = f"{name}/{optimize}/untrusted"
+    try:
+        run(
+            [
+                args.opt,
+                str(raw),
+                "--ctjs-resolve-globals",
+                "--ctjs-lift-to-scf",
+                f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
+                "-o",
+                str(native),
+            ]
+        )
+    except RuntimeError as error:
+        return f"CHANGED {label}: lowering failed: {str(error).splitlines()[0]}"
+    text = native.read_text()
+    try:
+        check_refusal(label, text, functions)
+        return f"CHANGED {label}: listed native but kept its refusal boundary" if listed else None
+    except RuntimeError:
+        pass
+    native_count = len(NATIVE.findall(text))
+    refused = len(FUNCTION.findall(text))
+    shape = f"{native_count}/{functions} native, {refused} refused"
+    if refused or "emitc.func @main(" not in text:
+        return f"CHANGED {label}: partial ({shape})"
+    try:
+        check_executable(args, f"{name}.{optimize}.untrusted", native, expected)
+        return None if listed else f"CHANGED {label}: complete ({shape}), runs with a={expected}"
+    except Exception as error:
+        return f"CHANGED {label}: complete ({shape}), run failed: {str(error).splitlines()[0]}"
+
+
 def main():
     args = native_args(__doc__, "fixtures")
     vendor = Path(__file__).resolve().parents[6] / "ctbrowser/vendor/bootstrap/bootstrap.bundle.js"
@@ -604,6 +739,10 @@ def main():
     preparation_refusals = 0
     checked = prepared_refusals = 0
     cutoffs = {}
+    # Fixtures whose untrusted lowering no longer keeps the refusal boundary,
+    # or whose interpreter observation changed, collected across the whole run
+    # and reported together at the end.
+    untrusted_changes = []
     for name, (node_expected, reference_expected) in OBSERVATIONS.items():
         source = args.fixtures / f"{name}.js"
         node = run([args.node, "-e", NODE, str(source)], success=node_expected is not None)
@@ -618,9 +757,15 @@ def main():
         if name == "class-map-record-nested-conditional-dead-escape":
             reference_output += "retained=undefined\n"
         if reference_expected is not None and reference.stdout != reference_output:
-            raise RuntimeError(
-                f"{name}: interpreter observation changed\n{reference.stdout}{reference.stderr}"
+            # Reported with the untrusted changes; the rest of this fixture's
+            # checks assume the old observation.
+            change = (
+                f"CHANGED {name}: interpreter prints {reference.stdout.strip()!r},"
+                f" expected {reference_output.strip()!r}"
             )
+            print(change, file=sys.stderr, flush=True)
+            untrusted_changes.append(change)
+            continue
         raw = args.work / f"{name}.raw.mlir"
         imported = run([args.translate, "--ctbrowser-js-to-ctjs", str(source), "-o", str(raw)])
         text = raw.read_text()
@@ -1368,18 +1513,11 @@ def main():
             preparation_refusals += 2
         for optimize in (False, True):
             native = args.work / f"{name}.{optimize}.untrusted.mlir"
-            run(
-                [
-                    args.opt,
-                    str(raw),
-                    "--ctjs-resolve-globals",
-                    "--ctjs-lift-to-scf",
-                    f"--ctnative-lower-to-emitc=optimize={str(optimize).lower()}",
-                    "-o",
-                    str(native),
-                ]
-            )
-            check_refusal(f"{name}/{optimize}/untrusted", native.read_text(), functions)
+            change = untrusted_change(args, name, optimize, raw, native, functions, node_expected)
+            if change:
+                print(change, file=sys.stderr, flush=True)
+                untrusted_changes.append(change)
+                continue
             if name == "helper-global-alias":
                 check_mutable_helper(native.read_text())
             refusals += 1
@@ -1450,6 +1588,11 @@ def main():
                     prepared_refusals += 1
                 else:
                     checked += check_executable(args, f"{name}.{optimize}", native, node_expected)
+    if untrusted_changes:
+        raise RuntimeError(
+            f"{len(untrusted_changes)} class fixture result(s) changed:\n"
+            + "\n".join(untrusted_changes)
+        )
     plain_checked, plain_refused = check_constructed_methods(args)
     print(
         f"class initialization controls: {len(OBSERVATIONS)} source observations, "

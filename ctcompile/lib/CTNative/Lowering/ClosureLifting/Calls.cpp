@@ -91,6 +91,9 @@ void closureLifter::indexAndNewTargets() {
 /// before any rewrite.
 void closureLifter::census() {
     indexAndNewTargets();
+    // Before any rule asks about a prototype: the class census marks the
+    // setup operations those rules skip.
+    classCensus();
     module.walk([&](mlir::Operation * o) {
         auto holder = o->getParentOfType<ctjs::FuncOp>();
         if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {

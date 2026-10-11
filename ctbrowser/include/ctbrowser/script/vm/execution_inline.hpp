@@ -200,7 +200,8 @@ inline auto context::erase_global(std::string_view name) -> bool {
 
 inline auto context::define_native(std::string name, native_fn fn) -> void {
     value v = value::object(allocate<native_object>(name, std::move(fn)));
-    current_realm().globals[std::move(name)] = v;
+    realm_record & realm = current_realm();
+    (internal_global(name) ? realm.internals : realm.globals)[std::move(name)] = v;
 }
 
 [[nodiscard]] inline auto context::global(std::string_view name) const -> value {
@@ -252,6 +253,11 @@ inline auto context::set_undeclared_name_hook(std::function<value(std::string_vi
 /// and the AOT bridge ask for it.
 [[nodiscard]] inline auto context::global_or_named(std::string_view name, bool silent) -> value {
     realm_record & realm = current_realm();
+    // An engine helper is read from its own table only (internal_global).
+    if (internal_global(name)) [[unlikely]] {
+        const auto it = realm.internals.find(name);
+        return it == realm.internals.end() ? value::undefined() : it->second;
+    }
     const auto it = realm.globals.find(name);
     if (it != realm.globals.end()) { return it->second; }
     if (realm.undeclared_name) {

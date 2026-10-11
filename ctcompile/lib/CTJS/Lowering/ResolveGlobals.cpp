@@ -136,6 +136,7 @@
 #include "ctcompile/CTJS/IR/CTJSAttrs.h"
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Import/EngineGlobals.h"
 #include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTJS/Transforms/Passes.h"
 
@@ -1348,6 +1349,14 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 record(name, facts.stores.size(), FuncOp{},
                        "absent: never stored and not provided by the native realm; " +
                            std::to_string(absent->second) + " typeof read(s) folded to undefined");
+                continue;
+            }
+            // A VM class helper's IR name (EngineGlobals.h) is never resolved:
+            // its calls reach the engine-internal helper whatever a script
+            // stores under that name.
+            if (!engineHelperVMName(name.getValue()).empty()) {
+                record(name, facts.stores.size(), FuncOp{},
+                       "an engine helper, which no store of the script reaches");
                 continue;
             }
             // Clauses 1-3 and 6, which known_callee() also asks.

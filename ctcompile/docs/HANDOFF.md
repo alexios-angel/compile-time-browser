@@ -24,20 +24,18 @@ committing. There is no CI. Do not build on the small local machine.
 
 ## Summary (updated 2026-10-10)
 - Active goal: Bootstrap; status: in progress
-- Last verified commit on ctcompile-v1: 8b5d265e4 Merge bootstrap-host-2 into
-  ctcompile-v1: ctcss-translate, css input seam (each merge since 986ad747a was
-  checked with focused tests only; no full suite ran)
+- Last verified commit on ctcompile-v1: 446f071bb Merge queue/5 into
+  ctcompile-v1: class helpers, classes, startup re-pin (each merge since
+  986ad747a was checked with focused tests only; no full suite ran)
 - Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE (2026-10-10);
-  `check-workload.py fixture` -> VERDICT: DONE
-- First gap and next step: admission. On ctcompile-v1 the bundle has 19 of 574
-  functions native and css-dump.js 0 of 6. The unmerged bootstrap-this branch
-  (run-once function cells as namespace-scope statics, the absent-global typeof
-  fold, clause-5 refinements) measures 21 of 574 but still fails focused tests;
-  after it: JS classes as C++ classes (slice 1a plus the VM class-helper fix are
-  drafted, uncommitted, in that worktree). css-dump.js next needs tuples in
-  vectors, vector parameters and returns, the recursive `walk`, JSON and DOM
-  reads. native-run: css_syntax.native (compiled CSS) is in progress;
-  bootstrap_layout.native needs the generated css-dump.js plus static_page.
+  `check-workload.py fixture` -> VERDICT: DONE; neither was re-run on 446f071bb
+- First gap and next step: admission. The bundle measured 21 of 574 functions
+  native and css-dump.js 1 of 6 before queue/5; JS classes now lower to C++
+  classes. Next layers in the queue: the Data-table singletons (author-1), DOM
+  reads for css-dump.js (author-2), parallel test drivers and uv (author-3),
+  array callbacks (author-4), object shapes (author-5), nested closures
+  (author-6). native-run: css_syntax.native passes; bootstrap_layout.native
+  still needs the generated css-dump.js plus static_page.
 - Goals done: none
 - Open questions for the user: none
 - Decisions since the prompt revision (all 2026-10-10, by the user):
@@ -50,6 +48,23 @@ committing. There is no CI. Do not build on the small local machine.
   - the VM's `__ctbrowser_*` class helpers become engine-internal;
   - validation runs only targeted, focused tests;
   - every commit carries a Co-Authored-By trailer; merges use a message file.
+
+### 2026-10-10 claude-ctcompile: classes, class helpers, function binding
+Commits (merge queue rounds queue/4 and queue/5, merged as 446f071bb):
+05c08147c rows of [name, value] and bounded index reads; e5d62d9e5 VM class
+helpers kept out of the page's globals; 11c86d670 JavaScript classes lowered to
+C++ classes; 7002a6d35, 6dada00dd, d44863423, 0a804691a, a9bb8bc70,
+a73a82333, 81b0f7e31 (class fixture expectations and negatives);
+967de3e92 Array.prototype callback methods and span reads; 23f60d1c8 and
+dfedc9185 arrays lent to callees as spans and between calls; 1aea14cbb
+function boxes bound once their captures are static; 5937b693d startup.test
+re-pinned to 80 targets / 265 calls (the 14 new targets are factory function
+declarations now called directly).
+Checks: queue/4 focused lit and CTest selections green except startup.test,
+bisected to 1aea14cbb; queue/5 lit `CTNative/Lowering/Closures/callback/startup.test`
+passed on devbox at 063f14a72. No full suite ran.
+Next boundary: the startup tip pin is 83/268 once the Data-table singleton layer
+(6a24d4ab6) lands.
 
 ### 2026-10-10 claude-ctcompile: VM-free page, built-in objects, compiled CSS
 Commits: 9367a35eb (ctbrowser-page: computed style and client rects lifted

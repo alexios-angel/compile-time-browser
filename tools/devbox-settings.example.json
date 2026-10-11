@@ -1,0 +1,35 @@
+{
+  "about": "Build boxes for tools/devbox-pool.py, in order of preference. Copy this file to devbox-settings.json (gitignored: it is machine-local) and edit it. A box runs up to `slots` jobs at once; slot 0 is `lock` itself, the same file the agents' `flock` commands take, and slot N is `lock` + `.N`. `round_marker` exists while a validation round runs there; ordinary jobs skip such a box. `build_jobs`, when set, is exported as CT_BUILD_JOBS (tools/remote-build.sh's -j) so concurrent slots share the cores instead of each taking all of them; tests still use every core. `server` is the infra helper that starts the box (paths are relative to this file).",
+  "boxes": [
+    {
+      "name": "devbox-aws",
+      "lock": "/tmp/ctbrowser-devbox-aws-build.lock",
+      "round_marker": "/tmp/ctbrowser-queue-round-devbox-aws",
+      "server": "../../infra/aws-build-server/server.sh",
+      "running": "^running\\b",
+      "slots": 4,
+      "note": "c7a.8xlarge, 32 Zen 4 cores, 61 GiB: four slots of 8 build jobs (about 12 GB each at peak); four uncapped builds once ran a 32 GiB box out of memory",
+      "build_jobs": 8
+    },
+    {
+      "name": "devbox-gcp",
+      "lock": "/tmp/ctbrowser-devbox-gcp-build.lock",
+      "round_marker": "/tmp/ctbrowser-queue-round-devbox-gcp",
+      "server": "../../infra/gcp-build-server/server.sh",
+      "running": "^RUNNING\\b",
+      "slots": 2,
+      "note": "t2d-standard-16, 16 Zen 3 cores without SMT, 64 GB: two slots of 8 build jobs",
+      "build_jobs": 8
+    },
+    {
+      "name": "devbox",
+      "lock": "/tmp/ctbrowser-devbox-build.lock",
+      "round_marker": "/tmp/ctbrowser-queue-round-devbox",
+      "server": "../../infra/azure-build-server/server.sh",
+      "running": "\\brunning\\b",
+      "slots": 1,
+      "note": "8 vCPU = 4 cores with SMT, 32 GiB: one job"
+    }
+  ],
+  "poll_seconds": 10
+}

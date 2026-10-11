@@ -2,6 +2,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Calls.cpp
   Callbacks.cpp
   Cells.cpp
+  Classes.cpp
   Bindings.cpp
   Captures.cpp
   Methods.cpp

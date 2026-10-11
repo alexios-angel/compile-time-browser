@@ -239,9 +239,10 @@ function prototype_replacement() {
 var a = prototype_replacement();
 
 //--- mutable-class-helper.js
-// Node never calls this ctbrowser hook, so a=0 there and a=1 in the VM.
-// The two writes keep the hook's global unresolved, so the call must stay;
-// dropping it because of the name alone would lose the replacement's effect.
+// The class helper is engine-internal in the VM, so these writes make an
+// ordinary global and never run: a=0 in the VM, as in Node. In the IR the
+// helper keeps the name `__ctbrowser_class_defined`, so native lowering refuses
+// the script's own use of that name rather than confuse the two.
 __ctbrowser_class_defined = function first(value) {};
 function mutable_class_helper() {
     var calls = 0;

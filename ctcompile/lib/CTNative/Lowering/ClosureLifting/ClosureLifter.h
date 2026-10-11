@@ -563,6 +563,39 @@ struct closureLifter {
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 
+    // --- The class census (Classes.cpp) --------------------------------------
+
+    /// One JavaScript class as the importer spells it (see Classes.cpp).
+    struct jsClass {
+        ctjs::CreateClosureOp constructor;
+        ctjs::CreateObjectOp prototype;
+        ctjs::CreateClosureOp parent; ///< The parent's constructor, or null.
+        ctjs::CallOp heritage;        ///< The `extends` helper call, or null.
+        llvm::StringMap<ctjs::CreateClosureOp> methods, getters, statics, staticGetters;
+        /// Operations that lower to nothing once the class is proved: the
+        /// `constructor` and `__home` edges and the class_defined call.
+        llvm::SmallPtrSet<mlir::Operation *, 16> setup;
+        /// The `prototype` attachment and each member definition, which the
+        /// constructor and method rules consume as they do an ES5 prototype.
+        llvm::SmallPtrSet<mlir::Operation *, 16> definitions;
+        llvm::SmallVector<ctjs::CellSetOp> bindings;
+        /// Uses of the constructor that are not setup (`new`, static reads).
+        llvm::SmallVector<mlir::OpOperand *> uses;
+        std::string reason; ///< Why the class is not proved; empty if it is.
+    };
+    /// Keyed by the constructor's ctjs.create_closure.
+    llvm::MapVector<mlir::Operation *, jsClass> jsClasses;
+
+    static bool isHomeEdge(mlir::Operation * op);
+
+    void classCensus();
+
+    ctjs::CreateClosureOp classMethod(const jsClass & cls, llvm::StringRef name);
+
+    void eraseClassSetup(jsClass & cls);
+
+    static std::string classNameOf(ctjs::FuncOp target);
+
     // --- Static cells of run-once functions (RunOnce.cpp) ------------------
 
     /// Set on the lifter that run() starts after a static rewrite, so that the
@@ -600,7 +633,10 @@ struct closureLifter {
     /// this lifter is a trial.
     llvm::DenseSet<int64_t> boundTrialCells;
 
-    bool makeRunOnceCellsStatic(liftReport & out);
+    /// With `functions` false, boxes that hold a function are left alone, so
+    /// that a second call can first see which of them the binding rule takes
+    /// once the other boxes are static.
+    bool makeRunOnceCellsStatic(liftReport & out, bool functions);
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 

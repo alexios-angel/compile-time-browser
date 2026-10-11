@@ -49,6 +49,16 @@
 // RUN: %t/amd-clang | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %native_reference %t/amd.js | FileCheck %s --check-prefix=OBSERVATION
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/amd.js | FileCheck %s --check-prefix=OBSERVATION
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/declared.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/declared.mlir
+// RUN: FileCheck %s --check-prefix=DECLARED --implicit-check-not=ctnative.not_native < %t/declared.mlir
+// RUN: ctjs-opt %t/declared.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/declared.cpp
+// RUN: %gxx -O2 %t/declared.cpp -o %t/declared-gcc
+// RUN: %t/declared-gcc | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %clangxx -O2 %t/declared.cpp -o %t/declared-clang
+// RUN: %t/declared-clang | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %native_reference %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/declared.js | FileCheck %s --check-prefix=DECLAREDOUT
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/twice.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=TWICE
@@ -82,6 +92,22 @@
 // to undefined (CTJS/Transforms/absent-globals.mlir), precomputation drops both
 // arms, and the one call left makes the factory run once. Its output is
 // checked with the UMD prefix.
+
+// --- A function declaration over a static binding ----------------------------
+//
+// `bump` is declared in the factory and captures `count`; an arrow calls it.
+// Until `count` is static, the binding rule cannot call `bump` directly from
+// the arrow (its capture is not a binding that rule erases), so the arrow
+// would be refused. Boxes holding a function wait for a second round: with
+// `count` static, `bump` is a local function again and every call of it is
+// direct, instead of `bump` becoming a static variable called through.
+//
+// DECLARED-NOT: static_bump
+// DECLARED: emitc.global static @static_count :
+// DECLARED-NOT: static_bump
+// DECLARED: emitc.func @bump_
+// DECLARED-NOT: static_bump
+// DECLAREDOUT: r=43
 
 // --- Negative controls -------------------------------------------------------
 //
@@ -119,6 +145,14 @@ var r = (function (factory) {
     const fn = make();
     return fn() + fn() * 10;
 });
+
+//--- declared.js
+var r = (function () {
+    var count = 0;
+    function bump(n) { count = count + n; return count; }
+    const twice = () => bump(1) + bump(2);
+    return twice() * 10 + count;
+})();
 
 //--- twice.js
 var r = (function (factory) { return factory() + factory(); })(function () {
