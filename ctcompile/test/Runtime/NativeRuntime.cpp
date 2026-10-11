@@ -17,6 +17,7 @@
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
+#include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
@@ -28,6 +29,21 @@
 namespace ctnative {
 struct identity_object {};
 } // namespace ctnative
+
+namespace {
+/// A constant table as ctcompile emits one, for table_field_or_undefined.
+struct spread_table_t : ctnative::static_table {
+    ctnative::js_num interval;
+    ctnative::js_boolean_t wrap;
+    ctnative::js_string pause;
+    ctnative::nullable_scalar parent;
+};
+const spread_table_t spread_table{{},
+                                  ctnative::js_num{5000.0},
+                                  ctnative::js_boolean_t{true},
+                                  ctnative::js_string("hover", 5),
+                                  ctnative::nullable_scalar::null()};
+} // namespace
 
 namespace {
 template <class T>
@@ -1219,6 +1235,31 @@ int main() {
         // `$` in the function's result is literal: no GetSubstitution.
         CHECK(replace.call(js_string{"a"}, RegExp("a", "g"),
                            [](js_string) { return js_string{"$&$1"}; }) == js_string{"$&$1"});
+    }
+
+    {
+        // A spread of a constant table reads each field, or undefined when the
+        // static is still undefined (null pointer): CopyDataProperties copies
+        // nothing then, rather than throwing as a field read does.
+        using ctnative::nullable_scalar;
+        using ctnative::nullable_string;
+        using ctnative::table_field_or_undefined;
+        const ctnative::static_table_ptr table = &spread_table;
+        const auto interval =
+            table_field_or_undefined<&spread_table_t::interval, nullable_scalar>(table);
+        CHECK(interval.tag == nullable_scalar::kind::number && interval.value == 5000.0);
+        const auto wrap = table_field_or_undefined<&spread_table_t::wrap, nullable_scalar>(table);
+        CHECK(wrap.tag == nullable_scalar::kind::boolean && wrap.value == 1.0);
+        const auto pause = table_field_or_undefined<&spread_table_t::pause, nullable_string>(table);
+        CHECK(pause.tag == nullable_string::kind::string && pause.value == "hover");
+        // A field holding null stays null, distinct from the undefined below.
+        const auto parent =
+            table_field_or_undefined<&spread_table_t::parent, nullable_scalar>(table);
+        CHECK(parent.tag == nullable_scalar::kind::null);
+        CHECK((table_field_or_undefined<&spread_table_t::interval, nullable_scalar>(nullptr).tag ==
+               nullable_scalar::kind::undefined));
+        CHECK((table_field_or_undefined<&spread_table_t::pause, nullable_string>(nullptr).tag ==
+               nullable_string::kind::undefined));
     }
 
     CHECK(unbound());

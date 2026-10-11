@@ -175,10 +175,16 @@ bool lowering::replaceStaticTable(mlir::Operation * o) {
         return true;
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o)) {
-        const std::string field =
-            "<&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o) + ">";
-        mlir::Value value = callValue(at, o->getLoc(), read.getResult().getType(),
-                                      "ctnative::table_field" + field, read.getObject());
+        const std::string member =
+            "&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o);
+        // A spread's read names its result type, which also holds undefined
+        // for a table not stored yet.
+        const mlir::Type type = read.getResult().getType();
+        const std::string callee = o->hasAttr(kNativeStaticTableSpread)
+                                       ? "ctnative::table_field_or_undefined<" + member + ", " +
+                                             llvm::cast<ec::OpaqueType>(type).getValue().str() + ">"
+                                       : "ctnative::table_field<" + member + ">";
+        mlir::Value value = callValue(at, o->getLoc(), type, callee, read.getObject());
         read.getResult().replaceAllUsesWith(value);
         eraseIfUnused(o);
         return true;

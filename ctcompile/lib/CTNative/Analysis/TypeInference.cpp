@@ -685,7 +685,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             return answer(StaticTableType::get(c, name.getValue()));
         }
         if (auto field = op->getAttr(kNativeStaticTableField)) {
-            return answer(typeOfConstant(c, field));
+            // A spread's read of a table that may still be undefined.
+            const auto type = typeOfConstant(c, field);
+            return answer(op->hasAttr(kNativeStaticTableSpread)
+                              ? TypeValue::join(TypeValue{type}, TypeValue{absentType(c)}).getType()
+                              : type);
         }
     }
 
