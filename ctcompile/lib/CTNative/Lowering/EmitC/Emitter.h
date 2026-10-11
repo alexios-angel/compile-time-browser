@@ -304,6 +304,9 @@ struct lowering {
                              mlir::Value exponent);
 
     void retype(ctjs::FuncOp fn);
+    /// Lowers a replace call with a specialised callback, and skips the plumbing
+    /// it consumes (EmitC/StringCallbacks.cpp). False for any other operation.
+    bool replaceStringCallback(mlir::Operation * o);
     /// Gives each data-record call (TypeInference::markRecordReturns) its
     /// class by value and moves the result into a local (EmitC/Records.cpp).
     void passRecords(ctjs::FuncOp fn);

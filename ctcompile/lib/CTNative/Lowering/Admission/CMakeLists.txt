@@ -3,6 +3,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   IdentityFields.cpp
   Objects.cpp
   Operations.cpp
+  StringCallbacks.cpp
   Functions.cpp
   Admission.h
 )

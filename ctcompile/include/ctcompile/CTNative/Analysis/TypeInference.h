@@ -46,7 +46,9 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace ctcompile::ctnative {
 
@@ -75,6 +77,16 @@ inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_be
 /// and on each direct call of it, when markRecordReturns proved that the call's
 /// result can receive a copy (Analysis/Inference/Records.cpp).
 inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
+
+/// A callback of `text.replace(/pattern/g, fn)` that closure lifting
+/// specialised for its one call (Lowering/ClosureLifting/StringCallbacks.cpp).
+/// On the `ctjs.call` it is a symbol reference to the callback, whose captures
+/// follow the RegExp literal in the call's arguments; on the callback's
+/// `ctjs.func` it is a unit attribute.
+inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_callback";
+/// The String.prototype method a `ctjs.call` invokes on its receiver, written
+/// by TypeInference::markStringMethodCalls: only "toLowerCase" today.
+inline constexpr llvm::StringLiteral kNativeStringMethod = "ctnative.string_method";
 
 /// One SSA value's inferred type, as a lattice element.
 ///
@@ -225,6 +237,29 @@ public:
     static bool isRecordCall(mlir::Value value);
     /// Whether `ret` is a `ctjs.return` of a function kRecordReturn marks.
     static bool returnsRecord(mlir::Operation * ret);
+
+    // String.prototype.replace with a function (Inference/StringCallbacks.cpp).
+    /// The pattern and flags of the RegExp literal `value` is, or none.
+    static std::optional<std::pair<std::string, std::string>> regExpLiteral(mlir::Value value);
+    /// Why the native runtime cannot run `pattern` with `flags` for a callback
+    /// that declares `declared` parameters the way JavaScript does, or empty.
+    static std::string replacePatternProblem(llvm::StringRef pattern, llvm::StringRef flags,
+                                             unsigned declared);
+    /// Whether `op` is a replace call closure lifting specialised.
+    static bool isStringCallbackCall(mlir::Operation * op);
+    /// Marks each `text.toLowerCase()` call with kNativeStringMethod, while its
+    /// key is still a constant the lowering has not rewritten.
+    static void markStringMethodCalls(mlir::Operation * top);
+    /// Whether `op` is a marked `text.toLowerCase()`, which the runtime spells
+    /// `ctnative::String.prototype.toLowerCase.call(text)` on a String.
+    static bool isStringMethodCall(mlir::Operation * op);
+    /// Whether `op` is the method read, the RegExp literal or the literal
+    /// factory's global that only such a call (or a toLowerCase call)
+    /// consumes; it lowers to nothing.
+    static bool consumedByStringCallback(mlir::Operation * op);
+    /// Whether `value` is a parameter of a specialised replace callback, which
+    /// its call types rather than the entry state.
+    static bool isStringCallbackParameter(mlir::Value value);
 
     /// Whether `array` is a dense array literal that can be a `std::vector`:
     /// its uses keep it dense (no holes) and local. Allowed uses are appends,
@@ -395,6 +430,10 @@ private:
     /// stored value's lattice.
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
+    /// The type of a specialised replace call, after joining its captures, and
+    /// the match and groups (Strings), into the callback's parameters.
+    mlir::Type stringCallbackType(mlir::Operation * op,
+                                  llvm::ArrayRef<const TypeLattice *> operands, bool & pending);
 
     /// The element type of a dense array: the join over everything appended or
     /// stored into it, from `undefined`. `op` is the operation asking, so every

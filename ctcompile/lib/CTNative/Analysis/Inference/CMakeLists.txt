@@ -3,5 +3,6 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   Exceptions.cpp
   Records.cpp
   Shapes.cpp
+  StringCallbacks.cpp
   Vectors.cpp
 )

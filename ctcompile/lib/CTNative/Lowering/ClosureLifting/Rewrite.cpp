@@ -93,6 +93,7 @@ liftReport closureLifter::run() {
     constructorCensus();
     argumentCensus();
     methodCensus();
+    stringCallbackCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // Closure -> its own reason.
     // The closure that names each function, for the chained reason below: a
     // capture filled from the enclosing closure is refused with that
@@ -156,6 +157,7 @@ liftReport closureLifter::run() {
                 returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -387,6 +389,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // established: every caller of this function is visible.
     mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
     ++out.functions;
+
+    if (stringCallbacks.contains(made.front())) {
+        return rewriteStringCallback(made.front(), target, out);
+    }
 
     if (returnedClosures.contains(made.front())) {
         liftReturnedClosure(made.front(), target, captures, parameters, out, preserveReceiver);

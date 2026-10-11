@@ -501,6 +501,8 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
+    // A specialised replace callback's parameters come from its call.
+    if (isStringCallbackParameter(value)) { return; }
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
@@ -710,6 +712,15 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             propagateIfChanged(result, result->join(TypeValue{mapAnswer}));
         }
         return mlir::success();
+    }
+
+    // String.prototype.toLowerCase, and replace with a specialised function.
+    if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    if (isStringCallbackCall(op)) {
+        bool pending = false;
+        const mlir::Type replaced = stringCallbackType(op, operands, pending);
+        if (pending) { return mlir::success(); }
+        if (replaced) { return answer(replaced); }
     }
 
     // Vectors of one proved element type, and split on a String.

@@ -3,6 +3,7 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
   Shapes.cpp
   Records.cpp
+  StringCallbacks.cpp
   OwnedGlobals.cpp
   Module.cpp
   DOM.cpp
