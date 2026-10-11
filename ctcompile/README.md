@@ -48,12 +48,11 @@ Clang, run both binaries, and require identical output.
 
 ### What works and what doesn't
 
-Small programs and focused test pages compile completely. The project's yardstick
-is Bootstrap 5.3.8's JavaScript bundle, which is a real, minified library full
-of classes, closures, event handlers and DOM access. On this release, 21 of its
-574 functions compile natively. The rest are refused, each with a reason. Work
-on development branches gets further than that, but it hasn't been validated
-for release yet.
+Small programs and focused test pages compile completely. Large, minified
+real-world scripts, full of classes, closures, event handlers and DOM access,
+mostly don't yet: most of their functions are still refused, each with a
+reason. Work on development branches gets further, but it hasn't been
+validated for release yet.
 
 Expect plenty of refusals on your own code. Arbitrary host APIs, many
 exception and iterator patterns, and dynamic code are out of reach for now. If

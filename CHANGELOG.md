@@ -12,8 +12,6 @@ nowhere near finished.
   headlessly, and the engine embeds in C++ through `ctbrowser::run_app`.
 - test262: 47,425 of the 49,377 tests that ran pass (96.0%, September 2026).
 - web-platform-tests `css/`: 1,596 of 2,926 runnable files pass.
-- p5.js, Phaser, Babylon.js and Bootstrap pages run as test corpora, each
-  partially.
 - WebGL goes through ANGLE when it's available.
 
 **ctcompile** (the compiler, version 0.1.0)
@@ -28,8 +26,8 @@ nowhere near finished.
 
 **Known limits**
 
-- The native compiler handles small programs and focused tests completely, but
-  only 21 of the 574 functions in Bootstrap's JavaScript bundle so far.
+- The native compiler handles small programs and focused tests completely.
+  Most functions in large real-world scripts are still refused.
 - The packager doesn't use the native compiler yet, and doesn't precompile HTML
   or CSS.
 - Module scripts can't be packaged.

@@ -11,7 +11,7 @@ separate homes.
 | `Analysis/Ownership/` | Global roots, method tables and captured Map owners |
 | `CTJS/` | Dialect IR, bytecode import and transformations |
 | `CTNative/` | Native IR and pass tests in `IR/`, `BindingTime/`, `Optimization/`, `PartialEvaluation/`, `Precomputation/`, `Specialization/` and `Supercompilation/` |
-| `CTNative/Browser/` | DOM entry drivers in `dom/`, `class_dom/` and `bootstrap/`: each case is a `.test` beside its same-stem `.py` driver |
+| `CTNative/Browser/` | DOM entry drivers, one folder per subject: each case is a `.test` beside its same-stem `.py` driver |
 | `CTNative/Lowering/` | Native admission and emission tests grouped into `Maps/`, `Objects/`, `Closures/`, `Scalars/`, `Exceptions/`, `Admission/` and `Emission/` |
 | `CTNative/Ownership/` | Owned global execution checks, and `global_maps/`: the owned-global-maps package (`driver/`, `harness/`, `sources/`) beside its tests |
 | `CTNative/Exports/` | Published native entry points and their source specimen |

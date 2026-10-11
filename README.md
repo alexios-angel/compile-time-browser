@@ -39,11 +39,9 @@ straight to ctbrowser's C++ libraries. The tests check it the hard way: the
 generated program is built with both GCC and Clang, run, and its output
 compared with what the VM prints for the same script.
 
-How far it gets today: small programs and test pages compile completely. The
-target I'm working towards is Bootstrap 5.3's JavaScript bundle, and that is
-far from done. On this release, 21 of the bundle's 574 functions compile
-natively and the rest are refused with reasons. Much more is in progress on
-development branches.
+How far it gets today: small programs and test pages compile completely.
+Large real-world scripts mostly don't yet. Most of their functions are still
+refused, each with a reason, and closing that gap is the main work ahead.
 
 [ctcompile/README.md](ctcompile/README.md) shows how to compile a small
 program yourself.
@@ -61,11 +59,8 @@ Some numbers, measured in September 2026:
 - **web-platform-tests, `css/`:** 1,596 of 2,926 runnable files pass, with
   70,328 passing subtests.
 
-It runs real libraries. p5.js 2.3.1, Phaser 4.2.1, Babylon.js 9.18.2 and
-Bootstrap 5.3.8 are in the test corpora, and regression checks track specific
-behavior in each one. "Runs" is doing some work in that sentence: support for
-each library is partial and still growing. Pages are painted by a software tile
-rasterizer, and WebGL goes through ANGLE when it's available.
+Pages are painted by a software tile rasterizer, and WebGL goes through ANGLE
+when it's available.
 
 ## Building
 
@@ -130,7 +125,7 @@ SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
 ```
 
 There are more pages in [ctbrowser/examples/pages](ctbrowser/examples/pages):
-forms, canvas, images, scripting and the library demos. If you just want to see
+forms, canvas, images, scripting and a few games. If you just want to see
 something run without building, there are
 [prebuilt Linux examples](https://github.com/alexios-angel/compile-time-browser/releases/tag/examples-linux-x64)
 from July 2026. They're older than this release, but they do run.
