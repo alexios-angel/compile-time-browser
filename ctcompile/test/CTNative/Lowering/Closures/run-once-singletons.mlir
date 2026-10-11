@@ -11,12 +11,14 @@
 // A method may also call the table's other methods through `this`
 // (Bootstrap's SelectorEngine: `focusableChildren(t) { return this.find(e,
 // t)... }`), and may create nested closures (H.getDataAttributes' filter
-// arrow); those calls become direct too.
+// arrow); those calls become direct too. Such a table stays a static variable
+// even when every closure that reads it lifts (RunOnce.cpp), so a table read
+// by an ordinary local function binds as well.
 //
 // The positives lower completely and print the same `r` as Node and the
 // interpreter with both compilers. The negatives keep the call through the
-// literal: a read that uses the binding as a value, a method that reads a
-// field of `this` that is not a method, a method that uses `this` as a value,
+// literal: a read that uses the binding as a value (with readers that lift
+// too), a method that reads a field of `this` that is not a method, a method that uses `this` as a value,
 // a method that reads `this` while its closure is held outside the literal,
 // and a read in a function started before the literal is written.
 //
@@ -41,6 +43,19 @@
 // RUN: %t/self-clang | FileCheck %s --check-prefix=SELF
 // RUN: %native_reference %t/self.js | FileCheck %s --check-prefix=SELF
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/self.js | FileCheck %s --check-prefix=SELF
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/lifted.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/lifted.mlir
+// RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/lifted.mlir
+// RUN: ctjs-opt %t/lifted.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/lifted.cpp
+// RUN: %gxx -O2 %t/lifted.cpp -o %t/lifted-gcc
+// RUN: %t/lifted-gcc | FileCheck %s --check-prefix=LIFTED
+// RUN: %clangxx -O2 %t/lifted.cpp -o %t/lifted-clang
+// RUN: %t/lifted-clang | FileCheck %s --check-prefix=LIFTED
+// RUN: %native_reference %t/lifted.js | FileCheck %s --check-prefix=LIFTED
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/lifted.js | FileCheck %s --check-prefix=LIFTED
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/lifted-value.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=LIFTED-VALUE
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/this-value.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=THIS-VALUE
@@ -61,12 +76,17 @@
 // TABLE: emitc.func @main
 // OBSERVATION: r=3125
 // SELF: r=12013
+// LIFTED: r=7012
 
 // Each negative keeps the literal, and its static box says why.
 // VALUE: ctnative.singleton_reason = "a read reaches `ctjs.compare` in `{{.*}}`"
 // VALUE: ctjs.constant #ctjs.string<"on">
 // RECEIVER: ctnative.singleton_reason = "the method `on` reads its receiver, new.target or its own closure"
 // RECEIVER: ctjs.constant #ctjs.string<"on">
+// A table also read as a value stays a capture of the closure that reads it.
+// LIFTED-VALUE-NOT: static_cell
+// LIFTED-VALUE: ctnative.closure_reason = "it is a method field of an object whose shape is not closed, so `find` cannot become a free function taking that object"
+// LIFTED-VALUE: ctnative.not_native = "capture 0 is !ctnative.boxed - no caller proves it
 // THIS-VALUE: ctnative.singleton_reason = "the method `on` reads its receiver, new.target or its own closure"
 // THIS-VALUE: ctjs.constant #ctjs.string<"on">
 // SHARED: ctnative.singleton_reason = "the method `on` reads its receiver, new.target or its own closure"
@@ -99,6 +119,24 @@ var r = (function () {
     function make() { return () => R.all(1) + R.find(3); }
     const fn = make();
     return fn() * 1000 + log;
+})();
+
+//--- lifted.js
+var r = (function () {
+    var log = 0;
+    const R = {
+        find(n) { log = log * 10 + n; return n * 2; },
+        all(n) { return this.find(n) + 1; },
+    };
+    function run() { return R.all(1) + R.find(2); }
+    return run() * 1000 + log;
+})();
+
+//--- lifted-value.js
+var r = (function () {
+    const R = { find(n) { return n * 2; } };
+    function run() { return R.find(1) + (R === null ? 1 : 0); }
+    return run();
 })();
 
 //--- this-value.js
