@@ -20,6 +20,12 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits an addEventListener call specialised for its listener
 /// (HostCallbacks.cpp).
 bool hostCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits a use of a listener's Event (HostCallbacks.cpp); nullopt when `o`
+/// uses none.
+std::optional<bool> eventOperation(admission & self, mlir::Operation * o);
+/// Admits an element member call or read (Elements.cpp); nullopt when `o`
+/// is none.
+std::optional<bool> elementOperation(admission & self, mlir::Operation * o);
 
 namespace {
 
@@ -42,6 +48,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         if (vector && llvm::isa<TupleType>(vector.getElementType())) {
             return TypeInference::isTupleLiteral(value) &&
                    carrierOf(self.typeOf(value)) == carrier::tuple;
+        }
+        // An element into an array of elements (`[i]`, the spread loop).
+        if (vector && llvm::isa<DOMElementType>(vector.getElementType())) {
+            return carrierOf(self.typeOf(value)) == carrier::domElement;
         }
         return isString(value);
     };
@@ -163,6 +173,37 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::builtinStatic: {
+        const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+        const std::string name =
+            (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
+        using Param = TypeInference::BuiltinStatic::Param;
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            const Param kind = row.params[index];
+            const carrier held = carrierOf(self.typeOf(argument));
+            // The carriers Runtime/Console.hpp's console_detail::append takes.
+            const bool printable = held == carrier::string || held == carrier::number ||
+                                   held == carrier::boolean || held == carrier::nullable ||
+                                   held == carrier::nullableString;
+            // An element that may be null is passed through present_element,
+            // which throws the VM's TypeError for null as the call would.
+            const bool nullable = kind == Param::element && held == carrier::nullableElement;
+            const bool fits = kind == Param::string    ? held == carrier::string
+                              : kind == Param::number  ? held == carrier::number
+                              : kind == Param::element ? held == carrier::domElement
+                                                       : printable;
+            if (!fits && !nullable) {
+                return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
+                                   printed(self.typeOf(argument)) + ", not " +
+                                   (kind == Param::string    ? "a String"
+                                    : kind == Param::number  ? "a Number"
+                                    : kind == Param::element ? "an Element"
+                                                             : "a String, Number, Boolean, null "
+                                                               "or undefined"));
+            }
+        }
+        return true;
+    }
     case VectorCall::includes:
         if (!array(call.getReceiver()) ||
             carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
@@ -189,6 +230,8 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     if (TypeInference::isHostCallbackCall(o)) {
         return hostCallbackOperation(self, llvm::cast<CallOp>(o));
     }
+    if (auto admitted = eventOperation(self, o)) { return *admitted; }
+    if (auto admitted = elementOperation(self, o)) { return *admitted; }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -332,6 +375,7 @@ bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
     if (auto admitted = staticTableOperation(o)) { return *admitted; }
+    if (auto admitted = instanceOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
@@ -997,6 +1041,14 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                 if (!ownedTableField(set)) { return false; }
                 continue;
             }
+            // A field one of a proved set of closures (ClosureSets.cpp) is
+            // stored as that set's std::variant, whether the stored value is
+            // the set or one member's closure.
+            if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
+                (c == carrier::closure && set.getValue().getDefiningOp() &&
+                 set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
+                continue;
+            }
             if (!isScalarCarrier(c) && c != carrier::string) {
                 return refuse(("field `" + key + "` is stored a " +
                                printed(typeOf(set.getValue())) + ", not a number or a boolean")
@@ -1028,7 +1080,10 @@ bool admission::directCall(ctjs::CallDirectOp call) {
     // is the generated class, so it must really be a closed-shape object and
     // not some other value the lift never looked at.
     const auto operands = call.getArgOperands();
-    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver())) {
+    // An instance a registry Map owns is passed as its owner or borrowed
+    // (EmitC/Instances.cpp).
+    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver()) &&
+        carrierOf(typeOf(call.getReceiver())) != carrier::instance) {
         return refuse("a method call whose receiver is not a closed-shape object");
     }
     for (unsigned i = 3; i < operands.size(); ++i) {
@@ -1064,11 +1119,15 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&
+            carrierOf(typeOf(operands[i])) != carrier::instance &&
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
             // An element array is lent to the callee as a std::span.
             !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
+            // An ordinary script's element (or element or null) is a copied view.
+            !(pageViews() && (carrierOf(typeOf(operands[i])) == carrier::domElement ||
+                              carrierOf(typeOf(operands[i])) == carrier::nullableElement)) &&
             !numeric(operands[i], "argument")) {
             return false;
         }

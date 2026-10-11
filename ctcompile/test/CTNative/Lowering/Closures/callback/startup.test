@@ -12,18 +12,13 @@
 # as local functions, so their calls are direct: 14 more targets, 38 more calls.
 # Calls of methods of the factory's object tables are direct too (Data's set,
 # get and remove; EventHandler's on, one, off and trigger): 7 more targets,
-# 103 more calls.
-# A hoisted function that names one declared after it is bound too, since it
-# runs only through reads of its own binding: EventHandler's addHandler (D$8),
-# normalizeParameters (S$7) and getTypeEvent (N$17), and hydrateObj (j$18), become
-# direct calls: 4 more targets, 9 more calls.
-# BOOTSTRAP: post-native graph: 91 distinct targets over 377 ctjs.call_direct and 0 emitc.call site(s)
-# The factory itself calls EventHandler's `on` (fn$136), now a direct call,
-# and `on` now calls addHandler directly, which reaches its helpers:
-# makeEventUid (x$3), getElementEvents (k$4), findHandler (L$5), S$7, N$17,
-# and the three wrapper factories it calls (fn$9 for mouseenter/leave, fn$11
-# for delegation, fn$13 for a plain handler).
-# BOOTSTRAP: entry _script_$0: 16 function(s) on static direct-call paths
-# BOOTSTRAP: reachable: D$8, L$5, N$17, S$7, _script_$0, bi$88, fn$1, fn$11, fn$125, fn$13, fn$136, fn$178, fn$2, fn$9, k$4, x$3
+# 103 more calls. SelectorEngine's and Manipulator's methods follow (one
+# calls another through `this`, one creates a filter arrow): 13 more targets,
+# 63 more calls.
+# BOOTSTRAP: post-native graph: 100 distinct targets over 431 ctjs.call_direct and 0 emitc.call site(s)
+# The factory itself calls EventHandler's `on` (fn$136), now a direct call.
+# One of those arrows, fn$126, is called from the startup path itself.
+# BOOTSTRAP: entry _script_$0: 8 function(s) on static direct-call paths
+# BOOTSTRAP: reachable: _script_$0, bi$88, fn$1, fn$125, fn$126, fn$136, fn$178, fn$2
 # UNREACHABLE: named-callees: fn$463 is not reachable by direct calls from _script_$0
 # NATIVE: entry main:

@@ -62,6 +62,7 @@
 
 using ctcompile::ctnative::CTNativeDialect;
 using ctcompile::ctnative::kDefaultStringEncoding;
+using ctcompile::ctnative::kMaxClosureSetTargets;
 using ctcompile::ctnative::kMaxVariantAlternatives;
 using ctcompile::ctnative::meet;
 using ctcompile::ctnative::StrEncoding;
@@ -183,21 +184,33 @@ const MeetRow kMeetTable[] = {
      "json absorbs everything below it - a value it could not type does not "
      "become typeable because one path was a bool"},
 
+    // --- instances a registry Map owns ---------------------------------------
+    {"!ctnative.instance<\"Widget\">", "!ctnative.instance<\"Widget\">",
+     "!ctnative.instance<\"Widget\">", "an instance of one class stays one"},
+    {"!ctnative.opt<!ctnative.bottom>", "!ctnative.instance<\"Widget\">",
+     "!ctnative.opt<!ctnative.instance<\"Widget\">>",
+     "`map.get(k) || null`: an instance or neither, one null shared_ptr for both"},
+    {"!ctnative.instance<\"Widget\">", "!ctnative.instance<\"Alert\">",
+     "!ctnative.variant<!ctnative.instance<\"Alert\">, !ctnative.instance<\"Widget\">>",
+     "two classes are two structs, not a base and a derived one"},
+    {"!ctnative.instance<\"Widget\">", "!ctnative.bool",
+     "!ctnative.variant<!ctnative.bool, !ctnative.instance<\"Widget\">>",
+     "the `false` of `has(k) && get(k)` is not an absent instance"},
+
     // --- nominal callables --------------------------------------------------
     {"!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">",
      "the same target retains its nominal callable type"},
     {"!ctnative.bottom", "!ctnative.closure<\"get$1\">", "!ctnative.closure<\"get$1\">",
      "an unreachable path does not erase a known callable target"},
     {"!ctnative.closure<\"get$2\">", "!ctnative.closure<\"get$1\">",
-     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
-     "distinct targets remain alternatives even when their source names match; "
-     "the type cannot promise one direct callee for both"},
+     "!ctnative.closure_set<\"get$1\", \"get$2\">",
+     "distinct targets are one of a set even when their source names match; "
+     "the type promises a dispatch over both, never one direct callee"},
     {"!ctnative.opt<!ctnative.closure<\"get$1\">>", "!ctnative.closure<\"get$1\">",
      "!ctnative.opt<!ctnative.closure<\"get$1\">>",
      "an absent callable remains possible after meeting its definite target"},
     {"!ctnative.opt<!ctnative.closure<\"get$1\">>", "!ctnative.opt<!ctnative.closure<\"get$2\">>",
-     "!ctnative.opt<!ctnative.variant<!ctnative.closure<\"get$1\">, "
-     "!ctnative.closure<\"get$2\">>>",
+     "!ctnative.opt<!ctnative.closure_set<\"get$1\", \"get$2\">>",
      "absence is hoisted once without losing either possible target"},
     {"!ctnative.opt<!ctnative.bottom>", "!ctnative.closure<\"get$1\">",
      "!ctnative.opt<!ctnative.closure<\"get$1\">>",
@@ -215,13 +228,26 @@ const MeetRow kMeetTable[] = {
      "!ctnative.variant<!ctnative.closure<\"get$1\">, "
      "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>>",
      "capturing a Map does not make the callable itself a Map"},
-    {"!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
-     "!ctnative.closure<\"get$1\">",
-     "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
+    {"!ctnative.closure_set<\"get$1\", \"get$2\">", "!ctnative.closure<\"get$1\">",
+     "!ctnative.closure_set<\"get$1\", \"get$2\">",
      "revisiting one target cannot discard another target already seen"},
+    {"!ctnative.closure_set<\"get$1\", \"get$2\">", "!ctnative.closure<\"get$3\">",
+     "!ctnative.closure_set<\"get$1\", \"get$2\", \"get$3\">",
+     "a new target joins the set, in sorted order"},
+    {"!ctnative.closure_set<\"get$1\", \"get$2\">", "!ctnative.closure_set<\"get$2\", \"get$3\">",
+     "!ctnative.closure_set<\"get$1\", \"get$2\", \"get$3\">",
+     "two sets meet at their union, each shared target once"},
+    {"!ctnative.closure_set<\"get$1\", \"get$2\">", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.closure_set<\"get$1\", \"get$2\">, !ctnative.num<f64>>",
+     "a set of callables is still not a number; the union keeps both"},
+    {"!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.num<f64>>",
+     "!ctnative.closure<\"get$2\">",
+     "!ctnative.variant<!ctnative.closure_set<\"get$1\", \"get$2\">, !ctnative.num<f64>>",
+     "callables inside a union merge into one set alternative"},
+    {"!ctnative.closure_set<\"get$1\", \"get$2\">", "!ctnative.boxed", "!ctnative.boxed",
+     "a set of known callables cannot recover a target from an unproved path"},
     {"!ctnative.vec<!ctnative.closure<\"get$1\">>", "!ctnative.vec<!ctnative.closure<\"get$2\">>",
-     "!ctnative.vec<!ctnative.variant<!ctnative.closure<\"get$1\">, "
-     "!ctnative.closure<\"get$2\">>>",
+     "!ctnative.vec<!ctnative.closure_set<\"get$1\", \"get$2\">>",
      "structural containers preserve nominal identity in their elements"},
     {"!ctnative.closure<\"get$1\">", "!ctnative.boxed", "!ctnative.boxed",
      "a known callable cannot recover a target from an unproved path"},
@@ -345,6 +371,18 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.computed_style", "!ctnative.dom_rect",
      "!ctnative.variant<!ctnative.computed_style, !ctnative.dom_rect>",
      "two page objects of different kinds stay alternatives"},
+    {"!ctnative.event", "!ctnative.event", "!ctnative.event", "idempotent"},
+    {"!ctnative.event", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.event>",
+     "an event that may be undefined is an optional event"},
+    {"!ctnative.event", "!ctnative.computed_style",
+     "!ctnative.variant<!ctnative.computed_style, !ctnative.event>",
+     "an event and another page object stay alternatives"},
+    {"!ctnative.timer", "!ctnative.timer", "!ctnative.timer", "idempotent"},
+    {"!ctnative.timer", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.timer>",
+     "a handle that may be null is an optional handle"},
+    {"!ctnative.timer", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.num<f64>, !ctnative.timer>",
+     "a handle is not a Number: the two stay alternatives"},
 
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
@@ -388,7 +426,9 @@ const char * const kSampleTypes[] = {
     "!ctnative.closure<\"get$2\">",
     "!ctnative.opt<!ctnative.closure<\"get$1\">>",
     "!ctnative.opt<!ctnative.closure<\"get$2\">>",
-    "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.closure<\"get$2\">>",
+    "!ctnative.closure_set<\"get$1\", \"get$2\">",
+    "!ctnative.closure_set<\"get$2\", \"get$3\">",
+    "!ctnative.variant<!ctnative.closure<\"get$1\">, !ctnative.num<f64>>",
     "!ctnative.vec<!ctnative.closure<\"get$1\">>",
     "!ctnative.method_table<\"table$1\">",
     "!ctnative.method_table<\"table$2\">",
@@ -402,6 +442,8 @@ const char * const kSampleTypes[] = {
     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
     "!ctnative.dom_rect",
     "!ctnative.computed_style",
+    "!ctnative.event",
+    "!ctnative.timer",
 };
 
 //===--------------------------------------------------------------------===//
@@ -574,6 +616,42 @@ int main() {
               llvm::isa<ctcompile::ctnative::JsonType>(fifth));
     }
 
+    // --- the closure-set cap ------------------------------------------------
+    //
+    // kMaxClosureSetTargets distinct callables are one set; one more is boxed,
+    // and boxed in every bracketing: folded from the left, from the right, and
+    // as the meet of two sets whose union is one past the cap.
+    {
+        using ctcompile::ctnative::ClosureSetType;
+        std::vector<Type> callables;
+        for (unsigned i = 0; i <= kMaxClosureSetTargets; ++i) {
+            const std::string text = "!ctnative.closure<\"t$" + std::to_string(100 + i) + "\">";
+            callables.push_back(parse(context, text.c_str()));
+        }
+        Type full = bottom;
+        for (unsigned i = 0; i < kMaxClosureSetTargets; ++i) { full = meet(full, callables[i]); }
+        const auto asSet = llvm::dyn_cast<ClosureSetType>(full);
+        check("the cap's worth of callables is one closure set",
+              asSet && asSet.getTargets().size() == kMaxClosureSetTargets);
+        check("one more callable falls off the cap into boxed",
+              llvm::isa<ctcompile::ctnative::BoxedType>(
+                  meet(full, callables[kMaxClosureSetTargets])));
+        Type fromRight = bottom;
+        for (unsigned i = kMaxClosureSetTargets + 1; i-- > 0;) {
+            fromRight = meet(callables[i], fromRight);
+        }
+        Type low = bottom;
+        Type high = bottom;
+        for (unsigned i = 0; i <= kMaxClosureSetTargets; ++i) {
+            (i % 2 == 0 ? low : high) = meet(i % 2 == 0 ? low : high, callables[i]);
+        }
+        check("past the cap is boxed in every bracketing",
+              llvm::isa<ctcompile::ctnative::BoxedType>(fromRight) &&
+                  llvm::isa<ctcompile::ctnative::BoxedType>(meet(low, high)) &&
+                  llvm::isa<ctcompile::ctnative::BoxedType>(
+                      meet(meet(parse(context, "!ctnative.num<f64>"), low), high)));
+    }
+
     // --- `.length`, pinned to the interpreter -----------------------------
     //
     // This was divergence ND-1 in ctcompile/docs/native-divergences.md, now
@@ -656,9 +734,10 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 73 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 94 meet rows in both directions, 5 law checks, 3 variant-cap checks,
+    // 3 closure-set-cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 165;
+    const int expectedChecks = 210;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

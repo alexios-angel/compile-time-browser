@@ -45,6 +45,16 @@ inline nullable_string vec_at(const std::vector<js_string> & values, nullable_sc
     return values[index].value();
 }
 
+/// `a[i]` of an array of Numbers (a map result): the element, else undefined.
+inline nullable_scalar vec_at(std::span<const js_num> values, nullable_scalar key) {
+    std::size_t index = 0;
+    if (!element_index(key, values.size(), index)) { return {}; }
+    return values[index];
+}
+inline nullable_scalar vec_at(const std::vector<js_num> & values, nullable_scalar key) {
+    return vec_at(std::span<const js_num>{values}, key);
+}
+
 /// `a[i]` where the compiler proved `i` an integer in [0, a.length) (a loop
 /// counter checked against this array's length; element arrays never shrink),
 /// so the read is the element itself rather than an optional.

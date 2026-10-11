@@ -6,7 +6,8 @@ add_library(ctcompile-ctnative-lowering
   LowerToEmitC.cpp
   LoweringSupport.cpp
   PrintDeduced.cpp
-  PruneDeadStores.cpp)
+  PruneDeadStores.cpp
+  TestInstances.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering CTNativeTransformsPassIncGen)
 

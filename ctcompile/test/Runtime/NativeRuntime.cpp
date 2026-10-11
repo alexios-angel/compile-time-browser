@@ -32,6 +32,14 @@ struct identity_object {};
 } // namespace ctnative
 
 namespace {
+/// A constant table as ctcompile emits one (EmitC/StaticTables.cpp).
+struct sample_table_t : ctnative::static_table {
+    ctnative::js_num interval;
+    ctnative::js_string pause;
+};
+inline const sample_table_t sample_table{
+    {}, ctnative::js_num{5000.0}, ctnative::js_string("hover", 5)};
+
 /// A constant table as ctcompile emits one, for table_field_or_undefined.
 struct spread_table_t : ctnative::static_table {
     ctnative::js_num interval;
@@ -1010,6 +1018,36 @@ int main() {
     CHECK(ctnative::Number(nullable_scalar{js_null_t{}}) == ctnative::js_num{0.0});
     CHECK(ctnative::Number(ctnative::js_num{2.5}) == ctnative::js_num{2.5});
 
+    // Number.parseInt (19.2.5): leading whitespace and a sign, radix 10, 16
+    // and 0 (10, or 16 after 0x), a radix out of [2, 36] as NaN, the 0x prefix
+    // only for 16 or 0, a garbage suffix ignored, and no digits as NaN.
+    {
+        const auto parse = [](const char * text, double radix) {
+            return ctnative::Number.parseInt(js_string{std::string{text}}, ctnative::js_num{radix})
+                .value();
+        };
+        CHECK(parse("  \t42px", 10) == 42.0);
+        CHECK(parse("-17", 10) == -17.0);
+        CHECK(parse("+8", 10) == 8.0);
+        CHECK(parse("ff", 16) == 255.0);
+        CHECK(parse("0x1F", 16) == 31.0);
+        CHECK(parse("0x1F", 0) == 31.0);
+        CHECK(parse("0x1F", 10) == 0.0);
+        CHECK(parse("12", 0) == 12.0);
+        CHECK(parse("101", 2) == 5.0);
+        CHECK(parse("z", 36) == 35.0);
+        CHECK(std::isnan(parse("7", 1)));
+        CHECK(std::isnan(parse("7", 37)));
+        CHECK(std::isnan(parse("", 10)));
+        CHECK(std::isnan(parse("px", 10)));
+        CHECK(std::isnan(parse("-", 10)));
+        CHECK(std::signbit(parse("-0", 10)));
+        // A missing radix is undefined, which ToInt32 makes 0.
+        CHECK(ctnative::Number.parseInt(js_string{"0x10"}).value() == 16.0);
+        // ToInt32 wraps the radix: 2^32 + 16 is 16.
+        CHECK(parse("10", 4294967312.0) == 16.0);
+    }
+
     // Boolean(value) is ToBoolean for each carrier: NaN, 0 and -0, the empty
     // String, undefined and null are false; a String union follows its
     // alternative.
@@ -1250,6 +1288,27 @@ int main() {
     }
 
     {
+        // A table's fields read through its static, and a static the run-once
+        // function has not stored yet is undefined: reading it throws.
+        ctnative::static_table_ptr table = &sample_table;
+        const ctnative::static_table_ptr copy = table;
+        CHECK(copy == table);
+        CHECK(ctnative::table_field<&sample_table_t::interval>(table) == ctnative::js_num{5000.0});
+        CHECK(ctnative::table_field<&sample_table_t::pause>(copy) ==
+              ctnative::js_string("hover", 5));
+        CHECK(&ctnative::table_field<&sample_table_t::interval>(table) == &sample_table.interval);
+        const auto throwsTypeError = [](ctnative::static_table_ptr undefined) {
+            try {
+                (void)ctnative::table_field<&sample_table_t::interval>(undefined);
+            } catch (const std::invalid_argument & error) {
+                return std::string_view(error.what()).starts_with("TypeError");
+            }
+            return false;
+        };
+        CHECK(throwsTypeError(nullptr));
+    }
+
+    {
         // A spread of a constant table reads each field, or undefined when the
         // static is still undefined (null pointer): CopyDataProperties copies
         // nothing then, rather than throwing as a field read does.
@@ -1291,6 +1350,37 @@ int main() {
             (void)table::entries(nullptr);
         } catch (const std::invalid_argument &) { threw = true; }
         CHECK(threw);
+    }
+
+    // console.log's line (Runtime/Console.hpp): ToString of each argument, as
+    // the VM's console binding writes it, joined by single spaces.
+    {
+        using ctnative::nullable_scalar;
+        using ctnative::nullable_string;
+        using ctnative::console_detail::line;
+        CHECK(line(js_string{"text"}) == "text");
+        CHECK(line(js_string{}) == "");
+        CHECK(line(js_string{"a\xC3\xA9"}) == "a\xC3\xA9");
+        CHECK(line(ctnative::js_num{1.5}) == "1.5");
+        CHECK(line(ctnative::js_num{-0.0}) == "0");
+        CHECK(line(ctnative::js_num{1e21}) == "1e+21");
+        CHECK(line(ctnative::js_num{0.1}) == "0.1");
+        CHECK(line(ctnative::js_num{std::numeric_limits<double>::infinity()}) == "Infinity");
+        CHECK(line(ctnative::js_num{-std::numeric_limits<double>::infinity()}) == "-Infinity");
+        CHECK(line(ctnative::js_num{std::numeric_limits<double>::quiet_NaN()}) == "NaN");
+        CHECK(line(std::int32_t{-7}) == "-7");
+        CHECK(line(js_boolean_t{true}) == "true");
+        CHECK(line(js_boolean_t{false}) == "false");
+        CHECK(line(ctnative::undefined_t{}) == "undefined");
+        CHECK(line(ctnative::js_null_t{}) == "null");
+        CHECK(line(nullable_scalar{}) == "undefined");
+        CHECK(line(nullable_scalar::null()) == "null");
+        CHECK(line(nullable_scalar{2.0}) == "2");
+        CHECK(line(nullable_scalar{js_boolean_t{true}}) == "true");
+        CHECK(line(nullable_string{}) == "undefined");
+        CHECK(line(nullable_string{std::string{"s"}}) == "s");
+        CHECK(line(js_string{"a"}, ctnative::js_num{2.0}, js_boolean_t{false}) == "a 2 false");
+        CHECK(line() == "");
     }
 
     CHECK(unbound());

@@ -1,0 +1,52 @@
+# Differential test of native console.log (Runtime/Console.hpp). The VM runs
+# console-log.js in a page and records each console.log line; the native
+# pipeline lowers the same file (refusing while any function is not native),
+# and its program, built with GCC and with Clang and linked with ctbrowser's
+# Core library (console_log.py), must print the same lines.
+# FileCheck pins the VM's lines, so an empty or shortened output cannot pass.
+
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %native_reference --page %S/console-log.html --script %S/console-log.js > %t/vm.txt
+# RUN: FileCheck %s --match-full-lines --strict-whitespace < %t/vm.txt
+# RUN: %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/console-log.js -DOUTPUT=%t/console.mlir -P %S/../../Checks/pipeline.cmake
+# RUN: ctjs-translate --mlir-to-cpp %t/console.mlir -o %t/console.cpp
+# RUN: grep -c 'ctnative::console.log(' %t/console.cpp | FileCheck %s --check-prefix=CALLS
+# CALLS: {{16|32}}
+# An argument Console.hpp cannot print is refused, naming the kinds it can.
+# RUN: not %cmake -DTRANSLATE=ctjs-translate -DOPT=ctjs-opt -DSOURCE=%S/console-log-refused.js -DOUTPUT=%t/refused.mlir -P %S/../../Checks/pipeline.cmake 2>&1 | FileCheck %s --check-prefix=REFUSED
+# REFUSED: console.log's argument 0 is {{.*}}, not a String, Number, Boolean, null or undefined
+# RUN: python3 %S/console_log.py --cpp %t/console.cpp --expected %t/vm.txt --build %build --include %{monorepo}/ctbrowser/include --work %t
+
+# CHECK:text
+# CHECK-EMPTY:
+# CHECK-NEXT:1.5
+# CHECK-NEXT:0
+# CHECK-NEXT:Infinity
+# CHECK-NEXT:-Infinity
+# CHECK-NEXT:NaN
+# CHECK-NEXT:1e+21
+# CHECK-NEXT:0.30000000000000004
+# CHECK-NEXT:true
+# CHECK-NEXT:false
+# CHECK-NEXT:null
+# CHECK-NEXT:undefined
+# CHECK-NEXT:a 2 false
+# CHECK-NEXT:null
+# CHECK-NEXT:undefined
+# CHECK-NEXT:text
+# CHECK-EMPTY:
+# CHECK-NEXT:1.5
+# CHECK-NEXT:0
+# CHECK-NEXT:Infinity
+# CHECK-NEXT:-Infinity
+# CHECK-NEXT:NaN
+# CHECK-NEXT:1e+21
+# CHECK-NEXT:0.30000000000000004
+# CHECK-NEXT:true
+# CHECK-NEXT:true
+# CHECK-NEXT:null
+# CHECK-NEXT:undefined
+# CHECK-NEXT:a 2 false
+# CHECK-NEXT:3
+# CHECK-NEXT:present
+# CHECK-NOT:{{.}}
