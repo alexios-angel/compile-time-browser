@@ -92,6 +92,15 @@ enum class carrier {
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
     computedStyle,
+    /// A run-once static's constant table, or undefined before it is stored: a
+    /// pointer to its namespace-scope struct (Runtime/StaticTable.hpp).
+    staticTable,
+    /// The Event a native listener receives (Runtime/Events.hpp).
+    domEvent,
+    /// An ordinary script's element or null (Runtime/Browser.hpp).
+    nullableElement,
+    /// A timer's handle (Runtime/Timers.hpp).
+    timer,
     /// A Promise of a Number, a Boolean, a String or undefined
     /// (Runtime/Promise.hpp), spelled by promiseSpelling.
     promise,
@@ -126,9 +135,14 @@ inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrow
 inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t";
 inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
 inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed_style";
+inline constexpr llvm::StringLiteral kEventType = "ctnative::js_event";
+inline constexpr llvm::StringLiteral kNullableElementType = "std::optional<ctnative::js_element_t>";
+inline constexpr llvm::StringLiteral kTimerType = "ctnative::timer_id";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
+/// A run-once static's constant table (Runtime/StaticTable.hpp).
+inline constexpr llvm::StringLiteral kStaticTableType = "ctnative::static_table_ptr";
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 /// One row per carrier, in enum order: its C++ spelling (empty when the
@@ -165,6 +179,10 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::tupleVector, ""},
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
+    {carrier::staticTable, kStaticTableType},
+    {carrier::domEvent, kEventType},
+    {carrier::nullableElement, kNullableElementType},
+    {carrier::timer, kTimerType},
     {carrier::promise, ""},
     {carrier::promiseResolve, ""},
 };

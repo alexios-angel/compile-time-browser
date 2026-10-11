@@ -4,7 +4,11 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Callbacks.cpp
   Cells.cpp
   Classes.cpp
+  ClassStatics.cpp
+  ClassInheritance.cpp
+  ClassInheritance.h
   Bindings.cpp
+  BorrowedCallbacks.cpp
   Captures.cpp
   Methods.cpp
   Diagnostics.cpp
@@ -16,5 +20,6 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   MethodTables.cpp
   RunOnce.cpp
   Singletons.cpp
+  StringCallbacks.cpp
   ClosureLifter.h
 )

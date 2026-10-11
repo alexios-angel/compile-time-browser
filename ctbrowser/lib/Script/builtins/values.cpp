@@ -594,54 +594,16 @@ void install_globals(context & cx) {
     using detail::new_table;
     // 19.2.5 gives parseInt two parameters and 19.2.4 gives parseFloat one.
     detail::global_fn(cx, "parseInt", 2, [](context & c, std::span<value> a) {
-        // 19.2.5, step by step. ? ToString(string), then StrWhiteSpaceChar
-        // trimmed from the front (the Unicode spaces too, TrimString's set,
-        // not the ASCII one), the sign, ? ToInt32(radix) with 0 meaning 10
-        // and a 0x prefix meaning 16 unless a radix was demanded, [2, 36]
-        // or NaN, the longest digit prefix or NaN, and the value, through a
-        // double, which rounds past 2^53 as the note allows.
+        // 19.2.5: ? ToString(string) and ? ToInt32(radix) here, the rest in
+        // ctbrowser::parse_int, which native code calls too.
         const std::string s = str_at(c, a, 0);
         if (c.throw_pending()) { return value::undefined(); }
-        std::string_view rest = trim_js_space(s, true, false);
-        double sign = 1;
-        if (!rest.empty() && (rest.front() == '+' || rest.front() == '-')) {
-            if (rest.front() == '-') { sign = -1; }
-            rest.remove_prefix(1);
-        }
         const value radix_arg = arg_at(a, 1);
         if (!numeric_arg(c, radix_arg)) { return value::undefined(); }
         const double radix_number = c.to_number_value(radix_arg);
         if (c.throw_pending()) { return value::undefined(); }
-        int radix = static_cast<int>(context::to_int32(value::number(radix_number)));
-        bool strip_prefix = true;
-        if (radix != 0) {
-            if (radix < 2 || radix > 36) { return value::number(std::nan("")); }
-            if (radix != 16) { strip_prefix = false; }
-        } else {
-            radix = 10;
-        }
-        if (strip_prefix && rest.size() >= 2 && rest[0] == '0' &&
-            (rest[1] == 'x' || rest[1] == 'X')) {
-            rest.remove_prefix(2);
-            radix = 16;
-        }
-        const auto digit = [](char ch) {
-            if (ch >= '0' && ch <= '9') { return ch - '0'; }
-            if (ch >= 'a' && ch <= 'z') { return ch - 'a' + 10; }
-            if (ch >= 'A' && ch <= 'Z') { return ch - 'A' + 10; }
-            return 36;
-        };
-        std::size_t used = 0;
-        while (used < rest.size() && digit(rest[used]) < radix) { ++used; }
-        if (used == 0) { return value::number(std::nan("")); }
-        // Base 10 goes through the exact decimal-to-double conversion, as the
-        // note asks; the other radices accumulate.
-        if (radix == 10) {
-            return value::number(sign * string_to_number_prefix(rest.substr(0, used)));
-        }
-        double out = 0;
-        for (std::size_t i = 0; i < used; ++i) { out = out * radix + digit(rest[i]); }
-        return value::number(sign * out);
+        return value::number(parse_int(
+            s, static_cast<std::int32_t>(context::to_int32(value::number(radix_number)))));
     });
     detail::global_fn(cx, "parseFloat", 1, [](context & c, std::span<value> a) {
         // string_to_number_prefix, not std::stod: stod reads LC_NUMERIC for the

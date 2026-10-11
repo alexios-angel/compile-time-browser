@@ -17,9 +17,16 @@ config.suffixes = [".mlir", ".td", ".test"]
 # on input that never comes, a fixed point that does not converge) would
 # otherwise hold the whole run forever; this reports it as TIMEOUT, which fails
 # the run. lit enforces the limit through psutil, which the lit environment
-# must have (~/.lit-venv/bin/pip install psutil); without it lit stops at once
-# with that instruction rather than running without the limit.
-lit_config.maxIndividualTestTime = 3600
+# must have (pyproject.toml's test group installs it beside lit).
+#
+# Newer lit (23.1 from PyPI) takes the limit per suite on `config` and makes
+# lit_config's read-only once set; older lit only has lit_config's, which
+# stops at once without psutil rather than running without the limit. A
+# --timeout on the command line overrides either.
+if hasattr(config, "maxIndividualTestTime"):
+    config.maxIndividualTestTime = 3600
+else:
+    lit_config.maxIndividualTestTime = 3600
 config.excludes = ["Inputs"]
 config.test_format = lit.formats.ShTest(not llvm_config.use_lit_shell)
 
@@ -174,10 +181,41 @@ config.substitutions.insert(
         " --include %{monorepo}/ctbrowser/include --work %t --nm %nm",
     ),
 )
+
+
 # %{obj}: where the build writes each native fixture's modules (Native.cmake's
 # ctcompile_add_native_pipeline: <name>.pipeline{,.deduced,.mutated}.emitc.mlir).
 # docs/refactor-goldens.md compares a refactor against the same files.
-config.substitutions.append(("%{obj}", config.test_exec_root))
+#
+# Those modules are build outputs, not test outputs: a build of only ctjs-opt
+# and ctjs-translate leaves them from the previous compiler, and a fixture
+# would pass against them. The ctcompile-fixture-inputs target (Lit.cmake)
+# touches fixture-inputs.stamp once they are current. While the stamp is
+# missing or older than either tool, %{obj} names a directory that does not
+# exist and says which target to build, so every test that reads a module
+# fails with that path instead of passing on stale input.
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+_stamp = _mtime(os.path.join(config.test_exec_root, "fixture-inputs.stamp"))
+_tools = [
+    _mtime(os.path.join(directory, tool))
+    for directory in config.ctcompile_tools_dirs
+    for tool in ("ctjs-opt", "ctjs-translate")
+]
+if _stamp is not None and all(built is None or built <= _stamp for built in _tools):
+    _obj = config.test_exec_root
+else:
+    _obj = os.path.join(config.test_exec_root, "stale-inputs-build-target-ctcompile-fixture-inputs")
+    lit_config.note(
+        "native fixture modules are missing or older than ctjs-opt/ctjs-translate; "
+        "tests that read %{obj} fail until the ctcompile-fixture-inputs target is built"
+    )
+config.substitutions.append(("%{obj}", _obj))
 config.substitutions.append(("%{monorepo}", config.monorepo_root))
 config.substitutions.append(("%host_cxx", config.host_cxx))
 config.substitutions.append(("%nm", config.nm))
@@ -192,3 +230,10 @@ config.substitutions.append(("%build", config.build_root))
 # The Python drivers import each other across directories (CTNative/harness.py
 # explains how), and running one by hand needs the same path.
 config.environment["PYTHONPATH"] = config.test_source_root
+
+# A driver that loops over named fixtures runs only those CTCOMPILE_FIXTURES
+# selects (comma-separated globs; CTNative/harness.py selected_fixtures), so a
+# change can be checked on the fixtures it touches. lit clears the environment,
+# so the variable is passed through when set; unset, every fixture runs.
+if "CTCOMPILE_FIXTURES" in os.environ:
+    config.environment["CTCOMPILE_FIXTURES"] = os.environ["CTCOMPILE_FIXTURES"]

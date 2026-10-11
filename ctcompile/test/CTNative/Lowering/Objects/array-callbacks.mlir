@@ -19,7 +19,7 @@
 // CHECK-DAG: @fourParameters${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.filter declares 4 parameters - it is passed 3, and needs at least one"
 // CHECK-DAG: @counts${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the callback of Array.prototype.forEach captures binding 0, which is written after it is captured - the callback takes its captures by value"
 // CHECK-DAG: @notAnArray${{[0-9]+}}{{.*}}ctnative.not_native = "the receiver of Array.prototype.filter is
-// CHECK-DAG: @lengths${{[0-9]+}}{{.*}}ctnative.not_native = "the result of Array.prototype.map is
+// CHECK-DAG: @flags${{[0-9]+}}{{.*}}ctnative.not_native = "the result of Array.prototype.map is
 // CHECK-DAG: @mixedSum${{[0-9]+}}{{.*}}ctnative.not_native = "reduce's accumulator changes type: the initial value is
 
 //--- emit.js
@@ -76,9 +76,9 @@ function notAnArray(list) {
         return s;
     }).length;
 }
-function lengths() {
+function flags() {
     return ['a', 'bb'].map(function (s) {
-        return s.length;
+        return s === 'a';
     }).length;
 }
 function mixedSum() {
@@ -92,5 +92,5 @@ var r3 = readsThis();
 var r4 = fourParameters();
 var r5 = counts();
 var r6 = notAnArray(7);
-var r7 = lengths();
+var r7 = flags();
 var r8 = mixedSum();

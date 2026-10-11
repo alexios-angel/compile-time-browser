@@ -9,14 +9,13 @@ refused.
 
 import json
 import re
-import subprocess
 
 from CTNative.Browser.dom import dom
 from CTNative.Browser.class_dom import callbacks
 from CTNative.Browser.class_dom.boolean import captures
 from CTNative.Browser.class_dom.parameter_defaults import budget_boundary
 from CTNative.Browser.dom.boolean.cells import source_operations
-from CTNative.harness import run
+from CTNative.harness import run, slotted_run
 
 # `seen` is declared without a value and initialized to false only inside an
 # if-arm. "arm-only-state" is the base case that must compile natively; the
@@ -356,7 +355,7 @@ def main():
         )
         path = args.work / "verifier-root-before-frame.mlir"
         path.write_text(invalid)
-        actual = subprocess.run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
+        actual = slotted_run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
         assert actual.returncode == 1 and "error:" in actual.stderr, actual.stderr
         refusals += 1
     for name, method in BAD.items():

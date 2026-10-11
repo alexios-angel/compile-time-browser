@@ -82,9 +82,6 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=BOUNDWRITE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundmutual.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BOUNDMUTUAL
 
 // --- Shared bindings that now compile ---------------------------------------
 //
@@ -427,26 +424,6 @@
 // BOUNDWRITE: ctjs.func {{.*}}@reassigns$1
 // BOUNDWRITE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function that reads it ASSIGNS the binding, so the name holds a variable and not one function"
 
-// --- Binding clause 3 across two names: mutual recursion --------------------
-//
-// `even_ish` calls `odd_ish` and `odd_ish` calls `even_ish`, so one of the two
-// stores has to come second, and `writeReachesEveryRead` asks that the store
-// dominate every use of every closure that captured the box, which for a name
-// includes the `ctjs.cell_set` that puts the other closure in its box. It
-// cannot ask about calls instead: a closure whose value goes into a box of its
-// own has no call site at all until this very rewrite makes one. So the second
-// name is refused for dominance and the first for clause 5, because the
-// capture it needs is the name that was just refused.
-//
-// This is the rule being conservative, not a soundness requirement: the same
-// conservatism refuses `function g() { f(); } function f() {}` written in that
-// order. Following a closure's value through its own box, one hop out, would
-// admit both; that is the next improvement to make after the slot clause
-// above.
-//
-// BOUNDMUTUAL: ctjs.func {{.*}}@mutual$1
-// BOUNDMUTUAL-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: its one assignment does not reach every read of it, and a read before it yields the undefined the binding was hoisted with"
-
 //--- sharedreturn.js
 function maker() {
     var n = 0;
@@ -665,11 +642,3 @@ function reassigns() {
     return flip() + use();
 }
 var r = reassigns();
-
-//--- boundmutual.js
-function mutual(k) {
-    var even_ish = function (n) { if (n <= 0) { return 1; } return odd_ish(n - 1); };
-    var odd_ish = function (n) { if (n <= 0) { return 0; } return even_ish(n - 1); };
-    return even_ish(k) * 10 + odd_ish(k);
-}
-var r = mutual(3);

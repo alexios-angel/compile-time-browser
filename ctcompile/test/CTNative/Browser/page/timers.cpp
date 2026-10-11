@@ -17,6 +17,8 @@
 #include <string>
 
 #ifdef CTBROWSER_TEST_NATIVE
+#define CTNATIVE_DOM 1
+#include "ctcompile/CTNative/Runtime/Page.hpp"
 #include "ctcompile/CTNative/Runtime/Timers.hpp"
 using fixture_page = ctbrowser::page::static_page;
 using fixture_options = ctbrowser::page::static_page_options;
@@ -31,7 +33,8 @@ namespace {
 /// does between frames.
 void advance(fixture_page & page, double ms) {
 #ifdef CTBROWSER_TEST_NATIVE
-    (void)page;
+    // Handlers run with the page bound, as the program's entries do.
+    const ctnative::page_scope scope{page};
     (void)ctnative::timers::program().advance(ms);
 #else
     (void)page.tick(ms);

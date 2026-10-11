@@ -16,6 +16,7 @@ from CTNative.harness import (
     VM_SYMBOL as VM,
     native_args,
     native_tools,
+    run_parallel,
     run_sanitized,
     threshold,
 )
@@ -171,8 +172,11 @@ def main():
             "undefined",
         ),
     }
-    saved = {}
-    for name, (source, binding, value) in positives.items():
+
+    # Each case below writes only files named after itself, so the cases of one
+    # loop run side by side (run_parallel).
+    def check_positive(item):
+        name, (source, binding, value) = item
         js, ir, count = boundary.prepare(args, name, source)
         if count != 1:
             raise RuntimeError(f"{name}: changed source denominator")
@@ -214,7 +218,9 @@ def main():
         ):
             raise RuntimeError(f"{name}: expected 1/1 native with a live owner\n{text}")
         standalone(args, output, name, expected, compilers, nm)
-        saved[name] = ir, config
+        return ir, config
+
+    saved = dict(zip(positives, run_parallel(positives.items(), check_positive)))
 
     # A contract declaring `undefined` as present authorizes only that exact,
     # unchanged binding. A refusal must keep the load, including when the source
@@ -246,7 +252,9 @@ def main():
         raise RuntimeError("raw undefined store control lost its source load")
     written.write_text(text)
     written_config = contract(args, written, "fixed-undefined-raw-store", undefined=("undefined",))
-    for policy, options in (("default", ""), ("disabled", "optimize=false")):
+
+    def check_policy(item):
+        policy, options = item
         label = f"fixed-undefined-{policy}"
         output = lower(args, ir, label, config, options=options)
         if output.read_text() != (args.work / "fixed_undefined.native.mlir").read_text():
@@ -304,6 +312,8 @@ def main():
             options=options + " host-max-steps=0",
             reason="budget",
         )
+
+    run_parallel((("default", ""), ("disabled", "optimize=false")), check_policy)
     _, changed, _ = boundary.prepare(args, "fixed-undefined-stale", source.replace("42", "43"))
     refused(args, changed, "fixed-undefined-stale", config, reason="fingerprint mismatch")
     forged = args.work / "fixed-undefined-forged.mlir"
@@ -385,7 +395,9 @@ def main():
         "boolean": "var host = {slot: true}; var observed = host.slot; var trace = 42;",
         "string": "var host = {slot: 'answer'}; var observed = host.slot; var trace = 42;",
     }
-    for name, source in refusals.items():
+
+    def check_refusal(item):
+        name, source = item
         _, rejected, _ = boundary.prepare(args, name, source)
         fresh = contract(args, rejected, name)
         # The accessor case has a getter function that may still lower natively
@@ -405,6 +417,8 @@ def main():
         if name == "rewrite":
             refused(args, rejected, "stale", config, reason="fingerprint mismatch")
             refused(args, output, "rewrite-rerun", config, reason="fingerprint mismatch")
+
+    run_parallel(refusals.items(), check_refusal)
     print(
         f"native owned globals: {len(positives) + len(ignored_writes) - 1} complete 1/1 programs; Node/interpreter and "
         "explicit/deduced GCC/Clang agree; owning lifetime sanitizers and "

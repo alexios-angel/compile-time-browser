@@ -345,6 +345,18 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.computed_style", "!ctnative.dom_rect",
      "!ctnative.variant<!ctnative.computed_style, !ctnative.dom_rect>",
      "two page objects of different kinds stay alternatives"},
+    {"!ctnative.event", "!ctnative.event", "!ctnative.event", "idempotent"},
+    {"!ctnative.event", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.event>",
+     "an event that may be undefined is an optional event"},
+    {"!ctnative.event", "!ctnative.computed_style",
+     "!ctnative.variant<!ctnative.computed_style, !ctnative.event>",
+     "an event and another page object stay alternatives"},
+    {"!ctnative.timer", "!ctnative.timer", "!ctnative.timer", "idempotent"},
+    {"!ctnative.timer", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.timer>",
+     "a handle that may be null is an optional handle"},
+    {"!ctnative.timer", "!ctnative.num<f64>",
+     "!ctnative.variant<!ctnative.num<f64>, !ctnative.timer>",
+     "a handle is not a Number: the two stay alternatives"},
 
     // --- promises ----------------------------------------------------------
     {"!ctnative.promise<!ctnative.num<i32>>", "!ctnative.promise<!ctnative.num<f64>>",
@@ -420,6 +432,8 @@ const char * const kSampleTypes[] = {
     "!ctnative.promise<!ctnative.bool>",
     "!ctnative.promise<!ctnative.num<i32>>",
     "!ctnative.promise_resolve<!ctnative.bool>",
+    "!ctnative.event",
+    "!ctnative.timer",
 };
 
 //===--------------------------------------------------------------------===//
@@ -674,9 +688,9 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 77 meet rows in both directions, 5 law checks, 3 cap checks,
+    // 83 meet rows in both directions, 5 law checks, 3 cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 173;
+    const int expectedChecks = 185;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

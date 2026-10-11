@@ -191,7 +191,7 @@
 //
 // DYNAMIC: ctjs.globals = [
 // DYNAMIC-SAME: {name = "add", reason = "closed: 1 call(s) rewritten", resolved = @add$1, stores = 1 : i32}
-// DYNAMIC-SAME: {name = "globalThis", reason = "never stored in this program - a host binding", resolved = "none", stores = 0 : i32}
+// DYNAMIC-SAME: {host_binding, name = "globalThis", reason = "never stored in this program - a host binding", resolved = "none", stores = 0 : i32}
 // DYNAMIC-SAME: {name = "x", reason = "written through the global object (ctjs.set_property at {{[^)]*}}), which binds this name", resolved = "none", stores = 0 : i32}
 // DYNAMIC-LABEL: ctjs.func @_script_$0(
 // DYNAMIC: ctjs.set_property

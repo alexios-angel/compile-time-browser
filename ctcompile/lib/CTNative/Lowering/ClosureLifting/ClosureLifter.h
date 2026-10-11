@@ -519,12 +519,19 @@ struct closureLifter {
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+    /// Replacement functions of `text.replace(/pattern/g, f)`
+    /// (StringCallbacks.cpp), judged and rewritten as an Array callback is.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> stringCallbacks;
+    void stringCallbackCensus();
+    std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
+    void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     /// Callbacks handed to the host (HostCallbacks.cpp): each closure whose
-    /// one use is the listener argument of `el.addEventListener(type, f)` or
-    /// the handler argument of `setTimeout(f, delay)`, with that call. Judged by whyNotHostCallback
-    /// and rewritten by rewriteHostCallback, as arrayCallbacks are.
-    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> hostCallbacks;
+    /// one use is the handler argument of `setTimeout(f, delay)`, or whose
+    /// every use is the listener argument of an `addEventListener` or
+    /// `removeEventListener` call (at least one adding it), with those calls. Judged by
+    /// whyNotHostCallback and rewritten by rewriteHostCallback, as arrayCallbacks are.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallOp, 1>> hostCallbacks;
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -547,6 +554,8 @@ struct closureLifter {
     ctjs::CellSetOp dominatingWriteOf(ctjs::CreateCellOp cell);
 
     bool writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSetOp store);
+
+    bool holderReadsFollow(ctjs::CellSetOp store, mlir::Operation * at);
 
     bool isAssignedBeforeRead(ctjs::CreateCellOp cell) const;
 
@@ -694,6 +703,24 @@ struct closureLifter {
     /// into direct calls when nothing else reads it (Singletons.cpp). Returns
     /// whether it changed the module.
     bool bindSingletonMethods(liftReport & out);
+
+    /// What can start each function, and how many closures name it (see
+    /// indexStarters() in Singletons.cpp).
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> starters;
+    llvm::DenseMap<mlir::Operation *, unsigned> closuresOf;
+    void indexStarters();
+    bool runsAfter(
+        mlir::Operation * op, mlir::Operation * write,
+        const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> & startedBy);
+
+    /// Turns reads of a class's static members into direct calls and erases
+    /// their definitions (ClassStatics.cpp). Returns whether it changed the
+    /// module.
+    bool bindClassStatics(liftReport & out);
+    /// Why the static-member rewrite left a class's statics in place, keyed
+    /// by the constructor's ctjs.create_closure; classCensus() appends it to
+    /// the class's refusal.
+    llvm::DenseMap<mlir::Operation *, std::string> staticRefusals;
 
     std::string whyNotABoundFunction(ctjs::CellSetOp store);
 
@@ -896,6 +923,20 @@ struct closureLifter {
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
+
+    // --- Borrowed callbacks (BorrowedCallbacks.cpp) ----------------------------
+    //
+    // A closure passed to a parameter that its callee only calls, where every
+    // caller of that callee passes one. Each such closure maps to all the
+    // closures passed to the same parameter (including itself), because that
+    // parameter has one C++ type for all of them. The census is retaken each
+    // round, as lifting a callee changes its operand positions.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CreateClosureOp, 2>>
+        borrowedCallbacks;
+    void borrowedCallbackCensus();
+    std::optional<std::string> whyNotBorrowedMember(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyNotBorrowedCallback(ctjs::CreateClosureOp c);
+    void rewriteBorrowedCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     liftReport run();
 

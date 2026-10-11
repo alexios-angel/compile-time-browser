@@ -16,6 +16,8 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
+#include "ctcompile/CTNative/Runtime/RegExp.hpp"
+#include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
@@ -27,6 +29,16 @@
 namespace ctnative {
 struct identity_object {};
 } // namespace ctnative
+
+namespace {
+/// A constant table as ctcompile emits one (EmitC/StaticTables.cpp).
+struct sample_table_t : ctnative::static_table {
+    ctnative::js_num interval;
+    ctnative::js_string pause;
+};
+inline const sample_table_t sample_table{
+    {}, ctnative::js_num{5000.0}, ctnative::js_string("hover", 5)};
+} // namespace
 
 namespace {
 template <class T>
@@ -981,6 +993,36 @@ int main() {
     CHECK(ctnative::Number(nullable_scalar{js_null_t{}}) == ctnative::js_num{0.0});
     CHECK(ctnative::Number(ctnative::js_num{2.5}) == ctnative::js_num{2.5});
 
+    // Number.parseInt (19.2.5): leading whitespace and a sign, radix 10, 16
+    // and 0 (10, or 16 after 0x), a radix out of [2, 36] as NaN, the 0x prefix
+    // only for 16 or 0, a garbage suffix ignored, and no digits as NaN.
+    {
+        const auto parse = [](const char * text, double radix) {
+            return ctnative::Number.parseInt(js_string{std::string{text}}, ctnative::js_num{radix})
+                .value();
+        };
+        CHECK(parse("  \t42px", 10) == 42.0);
+        CHECK(parse("-17", 10) == -17.0);
+        CHECK(parse("+8", 10) == 8.0);
+        CHECK(parse("ff", 16) == 255.0);
+        CHECK(parse("0x1F", 16) == 31.0);
+        CHECK(parse("0x1F", 0) == 31.0);
+        CHECK(parse("0x1F", 10) == 0.0);
+        CHECK(parse("12", 0) == 12.0);
+        CHECK(parse("101", 2) == 5.0);
+        CHECK(parse("z", 36) == 35.0);
+        CHECK(std::isnan(parse("7", 1)));
+        CHECK(std::isnan(parse("7", 37)));
+        CHECK(std::isnan(parse("", 10)));
+        CHECK(std::isnan(parse("px", 10)));
+        CHECK(std::isnan(parse("-", 10)));
+        CHECK(std::signbit(parse("-0", 10)));
+        // A missing radix is undefined, which ToInt32 makes 0.
+        CHECK(ctnative::Number.parseInt(js_string{"0x10"}).value() == 16.0);
+        // ToInt32 wraps the radix: 2^32 + 16 is 16.
+        CHECK(parse("10", 4294967312.0) == 16.0);
+    }
+
     // Boolean(value) is ToBoolean for each carrier: NaN, 0 and -0, the empty
     // String, undefined and null are false; a String union follows its
     // alternative.
@@ -1180,6 +1222,65 @@ int main() {
         CHECK(ctnative::String.prototype.split.call(js_string{}, whitespace_run) == strings({""}));
         CHECK(ctnative::String.prototype.split.call(js_string{"\xC3\xA9"}, whitespace_run) ==
               strings({"\xC3\xA9"}));
+    }
+
+    // String.prototype.replace with a RegExp and a function (RegExp.hpp).
+    {
+        using ctnative::js_string;
+        using ctnative::RegExp;
+        const auto & replace = ctnative::String.prototype.replace;
+        const auto dashed = [](js_string m) { return js_string{"-"} + m; };
+        CHECK(replace.call(js_string{"fooBarBaz"}, RegExp("[A-Z]", "g"), dashed) ==
+              js_string{"foo-Bar-Baz"});
+        // Without `g` only the first match is replaced.
+        CHECK(replace.call(js_string{"aXbX"}, RegExp("X", ""), dashed) == js_string{"a-XbX"});
+        // Groups are passed after the match, in order.
+        CHECK(replace.call(js_string{"k=v;a=b"}, RegExp("([a-z])=([a-z])", "g"),
+                           [](js_string all, js_string key, js_string value) {
+                               return value + js_string{":"} + key + js_string{"/"} + all;
+                           }) == js_string{"v:k/k=v;b:a/a=b"});
+        // Alternatives are tried in order, as in JavaScript.
+        CHECK(replace.call(js_string{"top-start"}, RegExp("left|right|bottom|top", "g"),
+                           [](js_string m) {
+                               return m == js_string{"top"} ? js_string{"bottom"} : m;
+                           }) == js_string{"bottom-start"});
+        // No match leaves the text, multibyte characters included, unchanged.
+        CHECK(replace.call(js_string{"\xC3\xA9t\xC3\xA9"}, RegExp("[A-Z]", "g"), dashed) ==
+              js_string{"\xC3\xA9t\xC3\xA9"});
+        CHECK(replace.call(js_string{}, RegExp("[A-Z]", "g"), dashed) == js_string{});
+        // A Number result is converted with ToString.
+        CHECK(replace.call(js_string{"a1b"}, RegExp("[a-z]", "g"), [](js_string) {
+            return ctnative::js_num{2.5};
+        }) == js_string{"2.512.5"});
+        // An empty match advances one position, as AdvanceStringIndex does;
+        // the compiler refuses such patterns, but the runtime still agrees.
+        CHECK(replace.call(js_string{"ab"}, RegExp("x*", "g"), [](js_string m) {
+            return js_string{"["} + m + js_string{"]"};
+        }) == js_string{"[]a[]b[]"});
+        // `$` in the function's result is literal: no GetSubstitution.
+        CHECK(replace.call(js_string{"a"}, RegExp("a", "g"),
+                           [](js_string) { return js_string{"$&$1"}; }) == js_string{"$&$1"});
+    }
+
+    {
+        // A table's fields read through its static, and a static the run-once
+        // function has not stored yet is undefined: reading it throws.
+        ctnative::static_table_ptr table = &sample_table;
+        const ctnative::static_table_ptr copy = table;
+        CHECK(copy == table);
+        CHECK(ctnative::table_field<&sample_table_t::interval>(table) == ctnative::js_num{5000.0});
+        CHECK(ctnative::table_field<&sample_table_t::pause>(copy) ==
+              ctnative::js_string("hover", 5));
+        CHECK(&ctnative::table_field<&sample_table_t::interval>(table) == &sample_table.interval);
+        const auto throwsTypeError = [](ctnative::static_table_ptr undefined) {
+            try {
+                (void)ctnative::table_field<&sample_table_t::interval>(undefined);
+            } catch (const std::invalid_argument & error) {
+                return std::string_view(error.what()).starts_with("TypeError");
+            }
+            return false;
+        };
+        CHECK(throwsTypeError(nullptr));
     }
 
     CHECK(unbound());

@@ -159,9 +159,10 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   target_link_libraries(ctcompile-test-dom-reads-native PRIVATE ctbrowser::page)
   ctcompile_target(ctcompile-test-dom-reads-native)
 
-  # A page test built twice from CTNative/Browser/page/<name>.cpp: over the
+  # A page test built from CTNative/Browser/page/<name>.cpp: over the
   # interpreter, and natively over <name>.js compiled through the native
-  # pipeline with `entry` as its string entry. <name>.test diffs the two.
+  # pipeline with `entry` as its string entry, by clang and by GCC.
+  # <name>.test diffs each native run against the interpreter's.
   function(ctcompile_page_workload name entry)
     set(emitc "${CMAKE_CURRENT_BINARY_DIR}/${name}.emitc.mlir")
     set(cpp "${CMAKE_CURRENT_BINARY_DIR}/${name}.generated.cpp")
@@ -191,6 +192,49 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
     target_compile_definitions(ctcompile-test-${name}-native PRIVATE CTBROWSER_TEST_NATIVE=1)
     target_link_libraries(ctcompile-test-${name}-native PRIVATE ctbrowser::page)
     ctcompile_target(ctcompile-test-${name}-native)
+
+    # The same native test built by GCC, since native output must build and
+    # run under both compilers: its two sources compiled by g++ with the clang
+    # target's include directories and definitions and the project's warnings
+    # as errors, then linked against the same libraries (both compilers use
+    # GCC's libstdc++ here).
+    set(native ctcompile-test-${name}-native)
+    set(gcc_dir "${CMAKE_CURRENT_BINARY_DIR}/${name}-gcc")
+    file(MAKE_DIRECTORY "${gcc_dir}")
+    set(gcc_flags -std=c++23 -O2 -Wall -Wextra -Wconversion -pedantic -Werror
+        "-I$<JOIN:$<TARGET_PROPERTY:${native},INCLUDE_DIRECTORIES>,$<SEMICOLON>-I>"
+        "-D$<JOIN:$<TARGET_PROPERTY:${native},COMPILE_DEFINITIONS>,$<SEMICOLON>-D>")
+    # The rest of the clang target's compile options are only warnings and
+    # the same -O2; check-gcc-options.cmake fails the build when that stops
+    # being so.
+    set(checked "${gcc_dir}/options.checked")
+    add_custom_command(
+      OUTPUT "${checked}"
+      COMMAND "${CMAKE_COMMAND}" -DTARGET=${native}
+              "-DOPTIONS=$<JOIN:$<TARGET_PROPERTY:${native},COMPILE_OPTIONS>,|>"
+              -DSTAMP=${checked} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gcc-options.cmake"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gcc-options.cmake"
+      COMMENT "Checking that ${native}-gcc copies every option of ${native}"
+      VERBATIM)
+    set(objects)
+    foreach(source "${_dom_reads_dir}/${name}.cpp" "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp")
+      get_filename_component(stem "${source}" NAME_WE)
+      set(object "${gcc_dir}/${stem}.o")
+      add_custom_command(
+        OUTPUT "${object}"
+        COMMAND "${CTCOMPILE_CLEAN_GXX}" ${gcc_flags} -MD -MF "${object}.d" -c "${source}"
+                -o "${object}"
+        DEPENDS "${source}" "${cpp}" "${checked}"
+        DEPFILE "${object}.d"
+        COMMENT "Compiling ${stem}.cpp with GCC"
+        COMMAND_EXPAND_LISTS
+        VERBATIM)
+      list(APPEND objects "${object}")
+    endforeach()
+    set_source_files_properties(${objects} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+    add_executable(${native}-gcc ${objects})
+    set_target_properties(${native}-gcc PROPERTIES LINKER_LANGUAGE CXX)
+    target_link_libraries(${native}-gcc PRIVATE ctbrowser::page)
   endfunction()
   # Listeners run when the test clicks the page: dispatched by the browser,
   # and by the native listener table (Runtime/Events.hpp).
@@ -198,4 +242,6 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   # Timers run when the test moves the clock: by the browser's tick, and by
   # the native timer table (Runtime/Timers.hpp).
   ctcompile_page_workload(timers timers_report)
+  # The element calls of Bootstrap's SelectorEngine and Manipulator.
+  ctcompile_page_workload(selectors selectors_report)
 endif()

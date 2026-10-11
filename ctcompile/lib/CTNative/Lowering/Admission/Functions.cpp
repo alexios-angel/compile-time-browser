@@ -127,6 +127,9 @@ bool admission::function(ctjs::FuncOp fn) {
     const auto capturesAttr = fn->getAttrOfType<mlir::IntegerAttr>(kNativeCaptures);
     const unsigned captures = capturesAttr ? static_cast<unsigned>(capturesAttr.getInt()) : 0u;
     for (unsigned i = 3; i < entry.getNumArguments(); ++i) {
+        // A borrowed callback parameter is a ctnative::function_ref; the calls
+        // through it are admitted one by one (BorrowedCallbacks.cpp).
+        if (isBorrowedParameter(entry.getArgument(i))) { continue; }
         // Object parameters get the receiver's check. Their carrier is the
         // generated class one indirection away, so `carrierOf` has no row for
         // them and the check below would refuse every one; what has to hold is
@@ -190,7 +193,11 @@ bool admission::function(ctjs::FuncOp fn) {
         if (isNativeMapBookkeeping(o)) { return; }
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
-        if (llvm::isa<ctjs::CreateObjectOp>(o)) { return; }
+        // An object literal, or a record its callee returned, is its class.
+        if (llvm::isa<ctjs::CreateObjectOp>(o) ||
+            (o->getNumResults() == 1 && TypeInference::isRecordCall(o->getResult(0)))) {
+            return;
+        }
         if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o);
             load && ownedGlobalValue(load.getResult())) {
             return;

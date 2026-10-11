@@ -8,22 +8,12 @@ the lowering refuses what it cannot prove: no manifest, a stale fingerprint
 already-lowered output, and too small a step budget.
 """
 
-from concurrent.futures import ThreadPoolExecutor
-import os
+import argparse
+
+from CTNative.harness import run_parallel
 
 from .execution import *
 from ..harness.map_results import check_result_calls
-
-
-def parallel(function, items):
-    """`function` over `items` on every CPU, results in order. The first
-    failure is raised once the calls already running finish; the rest never
-    start."""
-    pool = ThreadPoolExecutor(os.cpu_count())
-    try:
-        return list(pool.map(function, items))
-    finally:
-        pool.shutdown(cancel_futures=True)
 
 
 def main():
@@ -40,16 +30,16 @@ def main():
     saved = dict(
         zip(
             positives,
-            parallel(
-                lambda item: check_positive(args, node, reference, compilers, nm, *item),
+            run_parallel(
                 positives.items(),
+                lambda item: check_positive(args, node, reference, compilers, nm, *item),
             ),
         )
     )
     # Every control reads only what the programs above left and writes only
     # files no other control reads or writes, so they run side by side too.
-    rollbacks = parallel(
-        lambda control: control(args, node, reference, compilers, nm, positives, saved), CONTROLS
+    rollbacks = run_parallel(
+        CONTROLS, lambda control: control(args, node, reference, compilers, nm, positives, saved)
     )
     report(
         positives, shared_refusals(), [budget for found in rollbacks if found for budget in found]
@@ -57,107 +47,62 @@ def main():
 
 
 def forged_evidence(args, node, reference, compilers, nm, positives, saved):
-    """Forged leaf and nullable reports, and mutated observation and field tags."""
-    check_primitive_absence_forgeries(args, saved, node, reference)
-    check_leaf_object_forgeries(args, saved)
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "local_field_get_guarded_checked",
-            "historical_object_saved_identity",
-            "local_field_readback_lifetime_checked",
-        ),
-    )
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        ("local_field_direct", "local_field_saved_overwrite", "local_field_readback_lifetime"),
-    )
-    check_leaf_object_forgeries(args, saved, LEAF_COMPARISON_REPAIRS)
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "local_absence_delete_undefined",
-            "local_absence_saved_undefined",
-            "local_absence_distinct_branches_false",
-        ),
-    )
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "local_absence_clear_saved_identity",
-            "local_clear_saved_undefined",
-            "local_clear_both_branches_false",
-        ),
-    )
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "local_identity_repeated_keys",
-            "local_numeric_nested_key",
-            "local_numeric_branch_lifetime",
-            "local_numeric_bool",
-        ),
-    )
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "local_add_saved_results",
-            "local_numeric_saved_snapshot",
-            "scalar_result_key",
-            "scalar_saved_branch_lifetime",
-        ),
-    )
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (*sorted(SCALAR_GLOBAL_INITIALIZED), "scalar_alias_chain", "scalar_alias_branch_lifetime"),
-    )
-    check_leaf_object_forgeries(args, saved, ("scalar_constant_only", "constant_alias_arithmetic"))
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "constant_boolean",
-            "constant_boolean_true",
-            "constant_boolean_alias_chain",
-            "constant_boolean_saved_result",
-            "constant_boolean_branch_lifetime",
-        ),
-    )
-    check_boolean_observation_mutations(args, compilers, nm)
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "constant_string",
-            "constant_string_bytes",
-            "constant_string_alias_chain",
-            "constant_string_trace_empty",
-            "constant_string_branch_lifetime",
-        ),
-    )
-    check_string_observation_mutations(args, compilers, nm)
-    check_leaf_object_forgeries(
-        args,
-        saved,
-        (
-            "leaf_object_string_field",
-            "field_string_bytes",
-            "field_string_saved",
-            "field_string_lifetime",
-        ),
-    )
-    check_string_field_tag_mutations(args, compilers, nm)
+    """Forged leaf and nullable reports, and mutated observation and field tags.
+
+    The checks run side by side (run_parallel). The forgery checks read only
+    the saved programs' paths and each gets its own work directory, so two
+    checks forging the same program cannot share a file; the observation and
+    field-tag mutations read the positive programs' C++ by name from the main
+    work directory, and write only files named after their own cases."""
+
+    def isolated(check):
+        def task(label):
+            work = args.work / f"forged-{label}"
+            work.mkdir(exist_ok=True)
+            check(argparse.Namespace(**dict(vars(args), work=work)))
+
+        return task
+
+    def nullable_forgeries(name, task_args):
+        ir, config, output = saved[name]
+        expected_cpp = comparable_provenance(
+            host.run([task_args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
+        )
+        for mode, options in (("default", ""), ("disabled", "optimize=false")):
+            for payload in ("bool", "string", "nullable_string"):
+                forged_name = name + "-" + mode + "-forged-" + payload
+                forged = task_args.work / f"{forged_name}.mlir"
+                forged.write_text(forge_map_presence(ir.read_text(), payload))
+                failed = methods.refused(
+                    task_args,
+                    forged,
+                    forged_name + "-stale",
+                    config,
+                    options=options,
+                    reason="fingerprint mismatch",
+                    admitted=0,
+                )
+                check_call_preservation(
+                    forged.read_text(), failed.read_text(), forged_name + "-stale"
+                )
+                fresh = contract(task_args, forged, forged_name)
+                checked = owned.lower(task_args, forged, forged_name, fresh, options=options)
+                text = methods.census(checked, 6, forged_name, admitted=6)
+                if (
+                    "ctnative.host_owner_proved = true" not in text
+                    or comparable_provenance(
+                        host.run([task_args.translate, "--mlir-to-cpp", str(checked)]).stdout,
+                        forged,
+                    )
+                    != expected_cpp
+                ):
+                    raise RuntimeError(
+                        f"{forged_name}: forged scalar tags changed nullable storage"
+                    )
 
     # Valid-looking scalar markers cannot normalize real null keys or narrow
     # the second use of a nullable formal. Fresh proof must emit the same C++.
-    for name in (
+    nullable_names = (
         "nullable_key_identity",
         "nullable_second_key_use",
         "nullable_payload_readback",
@@ -169,41 +114,146 @@ def forged_evidence(args, node, reference, compilers, nm, positives, saved):
         "nullable_payload_mixed_saved",
         *nullable_host_result_sources(),
         *nullable_nested_result_sources(),
-    ):
-        ir, config, output = saved[name]
-        expected_cpp = comparable_provenance(
-            host.run([args.translate, "--mlir-to-cpp", str(output)]).stdout, ir
-        )
-        for mode, options in (("default", ""), ("disabled", "optimize=false")):
-            for payload in ("bool", "string", "nullable_string"):
-                forged_name = name + "-" + mode + "-forged-" + payload
-                forged = args.work / f"{forged_name}.mlir"
-                forged.write_text(forge_map_presence(ir.read_text(), payload))
-                failed = methods.refused(
-                    args,
-                    forged,
-                    forged_name + "-stale",
-                    config,
-                    options=options,
-                    reason="fingerprint mismatch",
-                    admitted=0,
-                )
-                check_call_preservation(
-                    forged.read_text(), failed.read_text(), forged_name + "-stale"
-                )
-                fresh = contract(args, forged, forged_name)
-                checked = owned.lower(args, forged, forged_name, fresh, options=options)
-                text = methods.census(checked, 6, forged_name, admitted=6)
-                if (
-                    "ctnative.host_owner_proved = true" not in text
-                    or comparable_provenance(
-                        host.run([args.translate, "--mlir-to-cpp", str(checked)]).stdout, forged
-                    )
-                    != expected_cpp
-                ):
-                    raise RuntimeError(
-                        f"{forged_name}: forged scalar tags changed nullable storage"
-                    )
+    )
+    tasks = [
+        isolated(
+            lambda task_args: check_primitive_absence_forgeries(task_args, saved, node, reference)
+        ),
+        isolated(lambda task_args: check_leaf_object_forgeries(task_args, saved)),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "local_field_get_guarded_checked",
+                    "historical_object_saved_identity",
+                    "local_field_readback_lifetime_checked",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "local_field_direct",
+                    "local_field_saved_overwrite",
+                    "local_field_readback_lifetime",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(task_args, saved, LEAF_COMPARISON_REPAIRS)
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "local_absence_delete_undefined",
+                    "local_absence_saved_undefined",
+                    "local_absence_distinct_branches_false",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "local_absence_clear_saved_identity",
+                    "local_clear_saved_undefined",
+                    "local_clear_both_branches_false",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "local_identity_repeated_keys",
+                    "local_numeric_nested_key",
+                    "local_numeric_branch_lifetime",
+                    "local_numeric_bool",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "local_add_saved_results",
+                    "local_numeric_saved_snapshot",
+                    "scalar_result_key",
+                    "scalar_saved_branch_lifetime",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    *sorted(SCALAR_GLOBAL_INITIALIZED),
+                    "scalar_alias_chain",
+                    "scalar_alias_branch_lifetime",
+                ),
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args, saved, ("scalar_constant_only", "constant_alias_arithmetic")
+            )
+        ),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "constant_boolean",
+                    "constant_boolean_true",
+                    "constant_boolean_alias_chain",
+                    "constant_boolean_saved_result",
+                    "constant_boolean_branch_lifetime",
+                ),
+            )
+        ),
+        lambda _: check_boolean_observation_mutations(args, compilers, nm),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "constant_string",
+                    "constant_string_bytes",
+                    "constant_string_alias_chain",
+                    "constant_string_trace_empty",
+                    "constant_string_branch_lifetime",
+                ),
+            )
+        ),
+        lambda _: check_string_observation_mutations(args, compilers, nm),
+        isolated(
+            lambda task_args: check_leaf_object_forgeries(
+                task_args,
+                saved,
+                (
+                    "leaf_object_string_field",
+                    "field_string_bytes",
+                    "field_string_saved",
+                    "field_string_lifetime",
+                ),
+            )
+        ),
+        lambda _: check_string_field_tag_mutations(args, compilers, nm),
+        *(
+            isolated(lambda task_args, name=name: nullable_forgeries(name, task_args))
+            for name in nullable_names
+        ),
+    ]
+    run_parallel(range(len(tasks)), lambda index: tasks[index](index))
 
 
 def ordinary_controls(args, node, reference, compilers, nm, positives, saved):

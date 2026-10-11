@@ -191,7 +191,8 @@ bool closureLifter::writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSet
                 // itself would refuse every recursive local function; the
                 // calls of `f` are reads of the cell and are checked above.
                 if (at == store.getOperation()) { continue; }
-                if (!reachesInFrame(store.getOperation(), at)) { return false; }
+                if (reachesInFrame(store.getOperation(), at)) { continue; }
+                if (!holderReadsFollow(store, at)) { return false; }
             }
             continue;
         }
@@ -200,6 +201,51 @@ bool closureLifter::writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSet
         // than trusting that, because the rule must account for every way to
         // reach the storage.
         return false;
+    }
+    return true;
+}
+
+/// Whether a capturing closure's use `at`, which `store` does not reach, still
+/// cannot run the closure before `store`. That holds when `at` stores the
+/// closure into another binding of the same frame and every way to get the
+/// closure back out of that binding comes after `store`: each read of it is
+/// dominated by `store`, and each closure that captures it is itself used
+/// only after `store` (or again only stored into such a binding).
+///
+/// This is the case of hoisted function declarations: `function S() { N(); }
+/// function N() {}` stores S's closure, which captures N, into S's binding
+/// before N's binding is written, yet S can only run through a read of its
+/// binding, and those are in the body after every hoisted store.
+bool closureLifter::holderReadsFollow(ctjs::CellSetOp store, mlir::Operation * at) {
+    llvm::SmallPtrSet<mlir::Operation *, 8> seen;
+    llvm::SmallVector<mlir::Operation *> work{at};
+    auto owner = store->getParentOfType<ctjs::FuncOp>();
+    while (!work.empty()) {
+        mlir::Operation * use = work.pop_back_val();
+        if (!seen.insert(use).second) { continue; }
+        if (use == store.getOperation() || reachesInFrame(store.getOperation(), use)) { continue; }
+        // Only a store of the closure as the value of a binding of this frame
+        // can be followed; anything else may run it.
+        auto into = llvm::dyn_cast<ctjs::CellSetOp>(use);
+        if (!into) { return false; }
+        auto holder = into.getCell().getDefiningOp<ctjs::CreateCellOp>();
+        if (!holder || holder->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
+        for (mlir::OpOperand & held : holder.getResult().getUses()) {
+            switch (classify(held)) {
+            case cellUse::write: continue;
+            case cellUse::read:
+                if (!dominance.properlyDominates(store.getOperation(), held.getOwner())) {
+                    return false;
+                }
+                continue;
+            case cellUse::capture:
+                for (mlir::Operation * next : held.getOwner()->getResult(0).getUsers()) {
+                    work.push_back(next);
+                }
+                continue;
+            default: return false;
+            }
+        }
     }
     return true;
 }

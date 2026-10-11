@@ -142,7 +142,7 @@ bool passesAReceiver(mlir::OpOperand & use) {
 /// store, so its set of fields is fixed.
 bool TypeInference::hasClosedShape(mlir::Value object) {
     if (!object.getDefiningOp<ctjs::CreateObjectOp>() && !namesAnObjectParameter(object) &&
-        !nativeMapRecordOrigin(object)) {
+        !nativeMapRecordOrigin(object) && !isRecordCall(object)) {
         return false;
     }
     for (mlir::OpOperand & use : object.getUses()) {
@@ -156,7 +156,7 @@ bool TypeInference::hasClosedShape(mlir::Value object) {
                 constantKey(key) == "__proto__") {
                 return false;
             }
-        } else if (!passesAReceiver(use) && !isNativeMapRecordStore(use)) {
+        } else if (!passesAReceiver(use) && !isNativeMapRecordStore(use) && !returnsRecord(user)) {
             return false;
         }
     }
@@ -209,6 +209,13 @@ llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> TypeInference::gr
                                   entry.getArgument(static_cast<unsigned>(index)));
             }
         }
+    });
+
+    // A record call's result is the object its callee returned, copied.
+    top->walk([&](ctjs::CallDirectOp call) {
+        if (!isRecordCall(call.getResult())) { return; }
+        call.getTarget().walk(
+            [&](ctjs::ReturnOp ret) { classes.unionSets(call.getResult(), ret.getValue()); });
     });
 
     top->walk([&](ctjs::CallOp call) {

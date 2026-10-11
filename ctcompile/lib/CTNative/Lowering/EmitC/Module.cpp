@@ -131,7 +131,9 @@ void lowering::declareGlobals() {
     bool needsCells = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
-        needsTimers |= call.getCallee() == "ctnative::setTimeout";
+        needsTimers |= llvm::is_contained({"ctnative::setTimeout", "ctnative::setInterval",
+                                           "ctnative::clearTimeout", "ctnative::clearInterval"},
+                                          call.getCallee());
         needsPromises |= call.getCallee().starts_with("ctnative::Promise.");
         needsCells |= call.getCallee() == "ctnative::cell_place" ||
                       call.getCallee().starts_with("std::make_shared<ctnative::cell<");
@@ -156,6 +158,12 @@ void lowering::declareGlobals() {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Browser.hpp"),
                               b.getUnitAttr());
+    }
+    // A borrowed callback parameter is a ctnative::function_ref.
+    if (!borrowedSignatures.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Callable.hpp"),
+                              mlir::UnitAttr{});
     }
     if (needsEvents) {
         ec::IncludeOp::create(b, module.getLoc(),
@@ -182,6 +190,18 @@ void lowering::declareGlobals() {
     for (const std::string & definition : environments) { verbatim(b, definition); }
     for (const std::string & definition : methodTables) { verbatim(b, definition); }
     if (!domDataSession.empty()) { verbatim(b, domDataDefinition()); }
+    // A run-once static's constant table precedes the static that points at it.
+    bool tables = false;
+    for (const auto & [name, definition] : staticTables) {
+        if (!statics.contains(name)) { continue; }
+        if (!tables) {
+            ec::IncludeOp::create(b, module.getLoc(),
+                                  b.getStringAttr("ctcompile/CTNative/Runtime/StaticTable.hpp"),
+                                  b.getUnitAttr());
+            tables = true;
+        }
+        verbatim(b, definition);
+    }
     for (llvm::StringRef name : sortedKeys(globals)) {
         // Default tagged storage is undefined until the first generated
         // store. Each observation checks its exact tag, so a missing store

@@ -21,6 +21,12 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// (HostCallbacks.cpp).
 bool hostCallbackOperation(admission & self, ctjs::CallOp call);
 bool promiseOperation(admission & self, mlir::Operation * o);
+/// Admits a use of a listener's Event (HostCallbacks.cpp); nullopt when `o`
+/// uses none.
+std::optional<bool> eventOperation(admission & self, mlir::Operation * o);
+/// Admits an element member call or read (Elements.cpp); nullopt when `o`
+/// is none.
+std::optional<bool> elementOperation(admission & self, mlir::Operation * o);
 
 namespace {
 
@@ -43,6 +49,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         if (vector && llvm::isa<TupleType>(vector.getElementType())) {
             return TypeInference::isTupleLiteral(value) &&
                    carrierOf(self.typeOf(value)) == carrier::tuple;
+        }
+        // An element into an array of elements (`[i]`, the spread loop).
+        if (vector && llvm::isa<DOMElementType>(vector.getElementType())) {
+            return carrierOf(self.typeOf(value)) == carrier::domElement;
         }
         return isString(value);
     };
@@ -164,6 +174,30 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::builtinStatic: {
+        const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+        const std::string name =
+            (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
+        using Param = TypeInference::BuiltinStatic::Param;
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            const Param kind = row.params[index];
+            const carrier wanted = kind == Param::string   ? carrier::string
+                                   : kind == Param::number ? carrier::number
+                                                           : carrier::domElement;
+            // An element that may be null is passed through present_element,
+            // which throws the VM's TypeError for null as the call would.
+            const bool nullable = kind == Param::element &&
+                                  carrierOf(self.typeOf(argument)) == carrier::nullableElement;
+            if (carrierOf(self.typeOf(argument)) != wanted && !nullable) {
+                return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
+                                   printed(self.typeOf(argument)) + ", not " +
+                                   (kind == Param::string   ? "a String"
+                                    : kind == Param::number ? "a Number"
+                                                            : "an Element"));
+            }
+        }
+        return true;
+    }
     case VectorCall::includes:
         if (!array(call.getReceiver()) ||
             carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {
@@ -191,6 +225,8 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
         return hostCallbackOperation(self, llvm::cast<CallOp>(o));
     }
     if (TypeInference::isPromiseCall(o)) { return promiseOperation(self, o); }
+    if (auto admitted = eventOperation(self, o)) { return *admitted; }
+    if (auto admitted = elementOperation(self, o)) { return *admitted; }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -286,10 +322,56 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
     return true;
 }
 
+/// Admits a borrowed callback's closure or a call through a borrowed
+/// parameter (BorrowedCallbacks.cpp).
+bool borrowedCallbackOperation(admission & self, mlir::Operation * o);
+
+namespace {
+
+/// The refusal for a read of a run-once function's static variable whose type
+/// has no carrier: the variable's JavaScript name and what its owner stores in
+/// it, so the reason points at the binding rather than at this frame.
+std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef type) {
+    const auto name = reference->getAttrOfType<mlir::StringAttr>(kNativeStaticCell).getValue();
+    std::string holds;
+    reference->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::CreateCellOp owner) {
+        if (owner->hasAttr(kNativeStaticReference) ||
+            owner->getAttrOfType<mlir::StringAttr>(kNativeStaticCell) !=
+                reference->getAttr(kNativeStaticCell)) {
+            return;
+        }
+        for (mlir::Operation * user : owner.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
+            if (!store || store.getCell() != owner.getResult()) { continue; }
+            mlir::Operation * made = store.getValue().getDefiningOp();
+            const char * what =
+                llvm::isa_and_nonnull<ctjs::CreateObjectOp>(made)    ? "an object literal"
+                : llvm::isa_and_nonnull<ctjs::CreateArrayOp>(made)   ? "an array literal"
+                : llvm::isa_and_nonnull<ctjs::CreateClosureOp>(made) ? "a function"
+                                                                     : "a value";
+            if (holds.find(what) == std::string::npos) {
+                holds += holds.empty() ? what : std::string(" or ") + what;
+            }
+        }
+    });
+    return ("it reads `" + name.drop_front(llvm::StringRef("static_").size()) +
+            "`, a static variable of a function that runs once, which holds " +
+            (holds.empty() ? "nothing this frame can see" : holds) + " of type " + type +
+            " - that type has no native carrier")
+        .str();
+}
+
+} // namespace
+/// Admits a String.prototype.replace call with a specialised callback and the
+/// plumbing it consumes (StringCallbacks.cpp).
+std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * o);
+
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    if (auto admitted = staticTableOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
+    if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
@@ -319,6 +401,9 @@ bool admission::op(mlir::Operation * o) {
             return (table && table.getSite() == methodTableName(o)) ||
                    refuse("returned method table access has no single proved schema");
         }
+    }
+    if (o->hasAttr(kNativeBorrowedCallback) || o->hasAttr(kNativeBorrowedCall)) {
+        return borrowedCallbackOperation(*this, o);
     }
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
@@ -470,6 +555,9 @@ bool admission::op(mlir::Operation * o) {
                           "a reference cycle");
         }
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
+            if (o->hasAttr(kNativeStaticReference)) {
+                return refuse(staticReferenceRefusal(cell, printed(typeOf(cell.getResult()))));
+            }
             return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
                           ", which has no native carrier - a variable this tier cannot "
                           "spell is not one it may point at");
@@ -1024,6 +1112,9 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
             // An element array is lent to the callee as a std::span.
             !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
+            // An ordinary script's element (or element or null) is a copied view.
+            !(pageViews() && (carrierOf(typeOf(operands[i])) == carrier::domElement ||
+                              carrierOf(typeOf(operands[i])) == carrier::nullableElement)) &&
             !numeric(operands[i], "argument")) {
             return false;
         }
@@ -1032,6 +1123,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
 }
 
 bool admission::returned(ctjs::ReturnOp ret) {
+    // A data record is returned by value as its class; closedObject checks it.
+    if (TypeInference::returnsRecord(ret)) { return true; }
     const carrier c = carrierOf(typeOf(ret.getValue()));
     if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
     returnedType =

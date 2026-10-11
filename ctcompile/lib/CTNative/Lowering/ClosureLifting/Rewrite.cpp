@@ -6,6 +6,7 @@
 // performs the rewrite for one target.
 //
 //===----------------------------------------------------------------------===//
+#include "ClassInheritance.h"
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -13,6 +14,9 @@ namespace ctcompile::ctnative::lowering_detail {
 /// Lifts every admissible closure in the module and returns the counts.
 liftReport closureLifter::run() {
     liftReport out;
+    // A class that extends another becomes one that extends nothing, before
+    // any census reads a class (ClassInheritance.cpp).
+    flattenClassInheritance(module);
     // Environment attributes are conclusions of this run's proof. Strip any
     // already present so input IR cannot opt into an owning representation.
     module.walk([](mlir::Operation * op) {
@@ -24,8 +28,15 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeMethodTable);
         op->removeAttr(kNativeTableField);
         op->removeAttr(kNativeArrayCallback);
+        op->removeAttr(kNativeBorrowedCallback);
+        op->removeAttr(kNativeBorrowedCall);
         op->removeAttr(kNativeHostCallback);
         op->removeAttr(kNativeHostTimer);
+        op->removeAttr(kNativeHostTarget);
+        op->removeAttr(kNativeHostCapture);
+        op->removeAttr(kNativeHostIdentity);
+        op->removeAttr(kNativeHostIdentified);
+        op->removeAttr(kNativeHostRemove);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -80,6 +91,9 @@ liftReport closureLifter::run() {
     // directly (Singletons.cpp). After the binding rule, which removes the
     // methods' captures of the functions it binds.
     bindSingletonMethods(out);
+    // Static members of a class are called directly (ClassStatics.cpp), so
+    // that the class census below can prove the class.
+    bindClassStatics(out);
     // Unbox object literals that are proved uncaptured before the
     // argument/receiver census. A separate lifter does this because the
     // rewrite erases stores its census points at; the main census below then
@@ -101,6 +115,7 @@ liftReport closureLifter::run() {
     argumentCensus();
     methodCensus();
     arrayCallbackCensus();
+    stringCallbackCensus();
     hostCallbackCensus();
     promiseCallbackCensus();
     keptCellCensus();
@@ -143,6 +158,7 @@ liftReport closureLifter::run() {
         returnedClosures.clear();
         returnedClosureCensus();
         returnedMethodTableCensus();
+        borrowedCallbackCensus();
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so one unliftable creation site blocks every other.
@@ -168,6 +184,8 @@ liftReport closureLifter::run() {
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
                 : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
+                : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
+                : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
                 : hostCallbacks.contains(c.getOperation())       ? whyNotHostCallback(c)
                 : promiseCallbacks.contains(c.getOperation())    ? whyNotPromiseCallback(c)
                                                                  : whyNotLiftable(c);
@@ -416,6 +434,13 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     if (arrayCallbacks.contains(made.front())) {
         rewriteArrayCallback(made.front(), target, out);
         return;
+    }
+    if (borrowedCallbacks.contains(made.front())) {
+        rewriteBorrowedCallback(made.front(), target, out);
+        return;
+    }
+    if (stringCallbacks.contains(made.front())) {
+        return rewriteStringCallback(made.front(), target, out);
     }
     if (hostCallbacks.contains(made.front())) {
         rewriteHostCallback(made.front(), target, out);

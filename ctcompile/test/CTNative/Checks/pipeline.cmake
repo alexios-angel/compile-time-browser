@@ -7,6 +7,7 @@
 #
 #   -DTRANSLATE= ctjs-translate   -DOPT= ctjs-opt   -DSOURCE= the JS   -DOUTPUT= the module
 #   optional -DSTRING_ENTRIES=name[,name] for functions the embedder calls
+#   optional -DALLOW_REFUSED=TRUE to write the module even when a function is refused
 #
 # The module is written with debug info, so every op keeps its JavaScript
 # line:col, which is what the CTCOMPILE_PIN type assertions (see
@@ -119,7 +120,14 @@ endif()
 # failure three steps later: the diagnostic sits on the ctjs.func the pass left
 # behind.
 string(REGEX MATCHALL "ctnative.not_native = \"[^\"]*\"" refusals "${module}")
-if(refusals)
+if(refusals AND ALLOW_REFUSED)
+  # -DALLOW_REFUSED=TRUE writes the module anyway, refused ctjs.funcs and all,
+  # for tools/check/workloads/dry_run.py, which tries the later stages on the
+  # native part. Such a module is never evidence that the script is native.
+  list(LENGTH refusals refused_count)
+  message(WARNING "pipeline.cmake: ${SOURCE}: ${refused_count} function(s) refused; "
+                  "writing the module anyway (ALLOW_REFUSED)")
+elseif(refusals)
   list(JOIN refusals "\n  " refusals)
   message(FATAL_ERROR "pipeline.cmake: ${SOURCE} is not native:\n  ${refusals}")
 endif()
@@ -127,4 +135,6 @@ file(WRITE "${OUTPUT}" "${module}")
 if(OPTIMIZATION_REPORT)
   message(STATUS "${complaints}")
 endif()
-message(STATUS "native pipeline: ${SOURCE} -> ${OUTPUT}, no function refused")
+if(NOT refusals)
+  message(STATUS "native pipeline: ${SOURCE} -> ${OUTPUT}, no function refused")
+endif()
