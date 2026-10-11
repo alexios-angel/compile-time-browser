@@ -1,11 +1,12 @@
 // The element calls of Bootstrap's SelectorEngine (bootstrap.bundle.js's `R`)
-// and Manipulator (`H`) in an ordinary script, in a table of the same shape
-// held by a function that runs once: SelectorEngine's find and findOne
-// (Element.prototype.querySelectorAll and querySelector through `call`, the
-// document element as the default root, and the `[].concat(...nodes)` copy),
-// prev and next (the element-sibling walks with matches, returning `[i]` or
-// `[]`), parentElement, closest, querySelector, and
-// getAttribute, setAttribute and removeAttribute.
+// and Manipulator (`H`) in an ordinary script, in tables of the same shape
+// held by a function that runs once: Manipulator's setDataAttribute and
+// removeDataAttribute (with its camelCase-to-kebab helper `F`),
+// SelectorEngine's find and findOne (Element.prototype.querySelectorAll and
+// querySelector through `call`, the document element as the default root, and
+// the `[].concat(...nodes)` copy), prev and next (the element-sibling walks
+// with matches, returning `[i]` or `[]`), parentElement, closest,
+// querySelector, and getAttribute, setAttribute and removeAttribute.
 // selectors.test runs selectors_report() on the interpreter and natively over
 // selectors.html and compares the answers.
 var selectorsAnswer = (function () {
@@ -30,6 +31,18 @@ var selectorsAnswer = (function () {
         }
     };
 
+    function F(t) {
+        return t.replace(/[A-Z]/g, t => `-${t.toLowerCase()}`);
+    }
+    const H = {
+        setDataAttribute(t, e, i) {
+            t.setAttribute(`data-bs-${F(e)}`, i);
+        },
+        removeDataAttribute(t, e) {
+            t.removeAttribute(`data-bs-${F(e)}`);
+        }
+    };
+
     function ids(elements) {
         let out = '';
         for (let k = 0; k < elements.length; k++) {
@@ -47,6 +60,10 @@ var selectorsAnswer = (function () {
             out += ids(R.next(kid, 'body')) + ids(R.prev(kid, 'head')) + ids(R.next(kid, 'p')) + '|';
             const up = kid.parentElement;
             out += (up ? up.id : 'none') + '/' + kid.getAttribute('id') + '/' + kid.getAttribute('lang');
+            H.setDataAttribute(kid, 'seenBy', 'manipulator');
+            out += '/' + kid.getAttribute('data-bs-seen-by');
+            H.removeDataAttribute(kid, 'seenBy');
+            out += '/' + kid.getAttribute('data-bs-seen-by');
             kid.setAttribute('data-bs-seen', 'yes');
             out += '/' + kid.getAttribute('DATA-BS-SEEN') + root.getAttribute('data-bs-seen');
             kid.removeAttribute('data-bs-seen');
