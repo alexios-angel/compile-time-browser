@@ -4,6 +4,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   ArrayCallbacks.cpp
   HostCallbacks.cpp
   Shapes.cpp
+  Records.cpp
   OwnedGlobals.cpp
   Module.cpp
   DOM.cpp

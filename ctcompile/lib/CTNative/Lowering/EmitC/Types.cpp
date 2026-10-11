@@ -75,6 +75,7 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
     });
     const auto retypeValue = [&](mlir::Value v) {
+        if (retypeBorrowed(v)) { return; }
         if (v.getDefiningOp<ctjs::CreateObjectOp>() && carrierOf(typeOf(v)) == carrier::json) {
             v.setType(ec::LValueType::get(carrierType(context, carrier::json)));
             return;
@@ -304,6 +305,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             mlir::Value(call.getResult()).setType(receiverType(shapeAt(call.getResult())));
         }
     });
+    passRecords(fn);
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

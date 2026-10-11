@@ -87,6 +87,7 @@ void lowering::lower(ctjs::FuncOp fn) {
     if (!isEntry) {
         fn.getBody().walk([&](ctjs::ReturnOp ret) { returnType = ret.getValue().getType(); });
         if (const auto joined = resultTypes.lookup(fn.getSymName())) { returnType = joined; }
+        if (const auto record = recordReturnType(fn)) { returnType = record; }
     }
     if (isEntry) { params.clear(); }
 

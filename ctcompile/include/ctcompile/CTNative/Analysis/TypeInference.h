@@ -73,6 +73,11 @@ class DOMEntryAnalysis;
 /// and a mistyped attribute name is a silent narrowing nothing would catch.
 inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_before_read";
 
+/// Attribute on a function whose every return is an object literal it built,
+/// and on each direct call of it, when markRecordReturns proved that the call's
+/// result can receive a copy (Analysis/Inference/Records.cpp).
+inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
+
 /// One SSA value's inferred type, as a lattice element.
 ///
 /// A null type means "nothing known yet" and is not bottom. The framework
@@ -162,7 +167,9 @@ public:
     /// the join of every store of `k` to it, starting from undefined because
     /// nothing orders the read after a store. Any other use of the object (a
     /// call, a return, a dynamic key, `delete`, `in`, spread) makes its shape
-    /// open and every read of it `boxed`.
+    /// open and every read of it `boxed`. A data record (markRecordReturns) is
+    /// the exception: its literal may be returned, and the call's result is a
+    /// closed object of the same shape.
     static bool hasClosedShape(mlir::Value object);
 
     /// Whether `v` is the lifted `this` of a method. A method whose `this` uses
@@ -206,6 +213,20 @@ public:
     /// function, so they cannot disagree about what a field is.
     static llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 2>> groupReceivers(
         mlir::Operation * top);
+
+    /// Marks data records returned by value with kRecordReturn: a private
+    /// function, called only directly, whose every `ctjs.return` returns an
+    /// object literal it made, used otherwise only through constant keys, and
+    /// whose every call result is used only through constant keys or lent to
+    /// a record parameter. A record parameter belongs to a private function
+    /// called only directly, every call passes it a record, and it is used the
+    /// same way; its index joins `ctnative.object_args`. Run once, after
+    /// closure lifting and before groupReceivers.
+    static void markRecordReturns(mlir::Operation * top);
+    /// Whether `value` is the result of a call kRecordReturn marks.
+    static bool isRecordCall(mlir::Value value);
+    /// Whether `ret` is a `ctjs.return` of a function kRecordReturn marks.
+    static bool returnsRecord(mlir::Operation * ret);
 
     /// Whether `array` is a dense array literal that can be a `std::vector`:
     /// its uses keep it dense (no holes) and local. Allowed uses are appends,
@@ -519,7 +540,8 @@ private:
     /// function. Forwarded slots need their own check of every callable and
     /// use; cycles and the bounded walk's cutoff keep the seed. Field removal
     /// is ruled out by the closed-alias check, and every callee write stays in
-    /// the type join.
+    /// the type join. A data record's call result drops the seed when, in the
+    /// callee, a store of the key dominates every return of its literal.
     bool fieldIsAssignedBefore(mlir::Value object, llvm::StringRef key, mlir::Operation * read);
 
     /// The type a carried binding holds: the join over its initial and every
@@ -534,6 +556,17 @@ private:
     /// values crossing a call boundary, and every operation the transfer
     /// function does not handle. `boxed` is the top of the lattice and always
     /// safe; the native compiler either proves a type or falls back to it.
+    // Borrowed callbacks (Inference/BorrowedCallbacks.cpp).
+    /// Whether `value` is a parameter of a borrowed callback, which the
+    /// closure and the calls through its callee's parameter type rather than
+    /// the entry state.
+    static bool isBorrowedCallbackParameter(mlir::Value value);
+    /// The transfer function of a borrowed callback's closure and of a call
+    /// through a borrowed parameter; nullopt for any other operation.
+    std::optional<mlir::LogicalResult> visitBorrowedCallback(
+        mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+        llvm::ArrayRef<TypeLattice *> results);
+
     void setToEntryState(TypeLattice * lattice) override;
 };
 

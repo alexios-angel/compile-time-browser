@@ -2,7 +2,7 @@
 (no script VM), run them, and check them against Node and the reference
 interpreter."""
 
-from CTNative.harness import native_args, native_tools
+from CTNative.harness import native_args, native_tools, run_parallel
 
 from .common import *
 from .object.maps import *
@@ -188,10 +188,15 @@ def check_object_keys(args, node, reference, compilers, nm):
     their evidence (object/keys.py)."""
     positives = object_argument_sources()
     check_object_argument_observations(args, node, reference)
-    saved = {
-        name: check_positive(args, node, reference, compilers, nm, name, spec)
-        for name, spec in positives.items()
-    }
+    saved = dict(
+        zip(
+            positives,
+            run_parallel(
+                positives.items(),
+                lambda item: check_positive(args, node, reference, compilers, nm, *item),
+            ),
+        )
+    )
     check_object_argument_controls(args, saved)
     print(f"object keys: {len(positives)} native programs and their controls")
 
@@ -209,9 +214,9 @@ def setup():
     """Parse the shared command line and locate the two oracles (Node and the
     reference interpreter), the two C++ compilers and nm.
 
-    Each group in GROUPS is its own lit test (../<group>.test) and runs its
-    programs one after another. core.test runs everything else as one lit case
-    and parallelises internally through __main__.parallel.
+    Each group in GROUPS is its own lit test (../<group>.test); core.test runs
+    everything else as one lit case. Each runs its independent programs side
+    by side through CTNative.harness.run_parallel.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--group", choices=GROUPS)

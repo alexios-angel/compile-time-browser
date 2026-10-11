@@ -88,10 +88,13 @@ global `operator new` in a static archive can be silently dropped by link order.
 
 Flags: `-O2 -pedantic -Wall -Wextra -Werror -Wconversion`. Tests are
 EXECUTABLES, SDL-free, headless. `tools/format.sh --check` is the formatting
-gate - clang-format for the C++, ruff (`brew install ruff`, `pyproject.toml`)
-for every tracked `.py`, and js-beautify (`npm install -g js-beautify`,
-`.jsbeautifyrc`) for the hand-written JS/HTML/CSS, test data excluded -
-**run it yourself before committing**. There is NO CI: the GitHub
+gate - clang-format for the C++, ruff (`uv run ruff`, configured in
+`pyproject.toml`) for every tracked `.py`, and js-beautify (`npm install -g
+js-beautify`, `.jsbeautifyrc`) for the hand-written JS/HTML/CSS, test data
+excluded - **run it yourself before committing**. Python dependencies (lit,
+Playwright, ruff) are uv dependency groups in `pyproject.toml`, pinned by
+`uv.lock` and installed into `/.venv`; `tools/remote-build.sh` syncs lit on the
+box, and `ctbrowser/docs/tools.md` lists the groups. There is NO CI: the GitHub
 workflow was deleted on 2026-08-08, so nothing checks formatting or runs the
 suite unless a person does. `tools/remote-build.sh` is the build/test entry point;
 Codex uses the focused policy above.
