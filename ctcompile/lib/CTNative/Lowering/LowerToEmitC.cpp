@@ -472,7 +472,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         if (!hostContract) { forOfOriginals = foldArrayForOf(module); }
         if (!hostContract) {
             closureLifter cells{module};
-            cells.census();
+            cells.census(/*cellFactsOnly=*/true);
             insertRefinements(module,
                               [&](ctjs::CreateCellOp cell) { return cells.isConstantCell(cell); });
         }

@@ -2,8 +2,8 @@
 //
 // The table of the realm's built-ins native code calls through the runtime's
 // built-in objects: statics of namespace objects (`Number.parseInt`,
-// `Number.parseFloat`, `Math.min`, `JSON.stringify`), globals called
-// themselves (`Number(s)`) and prototype methods called through `call`
+// `Number.parseFloat`, `Math.min`, `JSON.stringify`, `console.log`), globals
+// called themselves (`Number(s)`) and prototype methods called through `call`
 // (`String.prototype.toLowerCase.call(s)`), and the recognition of a call of
 // one. Each lowers to its runtime spelling, `ctnative::Number.parseInt(s, r)`.
 //
