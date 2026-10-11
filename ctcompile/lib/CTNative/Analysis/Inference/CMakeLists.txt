@@ -3,6 +3,7 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   BorrowedCallbacks.cpp
   BuiltinStatics.cpp
   Initialization.cpp
+  JsonRecords.cpp
   Exceptions.cpp
   Records.cpp
   HostCallbacks.cpp

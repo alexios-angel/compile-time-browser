@@ -31,6 +31,9 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     // Number(value) (21.1.1.1) of a String: ToNumber. An empty member is a
     // call of the global itself.
     {"Number", "", "ctnative::Number", {Param::string, Param::number}, 1, 1},
+    // JSON.stringify (25.5.2.1) of an object literal, with no replacer and no
+    // space: ctnative::JSON.stringify of the literal's ctnative::json_record.
+    {"JSON", "stringify", "ctnative::JSON.stringify", {Param::record, Param::number}, 1, 1, true},
 };
 
 /// Whether --ctjs-resolve-globals found that this program never binds

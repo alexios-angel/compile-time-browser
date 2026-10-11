@@ -35,6 +35,19 @@ constexpr llvm::StringLiteral kStringArrayRow = "ctnative.string_array_row";
 constexpr llvm::StringLiteral kArrayHeader = "ctcompile/CTNative/Runtime/Array.hpp";
 /// markWrittenArrays' list (isWrittenArray).
 constexpr llvm::StringLiteral kWrittenArrays = "ctnative.written_arrays";
+/// On a built-in call taking a record, the record's keys in definition order.
+constexpr llvm::StringLiteral kRecordKeys = "ctnative.record_keys";
+constexpr llvm::StringLiteral kJsonHeader = "ctcompile/CTNative/Runtime/Json.hpp";
+
+/// Adds `#include "<header>"` once, at the top of the module.
+void includeHeader(mlir::ModuleOp module, llvm::StringRef header) {
+    for (auto include : module.getBody()->getOps<ec::IncludeOp>()) {
+        if (include.getInclude() == header) { return; }
+    }
+    mlir::OpBuilder b(module.getContext());
+    b.setInsertionPointToStart(module.getBody());
+    ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(header), mlir::UnitAttr{});
+}
 
 /// Adds `#include "Runtime/Array.hpp"` once, at the top of the module. The
 /// runtime header and its defines are inserted in front of it later
@@ -205,9 +218,21 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             // and method read it was recognised by are plumbing, replaced
             // first, and so are String literal arguments.
             const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+            using Param = TypeInference::BuiltinStatic::Param;
             std::string action = "static ";
             for (unsigned i = 0; i < row.arity; ++i) {
-                action += row.params[i] == TypeInference::BuiltinStatic::Param::string ? 's' : 'n';
+                action += row.params[i] == Param::string   ? 's'
+                          : row.params[i] == Param::record ? 'r'
+                                                           : 'n';
+                // A record's keys, in definition order, read now while its
+                // writes are still ctjs.
+                if (row.params[i] == Param::record && i < call.getArgs().size()) {
+                    llvm::SmallVector<mlir::Attribute> keys;
+                    for (llvm::StringRef key : TypeInference::recordKeys(call.getArgs()[i])) {
+                        keys.push_back(mlir::StringAttr::get(op->getContext(), key));
+                    }
+                    op->setAttr(kRecordKeys, mlir::ArrayAttr::get(op->getContext(), keys));
+                }
             }
             mark(op, action + " " + row.callee.str());
             break;
@@ -531,14 +556,32 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind.consume_front("static ")) {
         // `ctnative::Number.parseInt(s, radix)`: admission proved each
-        // argument a String or a Number, as its parameter asks.
+        // argument a String or a Number, as its parameter asks. A record is
+        // `ctnative::json_record("key", value, ...)` of its struct's fields.
         const auto [kinds, callee] = kind.split(' ');
         llvm::SmallVector<mlir::Value, 2> operands;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            if (kinds[index] == 'r') {
+                includeHeader(o->getParentOfType<mlir::ModuleOp>(), kJsonHeader);
+                const auto text = ec::PointerType::get(ec::OpaqueType::get(context, "const char"));
+                const auto any = ec::OpaqueType::get(context, "auto");
+                llvm::SmallVector<mlir::Value> fields;
+                for (mlir::Attribute key : o->getAttrOfType<mlir::ArrayAttr>(kRecordKeys)) {
+                    const llvm::StringRef name = llvm::cast<mlir::StringAttr>(key).getValue();
+                    fields.push_back(
+                        ec::LiteralOp::create(b, where, text, ("\"" + name + "\"").str()));
+                    fields.push_back(ec::LoadOp::create(
+                        b, where, any, lower.memberAccess(b, where, argument, name, any)));
+                }
+                operands.push_back(callValue(b, where,
+                                             ec::OpaqueType::get(context, "ctbrowser::json_value"),
+                                             "ctnative::json_record", fields));
+                continue;
+            }
             operands.push_back(
                 kinds[index] == 's' ? argument : lower.convertScalar(b, where, argument, numeric));
         }
-        swap(callValue(b, where, numeric, callee, operands));
+        swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;
     }
     if (kind == "includes") {

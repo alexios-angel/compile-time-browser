@@ -176,6 +176,28 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         const std::string name =
             row.member.empty() ? row.global.str() : (row.global + "." + row.member).str();
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            if (row.params[index] == TypeInference::BuiltinStatic::Param::record) {
+                if (!admission::isClosedObject(argument)) {
+                    return self.refuse(name +
+                                       " of a value that is not a closed-shape object literal");
+                }
+                if (const std::string why = TypeInference::stringifiedRecordProblem(argument, call);
+                    !why.empty()) {
+                    return self.refuse(name + " of an object literal: " + why);
+                }
+                for (mlir::Operation * user : argument.getUsers()) {
+                    auto write = llvm::dyn_cast<SetPropertyOp>(user);
+                    const carrier c =
+                        write ? carrierOf(self.typeOf(write.getValue())) : carrier::number;
+                    if (c != carrier::number && c != carrier::string && c != carrier::boolean) {
+                        return self.refuse(name + " of an object literal whose field `" +
+                                           ctjs::constantKey(write.getKey()).str() + "` is " +
+                                           printed(self.typeOf(write.getValue())) +
+                                           ", not a Number, String or Boolean");
+                    }
+                }
+                continue;
+            }
             const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
             if (string ? !isString(argument)
                        : carrierOf(self.typeOf(argument)) != carrier::number) {

@@ -309,13 +309,16 @@ public:
     static VectorCall vectorCallOf(mlir::Operation * op);
 
     /// One static method of a built-in namespace object, or the global itself,
-    /// that native code calls as `<callee>(args...)`. Every row returns a
-    /// Number.
+    /// that native code calls as `<callee>(args...)`. A row returns a Number
+    /// unless it says it returns a String.
     struct BuiltinStatic {
         /// What an argument must be for the call to lower.
         enum class Param {
             string,
-            number
+            number,
+            /// An object literal JSON.stringify serializes
+            /// (stringifiedRecordProblem).
+            record
         };
         llvm::StringLiteral global; ///< `Number`, `Math`.
         llvm::StringLiteral member; ///< `parseInt`, `min`; empty for `Number(s)`.
@@ -323,11 +326,24 @@ public:
         std::array<Param, 2> params;
         unsigned arity;    ///< How many of `params` the method takes.
         unsigned required; ///< How many of them a call must pass.
+        bool returnsString = false;
     };
     /// The row of the built-in statics table (Inference/BuiltinStatics.cpp)
     /// that `op` calls, or null. The table is the one place built-in statics
     /// are recognised; a new one is a row there plus its runtime member.
     static const BuiltinStatic * builtinStaticOf(mlir::Operation * op);
+    /// Whether `use` passes an object literal to a Param::record parameter.
+    static bool passesARecord(mlir::OpOperand & use);
+    /// Why the object literal `object`, passed to JSON.stringify by `call`,
+    /// cannot be serialized from its C++ struct, or empty: every write to it
+    /// must be in its own block before the call, under a constant key that is
+    /// not an array index, so its own keys at the call are exactly those
+    /// keys, in the order they were first written. Admission checks the
+    /// values' types.
+    static std::string stringifiedRecordProblem(mlir::Value object, mlir::Operation * call);
+    /// The keys of a record stringifiedRecordProblem accepts, in definition
+    /// order.
+    static llvm::SmallVector<llvm::StringRef> recordKeys(mlir::Value object);
 
     // Array-method callbacks (Inference/ArrayCallbacks.cpp).
     /// Whether `key` names an Array method the runtime calls back from.
