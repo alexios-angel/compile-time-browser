@@ -4,9 +4,10 @@
 // (TypeInference::isPromiseCall): a `new Promise(f)` or `p.then(f)` closure
 // lifting specialised for its callback, `Promise.resolve(v)`, and a call of an
 // executor's resolve function. A promise is native only when its value was
-// proved to be a Number, a Boolean or a String. Anything else is refused by
-// name: an unproved value has no C++ type, and an object could have a `then`
-// key, which would make resolving with it adopt that object instead. The
+// proved to be a Number, a Boolean, a String or undefined. Anything else is
+// refused by name: an unproved value has no C++ type, and an object could
+// have a `then` key, which would make resolving with it adopt that object
+// instead. The
 // callback's captures are copied into it (Runtime/Promise.hpp keeps a handler
 // until the microtask queue runs it), so only values with no identity to
 // share qualify, as for a host callback.
@@ -22,8 +23,9 @@ namespace {
 bool nativePromise(admission & self, mlir::Value value, llvm::StringRef what) {
     if (carrierOf(self.typeOf(value)) != carrier::none) { return true; }
     return self.refuse(what.str() + " is " + printed(self.typeOf(value)) +
-                       " - only a promise of a Number, a Boolean or a String is native; any "
-                       "other value is unproved, and an object could have a `then` key");
+                       " - only a promise of a Number, a Boolean, a String or undefined is "
+                       "native; any other value is unproved, and an object could have a `then` "
+                       "key");
 }
 
 } // namespace
@@ -39,10 +41,13 @@ bool promiseOperation(admission & self, mlir::Operation * o) {
         // `Promise.resolve(v)`, or `resolve(v)` in an executor.
         if (auto resolve = llvm::dyn_cast<mlir::BlockArgument>(call.getCallee())) {
             if (!nativePromise(self, resolve, "the executor's resolve function")) { return false; }
-            if (!isScalarPromiseValue(carrierOf(self.typeOf(call.getArgs().front())))) {
+            // A promise argument is adopted (Runtime/Promise.hpp).
+            const carrier given = carrierOf(self.typeOf(call.getArgs().front()));
+            if (!isScalarPromiseValue(given) && given != carrier::promise) {
                 return self.refuse("the executor's resolve function is called with " +
                                    printed(self.typeOf(call.getArgs().front())) +
-                                   ", not a Number, a Boolean or a String");
+                                   ", not a Number, a Boolean, a String, undefined or a promise "
+                                   "of one");
             }
             return true;
         }
@@ -52,10 +57,8 @@ bool promiseOperation(admission & self, mlir::Operation * o) {
         if (!nativePromise(self, call.getReceiver(), "the promise `then` is called on")) {
             return false;
         }
-        // ponytail: the promise `then` returns is not typed yet.
-        if (!call.getResult().use_empty()) {
-            return self.refuse("the promise Promise.prototype.then returns is read - only a "
-                               "`then` whose result is discarded is native");
+        if (!nativePromise(self, call.getResult(), "the promise Promise.prototype.then returns")) {
+            return false;
         }
     }
     const llvm::StringRef callback =

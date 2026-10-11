@@ -8,10 +8,13 @@
 // call types its callee's:
 //
 // - an executor's resolve function is a `promise_resolve<T>`, where T is the
-//   join of every value it is called with, and `new Promise(f)` answers
-//   `promise<T>`;
-// - a handler's value parameter is the T of the promise `then` is called on;
-// - `Promise.resolve(v)` answers `promise<type of v>`.
+//   join of every value it is called with (the value of a promise, which it
+//   adopts), and `new Promise(f)` answers `promise<T>`;
+// - a handler's value parameter is the T of the promise `then` is called on,
+//   and `then` answers a promise of what the handler returns (again the value
+//   of a returned promise);
+// - `Promise.resolve(v)` answers `promise<type of v>`, or v's own type when v
+//   is a promise.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,6 +46,16 @@ mlir::BlockArgument promiseParameter(ctjs::FuncOp callback) {
         return {};
     }
     return entry.getArgument(static_cast<unsigned>(index.getInt()));
+}
+
+/// The value a promise resolved with `resolution` settles with: the value of
+/// a promise, which it adopts, or `resolution` itself. A null type (nothing
+/// visited yet) is bottom.
+mlir::Type settledValue(mlir::Type resolution) {
+    if (auto promise = llvm::dyn_cast_or_null<PromiseType>(resolution)) {
+        return promise.getElementType();
+    }
+    return resolution;
 }
 
 /// Whether `call` calls a lifted executor's resolve function.
@@ -98,13 +111,14 @@ mlir::Type TypeInference::promiseType(mlir::Operation * op,
         }
         const mlir::BlockArgument parameter = promiseParameter(callback);
         if (llvm::isa<ctjs::ConstructOp>(op)) {
-            // The value is whatever the resolve function is called with.
+            // The value is whatever the resolve function is called with, or
+            // the value of a promise it is called with, which it adopts.
             mlir::Type value = BottomType::get(c);
             if (parameter) {
                 for (mlir::Operation * user : parameter.getUsers()) {
                     auto call = llvm::dyn_cast<ctjs::CallOp>(user);
                     if (call && call.getCallee() == parameter && call.getArgs().size() == 1) {
-                        value = joinLattices(op, call.getArgs(), value);
+                        value = meet(value, settledValue(joinLattices(op, call.getArgs(), {})));
                     }
                 }
                 join(parameter, PromiseResolveType::get(c, value));
@@ -113,10 +127,17 @@ mlir::Type TypeInference::promiseType(mlir::Operation * op,
         }
         // A handler receives the value of the promise `then` is called on.
         auto promise = llvm::dyn_cast_or_null<PromiseType>(operands[1]->getValue().getType());
-        if (parameter && promise) { join(parameter, promise.getElementType()); }
-        // ponytail: the promise `then` returns is not typed yet; admission
-        // refuses reading it.
-        return OptType::get(c, BottomType::get(c));
+        // A value not yet known is not joined: a parameter holding bottom
+        // would be visited as a value that is nothing, and an operation that
+        // widens on that cannot narrow again.
+        if (parameter && promise && !llvm::isa<BottomType>(promise.getElementType())) {
+            join(parameter, promise.getElementType());
+        }
+        // The promise `then` returns settles with what the handler returns,
+        // adopting it when that is a promise.
+        llvm::SmallVector<mlir::Value> returned;
+        callback.walk([&](ctjs::ReturnOp ret) { returned.push_back(ret.getValue()); });
+        return PromiseType::get(c, settledValue(joinLattices(op, returned, BottomType::get(c))));
     }
     auto call = llvm::dyn_cast<ctjs::CallOp>(op);
     if (!call) { return {}; }
@@ -125,7 +146,7 @@ mlir::Type TypeInference::promiseType(mlir::Operation * op,
         // An argument not yet visited answers nothing yet; bottom is the
         // identity of the join.
         const mlir::Type value = operands[2]->getValue().getType();
-        return value ? mlir::Type(PromiseType::get(c, value)) : BottomType::get(c);
+        return value ? mlir::Type(PromiseType::get(c, settledValue(value))) : BottomType::get(c);
     }
     return {};
 }

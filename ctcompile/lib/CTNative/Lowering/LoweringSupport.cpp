@@ -295,7 +295,8 @@ bool isScalarCarrier(carrier value) {
 }
 
 bool isScalarPromiseValue(carrier value) {
-    return value == carrier::number || value == carrier::boolean || value == carrier::string;
+    return value == carrier::number || value == carrier::boolean || value == carrier::string ||
+           value == carrier::nullable;
 }
 
 std::string promiseSpelling(mlir::Type type) {

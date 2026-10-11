@@ -92,8 +92,8 @@ enum class carrier {
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
     computedStyle,
-    /// A Promise of a Number, a Boolean or a String (Runtime/Promise.hpp),
-    /// spelled by promiseSpelling.
+    /// A Promise of a Number, a Boolean, a String or undefined
+    /// (Runtime/Promise.hpp), spelled by promiseSpelling.
     promise,
     /// The resolve function `new Promise` hands its executor, spelled by
     /// promiseSpelling.
@@ -185,7 +185,8 @@ inline const carrierRow & carrierInfo(carrier which) {
 /// Number, Boolean, or a nullable/Number|Boolean scalar.
 bool isScalarCarrier(carrier value);
 /// Whether a promise of a value with this carrier is native: a Number, a
-/// Boolean or a String (Runtime/Promise.hpp).
+/// Boolean, a String, or an optional scalar such as the undefined a handler
+/// returns (Runtime/Promise.hpp).
 bool isScalarPromiseValue(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);

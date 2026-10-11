@@ -18,6 +18,17 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+namespace {
+
+/// Whether `value` holds a promise. It asks the C++ type, since an operand
+/// another replacement produced has no lattice type.
+bool holdsPromise(mlir::Value value) {
+    auto opaque = llvm::dyn_cast<ec::OpaqueType>(value.getType());
+    return opaque && opaque.getValue().starts_with("ctnative::js_promise<");
+}
+
+} // namespace
+
 bool replacePromise(lowering & lower, mlir::Operation * o) {
     mlir::MLIRContext * context = o->getContext();
     mlir::OpBuilder b(o);
@@ -51,7 +62,12 @@ bool replacePromise(lowering & lower, mlir::Operation * o) {
             return swap(callValue(b, where, construct.getResult().getType(),
                                   "ctnative::Promise.construct<" + value + ">", bound));
         }
-        const mlir::Value operands[] = {llvm::cast<ctjs::CallOp>(o).getReceiver(), bound};
+        auto then = llvm::cast<ctjs::CallOp>(o);
+        const mlir::Value operands[] = {then.getReceiver(), bound};
+        if (!then.getResult().use_empty()) {
+            return swap(callValue(b, where, then.getResult().getType(),
+                                  "ctnative::Promise.prototype.then.call", operands));
+        }
         callWithConstValueOperands(b, where, mlir::TypeRange{},
                                    b.getStringAttr("ctnative::Promise.prototype.then.call"),
                                    operands);
@@ -61,18 +77,23 @@ bool replacePromise(lowering & lower, mlir::Operation * o) {
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (llvm::isa<mlir::BlockArgument>(call.getCallee())) {
         // `resolve(v)` in an executor answers undefined, which nothing reads.
+        // A promise argument is passed as it is, to be adopted.
         auto resolve = llvm::cast<PromiseResolveType>(lower.typeOf(call.getCallee()));
-        const mlir::Value operands[] = {call.getCallee(),
-                                        asValue(call.getArgs().front(), resolve.getElementType())};
+        const mlir::Value given = call.getArgs().front();
+        const mlir::Value operands[] = {
+            call.getCallee(),
+            holdsPromise(given) ? given : asValue(given, resolve.getElementType())};
         callWithConstValueOperands(b, where, mlir::TypeRange{},
                                    b.getStringAttr("ctnative::invoke_callable"), operands);
         if (!call.getResult().use_empty()) { return swap(lower.absentConstant(b, where)); }
         lowering::eraseIfUnused(o);
         return true;
     }
+    // Promise.resolve of a promise returns that promise.
     auto promise = llvm::cast<PromiseType>(lower.typeOf(call.getResult()));
+    const mlir::Value given = call.getArgs().front();
     return swap(callValue(b, where, call.getResult().getType(), "ctnative::Promise.resolve",
-                          asValue(call.getArgs().front(), promise.getElementType())));
+                          holdsPromise(given) ? given : asValue(given, promise.getElementType())));
 }
 
 } // namespace ctcompile::ctnative::lowering_detail
