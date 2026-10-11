@@ -289,6 +289,9 @@ struct lowering {
     [[nodiscard]] const siteShape & shapeAt(mlir::Value object) const;
 
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(mlir::Value object);
+    /// Gives each field of `object` stored as a String union carrier that
+    /// carrier in `stored` (EmitC/VariantFields.cpp).
+    void variantFields(mlir::Value object, llvm::StringMap<mlir::Type> & stored);
 
     void censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted);
     void censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted, const OwnedGlobalRoots * roots);

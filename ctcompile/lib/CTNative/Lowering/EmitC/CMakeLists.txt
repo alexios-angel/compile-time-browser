@@ -25,6 +25,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   ClosureSets.cpp
   MethodTables.cpp
   StaticTables.cpp
+  VariantFields.cpp
   Emitter.h
   Runtime.h
 )

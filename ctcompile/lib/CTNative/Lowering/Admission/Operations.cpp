@@ -1011,6 +1011,12 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                            "would find undefined")
                               .str());
         }
+        // A field joining String with absence, Boolean or Number is a union
+        // member (Admission/VariantFields.cpp).
+        if (auto admitted = variantField(key, user, accesses)) {
+            if (!*admitted) { return false; }
+            continue;
+        }
         // The existing shape census already spells one definite string as
         // std::string. Mixed or possibly absent reads need a different join;
         // do not route them through the numeric nullable carrier.
