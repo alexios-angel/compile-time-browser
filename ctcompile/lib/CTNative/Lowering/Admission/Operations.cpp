@@ -42,10 +42,18 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     if (isVectorCallPlumbing(o)) { return true; }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
         literal && TypeInference::isTupleLiteral(literal.getResult())) {
+        // An element in a row is the runtime's view, which only an ordinary
+        // script's elements are.
+        auto row = llvm::dyn_cast_or_null<TupleType>(self.typeOf(literal.getResult()));
+        if (row && !self.pageViews() && llvm::any_of(row.getElements(), [](mlir::Type part) {
+                return carrierOf(part) == carrier::domElement;
+            })) {
+            return self.refuse("a row holding a DOM element under a host contract");
+        }
         return carrierOf(self.typeOf(literal.getResult())) == carrier::tuple ||
                self.refuse("a two-element row whose positions are " +
                            printed(self.typeOf(literal.getResult())) +
-                           ", not Strings, Numbers or Number|String");
+                           ", not Strings, Numbers, Number|String or elements");
     }
     if (auto append = llvm::dyn_cast<AppendOp>(o);
         append && TypeInference::isTupleLiteral(append.getArray())) {
@@ -985,6 +993,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
         if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
             !(carrierOf(typeOf(operands[i])) == carrier::domElement && ownedGlobals &&
               ownedGlobals->proved() && !ownedGlobals->domInputs().empty()) &&
+            // An ordinary script's element is the runtime's view, passed by value.
+            !(carrierOf(typeOf(operands[i])) == carrier::domElement && pageViews()) &&
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&

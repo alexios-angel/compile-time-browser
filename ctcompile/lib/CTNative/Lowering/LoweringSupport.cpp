@@ -143,11 +143,13 @@ carrier carrierOf(mlir::Type type) {
     // strings and of borrowed DOM elements have their own carriers and
     // admission rules.
     // A tuple has a carrier when it has two positions and each is a String, a
-    // Number or a Number|String, which is what a std::pair of them can hold.
+    // Number, a Number|String or an ordinary script's element (admission
+    // refuses one under a host contract), which a std::pair of them can hold.
     if (auto tuple = llvm::dyn_cast<TupleType>(type)) {
         const auto position = [](mlir::Type part) {
             const carrier c = carrierOf(part);
-            return c == carrier::string || c == carrier::number || c == carrier::numberString;
+            return c == carrier::string || c == carrier::number || c == carrier::numberString ||
+                   c == carrier::domElement;
         };
         return tuple.getElements().size() == 2 && llvm::all_of(tuple.getElements(), position)
                    ? carrier::tuple

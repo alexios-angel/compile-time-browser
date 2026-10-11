@@ -456,9 +456,15 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
                 positions.push_back(llvm::cast<ctjs::AppendOp>(part).getElement());
             }
             for (std::size_t index = 0; index < positions.size(); ++index) {
-                positions[index] = lower.convertScalar(
-                    b, where, positions[index],
-                    carrierType(context, carrierOf(element.getElements()[index])));
+                // An element position holds the runtime's view, as the
+                // element itself is typed (retype); the rest widen to their
+                // carrier.
+                const mlir::Type part = element.getElements()[index];
+                const mlir::Type target =
+                    carrierOf(part) == carrier::domElement
+                        ? mlir::Type(ec::OpaqueType::get(context, kPageElementType))
+                        : carrierType(context, carrierOf(part));
+                positions[index] = lower.convertScalar(b, where, positions[index], target);
             }
             const std::string pair = elementSpelling(element);
             value = callValue(b, where, ec::OpaqueType::get(context, pair), pair, positions);
