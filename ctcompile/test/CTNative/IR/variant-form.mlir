@@ -64,6 +64,28 @@ func.func private @repeated(!ctnative.variant<!ctnative.bool, !ctnative.bool>)
 
 // -----
 
+// Two callables meet as one `closure_set`, so a variant holding two is a
+// second spelling of a type that exists.
+// expected-error @below {{a variant may hold one callable alternative}}
+func.func private @two_callables(!ctnative.variant<!ctnative.closure<"a$1">, !ctnative.closure<"b$2">>)
+
+// -----
+
+// expected-error @below {{a closure set needs at least two targets}}
+func.func private @one_target(!ctnative.closure_set<"a$1">)
+
+// -----
+
+// expected-error @below {{closure set targets must be sorted and distinct}}
+func.func private @unsorted(!ctnative.closure_set<"b$2", "a$1">)
+
+// -----
+
+// One callable set beside a non-callable is canonical.
+func.func private @set_and_number(!ctnative.variant<!ctnative.closure_set<"a$1", "b$2">, !ctnative.num<f64>>)
+
+// -----
+
 // The one that must be accepted, so that the file cannot pass by rejecting
 // everything. Four distinct, non-absorbing, non-lifting alternatives is exactly
 // the cap and exactly canonical.

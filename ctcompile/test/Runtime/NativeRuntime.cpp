@@ -16,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
+#include "ctcompile/CTNative/Runtime/Object.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
 #include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
@@ -38,6 +39,30 @@ struct sample_table_t : ctnative::static_table {
 };
 inline const sample_table_t sample_table{
     {}, ctnative::js_num{5000.0}, ctnative::js_string("hover", 5)};
+
+/// A constant table as ctcompile emits one, for table_field_or_undefined.
+struct spread_table_t : ctnative::static_table {
+    ctnative::js_num interval;
+    ctnative::js_boolean_t wrap;
+    ctnative::js_string pause;
+    ctnative::nullable_scalar parent;
+};
+const spread_table_t spread_table{{},
+                                  ctnative::js_num{5000.0},
+                                  ctnative::js_boolean_t{true},
+                                  ctnative::js_string("hover", 5),
+                                  ctnative::nullable_scalar::null()};
+
+/// A constant table of Strings as ctcompile emits one, for object_table.
+struct type_table_t : ctnative::static_table {
+    using value_type = ctnative::js_string;
+    static constexpr std::array<std::string_view, 2> keys{"parent", "toggle"};
+    ctnative::js_string parent;
+    ctnative::js_string toggle;
+    std::array<value_type, 2> values() const { return {parent, toggle}; }
+};
+const type_table_t type_table{
+    {}, ctnative::js_string("(null|element)", 14), ctnative::js_string("boolean", 7)};
 } // namespace
 
 namespace {
@@ -1281,6 +1306,81 @@ int main() {
             return false;
         };
         CHECK(throwsTypeError(nullptr));
+    }
+
+    {
+        // A spread of a constant table reads each field, or undefined when the
+        // static is still undefined (null pointer): CopyDataProperties copies
+        // nothing then, rather than throwing as a field read does.
+        using ctnative::nullable_scalar;
+        using ctnative::nullable_string;
+        using ctnative::table_field_or_undefined;
+        const ctnative::static_table_ptr table = &spread_table;
+        const auto interval =
+            table_field_or_undefined<&spread_table_t::interval, nullable_scalar>(table);
+        CHECK(interval.tag == nullable_scalar::kind::number && interval.value == 5000.0);
+        const auto wrap = table_field_or_undefined<&spread_table_t::wrap, nullable_scalar>(table);
+        CHECK(wrap.tag == nullable_scalar::kind::boolean && wrap.value == 1.0);
+        const auto pause = table_field_or_undefined<&spread_table_t::pause, nullable_string>(table);
+        CHECK(pause.tag == nullable_string::kind::string && pause.value == "hover");
+        // A field holding null stays null, distinct from the undefined below.
+        const auto parent =
+            table_field_or_undefined<&spread_table_t::parent, nullable_scalar>(table);
+        CHECK(parent.tag == nullable_scalar::kind::null);
+        CHECK((table_field_or_undefined<&spread_table_t::interval, nullable_scalar>(nullptr).tag ==
+               nullable_scalar::kind::undefined));
+        CHECK((table_field_or_undefined<&spread_table_t::pause, nullable_string>(nullptr).tag ==
+               nullable_string::kind::undefined));
+    }
+
+    {
+        // Object.entries, keys and values of a constant table: definition
+        // order, and ToObject's TypeError for a table not stored yet.
+        using table = ctnative::object_table<type_table_t>;
+        const auto entries = table::entries(&type_table);
+        CHECK(entries.size() == 2);
+        CHECK(entries[0].first == ctnative::js_string{"parent"} &&
+              entries[0].second == ctnative::js_string{"(null|element)"});
+        CHECK(entries[1].first == ctnative::js_string{"toggle"} &&
+              entries[1].second == ctnative::js_string{"boolean"});
+        CHECK(table::keys(&type_table)[1] == ctnative::js_string{"toggle"});
+        CHECK(table::values(&type_table)[0] == ctnative::js_string{"(null|element)"});
+        bool threw = false;
+        try {
+            (void)table::entries(nullptr);
+        } catch (const std::invalid_argument &) { threw = true; }
+        CHECK(threw);
+    }
+
+    // console.log's line (Runtime/Console.hpp): ToString of each argument, as
+    // the VM's console binding writes it, joined by single spaces.
+    {
+        using ctnative::nullable_scalar;
+        using ctnative::nullable_string;
+        using ctnative::console_detail::line;
+        CHECK(line(js_string{"text"}) == "text");
+        CHECK(line(js_string{}) == "");
+        CHECK(line(js_string{"a\xC3\xA9"}) == "a\xC3\xA9");
+        CHECK(line(ctnative::js_num{1.5}) == "1.5");
+        CHECK(line(ctnative::js_num{-0.0}) == "0");
+        CHECK(line(ctnative::js_num{1e21}) == "1e+21");
+        CHECK(line(ctnative::js_num{0.1}) == "0.1");
+        CHECK(line(ctnative::js_num{std::numeric_limits<double>::infinity()}) == "Infinity");
+        CHECK(line(ctnative::js_num{-std::numeric_limits<double>::infinity()}) == "-Infinity");
+        CHECK(line(ctnative::js_num{std::numeric_limits<double>::quiet_NaN()}) == "NaN");
+        CHECK(line(std::int32_t{-7}) == "-7");
+        CHECK(line(js_boolean_t{true}) == "true");
+        CHECK(line(js_boolean_t{false}) == "false");
+        CHECK(line(ctnative::undefined_t{}) == "undefined");
+        CHECK(line(ctnative::js_null_t{}) == "null");
+        CHECK(line(nullable_scalar{}) == "undefined");
+        CHECK(line(nullable_scalar::null()) == "null");
+        CHECK(line(nullable_scalar{2.0}) == "2");
+        CHECK(line(nullable_scalar{js_boolean_t{true}}) == "true");
+        CHECK(line(nullable_string{}) == "undefined");
+        CHECK(line(nullable_string{std::string{"s"}}) == "s");
+        CHECK(line(js_string{"a"}, ctnative::js_num{2.0}, js_boolean_t{false}) == "a 2 false");
+        CHECK(line() == "");
     }
 
     CHECK(unbound());

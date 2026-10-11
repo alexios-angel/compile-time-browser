@@ -32,7 +32,8 @@ std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClo
     // non-undefined $enclosing_this is the only place the IR says a target is
     // an arrow. A lifted call passes the call's receiver as %arg0, which for
     // an arrow is not what the interpreter reads, so an arrow may be lifted
-    // only when it never reads `this`.
+    // only when it never reads `this`. run() first makes every such read a
+    // capture (captureLexicalThis), so this fires only on paths that skip it.
     //
     // This guard keeps arrows out of the receiver lift, and removing it would
     // give a wrong answer rather than a refusal: `{ f: () => this.x }` reads
@@ -41,7 +42,8 @@ std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClo
     // the literal. It is checked first for that reason, before any rule that
     // admits a `this` use.
     if (!ctjs::isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
-        return "it is an arrow function that reads its lexical `this` - Stage 59B";
+        return "it is an arrow function that reads its lexical `this`, which this path does "
+               "not turn into a capture";
     }
     return std::nullopt;
 }

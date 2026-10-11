@@ -618,8 +618,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
                 : nullptr;
+        // The fingerprint is checked against the module as it arrived (the
+        // first analysis, above); the lowering's markers have annotated the
+        // module since, and every other DOM check reruns here on it as it is.
         auto admittedDOM =
-            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps)
+            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps,
+                                                          domEntry->fingerprint())
                      : nullptr;
         if (admittedDOM && !admittedDOM->proved()) {
             return fail("native DOM entry admission: " + admittedDOM->reason());

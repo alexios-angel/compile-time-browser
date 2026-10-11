@@ -46,6 +46,19 @@ namespace ctcompile::ctnative {
 /// ctcompile/test/Analysis/Types/Lattice.cpp).
 inline constexpr unsigned kMaxVariantAlternatives = 4;
 
+/// How many targets a `!ctnative.closure_set` may name before the lattice
+/// answers `!ctnative.boxed`.
+///
+/// Sixteen is a policy with a measured floor: Popper's modifier engine, the
+/// largest closed callable set in the workloads, calls through a field that
+/// holds one of ten functions. Each target is one `std::visit` arm in the
+/// emitted C++, so a much larger set is generated code no one would write.
+/// Like the variant cap it bounds the lattice's height, which the
+/// type-inference dataflow needs to terminate. Past the cap the answer is
+/// `boxed` rather than `json`: `json` describes data, and no data value can
+/// be called.
+inline constexpr unsigned kMaxClosureSetTargets = 16;
+
 /// The C++ representation a JavaScript string gets when nothing has proved a
 /// narrower one.
 ///
@@ -81,6 +94,8 @@ inline constexpr StrEncoding kDefaultStringEncoding = StrEncoding::UTF8;
 ///     reverse needs a lifetime proof the compiler does not have.
 ///   * containers meet with their own kind, elementwise. `owned` widens into
 ///     `shared`; `weak` is unordered against both, deliberately.
+///   * two callables (`closure` or `closure_set`) meet at the set of their
+///     targets, and at `boxed` past `kMaxClosureSetTargets`.
 ///   * anything else is a union: flattened, merged pairwise, deduplicated,
 ///     ordered by printed form so the answer is one MLIR type and not two
 ///     equivalent ones, and collapsed to `json` past

@@ -513,6 +513,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         case BuiltinStatic::Result::string: return stringType(c);
         case BuiltinStatic::Result::elementVector: return VecType::get(c, DOMElementType::get(c));
         case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::undefined: return absentType(c);
         case BuiltinStatic::Result::number: return doubleType(c);
         }
         return {};
@@ -706,7 +707,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             return answer(StaticTableType::get(c, name.getValue()));
         }
         if (auto field = op->getAttr(kNativeStaticTableField)) {
-            return answer(typeOfConstant(c, field));
+            // A spread's read of a table that may still be undefined.
+            const auto type = typeOfConstant(c, field);
+            return answer(op->hasAttr(kNativeStaticTableSpread)
+                              ? TypeValue::join(TypeValue{type}, TypeValue{absentType(c)}).getType()
+                              : type);
         }
     }
 
@@ -822,6 +827,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // initializes is dead code and is boxed by whoever reads the final state.
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
+    }
+    // Instances a registry Map owns (Inference/Instances.cpp).
+    if (const auto instance = instanceTypeOf(op, operands)) {
+        return *instance ? answer(*instance) : mlir::success();
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && isProvedString(operands[0]) && constantKey(read.getKey()) == "length") {

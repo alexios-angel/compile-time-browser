@@ -11,6 +11,9 @@
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
+#include "ctcompile/CTNative/IR/CTNativeTypes.h"
+
+#include "mlir/IR/SymbolTable.h"
 
 namespace ctcompile::ctnative {
 
@@ -31,6 +34,27 @@ inline constexpr llvm::StringLiteral kNativeBorrowedCallback = "ctnative.borrowe
 /// On a ctjs.call through such a parameter: the callbacks it may call, as an
 /// array of symbol references.
 inline constexpr llvm::StringLiteral kNativeBorrowedCall = "ctnative.borrowed_call";
+
+/// A closure set (ClosureLifting/ClosureSets.cpp): on a member's
+/// ctjs.create_closure, every member's lifted function, sorted, as an array of
+/// symbol references; on a ctjs.call through the set, a unit attribute. The
+/// member also carries kNativeBorrowedCallback and the call
+/// kNativeBorrowedCall, which type inference and admission read as for a
+/// borrowed callback.
+inline constexpr llvm::StringLiteral kNativeClosureSet = "ctnative.closure_set";
+
+/// Whether `type` is a closure set every target of which the closure-set lift
+/// made a member (kNativeClosureSet on the target's ctjs.func), looked up
+/// from `at`. Any other `closure_set` (callers passing different callbacks
+/// to one borrowed parameter, say) has no closure-set representation.
+inline bool isProvedClosureSet(mlir::Operation * at, mlir::Type type) {
+    auto set = llvm::dyn_cast_or_null<ClosureSetType>(type);
+    if (!set) { return false; }
+    return llvm::all_of(set.getTargets(), [&](mlir::StringAttr target) {
+        mlir::Operation * fn = mlir::SymbolTable::lookupNearestSymbolFrom(at, target);
+        return fn && fn->hasAttr(kNativeClosureSet);
+    });
+}
 
 /// The callback a borrowed ctjs.create_closure names, or empty.
 inline llvm::StringRef borrowedTarget(mlir::Operation * op) {

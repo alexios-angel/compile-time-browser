@@ -95,6 +95,7 @@ void lowering::censusEnvironments(llvm::ArrayRef<ctjs::FuncOp> accepted) {
 // environment operation.
 bool lowering::replaceEnvironment(mlir::Operation * op) {
     if (op->hasAttr(kNativeStoredRead)) { return true; }
+    if (replaceClosureSetMember(op)) { return true; } // ClosureSets.cpp
     // A borrowed callback (ClosureLifting/BorrowedCallbacks.cpp): the closure
     // binds the lifted callback to its captures, and a call through the
     // parameter calls the ctnative::function_ref that borrows it.

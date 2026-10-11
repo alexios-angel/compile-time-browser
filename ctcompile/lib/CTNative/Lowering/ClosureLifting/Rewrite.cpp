@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "ClassInheritance.h"
 #include "ClosureLifter.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -29,6 +30,7 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeTableField);
         op->removeAttr(kNativeArrayCallback);
         op->removeAttr(kNativeBorrowedCallback);
+        op->removeAttr(kNativeClosureSet); // ClosureSets.cpp
         op->removeAttr(kNativeBorrowedCall);
         op->removeAttr(kNativeHostCallback);
         op->removeAttr(kNativeHostTimer);
@@ -44,6 +46,7 @@ liftReport closureLifter::run() {
     // before them would describe operations that no longer exist.
     // indexAndNewTargets() supplies the two census walks they need.
     indexAndNewTargets();
+    captureLexicalThis(); // ArrowThis.cpp: an arrow's `this` becomes a capture.
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
     // closures no longer capture them. Boxes holding a function wait for a
@@ -103,6 +106,10 @@ liftReport closureLifter::run() {
         locals.census();
         locals.unboxCells(out, true);
     }
+    // A registry Map's class: its `dispose` loop over its own property
+    // names becomes one store per field (Analysis/Instances.h), before the
+    // census below indexes the calls that loop makes.
+    rewriteInstanceRegistries(module);
     census();
     // Run the argument census before the method census, because methodCensus
     // reads closedAfterLift, which reads the argument slots. All censuses run
@@ -157,6 +164,7 @@ liftReport closureLifter::run() {
         returnedClosureCensus();
         returnedMethodTableCensus();
         borrowedCallbackCensus();
+        closureSetCensus(); // ClosureSets.cpp
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so one unliftable creation site blocks every other.
@@ -185,6 +193,7 @@ liftReport closureLifter::run() {
                 : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
                 : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
                 : hostCallbacks.contains(c.getOperation())       ? whyNotHostCallback(c)
+                : closureSets.contains(c.getOperation())         ? whyNotInClosureSet(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -278,6 +287,7 @@ liftReport closureLifter::run() {
             op->setAttr(kNativeMethodRefusal, mlir::UnitAttr::get(context));
         }
     }
+    releaseLexicalThisCells(); // ArrowThis.cpp: before unboxCells sees the cells.
     unboxCells(out);
     return out;
 }
@@ -307,6 +317,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             objectArgs.push_back(static_cast<int32_t>(captureArgument(captures) + j));
         }
     }
+    // An arrow's lexical `this` capture may be an object pointer too (ArrowThis.cpp).
+    const llvm::SmallVector<int32_t> lexicalThis = lexicalThisObjectArgs(made);
+    objectArgs.insert(objectArgs.begin(), lexicalThis.begin(), lexicalThis.end());
 
     // Which captures are passed as a pointer to the owning frame's variable
     // rather than by value. Read before the capture parameters are inserted
@@ -430,6 +443,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     }
     if (hostCallbacks.contains(made.front())) {
         rewriteHostCallback(made.front(), target, out);
+        return;
+    }
+    if (closureSets.contains(made.front())) { // ClosureSets.cpp
+        rewriteClosureSetMember(made.front(), target, out);
         return;
     }
 

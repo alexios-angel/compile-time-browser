@@ -64,6 +64,7 @@ Negative tests, which show the check can fail (each is a lit RUN line under
 
 import argparse
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -154,6 +155,13 @@ def main():
     # --- (a) EmitC -> C++ through the forked emitter, (b) standalone compile ---
     if args.prebuilt:
         exe = args.prebuilt
+        # lit leaves a tool name it cannot find unexpanded, so a target that
+        # was never built reaches here as a bare name.
+        if not Path(exe).is_file() and not shutil.which(exe):
+            fail(
+                f"the prebuilt binary {exe} is missing; build it first: "
+                f"tools/remote-build.sh {Path(exe).name}"
+            )
         print(f"{name}: gating a prebuilt binary, {exe}")
     else:
         cpp = run([args.translate, "--mlir-to-cpp", args.module]).stdout

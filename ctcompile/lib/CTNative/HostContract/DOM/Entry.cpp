@@ -28,7 +28,7 @@
 namespace ctcompile::ctnative {
 
 DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & contract,
-                                   unsigned maxSteps) {
+                                   unsigned maxSteps, llvm::StringRef inputFingerprint) {
     // Charge for the module walk before anything else: one step per operation
     // plus one per operand (the same cost rule normalizeDOMURI uses), and the
     // same amount again for the fingerprint, which prints the whole module.
@@ -53,7 +53,9 @@ DOMEntryAnalysis::DOMEntryAnalysis(mlir::ModuleOp module, const HostContract & c
         refusal = "DOM entry analysis work budget exhausted";
         return;
     }
-    if (hostContractFingerprint(module) != contract.moduleSha256) {
+    moduleFingerprint =
+        inputFingerprint.empty() ? hostContractFingerprint(module) : inputFingerprint.str();
+    if (moduleFingerprint != contract.moduleSha256) {
         refusal = "host contract module fingerprint mismatch";
         return;
     }

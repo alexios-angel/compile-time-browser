@@ -31,7 +31,10 @@
 // A parent that nothing uses any more once its children carry their own
 // copies (never constructed, its statics never read, its binding never read)
 // is erased with its members, as are functions no closure names any more.
-// The module's ctnative.inheritance_summary counts the copies and erasures.
+// The module's ctnative.inheritance_summary counts the copies and erasures;
+// ctnative.copies maps every copy to the source function it stands for, and
+// ctnative.inheritance_erased lists the source functions erased, so a count
+// of source functions can be rebuilt after later passes prune functions.
 //
 // A class is left as it is, with the reason on its constructor closure
 // (kNativeInheritanceReason), when its parent is not one class of this module
@@ -129,6 +132,10 @@ struct flattener {
     unsigned nextIndex = 0;
     /// Functions this run added as copies and erased as unreachable.
     int64_t copies = 0, erased = 0;
+    /// Each copy this run made, by symbol: the source function it stands for.
+    llvm::MapVector<llvm::StringRef, mlir::StringAttr> copiesOf;
+    /// The source functions (not copies) this run erased.
+    llvm::SmallVector<mlir::Attribute> erasedSources;
 
     explicit flattener(mlir::ModuleOp m) : module(m), context(m.getContext()) {}
 
@@ -287,6 +294,11 @@ struct flattener {
         b.insert(copy);
         byIndex[at] = copy;
         ++copies;
+        // Every copy names the source function it was first copied from.
+        if (!copy->hasAttr(kNativeCopyOf)) {
+            copy->setAttr(kNativeCopyOf, mlir::StringAttr::get(context, fn.getSymName()));
+        }
+        copiesOf[copy.getSymName()] = llvm::cast<mlir::StringAttr>(copy->getAttr(kNativeCopyOf));
         llvm::SmallVector<ctjs::CreateClosureOp> inner;
         copy.walk([&](ctjs::CreateClosureOp made) { inner.push_back(made); });
         for (ctjs::CreateClosureOp made : inner) {
@@ -910,6 +922,9 @@ struct flattener {
         // A constructor that only forwards is the parent's, named after D.
         if (implicit) {
             auto [copy, index] = copyFunction(targetOf(parent.constructor), name, name);
+            // It stands for the forwarding constructor, which goes.
+            copy->setAttr(kNativeCopyOf, mlir::StringAttr::get(context, ctorFn.getSymName()));
+            copiesOf[copy.getSymName()] = mlir::StringAttr::get(context, ctorFn.getSymName());
             cls.constructor.setFunctionAttr(at.getI32IntegerAttr(static_cast<int32_t>(index)));
             // Nothing else names the forwarding function now.
             eraseIfUnnamed(ctorFn);
@@ -1089,6 +1104,9 @@ struct flattener {
         llvm::SmallVector<ctjs::FuncOp> nested;
         fn.walk([&](ctjs::CreateClosureOp made) { nested.push_back(targetOf(made)); });
         byIndex.erase(*ctjs::functionIndex(fn));
+        if (!fn->hasAttr(kNativeCopyOf)) {
+            erasedSources.push_back(mlir::StringAttr::get(context, fn.getSymName()));
+        }
         fn.erase();
         ++erased;
         for (ctjs::FuncOp inner : nested) { eraseIfUnnamed(inner); }
@@ -1150,6 +1168,25 @@ struct flattener {
                     b.getNamedAttr("copies", b.getI64IntegerAttr(count("copies") + copies)),
                     b.getNamedAttr("erased", b.getI64IntegerAttr(count("erased") + erased)),
                 }));
+        }
+        module.walk([](ctjs::FuncOp fn) { fn->removeAttr(kNativeCopyOf); });
+        if (!copiesOf.empty()) {
+            llvm::SmallVector<mlir::NamedAttribute> all;
+            if (auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies)) {
+                all.append(earlier.begin(), earlier.end());
+            }
+            for (auto & [copy, source] : copiesOf) {
+                all.emplace_back(mlir::StringAttr::get(context, copy), source);
+            }
+            module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
+        }
+        if (!erasedSources.empty()) {
+            llvm::SmallVector<mlir::Attribute> all;
+            if (auto earlier = module->getAttrOfType<mlir::ArrayAttr>(kNativeErasedSources)) {
+                all.append(earlier.begin(), earlier.end());
+            }
+            all.append(erasedSources);
+            module->setAttr(kNativeErasedSources, mlir::ArrayAttr::get(context, all));
         }
         // A cycle of parents never becomes ready.
         for (auto & [key, cls] : classes) {

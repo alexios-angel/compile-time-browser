@@ -74,6 +74,9 @@ enum class carrier {
     nullableNumberString,
     map,
     closure,
+    /// One of a proved set of callables (Analysis lattice `closure_set`), a
+    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    closureSet,
     methodTable,
     objectIdentity,
     objectValue,
@@ -100,7 +103,10 @@ enum class carrier {
     /// An ordinary script's element or null (Runtime/Browser.hpp).
     nullableElement,
     /// A timer's handle (Runtime/Timers.hpp).
-    timer
+    timer,
+    /// An instance of a class a registry Map owns, or null or undefined:
+    /// `std::shared_ptr<C>`, spelled per class (EmitC/Instances.cpp).
+    instance
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -160,6 +166,7 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::nullableNumberString, kNullableNumberStringType, true},
     {carrier::map, ""},
     {carrier::closure, ""},
+    {carrier::closureSet, ""},
     {carrier::methodTable, ""},
     {carrier::objectIdentity, kObjectIdentityType},
     {carrier::objectValue, kObjectValueType},
@@ -177,8 +184,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::domEvent, kEventType},
     {carrier::nullableElement, kNullableElementType},
     {carrier::timer, kTimerType},
+    {carrier::instance, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::timer) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::instance) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -243,6 +251,13 @@ inline bool isIdentityCarrier(mlir::Type type) {
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
+/// The type a closed-shape field holds when its reads and writes join to an
+/// optional String or a union of String with Boolean or Number (and maybe
+/// absence), which a struct member stores as that union carrier; null for any
+/// other field. `accesses` are the field's reads and writes, `typeOf` the
+/// lattice type of a value (ObjectValues/VariantFields.cpp).
+mlir::Type variantFieldType(llvm::ArrayRef<mlir::Operation *> accesses,
+                            llvm::function_ref<mlir::Type(mlir::Value)> typeOf);
 /// A definite Number, Boolean or String lattice type.
 inline bool isPrimitive(mlir::Type type) {
     return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type);
@@ -289,6 +304,12 @@ llvm::StringRef mixedMapKeySpelling(mlir::Type type);
 llvm::StringRef nullableMapSpelling(mlir::Type type);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);
+/// The C++ name of an identity class's struct, as nameFamilies gives it.
+std::string instanceClassSpelling(llvm::StringRef className);
+/// The class C of `instance<C>` or `opt<instance<C>>`.
+llvm::StringRef instanceClassName(mlir::Type type);
+/// `std::shared_ptr<C>`, the carrier of `instance<C>` and `opt<instance<C>>`.
+mlir::Type instanceCarrierType(mlir::Type type);
 bool mapNeedsString(MapType type);
 bool mapNeedsNullableString(MapType type);
 bool mapNeedsNullableStringKey(MapType type);
