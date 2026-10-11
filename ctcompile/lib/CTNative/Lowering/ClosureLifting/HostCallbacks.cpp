@@ -64,17 +64,18 @@ std::optional<std::string> closureLifter::whyNotHostCallback(ctjs::CreateClosure
     const std::string callback = (timer ? "the handler of " : "the listener of ") + method;
     mlir::Block & entry = target.getBody().front();
     // A listener's `this` is the event's currentTarget and a handler's the
-    // window, which nothing proves yet.
+    // window, which nothing proves yet (a listener reads e.currentTarget).
     if (!entry.getArgument(ctjs::arg_receiver).use_empty()) { return callback + " reads `this`"; }
     if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
         return callback + " reads new.target";
     }
     if (ctjs::readsRawArguments(target)) { return callback + " reads its `arguments`"; }
-    // The runtime builds no Event object yet.
-    if (const unsigned declared = ctjs::parameterCount(entry); declared != 0) {
+    // A listener is called with the Event (Runtime/Events.hpp's js_event); a
+    // handler with nothing, since extra setTimeout arguments are refused.
+    if (const unsigned declared = ctjs::parameterCount(entry); declared > (timer ? 0u : 1u)) {
         return callback + " declares " + std::to_string(declared) +
                (timer ? " parameters - only a handler that takes none is native"
-                      : " parameters - only a listener that takes no event is native");
+                      : " parameters - only a listener that takes the event alone is native");
     }
     // The host keeps the listener after this frame returns, with its captures
     // copied into it.

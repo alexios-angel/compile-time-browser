@@ -46,7 +46,8 @@ ctbrowser::node_id by_id(const ctbrowser::document & doc, std::string_view id,
 void click(fixture_page & page, std::string_view id) {
     const ctbrowser::node_id target = by_id(page.doc(), id, page.doc().root());
 #ifdef CTBROWSER_TEST_NATIVE
-    (void)ctnative::event_listeners::program().dispatch({&page.doc(), target}, "click");
+    (void)ctnative::event_listeners::program().dispatch(
+        ctnative::js_element_t{{&page.doc(), target}, page.styles()}, "click");
 #else
     (void)page.bindings().click(target);
 #endif

@@ -4,8 +4,10 @@
 // a ctbrowser::page::static_page: listeners registered the way generated code
 // registers them run in registration order at each step of a bubbling path,
 // a listener added during a dispatch waits for the next one, a throwing
-// listener is reported without stopping the rest, and forget() drops a
-// document's listeners.
+// listener is reported without stopping the rest, forget() drops a
+// document's listeners, and a listener's Event reports its type, target and
+// current target and carries preventDefault and stopPropagation back to the
+// dispatch.
 //
 //===----------------------------------------------------------------------===//
 
@@ -54,18 +56,18 @@ void test_bubbling_runs_each_step_in_registration_order() {
     EventTarget.prototype.addEventListener.call(leaf, js_string{"focus"}, [&] { order += 'f'; });
 
     event_listeners & table = event_listeners::program();
-    CHECK_EQ(table.dispatch(leaf.value(), "click"), std::size_t{3});
+    CHECK_EQ(table.dispatch(leaf, "click"), std::size_t{3});
     CHECK_EQ(order, std::string{"b2r"});
     // Without bubbling only the target's listeners run.
     order.clear();
-    CHECK_EQ(table.dispatch(body.value(), "click", false), std::size_t{2});
+    CHECK_EQ(table.dispatch(body, "click", false), std::size_t{2});
     CHECK_EQ(order, std::string{"b2"});
     // Another type reaches only its own listeners.
     order.clear();
-    CHECK_EQ(table.dispatch(leaf.value(), "focus"), std::size_t{1});
+    CHECK_EQ(table.dispatch(leaf, "focus"), std::size_t{1});
     CHECK_EQ(order, std::string{"f"});
     table.forget(bound.page.doc());
-    CHECK_EQ(table.dispatch(leaf.value(), "click"), std::size_t{0});
+    CHECK_EQ(table.dispatch(leaf, "click"), std::size_t{0});
 }
 
 void test_a_listener_added_while_dispatching_waits() {
@@ -82,9 +84,9 @@ void test_a_listener_added_while_dispatching_waits() {
         }
     });
     event_listeners & table = event_listeners::program();
-    CHECK_EQ(table.dispatch(root.value(), "click"), std::size_t{1});
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{1});
     CHECK(outer == 1 && inner == 0);
-    CHECK_EQ(table.dispatch(root.value(), "click"), std::size_t{65});
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{65});
     CHECK(outer == 2 && inner == 64);
     table.forget(bound.page.doc());
 }
@@ -99,10 +101,48 @@ void test_a_throwing_listener_is_reported() {
     EventTarget.prototype.addEventListener.call(root, js_string{"click"}, [&] { after = true; });
     event_listeners & table = event_listeners::program();
     const std::size_t before = table.reported().size();
-    CHECK_EQ(table.dispatch(root.value(), "click"), std::size_t{2});
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{2});
     CHECK(after);
     CHECK_EQ(table.reported().size(), before + 1);
     CHECK_EQ(table.reported().back(), std::string{"TypeError: boom"});
+    table.forget(bound.page.doc());
+}
+
+void test_the_event_a_listener_receives() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const js_element_t root = *ctnative::document.documentElement();
+    const js_element_t body = root.children()[1];
+    const js_element_t leaf = body.children()[0];
+    std::string seen;
+    const auto describe = [&](const ctnative::js_event & e) {
+        seen += e.type().value() + ":" + e.target().tagName().value() + "@" +
+                e.currentTarget().tagName().value() + " ";
+    };
+    EventTarget.prototype.addEventListener.call(leaf, js_string{"click"}, describe);
+    // The body's listener cancels the event and stops it there, so the root's
+    // never runs; a later listener on the body still does and sees the cancel.
+    EventTarget.prototype.addEventListener.call(
+        body, js_string{"click"}, [&](const ctnative::js_event & e) {
+            describe(e);
+            ctnative::Event.prototype.preventDefault.call(e);
+            ctnative::Event.prototype.stopPropagation.call(e);
+        });
+    EventTarget.prototype.addEventListener.call(
+        body, js_string{"click"}, [&](const ctnative::js_event & e) {
+            seen += static_cast<bool>(e.defaultPrevented()) ? "canceled " : "live ";
+        });
+    EventTarget.prototype.addEventListener.call(root, js_string{"click"}, describe);
+    event_listeners & table = event_listeners::program();
+    bool canceled = false;
+    CHECK_EQ(table.dispatch(leaf, "click", true, true, &canceled), std::size_t{3});
+    CHECK_EQ(seen, std::string{"click:P@P click:P@BODY canceled "});
+    CHECK(canceled);
+    // An event that is not cancelable ignores preventDefault.
+    seen.clear();
+    CHECK_EQ(table.dispatch(body, "click", true, false, &canceled), std::size_t{2});
+    CHECK_EQ(seen, std::string{"click:BODY@BODY live "});
+    CHECK(!canceled);
     table.forget(bound.page.doc());
 }
 
@@ -112,5 +152,6 @@ int main() {
     test_bubbling_runs_each_step_in_registration_order();
     test_a_listener_added_while_dispatching_waits();
     test_a_throwing_listener_is_reported();
+    test_the_event_a_listener_receives();
     REPORT("native_events");
 }

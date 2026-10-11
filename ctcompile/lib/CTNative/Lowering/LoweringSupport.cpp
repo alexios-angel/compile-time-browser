@@ -81,6 +81,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
     if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
+    if (llvm::isa<EventType>(type)) { return carrier::domEvent; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -232,7 +233,7 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
     return call &&
            (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
-            TypeInference::isHostCallbackCall(call)) &&
+            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call)) &&
            ctjs::receiverMethod(call) == read;
 }
 

@@ -12,6 +12,10 @@
 // (Runtime/Events.hpp) or timer table (Runtime/Timers.hpp) owns the bound
 // callable from then on.
 //
+// A listener's Event is the runtime's js_event: `e.type`, `e.target`,
+// `e.currentTarget` and `e.defaultPrevented` are its members of those names,
+// and `e.preventDefault()` is `ctnative::Event.prototype.preventDefault.call(e)`.
+//
 //===----------------------------------------------------------------------===//
 
 #include "Emitter.h"
@@ -45,6 +49,44 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
             b, where, mlir::TypeRange{},
             b.getStringAttr("ctnative::EventTarget.prototype.addEventListener.call"), operands);
     }
+    lowering::eraseIfUnused(o);
+    return true;
+}
+
+std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o) {
+    const auto event = [&](mlir::Value v) {
+        return carrierOf(lower.typeOf(v)) == carrier::domEvent;
+    };
+    if (TypeInference::isEventCall(o) && event(llvm::cast<ctjs::CallOp>(o).getReceiver())) {
+        // The names are recorded now: by replacement time the keys are
+        // emitc constants.
+        return ("event_call:" + ctjs::methodKey(llvm::cast<ctjs::CallOp>(o))).str();
+    }
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o); read && event(read.getObject())) {
+        return ("event:" + ctjs::constantKey(read.getKey())).str();
+    }
+    return std::nullopt;
+}
+
+bool replaceEvent(mlir::Operation * o, llvm::StringRef kind) {
+    mlir::MLIRContext * context = o->getContext();
+    mlir::OpBuilder b(o);
+    const mlir::Location where = o->getLoc();
+    if (llvm::StringRef method = kind; method.consume_front("event_call:")) {
+        const mlir::Value operands[] = {llvm::cast<ctjs::CallOp>(o).getReceiver()};
+        callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                   b.getStringAttr("ctnative::Event.prototype." + method + ".call"),
+                                   operands);
+        lowering::eraseIfUnused(o);
+        return true;
+    }
+    llvm::StringRef member = kind;
+    if (!member.consume_front("event:")) { return false; }
+    const mlir::Type result = member == "type" ? carrierType(context, carrier::string)
+                              : member == "defaultPrevented"
+                                  ? carrierType(context, carrier::boolean)
+                                  : ec::OpaqueType::get(context, kPageElementType);
+    o->getResult(0).replaceAllUsesWith(memberCall(b, where, result, o->getOperand(0), member));
     lowering::eraseIfUnused(o);
     return true;
 }

@@ -5,6 +5,7 @@
 // the answers.
 var clicks = 0;
 var order = '';
+var seen = '';
 
 // A listener with no captures, on the root element.
 document.documentElement.addEventListener('click', function () {
@@ -23,11 +24,22 @@ function listen(name) {
             kid.addEventListener('click', function () {
                 order = order + name;
             });
+            // A listener that takes the event: it reads the event's type,
+            // target and current target, cancels it, and stops a click on the
+            // leaf from reaching the root.
+            kid.addEventListener('click', function (e) {
+                e.preventDefault();
+                seen = seen + e.type + ':' + e.target.id + '@' + e.currentTarget.id +
+                    (e.defaultPrevented ? '!' : '') + ' ';
+                if (e.target.id === 'leaf') {
+                    e.stopPropagation();
+                }
+            });
         }
     }
 }
 listen('b');
 
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen;
 }

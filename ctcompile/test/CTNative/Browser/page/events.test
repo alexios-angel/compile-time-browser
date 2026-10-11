@@ -6,7 +6,7 @@
 # RUN: diff %t.vm %t.native
 # RUN: FileCheck %s --input-file %t.native
 # RUN: %nm -C %{obj}/ctcompile-test-events-native | not grep -E "ctbrowser::script::"
-# CHECK: clicks=0 order=
-# CHECK-NEXT: top: clicks=1 order=r
-# CHECK-NEXT: leaf: clicks=2 order=rbr
-# CHECK-NEXT: page: clicks=3 order=rbrbr
+# CHECK: clicks=0 order= seen=
+# CHECK-NEXT: top: clicks=1 order=r seen=
+# CHECK-NEXT: leaf: clicks=1 order=rb seen=click:leaf@page! {{$}}
+# CHECK-NEXT: page: clicks=2 order=rbbr seen=click:leaf@page! click:page@page! {{$}}
