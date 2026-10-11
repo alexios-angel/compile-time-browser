@@ -413,6 +413,12 @@ public:
     /// Whether `op` is the empty literal of `[].concat(...a)` or its `concat`
     /// read, which lower to nothing.
     static bool isSpreadCopyPlumbing(mlir::Operation * op);
+    /// Whether `value`, an element that may be null, is known non-null where
+    /// `user` uses it (Inference/Elements.cpp): `user` sits in the
+    /// then-branch of `if (value)`, or `value` leaves a `for (; i;)` loop on
+    /// an exit that only the loop's truthy arm takes (SelectorEngine's prev
+    /// and next return `[i]` from inside the loop).
+    static bool presentElement(mlir::Value value, mlir::Operation * user);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -587,6 +593,11 @@ private:
     /// or null.
     mlir::Type elementMemberType(mlir::Operation * op,
                                  llvm::ArrayRef<const TypeLattice *> operands);
+    /// `joined`, the element type of the array `members` names, narrowed
+    /// from an element or null to an element when every value stored into
+    /// it is an element or is present where it is stored (presentElement).
+    mlir::Type presentElements(mlir::Operation * op, llvm::ArrayRef<mlir::Value> members,
+                               mlir::Type joined);
     /// The type of a specialised Array-method call, after joining its
     /// receiver's element type, the index and its captured values into the
     /// callback's parameters.

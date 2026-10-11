@@ -151,6 +151,14 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
             add(selected.thenYield().getOperand(index));
             add(selected.elseYield().getOperand(index));
+        } else if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(definition)) {
+            // A loop's exits, as the importer structures an early return
+            // from inside it: one arm per exit.
+            borrowed = true;
+            const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
+            for (mlir::Region & arm : cases->getRegions()) {
+                add(llvm::cast<mlir::scf::YieldOp>(arm.front().getTerminator()).getOperand(index));
+            }
         } else if (llvm::isa<ctjs::CreateArrayOp, ctjs::CallDirectOp>(definition)) {
             // A literal, or the array a direct call returned by value.
             owners.push_back(definition);
@@ -203,6 +211,11 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             if (auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(user)) {
                 if (auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(yield->getParentOp())) {
                     before(loop, use.getOperandNumber());
+                    continue;
+                }
+                if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(yield->getParentOp())) {
+                    borrowed = true;
+                    add(cases.getResult(use.getOperandNumber()));
                     continue;
                 }
                 auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
@@ -314,7 +327,15 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
     if (borrowed && !parameter) {
         if (!function) { return fail("an array outside a function"); }
         for (mlir::Operation * owner : owners) {
-            if (owner->getBlock() != &function.getBody().front()) {
+            // An empty literal in a branch that runs at most once per call
+            // (`return [i]` and `return []` in a loop's exit arms) can take
+            // its frame slot at the function's entry: making an empty array
+            // has no effect to move.
+            auto literal = llvm::dyn_cast<ctjs::CreateArrayOp>(owner);
+            const bool hoistable = literal && literal.getElements().empty() &&
+                                   !owner->getParentOfType<mlir::scf::WhileOp>() &&
+                                   !owner->getParentOfType<mlir::scf::ForOp>();
+            if (owner->getBlock() != &function.getBody().front() && !hoistable) {
                 return fail("an array created inside a branch or a loop and carried out of it - "
                             "its storage has to be one frame slot");
             }

@@ -406,6 +406,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
     // `pending` set while every stored value is still unvisited.
     const auto element = [&](llvm::ArrayRef<mlir::Value> members) -> mlir::Type {
         mlir::Type joined = joinLattices(op, elementVectorStores(members), mlir::Type{});
+        joined = presentElements(op, members, joined);
         if (splitsAString(members)) { joined = meet(joined, stringType(c)); }
         return joined;
     };
