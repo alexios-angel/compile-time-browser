@@ -926,6 +926,19 @@ struct flattener {
             copy->setAttr(kNativeCopyOf, mlir::StringAttr::get(context, ctorFn.getSymName()));
             copiesOf[copy.getSymName()] = mlir::StringAttr::get(context, ctorFn.getSymName());
             cls.constructor.setFunctionAttr(at.getI32IntegerAttr(static_cast<int32_t>(index)));
+            // The closure now names the parent's code, so it captures what
+            // the parent's closure captures: its upvalue operands follow the
+            // descriptors of the function it names. Both closures are made in
+            // the same frame, the parent's first.
+            llvm::SmallVector<mlir::Value> operands{cls.constructor.getEnclosingClosure(),
+                                                    cls.constructor.getEnclosingThis()};
+            llvm::append_range(operands, parent.constructor.getUpvalues());
+            cls.constructor->setOperands(operands);
+            if (auto indices = parent.constructor.getEnclosingIndicesAttr()) {
+                cls.constructor.setEnclosingIndicesAttr(indices);
+            } else {
+                cls.constructor.removeEnclosingIndicesAttr();
+            }
             // Nothing else names the forwarding function now.
             eraseIfUnnamed(ctorFn);
         }

@@ -12,8 +12,10 @@
 # as local functions, so their calls are direct: 14 more targets, 38 more calls.
 # Calls of methods of the factory's object tables are direct too (Data's set,
 # get and remove; EventHandler's on, one, off and trigger): 7 more targets,
-# 103 more calls.
-# BOOTSTRAP: post-native graph: 87 distinct targets over 368 ctjs.call_direct and 0 emitc.call site(s)
+# 103 more calls. Flattening copies each component's inherited methods and
+# statics onto it, and the static-member rewrite calls static members
+# directly: 16 more targets, 133 more calls.
+# BOOTSTRAP: post-native graph: 103 distinct targets over 501 ctjs.call_direct and 0 emitc.call site(s)
 # The factory itself calls EventHandler's `on` (fn$136), now a direct call.
 # BOOTSTRAP: entry _script_$0: 7 function(s) on static direct-call paths
 # BOOTSTRAP: reachable: _script_$0, bi$88, fn$1, fn$125, fn$136, fn$178, fn$2

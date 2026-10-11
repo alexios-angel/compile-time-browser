@@ -300,6 +300,13 @@ UNTRUSTED_NATIVE.update(
 )
 UNTRUSTED_NATIVE.update(dict.fromkeys(("inherited-getter-unused-ambient",), (True,)))
 
+# Static-member fixtures the static-member rewrite completes in both modes;
+# each prints Node's value.
+UNTRUSTED_NATIVE.update(dict.fromkeys(("static-defaults", "static-default-fields"), (False, True)))
+# Without optimization, an inherited static getter nothing reads stays
+# refused beside the native program.
+UNTRUSTED_PARTIAL.update(dict.fromkeys(("inherited-getter-unused-ambient",), (False,)))
+
 # Key-conflict fixtures: the reference interpreter has no `console`, so these
 # fixtures report a conflict by throwing rather than by logging it.
 CONFLICT_OBSERVATIONS = {
