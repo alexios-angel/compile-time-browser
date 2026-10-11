@@ -14,12 +14,16 @@
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/values.js --work %t --name recursion_mutation --mutate visited --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/surplus.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=SURPLUS
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/value.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=VALUE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc="optimize=false" | FileCheck %s --check-prefix=ESCAPE
 
 # NATIVE-DAG: emitc.func @down_
 # NATIVE-DAG: emitc.func @visit_
 # MUTATION: global 'visited' differs
 # SURPLUS: ctnative.not_native = "a closure used as a value: it calls itself with more arguments than it declares"
 # VALUE: ctnative.not_native = "a closure used as a value: its target's own closure escapes into `ctjs.compare`, so a call of it may come from somewhere this rewrite cannot see"
+# A named function expression that calls itself and also returns its own
+# closure escapes: the returned value can be called from anywhere.
+# ESCAPE: ctnative.not_native = "a closure used as a value: its target's own closure escapes into `ctjs.return`, so a call of it may come from somewhere this rewrite cannot see"
 
 #--- values.js
 function depth(n) {
@@ -56,3 +60,15 @@ function named(n) {
     })(n);
 }
 var compared = named(3);
+
+#--- escape.js
+function counter(n) {
+    var f = (function next(k) {
+        if (k > 0) {
+            next(k - 1);
+        }
+        return next;
+    })(n);
+    return typeof f;
+}
+var counted = counter(2);
