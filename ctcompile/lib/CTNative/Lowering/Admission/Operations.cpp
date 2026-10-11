@@ -153,6 +153,20 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return array(call.getResult()) ||
                self.refuse("the result of split is " + printed(self.typeOf(call.getResult())));
     }
+    case VectorCall::builtinStatic: {
+        const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+        const std::string name = (row.global + "." + row.member).str();
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
+            if (string ? !isString(argument)
+                       : carrierOf(self.typeOf(argument)) != carrier::number) {
+                return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
+                                   printed(self.typeOf(argument)) + ", not a " +
+                                   (string ? "String" : "Number"));
+            }
+        }
+        return true;
+    }
     case VectorCall::includes:
         if (!array(call.getReceiver()) ||
             carrierOf(self.typeOf(call.getReceiver())) != carrier::stringVector) {

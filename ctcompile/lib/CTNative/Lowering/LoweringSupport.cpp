@@ -164,6 +164,11 @@ carrier carrierOf(mlir::Type type) {
 
 bool isElementArray(mlir::Value v, mlir::Type type) {
     const carrier c = carrierOf(type);
+    if (c == carrier::vector) {
+        auto vector = llvm::dyn_cast<VecType>(type);
+        return vector && llvm::isa<NumType>(vector.getElementType()) &&
+               TypeInference::isNumberElementVector(v);
+    }
     return (c == carrier::stringVector || c == carrier::tupleVector) &&
            !TypeInference::elementVectorAliases(v).empty();
 }
@@ -213,6 +218,21 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
                TypeInference::vectorCallOf(use->getOwner()) == VectorCall::splitSpace;
     };
     if (llvm::isa_and_nonnull<ctjs::CallOp>(o)) { return separatesWhitespace(o); }
+    // The realm's namespace object is plumbing as the receiver of a built-in
+    // static call and the object its method is read from.
+    if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
+        const auto staticUse = [&](mlir::OpOperand & use) {
+            mlir::Operation * user = use.getOwner();
+            if (use.getOperandNumber() == 1 && TypeInference::builtinStaticOf(user)) {
+                return true;
+            }
+            return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&
+                   isVectorCallPlumbing(user);
+        };
+        if (!load.getResult().use_empty() && llvm::all_of(load.getResult().getUses(), staticUse)) {
+            return true;
+        }
+    }
     if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
         return load.getName() == "__ctbrowser_regexp" && !load.getResult().use_empty() &&
                llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
