@@ -113,6 +113,32 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             ownConstructor = true;
         }
     });
+    // Rule 1 for `x.constructor` outside a class's own methods: an instance
+    // of a class can be read that way wherever it flows, and such a read
+    // names a class this rewrite would not see.
+    llvm::DenseSet<mlir::Value> instanceThis;
+    for (auto & [key, cls] : jsClasses) {
+        llvm::SmallVector<ctjs::CreateClosureOp> members{cls.constructor};
+        for (const auto & entry : cls.methods) { members.push_back(entry.getValue()); }
+        for (const auto & entry : cls.getters) { members.push_back(entry.getValue()); }
+        for (ctjs::CreateClosureOp member : members) {
+            ctjs::FuncOp fn = targetOf(member);
+            if (fn && !fn.getBody().empty()) {
+                instanceThis.insert(fn.getBody().front().getArgument(ctjs::arg_receiver));
+            }
+        }
+    }
+    // ponytail: `this.constructor` inside an arrow reads the arrow's lexical
+    // `this`, not its receiver, so it counts as a stray read here until the
+    // arrow-`this` lowering (ArrowThis.cpp) gives the arrow the method's
+    // receiver.
+    mlir::Operation * strayConstructorRead = nullptr;
+    module.walk([&](ctjs::GetPropertyOp read) {
+        if (!strayConstructorRead && ctjs::constantKey(read.getKey()) == "constructor" &&
+            !instanceThis.contains(read.getObject())) {
+            strayConstructorRead = read;
+        }
+    });
     // Rule 4, from every heritage call in the module, including the ones
     // whose shape the class census does not recognise (and so records no
     // parent for): each side is the class a binding or closure names, and a
@@ -199,6 +225,11 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                    "in a static member may not be one class");
             continue;
         }
+        if (strayConstructorRead) {
+            refuse("`x.constructor` is read" + where(strayConstructorRead) +
+                   ", where `x` may be an instance of the class");
+            continue;
+        }
         if (ownConstructor) {
             refuse("an object writes its own `constructor`, so `this.constructor` may not "
                    "name the class");
@@ -261,6 +292,18 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (auto & entry : statics) {
             names.insert(entry.getValue().target.getBody().front().getArgument(0));
             selves.insert(entry.getValue().target.getBody().front().getArgument(0));
+        }
+        // The constructor's own closure and new.target, which a `new` of the
+        // class passes it: the direct call that replaces that `new` passes
+        // neither, so they must be names the rewrite resolves.
+        mlir::Value constructorCallee;
+        if (ctjs::FuncOp constructor = targetOf(cls.constructor);
+            constructor && !constructor.getBody().empty()) {
+            constructorCallee = constructor.getBody().front().getArgument(ctjs::arg_callee);
+            for (unsigned implicit : {1u, 2u}) {
+                names.insert(constructor.getBody().front().getArgument(implicit));
+                selves.insert(constructor.getBody().front().getArgument(implicit));
+            }
         }
         // `this.constructor` in a method or the constructor.
         llvm::SmallVector<ctjs::FuncOp> instanceFunctions{targetOf(cls.constructor)};
@@ -487,6 +530,13 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 mlir::Operation * user = use.getOwner();
                 if (llvm::isa<ctjs::RootOp>(user) || cls.setup.contains(user) ||
                     cls.definitions.contains(user) || isHomeEdge(user)) {
+                    continue;
+                }
+                // The constructor reaching its captures through its own
+                // closure, which the closure lift turns into parameters.
+                if (name == constructorCallee &&
+                    (llvm::isa<ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(user) ||
+                     (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() == 0))) {
                     continue;
                 }
                 if (llvm::isa<ctjs::ConstructOp>(user)) {

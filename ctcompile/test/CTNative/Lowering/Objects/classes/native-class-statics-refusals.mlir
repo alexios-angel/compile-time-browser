@@ -24,6 +24,12 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relay.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=RELAY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor-read.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CONSTRUCTORREAD --implicit-check-not=unreachable_refusals
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/init-fields.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=INITFIELDS --implicit-check-not=unreachable_refusals
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-or-create.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=GETORCREATE
@@ -50,6 +56,16 @@
 // A static member that is called and relays its capture of `base` to a
 // nested function through its own closure: the direct call passes no closure.
 // RELAY: ctnative.class_reason = "it has static method `make`; its static member `make` reads new.target or its own closure"
+//
+// A static getter read through an instance's `constructor` outside the class
+// (`read(item)`): the rewrite cannot see that read, so it keeps every static
+// member, and no getter is removed as unreachable while it can still run.
+// CONSTRUCTORREAD: ctnative.class_reason = "it has static getter `VALUE`; `x.constructor` is read in `read${{[0-9]+}}`, where `x` may be an instance of the class"
+//
+// A field initializer: the constructor passes its own closure to the VM's
+// __ctbrowser_init_fields, which reads the initializer off it, so the
+// constructor's closure is a use of the class the rewrite cannot resolve.
+// INITFIELDS: ctnative.class_reason = "it has static getter `SIDES`; `Shape` is used as a value by `ctjs.call` in `Shape${{[0-9]+}}`"
 //
 // Bootstrap's BaseComponent.getOrCreateInstance on two subclasses that
 // override a static getter: `new this(e)` constructs the subclass that the
@@ -123,5 +139,21 @@ function run() {
     class Y extends Base { static get NAME() { return "yy"; } size() { return 20; } }
     const a = X.getOrCreateInstance(1), b = Y.getOrCreateInstance(2);
     return a.size() + b.size() + X.NAME.length + Y.NAME.length + (X.getOrCreateInstance(1) === a ? 1 : 0);
+}
+var r = run();
+
+//--- constructor-read.js
+function read(saved) { return saved.constructor.VALUE; }
+function run() {
+    class Item { constructor(n) { this.n = n; } static get VALUE() { return 7; } }
+    const item = new Item(3);
+    return item.n + Item.VALUE + read(item);
+}
+var r = run();
+
+//--- init-fields.js
+function run() {
+    class Shape { n = 7; static get SIDES() { return 4; } }
+    return new Shape().n + Shape.SIDES;
 }
 var r = run();

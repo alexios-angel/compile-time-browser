@@ -181,6 +181,10 @@ UNTRUSTED_NATIVE = {
         ),
         (True,),
     ),
+    # Inside its own constructor a class's name is the constructor's own
+    # closure, so `Shape.SEED` there is a static read through that closure,
+    # which the rewrite resolves like any other name of the class.
+    **dict.fromkeys(("class-map-mixed-captures",), (False, True)),
     # The same, once optimization folds the computed key `"NA" + "ME"` to a
     # constant.
     **dict.fromkeys(("static-dynamic",), (True,)),
