@@ -2,15 +2,26 @@
 // a map result lowers with nothing refused and no iterator helper call left
 // in the lowered functions.
 // STRING iterates a String, which the fold indexes only as an array, so the
-// function is refused with the fold's reason and gets its body back.
+// function is refused with the fold's reason and gets its body back. PAIRS
+// destructures pair-vector rows in the loop head; REST, DEFAULT and NESTED
+// keep the iterator helpers and are refused with their pattern named, and
+// TEXT destructures a String, which is not a tuple or an array.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/pairs.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PAIRS --implicit-check-not=ctnative.not_native
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/patterns.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=PATTERNS
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/string.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STRING
 
 // EMIT: emitc.func @total
 // EMIT: emitc.func @longest
 // EMIT-NOT: __ctbrowser_iter
+// PAIRS: emitc.func @rows
+// PAIRS-NOT: __ctbrowser_iter
+// PATTERNS-DAG: @rest${{[0-9]+}}{{.*}}ctnative.not_native = "array destructuring with a rest element, which steps the iterator in a loop"
+// PATTERNS-DAG: @withDefault${{[0-9]+}}{{.*}}ctnative.not_native = "array destructuring with a default value"
+// PATTERNS-DAG: @nested${{[0-9]+}}{{.*}}ctnative.not_native = "a nested array destructuring pattern"
+// PATTERNS-DAG: @text${{[0-9]+}}{{.*}}ctnative.not_native = "array destructuring of {{.*}}, not a tuple or an array this tier holds"
 // STRING: @letters${{[0-9]+}}{{.*}}ctnative.not_native = "a for-of over {{.*}}, not an array this tier holds"
 // STRING: "__ctbrowser_for_of_open"
 
@@ -44,3 +55,35 @@ function letters(text) {
     return n;
 }
 var r = letters('abc');
+
+//--- pairs.js
+function rows() {
+    var lines = [];
+    var pairs = [];
+    pairs.push(['@x', 1.5]);
+    pairs.push(['color', 'red']);
+    for (const [name, value] of pairs) {
+        lines.push(name + '=' + value);
+    }
+    return lines.join(' ');
+}
+var r = rows();
+
+//--- patterns.js
+function rest(value) {
+    const [first, ...others] = value;
+    return 1;
+}
+function withDefault(value) {
+    const [first = 'none', second] = value;
+    return 2;
+}
+function nested(value) {
+    const [[a, b], c] = value;
+    return 3;
+}
+function text(value) {
+    const [a, b] = value;
+    return a.length + b.length;
+}
+var r = rest('ab') + withDefault('cd') + nested('ef') + text('xy');

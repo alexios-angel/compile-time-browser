@@ -260,6 +260,17 @@ bool admission::op(mlir::Operation * o) {
         return refuse("a for-of over " + printed(typeOf(read.getObject())) +
                       ", not an array this tier holds");
     }
+    // A folded array destructuring reads its value as a tuple or an array.
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+        read && o->hasAttr(kDestructureArray) &&
+        carrierOf(typeOf(read.getObject())) != carrier::tuple &&
+        !isElementArray(read.getObject(), typeOf(read.getObject()))) {
+        return refuse("array destructuring of " + printed(typeOf(read.getObject())) +
+                      ", not a tuple or an array this tier holds");
+    }
+    if (auto why = o->getAttrOfType<mlir::StringAttr>(kDestructureRefusal)) {
+        return refuse(why.str());
+    }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
         // The same carrier, or the String or Number alternative of one that

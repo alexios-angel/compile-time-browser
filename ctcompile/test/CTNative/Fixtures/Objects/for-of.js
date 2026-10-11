@@ -1,5 +1,6 @@
 // for-of over arrays this tier holds, as index loops: an array of Strings
-// from split, an array of Numbers from map, and a loop left by `break`.
+// from split, an array of Numbers from map, a loop left by `break`, and
+// `[name, value]` rows of a pair vector destructured in the loop head.
 // Every global is a scalar compared with the interpreter.
 function total(text) {
     var sum = 0;
@@ -29,7 +30,18 @@ function firstBig(text) {
     }
     return found;
 }
+function rows() {
+    var lines = [];
+    var pairs = [];
+    pairs.push(['@x', 1.5]);
+    pairs.push(['color', 'red']);
+    for (const [name, value] of pairs) {
+        lines.push(name + '=' + value);
+    }
+    return lines.join(' ');
+}
 var a = total('1,2,3');
 var b = longest('a,bbb,cc');
 var c = firstBig('1,7,9');
 var d = firstBig('1,2');
+var e = rows();
