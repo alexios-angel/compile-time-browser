@@ -23,6 +23,13 @@
   },
   "prefixes": [
     {
+      "path": "ctcompile/lib/CTNative/HostContract/DOM/",
+      "lit": [
+        "CTNative/HostContract/",
+        "CTNative/Browser/dom/"
+      ]
+    },
+    {
       "path": "ctcompile/lib/CTNative/Lowering/",
       "lit": [
         "CTNative/Lowering/Admission/",
