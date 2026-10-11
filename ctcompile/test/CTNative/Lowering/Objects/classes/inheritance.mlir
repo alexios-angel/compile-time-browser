@@ -33,7 +33,14 @@
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STATICS
 
-// CHECK: ctnative.inheritance_summary = {copies = {{[1-9][0-9]*}} : i64, erased = {{[1-9][0-9]*}} : i64}
+// The module lists every copy with the source function it stands for (the
+// forwarding constructor Alert never wrote is erased and its copy stands for
+// it), and every source function erased.
+// CHECK: ctnative.copies = {
+// CHECK-SAME: Alert${{[0-9]+}} = "Alert$8"
+// CHECK-SAME: _getConfig_Alert${{[0-9]+}} = "_getConfig$3"
+// CHECK-SAME: ctnative.inheritance_erased = [{{.*}}"Alert$8"{{.*}}"Config$2"]
+// CHECK-SAME: ctnative.inheritance_summary = {copies = {{[1-9][0-9]*}} : i64, erased = {{[1-9][0-9]*}} : i64}
 // CHECK-DAG: emitc.class @Alert
 // CHECK-DAG: emitc.class @Toast
 // CHECK-DAG: emitc.class @Base
