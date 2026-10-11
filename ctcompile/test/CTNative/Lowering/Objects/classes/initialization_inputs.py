@@ -1199,6 +1199,16 @@ def check_constructed_methods(args):
     return checked, refused
 
 
+def inheritance_delta(text):
+    """Functions the inheritance rewrite added (per-class copies) less those
+    it erased (unreachable parents), from the module's
+    ctnative.inheritance_summary; 0 when it changed nothing."""
+    found = re.search(
+        r"ctnative\.inheritance_summary = \{copies = (\d+) : i64, erased = (\d+) : i64\}", text
+    )
+    return int(found.group(1)) - int(found.group(2)) if found else 0
+
+
 def check_refusal(name, text, functions):
     """Assert that every one of `functions` in `text` is native or a named refusal.
 
@@ -1207,7 +1217,7 @@ def check_refusal(name, text, functions):
     remaining = len(FUNCTION.findall(text))
     reasons = REFUSAL.findall(text)
     if (
-        remaining + len(NATIVE.findall(text)) != functions
+        remaining + len(NATIVE.findall(text)) != functions + inheritance_delta(text)
         or len(reasons) != remaining
         or not all(reasons)
         or not re.search(r"ctjs.func @_script_\$0\(.*ctnative.not_native", text)

@@ -42,6 +42,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ClassInheritance.h"
 #include "ClosureLifter.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 
@@ -149,7 +150,11 @@ void closureLifter::classCensus() {
             }
             if (auto call = llvm::dyn_cast<ctjs::CallOp>(user);
                 call && callsIntrinsic(call, "__ctbrowser_class_heritage")) {
-                if (call.getArgs().size() != 3 || call.getArgs()[0] != ctor) {
+                if (call.getArgs().size() == 3 && call.getArgs()[0] != ctor) {
+                    refuse("a class that extends it was not flattened");
+                    continue;
+                }
+                if (call.getArgs().size() != 3) {
                     refuse("its heritage call is not (class, parent, prototype)");
                     continue;
                 }
@@ -157,8 +162,12 @@ void closureLifter::classCensus() {
                 cls.parent = boundConstructor(call.getArgs()[1]);
                 if (!cls.parent) { refuse("its parent is not one class this module defines"); }
                 cls.definitions.insert(user);
-                refuse("it extends another class; super() and inherited members are the next "
-                       "slice");
+                // ClassInheritance.cpp flattens every class it can; one still
+                // extending another carries its reason.
+                const auto why =
+                    cls.constructor->getAttrOfType<mlir::StringAttr>(kNativeInheritanceReason);
+                refuse("it extends another class: " +
+                       (why ? why.getValue() : llvm::StringRef("its chain was not flattened")));
                 continue;
             }
             if (auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
