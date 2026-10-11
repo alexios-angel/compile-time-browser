@@ -10,6 +10,7 @@
 
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "../../Analysis/OwnedMethodTableSlots.h"
+#include "../ForOf.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
@@ -252,6 +253,13 @@ std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    // A folded for-of indexes its source as an array (ForOf.cpp).
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+        read && o->hasAttr(kForOfArray) &&
+        !isElementArray(read.getObject(), typeOf(read.getObject()))) {
+        return refuse("a for-of over " + printed(typeOf(read.getObject())) +
+                      ", not an array this tier holds");
+    }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
         // The same carrier, or the String or Number alternative of one that

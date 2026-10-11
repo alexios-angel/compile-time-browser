@@ -30,6 +30,7 @@
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
 #include "Exceptions/Recovery.h"
+#include "ForOf.h"
 #include "Refinements.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
@@ -409,6 +410,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // Values a branch tested get a narrowed name in that branch, after the
         // lift has unboxed the cells it could; a fresh census answers which of
         // the remaining cells hold one value (Refinements.cpp).
+        // A for-of over an array keeps only its index loop (ForOf.cpp); a
+        // refused function gets its body back below.
+        ForOfOriginals forOfOriginals;
+        if (!hostContract) { forOfOriginals = foldArrayForOf(module); }
         if (!hostContract) {
             closureLifter cells{module};
             cells.census();
@@ -827,6 +832,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());
             setOrRemoveAttr(fn, "ctjs.not_structured", (*original)->getAttr("ctjs.not_structured"));
+        }
+        // After recovery's, which may hold the folded body.
+        for (auto & [fn, original] : forOfOriginals) {
+            if (!llvm::is_contained(accepted, fn)) { fn.getBody().takeBody(original->getBody()); }
         }
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
             lower.censusDOM(*admittedDOM,
