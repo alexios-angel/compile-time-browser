@@ -89,6 +89,10 @@ bool closureLifter::isHomeEdge(mlir::Operation * op) {
 /// `ctnative.class_setup`.
 void closureLifter::classCensus() {
     jsClasses.clear();
+    // The census runs more than once (the static-member rewrite runs it
+    // first), so a mark from an earlier run must not outlive a class that
+    // this run refuses.
+    module.walk([&](mlir::Operation * op) { op->removeAttr(kNativeClassSetup); });
     module.walk([&](ctjs::CallOp call) {
         if (!callsIntrinsic(call, "__ctbrowser_class_defined") || call.getArgs().size() != 1) {
             return;
