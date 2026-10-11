@@ -22,16 +22,17 @@ The native application driver remains incomplete; native compiler development us
 under `/tmp/ctbrowser-devbox-build.lock`, then run the local formatter before
 committing. There is no CI. Do not build on the small local machine.
 
-## Summary (updated 2026-10-10)
-- Active goal: Bootstrap; status: in progress
+## Summary (updated 2026-10-11, run stopped)
+- Active goal: Bootstrap; status: in progress, run STOPPED by the user
 - Last verified commit on ctcompile-v1: 8b3cf623b Merge queue/9 into
   ctcompile-v1 (rounds queue/6 to queue/9; focused checks only, no full suite)
 - Workload check: `check-workload.py bootstrap` -> VERDICT: NOT DONE; admission
-  41 of 574 at queue/10-int, 43 of 574 at queue/11-int (both stacked on 8b3cf623b,
-  not landed: a soundness regression in Objects/array/borrow.mlir is being
-  bisected); `check-workload.py fixture` -> VERDICT: DONE
-- Team (2026-10-11): 12 authors and 2 validators over three build boxes
-  (devbox, devbox-aws, devbox-gcp) pooled by tools/devbox-pool.py
+  43 of 574 at queue/13-int e844594af (not landed, red; see the 2026-10-11 stop
+  entry below); `check-workload.py fixture` -> VERDICT: DONE
+- Build boxes: NONE. The user ran `terraform destroy` for the Azure, AWS and GCP
+  boxes on 2026-10-11, so every remote tree, DEVBOX_DIR copy and remote log is
+  gone; tools/devbox-settings.json still names them. Ask the user where to build
+  before resuming; do not recreate a box.
 - First gap: admission. The largest blockers are class statics plus
   inheritance (authors 1 and 9), callbacks passed as arguments (authors 4, 6,
   8, 12), Popper's modifier engine (author-7) and component instances held in
@@ -54,7 +55,52 @@ committing. There is no CI. Do not build on the small local machine.
   - admission may count functions removed as unreachable (each with a
     `removed: unreachable` row) and reachability-pruned ones; removal is only for
     code nothing that can run reaches, never a way around a refusal;
-  - only Azure, AWS and GCP build boxes.
+  - only Azure, AWS and GCP build boxes (all three destroyed 2026-10-11).
+
+### 2026-10-11 claude-ctcompile: run stopped, queue/13 unlanded
+The user stopped the run after a usage-limit stop and destroyed all three build
+boxes. Nothing below is on ctcompile-v1; every SHA is a local branch in the main
+repository (worktrees under ~/Downloads/claude/wt/). Nothing was pushed.
+
+queue/13-int tip 093de02ba (validator-2's worktree). Merged: lane-inherit
+3e1cde2ec, bootstrap-cssdump-2 718c99000, author-1 2ff26b2e9, lane-events
+50127d327, lane-callbacks c0d18180b, lane-shapes efac771c3, lane-config
+e6d9f8b46, lane-arrowthis 4480826b3, lane-selectors 04f102eb8. Last round
+(e844594af, without initialization.mlir): admission 43 of 574, fixture DONE,
+59/61 ctest, 307/317 lit. initialization.mlir 904/905 at e844594af. Known reds
+and their fixes, none merged yet:
+- Runtime/Object.hpp:23 stray `};` from lane-config 26ad6d7c5 breaks the
+  native-handlers and native-json builds; delete it (author-10, not committed).
+- css-dump fn$5 no longer removed (ctnative.refine has no reachability
+  contract): bootstrap-cssdump-2 eb3eb6e35. host-callbacks capturesStyle:
+  f77cf3bde.
+- class-map-inherited-base-string (initialization.mlir, terminal-publication):
+  now native, prints a=993 like Node; move it from PREPARED_ONLY to the native
+  list and add a witness for "string field requires definite string reads and
+  writes" (lane-config owner).
+- values.mlir FORGED, return-carrier TWORETURNS and the Closures/Maps
+  *-proof.mlir witnesses: a4121e82c's removal of unread statics removes the
+  refused witness; make each witness reachable again (lane-handlers, uncommitted).
+- operands.mlir DYNKEY and static-tables dynamic.js: lane-handlers D3 replaces
+  each with a VM differential plus a witness only the old clause refuses
+  (uncommitted).
+- dom/basics.mlir: lane-callbacks and lane-shapes each break it alone.
+- inheritance.mlir ARROW: lane-inherit 9004ca58c against lane-arrowthis.
+- Lattice and startup.test: measured 204 checks and 111 targets / 675 calls /
+  17 entry functions at e844594af; re-pin once on the final tip.
+Not yet merged: lane-promise e2fa8f13e (S1 shared cells 9ad5510fe, Events.hpp
+checkpoint), bootstrap-singletons 8ca16b392 (class tag type, export proof),
+bootstrap-host-5 ef319264a (Console.hpp include fix), lane-newthis 4cb401c35
+plus uncommitted `new this` hunks.
+
+Largest measured blockers on the bundle (reachable, solely blocked): the
+`x.constructor` read in fn$456 (291, author-1's rule from 2ff26b2e9; narrow it to
+rewritten classes); class bindings escaping through statics, the g/q helpers and
+the export object; callbacks passed as arguments (93); prototype methods (58);
+Popper (~80; probe 7f020f715, step 1 = closure-set fields of records in vectors);
+12 classes constructed only through run-once static cells. Parked work:
+author-11's shape 2 patch and author-2's Popper step 1 diff and probe, copied
+to ~/Downloads/claude/parked-2026-10-11/ (outside the repository).
 
 ### 2026-10-11 claude-ctcompile: rounds queue/6 to queue/9
 Merged as 8b3cf623b. Layers: author-2 8540e0b59, 47ba6ff19 (global
