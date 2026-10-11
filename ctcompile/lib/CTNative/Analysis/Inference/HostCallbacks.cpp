@@ -29,8 +29,17 @@ bool TypeInference::isHostCallbackCall(mlir::Operation * op) {
 
 bool TypeInference::isTimerCall(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
-    return call && (call->hasAttr(kNativeHostTimer) ||
-                    isRealmGlobal(call.getCallee().getDefiningOp(), "setTimeout"));
+    if (!call) { return false; }
+    if (call->hasAttr(kNativeHostTimer)) { return true; }
+    mlir::Operation * callee = call.getCallee().getDefiningOp();
+    return isRealmGlobal(callee, "setTimeout") || isRealmGlobal(callee, "setInterval");
+}
+
+bool TypeInference::isTimerClear(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || call.getArgs().size() != 1) { return false; }
+    mlir::Operation * callee = call.getCallee().getDefiningOp();
+    return isRealmGlobal(callee, "clearTimeout") || isRealmGlobal(callee, "clearInterval");
 }
 
 bool TypeInference::isHostCallbackParameter(mlir::Value value) {
@@ -49,10 +58,10 @@ bool TypeInference::isHostCallbackParameter(mlir::Value value) {
 /// safe because the host defines the member and the program never writes
 /// through it:
 /// - `.devicePixelRatio`: a Number read (TypeInference::domReadType);
-/// - `.addEventListener` read only to call it with a listener closure lifting
-///   specialised (isHostCallbackCall), and the global object as that call's
-///   receiver: the runtime's listener table keeps the listener, and no
-///   property of the window is read or written.
+/// - `.addEventListener` or `.removeEventListener` read only to call it with a
+///   listener closure lifting specialised (isHostCallbackCall), and the global
+///   object as that call's receiver: the runtime's listener table keeps or
+///   drops the listener, and no property of the window is read or written.
 /// Other lanes add their inert host reads here.
 bool TypeInference::isInertWindowLoad(mlir::Operation * op) {
     auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(op);
@@ -67,11 +76,69 @@ bool TypeInference::isInertWindowLoad(mlir::Operation * op) {
         if (!read || use.getOperandNumber() != 0) { return false; }
         const llvm::StringRef key = ctjs::constantKey(read.getKey());
         if (key == "devicePixelRatio") { return true; }
-        if (key != "addEventListener" || !read.getResult().hasOneUse()) { return false; }
+        if ((key != "addEventListener" && key != "removeEventListener") ||
+            !read.getResult().hasOneUse()) {
+            return false;
+        }
         auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
         return call && isHostCallbackCall(call) && call.getCallee() == read.getResult() &&
                call.getReceiver() == load.getResult();
     });
+}
+
+bool TypeInference::isEventConstruct(mlir::Operation * op) {
+    auto construct = llvm::dyn_cast_or_null<ctjs::ConstructOp>(op);
+    return construct && (construct.getArgs().size() == 1 || construct.getArgs().size() == 2) &&
+           isRealmGlobal(construct.getCallee().getDefiningOp(), "Event") &&
+           construct.getNewTarget() == construct.getCallee() && eventInitFields(op);
+}
+
+std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>> TypeInference::
+    eventInitFields(mlir::Operation * op) {
+    auto construct = llvm::cast<ctjs::ConstructOp>(op);
+    llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>> fields;
+    if (construct.getArgs().size() < 2) { return fields; }
+    auto literal = construct.getArgs()[1].getDefiningOp<ctjs::CreateObjectOp>();
+    if (!literal) { return std::nullopt; }
+    for (mlir::OpOperand & use : literal.getResult().getUses()) {
+        if (use.getOwner() == op) {
+            // Only as the init, never also as the type.
+            if (use.getOperandNumber() != 3) { return std::nullopt; }
+            continue;
+        }
+        auto define = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+        if (!define || use.getOperandNumber() != 0 || !define->hasAttr("ctjs.define_own")) {
+            return std::nullopt;
+        }
+        const llvm::StringRef key = ctjs::constantKey(define.getKey());
+        if (key != "bubbles" && key != "cancelable") { return std::nullopt; }
+        fields.emplace_back(key, define.getValue());
+    }
+    return fields;
+}
+
+bool TypeInference::isEventInitPart(mlir::Operation * op) {
+    mlir::Value literal;
+    if (llvm::isa_and_nonnull<ctjs::CreateObjectOp>(op)) {
+        literal = op->getResult(0);
+    } else if (auto define = llvm::dyn_cast_or_null<ctjs::SetPropertyOp>(op)) {
+        literal = define.getObject();
+    }
+    if (!literal || !literal.getDefiningOp<ctjs::CreateObjectOp>()) { return false; }
+    return llvm::any_of(literal.getUsers(), [&](mlir::Operation * user) {
+        auto construct = llvm::dyn_cast<ctjs::ConstructOp>(user);
+        return construct && construct.getArgs().size() == 2 && construct.getArgs()[1] == literal &&
+               isEventConstruct(construct);
+    });
+}
+
+bool TypeInference::isDispatchEventCall(mlir::Operation * op) {
+    auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
+    if (!call || call.getArgs().size() != 1 || ctjs::methodKey(call) != "dispatchEvent") {
+        return false;
+    }
+    auto read = ctjs::receiverMethod(call);
+    return read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse();
 }
 
 bool TypeInference::isEventCall(mlir::Operation * op) {
@@ -95,6 +162,12 @@ mlir::Type TypeInference::hostCallbackType(mlir::Operation * op,
     if (isEventCall(op) && event(llvm::cast<ctjs::CallOp>(op).getReceiver())) {
         return OptType::get(c, BottomType::get(c));
     }
+    // new Event(type, init) is an Event; el.dispatchEvent(e) answers whether
+    // no listener canceled it.
+    if (isEventConstruct(op)) { return EventType::get(c); }
+    if (isDispatchEventCall(op) && event(llvm::cast<ctjs::CallOp>(op).getArgs()[0])) {
+        return BoolType::get(c);
+    }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && event(read.getObject())) {
         const llvm::StringRef key = ctjs::constantKey(read.getKey());
         if (key == "type") { return defaultStringType(c); }
@@ -102,31 +175,35 @@ mlir::Type TypeInference::hostCallbackType(mlir::Operation * op,
         if (key == "defaultPrevented") { return BoolType::get(c); }
         return {};
     }
+    if (isTimerClear(op)) { return OptType::get(c, BottomType::get(c)); }
     if (!isHostCallbackCall(op)) { return {}; }
     auto listener = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(
         op, op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback));
     if (!listener || listener.getBody().empty()) { return {}; }
     mlir::Block & entry = listener.getBody().front();
-    // Operands are the callee, the receiver, the event type or the delay,
-    // then the captures, which the callback takes after its implicit
-    // arguments, then a listener's capture flag.
+    // A removal passes no captures and calls nothing.
+    if (op->hasAttr(kNativeHostRemove)) { return OptType::get(c, BottomType::get(c)); }
+    // Operands are the callee, the receiver, the event type or the delay, a
+    // listener's identity, then the captures, which the callback takes after
+    // its implicit arguments, then a listener's capture flag.
+    const unsigned begin = op->hasAttr(kNativeHostIdentified) ? 4 : 3;
     const auto end =
         static_cast<unsigned>(operands.size()) - (op->hasAttr(kNativeHostCapture) ? 1 : 0);
-    for (unsigned i = 3; i < end; ++i) {
-        const unsigned index = ctjs::implicit_arguments + i - 3;
+    for (unsigned i = begin; i < end; ++i) {
+        const unsigned index = ctjs::implicit_arguments + i - begin;
         const mlir::Type type = operands[i]->getValue().getType();
         if (!type || index >= entry.getNumArguments()) { continue; }
         TypeLattice * lattice = getLatticeElement(entry.getArgument(index));
         propagateIfChanged(lattice, lattice->join(TypeValue{type}));
     }
     // A listener's declared parameter, after its captures, is the Event.
-    if (const unsigned index = ctjs::implicit_arguments + end - 3;
+    if (const unsigned index = ctjs::implicit_arguments + end - begin;
         !isTimerCall(op) && index < entry.getNumArguments()) {
         TypeLattice * lattice = getLatticeElement(entry.getArgument(index));
         propagateIfChanged(lattice, lattice->join(TypeValue{EventType::get(c)}));
     }
-    // setTimeout answers the timer's handle.
-    if (isTimerCall(op)) { return NumType::getDouble(c); }
+    // setTimeout and setInterval answer the timer's handle.
+    if (isTimerCall(op)) { return TimerType::get(c); }
     return OptType::get(c, BottomType::get(c));
 }
 

@@ -50,6 +50,8 @@ mlir::Attribute scalarConstant(mlir::Value value) {
 struct table {
     llvm::StringMap<mlir::Attribute> scalars;
     llvm::StringSet<> arrays;
+    /// Every field's key operand, in the order the literal defines them.
+    llvm::SmallVector<mlir::Value> order;
     llvm::SmallVector<mlir::Operation *> parts;
 };
 
@@ -90,6 +92,7 @@ Reason arrayField(ctjs::CreateArrayOp array, llvm::StringRef key, table & into) 
 /// Why `literal`, stored into its static by `write`, is not a table of
 /// constants complete before that write; fills `into` otherwise.
 Reason literalFields(ctjs::CreateObjectOp literal, ctjs::CellSetOp write, table & into) {
+    llvm::SmallVector<ctjs::SetPropertyOp> stores;
     for (mlir::OpOperand & use : literal.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
         if (user == write.getOperation() && use.getOperandNumber() == 1) { continue; }
@@ -117,7 +120,13 @@ Reason literalFields(ctjs::CreateObjectOp literal, ctjs::CellSetOp write, table 
                    "`, which is not a constant number, boolean, string, null or array of them";
         }
         into.parts.push_back(store);
+        stores.push_back(store);
     }
+    // Every store is in the write's block (checked above), so block order is
+    // definition order.
+    llvm::sort(stores,
+               [](ctjs::SetPropertyOp a, ctjs::SetPropertyOp b) { return a->isBeforeInBlock(b); });
+    for (ctjs::SetPropertyOp store : stores) { into.order.push_back(store.getKey()); }
     return std::nullopt;
 }
 
@@ -127,6 +136,8 @@ struct readers {
     const table & fields;
     const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> & calls;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, mlir::Attribute>> reads;
+    /// Spreads of the table into a fresh literal, written out once proved.
+    llvm::SmallVector<ctjs::CopyPropsOp> spreads;
     llvm::DenseSet<mlir::Operation *> followed;
 
     Reason check(mlir::Value value) {
@@ -146,6 +157,18 @@ struct readers {
                     return "is read at `" + key.str() + "`, which the literal does not define";
                 }
                 reads.emplace_back(read, found->second);
+                continue;
+            }
+            if (auto spread = llvm::dyn_cast<ctjs::CopyPropsOp>(user);
+                spread && use.getOperandNumber() == 1) {
+                if (!spread.getTarget().getDefiningOp<ctjs::CreateObjectOp>()) {
+                    return std::string("is spread into an object that is not a fresh literal");
+                }
+                if (!fields.arrays.empty()) {
+                    return "is spread while it holds the array field `" +
+                           fields.arrays.begin()->first().str() + "`";
+                }
+                spreads.push_back(spread);
                 continue;
             }
             if (llvm::isa<ctjs::ReturnOp>(user)) {
@@ -173,6 +196,28 @@ struct readers {
         return std::nullopt;
     }
 };
+
+/// Writes out `spread`, a proved spread of table `name`: per field, a read
+/// marked as the table's (and as a spread's, since the table may still be
+/// undefined) and an own definition on the target.
+void expandSpread(ctjs::CopyPropsOp spread, mlir::StringAttr name, const table & fields) {
+    mlir::OpBuilder builder{spread};
+    const mlir::Location where = spread.getLoc();
+    const mlir::Value source = spread.getSource();
+    for (mlir::Value definedKey : fields.order) {
+        const llvm::StringRef text = ctjs::constantKey(definedKey);
+        const mlir::Value key =
+            ctjs::ConstantOp::create(builder, where, definedKey.getType(),
+                                     ctjs::StringAttr::get(builder.getContext(), text));
+        auto read = ctjs::GetPropertyOp::create(builder, where, source.getType(), source, key);
+        read->setAttr(kNativeStaticTable, name);
+        read->setAttr(kNativeStaticTableField, fields.scalars.lookup(text));
+        read->setAttr(kNativeStaticTableSpread, builder.getUnitAttr());
+        ctjs::SetPropertyOp::create(builder, where, spread.getTarget(), key, read.getResult())
+            ->setAttr(ctjs::defineOwnMarker, builder.getUnitAttr());
+    }
+    spread.erase();
+}
 
 } // namespace
 
@@ -244,6 +289,7 @@ void markStaticTables(mlir::ModuleOp module) {
             read->setAttr(kNativeStaticTable, name);
             read->setAttr(kNativeStaticTableField, constant);
         }
+        for (ctjs::CopyPropsOp spread : uses.spreads) { expandSpread(spread, name, fields); }
     }
 }
 

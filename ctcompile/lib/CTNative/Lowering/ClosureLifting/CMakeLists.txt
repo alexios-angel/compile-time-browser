@@ -1,9 +1,14 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
   ArrayCallbacks.cpp
+  ArrowThis.cpp
   Calls.cpp
   Callbacks.cpp
   Cells.cpp
   Classes.cpp
+  ClassInheritance.cpp
+  ClassInheritance.h
+  ClassStatics.cpp
+  ClosureSets.cpp
   Bindings.cpp
   BorrowedCallbacks.cpp
   Captures.cpp

@@ -19,7 +19,17 @@
 # RUN: %t/table-clang | FileCheck %s --check-prefix=OBSERVATION
 # RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=OBSERVATION
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=OBSERVATION
-# RUN: for name in written dynamic argument stored nested; do \
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/spread.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/spread.mlir
+# RUN: FileCheck %s --check-prefix=SPREAD --implicit-check-not=ctnative.not_native < %t/spread.mlir
+# RUN: ctjs-opt %t/spread.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/spread.cpp
+# RUN: %gxx -O2 %t/spread.cpp -o %t/spread-gcc
+# RUN: %t/spread-gcc | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: %clangxx -O2 %t/spread.cpp -o %t/spread-clang
+# RUN: %t/spread-clang | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: %native_reference %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: for name in written dynamic argument stored nested spread-array spread-enumerated; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc; done \
 # RUN:   | FileCheck %s --check-prefix=REFUSED
@@ -41,6 +51,19 @@
 # REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is passed as an argument
 # REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is stored into another object, array or variable
 # REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that holds `allowList`, which is not a constant number, boolean, string, null or array of them
+
+# A spread of the table writes out one read per field. The first spread runs
+# before the run-once function stores the table, so it copies nothing and the
+# target's fields read as undefined; the second copies every field.
+# SPREAD: call_opaque "ctnative::table_field_or_undefined<&static_config_table_t::interval, ctnative::nullable_scalar>"
+# SPREAD: call_opaque "ctnative::table_field_or_undefined<&static_config_table_t::pause, ctnative::nullable_string>"
+# SPREAD-OBSERVATION: r=16112
+
+# A spread of a table with an array field is refused by name. So is a spread
+# whose target's keys are enumerated: the target is not a struct then, so a
+# field the table did not copy can never read as one that holds undefined.
+# REFUSED: holding an object literal that is spread while it holds the array field `offset`
+# REFUSED: global `Object` is !ctnative.boxed, not a number
 
 #--- table.js
 var r = (function () {
@@ -106,3 +129,38 @@ var r = (function () {
     const get = make();
     return get().interval;
 })();
+
+#--- spread.js
+var r = (function () {
+    function make() {
+        return () => config;
+    }
+    const get = make();
+    var early = {...get(), extra: 1};
+    var config = {interval: 5000, wrap: true, parent: null, pause: "hover"};
+    var late = {...get(), extra: 2};
+    return (early.interval === undefined ? 1 : 0) + late.interval + (late.wrap ? 100 : 0) +
+        (late.parent === null ? 10 : 0) + early.extra + (late.pause === "hover" ? 1000 : 0) +
+        (early.pause === undefined ? 10000 : 0);
+})();
+
+#--- spread-array.js
+var r = (function () {
+    var config = {interval: 5000, offset: [0, 2]};
+    function make() {
+        return () => ({...config});
+    }
+    const get = make();
+    return get().interval;
+})();
+
+#--- spread-enumerated.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => Object.keys({...config}).length;
+    }
+    const get = make();
+    return get();
+})();
+

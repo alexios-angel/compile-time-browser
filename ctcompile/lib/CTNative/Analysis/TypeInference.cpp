@@ -407,6 +407,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
     // `pending` set while every stored value is still unvisited.
     const auto element = [&](llvm::ArrayRef<mlir::Value> members) -> mlir::Type {
         mlir::Type joined = joinLattices(op, elementVectorStores(members), mlir::Type{});
+        joined = presentElements(op, members, joined);
         if (splitsAString(members)) { joined = meet(joined, stringType(c)); }
         return joined;
     };
@@ -509,7 +510,14 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                 return {};
             }
         }
-        return row.result == BuiltinStatic::Result::string ? stringType(c) : doubleType(c);
+        switch (row.result) {
+        case BuiltinStatic::Result::string: return stringType(c);
+        case BuiltinStatic::Result::elementVector: return VecType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::undefined: return absentType(c);
+        case BuiltinStatic::Result::number: return doubleType(c);
+        }
+        return {};
     }
     case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
     case VectorCall::callback: return arrayCallbackType(op, operands, pending);
@@ -706,7 +714,11 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             return answer(StaticTableType::get(c, name.getValue()));
         }
         if (auto field = op->getAttr(kNativeStaticTableField)) {
-            return answer(typeOfConstant(c, field));
+            // A spread's read of a table that may still be undefined.
+            const auto type = typeOfConstant(c, field);
+            return answer(op->hasAttr(kNativeStaticTableSpread)
+                              ? TypeValue::join(TypeValue{type}, TypeValue{absentType(c)}).getType()
+                              : type);
         }
     }
 
@@ -823,6 +835,10 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
     }
+    // Instances a registry Map owns (Inference/Instances.cpp).
+    if (const auto instance = instanceTypeOf(op, operands)) {
+        return *instance ? answer(*instance) : mlir::success();
+    }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && isProvedString(operands[0]) && constantKey(read.getKey()) == "length") {
         return answer(doubleType(c));
@@ -874,6 +890,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // element, an element's text members and children, the root's client
     // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
     if (!ownedRoots_ && !domEntry_) {
+        if (const mlir::Type member = elementMemberType(op, operands)) { return answer(member); }
         if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
         if (const mlir::Type registered = hostCallbackType(op, operands)) {
             return answer(registered);

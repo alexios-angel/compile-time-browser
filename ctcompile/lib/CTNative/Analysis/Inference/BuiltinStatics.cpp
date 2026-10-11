@@ -1,8 +1,8 @@
 //===- BuiltinStatics.cpp - Calls of built-in static methods --------------===//
 //
 // The table of static methods of the realm's built-in namespace objects
-// (`Number.parseInt`, `Number.parseFloat`, `Math.min`) that native code calls
-// through the runtime's built-in objects, such as
+// (`Number.parseInt`, `Number.parseFloat`, `Math.min`, `console.log`) that
+// native code calls through the runtime's built-in objects, such as
 // `ctnative::Number.parseInt(s, radix)` and `ctnative::Math.min(a, b)`, and the
 // recognition of a call of one.
 //
@@ -34,6 +34,15 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
     {"Number", "parseFloat", "ctnative::Number.parseFloat", {Param::string}, 1, 1},
     // Math.min (21.3.2.25) of exactly two Numbers.
     {"Math", "min", "ctnative::Math.min", {Param::number, Param::number}, 2, 2},
+    // console.log (WHATWG Console 1.1.6) of up to three printable values,
+    // one line in the VM's format (Runtime/Console.hpp).
+    {"console",
+     "log",
+     "ctnative::console.log",
+     {Param::printable, Param::printable, Param::printable},
+     3,
+     1,
+     Result::undefined},
     // String.prototype.toLowerCase (22.1.3.28) of a String receiver.
     {"String",
      "toLowerCase",
@@ -42,6 +51,25 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
      1,
      1,
      Result::string,
+     true},
+    // Element.prototype.querySelectorAll (DOM 4.2.6) and querySelector:
+    // Bootstrap's SelectorEngine calls them through the prototype on its root
+    // element, which may be the document element read as a default.
+    {"Element",
+     "querySelectorAll",
+     "ctnative::Element.prototype.querySelectorAll.call",
+     {Param::element, Param::string},
+     2,
+     2,
+     Result::elementVector,
+     true},
+    {"Element",
+     "querySelector",
+     "ctnative::Element.prototype.querySelector.call",
+     {Param::element, Param::string},
+     2,
+     2,
+     Result::nullableElement,
      true},
 };
 

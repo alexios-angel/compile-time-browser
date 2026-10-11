@@ -39,6 +39,8 @@ void lowering::finish() {
                 break;
             }
         }
+        // A class field holding a closure set names its members' functions.
+        declareClosureSetMembers(b, lowered); // ClosureSets.cpp
         // One emitc.class per object shape (not per allocation site), with
         // public fields only. A shape family whose members disagree on a field
         // type becomes a class template: the varying fields' types are template
@@ -128,7 +130,9 @@ void lowering::declareGlobals() {
     bool needsTimers = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
-        needsTimers |= call.getCallee() == "ctnative::setTimeout";
+        needsTimers |= llvm::is_contained({"ctnative::setTimeout", "ctnative::setInterval",
+                                           "ctnative::clearTimeout", "ctnative::clearInterval"},
+                                          call.getCallee());
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");

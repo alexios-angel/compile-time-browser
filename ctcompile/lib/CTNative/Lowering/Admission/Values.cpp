@@ -394,7 +394,10 @@ bool admission::lowersToNothing(mlir::Value v) {
     if (isNativeMapBookkeeping(o)) { return true; }
     if (isDeclarationClosure(o) || isKeyOnlyString(o) || isVectorKeyString(o)) { return true; }
     if (isLiftedClosure(o) || isUnboxedCell(o)) { return true; }
-    if (isVectorCallPlumbing(o) || isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    if (isVectorCallPlumbing(o) || isPageGlobal(o) || isPageMethodRead(o) ||
+        TypeInference::isEventInitPart(o) || o->hasAttr(kNativeHostDeclared)) {
+        return true;
+    }
     // A specialised replace call's method read and RegExp literal, and the
     // constant strings they read: the call spells them itself.
     if (TypeInference::consumedByStringCallback(o) ||

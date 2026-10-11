@@ -412,8 +412,15 @@ def CTNativeTestInstanceRegistries : Pass<"ctnative-test-instance-registries", "
     `ctnative.instance_registry` is "proved" or the refusal sentence, and
     `ctnative.instance_non_null` on a function lists the declared parameters
     proved to hold an instance. It changes nothing else, so the proof can be
-    tested before the lowering consumes it.
+    tested before the lowering consumes it. With `lifted`, the closure
+    lifter's binding steps run first, through the object-table calls
+    (Singletons.cpp), as in the lowering, where the proof sees the IR they
+    leave.
   }];
+  let options = [
+    Option<"lifted", "lifted", "bool", /*default=*/"false",
+           "Run the closure lifter's binding steps first, through the object-table calls">
+  ];
 }
 
 #endif // CTCOMPILE_CTNATIVE_TRANSFORMS_PASSES_TD

@@ -151,12 +151,30 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
             add(selected.thenYield().getOperand(index));
             add(selected.elseYield().getOperand(index));
+        } else if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(definition)) {
+            // A loop's exits, as the importer structures an early return
+            // from inside it: one arm per exit.
+            borrowed = true;
+            const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
+            for (mlir::Region & arm : cases->getRegions()) {
+                add(llvm::cast<mlir::scf::YieldOp>(arm.front().getTerminator()).getOperand(index));
+            }
         } else if (llvm::isa<ctjs::CreateArrayOp, ctjs::CallDirectOp>(definition)) {
             // A literal, or the array a direct call returned by value.
             owners.push_back(definition);
         } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(definition);
                    read && ctjs::constantKey(read.getKey()) == "children") {
             collection = true;
+            owners.push_back(definition);
+        } else if (vectorCallOf(definition) == VectorCall::builtinStatic) {
+            // querySelectorAll's snapshot (Inference/Elements.cpp): a NodeList,
+            // which has no push, join or sort.
+            collection = true;
+            owners.push_back(definition);
+        } else if (llvm::isa<ctjs::IterableOp>(definition)) {
+            add(definition->getOperand(0));
+        } else if (spreadCopySource(definition)) {
+            // `[].concat(...a)`: a new array (Inference/Elements.cpp).
             owners.push_back(definition);
         } else if (const VectorCall made = vectorCallOf(definition);
                    made == VectorCall::split || made == VectorCall::splitSpace ||
@@ -195,6 +213,11 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                     before(loop, use.getOperandNumber());
                     continue;
                 }
+                if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(yield->getParentOp())) {
+                    borrowed = true;
+                    add(cases.getResult(use.getOperandNumber()));
+                    continue;
+                }
                 auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
                 if (!selected || use.getOperandNumber() >= selected.getNumResults()) {
                     return fail("an array yielded out of a region that is not an if or a loop");
@@ -203,6 +226,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                 add(selected.getResult(use.getOperandNumber()));
                 continue;
             }
+            // The spread loop's iterator over the array, and the copy
+            // `[].concat(...a)` makes of it (Inference/Elements.cpp).
+            if (llvm::isa<ctjs::IterableOp>(user)) {
+                add(user->getResult(0));
+                continue;
+            }
+            if (spreadCopySource(user) == member) { continue; }
             if (llvm::isa<ctjs::AppendOp>(user)) {
                 // Operand 1 is the element: an array appended into another
                 // array has escaped into it.
@@ -297,7 +327,15 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
     if (borrowed && !parameter) {
         if (!function) { return fail("an array outside a function"); }
         for (mlir::Operation * owner : owners) {
-            if (owner->getBlock() != &function.getBody().front()) {
+            // An empty literal in a branch that runs at most once per call
+            // (`return [i]` and `return []` in a loop's exit arms) can take
+            // its frame slot at the function's entry: making an empty array
+            // has no effect to move.
+            auto literal = llvm::dyn_cast<ctjs::CreateArrayOp>(owner);
+            const bool hoistable = literal && literal.getElements().empty() &&
+                                   !owner->getParentOfType<mlir::scf::WhileOp>() &&
+                                   !owner->getParentOfType<mlir::scf::ForOp>();
+            if (owner->getBlock() != &function.getBody().front() && !hoistable) {
                 return fail("an array created inside a branch or a loop and carried out of it - "
                             "its storage has to be one frame slot");
             }

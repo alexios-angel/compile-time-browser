@@ -10,7 +10,8 @@
 // dispatch, the capture phase runs from the window down before the target and
 // the bubble phase, and an event the program made with new Event is
 // dispatched with its own flags and keeps the extra fields its listeners
-// wrote.
+// wrote; and listeners are added once per function identity and removed by it,
+// even by themselves while they run.
 //
 //===----------------------------------------------------------------------===//
 
@@ -212,20 +213,63 @@ void test_a_program_made_event_and_its_extra_fields() {
             order += e.extra_if() ? e.extra_if()->written_by : std::string{"none"};
         });
     // new Event(type) neither bubbles nor can be canceled.
-    ctnative::js_event_object quiet = ctnative::Event(js_string{"custom"});
+    ctnative::js_event quiet = ctnative::Event(js_string{"custom"});
     CHECK(static_cast<bool>(EventTarget.prototype.dispatchEvent.call(leaf, quiet)));
     CHECK(!static_cast<bool>(quiet.defaultPrevented()));
     CHECK_EQ(order, std::string{});
     // With both flags the root hears it, and the cancel and the field are read
     // back from the same object afterwards.
-    ctnative::js_event_object loud = ctnative::Event(
+    ctnative::js_event loud = ctnative::Event(
         js_string{"custom"}, ctnative::event_init{js_boolean_t{true}, js_boolean_t{true}});
     CHECK(!static_cast<bool>(EventTarget.prototype.dispatchEvent.call(leaf, loud)));
     CHECK(static_cast<bool>(loud.defaultPrevented()));
     CHECK_EQ(order, std::string{"leaf"});
-    CHECK(loud.view().extra_if() != nullptr);
-    CHECK_EQ(loud.view().extra().written_by, std::string{"leaf"});
+    CHECK(loud.extra_if() != nullptr);
+    CHECK_EQ(loud.extra().written_by, std::string{"leaf"});
     event_listeners::program().forget(bound.page.doc());
+}
+
+void test_remove_by_identity() {
+    bound_page bound;
+    const ctnative::page_scope scope{bound.page};
+    const js_element_t root = *ctnative::document.documentElement();
+    std::string order;
+    const auto h = ctnative::identify([&] { order += 'h'; });
+    const auto g = ctnative::identify([&] { order += 'g'; });
+    const js_string click{"click"};
+    const js_boolean_t capture{true};
+    EventTarget.prototype.addEventListener.call(root, click, h);
+    // The same function again is ignored; with the capture flag it is a
+    // second registration.
+    EventTarget.prototype.addEventListener.call(root, click, h);
+    EventTarget.prototype.addEventListener.call(root, click, g);
+    EventTarget.prototype.addEventListener.call(root, click, g, capture);
+    event_listeners & table = event_listeners::program();
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{3});
+    CHECK_EQ(order, std::string{"ghg"});
+    // Removal matches the capture flag too.
+    EventTarget.prototype.removeEventListener.call(root, click, g.identity);
+    order.clear();
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{2});
+    CHECK_EQ(order, std::string{"gh"});
+    EventTarget.prototype.removeEventListener.call(root, click, g.identity, capture);
+    // A listener that removes itself finishes its run, and the next listener
+    // of the same step still runs.
+    ctnative::callable_identity self{};
+    const auto once = ctnative::identify([&] {
+        order += 'o';
+        EventTarget.prototype.removeEventListener.call(root, click, self);
+    });
+    self = once.identity;
+    EventTarget.prototype.addEventListener.call(root, click, once);
+    EventTarget.prototype.addEventListener.call(root, click, g);
+    order.clear();
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{3});
+    CHECK_EQ(order, std::string{"hog"});
+    order.clear();
+    CHECK_EQ(table.dispatch(root, "click"), std::size_t{2});
+    CHECK_EQ(order, std::string{"hg"});
+    table.forget(bound.page.doc());
 }
 
 } // namespace
@@ -237,5 +281,6 @@ int main() {
     test_the_event_a_listener_receives();
     test_capture_then_target_then_bubble();
     test_a_program_made_event_and_its_extra_fields();
+    test_remove_by_identity();
     REPORT("native_events");
 }

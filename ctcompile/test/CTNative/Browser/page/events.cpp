@@ -20,6 +20,7 @@
 #ifdef CTBROWSER_TEST_NATIVE
 #define CTNATIVE_DOM 1
 #include "ctcompile/CTNative/Runtime/Events.hpp"
+#include "ctcompile/CTNative/Runtime/Page.hpp"
 using fixture_page = ctbrowser::page::static_page;
 using fixture_options = ctbrowser::page::static_page_options;
 #else
@@ -46,6 +47,9 @@ ctbrowser::node_id by_id(const ctbrowser::document & doc, std::string_view id,
 void click(fixture_page & page, std::string_view id) {
     const ctbrowser::node_id target = by_id(page.doc(), id, page.doc().root());
 #ifdef CTBROWSER_TEST_NATIVE
+    // Listeners run with the page bound, as the program's entries do: a
+    // listener may read the document.
+    const ctnative::page_scope scope{page};
     (void)ctnative::event_listeners::program().dispatch(
         ctnative::js_element_t{{&page.doc(), target}, page.styles()}, "click");
 #else
