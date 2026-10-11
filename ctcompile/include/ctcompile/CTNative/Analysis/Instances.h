@@ -66,6 +66,11 @@ struct InstanceRegistry {
     /// answer does not depend on which of the two an absent instance is, so a
     /// null `std::shared_ptr` answers them.
     llvm::SmallVector<mlir::Operation *> exactTests;
+    /// The yields of a falsy value that is not an instance into a join that
+    /// only truthiness reads (`map.has(k) && map.get(k) || null`), by yield
+    /// and operand: markInstanceRegistries yields null there instead, which
+    /// every reader treats alike, so the join is an instance or neither.
+    llvm::SmallVector<std::pair<mlir::Operation *, unsigned>> falsyYields;
 };
 
 /// The mark markInstanceRegistries puts on each method of a proved class: the

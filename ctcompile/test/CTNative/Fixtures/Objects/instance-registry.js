@@ -10,7 +10,9 @@
 //   b.size 10, then dispose() answers 0 + 1 entry left: 19
 //   getInstance("b") is null after dispose: 119
 //   a read straight from the Map, under `!= null`: + 4 * 1000 = 4119
-//   one entry left: 4120, for each of the two runs (`first` and `total`),
+//   findInstance("a") through `has(k) && get(k) || null`: + 4 * 10000 = 44119
+//   findInstance("b") is null: 144119
+//   one entry left: 144120, for each of the two runs (`first` and `total`),
 //   each with a registry of its own
 function run() {
     const registry = new Map();
@@ -33,6 +35,11 @@ function run() {
     function getInstance(key) {
         return registry.get(key) || null;
     }
+    // Bootstrap's Data.get: `has` answers false for a missing key, which
+    // only `|| null` reads, so the join is an instance or null.
+    function findInstance(key) {
+        return (registry.has(key) && registry.get(key)) || null;
+    }
     function sizeOf(widget) {
         return widget.size;
     }
@@ -46,6 +53,9 @@ function run() {
     if (getInstance("b") === null) { total = total + 100; }
     const c = registry.get("a");
     if (c != null) { total = total + c.size * 1000; }
+    const d = findInstance("a");
+    if (d !== null) { total = total + d.size * 10000; }
+    if (findInstance("b") === null) { total = total + 100000; }
     return total + registry.size;
 }
 var first = run();

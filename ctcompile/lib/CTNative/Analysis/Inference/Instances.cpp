@@ -643,6 +643,28 @@ class registryProof {
         return true;
     }
 
+    /// The falsy yields whose join only truthiness reads: every use of the
+    /// joined value is a truthiness test, or a yield where that test holds.
+    void collectFalsyYields() {
+        for (mlir::Value value : maybe) {
+            const bool truthinessOnly = llvm::all_of(value.getUses(), [&](mlir::OpOperand & use) {
+                mlir::Operation * user = use.getOwner();
+                return llvm::isa<ctjs::TruthyOp>(user) ||
+                       (llvm::isa<mlir::scf::YieldOp>(user) && guardedAt(value, user, nullptr));
+            });
+            if (!truthinessOnly) { continue; }
+            for (const source & from : sources.lookup(value)) {
+                auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(from.site);
+                if (!yield || !from.value || nullishBits(from.value) ||
+                    maybe.contains(from.value)) {
+                    continue;
+                }
+                const auto index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+                out.falsyYields.emplace_back(yield, index);
+            }
+        }
+    }
+
     /// Whether every value joined into an instance is an instance, null or
     /// undefined.
     bool checkJoins() {
@@ -905,6 +927,7 @@ public:
         // it can be stored anywhere. So no field of an instance can reach the
         // Map or an instance, whatever else it holds.
         if (!checkCaptors()) { return false; }
+        collectFalsyYields();
         for (ctjs::ConstructOp made : constructions) { out.instances.push_back(made.getResult()); }
         out.methods = methods;
         llvm::append_range(out.readBack, maybe);
@@ -1008,6 +1031,13 @@ std::vector<InstanceRegistry> markInstanceRegistries(mlir::ModuleOp module) {
         for (ctjs::FuncOp method : registry.methods) {
             method->setAttr(kNativeInstanceMethod,
                             registry.constructor->getAttr(kNativeInstanceClass));
+        }
+        for (const auto & [yield, index] : registry.falsyYields) {
+            mlir::OpBuilder at(yield);
+            auto null = ctjs::ConstantOp::create(at, yield->getLoc(),
+                                                 ctjs::ValueType::get(module.getContext()),
+                                                 ctjs::NullAttr::get(module.getContext()));
+            yield->setOperand(index, null);
         }
         for (mlir::Operation * test : registry.exactTests) {
             test->setAttr(kNativeInstanceTest, mlir::UnitAttr::get(module.getContext()));
