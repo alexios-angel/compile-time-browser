@@ -38,6 +38,7 @@
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
@@ -165,10 +166,7 @@ bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
 /// it an int32 loses an observable difference. tools/check/type-oracle.py
 /// counts NUM_NEGATIVE_ZERO as not-an-i32 for the same reason, and the two
 /// must agree.
-mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
-    mlir::MLIRContext * c = constant.getContext();
-    mlir::Attribute value = constant.getValue();
-
+mlir::Type typeOfConstant(mlir::MLIRContext * c, mlir::Attribute value) {
     if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr>(value)) { return absentType(c); }
     if (llvm::isa<ctjs::BooleanAttr>(value)) { return boolType(c); }
     if (llvm::isa<ctjs::StringAttr>(value)) { return stringType(c); }
@@ -181,6 +179,10 @@ mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
     }
     // A BigInt literal. CTNative has no type for one, so no type is claimed.
     return {};
+}
+
+mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
+    return typeOfConstant(constant.getContext(), constant.getValue());
 }
 
 } // namespace
@@ -657,6 +659,17 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
         return mlir::success();
     };
+
+    // A run-once static's constant table (Inference/StaticTables.cpp): the
+    // literal is the table, and a proved read is the constant in its field.
+    if (auto name = op->getAttrOfType<mlir::StringAttr>(kNativeStaticTable)) {
+        if (llvm::isa<ctjs::CreateObjectOp>(op)) {
+            return answer(StaticTableType::get(c, name.getValue()));
+        }
+        if (auto field = op->getAttr(kNativeStaticTableField)) {
+            return answer(typeOfConstant(c, field));
+        }
+    }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && domEntry_->isSymbolDescription(read)) {

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -174,7 +175,8 @@ void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
             if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
-            if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) {
+            if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity) ||
+                object->hasAttr(kNativeStaticTable)) {
                 return;
             }
             const auto fields = fieldsOf(object.getResult());

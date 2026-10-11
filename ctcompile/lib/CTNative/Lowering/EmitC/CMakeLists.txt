@@ -18,6 +18,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   SymbolTransport.h
   Environments.cpp
   MethodTables.cpp
+  StaticTables.cpp
   Emitter.h
   Runtime.h
 )
