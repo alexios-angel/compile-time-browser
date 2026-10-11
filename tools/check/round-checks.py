@@ -2,6 +2,7 @@
 """Print the focused checks that cover a change, for a validator to paste.
 
   tools/check/round-checks.py <base> <tip>     # the checks for git diff base..tip
+  tools/check/round-checks.py --owners <base> <tip>  # also who claims the selected tests
   tools/check/round-checks.py --self-test       # checks the selection; no git, no build
 
 For each file changed between <base> and <tip> it selects lit paths (under
@@ -21,7 +22,9 @@ Exit 0 with "nothing to check" when no change maps to a check (only docs).
 """
 
 import argparse
+import fnmatch
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -29,6 +32,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 MAPPING = Path(__file__).resolve().with_name("round-checks.json")
+# The team's claims journal tool (AGENT_SYNC overrides), for --owners.
+AGENT_SYNC = Path(os.environ.get("AGENT_SYNC", Path.home() / "Downloads/claude/agent-sync.py"))
 TESTS = "ctcompile/test/"
 LIT_SUFFIXES = (".mlir", ".td", ".test")  # lit.cfg.py's config.suffixes
 LIT_EXCLUDED = "Inputs"  # lit.cfg.py's config.excludes
@@ -125,6 +130,39 @@ def report(chosen, tests):
     return "\n".join(out), None
 
 
+def owners(lit, claims):
+    """For each selected lit path, the agents whose active claims cover test
+    paths in it: {path: sorted agents}. A claim path may end in a glob."""
+    found = {}
+    for selected in sorted(lit):
+        full = TESTS + selected
+        agents = {
+            claim["agent"]
+            for claim in claims
+            if claim["path"].startswith(TESTS)
+            and (
+                claim["path"].startswith(full)
+                if selected.endswith("/")
+                else fnmatch.fnmatch(full, claim["path"]) or claim["path"] == full
+            )
+        }
+        if agents:
+            found[selected] = sorted(agents)
+    return found
+
+
+def active_claims():
+    """The active claims agent-sync.py reports (one JSON object per line)."""
+    output = subprocess.run(
+        [sys.executable, str(AGENT_SYNC), "read", "--active", "--limit", "0"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    claims = [json.loads(line) for line in output.splitlines() if line.startswith("{")]
+    return [claim for claim in claims if claim.get("type") == "CLAIM" and claim.get("path")]
+
+
 def git(*args):
     return subprocess.run(
         ["git", "-C", str(ROOT), *args], capture_output=True, text=True, check=True
@@ -180,6 +218,15 @@ def self_test():
     whole.update(commands=set(), notes=set(), excluded=set(), lit_flags=set())
     assert report(whole, tests)[0] is None
     assert report(dict(whole, lit={""}), tests)[0] is None
+    # --owners: a claim inside a selected directory, or matching a selected
+    # test by glob, names its agent; others do not.
+    claims = [
+        {"agent": "a1", "path": "ctcompile/test/X/narrow.*"},
+        {"agent": "a2", "path": "ctcompile/test/X/deep/y.mlir"},
+        {"agent": "a3", "path": "ctcompile/lib/X/a.cpp"},
+    ]
+    assert owners({"X/narrow.mlir", "A/"}, claims) == {"X/narrow.mlir": ["a1"]}
+    assert owners({"X/"}, claims) == {"X/": ["a1", "a2"]}
     print("self-test passed")
 
 
@@ -190,6 +237,11 @@ def main():
     parser.add_argument("base", nargs="?")
     parser.add_argument("tip", nargs="?")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument(
+        "--owners",
+        action="store_true",
+        help="also print, per selected lit path, who holds active claims on tests in it",
+    )
     args = parser.parse_args()
     if args.self_test:
         self_test()
@@ -213,6 +265,13 @@ def main():
         print(f"round-checks: refused: {why}", file=sys.stderr)
         return 2
     print(text)
+    if args.owners:
+        found = owners(chosen["lit"], active_claims())
+        print("owners (active claims on selected tests; ask them when one fails):")
+        for path, agents in found.items():
+            print(f"  {path}: {', '.join(agents)}")
+        if not found:
+            print("  none")
     if unmapped:
         print(f"unmapped ({len(unmapped)}; add them to round-checks.json if they need checks):")
         print("".join(f"  {path}\n" for path in unmapped), end="")

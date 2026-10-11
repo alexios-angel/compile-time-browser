@@ -137,6 +137,9 @@ with it.
   - **Unmapped files.** Files that select nothing are listed, so a gap in the
     mapping is visible. It would have selected `Lowering/Objects/array/borrow.mlir`
     for the queue/9 range (`e3482cd02..408583072`) that missed it.
+  - **Owners.** `--owners` also lists, per selected lit path, the agents
+    whose active `agent-sync.py` claims cover tests in it, so a validator
+    knows whom to ask when one fails (`AGENT_SYNC` names the tool).
   - **Proof.** `--self-test` checks the selection on a planted mapping
     without git or a build.
 - `tools/mingw/build-boost-mingw.sh` — compiles Boost.URL and Boost.ProgramOptions
