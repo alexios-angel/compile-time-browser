@@ -432,6 +432,29 @@ def emit_cpp(ctx, name):
     ctx.each(name, list(ctx.scripts), body)
 
 
+def dom_toolchain(ctx):
+    """For build-native's "dom" option: the Clang the build chose for programs
+    that use ctbrowser's DOM (Native.cmake's %dom_clang, recorded in the
+    generated lit.site.cfg.py), and the include flags and libraries that
+    ctcompile/test/CTNative/Browser/dom/dom.py's link_options() gives the lit
+    drivers: Boost and simdutf headers; the DOM, Style and Core libraries."""
+    site = ctx.build / "ctcompile/test/lit.site.cfg.py"
+    match = site.exists() and re.search(r'^config\.dom_clang = "([^"]+)"', site.read_text(), re.M)
+    if not match:
+        raise SetupError(
+            f"{site} names no dom_clang; configure the build: tools/remote-build.sh ctjs-opt"
+        )
+    dom = harness("CTNative.Browser.dom.dom")
+    paths = argparse.Namespace(build=ctx.build, include=ctx.root / "ctbrowser/include")
+    try:
+        includes, libraries = dom.link_options(paths, selectors=True)
+    except (RuntimeError, OSError) as error:
+        raise SetupError(
+            f"{error}; build it first: tools/remote-build.sh ctbrowser-dom ctbrowser-style"
+        )
+    return match[1], includes, [str(library) for library in libraries]
+
+
 @stage(
     "build-native",
     "the C++ compiles with GCC and Clang under the gate's flags (-std=c++23 -Werror ...)",
@@ -446,6 +469,10 @@ def build_native(ctx, name):
         raise SetupError(str(error))
     flags = [*cpp_harness.FLAGS, *ctx.options(name).get("flags", [])]
     link = ctx.options(name).get("link", [])
+    if ctx.options(name).get("dom"):
+        clang, includes, libraries = dom_toolchain(ctx)
+        compilers = [compilers[0], clang]
+        flags, link = [*flags, *includes], [*link, *libraries]
 
     def body(item):
         cpp, binaries = ctx.artifacts[item]["cpp"], []
@@ -497,7 +524,8 @@ def no_vm_gate(ctx, name):
 
 @stage(
     "script-run",
-    "every native binary prints the same globals as the VM (ctcompile-test-native-reference)",
+    "every native binary prints the same globals as the VM (ctcompile-test-native-reference), "
+    "and the VM prints at least one",
     "The native program computes something the VM does not; reduce the script to the first "
     "differing global and compare the lowering with the interpreter's semantics.",
     needs="build-native",
@@ -521,6 +549,11 @@ def script_run(ctx, name):
             ctx.add(name, item, "FAIL", "the VM reference failed on this script", details)
             return
         want = globals_of(expected)
+        if not want:
+            # Nothing to compare: a native program that printed nothing would match.
+            summary = "the VM printed no globals, so the comparison would prove nothing"
+            ctx.add(name, item, "FAIL", summary, tail(notes))
+            return
         for binary in ctx.artifacts[item]["binaries"]:
             code, actual, errors = ctx.run_split([binary], name, item)
             got = globals_of(actual)
@@ -775,6 +808,14 @@ def probe_sleep(ctx, name):
     ctx.each(name, list(ctx.scripts), body)
 
 
+@stage("probe-binary", "a native binary that prints a=1", "write it", needs="discover")
+def probe_binary(ctx, name):
+    def body(item):
+        ctx.artifacts[item] = {"binaries": [ctx.root / "native.sh"]}
+        ctx.add(name, item, "PASS", "probe")
+    ctx.each(name, list(ctx.scripts), body)
+
+
 @stage("probe-missing", "a capability that does not exist yet", "build it", needs="discover")
 def probe_missing(ctx, name):
     ctx.each(name, list(ctx.scripts), lambda item: ctx.add(name, item, "MISSING", "absent"))
@@ -802,7 +843,17 @@ def self_test():
             "stale": {"scripts": ["missing.js"]},
             "gap": {"scripts": ["a.js"], "stages": ["discover", "probe-missing"]},
             "entry": {"scripts": [{"pattern": "a.js", "string_entries": ["f", "g"]}]},
+            "globals": {"scripts": ["a.js"], "stages": ["discover", "probe-binary", "script-run"]},
+            "vacuous": {"scripts": ["b.js"], "stages": ["discover", "probe-binary", "script-run"]},
         }
+        # script-run's reference prints a=1 for a.js and nothing for b.js; the
+        # native binary prints a=1.
+        reference = root / "ctcompile/test/ctcompile-test-native-reference"
+        reference.parent.mkdir(parents=True)
+        reference.write_text('#!/bin/sh\ncase "$1" in */a.js) echo a=1;; esac\n')
+        (root / "native.sh").write_text("#!/bin/sh\necho a=1\n")
+        for program in (reference, root / "native.sh"):
+            program.chmod(0o755)
         workloads["slow"]["options"] = {"probe-sleep": {"timeout": 0.5}}
         for name, body in workloads.items():
             (defs / f"{name}.json").write_text(json.dumps(body))
@@ -825,6 +876,9 @@ def self_test():
         assert blocked and blocked[0]["status"] == "BLOCKED", slow["results"]
         assert results["unknown"]["verdict"] == "CANNOT CHECK", results["unknown"]
         assert results["stale"]["verdict"] == "CANNOT CHECK", results["stale"]
+        assert results["globals"]["verdict"] == "DONE", results["globals"]
+        vacuous = [r for r in results["vacuous"]["results"] if r["stage"] == "script-run"]
+        assert vacuous[0]["status"] == "FAIL" and "no globals" in vacuous[0]["summary"], vacuous
         gap = results["gap"]
         assert gap["verdict"] == "NOT DONE" and gap["first_gap"]["status"] == "MISSING", gap
         spent = check(loaded["slow"], root, time.monotonic() + 0.3, root)

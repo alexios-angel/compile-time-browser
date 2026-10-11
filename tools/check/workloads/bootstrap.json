@@ -7,6 +7,7 @@
   "pages": ["ctbrowser/examples/pages/bootstrap-*.html"],
   "ctests": ["bootstrap_layout", "css_syntax"],
   "options": {
+    "build-native": {"dom": true},
     "native-run": {
       "runner": ["ctest", "--test-dir", "{build}", "--output-on-failure", "--no-tests=error",
                  "-R", "^{test}[.]native$"]
