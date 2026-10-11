@@ -526,7 +526,9 @@ struct closureLifter {
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
-    void census();
+    /// With `cellFactsOnly`, only what isConstantCell reads: no class census
+    /// and no shared-cell census, so it writes no attribute.
+    void census(bool cellFactsOnly = false);
 
     void singleWriteCensus();
 
