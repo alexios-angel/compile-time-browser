@@ -1,45 +1,310 @@
 {
-  "about": "tools/check/round-checks.py's mapping from changed paths to the focused checks that cover them. `prefixes`: a changed file under `path` selects these lit paths (relative to ctcompile/test; a trailing / means a directory), CTests (exact names), build targets and commands. The longest matching prefix wins, so a shared helper can be given a narrow entry under a broad one. A changed lit test or test helper under ctcompile/test with no entry selects itself (a test file) or its directory (a helper). `always` is added whenever anything is selected. Edit freely; round-checks.py --self-test does not read this file.",
+  "about": "tools/check/round-checks.py's mapping from changed paths to the focused checks that cover them. `prefixes`: a changed file under `path` selects these lit paths (relative to ctcompile/test; a trailing / means a directory), CTests (exact names), build targets and commands. The longest matching prefix wins, so a shared helper can be given a narrow entry under a broad one. A changed lit test or test helper under ctcompile/test with no entry selects itself (a test file) or its directory (a helper). `always` is added whenever anything is selected. `heavy` tests are left out of every selection (a negative lookahead in the filter) unless a changed file starts with one of their `when` prefixes; then they run with their `lit_flags`. Edit freely; round-checks.py --self-test does not read this file.",
   "always": {
-    "lit": ["CTNative/Lowering/Objects/", "CTNative/Lowering/Closures/", "CTNative/Optimization/",
-            "CTNative/Fixtures/"],
-    "targets": ["ctjs-opt", "ctjs-translate", "ctcompile-tool", "ctcompile-test-native-reference",
-                "ctcompile-fixture-inputs"],
-    "commands": ["python3 tools/check/check-workload.py fixture"],
-    "notes": ["CTNative/Fixtures reads build-time pipeline modules: build ctcompile-fixture-inputs, or the Fixtures tests fail on stale inputs (ctcompile/test/README.md)."]
+    "lit": [
+      "CTNative/Lowering/Objects/",
+      "CTNative/Lowering/Closures/",
+      "CTNative/Optimization/",
+      "CTNative/Fixtures/"
+    ],
+    "targets": [
+      "ctjs-opt",
+      "ctjs-translate",
+      "ctcompile-tool",
+      "ctcompile-test-native-reference",
+      "ctcompile-fixture-inputs"
+    ],
+    "commands": [
+      "python3 tools/check/check-workload.py fixture"
+    ],
+    "notes": [
+      "CTNative/Fixtures reads build-time pipeline modules: build ctcompile-fixture-inputs, or the Fixtures tests fail on stale inputs (ctcompile/test/README.md)."
+    ]
   },
   "prefixes": [
-    {"path": "ctcompile/lib/CTNative/Lowering/", "lit": ["CTNative/Lowering/"]},
-    {"path": "ctcompile/lib/CTNative/Lowering/EmitC/", "lit": ["CTNative/Lowering/", "Target/Cpp/"]},
-    {"path": "ctcompile/lib/CTNative/Lowering/ClosureLifting/",
-     "lit": ["CTNative/Lowering/", "CTNative/Ownership/"]},
-    {"path": "ctcompile/lib/CTNative/Analysis/", "lit": ["CTNative/Lowering/", "Analysis/"],
-     "ctests": ["ctcompile_type_inference"], "targets": ["ctcompile-test-type-inference"]},
-    {"path": "ctcompile/lib/CTNative/Reachability/", "lit": ["CTNative/Lowering/"]},
-    {"path": "ctcompile/lib/CTNative/HostContract/", "lit": ["CTNative/HostContract/"]},
-    {"path": "ctcompile/lib/CTNative/PartialEvaluation/", "lit": ["CTNative/PartialEvaluation/"]},
-    {"path": "ctcompile/lib/CTNative/Specialization/", "lit": ["CTNative/Specialization/"]},
-    {"path": "ctcompile/lib/CTNative/Supercompilation/", "lit": ["CTNative/Supercompilation/"]},
-    {"path": "ctcompile/lib/CTNative/BindingTime/", "lit": ["CTNative/BindingTime/"]},
-    {"path": "ctcompile/lib/CTNative/IR/", "lit": ["CTNative/IR/", "CTNative/Lowering/"]},
-    {"path": "ctcompile/include/ctcompile/CTNative/IR/", "lit": ["CTNative/IR/", "CTNative/Lowering/"]},
-    {"path": "ctcompile/include/ctcompile/CTNative/Analysis/", "lit": ["CTNative/Lowering/"]},
-    {"path": "ctcompile/include/ctcompile/CTNative/Runtime/", "lit": ["CTNative/Browser/page/"],
-     "ctests": ["ctcompile_native_runtime"], "targets": ["ctcompile-test-native-runtime"]},
-    {"path": "ctcompile/lib/CTJS/", "lit": ["CTJS/"]},
-    {"path": "ctcompile/lib/Target/Cpp/", "lit": ["Target/Cpp/"]},
-    {"path": "ctcompile/test/Runtime/", "ctests": ["ctcompile_native_runtime"],
-     "targets": ["ctcompile-test-native-runtime"]},
-    {"path": "ctcompile/test/lit.cfg.py", "lit": []},
-    {"path": "ctcompile/test/cmake/", "lit": []},
-    {"path": "ctcompile/test/CTNative/harness.py", "lit": []},
-    {"path": "ctcompile/test/Target/Cpp/harness.py", "lit": []},
-    {"path": "ctcompile/test/CTNative/Checks/", "lit": []},
-    {"path": "tools/check/check-workload.py",
-     "commands": ["python3 tools/check/check-workload.py --self-test"]},
-    {"path": "tools/check/native-claims.py",
-     "commands": ["python3 tools/check/native-claims.py --self-test"],
-     "ctests": ["ctcompile_native_claims_bootstrap", "ctcompile_native_claims_default_bootstrap"]},
-    {"path": "tools/check/round-checks", "commands": ["python3 tools/check/round-checks.py --self-test"]}
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/",
+      "lit": [
+        "CTNative/Lowering/Admission/",
+        "CTNative/Lowering/Emission/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/Admission/",
+      "lit": [
+        "CTNative/Lowering/Admission/",
+        "CTNative/Lowering/Objects/",
+        "CTNative/Lowering/Closures/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/EmitC/",
+      "lit": [
+        "CTNative/Lowering/Emission/",
+        "CTNative/Lowering/Objects/",
+        "CTNative/Lowering/Closures/",
+        "Target/Cpp/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/Exceptions/",
+      "lit": [
+        "CTNative/Lowering/Exceptions/",
+        "CTNative/ExceptionRecovery/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/ObjectValues/",
+      "lit": [
+        "CTNative/Lowering/Objects/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/StringValues/",
+      "lit": [
+        "CTNative/Lowering/Scalars/",
+        "CTNative/Lowering/Objects/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/PrintDeduced.cpp",
+      "lit": [
+        "CTNative/Checks/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/PruneDeadStores.cpp",
+      "lit": [
+        "CTNative/Lowering/Emission/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/ClosureLifting/",
+      "lit": [
+        "CTNative/Lowering/Closures/",
+        "CTNative/Lowering/Objects/classes/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Lowering/ClosureLifting/ArrayCallbacks.cpp",
+      "lit": [
+        "CTNative/Lowering/Closures/",
+        "CTNative/Lowering/Objects/array-callbacks.mlir"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Analysis/",
+      "lit": [
+        "Analysis/Types/"
+      ],
+      "ctests": [
+        "ctcompile_type_inference"
+      ],
+      "targets": [
+        "ctcompile-test-type-inference"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Analysis/Inference/",
+      "lit": [
+        "Analysis/Types/"
+      ],
+      "ctests": [
+        "ctcompile_type_inference",
+        "ctcompile_ctnative_lattice"
+      ],
+      "targets": [
+        "ctcompile-test-type-inference",
+        "ctcompile-test-ctnative-lattice"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Analysis/EscapeAnalysis",
+      "lit": [
+        "Analysis/Escape/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Analysis/NativeMap",
+      "lit": [
+        "CTNative/Lowering/Maps/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Analysis/Owned",
+      "lit": [
+        "CTNative/Ownership/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Reachability/",
+      "lit": []
+    },
+    {
+      "path": "ctcompile/lib/CTNative/HostContract/",
+      "lit": [
+        "CTNative/HostContract/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/PartialEvaluation/",
+      "lit": [
+        "CTNative/PartialEvaluation/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Specialization/",
+      "lit": [
+        "CTNative/Specialization/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/Supercompilation/",
+      "lit": [
+        "CTNative/Supercompilation/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/BindingTime/",
+      "lit": [
+        "CTNative/BindingTime/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTNative/IR/",
+      "lit": [
+        "CTNative/IR/"
+      ]
+    },
+    {
+      "path": "ctcompile/include/ctcompile/CTNative/IR/",
+      "lit": [
+        "CTNative/IR/"
+      ]
+    },
+    {
+      "path": "ctcompile/include/ctcompile/CTNative/Analysis/",
+      "lit": [
+        "Analysis/Types/"
+      ],
+      "ctests": [
+        "ctcompile_type_inference"
+      ],
+      "targets": [
+        "ctcompile-test-type-inference"
+      ]
+    },
+    {
+      "path": "ctcompile/include/ctcompile/CTNative/Runtime/",
+      "lit": [],
+      "ctests": [
+        "ctcompile_native_runtime"
+      ],
+      "targets": [
+        "ctcompile-test-native-runtime"
+      ]
+    },
+    {
+      "path": "ctcompile/include/ctcompile/CTNative/Runtime/Page.hpp",
+      "lit": [
+        "CTNative/Browser/page/"
+      ],
+      "ctests": [
+        "ctcompile_native_runtime"
+      ],
+      "targets": [
+        "ctcompile-test-native-runtime"
+      ]
+    },
+    {
+      "path": "ctcompile/include/ctcompile/CTNative/Runtime/Browser.hpp",
+      "lit": [
+        "CTNative/Browser/page/"
+      ],
+      "ctests": [
+        "ctcompile_native_runtime"
+      ],
+      "targets": [
+        "ctcompile-test-native-runtime"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/CTJS/",
+      "lit": [
+        "CTJS/"
+      ]
+    },
+    {
+      "path": "ctcompile/lib/Target/Cpp/",
+      "lit": [
+        "Target/Cpp/"
+      ]
+    },
+    {
+      "path": "ctcompile/test/Runtime/",
+      "ctests": [
+        "ctcompile_native_runtime"
+      ],
+      "targets": [
+        "ctcompile-test-native-runtime"
+      ]
+    },
+    {
+      "path": "ctcompile/test/lit.cfg.py",
+      "lit": []
+    },
+    {
+      "path": "ctcompile/test/cmake/",
+      "lit": []
+    },
+    {
+      "path": "ctcompile/test/CTNative/harness.py",
+      "lit": []
+    },
+    {
+      "path": "ctcompile/test/Target/Cpp/harness.py",
+      "lit": []
+    },
+    {
+      "path": "ctcompile/test/CTNative/Checks/",
+      "lit": []
+    },
+    {
+      "path": "tools/check/check-workload.py",
+      "commands": [
+        "python3 tools/check/check-workload.py --self-test"
+      ]
+    },
+    {
+      "path": "tools/check/native-claims.py",
+      "commands": [
+        "python3 tools/check/native-claims.py --self-test"
+      ],
+      "ctests": [
+        "ctcompile_native_claims_bootstrap",
+        "ctcompile_native_claims_default_bootstrap"
+      ]
+    },
+    {
+      "path": "tools/check/round-checks",
+      "commands": [
+        "python3 tools/check/round-checks.py --self-test"
+      ]
+    }
+  ],
+  "heavy": [
+    {
+      "test": "CTNative/Lowering/Objects/classes/initialization.mlir",
+      "when": [
+        "ctcompile/lib/CTNative/Lowering/ClosureLifting/Class",
+        "ctcompile/lib/CTNative/Lowering/ClosureLifting/Constructors",
+        "ctcompile/lib/CTNative/Lowering/ClosureLifting/Methods",
+        "ctcompile/lib/CTNative/Lowering/ClosureLifting/RunOnce",
+        "ctcompile/lib/CTNative/Lowering/ClosureLifting/Singletons",
+        "ctcompile/test/CTNative/Lowering/Objects/classes/"
+      ],
+      "lit_flags": "--timeout=9000",
+      "note": "initialization.mlir runs 905 class fixtures (about 3 minutes on 32 cores, far longer on a loaded box)"
+    }
   ]
 }
