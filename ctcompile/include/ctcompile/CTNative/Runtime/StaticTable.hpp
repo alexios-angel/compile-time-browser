@@ -10,9 +10,16 @@
 
 #pragma once
 
+#include "String.hpp"
+
 #include <array>
+#include <concepts>
+#include <cstddef>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace ctnative {
 
@@ -58,5 +65,58 @@ template <auto Field, class Result> Result table_field_or_undefined(static_table
         return to_nullable_string(value);
     }
 }
+
+/// A constant table whose fields all have one carrier. The emitted struct
+/// names its keys in definition order, `static constexpr
+/// std::array<std::string_view, N> keys`, and its values in the same order,
+/// `std::array<value_type, N> values() const`.
+template <class Table>
+concept uniform_table = requires(const Table & table) {
+    typename Table::value_type;
+    { Table::keys.size() } -> std::convertible_to<std::size_t>;
+    { table.values() };
+};
+
+namespace detail {
+/// The table `table` points to, or the TypeError ToObject throws for
+/// undefined (ECMA-262 7.1.18): the static was not stored yet.
+template <class Table> const Table & table_object(static_table_ptr table) {
+    if (table == nullptr) {
+        throw std::invalid_argument("TypeError: Cannot convert undefined or null to object");
+    }
+    return *static_cast<const Table *>(table);
+}
+} // namespace detail
+
+/// Object.keys, Object.values and Object.entries (ECMA-262 20.1.2.18, .22,
+/// .5) of a constant table, in its definition order, which is
+/// OrdinaryOwnPropertyKeys order: the proof admits no array-index key.
+/// Spelled with the table's struct, `ctnative::object_table<T>::entries(p)`.
+/// Each answer is an element vector whose size is known at compile time, so
+/// the C++ compiler can unroll a loop over it.
+template <uniform_table Table> struct object_table {
+    static constexpr std::size_t size = Table::keys.size();
+    static std::vector<js_string> keys(static_table_ptr table) {
+        (void)detail::table_object<Table>(table);
+        std::vector<js_string> out;
+        out.reserve(size);
+        for (const std::string_view key : Table::keys) { out.emplace_back(key.data(), key.size()); }
+        return out;
+    }
+    static std::vector<typename Table::value_type> values(static_table_ptr table) {
+        const auto all = detail::table_object<Table>(table).values();
+        return {all.begin(), all.end()};
+    }
+    static std::vector<std::pair<js_string, typename Table::value_type>> entries(
+        static_table_ptr table) {
+        const auto all = detail::table_object<Table>(table).values();
+        std::vector<std::pair<js_string, typename Table::value_type>> out;
+        out.reserve(size);
+        for (std::size_t i = 0; i < size; ++i) {
+            out.emplace_back(js_string(Table::keys[i].data(), Table::keys[i].size()), all[i]);
+        }
+        return out;
+    }
+};
 
 } // namespace ctnative

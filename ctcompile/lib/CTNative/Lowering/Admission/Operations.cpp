@@ -12,6 +12,7 @@
 #include "../../Analysis/OwnedMethodTableSlots.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -188,18 +189,24 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             // An element that may be null is passed through present_element,
             // which throws the VM's TypeError for null as the call would.
             const bool nullable = kind == Param::element && held == carrier::nullableElement;
-            const bool fits = kind == Param::string    ? held == carrier::string
-                              : kind == Param::number  ? held == carrier::number
-                              : kind == Param::element ? held == carrier::domElement
-                                                       : printable;
+            // A constant table only where its proof marked the call.
+            const bool table =
+                held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
+            const bool fits = kind == Param::string        ? held == carrier::string
+                              : kind == Param::number      ? held == carrier::number
+                              : kind == Param::element     ? held == carrier::domElement
+                              : kind == Param::staticTable ? table
+                                                           : printable;
             if (!fits && !nullable) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
                                    (kind == Param::string    ? "a String"
                                     : kind == Param::number  ? "a Number"
                                     : kind == Param::element ? "an Element"
-                                                             : "a String, Number, Boolean, null "
-                                                               "or undefined"));
+                                    : kind == Param::staticTable
+                                        ? "a constant table of Strings"
+                                        : "a String, Number, Boolean, null "
+                                          "or undefined"));
             }
         }
         return true;

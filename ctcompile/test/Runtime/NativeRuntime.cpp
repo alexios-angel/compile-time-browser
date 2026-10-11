@@ -16,7 +16,6 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
-#include "ctcompile/CTNative/Runtime/Object.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
 #include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"

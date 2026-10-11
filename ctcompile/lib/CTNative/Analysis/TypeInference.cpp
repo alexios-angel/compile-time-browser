@@ -515,6 +515,17 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
         case BuiltinStatic::Result::undefined: return absentType(c);
         case BuiltinStatic::Result::number: return doubleType(c);
+        // Only a call the constant-table proof marked: every field a String.
+        case BuiltinStatic::Result::tableEntries:
+            return op->hasAttr(kNativeStaticTableEnumeration)
+                       ? VecType::get(
+                             c, TupleType::get(c, llvm::SmallVector<mlir::Type, 2>{stringType(c),
+                                                                                   stringType(c)}))
+                       : mlir::Type{};
+        case BuiltinStatic::Result::tableKeys:
+        case BuiltinStatic::Result::tableValues:
+            return op->hasAttr(kNativeStaticTableEnumeration) ? VecType::get(c, stringType(c))
+                                                              : mlir::Type{};
         }
         return {};
     }
