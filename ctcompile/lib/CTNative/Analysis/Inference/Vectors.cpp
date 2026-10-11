@@ -510,8 +510,8 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
         // `e = document.documentElement` is, into the branch's result.
         if (auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(first)) {
             mlir::Operation * branch = yield->getParentOp();
-            const auto at = static_cast<unsigned>(
-                llvm::find(yield->getOperands(), value) - yield->getOperands().begin());
+            const auto at = static_cast<unsigned>(llvm::find(yield->getOperands(), value) -
+                                                  yield->getOperands().begin());
             value = at < branch->getNumResults() ? branch->getResult(at) : mlir::Value{};
             continue;
         }
