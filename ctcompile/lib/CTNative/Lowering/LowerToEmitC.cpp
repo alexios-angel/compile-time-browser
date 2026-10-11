@@ -665,10 +665,15 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");
                     });
-                    // A specialised Array-method call names its callback.
+                    // A specialised Array-method call names its callback,
+                    // and an addEventListener call its listener.
                     fn.getBody().walk([&](ctjs::CallOp call) {
                         auto callback =
                             call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback);
+                        if (!callback) {
+                            callback =
+                                call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback);
+                        }
                         if (!callback) { return; }
                         edge(symbols.lookup(callback.getValue()),
                              "calls back `" + callback.getValue() + "`, which is not native",
@@ -705,6 +710,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 lower.domParameters.insert(parameter);
             }
         }
+        // A program with string entries is embedded: its host asks the
+        // entries, and its top level runs inside the host's own output, as a
+        // script's top level prints nothing in the VM. So it prints no
+        // globals.
+        if (!stringEntries.empty()) { lower.explicitObservations = true; }
         if (admittedGlobals && admittedGlobals->proved()) {
             lower.explicitObservations = true;
             for (const auto & name : hostContract->observations) {

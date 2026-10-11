@@ -24,6 +24,7 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeMethodTable);
         op->removeAttr(kNativeTableField);
         op->removeAttr(kNativeArrayCallback);
+        op->removeAttr(kNativeHostCallback);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -99,6 +100,7 @@ liftReport closureLifter::run() {
     argumentCensus();
     methodCensus();
     arrayCallbackCensus();
+    hostCallbackCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // Closure -> its own reason.
     // The closure that names each function, for the chained reason below: a
     // capture filled from the enclosing closure is refused with that
@@ -163,6 +165,7 @@ liftReport closureLifter::run() {
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
                 : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
+                : hostCallbacks.contains(c.getOperation())       ? whyNotHostCallback(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -397,6 +400,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
 
     if (arrayCallbacks.contains(made.front())) {
         rewriteArrayCallback(made.front(), target, out);
+        return;
+    }
+    if (hostCallbacks.contains(made.front())) {
+        rewriteHostCallback(made.front(), target, out);
         return;
     }
 

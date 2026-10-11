@@ -260,6 +260,14 @@ public:
     /// call types rather than the entry state.
     static bool isArrayCallbackParameter(mlir::Value value);
 
+    // Listeners handed to the host (Inference/HostCallbacks.cpp).
+    /// Whether `op` is an `addEventListener` call closure lifting specialised
+    /// for its listener.
+    static bool isHostCallbackCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a listener, which its call
+    /// types rather than the entry state.
+    static bool isHostCallbackParameter(mlir::Value value);
+
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
     /// `a.sort()` results, and the values that borrow it through `scf`
@@ -424,6 +432,9 @@ private:
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
+    /// The type of a specialised `addEventListener` call (undefined), after
+    /// joining its captured values into the listener's parameters.
+    mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     /// The type of a specialised Array-method call, after joining its
     /// receiver's element type, the index and its captured values into the
     /// callback's parameters.

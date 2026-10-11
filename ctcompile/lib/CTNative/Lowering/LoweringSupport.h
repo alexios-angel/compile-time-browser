@@ -261,8 +261,9 @@ bool isVectorCallPlumbing(mlir::Operation * o);
 /// call, so the load lowers to nothing.
 bool isPageGlobal(mlir::Operation * o);
 /// Whether `o` reads a page method only to call it on the object it read it
-/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`). The call lowers to a
-/// runtime call, so the read lowers to nothing.
+/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`,
+/// `el.addEventListener(type, f)`). The call lowers to a runtime call, so the
+/// read lowers to nothing.
 bool isPageMethodRead(mlir::Operation * o);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
