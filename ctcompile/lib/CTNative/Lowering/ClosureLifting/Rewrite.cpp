@@ -6,6 +6,7 @@
 // performs the rewrite for one target.
 //
 //===----------------------------------------------------------------------===//
+#include "ClassInheritance.h"
 #include "ClosureLifter.h"
 
 namespace ctcompile::ctnative::lowering_detail {
@@ -13,6 +14,9 @@ namespace ctcompile::ctnative::lowering_detail {
 /// Lifts every admissible closure in the module and returns the counts.
 liftReport closureLifter::run() {
     liftReport out;
+    // A class that extends another becomes one that extends nothing, before
+    // any census reads a class (ClassInheritance.cpp).
+    flattenClassInheritance(module);
     // Environment attributes are conclusions of this run's proof. Strip any
     // already present so input IR cannot opt into an owning representation.
     module.walk([](mlir::Operation * op) {
@@ -27,6 +31,9 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeBorrowedCallback);
         op->removeAttr(kNativeBorrowedCall);
         op->removeAttr(kNativeHostCallback);
+        op->removeAttr(kNativeHostTimer);
+        op->removeAttr(kNativeHostTarget);
+        op->removeAttr(kNativeHostCapture);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -81,6 +88,9 @@ liftReport closureLifter::run() {
     // directly (Singletons.cpp). After the binding rule, which removes the
     // methods' captures of the functions it binds.
     bindSingletonMethods(out);
+    // Static members of a class are called directly (ClassStatics.cpp), so
+    // that the class census below can prove the class.
+    bindClassStatics(out);
     // Unbox object literals that are proved uncaptured before the
     // argument/receiver census. A separate lifter does this because the
     // rewrite erases stores its census points at; the main census below then

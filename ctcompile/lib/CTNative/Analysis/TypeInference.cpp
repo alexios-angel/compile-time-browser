@@ -500,8 +500,8 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         return VecType::get(c, stored ? stored : stringType(c));
     }
     case VectorCall::builtinStatic: {
-        // A row returns its Number or String once each String parameter is
-        // given a String; admission checks the other parameters.
+        // The row's result once each String parameter is given a String;
+        // admission checks the others.
         const BuiltinStatic & row = *builtinStaticOf(op);
         for (std::size_t i = 2; i < operands.size(); ++i) {
             if (row.params[i - 2] == BuiltinStatic::Param::string &&
@@ -509,7 +509,13 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                 return {};
             }
         }
-        return row.returnsString ? stringType(c) : doubleType(c);
+        switch (row.result) {
+        case BuiltinStatic::Result::string: return stringType(c);
+        case BuiltinStatic::Result::elementVector: return VecType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::number: return doubleType(c);
+        }
+        return {};
     }
     case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
     case VectorCall::callback: return arrayCallbackType(op, operands, pending);
@@ -871,6 +877,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // element, an element's text members and children, the root's client
     // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
     if (!ownedRoots_ && !domEntry_) {
+        if (const mlir::Type member = elementMemberType(op, operands)) { return answer(member); }
         if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
         if (const mlir::Type registered = hostCallbackType(op, operands)) {
             return answer(registered);

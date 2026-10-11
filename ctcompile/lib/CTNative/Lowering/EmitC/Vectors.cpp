@@ -24,6 +24,14 @@ void planArrayCallback(lowering & lower, ctjs::CallOp call);
 bool replaceArrayCallback(lowering & lower, mlir::Operation * o);
 // Listeners handed to the host (HostCallbacks.cpp).
 bool replaceHostCallback(lowering & lower, mlir::Operation * o);
+/// The action for a read or call on a listener's Event, and its replacement
+/// (HostCallbacks.cpp).
+std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
+bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
+/// The action for an element member call or read, and its replacement
+/// (Elements.cpp).
+std::optional<std::string> elementAction(lowering & lower, mlir::Operation * o);
+bool replaceElement(mlir::Operation * o, llvm::StringRef kind);
 
 namespace {
 
@@ -122,6 +130,14 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         }
         if (lower.pageViews && TypeInference::isHostCallbackCall(op)) {
             mark(op, "host_callback");
+            return;
+        }
+        if (auto action = lower.pageViews ? eventAction(lower, op) : std::nullopt) {
+            mark(op, *action);
+            return;
+        }
+        if (auto action = lower.pageViews ? elementAction(lower, op) : std::nullopt) {
+            mark(op, *action);
             return;
         }
         // The null on the branch an element's getBoundingClientRect test never
@@ -239,21 +255,23 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             break;
         case VectorCall::builtinStatic: {
             // The row rides on the mark, as `static <kinds> <callee>` with one
-            // `s` (String) or `n` (Number) per parameter: the namespace object
-            // and method read it was recognised by are plumbing, replaced
-            // first, and so are String literal arguments.
+            // letter per parameter: `s` String, `n` Number, `e` Element, `r`
+            // record (an object literal), `d` dictionary. The reads it was
+            // recognised by are plumbing, replaced first, and so are String
+            // literal arguments.
             const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
             using Param = TypeInference::BuiltinStatic::Param;
             std::string action = "static ";
             for (unsigned i = 0; i < row.arity; ++i) {
-                // A table (a dictionary) is passed as it is: `d`.
+                // A table (a dictionary) is passed as it is.
                 const bool table =
                     row.params[i] == Param::record && i < call.getArgs().size() &&
                     carrierOf(lower.typeOf(call.getArgs()[i])) == carrier::dictionary;
                 action += row.params[i] == Param::string   ? 's'
+                          : row.params[i] == Param::number ? 'n'
+                          : row.params[i] == Param::element ? 'e'
                           : table                          ? 'd'
-                          : row.params[i] == Param::record ? 'r'
-                                                           : 'n';
+                                                           : 'r';
                 // A record's keys, in definition order, read now while its
                 // writes are still ctjs.
                 if (row.params[i] == Param::record && !table && i < call.getArgs().size()) {
@@ -532,6 +550,8 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
+    if (kind.starts_with("event")) { return replaceEvent(o, kind); }
+    if (kind.starts_with("element_")) { return replaceElement(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];
@@ -602,8 +622,9 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind.consume_front("static ")) {
         // `ctnative::Number.parseInt(s, radix)`: admission proved each
-        // argument a String or a Number, as its parameter asks. A record is
-        // `ctnative::json_record("key", value, ...)` of its struct's fields.
+        // argument the kind its parameter asks; only a Number converts. A
+        // record is `ctnative::json_record("key", value, ...)` of its struct's
+        // fields; a dictionary is passed as it is.
         const auto [kinds, callee] = kind.split(' ');
         llvm::SmallVector<mlir::Value, 2> operands;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
@@ -629,8 +650,23 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
                                              "ctnative::json_record", fields));
                 continue;
             }
-            operands.push_back(
-                kinds[index] == 's' ? argument : lower.convertScalar(b, where, argument, numeric));
+            mlir::Value operand =
+                kinds[index] == 'n' ? lower.convertScalar(b, where, argument, numeric) : argument;
+            if (kinds[index] == 'e' && opaqueSpelling(operand.getType()) == kNullableElementType) {
+                operand = callValue(b, where, ec::OpaqueType::get(context, kPageElementType),
+                                    "ctnative::present_element", operand);
+            }
+            operands.push_back(operand);
+        }
+        // A returned array (querySelectorAll's snapshot) lands in a local
+        // that owns it, as split's pieces do.
+        if (auto owner = llvm::dyn_cast<ec::LValueType>(o->getResult(0).getType())) {
+            mlir::Value local =
+                ec::VariableOp::create(b, where, owner, ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(b, where, local,
+                                 callValue(b, where, owner.getValueType(), callee, operands));
+            swap(local);
+            return true;
         }
         swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;

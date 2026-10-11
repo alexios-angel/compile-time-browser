@@ -8,6 +8,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Math.hpp
   Object.hpp
   RegExp.hpp
+  StaticTable.hpp
   String.hpp
   ctnative.hpp
 )

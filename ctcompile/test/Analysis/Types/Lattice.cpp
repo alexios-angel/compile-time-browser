@@ -356,6 +356,12 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.computed_style", "!ctnative.dom_rect",
      "!ctnative.variant<!ctnative.computed_style, !ctnative.dom_rect>",
      "two page objects of different kinds stay alternatives"},
+    {"!ctnative.event", "!ctnative.event", "!ctnative.event", "idempotent"},
+    {"!ctnative.event", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.event>",
+     "an event that may be undefined is an optional event"},
+    {"!ctnative.event", "!ctnative.computed_style",
+     "!ctnative.variant<!ctnative.computed_style, !ctnative.event>",
+     "an event and another page object stay alternatives"},
 
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
@@ -414,6 +420,7 @@ const char * const kSampleTypes[] = {
     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
     "!ctnative.dom_rect",
     "!ctnative.computed_style",
+    "!ctnative.event",
 };
 
 //===--------------------------------------------------------------------===//

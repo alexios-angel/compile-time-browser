@@ -98,7 +98,11 @@ enum class carrier {
     staticTable,
     /// An object used as a table, std::shared_ptr<ctnative::dictionary<V>>
     /// (Runtime/Dictionary.hpp), spelled by dictionarySpelling.
-    dictionary
+    dictionary,
+    /// The Event a native listener receives (Runtime/Events.hpp).
+    domEvent,
+    /// An ordinary script's element or null (Runtime/Browser.hpp).
+    nullableElement
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -127,6 +131,8 @@ inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrow
 inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t";
 inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
 inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed_style";
+inline constexpr llvm::StringLiteral kEventType = "ctnative::js_event";
+inline constexpr llvm::StringLiteral kNullableElementType = "std::optional<ctnative::js_element_t>";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
@@ -170,8 +176,10 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::computedStyle, kComputedStyleType},
     {carrier::staticTable, kStaticTableType},
     {carrier::dictionary, ""},
+    {carrier::domEvent, kEventType},
+    {carrier::nullableElement, kNullableElementType},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::dictionary) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::nullableElement) + 1,
               "a carrier without a row");
 static_assert(
     [] {

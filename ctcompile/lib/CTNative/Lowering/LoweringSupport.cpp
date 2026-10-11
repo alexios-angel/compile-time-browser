@@ -81,6 +81,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
     if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
+    if (llvm::isa<EventType>(type)) { return carrier::domEvent; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -103,6 +104,7 @@ carrier carrierOf(mlir::Type type) {
         if (inner == carrier::booleanString) { return carrier::nullableBooleanString; }
         if (inner == carrier::numberString) { return carrier::nullableNumberString; }
         if (inner == carrier::string) { return carrier::nullableString; }
+        if (inner == carrier::domElement) { return carrier::nullableElement; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
         }
@@ -221,6 +223,15 @@ std::string elementSpanSpelling(mlir::Type type) {
 bool isPageGlobal(mlir::Operation * o) {
     auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o);
     if (!load || load.getResult().use_empty()) { return false; }
+    // setTimeout only to call it with a callback closure lifting specialised
+    // (HostCallbacks.cpp): the call lowers to ctnative::setTimeout.
+    if (load.getName() == "setTimeout") {
+        return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+            return use.getOperandNumber() == 0 &&
+                   TypeInference::isHostCallbackCall(use.getOwner()) &&
+                   TypeInference::isTimerCall(use.getOwner());
+        });
+    }
     if (load.getName() == "getComputedStyle") {
         return TypeInference::isRealmGlobal(load, load.getName()) &&
                llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
@@ -232,7 +243,14 @@ bool isPageGlobal(mlir::Operation * o) {
                                                               : "";
     if (read.empty() || !TypeInference::isRealmGlobal(load, load.getName())) { return false; }
     return llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
-        auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+        // The receiver of a listener registration (HostCallbacks.cpp), and
+        // its method read.
+        mlir::Operation * user = use.getOwner();
+        if ((use.getOperandNumber() == 1 && TypeInference::isHostCallbackCall(user)) ||
+            isPageMethodRead(user)) {
+            return true;
+        }
+        auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
         return get && use.getOperandNumber() == 0 && ctjs::constantKey(get.getKey()) == read;
     });
 }
@@ -243,21 +261,39 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
     return call &&
            (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
-            TypeInference::isHostCallbackCall(call)) &&
+            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call) ||
+            !TypeInference::elementCallKey(call).empty()) &&
            ctjs::receiverMethod(call) == read;
 }
 
 bool isVectorCallPlumbing(mlir::Operation * o) {
     using VectorCall = TypeInference::VectorCall;
+    if (TypeInference::isSpreadCopyPlumbing(o)) { return true; }
     const auto onlyUse = [](mlir::Value value) -> mlir::OpOperand * {
         return value.hasOneUse() ? &*value.getUses().begin() : nullptr;
+    };
+    // The reads a built-in call is recognised by: the namespace object, its
+    // `prototype` and the method, each used only by those reads and as the
+    // call's callee or receiver.
+    const auto builtinRead = [](mlir::Operation * read) {
+        const auto plumbing = [](mlir::OpOperand & use) {
+            mlir::Operation * user = use.getOwner();
+            if (use.getOperandNumber() <= 1 && TypeInference::builtinStaticOf(user)) {
+                return true;
+            }
+            return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&
+                   isVectorCallPlumbing(user);
+        };
+        return !read->getResult(0).use_empty() &&
+               llvm::all_of(read->getResult(0).getUses(), plumbing);
     };
     if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(o)) {
         mlir::OpOperand * use = onlyUse(read.getResult());
         const VectorCall kind =
             use ? TypeInference::vectorCallOf(use->getOwner()) : VectorCall::none;
-        return use && use->getOperandNumber() == 0 && kind != VectorCall::none &&
-               kind != VectorCall::regexp;
+        return (use && use->getOperandNumber() == 0 && kind != VectorCall::none &&
+                kind != VectorCall::regexp) ||
+               builtinRead(o);
     }
     // The RegExp call is plumbing only as split(/\s+/)'s separator.
     const auto separatesWhitespace = [&](mlir::Operation * call) {
@@ -267,22 +303,7 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
                TypeInference::vectorCallOf(use->getOwner()) == VectorCall::splitSpace;
     };
     if (llvm::isa_and_nonnull<ctjs::CallOp>(o)) { return separatesWhitespace(o); }
-    // The realm's namespace object is plumbing as the receiver of a built-in
-    // static call and the object its method is read from.
-    if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
-        const auto staticUse = [&](mlir::OpOperand & use) {
-            mlir::Operation * user = use.getOwner();
-            // The receiver of `Number.parseInt(s)`, the callee of `Number(s)`.
-            if (use.getOperandNumber() <= 1 && TypeInference::builtinStaticOf(user)) {
-                return true;
-            }
-            return use.getOperandNumber() == 0 && llvm::isa<ctjs::GetPropertyOp>(user) &&
-                   isVectorCallPlumbing(user);
-        };
-        if (!load.getResult().use_empty() && llvm::all_of(load.getResult().getUses(), staticUse)) {
-            return true;
-        }
-    }
+    if (llvm::isa_and_nonnull<ctjs::LoadGlobalOp>(o) && builtinRead(o)) { return true; }
     if (auto load = llvm::dyn_cast_or_null<ctjs::LoadGlobalOp>(o)) {
         return load.getName() == "__ctbrowser_regexp" && !load.getResult().use_empty() &&
                llvm::all_of(load.getResult().getUses(), [&](mlir::OpOperand & use) {
