@@ -822,6 +822,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return answer(doubleType(c));
     }
 
+    if (op->getNumResults() == 1) {
+        if (const mlir::Type table = dictionaryType(op, operands)) { return answer(table); }
+    }
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
         mapAnswer = mapTypeOf(op, made.getResult());

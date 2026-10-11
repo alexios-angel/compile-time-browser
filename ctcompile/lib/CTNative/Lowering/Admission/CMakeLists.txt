@@ -1,5 +1,6 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
   ArrayCallbacks.cpp
+  Dictionaries.cpp
   HostCallbacks.cpp
   Values.cpp
   BorrowedCallbacks.cpp

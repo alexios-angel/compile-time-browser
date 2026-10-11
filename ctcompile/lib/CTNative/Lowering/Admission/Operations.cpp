@@ -15,6 +15,9 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits an operation of an object used as a table (Dictionaries.cpp), or
+/// nullopt when `o` is not one.
+std::optional<bool> dictionaryOperation(admission & self, mlir::Operation * o);
 /// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
 bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits an addEventListener call specialised for its listener
@@ -387,6 +390,7 @@ bool admission::op(mlir::Operation * o) {
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
+    if (auto admitted = dictionaryOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
         auto object = edge->object;

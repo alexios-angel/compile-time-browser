@@ -85,6 +85,12 @@ void lowering::retype(ctjs::FuncOp fn) {
             v.setType(carrierType(context, carrier::string));
             return;
         }
+        // A table's intrinsic is replaced by a placeholder and erased with
+        // its call (EmitC/Dictionaries.cpp).
+        if (nativeDictionaryAction(v.getDefiningOp()) == "plumbing") {
+            v.setType(mlir::Float64Type::get(context));
+            return;
+        }
         if (domReads.contains(v.getDefiningOp()) || domUnusedPayloads.contains(v)) {
             // Checked builtin/receiver bookkeeping never needs a value carrier.
             v.setType(mlir::Float64Type::get(context));
@@ -164,6 +170,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         }
         if (c == carrier::closure) {
             v.setType(closureCarrierType(llvm::cast<ClosureType>(typeOf(v))));
+            return;
+        }
+        if (c == carrier::dictionary) {
+            v.setType(
+                ec::OpaqueType::get(context, dictionarySpelling(llvm::cast<DictType>(typeOf(v)))));
             return;
         }
         if (c == carrier::map) {
@@ -299,6 +310,8 @@ void lowering::retype(ctjs::FuncOp fn) {
         if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) { return; }
         // A static table's literal is its address (EmitC/StaticTables.cpp).
         if (object->hasAttr(kNativeStaticTable)) { return; }
+        // A table is a dictionary, not a struct (EmitC/Dictionaries.cpp).
+        if (isNativeDictionarySite(object)) { return; }
         if (ownedObjectTypes.contains(object.getResult())) { return; }
         mlir::Value(object.getResult()).setType(classType(shapeAt(object.getResult())));
     });

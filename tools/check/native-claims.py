@@ -146,10 +146,13 @@ _UNREACHABLE = re.compile(
     r'\{function = "((?:[^"\\]|\\.)*)", reason = "(removed: unreachable (?:[^"\\]|\\.)*)"'
 )
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
-# the per-name verdict the pass writes on the module. Grouping the reasons
+# the per-name verdict the pass writes on the module; a host binding's row
+# starts with its unit `host_binding` field. Grouping the reasons
 # shows why globals failed to resolve, the same way `ctnative.not_native`
 # shows why functions were refused.
-_GLOBAL_REASON = re.compile(r'\{name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"')
+_GLOBAL_REASON = re.compile(
+    r'\{(?:host_binding, )?name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"'
+)
 
 
 def shape_of(reason: str) -> str:

@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -37,20 +38,17 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
 };
 
 /// Whether --ctjs-resolve-globals found that this program never binds
-/// `name`, so a read of it is the realm's own value. Its `ctjs.globals` row
-/// gives that reason only when no store, no write through the global object
-/// and no dynamic global write can reach the name (ResolveGlobals.cpp,
-/// bound_closure and clause 5).
+/// `name`, so a read of it is the realm's own value: its `ctjs.globals` row
+/// carries kGlobalsHostBinding, which it sets only when no store, no write
+/// through the global object and no dynamic global write can reach the name
+/// (ResolveGlobals.cpp, bound_closure and clause 5).
 bool realmBinding(mlir::Operation * op, llvm::StringRef name) {
     auto module = op->getParentOfType<mlir::ModuleOp>();
     auto rows = module ? module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals") : nullptr;
     if (!rows) { return false; }
     for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
         auto bound = row.getAs<mlir::StringAttr>("name");
-        auto why = row.getAs<mlir::StringAttr>("reason");
-        if (bound && bound.getValue() == name) {
-            return why && why.getValue() == "never stored in this program - a host binding";
-        }
+        if (bound && bound.getValue() == name) { return row.contains(ctjs::kGlobalsHostBinding); }
     }
     return false;
 }

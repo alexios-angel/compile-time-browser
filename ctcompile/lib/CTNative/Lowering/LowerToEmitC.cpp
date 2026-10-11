@@ -514,6 +514,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         });
         if (!hostContract) {
             prepareNativeMaps(module);
+            prepareNativeDictionaries(module);
             prepareNativeObjectIdentities(module);
         }
         if (census) {
@@ -849,6 +850,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
                         if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
                         if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
+                        if (nativeDictionaryAction(load) == "plumbing") { return; }
                         // The RegExp literal factory behind split(/\s+/) and a
                         // specialised replace lowers to nothing; it is not a
                         // program global.

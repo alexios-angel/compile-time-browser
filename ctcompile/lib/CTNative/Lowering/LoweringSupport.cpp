@@ -129,6 +129,12 @@ carrier carrierOf(mlir::Type type) {
             return carrier::nullable;
         }
     }
+    // A table holds one value carrier (Admission/Dictionaries.cpp says which).
+    if (auto table = llvm::dyn_cast<DictType>(type)) {
+        return carrierInfo(carrierOf(table.getElementType())).spelling.empty()
+                   ? carrier::none
+                   : carrier::dictionary;
+    }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         const auto key = map.getKeyType();
         const auto string = llvm::dyn_cast<StrType>(key);
@@ -404,6 +410,12 @@ bool mapNeedsNullableString(MapType type) {
 bool mapNeedsNullableStringKey(MapType type) {
     return anyMapLevel(
         type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
+}
+
+std::string dictionarySpelling(DictType type) {
+    return ("std::shared_ptr<ctnative::dictionary<" +
+            carrierInfo(carrierOf(type.getElementType())).spelling + ">>")
+        .str();
 }
 
 mlir::Type mapCarrierType(MapType type) {
