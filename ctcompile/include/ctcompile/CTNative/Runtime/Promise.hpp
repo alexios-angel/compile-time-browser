@@ -219,6 +219,15 @@ template <class U, class E> struct then_result<js_promise<U, E>, E> {
     using type = js_promise<U, E>;
 };
 
+/// What a `then` handler returns, called with the value or, when it takes
+/// no parameter, with nothing.
+template <bool TakesValue, class F, class T> struct handler_result {
+    using type = std::invoke_result_t<F &, const T &>;
+};
+template <class F, class T> struct handler_result<false, F, T> {
+    using type = std::invoke_result_t<F &>;
+};
+
 /// Whether a handler result R, when it is a promise, rejects with an E.
 template <class R, class E> inline constexpr bool rejects_as = true;
 template <class U, class F, class E>
@@ -234,10 +243,12 @@ struct promise_then_method {
     /// is, since a missing onRejected passes the reason through (27.2.2.1
     /// step 1.e). A handler that throws a js_exception<E> rejects it.
     template <class T, class E, class F>
-    requires std::invocable<F &, const T &>
+    requires std::invocable<F &, const T &> || std::invocable<F &>
     auto call(const js_promise<T, E> & self, F on_fulfilled) const {
-        // A handler that returns nothing fulfills with undefined.
-        using returned = std::invoke_result_t<F &, const T &>;
+        // A handler that declares no parameter ignores the value, and one
+        // that returns nothing fulfills with undefined.
+        constexpr bool takes_value = std::invocable<F &, const T &>;
+        using returned = typename promise_detail::handler_result<takes_value, F, T>::type;
         using R = std::conditional_t<std::is_void_v<returned>, undefined_t, returned>;
         static_assert(promise_detail::rejects_as<R, E>,
                       "a then handler's promise must reject with the same reason type");
@@ -254,12 +265,19 @@ struct promise_then_method {
                     }
                     return;
                 }
+                const auto invoke = [&]() -> decltype(auto) {
+                    if constexpr (takes_value) {
+                        return handler(*settled.value);
+                    } else {
+                        return handler();
+                    }
+                };
                 const auto run = [&] {
                     if constexpr (std::is_void_v<returned>) {
-                        handler(*settled.value);
+                        invoke();
                         settle.first(undefined_t{});
                     } else {
-                        settle.first(handler(*settled.value));
+                        settle.first(invoke());
                     }
                 };
                 if constexpr (std::is_same_v<E, no_rejection>) {

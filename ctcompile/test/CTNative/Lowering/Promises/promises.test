@@ -3,23 +3,33 @@
 # `then` with a handler, each callback lifted with its captures bound by
 # value. The script ends in a microtask checkpoint, so the handlers run
 # before the globals are compared, in the order Node and the VM run them:
-# "s", then "v2", then "r".
+# "s", then "v2", then "r". The chain witness reads the promise each `then`
+# returns and adopts promises (a resolve function given one, a handler
+# returning one), which costs the extra jobs ECMA-262 orders: Node, the VM
+# and both native builds print "s12a73b84c16".
 #
 # The negatives are refused by name: a promise of an object (unproved, and it
-# could have a `then` key), a resolve function that leaves its executor, and
-# reading the promise `then` returns.
+# could have a `then` key) and a resolve function that leaves its executor.
+# Popper's memoised update stops at the same two rules: its resolve function
+# is captured by a handler, and the handler writes the memo it captures.
 #
 # RUN: split-file %s %t
-# RUN: %node %t/expected.cjs %t/witness.js
+# RUN: %node %t/expected.cjs %t/witness.js sv2r
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/witness.js -o %t/input.mlir
 # RUN: ctjs-opt %t/input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/runtime.mlir
 # RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/runtime.mlir
 # RUN: %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/witness.js --work %t --name promise_gcc --core-build %build
 # RUN: %compilation_unit --cxx %dom_clang --module %t/runtime.mlir --js %t/witness.js --work %t --name promise_clang --core-build %build
 # RUN: not %compilation_unit --cxx g++ --module %t/runtime.mlir --js %t/witness.js --work %t --name promise_mutation --mutate log --mutate-as string --core-build %build 2>&1 | FileCheck %s --check-prefix=MUTATION
+# RUN: %node %t/expected.cjs %t/chain.js s12a73b84c16
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/chain.js -o %t/chain-input.mlir
+# RUN: ctjs-opt %t/chain-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/chain.mlir
+# RUN: FileCheck %s --check-prefix=CHAINED --implicit-check-not=ctnative.not_native --implicit-check-not=ctjs.func < %t/chain.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/chain.mlir --js %t/chain.js --work %t --name chain_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/chain.mlir --js %t/chain.js --work %t --name chain_clang --core-build %build
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/popper.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=POPPER
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/object.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=OBJECT
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/escape.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ESCAPE
-# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/chain.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CHAIN
 
 # NATIVE-DAG: ctnative::Promise.construct<ctnative::js_num>
 # NATIVE-DAG: ctnative::invoke_callable
@@ -27,9 +37,12 @@
 # NATIVE-DAG: ctnative::Promise.resolve
 # NATIVE-DAG: ctnative::microtasks::program().checkpoint
 # MUTATION: global 'log' differs
-# OBJECT: not_native = "the promise new Promise makes is {{.*}} - only a promise of a Number, a Boolean or a String is native; any other value is unproved, and an object could have a `then` key"
+# OBJECT: not_native = "the promise new Promise makes is {{.*}} - only a promise of a Number, a Boolean, a String or undefined is native; any other value is unproved, and an object could have a `then` key"
 # ESCAPE: closure_reason = "the executor of new Promise uses its resolve function other than by calling it with one value
-# CHAIN: not_native = "the promise Promise.prototype.then returns is read
+# CHAINED-DAG: call_opaque "ctnative::Promise.prototype.then.call"{{.*}} -> !emitc.opaque<"ctnative::js_promise<ctnative::js_num>">
+# CHAINED-DAG: ctnative::Promise.resolve
+# POPPER-DAG: closure_reason = "the executor of new Promise uses its resolve function other than by calling it with one value
+# POPPER-DAG: closure_reason = "the handler of Promise.prototype.then captures binding 1, which is written after it is captured
 
 #--- witness.js
 var log = "";
@@ -53,7 +66,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const scope = {};
 vm.runInNewContext(fs.readFileSync(process.argv[2], "utf8"), scope);
-setTimeout(() => assert.equal(scope.log, "sv2r"), 0);
+setTimeout(() => assert.equal(scope.log, process.argv[3]), 0);
 
 #--- object.js
 var seen = 0;
@@ -76,14 +89,73 @@ function run() {
 run();
 
 #--- chain.js
-var seen = 0;
+var log = "";
+function seven() {
+    return new Promise(function (t) {
+        t(7);
+    });
+}
 function run() {
+    var p = new Promise(function (t) {
+        t(seven());
+    });
+    p.then(function (v) {
+        log = log + "a" + v;
+        return v + 1;
+    })
+        .then(function (w) {
+            log = log + "b" + w;
+            return Promise.resolve(w * 2);
+        })
+        .then(function (x) {
+            log = log + "c" + x;
+        });
     Promise.resolve(1)
         .then(function () {
-            seen = seen + 1;
+            log = log + "1";
         })
         .then(function () {
-            seen = seen + 2;
+            log = log + "2";
+        })
+        .then(function () {
+            log = log + "3";
+        })
+        .then(function () {
+            log = log + "4";
         });
+    log = log + "s";
 }
 run();
+
+#--- popper.js
+var log = "";
+var count = 0;
+function make() {
+    var r;
+    var s = function () {
+        return new Promise(function (t) {
+            count = count + 1;
+            t(count);
+        });
+    };
+    return function () {
+        return (
+            r ||
+                (r = new Promise(function (t) {
+                    Promise.resolve().then(function () {
+                        r = void 0;
+                        t(s());
+                    });
+                })),
+            r
+        );
+    };
+}
+var update = make();
+update().then(function (v) {
+    log = log + "a" + v;
+});
+update().then(function (v) {
+    log = log + "b" + v;
+});
+log = log + "s";

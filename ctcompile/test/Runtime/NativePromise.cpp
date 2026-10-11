@@ -91,11 +91,12 @@ void test_job_order_matches_node() {
 }
 
 // A reaction never runs before the checkpoint, even on a settled promise. A
-// handler that returns nothing, as a lifted JavaScript function returning
-// undefined does, fulfills its promise with undefined.
+// handler that takes no value and returns nothing, as a lifted JavaScript
+// `function () {}` does, is called without the value and fulfills its
+// promise with undefined.
 void test_reactions_wait_for_the_checkpoint() {
     bool ran = false;
-    (void)then(Promise.resolve(js_num{1.0}), [&ran](const js_num &) { ran = true; });
+    (void)then(Promise.resolve(js_num{1.0}), [&ran] { ran = true; });
     CHECK(!ran);
     CHECK_EQ(microtasks::program().checkpoint(), std::size_t{1});
     CHECK(ran);
