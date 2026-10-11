@@ -220,17 +220,25 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
                 continue;
             }
             // An element that may be null is passed through present_element,
-            // which throws the VM's TypeError for null as the call would.
+            // which throws the VM's TypeError for null as the call would. A
+            // printable is a carrier Runtime/Console.hpp's console_detail::append
+            // takes.
+            const bool printable = held == carrier::string || held == carrier::number ||
+                                   held == carrier::boolean || held == carrier::nullable ||
+                                   held == carrier::nullableString;
             const bool fits = kind == Param::string   ? isString(argument)
                               : kind == Param::number ? held == carrier::number
-                                                      : held == carrier::domElement ||
-                                                            held == carrier::nullableElement;
+                              : kind == Param::element
+                                  ? held == carrier::domElement || held == carrier::nullableElement
+                                  : printable;
             if (!fits) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
-                                   (kind == Param::string   ? "a String"
-                                    : kind == Param::number ? "a Number"
-                                                            : "an Element"));
+                                   (kind == Param::string    ? "a String"
+                                    : kind == Param::number  ? "a Number"
+                                    : kind == Param::element ? "an Element"
+                                                             : "a String, Number, Boolean, null "
+                                                               "or undefined"));
             }
         }
         return true;

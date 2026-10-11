@@ -1477,3 +1477,6 @@ template <> struct map_key_less<ctbrowser::element_ref> {
 #endif
 
 } // namespace ctnative
+
+// The console object, whose members need the carriers above.
+#include "ctcompile/CTNative/Runtime/Console.hpp"

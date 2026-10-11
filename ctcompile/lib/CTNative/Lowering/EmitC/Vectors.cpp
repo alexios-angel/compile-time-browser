@@ -255,8 +255,9 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             break;
         case VectorCall::builtinStatic: {
             // The row rides on the mark, as `static <kinds> <callee>` with one
-            // letter per parameter: `s` String, `n` Number, `e` Element, `r`
-            // record (an object literal), `d` dictionary. The reads it was
+            // letter per parameter: `s` String, `n` Number, `e` Element, `p`
+            // printable (passed as it is), `r` record (an object literal), `d`
+            // dictionary. The reads it was
             // recognised by are plumbing, replaced first, and so are String
             // literal arguments.
             const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
@@ -267,11 +268,12 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                 const bool table =
                     row.params[i] == Param::record && i < call.getArgs().size() &&
                     carrierOf(lower.typeOf(call.getArgs()[i])) == carrier::dictionary;
-                action += row.params[i] == Param::string   ? 's'
-                          : row.params[i] == Param::number ? 'n'
-                          : row.params[i] == Param::element ? 'e'
-                          : table                          ? 'd'
-                                                           : 'r';
+                action += row.params[i] == Param::string      ? 's'
+                          : row.params[i] == Param::number    ? 'n'
+                          : row.params[i] == Param::element   ? 'e'
+                          : row.params[i] == Param::printable ? 'p'
+                          : table                             ? 'd'
+                                                              : 'r';
                 // A record's keys, in definition order, read now while its
                 // writes are still ctjs.
                 if (row.params[i] == Param::record && !table && i < call.getArgs().size()) {

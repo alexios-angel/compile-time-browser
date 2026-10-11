@@ -513,6 +513,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         case BuiltinStatic::Result::string: return stringType(c);
         case BuiltinStatic::Result::elementVector: return VecType::get(c, DOMElementType::get(c));
         case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::undefined: return absentType(c);
         case BuiltinStatic::Result::number: return doubleType(c);
         }
         return {};
