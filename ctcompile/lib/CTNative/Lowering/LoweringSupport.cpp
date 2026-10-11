@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LoweringSupport.h"
+#include "Admission/Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 #include "ctcompile/Support/SourceSite.h"
@@ -95,6 +96,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
+    if (llvm::isa<ClosureSetType>(type)) { return carrier::closureSet; }
     if (llvm::isa<MethodTableType>(type)) { return carrier::methodTable; }
     if (llvm::isa<ObjectIdentityType>(type)) { return carrier::objectIdentity; }
     if (isObjectValueType(type)) { return carrier::objectValue; }
@@ -104,6 +106,13 @@ carrier carrierOf(mlir::Type type) {
     if (auto opt = llvm::dyn_cast<OptType>(type);
         opt && llvm::isa<StaticTableType>(opt.getElementType())) {
         return carrier::staticTable;
+    }
+    // An identity class's instance, or neither one: a null shared_ptr holds
+    // both null and undefined, so admission refuses where they differ.
+    if (llvm::isa<InstanceType>(type)) { return carrier::instance; }
+    if (auto opt = llvm::dyn_cast<OptType>(type);
+        opt && llvm::isa<InstanceType>(opt.getElementType())) {
+        return carrier::instance;
     }
     if (auto string = llvm::dyn_cast<StrType>(type);
         string && string.getEncoding() == StrEncoding::UTF8) {
@@ -155,7 +164,8 @@ carrier carrierOf(mlir::Type type) {
             (llvm::isa<StrType>(value) && carrierOf(value) == carrier::string) ||
             isObjectValueType(value) || !mixedMapSpelling(value).empty() ||
             !nullableMapSpelling(value).empty() ||
-            (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map);
+            (llvm::isa<MapType>(value) && carrierOf(value) == carrier::map) ||
+            llvm::isa<InstanceType>(value);
         return supportedKey && ownedValue ? carrier::map : carrier::none;
     }
     // Generic mutable arrays keep their numeric-content proof. Arrays of
@@ -451,7 +461,29 @@ llvm::StringRef mapKeySpelling(mlir::Type type) {
     llvm::report_fatal_error("native Map key has no carrier; admission should refuse it");
 }
 
+std::string instanceClassSpelling(llvm::StringRef className) {
+    // As nameFamilies names the class's struct.
+    // ponytail: assumes no other shape family took the class's name first
+    // (nameFamilies would append `_2`); a clash then fails the C++ build
+    // rather than miscompiling. Look the family up by class if one occurs.
+    return admission::isReservedInCpp(className) ? "js_" + className.str() : className.str();
+}
+
+llvm::StringRef instanceClassName(mlir::Type type) {
+    if (auto optional = llvm::dyn_cast<OptType>(type)) { type = optional.getElementType(); }
+    return llvm::cast<InstanceType>(type).getClassName();
+}
+
+mlir::Type instanceCarrierType(mlir::Type type) {
+    return ec::OpaqueType::get(type.getContext(),
+                               "std::shared_ptr<" + instanceClassSpelling(instanceClassName(type)) +
+                                   ">");
+}
+
 std::string mapValueSpelling(mlir::Type type) {
+    if (carrierOf(type) == carrier::instance) {
+        return llvm::cast<ec::OpaqueType>(instanceCarrierType(type)).getValue().str();
+    }
     if (auto nullable = nullableMapSpelling(type); !nullable.empty()) { return nullable.str(); }
     if (auto mixed = mixedMapSpelling(type); !mixed.empty()) { return mixed.str(); }
     if (isObjectValueType(type)) { return kObjectValueType.str(); }
@@ -490,7 +522,8 @@ mlir::Type mapCarrierType(MapType type) {
     const auto value = type.getValueType();
     const std::string body =
         (llvm::isa<MapType, BoolType, StrType>(value) || isObjectValueType(value) ||
-         !mixedMapSpelling(value).empty() || !nullableMapSpelling(value).empty())
+         carrierOf(value) == carrier::instance || !mixedMapSpelling(value).empty() ||
+         !nullableMapSpelling(value).empty())
             ? ("ctnative::map_storage<" + key + ", " + mapValueSpelling(value) + ">").str()
         : llvm::isa<StrType>(type.getKeyType()) ? std::string{"ctnative::string_to_number_map"}
                                                 : ("ctnative::number_map<" + key + ">").str();

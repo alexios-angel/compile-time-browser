@@ -1,6 +1,7 @@
 target_sources(ctcompile-ctnative-lowering PRIVATE
   Array.hpp
   Callable.hpp
+  Console.hpp
   Dictionary.hpp
   Handlers.hpp
   Json.hpp

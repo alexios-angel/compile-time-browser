@@ -23,6 +23,10 @@
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
 #include "ctcompile/CTNative/IR/CTNativeLattice.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
+
 namespace ctcompile::ctnative {
 
 namespace {
@@ -96,6 +100,121 @@ bool TypeInference::isSpreadCopyPlumbing(mlir::Operation * op) {
     if (llvm::isa_and_nonnull<ctjs::GetPropertyOp>(op)) { return copies(op); }
     auto empty = llvm::dyn_cast_or_null<ctjs::CreateArrayOp>(op);
     return empty && llvm::any_of(empty->getUsers(), copies);
+}
+
+namespace {
+
+/// Whether `op` sits in the then-branch of an `scf.if` testing `value`.
+bool insideTest(mlir::Value value, mlir::Operation * op) {
+    for (mlir::Operation * at = op; at && at->getParentOp(); at = at->getParentOp()) {
+        auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at->getParentOp());
+        if (!branch || at->getParentRegion() != &branch.getThenRegion()) { continue; }
+        auto test = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+        if (test && test.getValue() == value) { return true; }
+    }
+    return false;
+}
+
+/// Every (constant, yield) pair that can produce `value` through nested
+/// `scf.if` results, or false when some producer is not an integer constant.
+bool exitCodes(mlir::Value value,
+               llvm::SmallVectorImpl<std::pair<int64_t, mlir::Operation *>> & out,
+               mlir::Operation * at, unsigned depth = 0) {
+    if (depth > 8) { return false; }
+    if (auto branch = value.getDefiningOp<mlir::scf::IfOp>()) {
+        const unsigned index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+        for (mlir::scf::YieldOp yield : {branch.thenYield(), branch.elseYield()}) {
+            if (!exitCodes(yield.getOperand(index), out, yield, depth + 1)) { return false; }
+        }
+        return true;
+    }
+    llvm::APInt code;
+    if (!mlir::matchPattern(value, mlir::m_ConstantInt(&code))) { return false; }
+    out.emplace_back(code.getSExtValue(), at);
+    return true;
+}
+
+} // namespace
+
+bool TypeInference::presentElement(mlir::Value value, mlir::Operation * user) {
+    if (insideTest(value, user)) { return true; }
+    // `for (; i;) { if (...) return [i]; ... }`: the importer leaves the loop
+    // carrying `i` and an exit code, and builds `[i]` in the switch arm for
+    // that code. `i` is present there when every producer of that code sits
+    // in the loop's `if (i)` arm.
+    auto result = llvm::dyn_cast<mlir::OpResult>(value);
+    auto loop = result ? llvm::dyn_cast<mlir::scf::WhileOp>(result.getOwner()) : nullptr;
+    if (!loop) { return false; }
+    // The exit code the use sits under: an arm of `scf.index_switch` on the
+    // code, or (once canonicalized) the then-branch of `code == C`.
+    mlir::Value selected;
+    std::optional<int64_t> wanted;
+    for (mlir::Operation * at = user; at && at->getParentOp() && !wanted; at = at->getParentOp()) {
+        if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(at->getParentOp())) {
+            for (auto [code, region] : llvm::zip(cases.getCases(), cases.getCaseRegions())) {
+                if (&region == at->getParentRegion()) {
+                    wanted = code;
+                    selected = cases.getArg();
+                }
+            }
+            if (!wanted) { return false; }
+        } else if (auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at->getParentOp());
+                   branch && at->getParentRegion() == &branch.getThenRegion()) {
+            auto equal = branch.getCondition().getDefiningOp<mlir::arith::CmpIOp>();
+            llvm::APInt code;
+            if (!equal || equal.getPredicate() != mlir::arith::CmpIPredicate::eq) { continue; }
+            if (mlir::matchPattern(equal.getRhs(), mlir::m_ConstantInt(&code))) {
+                selected = equal.getLhs();
+            } else if (mlir::matchPattern(equal.getLhs(), mlir::m_ConstantInt(&code))) {
+                selected = equal.getRhs();
+            } else {
+                continue;
+            }
+            wanted = code.getSExtValue();
+        }
+    }
+    if (!wanted || !selected) { return false; }
+    auto cast = selected.getDefiningOp<mlir::arith::IndexCastUIOp>();
+    auto selector = cast ? llvm::dyn_cast<mlir::OpResult>(cast.getIn()) : nullptr;
+    if (!selector || selector.getOwner() != loop) { return false; }
+    mlir::scf::ConditionOp condition = loop.getConditionOp();
+    const mlir::Value carried = condition.getArgs()[result.getResultNumber()];
+    auto before = llvm::dyn_cast<mlir::BlockArgument>(carried);
+    if (!before || before.getOwner() != &loop.getBefore().front()) { return false; }
+    llvm::SmallVector<std::pair<int64_t, mlir::Operation *>> codes;
+    if (!exitCodes(condition.getArgs()[selector.getResultNumber()], codes, condition)) {
+        return false;
+    }
+    bool seen = false;
+    for (const auto & [code, producer] : codes) {
+        if (code != *wanted) { continue; }
+        if (!insideTest(before, producer)) { return false; }
+        seen = true;
+    }
+    return seen;
+}
+
+mlir::Type TypeInference::presentElements(mlir::Operation * op, llvm::ArrayRef<mlir::Value> members,
+                                          mlir::Type joined) {
+    auto opt = llvm::dyn_cast_or_null<OptType>(joined);
+    if (!opt || !llvm::isa<DOMElementType>(opt.getElementType())) { return joined; }
+    for (mlir::Value member : members) {
+        for (mlir::OpOperand & use : member.getUses()) {
+            auto append = llvm::dyn_cast<ctjs::AppendOp>(use.getOwner());
+            if (!append || use.getOperandNumber() != 0) { continue; }
+            const mlir::Type stored = joinLattices(op, append.getElement(), mlir::Type{});
+            if (!llvm::isa_and_nonnull<DOMElementType>(stored) &&
+                !presentElement(append.getElement(), append)) {
+                return joined;
+            }
+        }
+        // Elements written into a literal itself are not narrowed.
+        if (auto literal = member.getDefiningOp<ctjs::CreateArrayOp>();
+            literal && !literal.getElements().empty()) {
+            return joined;
+        }
+    }
+    return opt.getElementType();
 }
 
 mlir::Type TypeInference::elementMemberType(mlir::Operation * op,

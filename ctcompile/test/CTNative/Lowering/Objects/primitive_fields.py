@@ -86,6 +86,18 @@ def main():
         # NATIVE: the fixtures that must lower and run natively.
         if name in (
             "strings",
+            # Fields that are a String or undefined: an optional-String member
+            # (Lowering/ObjectValues/VariantFields.cpp).
+            "absent",
+            "borrowed-before",
+            "borrowed-conditional",
+            "borrowed-missing",
+            "borrowed-undefined",
+            "forwarded-before",
+            "forwarded-conditional",
+            "forwarded-missing",
+            "forwarded-undefined",
+            "method-missing",
             "equality",
             "utf8-length",
             "empty-length",
@@ -121,8 +133,13 @@ def main():
                 ]
             ).stdout
             assert "ctnative.not_native" in text and "emitc.func @main" not in text, name
-            if name in ("mixed", "absent"):
-                assert "string field requires definite string reads and writes" in text, name
+            # `mixed` stores a Number into a String field, so the field is a
+            # Number|String union (Lowering/ObjectValues/VariantFields.cpp);
+            # what refuses is `.length` of a value that may be a Number.
+            if name == "mixed":
+                assert "a property read on an object that is not a closed-shape literal" in text, (
+                    name
+                )
             refused += 1
     print(f"local string fields: {checked} native executions, {refused} refusals")
 

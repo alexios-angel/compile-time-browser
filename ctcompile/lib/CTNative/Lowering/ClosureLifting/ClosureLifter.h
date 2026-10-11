@@ -507,6 +507,18 @@ struct closureLifter {
     static mlir::ValueRange argsOfCallSite(mlir::Operation * user);
 
     void indexAndNewTargets();
+    /// Rewrites each arrow that reads its lexical `this` to capture it as a
+    /// constant cell (ArrowThis.cpp).
+    void captureLexicalThis();
+    /// The capture parameters of the lifted target of `made` that receive the
+    /// creating method's `this` as an object pointer (ArrowThis.cpp).
+    llvm::SmallVector<int32_t> lexicalThisObjectArgs(llvm::ArrayRef<ctjs::CreateClosureOp> made);
+    /// True when `use` of a method's `this` only hands it to such a lifted
+    /// arrow (ArrowThis.cpp).
+    bool passesLexicalThis(mlir::OpOperand & use);
+    /// Erases the cells captureLexicalThis made once only such arrows
+    /// capture them (ArrowThis.cpp).
+    void releaseLexicalThisCells();
 
     void specializeCallbacks(liftReport & out);
 
@@ -923,6 +935,20 @@ struct closureLifter {
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
+
+    // --- Closure sets (ClosureSets.cpp) ----------------------------------------
+    //
+    // Closures whose values meet at scf.if results and are otherwise only
+    // called: each member, and every call through the set. Retaken each round.
+    struct closureSet {
+        llvm::SmallVector<ctjs::CreateClosureOp, 4> members;
+        llvm::SetVector<ctjs::CallOp> calls;
+    };
+    llvm::DenseMap<mlir::Operation *, std::shared_ptr<closureSet>> closureSets;
+    void closureSetCensus();
+    std::optional<std::string> whyNotClosureSetMember(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyNotInClosureSet(ctjs::CreateClosureOp c);
+    void rewriteClosureSetMember(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     // --- Borrowed callbacks (BorrowedCallbacks.cpp) ----------------------------
     //

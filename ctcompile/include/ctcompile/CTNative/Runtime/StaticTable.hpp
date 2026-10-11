@@ -12,6 +12,7 @@
 
 #include <array>
 #include <stdexcept>
+#include <type_traits>
 
 namespace ctnative {
 
@@ -40,6 +41,22 @@ template <auto Field> const auto & table_field(static_table_ptr table) {
         throw std::invalid_argument("TypeError: Cannot read properties of undefined");
     }
     return static_cast<const concrete *>(table)->*Field;
+}
+
+/// Reads `Field` of the table `table` points to for an object spread
+/// (`{...table}`), as a `Result` (a nullable carrier such as nullable_scalar).
+/// CopyDataProperties (ECMA-262 7.3.25) copies nothing from undefined, so a
+/// null `table` gives an undefined `Result` instead of throwing.
+template <auto Field, class Result> Result table_field_or_undefined(static_table_ptr table) {
+    if (table == nullptr) { return Result{}; }
+    const auto & value = table_field<Field>(table);
+    if constexpr (std::is_constructible_v<Result, decltype(value)>) {
+        return Result(value);
+    } else {
+        // A String field into a nullable_string, found by argument-dependent
+        // lookup in ctnative.hpp.
+        return to_nullable_string(value);
+    }
 }
 
 } // namespace ctnative

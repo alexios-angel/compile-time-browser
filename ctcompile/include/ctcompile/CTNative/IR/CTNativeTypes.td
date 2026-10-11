@@ -454,6 +454,21 @@ def CTNative_StaticTableType
   }];
 }
 
+def CTNative_InstanceType
+    : CTNative_WrapperType<"Instance", "instance", (ins StringRefParameter<>:$className)> {
+  let summary = "An instance of a JavaScript class a registry Map owns: `std::shared_ptr<C>`";
+  let description = [{
+    Only a class whose constructor carries `ctnative.instance_class`
+    (Analysis/Instances.h) has instances of this type: its constructor stores
+    `this` into a Map that is proved to own nothing but instances of the
+    class, with no path from an instance back to the Map or another
+    instance. Shared ownership is then plain RAII: the Map entry and every
+    local holding the instance are owners, and the last one to go destroys
+    it. `opt<instance>` is a null pointer for both null and undefined, so
+    native code refuses wherever a program tells the two apart on it.
+  }];
+}
+
 def CTNative_MethodTableType
     : CTNative_WrapperType<"MethodTable", "method_table", (ins StringRefParameter<>:$site)> {
   let summary = "An owning closed table of immutable stored callable fields";
@@ -481,6 +496,29 @@ def CTNative_ClosureType
     parameters. They are not recursively embedded in this nominal type, so a
     recursive call graph cannot grow the type lattice indefinitely.
   }];
+}
+
+def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
+  let summary = "One of a finite, proved set of callables - a std::variant dispatched by std::visit";
+  let description = [{
+    Where two `closure` types meet, or a `closure` meets a `closure_set`: a
+    value that is one of several lifted callables, each bound to its own
+    captures, such as `c ? (x => x + k) : (x => x * 3)`. The targets are the
+    callables' nominal identities, sorted and distinct, so the meet of the
+    same targets in any order is one MLIR type.
+
+    IT IS CAPPED at `kMaxClosureSetTargets` (CTNativeLattice.h). A union of
+    more targets is `boxed`, in every bracketing, because the size of a union
+    of sets does not depend on the order it was formed in. The cap keeps the
+    lattice finite-height.
+
+    The closure-set lift (Lowering/ClosureLifting/ClosureSets.cpp) decides
+    which values may have this type; a call through one names every target
+    it may reach, and admission requires one signature for all of them.
+  }];
+  let parameters = (ins ArrayRefParameter<"::mlir::StringAttr">:$targets);
+  let assemblyFormat = "`<` $targets `>`";
+  let genVerifyDecl = 1;
 }
 
 //===----------------------------------------------------------------------===//
