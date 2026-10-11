@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include "Microtasks.hpp"
 #include "Number.hpp"
 
 #include <ctbrowser/core/number.hpp>
@@ -64,7 +65,8 @@ public:
     /// VM's dom_bindings::run_timers does after browser::tick moves its clock.
     /// A timer a callback schedules waits for the next advance(), even with a
     /// 0 delay. A callback that throws is reported (reported()) and the rest
-    /// still run. Returns how many ran.
+    /// still run. The promise jobs each callback queued run before the next
+    /// one starts. Returns how many ran.
     std::size_t advance(double elapsed_ms) {
         now_ms_ += elapsed_ms;
         std::vector<std::uint32_t> due;
@@ -80,6 +82,8 @@ public:
             try {
                 run();
             } catch (const std::exception & thrown) { reported_.emplace_back(thrown.what()); }
+            // A timer is a task, and a task ends in a microtask checkpoint.
+            microtasks::program().checkpoint();
         }
         for (const auto & entry : schedule_.entries()) {
             if (entry.cancelled) { callbacks_.erase(entry.id); }

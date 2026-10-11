@@ -18,6 +18,7 @@
 #endif
 
 #include "Browser.hpp"
+#include "Microtasks.hpp"
 
 #include <ctbrowser/shell/listener_registry.hpp>
 
@@ -75,7 +76,8 @@ public:
     /// up to the document element. Each step's listeners are the ones
     /// registered when the step begins, in registration order. A listener
     /// that throws is reported (reported()) and the rest still run, as the VM
-    /// reports an exception and continues. Returns how many listeners ran.
+    /// reports an exception and continues. The promise jobs the listeners
+    /// queued run before it returns. Returns how many listeners ran.
     ///
     /// ponytail: element steps only, with no capture phase, since only
     /// bubbling listeners on elements can be registered natively. The
@@ -110,6 +112,9 @@ public:
                 } catch (const std::exception & thrown) { reported_.emplace_back(thrown.what()); }
             }
         }
+        // HTML's "clean up after running script": the host dispatches with no
+        // script on the stack, so the dispatch ends in a microtask checkpoint.
+        microtasks::program().checkpoint();
         return ran;
     }
 

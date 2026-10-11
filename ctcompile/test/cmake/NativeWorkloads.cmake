@@ -24,6 +24,11 @@ ctcompile_unit_test(native-events LIBS ctbrowser::page)
 # Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-timers LIBS ctbrowser::core)
 
+# The native promises and microtask queue (CTNative/Runtime/Promise.hpp and
+# Microtasks.hpp), ordered against the timer table; its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-promise LIBS ctbrowser::core)
+
 set(_native_ctbrowser "${CTCOMPILE_MONOREPO_ROOT}/ctbrowser")
 set(_native_gate "${_native_ctbrowser}/cmake/run-without-vm.cmake")
 set(_native_gate_nm "${CMAKE_NM}")
