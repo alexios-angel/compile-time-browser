@@ -90,10 +90,14 @@ private:
             // strings or custom properties, so they are refused. This pass runs
             // before native lowering, while ctjs's reference forms are still
             // explicit.
-            const bool supported = op->getName().isRegistered() &&
-                                   llvm::StringSwitch<bool>(op->getName().getDialectNamespace())
-                                       .Cases({"builtin", "ctjs", "arith", "scf", "cf", "ub"}, true)
-                                       .Default(false);
+            // A typeof test's narrowing (Lowering/Refinements.cpp) holds a
+            // value and a typeof result, no reference.
+            const bool supported =
+                op->getName().isRegistered() &&
+                (llvm::StringSwitch<bool>(op->getName().getDialectNamespace())
+                     .Cases({"builtin", "ctjs", "arith", "scf", "cf", "ub"}, true)
+                     .Default(false) ||
+                 op->getName().getStringRef() == "ctnative.refine");
             if (!supported) {
                 refuse("operation has no CTJS reachability contract");
                 return mlir::WalkResult::interrupt();
