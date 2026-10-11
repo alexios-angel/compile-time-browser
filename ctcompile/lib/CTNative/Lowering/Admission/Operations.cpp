@@ -318,11 +318,15 @@ std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef
 }
 
 } // namespace
+/// Admits a String.prototype.replace call with a specialised callback and the
+/// plumbing it consumes (StringCallbacks.cpp).
+std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * o);
 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
+    if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {

@@ -15,5 +15,6 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   MethodTables.cpp
   RunOnce.cpp
   Singletons.cpp
+  StringCallbacks.cpp
   ClosureLifter.h
 )

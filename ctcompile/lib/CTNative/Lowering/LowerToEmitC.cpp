@@ -582,6 +582,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 : nullptr;
         // Data records returned by value join their callers' groups.
         TypeInference::markRecordReturns(module);
+        TypeInference::markStringMethodCalls(module);
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -726,10 +727,15 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");
                     });
-                    // A specialised Array-method call names its callback.
+                    // A specialised Array-method call or replace call names its
+                    // callback.
                     fn.getBody().walk([&](ctjs::CallOp call) {
                         auto callback =
                             call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback);
+                        if (!callback) {
+                            callback =
+                                call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeStringCallback);
+                        }
                         if (!callback) { return; }
                         edge(symbols.lookup(callback.getValue()),
                              "calls back `" + callback.getValue() + "`, which is not native",
@@ -831,9 +837,13 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
                         if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
                         if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
-                        // The RegExp literal factory behind split(/\s+/) lowers
-                        // to nothing; it is not a program global.
-                        if (isVectorCallPlumbing(load)) { return; }
+                        // The RegExp literal factory behind split(/\s+/) and a
+                        // specialised replace lowers to nothing; it is not a
+                        // program global.
+                        if (isVectorCallPlumbing(load) ||
+                            TypeInference::consumedByStringCallback(load)) {
+                            return;
+                        }
                         // Nor are `document` and `window` when only their
                         // page reads use them; those lower to runtime calls.
                         if (!hostContract && isPageGlobal(load)) { return; }

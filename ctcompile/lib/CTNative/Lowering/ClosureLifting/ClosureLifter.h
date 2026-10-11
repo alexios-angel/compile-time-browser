@@ -497,6 +497,12 @@ struct closureLifter {
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+    /// Replacement functions of `text.replace(/pattern/g, f)`
+    /// (StringCallbacks.cpp), judged and rewritten as an Array callback is.
+    llvm::DenseMap<mlir::Operation *, ctjs::CallOp> stringCallbacks;
+    void stringCallbackCensus();
+    std::optional<std::string> whyNotStringCallback(ctjs::CreateClosureOp c);
+    void rewriteStringCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     void census();
 

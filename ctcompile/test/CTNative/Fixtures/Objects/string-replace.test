@@ -1,0 +1,30 @@
+# Native differential test of string-replace.js. The modules come from
+# ctcompile_add_native_pipeline in Native.cmake, which lowers the program to
+# native C++ (writing no module while any function carries `ctnative.not_native`)
+# plus a variant printed with deduced `auto` types and one with a wrong type pin.
+# compilation-unit.py compiles a module standalone, checks with nm that it calls
+# no interpreter, runs it, and compares every global with the interpreter's.
+# compile-clean.py checks a warning-free build on both toolchains with a
+# provenance comment over every definition. print-deduced.py checks that the
+# deduced module differs only in type spellings and that the wrong pin fails.
+# A `not ... --mutate G` line adds one to global G in the C++ and expects the
+# comparison to fail naming G, proving the comparison can catch a difference.
+
+# String.prototype.replace with a RegExp literal and a function. The callback
+# bound to its captures is an `auto` local (`std::bind_front`), whose type has
+# no spelling for the printing policy to pin, so print-deduced.py is not run,
+# as for array-callbacks.test; the deduced module still builds and runs.
+# RUN: %compilation_unit --module %{obj}/string_replace.pipeline.emitc.mlir --js %S/string-replace.js --work %t --name string_replace --core-build %build
+# RUN: not %compilation_unit --module %{obj}/string_replace.pipeline.emitc.mlir --js %S/string-replace.js --work %t --name string_replace_off_by_one --core-build %build --mutate dashedLength11 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'dashedLength11' differs
+# RUN: %compilation_unit --module %{obj}/string_replace.pipeline.deduced.emitc.mlir --js %S/string-replace.js --work %t --name string_replace_deduced --core-build %build
+# RUN: %compile_clean --module %{obj}/string_replace.pipeline.emitc.mlir --work %t --name string_replace
+# RUN: %compile_clean --module %{obj}/string_replace.pipeline.deduced.emitc.mlir --work %t --name string_replace_deduced
+# The spelling: the JavaScript names, the literal pattern and the bound callback.
+# RUN: ctjs-translate --mlir-to-cpp %{obj}/string_replace.pipeline.emitc.mlir | FileCheck %s
+# CHECK-DAG: #include "ctcompile/CTNative/Runtime/RegExp.hpp"
+# CHECK-DAG: ctnative::String.prototype.replace.call(
+# CHECK-DAG: ctnative::RegExp("[A-Z]", "g")
+# CHECK-DAG: ctnative::RegExp("o", "")
+# CHECK-DAG: std::bind_front(
+# CHECK-DAG: ctnative::String.prototype.toLowerCase.call(
