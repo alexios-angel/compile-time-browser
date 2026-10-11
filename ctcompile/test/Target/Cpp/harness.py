@@ -16,7 +16,6 @@ import random
 import re
 import shutil
 import subprocess
-import tempfile
 
 # Include directories for generated programs: ctcompile/include for
 # ctcompile/CTNative/Runtime/ctnative.hpp, and ctbrowser/include for the core
@@ -44,7 +43,11 @@ FLAGS = [
 # while it holds one of os.cpu_count() slot files here, locked with flock, so
 # the limit holds across every lit worker and driver on the machine, and a
 # killed process gives its slot back.
-JOB_SLOTS = Path(tempfile.gettempdir()) / "ctcompile-job-slots"
+#
+# The directory is /tmp itself, not tempfile.gettempdir(): lit points TMPDIR at
+# a directory of its own for each run, which would give every lit run (each
+# checkout, each agent) a separate set of slots.
+JOB_SLOTS = Path("/tmp/ctcompile-job-slots")
 
 
 @contextlib.contextmanager

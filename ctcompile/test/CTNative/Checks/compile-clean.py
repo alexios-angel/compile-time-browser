@@ -19,11 +19,10 @@ RUN line checks.
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
 
-from CTNative.harness import FLAGS, run
+from CTNative.harness import FLAGS, run, slotted_run
 
 DEFINITION = re.compile(
     r"^[A-Za-z_][A-Za-z_0-9:<>]* [A-Za-z_][A-Za-z_0-9]*\(.*\) \{$"
@@ -82,7 +81,7 @@ def main():
     report = ""
     for i, cxx in enumerate(compilers):
         version = run([cxx, "--version"]).stdout.split("\n", 1)[0]
-        result = subprocess.run(
+        result = slotted_run(
             [cxx, *FLAGS, "-c", "-o", str(work / f"unit.{i}.o"), str(unit)],
             capture_output=True,
             text=True,
