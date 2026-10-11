@@ -320,7 +320,11 @@ public:
         /// What the call answers.
         enum class Result {
             number,
-            string
+            string,
+            /// An ordinary script's elements (querySelectorAll's snapshot).
+            elementVector,
+            /// An ordinary script's element or null.
+            nullableElement
         };
         llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
         llvm::StringLiteral member; ///< `parseInt`, `min`, `toLowerCase`.
@@ -380,6 +384,12 @@ public:
     /// Whether `key` is previousElementSibling, nextElementSibling or
     /// parentElement: a read that answers an element or null.
     static bool isElementLink(llvm::StringRef key);
+    /// For `[].concat(...a)`, the array `a` that the spread loop filled:
+    /// the call makes a copy of it (Inference/Elements.cpp). Null otherwise.
+    static mlir::Value spreadCopySource(mlir::Operation * op);
+    /// Whether `op` is the empty literal of `[].concat(...a)` or its `concat`
+    /// read, which lower to nothing.
+    static bool isSpreadCopyPlumbing(mlir::Operation * op);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
