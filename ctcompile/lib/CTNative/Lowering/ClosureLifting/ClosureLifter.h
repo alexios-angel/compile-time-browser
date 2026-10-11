@@ -859,6 +859,20 @@ struct closureLifter {
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
 
+    // --- Closure sets (ClosureSets.cpp) ----------------------------------------
+    //
+    // Closures whose values meet at scf.if results and are otherwise only
+    // called: each member, and every call through the set. Retaken each round.
+    struct closureSet {
+        llvm::SmallVector<ctjs::CreateClosureOp, 4> members;
+        llvm::SetVector<ctjs::CallOp> calls;
+    };
+    llvm::DenseMap<mlir::Operation *, std::shared_ptr<closureSet>> closureSets;
+    void closureSetCensus();
+    std::optional<std::string> whyNotClosureSetMember(ctjs::CreateClosureOp c);
+    std::optional<std::string> whyNotInClosureSet(ctjs::CreateClosureOp c);
+    void rewriteClosureSetMember(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
     // --- Borrowed callbacks (BorrowedCallbacks.cpp) ----------------------------
     //
     // A closure passed to a parameter that its callee only calls, where every

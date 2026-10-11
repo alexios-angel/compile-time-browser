@@ -447,6 +447,29 @@ def CTNative_ClosureType
   }];
 }
 
+def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
+  let summary = "One of a finite, proved set of callables - a std::variant dispatched by std::visit";
+  let description = [{
+    Where two `closure` types meet, or a `closure` meets a `closure_set`: a
+    value that is one of several lifted callables, each bound to its own
+    captures, such as `c ? (x => x + k) : (x => x * 3)`. The targets are the
+    callables' nominal identities, sorted and distinct, so the meet of the
+    same targets in any order is one MLIR type.
+
+    IT IS CAPPED at `kMaxClosureSetTargets` (CTNativeLattice.h). A union of
+    more targets is `boxed`, in every bracketing, because the size of a union
+    of sets does not depend on the order it was formed in. The cap keeps the
+    lattice finite-height.
+
+    The closure-set lift (Lowering/ClosureLifting/ClosureSets.cpp) decides
+    which values may have this type; a call through one names every target
+    it may reach, and admission requires one signature for all of them.
+  }];
+  let parameters = (ins ArrayRefParameter<"::mlir::StringAttr">:$targets);
+  let assemblyFormat = "`<` $targets `>`";
+  let genVerifyDecl = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // The three smart pointers. Escape analysis
 // (ctcompile/CTNative/Analysis/EscapeAnalysis.h) chooses between them.

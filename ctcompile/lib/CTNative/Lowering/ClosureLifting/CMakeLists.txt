@@ -4,6 +4,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Callbacks.cpp
   Cells.cpp
   Classes.cpp
+  ClosureSets.cpp
   Bindings.cpp
   BorrowedCallbacks.cpp
   Captures.cpp
