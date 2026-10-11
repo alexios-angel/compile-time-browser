@@ -193,14 +193,16 @@ inline std::vector<js_element_t> document_object::querySelectorAll(
 }
 
 /// `document.documentElement` where the program uses it as an element without
-/// a null check (css-dump.js's walk starts there). A document with no root
-/// element throws; the VM throws a TypeError at the first member read of the
-/// null, so the message names it. Like the other DOM errors in this header it
-/// is a C++ exception native `catch` cannot see, so admission keeps a `try`
-/// around such a read refused.
-inline js_element_t require_document_element() {
+/// a null check (css-dump.js's walk starts there), and `reading` is the first
+/// property the program reads of it. A document with no root element throws
+/// the TypeError the interpreter throws at that read of null. Like the other
+/// DOM errors in this header it is a C++ exception native `catch` cannot see,
+/// so admission keeps a `try` around such a read refused.
+inline js_element_t require_document_element(const char * reading) {
     std::optional<js_element_t> root = document.documentElement();
-    if (!root) { throw std::invalid_argument("TypeError: document.documentElement is null"); }
+    if (!root) {
+        throw type_error(std::string{"Cannot read properties of null (reading '"} + reading + "')");
+    }
     return *std::move(root);
 }
 

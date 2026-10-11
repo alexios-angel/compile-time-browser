@@ -10,8 +10,10 @@
 
 #pragma once
 
+#include "Error.hpp"
+
 #include <array>
-#include <stdexcept>
+#include <string>
 
 namespace ctnative {
 
@@ -30,14 +32,15 @@ template <class Table, class Field> struct table_of_member<Field Table::*> {
 };
 } // namespace detail
 
-/// Reads `Field` (`&ctn_x::key`) of the table `table` points to. A property
-/// read of undefined throws a TypeError (GetValue calls ToObject, ECMA-262
-/// 7.1.18), and a null `table` is a static the run-once function has not
-/// stored yet.
-template <auto Field> const auto & table_field(static_table_ptr table) {
+/// Reads `Field` (`&ctn_x::key`), the property `key` names, of the table
+/// `table` points to. A property read of undefined throws a TypeError
+/// (GetValue calls ToObject, ECMA-262 7.1.18) with the interpreter's message,
+/// and a null `table` is a static the run-once function has not stored yet.
+template <auto Field> const auto & table_field(static_table_ptr table, const char * key) {
     using concrete = typename detail::table_of_member<decltype(Field)>::type;
     if (table == nullptr) {
-        throw std::invalid_argument("TypeError: Cannot read properties of undefined");
+        throw type_error(std::string{"Cannot read properties of undefined (reading '"} + key +
+                         "')");
     }
     return static_cast<const concrete *>(table)->*Field;
 }

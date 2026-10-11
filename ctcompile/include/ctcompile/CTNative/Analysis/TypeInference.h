@@ -442,6 +442,11 @@ public:
     /// throws a TypeError, so the row is read as one that exists, and
     /// ctnative::vec_row throws instead when it does not.
     static bool isRowRead(mlir::Operation * read);
+    /// The key of the first constant-key property read of `value`, in program
+    /// text order, following it into a direct callee's parameter when it is
+    /// passed on first; empty when none is found. That read is where the
+    /// interpreter throws when `value` is null, and its error names the key.
+    static llvm::StringRef firstPropertyRead(mlir::Value value);
 
     /// A value that names a shared binding the closure lift made a
     /// frame-local variable: the `ctjs.create_cell` it marked

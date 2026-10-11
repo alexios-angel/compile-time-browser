@@ -88,6 +88,10 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
         fn.walk([&](ctjs::GetPropertyOp read) {
             if (read->hasAttr(kNativeStaticTable)) {
                 staticTableReads[read] = tableMember(ctjs::constantKey(read.getKey()));
+                // The key itself, which a read of an unset table's error names.
+                read->setAttr(
+                    "ctnative.static_table_key",
+                    mlir::StringAttr::get(read.getContext(), ctjs::constantKey(read.getKey())));
             }
         });
     }
@@ -177,8 +181,15 @@ bool lowering::replaceStaticTable(mlir::Operation * o) {
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o)) {
         const std::string field =
             "<&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o) + ">";
-        mlir::Value value = callValue(at, o->getLoc(), read.getResult().getType(),
-                                      "ctnative::table_field" + field, read.getObject());
+        // The key, which the error of a read of an unset table names.
+        const llvm::StringRef key =
+            o->getAttrOfType<mlir::StringAttr>("ctnative.static_table_key").getValue();
+        const mlir::Value named = ec::LiteralOp::create(
+            at, o->getLoc(), ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+            cpp::c_string_literal(std::string_view(key.data(), key.size())));
+        mlir::Value value =
+            callValue(at, o->getLoc(), read.getResult().getType(), "ctnative::table_field" + field,
+                      mlir::ValueRange{read.getObject(), named});
         read.getResult().replaceAllUsesWith(value);
         eraseIfUnused(o);
         return true;

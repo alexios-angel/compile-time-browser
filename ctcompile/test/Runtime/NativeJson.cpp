@@ -6,7 +6,9 @@
 // ctnative::vec_row (Array.hpp). The cases pin what differs from a plain C++
 // rendering: NaN and the infinities serialize as null and -0 as 0, array-index
 // keys of a dictionary come first, `$` patterns follow GetSubstitution, and a
-// row past the end throws the TypeError a property read of undefined throws.
+// row past the end, like a field of an unset static table (StaticTable.hpp),
+// throws the TypeError a property read of undefined throws, with the
+// interpreter's message.
 //
 //===----------------------------------------------------------------------===//
 
@@ -14,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Dictionary.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
+#include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 
 #include <cmath>
 #include <limits>
@@ -81,6 +84,24 @@ void test_row_past_the_end_throws() {
     CHECK(message == "Cannot read properties of undefined (reading '0')");
 }
 
+struct config_table_t : ctnative::static_table {
+    double interval = 5.0;
+};
+const config_table_t config_table{};
+
+void test_unset_table_throws() {
+    // A run-once static read before it is stored is undefined; reading its
+    // `interval` throws the interpreter's TypeError.
+    ctnative::static_table_ptr table = &config_table;
+    CHECK(ctnative::table_field<&config_table_t::interval>(table, "interval") == 5.0);
+    table = nullptr;
+    std::string message;
+    try {
+        (void)ctnative::table_field<&config_table_t::interval>(table, "interval");
+    } catch (const ctnative::type_error & thrown) { message = thrown.what(); }
+    CHECK(message == "Cannot read properties of undefined (reading 'interval')");
+}
+
 } // namespace
 
 int main() {
@@ -88,5 +109,6 @@ int main() {
     test_dictionary_puts_indices_first();
     test_replace_substitutes();
     test_row_past_the_end_throws();
+    test_unset_table_throws();
     REPORT("native_json");
 }

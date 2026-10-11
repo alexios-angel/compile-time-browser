@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ctcompile/CTNative/Runtime/Error.hpp"
 #include "ctcompile/CTNative/Runtime/Math.hpp"
 #include "ctcompile/CTNative/Runtime/Number.hpp"
 #include "ctcompile/CTNative/Runtime/String.hpp"
@@ -95,13 +96,6 @@ template <class T> struct js_exception {
 
 struct undefined_t {};
 struct js_null_t {};
-
-/// A TypeError native code throws. what() is the error's `message`, as the
-/// interpreter words it, so a caller that reports `e.message` reports the
-/// same text from either engine.
-struct type_error : std::invalid_argument {
-    using std::invalid_argument::invalid_argument;
-};
 
 /// A JavaScript Boolean. Conversion to a C++ `bool` or to a number is
 /// explicit, so a Boolean never silently becomes 0 or 1.

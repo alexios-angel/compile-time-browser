@@ -444,6 +444,45 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     return false;
 }
 
+llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
+    llvm::DenseSet<mlir::Value> seen;
+    while (value && seen.insert(value).second) {
+        auto fn = value.getParentRegion()->getParentOfType<ctjs::FuncOp>();
+        if (!fn) { return {}; }
+        // ponytail: text order, not execution order; a read in a branch that
+        // does not run can name the wrong key. Only the error message depends
+        // on it.
+        mlir::Operation * first = nullptr;
+        fn.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
+            if (first) { return mlir::WalkResult::interrupt(); }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+            if ((read && read.getObject() == value && !ctjs::constantKey(read.getKey()).empty()) ||
+                (call && llvm::is_contained(call->getOperands().drop_front(3), value))) {
+                first = op;
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(first)) {
+            return ctjs::constantKey(read.getKey());
+        }
+        auto call = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(first);
+        ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
+        if (!callee || callee.getBody().empty()) { return {}; }
+        // Into the callee, at the first argument position that passes it.
+        const mlir::Value passed = value;
+        value = {};
+        for (unsigned i = 3; i < call->getNumOperands(); ++i) {
+            if (call->getOperand(i) == passed) {
+                value = callee.getBody().front().getArgument(i);
+                break;
+            }
+        }
+    }
+    return {};
+}
+
 bool TypeInference::isRowRead(mlir::Operation * op) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
     if (!read || !ctjs::constantKey(read.getKey()).empty() || read.getResult().use_empty()) {

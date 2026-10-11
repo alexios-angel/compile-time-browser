@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Vectors.h"
+#include "ctcompile/Support/CppLiterals.hpp"
 
 #include <array>
 #include <limits>
@@ -35,6 +36,9 @@ constexpr llvm::StringLiteral kStringArrayRow = "ctnative.string_array_row";
 constexpr llvm::StringLiteral kArrayHeader = "ctcompile/CTNative/Runtime/Array.hpp";
 /// markWrittenArrays' list (isWrittenArray).
 constexpr llvm::StringLiteral kWrittenArrays = "ctnative.written_arrays";
+/// On the document.documentElement read, the property the program reads of it
+/// first (TypeInference::firstPropertyRead).
+constexpr llvm::StringLiteral kFirstRead = "ctnative.first_read";
 /// On a row read (TypeInference::isRowRead), the position its first use reads.
 constexpr llvm::StringLiteral kRowReading = "ctnative.row_reading";
 /// On a built-in call taking a record, the record's keys in definition order.
@@ -137,6 +141,11 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op); read && lower.pageViews) {
             const llvm::StringRef key = ctjs::constantKey(read.getKey());
             if (isPageGlobal(read.getObject().getDefiningOp())) {
+                if (key == "documentElement") {
+                    op->setAttr(kFirstRead, mlir::StringAttr::get(op->getContext(),
+                                                                  TypeInference::firstPropertyRead(
+                                                                      read.getResult())));
+                }
                 mark(op, key == "documentElement" ? "document_element" : "device_pixel_ratio");
                 return;
             }
@@ -443,9 +452,13 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "document_element") {
         // Null only for a document with no root element, where the
-        // interpreter throws a TypeError on the first member read.
+        // interpreter throws a TypeError on the first member read, naming it.
+        const llvm::StringRef reading = o->getAttrOfType<mlir::StringAttr>(kFirstRead).getValue();
+        const mlir::Value name = ec::LiteralOp::create(
+            b, where, ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+            cpp::c_string_literal(std::string_view(reading.data(), reading.size())));
         swap(callValue(b, where, ec::OpaqueType::get(context, kPageElementType),
-                       "ctnative::require_document_element", mlir::ValueRange{}));
+                       "ctnative::require_document_element", mlir::ValueRange{name}));
         return true;
     }
     if (kind == "device_pixel_ratio") {
