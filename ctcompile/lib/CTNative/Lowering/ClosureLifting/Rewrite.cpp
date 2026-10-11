@@ -23,6 +23,8 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeStoredRead);
         op->removeAttr(kNativeMethodTable);
         op->removeAttr(kNativeTableField);
+        op->removeAttr(kNativeBorrowedCallback);
+        op->removeAttr(kNativeBorrowedCall);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -73,6 +75,10 @@ liftReport closureLifter::run() {
         }
     }
     bindLocalFunctions(out);
+    // A static variable holding a table of methods is called through
+    // directly (Singletons.cpp). After the binding rule, which removes the
+    // methods' captures of the functions it binds.
+    bindSingletonMethods(out);
     // Unbox object literals that are proved uncaptured before the
     // argument/receiver census. A separate lifter does this because the
     // rewrite erases stores its census points at; the main census below then
@@ -132,6 +138,7 @@ liftReport closureLifter::run() {
         returnedClosures.clear();
         returnedClosureCensus();
         returnedMethodTableCensus();
+        borrowedCallbackCensus();
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so one unliftable creation site blocks every other.
@@ -156,6 +163,7 @@ liftReport closureLifter::run() {
                 returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -387,6 +395,11 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // established: every caller of this function is visible.
     mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
     ++out.functions;
+
+    if (borrowedCallbacks.contains(made.front())) {
+        rewriteBorrowedCallback(made.front(), target, out);
+        return;
+    }
 
     if (returnedClosures.contains(made.front())) {
         liftReturnedClosure(made.front(), target, captures, parameters, out, preserveReceiver);

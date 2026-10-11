@@ -87,7 +87,11 @@ enum class carrier {
     /// std::pair of its positions' carriers (elementSpelling).
     tuple,
     /// A vector of such tuples (elementArraySpelling).
-    tupleVector
+    tupleVector,
+    /// An ordinary script's getBoundingClientRect answer (Runtime/Page.hpp).
+    domRect,
+    /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
+    computedStyle
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -111,6 +115,11 @@ inline constexpr llvm::StringLiteral kNullableType = "ctnative::nullable_scalar"
 inline constexpr llvm::StringLiteral kObjectValueType = "ctnative::object_value";
 inline constexpr llvm::StringLiteral kDOMElementType = "ctbrowser::element_ref";
 inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrowser::element_ref>";
+/// An ordinary script's element: the runtime's view, which carries the style
+/// engine its page reads need (Runtime/Browser.hpp).
+inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t";
+inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
+inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed_style";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
@@ -148,8 +157,10 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::stringVector, ""},
     {carrier::tuple, ""},
     {carrier::tupleVector, ""},
+    {carrier::domRect, kDOMRectType},
+    {carrier::computedStyle, kComputedStyleType},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::tupleVector) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::computedStyle) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -224,13 +235,16 @@ inline bool primitiveOrAbsent(mlir::Type type) {
 }
 carrier carrierOf(mlir::Type type);
 /// Whether `v`, whose proved type is `type`, is an element array: a vector of
-/// Strings or of tuples whose group the element-vector proof
+/// Strings, tuples or DOM elements whose group the element-vector proof
 /// (TypeInference::elementVectorAliases) accepts. It lowers to
-/// elementArraySpelling(type).
-bool isElementArray(mlir::Value v, mlir::Type type);
+/// elementArraySpelling(type). Elements count only with `pageViews` (an
+/// ordinary script, lowering::pageViews): a host contract's element vectors
+/// are its own proof's.
+bool isElementArray(mlir::Value v, mlir::Type type, bool pageViews);
 /// The C++ type of one element of an element array or one tuple position:
-/// ctnative::js_string, ctnative::js_num, ctnative::number_string, or
-/// std::pair of two of those for a tuple. Empty for anything else.
+/// ctnative::js_string, ctnative::js_num, ctnative::number_string,
+/// ctnative::js_element_t, or std::pair of two of those for a tuple. Empty for
+/// anything else.
 std::string elementSpelling(mlir::Type type);
 /// `std::vector<elementSpelling(element)>` for an element array's VecType.
 std::string elementArraySpelling(mlir::Type type);
@@ -241,6 +255,15 @@ std::string elementSpanSpelling(mlir::Type type);
 /// method read that is its callee, or the RegExp literal (its factory load,
 /// the factory call) that is `split(/\s+/)`'s separator.
 bool isVectorCallPlumbing(mlir::Operation * o);
+/// Whether `o` loads the realm's `document` or `window` only to read
+/// `document.documentElement` or `window.devicePixelRatio` off it, or its
+/// `getComputedStyle` only to call it. The read or call lowers to a runtime
+/// call, so the load lowers to nothing.
+bool isPageGlobal(mlir::Operation * o);
+/// Whether `o` reads a page method only to call it on the object it read it
+/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`). The call lowers to a
+/// runtime call, so the read lowers to nothing.
+bool isPageMethodRead(mlir::Operation * o);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
 llvm::StringRef mixedMapKeySpelling(mlir::Type type);

@@ -26,7 +26,9 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     const auto isString = [&](mlir::Value v) {
         return carrierOf(self.typeOf(v)) == carrier::string;
     };
-    const auto array = [&](mlir::Value v) { return isElementArray(v, self.typeOf(v)); };
+    const auto array = [&](mlir::Value v) {
+        return isElementArray(v, self.typeOf(v), self.pageViews());
+    };
     // Whether `value` may be stored into the element array `into`: a String
     // into an array of Strings, a tuple literal into an array of tuples.
     const auto fits = [&](mlir::Value into, mlir::Value value) {
@@ -91,6 +93,11 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     if (auto read = llvm::dyn_cast<GetPropertyOp>(o); read && array(read.getObject())) {
         const llvm::StringRef key = constantKey(read.getKey());
         if (key == "length") { return true; }
+        if (key.empty() && carrierOf(self.typeOf(read.getObject())) == carrier::domElementVector &&
+            !TypeInference::isBoundedIndexRead(read)) {
+            return self.refuse("an element of an element's children read at an index not "
+                               "proved in bounds");
+        }
         if (key.empty()) { return self.numeric(read.getKey(), "array index"); }
         return self.refuse(
             ("an element array read through the named property `" + key + "`").str());
@@ -158,6 +165,90 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     return std::nullopt;
 }
 
+/// Admits the page reads of an ordinary script (no host contract; see
+/// TypeInference::domReadType); nullopt when `o` is not one.
+std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
+    using namespace ctjs;
+    if (!self.pageViews()) { return std::nullopt; }
+    if (isPageGlobal(o) || isPageMethodRead(o)) { return true; }
+    const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
+    if (TypeInference::isRectCall(o)) {
+        auto call = llvm::cast<CallOp>(o);
+        if (carrierOf(self.typeOf(call.getReceiver())) != carrier::domElement) {
+            return std::nullopt;
+        }
+        return rect(call.getResult()) || self.refuse("getBoundingClientRect lost its rect type");
+    }
+    if (TypeInference::isStyleCall(o)) {
+        auto call = llvm::cast<CallOp>(o);
+        if (carrierOf(self.typeOf(call.getArgs()[0])) != carrier::domElement) {
+            return self.refuse("getComputedStyle of a value that is not a proved element");
+        }
+        return carrierOf(self.typeOf(call.getResult())) == carrier::computedStyle ||
+               self.refuse("getComputedStyle lost its style type");
+    }
+    if (TypeInference::isStylePropertyCall(o) &&
+        carrierOf(self.typeOf(llvm::cast<CallOp>(o).getReceiver())) == carrier::computedStyle) {
+        auto call = llvm::cast<CallOp>(o);
+        return (carrierOf(self.typeOf(call.getArgs()[0])) == carrier::string &&
+                carrierOf(self.typeOf(call.getResult())) == carrier::string) ||
+               self.refuse("getPropertyValue of a name that is not a String");
+    }
+    if (TypeInference::deadRectReceiver(o)) {
+        return rect(o->getResult(0)) ||
+               self.refuse("the null of a getBoundingClientRect test on a value that is not "
+                           "a proved element");
+    }
+    auto read = llvm::dyn_cast<GetPropertyOp>(o);
+    if (!read) { return std::nullopt; }
+    const llvm::StringRef key = constantKey(read.getKey());
+    const carrier result = carrierOf(self.typeOf(read.getResult()));
+    if (carrierOf(self.typeOf(read.getObject())) == carrier::computedStyle) {
+        return self.refuse(
+            ("a computed style read through `" + key + "` - only getPropertyValue is native")
+                .str());
+    }
+    if (rect(read.getObject())) {
+        return result == carrier::number ||
+               self.refuse(("a rect read through `" + key +
+                            "` - only left, top, width and height are native")
+                               .str());
+    }
+    if (isPageGlobal(read.getObject().getDefiningOp())) {
+        return result == (key == "documentElement" ? carrier::domElement : carrier::number) ||
+               self.refuse(("`" + key + "` lost its page type").str());
+    }
+    if (carrierOf(self.typeOf(read.getObject())) != carrier::domElement) { return std::nullopt; }
+    if (key == "tagName" || key == "id" || key == "className") {
+        return result == carrier::string ||
+               self.refuse(("an element's `" + key + "` that is not a String").str());
+    }
+    if (key == "clientWidth" || key == "clientHeight") {
+        return result == carrier::number ||
+               self.refuse(("`" + key +
+                            "` of an element other than document.documentElement - only the "
+                            "root's client size is native")
+                               .str());
+    }
+    if (key == "getBoundingClientRect") {
+        return (TypeInference::isRectTest(read) && result == carrier::boolean) ||
+               self.refuse("an element's getBoundingClientRect read as a value - only "
+                           "testing it and calling it are native");
+    }
+    if (key == "children") {
+        std::string why;
+        if (TypeInference::elementVectorAliases(read.getResult(), &why).empty()) {
+            return self.refuse("an element's children: " + why);
+        }
+        return isElementArray(read.getResult(), self.typeOf(read.getResult()), true) ||
+               self.refuse("an element's children that are not a vector of elements");
+    }
+    return self.refuse(("an element read through `" + key +
+                        "` - an ordinary script reads only tagName, id, className, children, "
+                        "clientWidth, clientHeight and getBoundingClientRect")
+                           .str());
+}
+
 } // namespace
 
 bool admission::ownedTableField(ctjs::SetPropertyOp store) {
@@ -175,9 +266,51 @@ bool admission::ownedTableField(ctjs::SetPropertyOp store) {
     return true;
 }
 
+/// Admits a borrowed callback's closure or a call through a borrowed
+/// parameter (BorrowedCallbacks.cpp).
+bool borrowedCallbackOperation(admission & self, mlir::Operation * o);
+
+namespace {
+
+/// The refusal for a read of a run-once function's static variable whose type
+/// has no carrier: the variable's JavaScript name and what its owner stores in
+/// it, so the reason points at the binding rather than at this frame.
+std::string staticReferenceRefusal(ctjs::CreateCellOp reference, llvm::StringRef type) {
+    const auto name = reference->getAttrOfType<mlir::StringAttr>(kNativeStaticCell).getValue();
+    std::string holds;
+    reference->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::CreateCellOp owner) {
+        if (owner->hasAttr(kNativeStaticReference) ||
+            owner->getAttrOfType<mlir::StringAttr>(kNativeStaticCell) !=
+                reference->getAttr(kNativeStaticCell)) {
+            return;
+        }
+        for (mlir::Operation * user : owner.getResult().getUsers()) {
+            auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
+            if (!store || store.getCell() != owner.getResult()) { continue; }
+            mlir::Operation * made = store.getValue().getDefiningOp();
+            const char * what =
+                llvm::isa_and_nonnull<ctjs::CreateObjectOp>(made)    ? "an object literal"
+                : llvm::isa_and_nonnull<ctjs::CreateArrayOp>(made)   ? "an array literal"
+                : llvm::isa_and_nonnull<ctjs::CreateClosureOp>(made) ? "a function"
+                                                                     : "a value";
+            if (holds.find(what) == std::string::npos) {
+                holds += holds.empty() ? what : std::string(" or ") + what;
+            }
+        }
+    });
+    return ("it reads `" + name.drop_front(llvm::StringRef("static_").size()) +
+            "`, a static variable of a function that runs once, which holds " +
+            (holds.empty() ? "nothing this frame can see" : holds) + " of type " + type +
+            " - that type has no native carrier")
+        .str();
+}
+
+} // namespace
+
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
@@ -207,6 +340,9 @@ bool admission::op(mlir::Operation * o) {
             return (table && table.getSite() == methodTableName(o)) ||
                    refuse("returned method table access has no single proved schema");
         }
+    }
+    if (o->hasAttr(kNativeBorrowedCallback) || o->hasAttr(kNativeBorrowedCall)) {
+        return borrowedCallbackOperation(*this, o);
     }
     if (auto made = llvm::dyn_cast<CreateClosureOp>(o); made && !environmentTarget(o).empty()) {
         for (mlir::Value captured : made.getUpvalues()) {
@@ -347,6 +483,9 @@ bool admission::op(mlir::Operation * o) {
     // ClosureLifter.h.)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
+            if (o->hasAttr(kNativeStaticReference)) {
+                return refuse(staticReferenceRefusal(cell, printed(typeOf(cell.getResult()))));
+            }
             return refuse("a shared binding of type " + printed(typeOf(cell.getResult())) +
                           ", which has no native carrier - a variable this tier cannot "
                           "spell is not one it may point at");
@@ -900,7 +1039,7 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
             // An element array is lent to the callee as a std::span.
-            !isElementArray(operands[i], typeOf(operands[i])) &&
+            !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
             !numeric(operands[i], "argument")) {
             return false;
         }
@@ -909,6 +1048,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
 }
 
 bool admission::returned(ctjs::ReturnOp ret) {
+    // A data record is returned by value as its class; closedObject checks it.
+    if (TypeInference::returnsRecord(ret)) { return true; }
     const carrier c = carrierOf(typeOf(ret.getValue()));
     if (c == carrier::none) { return refuse("returns " + printed(typeOf(ret.getValue()))); }
     returnedType =

@@ -39,6 +39,9 @@ struct admission {
     /// The returned type, kept so that the source alternatives survive when a
     /// nullable carrier can also hold a boolean.
     mlir::Type returnedType = {};
+    /// Whether this is an ordinary script, with no host contract: its DOM
+    /// elements are the runtime's views (lowering::pageViews).
+    [[nodiscard]] bool pageViews() const { return !domEntry && !ownedGlobals; }
     /// The inferred type of `v`, or null when the solver has no fact for it.
     [[nodiscard]] mlir::Type typeOf(mlir::Value v) const;
 

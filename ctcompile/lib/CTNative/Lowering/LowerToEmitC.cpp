@@ -528,6 +528,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
                 : nullptr;
+        // Data records returned by value join their callers' groups.
+        TypeInference::markRecordReturns(module);
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -655,6 +657,13 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     // A retained closure is an edge too: create_closure names its
                     // target even when the enclosing function never invokes it.
                     fn.getBody().walk([&](ctjs::CreateClosureOp made) {
+                        // A borrowed callback names its callback the same way.
+                        if (const auto target = borrowedTarget(made); !target.empty()) {
+                            edge(symbols.lookup(target),
+                                 "binds `" + target + "`, which is not native",
+                                 "bound by `" + fn.getSymName() + "`, which is not native");
+                            return;
+                        }
                         if (environmentTarget(made).empty()) { return; }
                         edge(symbols.lookup(environmentTarget(made)),
                              "retains `" + environmentTarget(made) + "`, which is not native",
@@ -682,6 +691,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         }
 
         lowering lower{solver, &getContext(), module};
+        lower.pageViews = !hostContract;
         lower.groups = &groups;
         if (domData) {
             if (!admittedGlobals || !admittedGlobals->proved() ||
@@ -763,6 +773,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                         // The RegExp literal factory behind split(/\s+/) lowers
                         // to nothing; it is not a program global.
                         if (isVectorCallPlumbing(load)) { return; }
+                        // Nor are `document` and `window` when only their
+                        // page reads use them; those lower to runtime calls.
+                        if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is the global `undefined`, which is a constant.
+                        if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();
                     }
                     if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(o)) {

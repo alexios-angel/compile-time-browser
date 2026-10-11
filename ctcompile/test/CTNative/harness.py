@@ -1,7 +1,9 @@
 """What the CTNative python drivers share: a checked subprocess run, the two
 compilers (the same pair Target/Cpp/harness.py finds) and their flags, the
 usual command line, the JS import and lift, native build-and-run, work-limit
-bisection and the Node observer of named globals.
+bisection, the Node observer of named globals, and running independent cases
+on every CPU (run_parallel) or only those CTCOMPILE_FIXTURES selects
+(selected_fixtures).
 
 lit puts ctcompile/test on PYTHONPATH (lit.cfg.py), which is also what lets a
 driver import a sibling from another directory as, say,
@@ -12,6 +14,8 @@ by CMake (lit.site.cfg.py.in).
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -239,3 +243,49 @@ def run_sanitized(compiler, source, binary, flags):
         timeout=60,
         env=dict(os.environ, **SANITIZER_ENVIRONMENT),
     )
+
+
+def run_parallel(items, function, workers=None):
+    """`function` over `items` on `workers` threads (every CPU by default), the
+    results in the order of `items`. Threads, because a case's time is spent in
+    the tools it runs as subprocesses. Every case runs even when one fails, so
+    one run reports them all; then the failures are raised together, in the
+    order of `items`. A case must write only files named after itself and
+    return what it would print, so the output does not depend on scheduling."""
+    items = list(items)
+    with ThreadPoolExecutor(workers or os.cpu_count() or 1) as pool:
+        futures = [pool.submit(function, item) for item in items]
+    results, failures = [], []
+    for item, future in zip(items, futures):
+        try:
+            results.append(future.result())
+        except Exception as error:  # noqa: BLE001 (reported below, with the case)
+            failures.append(f"{item}: {type(error).__name__}: {error}")
+    if failures:
+        raise RuntimeError(
+            f"{len(failures)} of {len(items)} case(s) failed:\n" + "\n".join(failures)
+        )
+    return results
+
+
+FIXTURE_FILTER = "CTCOMPILE_FIXTURES"
+
+
+def selected_fixtures(names):
+    """The fixture names a run checks: all of `names`, or, when
+    CTCOMPILE_FIXTURES holds comma-separated globs (fnmatch, case-sensitive),
+    those matching one. A filter that matches nothing is an error, so a
+    misspelt filter never passes by checking nothing; a filtered run says so
+    in its output. lit passes the variable through (lit.cfg.py)."""
+    names = list(names)
+    patterns = [p.strip() for p in os.environ.get(FIXTURE_FILTER, "").split(",") if p.strip()]
+    if not patterns:
+        return names
+    chosen = [name for name in names if any(fnmatch.fnmatchcase(name, p) for p in patterns)]
+    if not chosen:
+        raise RuntimeError(f"{FIXTURE_FILTER}={os.environ[FIXTURE_FILTER]!r} matches no fixture")
+    print(
+        f"{len(chosen)} of {len(names)} fixtures selected "
+        f"({FIXTURE_FILTER}={os.environ[FIXTURE_FILTER]})"
+    )
+    return chosen

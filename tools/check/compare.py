@@ -8,7 +8,7 @@ and keystrokes one command at a time, and screenshots either on demand - so an
 AI can drive it, and a human can watch the windows and say "that click missed"
 while it is still happening.
 
-    tools/check/compare.py setup                     # once: a venv with Playwright
+    tools/check/compare.py setup                     # once: Playwright via uv
     tools/check/compare.py start --headed --delay 400 ctbrowser/examples/pages/widgets.html
     tools/check/compare.py click 120 200
     tools/check/compare.py type Claude
@@ -40,6 +40,7 @@ import socket
 import select
 import signal
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -54,7 +55,8 @@ PORTFILE = OUT / "session.port"
 # Where tools/remote-build.sh puts the tree on the build box, so --remote can
 # find the binary it just built. Same relative layout, so page paths carry over.
 REMOTE_DIR = "$HOME/projects/compile-time-browser"
-VENV = ROOT / "tools" / ".venv"
+# The uv environment (pyproject.toml); `setup` puts the compare group in it.
+VENV = ROOT / ".venv"
 REQUEST_TIMEOUT = 30.0
 START_TIMEOUT = 60.0
 CLOSE_TIMEOUT = 5.0
@@ -150,7 +152,7 @@ def time_limit(seconds: float):
 def read_png(path: Path) -> tuple[int, int, bytes]:
     """A screenshot PNG as (width, height, RGB bytes), through Pillow.
 
-    Pillow lives in the same venv as Playwright (compare-requirements.txt), and
+    Pillow lives in the same venv as Playwright (pyproject.toml's compare group), and
     the one caller - css-parity.py's cell comparison - only ever runs with a
     real browser on the other side, so it is imported here rather than at the
     top: `--engine=ctbrowse` still needs nothing installed.
@@ -775,22 +777,19 @@ def stale_session() -> bool:
 
 
 def setup() -> int:
-    """Create the venv Playwright lives in. Only needed for chrome/firefox."""
-    if not VENV.exists():
-        print(f"creating {VENV}")
-        subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
-    pip = VENV / "bin" / "pip"
+    """Install Playwright and Pillow (pyproject.toml's compare group, pinned by
+    uv.lock) into the uv environment, then its browsers. Only needed for
+    chrome/firefox. --inexact keeps the other groups' packages, such as lit."""
+    uv = shutil.which("uv")
+    if not uv:
+        print("compare.py: setup needs uv (brew install uv, tools/Brewfile)", file=sys.stderr)
+        return 1
+    subprocess.run([uv, "sync", "--inexact", "--group", "compare"], cwd=ROOT, check=True)
     subprocess.run(
-        [
-            str(pip),
-            "install",
-            "--quiet",
-            "-r",
-            str(Path(__file__).with_name("compare-requirements.txt")),
-        ],
+        [uv, "run", "--group", "compare", "playwright", "install", "chromium", "firefox"],
+        cwd=ROOT,
         check=True,
     )
-    subprocess.run([str(VENV / "bin" / "playwright"), "install", "chromium", "firefox"], check=True)
     print(f"ready: {VENV}")
     return 0
 

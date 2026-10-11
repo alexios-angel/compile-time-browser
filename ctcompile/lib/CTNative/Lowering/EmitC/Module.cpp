@@ -146,6 +146,12 @@ void lowering::declareGlobals() {
                               b.getStringAttr("ctcompile/CTNative/Runtime/Browser.hpp"),
                               b.getUnitAttr());
     }
+    // A borrowed callback parameter is a ctnative::function_ref.
+    if (!borrowedSignatures.empty()) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Callable.hpp"),
+                              mlir::UnitAttr{});
+    }
     if (needsObjectIdentity) { verbatim(b, identityDefinition()); }
     if (!identityFields.empty()) { verbatim(b, identityFieldHelpers()); }
     for (const std::string & definition : environments) { verbatim(b, definition); }
