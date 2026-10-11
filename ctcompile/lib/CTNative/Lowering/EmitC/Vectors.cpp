@@ -27,6 +27,10 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o);
 /// (HostCallbacks.cpp).
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
 bool replaceEvent(mlir::Operation * o, llvm::StringRef kind);
+/// The action for an element member call or read, and its replacement
+/// (Elements.cpp).
+std::optional<std::string> elementAction(lowering & lower, mlir::Operation * o);
+bool replaceElement(mlir::Operation * o, llvm::StringRef kind);
 
 namespace {
 
@@ -111,6 +115,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
             mark(op, *action);
             return;
         }
+        if (auto action = lower.pageViews ? elementAction(lower, op) : std::nullopt) {
+            mark(op, *action);
+            return;
+        }
         // The null on the branch an element's getBoundingClientRect test never
         // takes (TypeInference::deadRectReceiver): any rect will do.
         if (lower.pageViews && TypeInference::deadRectReceiver(op) &&
@@ -177,9 +185,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                 return;
             }
             if (!arrays.contains(read.getObject())) { return; }
-            mark(op, ctjs::constantKey(read.getKey()) == "length" ? "length"
-                     : TypeInference::isBoundedIndexRead(op)      ? "element"
-                                                                  : "at");
+            mark(op, ctjs::constantKey(read.getKey()) == "length"                   ? "length"
+                     : TypeInference::isBoundedIndexRead(op)                        ? "element"
+                     : carrierOf(lower.typeOf(read.getObject())) == carrier::vector ? "at_number"
+                                                                                    : "at");
             return;
         }
         auto call = llvm::dyn_cast<ctjs::CallOp>(op);
@@ -204,6 +213,22 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         case VectorCall::includes:
             if (arrays.contains(call.getReceiver())) { mark(op, "includes"); }
             break;
+        case VectorCall::builtinStatic: {
+            // The row rides on the mark, as `static <kinds> <callee>` with one
+            // `s` (String), `n` (Number) or `e` (Element) per parameter: the
+            // reads it was recognised by are plumbing, replaced first, and so
+            // are String literal arguments.
+            using Param = TypeInference::BuiltinStatic::Param;
+            const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
+            std::string action = "static ";
+            for (unsigned i = 0; i < row.arity; ++i) {
+                action += row.params[i] == Param::string   ? 's'
+                          : row.params[i] == Param::number ? 'n'
+                                                           : 'e';
+            }
+            mark(op, action + " " + row.callee.str());
+            break;
+        }
         case VectorCall::callback:
             if (arrays.contains(call.getReceiver())) {
                 mark(op, "callback");
@@ -298,7 +323,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     const auto place = [&](mlir::Value array) { return lowering::cellPlace(b, where, array); };
     const auto numeric = carrierType(context, carrier::number);
     const auto vectorValue = ec::OpaqueType::get(context, kStringArrayType);
-    const llvm::StringRef kind = action.getValue();
+    llvm::StringRef kind = action.getValue();
     if (kind == "plumbing") {
         // A method read or RegExp literal the call below it consumes: a dead
         // placeholder, as for an erased property-key constant.
@@ -409,17 +434,19 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
                        mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)}));
         return true;
     }
-    if (kind == "at") {
+    if (kind == "at" || kind == "at_number") {
         const mlir::Type result = o->getResult(0).getType();
-        const mlir::Value value =
-            callValue(b, where, carrierType(context, carrier::nullableString), "ctnative::vec_at",
-                      mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)});
+        const mlir::Value value = callValue(
+            b, where,
+            carrierType(context, kind == "at" ? carrier::nullableString : carrier::nullable),
+            "ctnative::vec_at", mlir::ValueRange{place(o->getOperand(0)), o->getOperand(1)});
         swap(lower.convertScalar(b, where, value, result));
         return true;
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
     if (kind.starts_with("event")) { return replaceEvent(o, kind); }
+    if (kind.starts_with("element_")) { return replaceElement(o, kind); }
     auto call = llvm::cast<ctjs::CallOp>(o);
     if (kind == "push") {
         mlir::Value value = call.getArgs()[0];
@@ -480,6 +507,33 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         swap(callValue(b, where, carrierType(context, carrier::string),
                        "ctnative::Array.prototype.join.call",
                        mlir::ValueRange{place(call.getReceiver()), separator}));
+        return true;
+    }
+    if (kind.consume_front("static ")) {
+        // `ctnative::Number.parseInt(s, radix)`: admission proved each
+        // argument the kind its parameter asks; only a Number converts.
+        const auto [kinds, callee] = kind.split(' ');
+        llvm::SmallVector<mlir::Value, 2> operands;
+        for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
+            mlir::Value operand =
+                kinds[index] == 'n' ? lower.convertScalar(b, where, argument, numeric) : argument;
+            if (kinds[index] == 'e' && opaqueSpelling(operand.getType()) == kNullableElementType) {
+                operand = callValue(b, where, ec::OpaqueType::get(context, kPageElementType),
+                                    "ctnative::present_element", operand);
+            }
+            operands.push_back(operand);
+        }
+        // A returned array (querySelectorAll's snapshot) lands in a local
+        // that owns it, as split's pieces do.
+        if (auto owner = llvm::dyn_cast<ec::LValueType>(o->getResult(0).getType())) {
+            mlir::Value local =
+                ec::VariableOp::create(b, where, owner, ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(b, where, local,
+                                 callValue(b, where, owner.getValueType(), callee, operands));
+            swap(local);
+            return true;
+        }
+        swap(callValue(b, where, o->getResult(0).getType(), callee, operands));
         return true;
     }
     if (kind == "includes") {

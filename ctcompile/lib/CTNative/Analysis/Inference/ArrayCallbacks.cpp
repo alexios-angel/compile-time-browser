@@ -62,6 +62,13 @@ bool TypeInference::arrayCallbackBorrows(mlir::Operation * op, unsigned index) {
     return index == 1 || (index >= 2 && index < 2 + capturesOf(llvm::cast<ctjs::CallOp>(op)));
 }
 
+bool TypeInference::isNumberElementVector(mlir::Value array) {
+    const auto members = elementVectorAliases(array);
+    return !members.empty() && llvm::none_of(members, [](mlir::Value member) {
+        return member.getDefiningOp<ctjs::CreateArrayOp>() != nullptr;
+    });
+}
+
 bool TypeInference::isArrayCallbackParameter(mlir::Value value) {
     auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
     if (!argument || !argument.getOwner()->isEntryBlock() ||

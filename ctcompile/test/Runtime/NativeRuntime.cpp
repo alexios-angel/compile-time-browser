@@ -993,6 +993,36 @@ int main() {
     CHECK(ctnative::Number(nullable_scalar{js_null_t{}}) == ctnative::js_num{0.0});
     CHECK(ctnative::Number(ctnative::js_num{2.5}) == ctnative::js_num{2.5});
 
+    // Number.parseInt (19.2.5): leading whitespace and a sign, radix 10, 16
+    // and 0 (10, or 16 after 0x), a radix out of [2, 36] as NaN, the 0x prefix
+    // only for 16 or 0, a garbage suffix ignored, and no digits as NaN.
+    {
+        const auto parse = [](const char * text, double radix) {
+            return ctnative::Number.parseInt(js_string{std::string{text}}, ctnative::js_num{radix})
+                .value();
+        };
+        CHECK(parse("  \t42px", 10) == 42.0);
+        CHECK(parse("-17", 10) == -17.0);
+        CHECK(parse("+8", 10) == 8.0);
+        CHECK(parse("ff", 16) == 255.0);
+        CHECK(parse("0x1F", 16) == 31.0);
+        CHECK(parse("0x1F", 0) == 31.0);
+        CHECK(parse("0x1F", 10) == 0.0);
+        CHECK(parse("12", 0) == 12.0);
+        CHECK(parse("101", 2) == 5.0);
+        CHECK(parse("z", 36) == 35.0);
+        CHECK(std::isnan(parse("7", 1)));
+        CHECK(std::isnan(parse("7", 37)));
+        CHECK(std::isnan(parse("", 10)));
+        CHECK(std::isnan(parse("px", 10)));
+        CHECK(std::isnan(parse("-", 10)));
+        CHECK(std::signbit(parse("-0", 10)));
+        // A missing radix is undefined, which ToInt32 makes 0.
+        CHECK(ctnative::Number.parseInt(js_string{"0x10"}).value() == 16.0);
+        // ToInt32 wraps the radix: 2^32 + 16 is 16.
+        CHECK(parse("10", 4294967312.0) == 16.0);
+    }
+
     // Boolean(value) is ToBoolean for each carrier: NaN, 0 and -0, the empty
     // String, undefined and null are false; a String union follows its
     // alternative.

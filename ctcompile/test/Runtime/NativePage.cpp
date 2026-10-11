@@ -105,6 +105,15 @@ void test_tree_walks_match_the_vm() {
     CHECK_EQ(tag_of(head.previousElementSibling()), std::string{"null"});
     CHECK_EQ(tag_of(head.nextElementSibling()), std::string{"BODY"});
     CHECK_EQ(tag_of(root.nextElementSibling()), std::string{"null"});
+    // A member of null throws the VM's TypeError text.
+    CHECK_EQ(text(ctnative::present_element(box.nextElementSibling()).tagName()), std::string{"P"});
+    bool threw = false;
+    try {
+        (void)ctnative::present_element(box.previousElementSibling());
+    } catch (const std::invalid_argument & error) {
+        threw = std::string{error.what()} == "TypeError: Cannot read properties of null";
+    }
+    CHECK(threw);
 }
 
 void test_attributes_match_the_vm() {

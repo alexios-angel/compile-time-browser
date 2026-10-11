@@ -193,4 +193,6 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   # Timers run when the test moves the clock: by the browser's tick, and by
   # the native timer table (Runtime/Timers.hpp).
   ctcompile_page_workload(timers timers_report)
+  # The element calls of Bootstrap's SelectorEngine and Manipulator.
+  ctcompile_page_workload(selectors selectors_report)
 endif()
