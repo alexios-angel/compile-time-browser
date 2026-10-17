@@ -30,6 +30,10 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor-static.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=CONSTRUCTORSTATIC
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/choice.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CHOICE
+// RUN: %native_reference %t/choice.js | FileCheck %s --check-prefix=CHOICE-RUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/init-fields.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=INITFIELDS --implicit-check-not=unreachable_refusals
@@ -72,6 +76,12 @@
 // members: `o` may be an instance of the class. (Reading `name` there instead
 // does not refuse; native-class-statics.mlir, describe.js.)
 // CONSTRUCTORSTATIC: ctnative.class_reason = "it has static method `describe`; `x.constructor` is read in `describe${{[0-9]+}}`, where `x` may be an instance of the class"
+//
+// A helper is passed one of two classes, chosen at run time: the helper
+// cannot be copied for one class, so both keep their static members.
+// CHOICE-DAG: ctnative.class_reason = "it has static getter `NAME`; `A` is used as a value by `scf.yield` in `run${{[0-9]+}}`"
+// CHOICE-DAG: ctnative.class_reason = "it has static getter `NAME`; `B` is used as a value by `scf.yield` in `run${{[0-9]+}}`"
+// CHOICE-RUN: r=80
 //
 // A field initializer: the constructor passes its own closure to the VM's
 // __ctbrowser_init_fields, which reads the initializer off it, so the
@@ -172,6 +182,17 @@ function run() {
     return new Shape(3).n + Shape.SIDES;
 }
 var r = run();
+
+//--- choice.js
+function run(flag) {
+    let base = 1;
+    base += 1;
+    function q(C) { return C.NAME.length * 10 + base; }
+    class A { constructor(n) { this.n = n; } static get NAME() { return "alpha"; } }
+    class B { constructor(n) { this.n = n; } static get NAME() { return "be"; } }
+    return q(flag ? A : B) + new A(1).n + new B(2).n;
+}
+var r = run(true) + run(false);
 
 //--- init-fields.js
 function run() {

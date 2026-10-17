@@ -41,8 +41,9 @@
 // RUN:   | FileCheck %s --check-prefix=GLOBAL --implicit-check-not=ctnative.class_reason
 //
 // What the specialisation refuses: a helper that stores the class or compares
-// it, and one that reaches its captures through its own closure (a direct
-// call of the clone has no closure to pass).
+// it, and one that reads new.target (a direct call of the clone passes
+// none). A helper that reaches its captures through its own closure is
+// copied, and called through a closure of the copy with the same captures.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/stores.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STORES
@@ -51,7 +52,11 @@
 // RUN:   | FileCheck %s --check-prefix=COMPARES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/captures.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=CAPTURES
+// RUN:   | FileCheck %s --check-prefix=CAPTURES --implicit-check-not=ctnative.class_reason
+// RUN: %native_reference %t/captures.js | FileCheck %s --check-prefix=CAPTURES-RUN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/new-target.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=NEWTARGET
 
 // CHECK: emitc.class @A
 // CHECK: emitc.class @B
@@ -62,7 +67,10 @@
 // GLOBAL: ctnative.not_native = "global `show` is !ctnative.boxed, not a number"
 // STORES: ctnative.class_reason = "it has static getter `NAME`; `A` is stored into something other than an object literal's own field in `keep${{[0-9]+}}`"
 // COMPARES: ctnative.class_reason = "it has static getter `NAME`; `A` is used as a value by `ctjs.compare` in `same${{[0-9]+}}`"
-// CAPTURES: ctnative.class_reason = "it has static getter `NAME`; `A` is passed to `keep${{[0-9]+}}`, which reads new.target or its own closure in `run${{[0-9]+}}`"
+// CAPTURES: ctnative.copies = {{{.*}}keep${{[0-9]+}} = "keep${{[0-9]+}}"
+// CAPTURES: emitc.class @A
+// CAPTURES-RUN: r=3
+// NEWTARGET: ctnative.class_reason = "it has static getter `NAME`; `A` is passed to `keep${{[0-9]+}}`, which reads new.target or its own closure in `run${{[0-9]+}}`"
 
 //--- helper.js
 function run() {
@@ -94,6 +102,16 @@ function run() {
     let seen = 0;
     seen += 1;
     function keep(k) { return k.NAME.length + seen; }
+    class A { constructor(v) { this.v = v; } static get NAME() { return "a"; } }
+    return keep(A) + new A(1).v;
+}
+var r = run();
+
+//--- new-target.js
+function run() {
+    let seen = 0;
+    seen += 1;
+    function keep(k) { return k.NAME.length + seen + (new.target ? 1 : 0); }
     class A { constructor(v) { this.v = v; } static get NAME() { return "a"; } }
     return keep(A) + new A(1).v;
 }

@@ -55,6 +55,39 @@
 // RUN: %t/arrow-clang | FileCheck %s --check-prefix=ARROW-RUN
 // RUN: %native_reference %t/arrow.js | FileCheck %s --check-prefix=ARROW-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/arrow.js | FileCheck %s --check-prefix=ARROW-RUN
+//
+// A helper that reads its capture `base` through its own closure is passed
+// two classes: each call goes to a copy of the helper made for that class,
+// called through a closure of the copy with the same captures, so `C.NAME`
+// in each copy is a direct call of that class's getter. `base` is assigned
+// after the helper's closure is made and before the calls; both copies see
+// the new value, as the original does. The copies are recorded in
+// ctnative.copies.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/helper.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/helper.mlir
+// RUN: FileCheck %s --check-prefix=HELPER --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/helper.mlir
+// RUN: ctjs-opt %t/helper.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/helper.cpp
+// RUN: %gxx -O2 %t/helper.cpp -o %t/helper-gcc
+// RUN: %t/helper-gcc | FileCheck %s --check-prefix=HELPER-RUN
+// RUN: %clangxx -O2 %t/helper.cpp -o %t/helper-clang
+// RUN: %t/helper-clang | FileCheck %s --check-prefix=HELPER-RUN
+// RUN: %native_reference %t/helper.js | FileCheck %s --check-prefix=HELPER-RUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/helper.js | FileCheck %s --check-prefix=HELPER-RUN
+//
+// The same helper as an arrow held in a `const` (Bootstrap's
+// defineJQueryPlugin and enableDismissTrigger): the calls are ctjs.call
+// through the arrow's closure, made earlier in the same function, so each
+// becomes a direct call of the arrow's copy for that class.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/viacall.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/viacall.mlir
+// RUN: FileCheck %s --check-prefix=VIACALL --implicit-check-not=ctnative.not_native --implicit-check-not=ctnative.class_reason < %t/viacall.mlir
+// RUN: ctjs-opt %t/viacall.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/viacall.cpp
+// RUN: %gxx -O2 %t/viacall.cpp -o %t/viacall-gcc
+// RUN: %t/viacall-gcc | FileCheck %s --check-prefix=HELPER-RUN
+// RUN: %clangxx -O2 %t/viacall.cpp -o %t/viacall-clang
+// RUN: %t/viacall-clang | FileCheck %s --check-prefix=HELPER-RUN
+// RUN: %native_reference %t/viacall.js | FileCheck %s --check-prefix=HELPER-RUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/viacall.js | FileCheck %s --check-prefix=HELPER-RUN
 
 // CHECK: ctnative.unreachable_refusals = [{{.*}}{function = "unused${{[0-9]+}}", reason = "removed: unreachable (no function that can run creates or calls it; it was refused: {{.*}}
 // CHECK: emitc.class @Shape
@@ -73,6 +106,13 @@
 // ARROW: emitc.func @size_{{[0-9]+}}(
 // ARROW: call @[[TAGSIDES]]()
 // ARROW-RUN: r=17
+// HELPER: ctnative.copies = {{{.*}}q${{[0-9]+}} = "q${{[0-9]+}}", q${{[0-9]+}} = "q${{[0-9]+}}"
+// HELPER-DAG: emitc.class @A
+// HELPER-DAG: emitc.class @B
+// VIACALL: ctnative.copies = {{{.*}}fn${{[0-9]+}} = "fn${{[0-9]+}}", fn${{[0-9]+}} = "fn${{[0-9]+}}"
+// VIACALL-DAG: emitc.class @A
+// VIACALL-DAG: emitc.class @B
+// HELPER-RUN: r=122155
 
 //--- shape.js
 function run() {
@@ -111,5 +151,29 @@ function run() {
         size() { const f = () => this.constructor.SIDES; return f(); }
     }
     return new Shape(3).n + Shape.SIDES + new Tag(1).size();
+}
+var r = run();
+
+//--- helper.js
+function run() {
+    let base = 1;
+    base += 1;
+    function q(C) { return C.NAME.length * 10 + base; }
+    class A { constructor(n) { this.n = n; } static get NAME() { return "alpha"; } }
+    class B { constructor(n) { this.n = n; } static get NAME() { return "be"; } }
+    base += 100;
+    return q(A) + q(B) * 1000 + new A(1).n + new B(2).n;
+}
+var r = run();
+
+//--- viacall.js
+function run() {
+    let base = 1;
+    base += 1;
+    const q = (C) => C.NAME.length * 10 + base;
+    class A { constructor(n) { this.n = n; } static get NAME() { return "alpha"; } }
+    class B { constructor(n) { this.n = n; } static get NAME() { return "be"; } }
+    base += 100;
+    return q(A) + q(B) * 1000 + new A(1).n + new B(2).n;
 }
 var r = run();

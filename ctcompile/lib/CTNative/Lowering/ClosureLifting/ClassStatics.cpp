@@ -25,14 +25,18 @@
 // of K's `s` in a copy of the helper made for K. The rewrite needs, for every
 // one of them:
 //  1. every use is a static-member read this file rewrites, the receiver of a
-//     call through one, class setup, an argument of a direct call to a
-//     helper that reads neither new.target nor its own closure, a `new`, a
-//     write of the binding or a capture of it (the rewrite leaves a static
+//     call through one, class setup, an argument of a direct call (or of a
+//     call through the helper's closure made earlier in the same function,
+//     which becomes one) to a helper that reads neither new.target nor its
+//     own closure (or reads the closure only for its captures, when the call
+//     is through the helper's closure made earlier in the same function: the
+//     clone then gets a closure of its own with the same captures), a `new`,
+//     a write of the binding or a capture of it (the rewrite leaves a static
 //     member's `this` and `this.constructor` without a value, so `new this`
 //     in a static member becomes a construct of the class, marked
 //     kNativeClassConstruct for Constructors.cpp, and any other `new` of
-//     them is refused where it can run); anything else could
-//     reach a static member this file does not see;
+//     them is refused where it can run); anything else could reach a static
+//     member this file does not see;
 //  2. each static member's closure is used only by its definition and its
 //     `__home` edge; a static member that a read outside the static members
 //     reaches reads neither new.target nor its own closure (its `this` is
@@ -48,6 +52,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "ClassInheritance.h"
 #include "ClosureLifter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -141,6 +146,26 @@ bool isGlobalObject(mlir::ModuleOp module, mlir::Value value, unsigned depth = 0
         return call && argument.getArgNumber() < call->getNumOperands() &&
                isGlobalObject(module, call->getOperand(argument.getArgNumber()), depth + 1);
     });
+}
+
+/// Whether `fn` reads no new.target and uses its own closure only to read its
+/// captures or to make closures (which may relay them): a closure made for a
+/// copy of `fn` with the same captures runs the copy exactly as the original
+/// runs on its own closure.
+bool readsOnlyCaptures(ctjs::FuncOp fn) {
+    mlir::Block & entry = fn.getBody().front();
+    return entry.getArgument(1).use_empty() &&
+           llvm::all_of(entry.getArgument(2).getUses(), [](mlir::OpOperand & use) {
+               return llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp>(use.getOwner()) &&
+                      use.getOperandNumber() == 0;
+           });
+}
+
+/// Whether `made` runs before `op` in the same function: it sits in a block
+/// that contains `op` (or an operation enclosing it), earlier.
+bool madeBefore(mlir::Operation * made, mlir::Operation * op) {
+    mlir::Operation * level = made->getBlock()->findAncestorOpInBlock(*op);
+    return level && made->isBeforeInBlock(level);
 }
 
 /// The function that `op` sits in, by name, for a refusal.
@@ -338,6 +363,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         }
     });
     llvm::DenseMap<mlir::Operation *, mlir::StringAttr> copiedFrom;
+    llvm::SmallVector<std::pair<mlir::StringAttr, mlir::StringAttr>> keptCopies;
     std::function<ctjs::FuncOp(ctjs::FuncOp, llvm::SmallVectorImpl<mlir::Operation *> &)>
         cloneDeep = [&](ctjs::FuncOp fn, llvm::SmallVectorImpl<mlir::Operation *> & made) {
             auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
@@ -616,6 +642,11 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             ctjs::FuncOp clone;
         };
         llvm::SmallVector<specialization> specialized;
+        // Each call through a closure the class was passed in, with the direct
+        // call that replaced it; the original stays, unused, until the class is
+        // proved (then it is erased) or refused (then it takes its place back).
+        llvm::SmallVector<std::pair<ctjs::CallOp, ctjs::CallDirectOp>> converted;
+        llvm::DenseSet<mlir::Operation *> replacedCalls;
         llvm::SmallVector<mlir::Operation *> clones;
         llvm::DenseMap<std::pair<mlir::Operation *, unsigned>, ctjs::FuncOp> cloneOf;
         // The parameter of `call`'s helper that receives the class as its
@@ -634,7 +665,14 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                         "`, which reads it from its argument window")
                     .str();
             }
-            if (needsCallee(target)) {
+            // A helper that reaches its captures through its own closure is
+            // called through a closure of its clone made beside its own, with
+            // the same captures; closure lifting then lifts that closure as it
+            // would the original's.
+            auto own = call.getCalleeValue().getDefiningOp<ctjs::CreateClosureOp>();
+            const bool closed = !needsCallee(target);
+            if (!closed && (!readsOnlyCaptures(target) || !own || targetOf(own) != target ||
+                            !madeBefore(own, call))) {
                 return ("is passed to `" + target.getSymName() +
                         "`, which reads new.target or its own closure")
                     .str();
@@ -667,7 +705,14 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             mlir::OpBuilder at(call);
             specialized.push_back({call, call.getCalleeAttr(), call.getCalleeValue(), i, clone});
             call.setCalleeAttr(mlir::FlatSymbolRefAttr::get(clone.getSymNameAttr()));
-            call.getCalleeValueMutable().assign(undefinedAt(at, call.getLoc()));
+            if (closed) {
+                call.getCalleeValueMutable().assign(undefinedAt(at, call.getLoc()));
+            } else {
+                mlir::OpBuilder beside(own->getBlock(), std::next(own->getIterator()));
+                auto made = llvm::cast<ctjs::CreateClosureOp>(beside.clone(*own));
+                made.setFunction(*ctjs::functionIndex(clone));
+                call.getCalleeValueMutable().assign(made.getResult());
+            }
             return clone.getBody().front().getArgument(ctjs::implicit_arguments + i);
         };
         const auto revert = [&] {
@@ -685,6 +730,12 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 passesNewTarget.erase(fn);
                 fn->erase();
             }
+            for (auto & [call, direct] : llvm::reverse(converted)) {
+                direct.getResult().replaceAllUsesWith(call.getResult());
+                direct->erase();
+            }
+            converted.clear();
+            replacedCalls.clear();
             if (!clones.empty()) { indexStarters(); }
             specialized.clear();
             clones.clear();
@@ -876,7 +927,8 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             for (mlir::OpOperand & use : name.getUses()) {
                 mlir::Operation * user = use.getOwner();
                 if (llvm::isa<ctjs::RootOp>(user) || cls.setup.contains(user) ||
-                    cls.definitions.contains(user) || isHomeEdge(user)) {
+                    cls.definitions.contains(user) || isHomeEdge(user) ||
+                    replacedCalls.contains(user)) {
                     continue;
                 }
                 // The constructor reaching its captures through its own
@@ -950,6 +1002,36 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 if (llvm::isa<ctjs::CallOp>(user) && use.getOperandNumber() == 1) {
                     receiving.insert(user);
                     continue;
+                }
+                // An argument of a call through a closure made earlier in this
+                // function (`const g = t => ...; g(K)`): the call is a direct
+                // call of that closure's function, which is then specialized as
+                // above.
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    call && use.getOperandNumber() >= call.getArgs().getBeginOperandIndex()) {
+                    auto own = call.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+                    ctjs::FuncOp target = own ? targetOf(own) : ctjs::FuncOp{};
+                    if (target && !target.getBody().empty() && madeBefore(own, call) &&
+                        call.getArgs().size() <= parametersOf(target)) {
+                        mlir::OpBuilder at(call);
+                        auto direct = directCall(at, call.getLoc(), target, call.getReceiver(), own,
+                                                 undefinedAt(at, call.getLoc()), {}, call.getArgs(),
+                                                 parametersOf(target));
+                        call.getResult().replaceAllUsesWith(direct.getResult());
+                        converted.push_back({call, direct});
+                        replacedCalls.insert(call);
+                        auto param = specialize(direct, use.getOperandNumber() -
+                                                            call.getArgs().getBeginOperandIndex());
+                        if (auto * value = std::get_if<mlir::Value>(&param)) {
+                            names.insert(*value);
+                            continue;
+                        }
+                        if (refuseAt(user, "`" + className + "` " + std::get<std::string>(param) +
+                                               where(user))) {
+                            break;
+                        }
+                        continue;
+                    }
                 }
                 auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
                 const llvm::StringRef field = load && use.getOperandNumber() == 0
@@ -1324,8 +1406,24 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         // removes it and records a row in ctnative.unreachable_refusals.
         cls.statics.clear();
         cls.staticGetters.clear();
+        for (auto & [call, direct] : converted) { call->erase(); }
+        for (mlir::Operation * clone : clones) {
+            keptCopies.emplace_back(llvm::cast<ctjs::FuncOp>(clone).getSymNameAttr(),
+                                    copiedFrom.lookup(clone));
+        }
         changed = true;
         indexStarters();
+    }
+    // Each helper clone, mapped to the function it copies (as the class
+    // flattening records its copies), so a count of source functions can be
+    // rebuilt after lowering.
+    if (!keptCopies.empty()) {
+        llvm::SmallVector<mlir::NamedAttribute> all;
+        if (auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies)) {
+            all.append(earlier.begin(), earlier.end());
+        }
+        for (auto & [copy, source] : keptCopies) { all.emplace_back(copy, source); }
+        module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
     }
     return changed;
 }
