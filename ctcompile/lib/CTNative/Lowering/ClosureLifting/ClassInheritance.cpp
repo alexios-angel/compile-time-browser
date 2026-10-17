@@ -604,14 +604,46 @@ struct flattener {
                 }
                 read.erase();
             }
-            mlir::OpBuilder at(site.closure);
-            site.closure->setOperand(site.operand, undefinedAt(at, site.closure.getLoc()));
+            dropCapture(site.closure,
+                        site.operand - site.closure.getUpvalues().getBeginOperandIndex());
             foldConstantBranches(targetOf(site.closure));
         }
         raised.erase();
         eraseWithFeeders(flag);
         foldConstantBranches(fn);
         return std::nullopt;
+    }
+
+    /// Removes capture `slot`, which nothing reads any more, from `closure`
+    /// and its function, the only closure of that function (flagCapture), so
+    /// the slot leaves no `undefined` capture behind for the capture rules to
+    /// refuse. Later slots move down one, in the function's reads and writes
+    /// and in what its nested closures relay from it.
+    void dropCapture(ctjs::CreateClosureOp closure, unsigned slot) {
+        ctjs::FuncOp target = targetOf(closure);
+        closure.getUpvaluesMutable().erase(slot);
+        if (const mlir::DenseI32ArrayAttr indices = closure.getEnclosingIndicesAttr()) {
+            llvm::SmallVector<int32_t> kept(indices.asArrayRef());
+            kept.erase(kept.begin() + slot);
+            closure.setEnclosingIndicesAttr(mlir::DenseI32ArrayAttr::get(context, kept));
+        }
+        const auto moved = [&](auto index) { return index > slot ? index - 1 : index; };
+        target.walk([&](mlir::Operation * op) {
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+                read.setIndex(moved(read.getIndex()));
+            } else if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op)) {
+                write.setIndex(moved(write.getIndex()));
+            } else if (auto inner = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                       inner && inner.getEnclosingIndicesAttr()) {
+                llvm::SmallVector<int32_t> relayed(inner.getEnclosingIndicesAttr().asArrayRef());
+                for (int32_t & index : relayed) {
+                    if (index > static_cast<int32_t>(slot)) { --index; }
+                }
+                inner.setEnclosingIndicesAttr(mlir::DenseI32ArrayAttr::get(context, relayed));
+            }
+        });
+        target->setAttr("upvalue_count", mlir::Builder(context).getI32IntegerAttr(
+                                             static_cast<int32_t>(target.getUpvalueCount() - 1)));
     }
 
     /// Erases `op` and each constant or global load only it used.
