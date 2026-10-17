@@ -10,6 +10,7 @@ is the box's `lock` file itself, the one the agents' `flock
 share it, and slot N is that path with `.N` appended.
 
     tools/devbox-pool.py run [--box NAME] [--round] [--wait] -- COMMAND...
+    tools/devbox-pool.py sync [--box NAME]
     tools/devbox-pool.py status
 
 `run` takes the first free slot (boxes in settings order) on a box that is
@@ -23,6 +24,13 @@ exits, and its exit status is returned.
 --round   a validation round: may use a marked box, and marks a one-slot box it takes
           until COMMAND exits, so ordinary jobs go elsewhere
 --wait    wait for a box instead of exiting 75 (EX_TEMPFAIL) when none is free
+
+`sync` copies the caller's worktree to $DEVBOX_DIR on every running box (or
+only --box), through `tools/remote-build.sh sync`, so a job can then build on
+whichever box is free. It waits for a slot on each box, so it never rewrites
+sources under a build in progress there. DEVBOX_DIR must be set: syncing to the
+shared default directory from an author's worktree would replace the
+validator's tree. Stopped boxes are skipped, not started.
 
 Run it from any worktree by its absolute path: it finds its settings beside
 itself, and COMMAND runs in the caller's working directory.
@@ -134,6 +142,32 @@ def run(settings, args):
         os.close(lock)
 
 
+def sync(settings, args):
+    if "DEVBOX_DIR" not in os.environ:
+        sys.exit("devbox-pool: sync needs DEVBOX_DIR (the box directory to sync into)")
+    root = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    script = Path(root) / "tools" / "remote-build.sh"
+    # An older checkout's remote-build.sh would read `sync` as a ninja target
+    # and start a build.
+    if not (script.with_name("remote_build.py").exists() or "= sync ]" in script.read_text()):
+        sys.exit(f"devbox-pool: {script} has no sync mode; merge ctcompile-v1 into this worktree")
+    failed = 0
+    for box in settings["boxes"]:
+        if args.box not in (None, box["name"]):
+            continue
+        if not is_running(box):
+            print(f"devbox-pool: {box['name']} is not running; skipped", file=sys.stderr)
+            continue
+        job = argparse.Namespace(
+            box=box["name"], round=False, wait=True,
+            command=[str(script), "sync"],
+        )
+        failed |= run(settings, job) != 0
+    return 1 if failed else 0
+
+
 def status(settings):
     for box in settings["boxes"]:
         busy = 0
@@ -157,11 +191,15 @@ def main():
     run_p.add_argument("--round", action="store_true")
     run_p.add_argument("--wait", action="store_true")
     run_p.add_argument("command", nargs=argparse.REMAINDER)
+    sync_p = sub.add_parser("sync", help="copy this worktree to $DEVBOX_DIR on every running box")
+    sync_p.add_argument("--box")
     sub.add_parser("status", help="show each box's power, lock and round state")
     args = parser.parse_args()
     settings = load_settings()
     if args.action == "status":
         return status(settings)
+    if args.action == "sync":
+        return sync(settings, args)
     if args.command[:1] == ["--"]:
         args.command = args.command[1:]
     return run(settings, args)

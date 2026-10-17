@@ -260,4 +260,6 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   ctcompile_page_workload(selectors selectors_report)
   # A Config-like struct field that holds an element or null.
   ctcompile_page_workload(element_fields element_fields_report)
+  # for-of and the Array callbacks over an array of elements.
+  ctcompile_page_workload(element_arrays element_arrays_report)
 endif()
