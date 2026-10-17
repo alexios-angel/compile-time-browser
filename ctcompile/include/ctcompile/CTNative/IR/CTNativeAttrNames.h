@@ -54,6 +54,16 @@ inline constexpr llvm::StringLiteral kNativeNotRunOnce = "ctnative.not_run_once"
 /// calls): they lower to nothing. Written by the class census
 /// (ClosureLifting/Classes.cpp).
 inline constexpr llvm::StringLiteral kNativeClassSetup = "ctnative.class_setup";
+/// On a `new this(...)` in a static member of a proved class: the name of the
+/// constructor's ctjs.func, which it constructs (a string, so that it is not
+/// a symbol use). The static-member rewrite
+/// (ClosureLifting/ClassStatics.cpp) proved that member's `this` is that class;
+/// the constructor lift builds the instance there.
+inline constexpr llvm::StringLiteral kNativeClassConstruct = "ctnative.class_construct";
+/// On a ctjs.cell_get of a run-once static cell written once with a class's
+/// closure, before every read: the name of that class constructor's ctjs.func
+/// (a string, as above). A `new` of the read constructs the class there.
+inline constexpr llvm::StringLiteral kNativeStaticClass = "ctnative.static_class";
 /// On a class constructor's closure: why the class census did not prove it.
 inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason";
 /// On the object literal that stands for an instance of a JavaScript class

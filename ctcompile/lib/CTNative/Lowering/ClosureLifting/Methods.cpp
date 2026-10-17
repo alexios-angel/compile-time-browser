@@ -736,7 +736,7 @@ void closureLifter::methodCensus() {
     // whyConstructorSetupDoesNotLift skips only receiver resolution; full
     // constructor admission rechecks that after this census settles.
     for (ctjs::ConstructOp built : allConstructs) {
-        auto closure = built.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        auto closure = constructedClosure(built);
         if (!closure || whyConstructorSetupDoesNotLift(closure)) { continue; }
         auto prototype = immutablePrototype(closure);
         if (!prototype) { continue; }

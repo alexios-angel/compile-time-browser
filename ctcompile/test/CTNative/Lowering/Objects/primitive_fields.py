@@ -64,6 +64,10 @@ def main():
         "declared-callable-escape": 5,
         "declared-replaced": 9,
         "declared-alias-delete": 1,
+        "borrowed-delete-kept": 1,
+        "borrowed-alias-delete-kept": 1,
+        "declared-alias-delete-kept": 1,
+        "forwarded-alias-delete-kept": 1,
         "utf8-length": 4,
         "empty-length": 0,
         "unknown-property": 0,
@@ -117,6 +121,14 @@ def main():
             "forwarded-parameters",
             "declared-forwarded",
             "declared-saved",
+            # A delete makes the literal a table (Inference/Dictionaries.cpp),
+            # shared by reference, so a delete through an alias is seen
+            # through the other name. The `-kept` copies also keep the literal
+            # in an array, which no table rule takes, and stay refused.
+            "borrowed-delete",
+            "borrowed-alias-delete",
+            "declared-alias-delete",
+            "forwarded-alias-delete",
         ):
             checked += check_native(args, source, name, expected)
             continue

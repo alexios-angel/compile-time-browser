@@ -76,3 +76,28 @@ var numbers = numbered(7);
 var style = filled('color,width,color');
 var json = dumped('color,width,10,color,a"b');
 var nested = registry(1, 'click');
+// The registry across functions, as EventHandler keeps it: a run-once
+// factory's table read by name from the functions it declares, a function
+// returning a table of it, and event types passed down as parameters. The
+// types are plain words, proved never to be a name Object.prototype answers
+// for because every call passes one of the literals `click` and `hover`.
+var handlers = (function () {
+    const E = {};
+    function eventsOf(uid) {
+        E[uid] = E[uid] || {};
+        return E[uid];
+    }
+    function add(uid, type, n) {
+        const l = eventsOf(uid);
+        const c = l[type] || (l[type] = {});
+        c[type + '::' + n] = n;
+    }
+    function has(uid, type, n) {
+        const c = eventsOf(uid)[type];
+        return c !== undefined && type + '::' + n in c ? 1 : 0;
+    }
+    add(1, 'click', 1);
+    add(1, 'click', 2);
+    add(2, 'hover', 3);
+    return has(1, 'click', 2) * 100 + has(2, 'click', 3) * 10 + has(2, 'hover', 3);
+})();

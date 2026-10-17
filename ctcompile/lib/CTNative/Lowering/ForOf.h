@@ -53,20 +53,27 @@ using ForOfOriginals =
 /// element or a nested pattern keeps the helpers, with kIterationRefusal.
 ///
 /// Both folds take the realm's Array iteration to be the original, so they
-/// run only when arrayIterationUnproved finds nothing; otherwise every open
+/// run only when realmBuiltinsUnproved finds nothing; otherwise every open
 /// keeps its helpers and carries that reason.
 ///
 /// The caller gives a refused function back its body from the returned
 /// originals.
 ForOfOriginals foldArrayForOf(mlir::ModuleOp module);
 
-/// Why the program may change how an array iterates, or nothing: `Array` or
-/// `Symbol` may be rebound (no `host_binding` row, or a dynamic global write
-/// when it has no row), a `Symbol.iterator` value is used other than as a
-/// read's key, `Array.prototype` is used other than as the object of a
-/// constant-key read, or the program reads a path that reaches a prototype
-/// without naming it (`__proto__`, `getPrototypeOf`, `setPrototypeOf`,
-/// `constructor.prototype`).
-std::optional<std::string> arrayIterationUnproved(mlir::ModuleOp module);
+/// Why the program may change how an array iterates or what the Array and
+/// String built-ins the native tier lowers do, or nothing: `Array`, `String`
+/// or `Symbol` may be rebound (no `host_binding` row, or a dynamic global
+/// write when it has no row), a `Symbol.iterator` value is used other than as
+/// a read's key, `Array.prototype` or `String.prototype` is used other than
+/// as the object of a constant-key read, or the program reads a path that
+/// reaches a prototype without naming it (`__proto__`, `getPrototypeOf`,
+/// `setPrototypeOf`, `constructor.prototype`).
+std::optional<std::string> realmBuiltinsUnproved(mlir::ModuleOp module);
+
+/// The module attribute foldArrayForOf sets to realmBuiltinsUnproved's
+/// reason when there is one: admission refuses the Array and String methods
+/// it lowers (push, join, sort, includes, split, the callback methods and the
+/// prototype rows) with it.
+inline constexpr llvm::StringLiteral kRealmBuiltinsUnproved = "ctnative.realm_builtins_unproved";
 
 } // namespace ctcompile::ctnative

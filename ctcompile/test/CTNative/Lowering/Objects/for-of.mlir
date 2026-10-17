@@ -1,6 +1,6 @@
 // for-of over arrays. EMIT checks that a for-of over split's array and over
 // a map result lowers with nothing refused and no iterator helper call left
-// in the lowered functions.
+// in the lowered functions, and that a push lowers natively.
 // STRING iterates a String, which the fold indexes only as an array, so the
 // function is refused with the fold's reason and gets its body back. PAIRS
 // destructures pair-vector rows in the loop head; REST, DEFAULT and NESTED
@@ -8,7 +8,9 @@
 // TEXT destructures a String, which is not a tuple or an array. REDEFINED
 // replaces Array.prototype[Symbol.iterator], so neither fold runs: both
 // functions (over a String, so the open is the first operation admission
-// meets) keep the iterator helpers and are refused with the proof's reason.
+// meets) keep the iterator helpers and are refused with the proof's reason,
+// and so are a split (words) and a push (grow), which are lowered as the
+// built-ins too.
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/emit.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=EMIT --implicit-check-not=ctnative.not_native
@@ -19,6 +21,7 @@
 
 // EMIT: emitc.func @total
 // EMIT: emitc.func @longest
+// EMIT: emitc.func @grow
 // EMIT-NOT: __ctbrowser_iter
 // PAIRS: emitc.func @rows
 // PAIRS-NOT: __ctbrowser_iter
@@ -28,6 +31,8 @@
 // PATTERNS-DAG: @text${{[0-9]+}}{{.*}}ctnative.not_native = "array destructuring of {{.*}}, not a tuple or an array this tier holds"
 // REDEFINED-DAG: @count${{[0-9]+}}{{.*}}ctnative.not_native = "array iteration needs the realm's own Array iterator: the program uses Array.prototype other than to read a method"
 // REDEFINED-DAG: @pair${{[0-9]+}}{{.*}}ctnative.not_native = "array iteration needs the realm's own Array iterator: the program uses Array.prototype other than to read a method"
+// REDEFINED-DAG: @words${{[0-9]+}}{{.*}}ctnative.not_native = "`split` needs the realm's own Array and String built-ins: the program uses Array.prototype other than to read a method"
+// REDEFINED-DAG: @grow${{[0-9]+}}{{.*}}ctnative.not_native = "`push` needs the realm's own Array and String built-ins: the program uses Array.prototype other than to read a method"
 // REDEFINED-DAG: "__ctbrowser_for_of_open"
 // REDEFINED-DAG: "__ctbrowser_iter_open"
 // STRING: @letters${{[0-9]+}}{{.*}}ctnative.not_native = "a for-of over {{.*}}, not an array this tier holds"
@@ -52,7 +57,12 @@ function longest(text) {
     }
     return best;
 }
-var a = total('1,2') + longest('a,bb');
+function grow(text) {
+    var out = ['a'];
+    out.push(text);
+    return out.length;
+}
+var a = total('1,2') + longest('a,bb') + grow('c');
 
 //--- string.js
 function letters(text) {
@@ -115,4 +125,12 @@ function pair(text) {
     const [a, b] = text;
     return a;
 }
-var r = count('a,b') + pair('c,d');
+function words(text) {
+    return text.split(',').length;
+}
+function grow(text) {
+    var out = ['a'];
+    out.push(text);
+    return out.length;
+}
+var r = count('a,b') + pair('c,d') + words('e,f') + grow('g');

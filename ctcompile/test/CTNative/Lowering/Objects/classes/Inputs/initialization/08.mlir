@@ -159,7 +159,8 @@ function nested_helper_newtarget() {
 }
 var a = nested_helper_newtarget();
 
-// Mutually recursive helpers are refused even though this call terminates.
+// Preparation refuses mutually recursive helpers even though this call
+// terminates; the unprepared lowering completes it.
 //--- nested-helper-recursive.js
 function nested_helper_recursive() {
     const first = n => n ? second(n - 1) : 7;

@@ -167,11 +167,15 @@ void lowering::declareGlobals() {
     // Only programs that register listeners or timers, use promises or share
     // a binding with a kept callback parse those headers.
     bool needsEvents = false;
+    // A table's type can appear in signatures and statics, so its header goes
+    // right after the runtime's.
+    bool needsDictionaries = false;
     bool needsTimers = false;
     bool needsPromises = false;
     bool needsCells = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
+        needsDictionaries |= call.getCallee().starts_with("ctnative::make_dictionary<");
         needsTimers |= llvm::is_contained({"ctnative::setTimeout", "ctnative::setInterval",
                                            "ctnative::clearTimeout", "ctnative::clearInterval"},
                                           call.getCallee());
@@ -199,6 +203,11 @@ void lowering::declareGlobals() {
     if (needsDOM) { verbatim(b, kDOMDefine); }
     if (pageReads) { verbatim(b, ("#ifndef CTNATIVE_DOM\n" + kDOMDefine + "\n#endif").str()); }
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
+    if (needsDictionaries) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Dictionary.hpp"),
+                              mlir::UnitAttr{});
+    }
     if (pageReads) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Page.hpp"),
