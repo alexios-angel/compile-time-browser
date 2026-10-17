@@ -19,6 +19,7 @@ def main():
         "strings": 375,
         "borrowed": 5,
         "mixed": 15,
+        "mixed-three": 12,
         "absent": 12,
         "equality": 111,
         "borrowed-equality": 5,
@@ -152,6 +153,10 @@ def main():
                 assert "a property read on an object that is not a closed-shape literal" in text, (
                     name
                 )
+            # A String, a Number and a Boolean join to no union carrier, so the
+            # String field rule still refuses it.
+            if name == "mixed-three":
+                assert "string field requires definite string reads and writes" in text, name
             refused += 1
     print(f"local string fields: {checked} native executions, {refused} refusals")
 
