@@ -453,6 +453,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 lifted.cells += locals.cells;
             }
         }
+        // Before the lift: an object parameter must be read only through
+        // constant keys, which `config[key]` in a loop over a table parameter
+        // becomes only once the loop is written out per key.
+        if (!hostContract) { unrollParameterTableLoops(module); }
         closureLifter lifter{module, census};
         if (!hostContract) { lifted = lifter.run(); }
         // Method and local-binding lifts expose the complete direct caller set.

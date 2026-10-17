@@ -1,0 +1,62 @@
+# Bootstrap's Config type check takes the config and its type table as
+# parameters: `_typeCheckConfig(config, configTypes)` loops over
+# Object.entries(configTypes) and reads config[key] for each key. Here callers
+# pass a config literal and one type table of constants to such a function.
+# The loop over the table parameter is written out per key before closure
+# lifting (unrollParameterTableLoops, Analysis/Inference/TableLoops.cpp), so
+# config[key] is a constant-key read and config an object parameter. It
+# lowers natively and prints the same `r` as Node and the interpreter with
+# both compilers. Callers that pass different tables keep the refusal.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/passed.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/passed.mlir
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/passed.mlir
+# RUN: ctjs-opt %t/passed.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/passed.cpp
+# RUN: %gxx -O2 %t/passed.cpp -o %t/passed-gcc && %t/passed-gcc | FileCheck %s --check-prefix=PASSED
+# RUN: %clangxx -O2 %t/passed.cpp -o %t/passed-clang && %t/passed-clang | FileCheck %s --check-prefix=PASSED
+# RUN: %native_reference %t/passed.js | FileCheck %s --check-prefix=PASSED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/passed.js | FileCheck %s --check-prefix=PASSED-NODE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/differs.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=DIFFERS
+
+# UNROLLED: emitc.func @main
+# UNROLLED-NOT: object_table
+# PASSED: r="interval%3Bpause%3Bwrap%3B%7Cinterval%3Bbad%20pause"
+# PASSED-NODE: r=interval;pause;wrap;|interval;bad pause
+# DIFFERS: it is passed to a parameter that reaches it through something other than a constant key
+
+#--- passed.js
+var r = (function () {
+    var types = {interval: "number", pause: "string", wrap: "boolean"};
+    function check(config, configTypes) {
+        var out = "";
+        for (const [k, v] of Object.entries(configTypes)) {
+            if (typeof config[k] !== v) {
+                return out + "bad " + k;
+            }
+            out = out + k + ";";
+        }
+        return out;
+    }
+    return check({interval: 5, pause: "hover", wrap: false}, types) + "|" +
+        check({interval: 5, pause: 7, wrap: true}, types);
+})();
+
+#--- differs.js
+var r = (function () {
+    function check(config, configTypes) {
+        var out = "";
+        for (const [k, v] of Object.entries(configTypes)) {
+            if (typeof config[k] !== v) {
+                return out + "bad " + k;
+            }
+            out = out + k + ";";
+        }
+        return out;
+    }
+    return check({interval: 5, pause: "hover"}, {interval: "number", pause: "string"}) + "|" +
+        check({interval: 5, pause: "hover"}, {pause: "string", interval: "number"});
+})();
+
