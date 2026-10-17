@@ -4,7 +4,8 @@
 # native table value holds: a key that is any String, and the literal
 # `toString`. A table that may hold undefined could not tell a stored
 # undefined from a missing key. A table that is also returned is not only a
-# table. (A Symbol key is refused too, but an ordinary script cannot make a
+# table. A table stored into itself would need a type that contains itself,
+# and a table that holds both tables and Numbers has no one value type. (A Symbol key is refused too, but an ordinary script cannot make a
 # native Symbol yet: `Symbol(...)` is refused first.)
 # RUN: split-file %s %t
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/any.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=ANY
@@ -14,7 +15,11 @@
 
 # ANY: ctnative.not_native = "a read of a table under a computed key that is not a Number and has no literal part with a character Object.prototype's names lack, so it could be `toString` or `__proto__`"
 # INHERITED: ctnative.not_native = "field `toString` is read but never written, and Object.prototype answers that name - the interpreter finds a function where this would find undefined"
-# UNDEFINED: ctnative.not_native = "an object used as a table whose values are !ctnative.opt<{{.*}}>, not one of Number, String, Boolean or Number|String"
+# UNDEFINED: ctnative.not_native = "an object used as a table whose values are !ctnative.opt<{{.*}}>, not one of Number, String, Boolean, Number|String or a table"
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cycle.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CYCLE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/mixed.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=MIXED
+# CYCLE: ctnative.dict_reason = "an object used as a table, but a table is stored into itself or into a table it holds"
+# MIXED: ctnative.dict_reason = "an object used as a table, but a table holds a value made by `ctjs.constant`"
 # RETURNED: ctnative.not_native = "an object literal that escapes - it is returned"
 
 #--- any.js
@@ -50,3 +55,22 @@ function make(key) {
     return table;
 }
 var r = make('a');
+
+#--- cycle.js
+function cycle(key) {
+    var table = {};
+    var inner = {};
+    table[key + '::1'] = inner;
+    inner[key + '::2'] = table;
+    return key + '::1' in table ? 1 : 0;
+}
+var r = cycle('a');
+
+#--- mixed.js
+function mixed(key) {
+    var table = {};
+    table[key + '::1'] = {};
+    table[key + '::2'] = 3;
+    return key + '::1' in table ? 1 : 0;
+}
+var r = mixed('a');

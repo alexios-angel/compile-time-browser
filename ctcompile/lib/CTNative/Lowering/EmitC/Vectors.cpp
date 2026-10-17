@@ -26,6 +26,8 @@ void planArrayCallback(lowering & lower, ctjs::CallOp call);
 bool replaceArrayCallback(lowering & lower, mlir::Operation * o);
 // Listeners handed to the host (HostCallbacks.cpp).
 bool replaceHostCallback(lowering & lower, mlir::Operation * o);
+// Promise operations (Promises.cpp).
+bool replacePromise(lowering & lower, mlir::Operation * o);
 /// The action for a read or call on a listener's Event, and its replacement
 /// (HostCallbacks.cpp).
 std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o);
@@ -132,6 +134,10 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
         }
         if (lower.pageViews && TypeInference::isHostCallbackCall(op)) {
             mark(op, "host_callback");
+            return;
+        }
+        if (lower.pageViews && TypeInference::isPromiseCall(op)) {
+            mark(op, "promise");
             return;
         }
         if (auto action = lower.pageViews ? eventAction(lower, op) : std::nullopt) {
@@ -565,6 +571,7 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
     }
     if (kind == "callback") { return replaceArrayCallback(lower, o); }
     if (kind == "host_callback") { return replaceHostCallback(lower, o); }
+    if (kind == "promise") { return replacePromise(lower, o); }
     if (kind.starts_with("event") || kind.starts_with("timer_") || kind.starts_with("host_")) {
         return replaceEvent(lower, o, kind);
     }

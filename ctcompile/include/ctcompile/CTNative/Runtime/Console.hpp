@@ -7,11 +7,14 @@
 // joined by one space. The check-workload.py probe and the console fixtures
 // compare those lines with the VM's.
 //
+// ctnative.hpp includes this header last, after the carriers it prints, and it
+// does not include ctnative.hpp back: a test driver that inlines ctnative.hpp's
+// text into the generated file (CTNative/harness.py, inline_runtime) would
+// otherwise get the runtime a second time from the real header.
+//
 //===----------------------------------------------------------------------===//
 
 #pragma once
-
-#include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <cstdio>
 #include <string>

@@ -40,7 +40,11 @@
 // EMIT-DAG: call_opaque "ctnative::EventTarget.prototype.removeEventListener.call"
 // EMIT-DAG: call_opaque "ctnative::declared_identity<&{{.*}}>"
 
-// CHECK-DAG: @later${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener captures binding 0, which is written after it is captured - the host keeps the listener, so it takes its captures by value"
+// A listener and a timer handler that capture a binding their frame writes
+// afterwards (later, timerLater) lift: the binding becomes a shared cell
+// whose handle the callback takes (rule 2b in ClosureLifter.h).
+// CHECK-DAG: ctjs.func @fn${{[0-9]+}}({{.*}}ctnative.cell_args = array<i32: 3>, ctnative.host_callback, {{.*}}ctnative.shared_cell_args = array<i32: 3>
+// CHECK-DAG: ctjs.func @fn${{[0-9]+}}({{.*}}ctnative.cell_args = array<i32: 3>, ctnative.host_callback, {{.*}}ctnative.shared_cell_args = array<i32: 3>
 // CHECK-DAG: @readsThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener reads `this`"
 // CHECK-DAG: @takesTwo${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the listener of EventTarget.prototype.addEventListener declares 2 parameters - only a listener that takes the event alone is native"
 // CHECK-DAG: ctnative.not_native = "an Event read through `clientX` - only type, target, currentTarget and defaultPrevented are native"
@@ -51,7 +55,6 @@
 // CHECK-DAG: ctnative.not_native = "an Event used other than through its reads, its preventDefault and stopPropagation calls and dispatchEvent - it does not leave its function"
 // CHECK-DAG: ctnative.not_native = "currentTarget of a listener on the document or the window - only an element's listener reads it natively"
 // CHECK-DAG: @capturesArray${{[0-9]+}}{{.*}}ctnative.not_native = "an array of Strings: an array passed to a call the native runtime does not implement"
-// CHECK-DAG: @timerLater${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout captures binding 0, which is written after it is captured - the host keeps the handler, so it takes its captures by value"
 // CHECK-DAG: @timerThis${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout reads `this`"
 // CHECK-DAG: @timerArgs${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: setTimeout with 3 arguments - only (handler, timeout) is native"
 // CHECK-DAG: @timerParameter${{[0-9]+}}{{.*}}ctnative.not_native = "a closure used as a value: the handler of setTimeout declares 1 parameters - only a handler that takes none is native"

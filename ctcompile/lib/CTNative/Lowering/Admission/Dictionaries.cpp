@@ -24,6 +24,13 @@ bool storable(carrier c) {
            c == carrier::numberString;
 }
 
+/// Whether a table may hold values of `type`: a scalar storable() admits, or
+/// tables. A table of tables may hold undefined, which its null pointer
+/// stores as an entry, so `in` and a missing key still tell it apart.
+bool storableValue(mlir::Type type) {
+    return storable(carrierOf(type)) || carrierOf(type) == carrier::dictionary;
+}
+
 /// Whether a key of this type has a ToPropertyKey the runtime spells
 /// (property_key): a String, a Number or a Number|String.
 bool spelledKey(admission & self, mlir::Value key, llvm::StringRef what) {
@@ -86,10 +93,10 @@ std::optional<bool> dictionaryOperation(admission & self, mlir::Operation * o) {
     if (isNativeDictionarySite(o)) {
         const mlir::Type type = self.typeOf(o->getResult(0));
         auto table = llvm::dyn_cast_or_null<DictType>(type);
-        if (!table || !storable(carrierOf(table.getElementType()))) {
+        if (!table || !storableValue(table.getElementType())) {
             return self.refuse("an object used as a table whose values are " +
                                printed(table ? table.getElementType() : type) +
-                               ", not one of Number, String, Boolean or Number|String");
+                               ", not one of Number, String, Boolean, Number|String or a table");
         }
         return true;
     }
@@ -98,7 +105,9 @@ std::optional<bool> dictionaryOperation(admission & self, mlir::Operation * o) {
     }
     const llvm::StringRef action = nativeDictionaryAction(o);
     if (action.empty()) { return std::nullopt; }
-    if (action == "plumbing" || action == "object" || action == "has") { return true; }
+    if (action == "plumbing" || action == "object" || action == "has" || action == "absent") {
+        return true;
+    }
     if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(o)) {
         return spelledKey(self, set.getKey(), "writes");
     }

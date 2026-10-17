@@ -14,6 +14,7 @@ target_sources(ctbrowser-page PUBLIC FILE_SET HEADERS BASE_DIRS "${CTBROWSER_INC
 target_sources(ctbrowser-page PRIVATE
   author_styles.cpp
   client_rects.cpp
+  intersection.cpp
   pipeline.cpp
   static_page.cpp
 )

@@ -19,6 +19,7 @@
 
 #include "Browser.hpp"
 #include "Handlers.hpp"
+#include "Microtasks.hpp"
 
 #include <ctbrowser/shell/listener_registry.hpp>
 
@@ -228,7 +229,10 @@ public:
     /// that throws is reported (reported()) and the rest still run, as the VM
     /// reports an exception and continues. Returns how many listeners ran;
     /// `canceled`, when given, is set to whether a listener canceled the
-    /// event.
+    /// event. The host calls this with no script on the stack, so it ends in
+    /// a microtask checkpoint and the promise jobs the listeners queued run
+    /// before it returns; dispatchEvent, which script calls, uses the other
+    /// overload and leaves them for the script's own checkpoint.
     ///
     /// ponytail: no shadow-tree retargeting and no passive or once listeners,
     /// since none can be registered natively yet; the VM's propagation path in
@@ -241,6 +245,9 @@ public:
         shared->cancelable = cancelable;
         const std::size_t ran = dispatch(target, js_event{shared});
         if (canceled != nullptr) { *canceled = shared->canceled; }
+        // HTML's "clean up after running script": no script is on the
+        // stack, so the dispatch ends in a microtask checkpoint.
+        microtasks::program().checkpoint();
         return ran;
     }
 
