@@ -45,6 +45,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ClosureLifter.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 #include "llvm/ADT/SetVector.h"
 
@@ -92,6 +93,52 @@ bool needsCallee(ctjs::FuncOp fn) {
     });
 }
 
+/// Whether `value` is the global object on every path: a load of
+/// `globalThis`, `window` or `self`, the script's own `this`, a choice between
+/// such values, or a parameter every direct caller passes one for (a UMD
+/// header's `(function (global) { ... })(this)`).
+bool isGlobalObject(mlir::ModuleOp module, mlir::Value value, unsigned depth = 0) {
+    if (depth > 8) { return false; }
+    if (auto load = value.getDefiningOp<ctjs::LoadGlobalOp>()) {
+        return llvm::is_contained(
+            std::initializer_list<llvm::StringRef>{"globalThis", "window", "self"}, load.getName());
+    }
+    if (auto choice = value.getDefiningOp<mlir::scf::IfOp>()) {
+        const unsigned index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+        return llvm::all_of(choice->getRegions(), [&](mlir::Region & region) {
+            return !region.empty() &&
+                   isGlobalObject(module, region.front().getTerminator()->getOperand(index),
+                                  depth + 1);
+        });
+    }
+    auto argument = llvm::dyn_cast<mlir::BlockArgument>(value);
+    auto fn = argument ? llvm::dyn_cast<ctjs::FuncOp>(argument.getOwner()->getParentOp())
+                       : ctjs::FuncOp{};
+    if (!fn || argument.getOwner() != &fn.getBody().front()) { return false; }
+    if (fn.getSymName() == "_script_$0") { return argument.getArgNumber() == ctjs::arg_receiver; }
+    if (argument.getArgNumber() < ctjs::implicit_arguments) { return false; }
+    // Every caller is visible: the function is private, or each closure of
+    // it is only the callee of direct calls of it.
+    const auto index = ctjs::functionIndex(fn);
+    bool hidden = false;
+    module.walk([&](ctjs::CreateClosureOp made) {
+        if (!index || ctjs::closureFunction(made) != index) { return; }
+        for (mlir::OpOperand & use : made.getResult().getUses()) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            hidden |= !llvm::isa<ctjs::RootOp>(use.getOwner()) &&
+                      (!call || use.getOperandNumber() != 2 || call.getCallee() != fn.getSymName());
+        }
+    });
+    if (hidden) { return false; }
+    auto uses = mlir::SymbolTable::getSymbolUses(fn, module.getOperation());
+    if (!uses || uses->empty()) { return false; }
+    return llvm::all_of(*uses, [&](const mlir::SymbolTable::SymbolUse & use) {
+        auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getUser());
+        return call && argument.getArgNumber() < call->getNumOperands() &&
+               isGlobalObject(module, call->getOperand(argument.getArgNumber()), depth + 1);
+    });
+}
+
 /// The function that `op` sits in, by name, for a refusal.
 std::string where(mlir::Operation * op) {
     auto fn = op->getParentOfType<ctjs::FuncOp>();
@@ -117,6 +164,8 @@ bool closureLifter::bindClassStatics(liftReport & out) {
     // of a class can be read that way wherever it flows, and such a read
     // names a class this rewrite would not see.
     llvm::DenseSet<mlir::Value> instanceThis;
+    // The class each constructor, method and getter belongs to.
+    llvm::DenseMap<mlir::Operation *, mlir::Operation *> memberOf;
     for (auto & [key, cls] : jsClasses) {
         llvm::SmallVector<ctjs::CreateClosureOp> members{cls.constructor};
         for (const auto & entry : cls.methods) { members.push_back(entry.getValue()); }
@@ -125,6 +174,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             ctjs::FuncOp fn = targetOf(member);
             if (fn && !fn.getBody().empty()) {
                 instanceThis.insert(fn.getBody().front().getArgument(ctjs::arg_receiver));
+                memberOf[fn.getOperation()] = key;
             }
         }
     }
@@ -132,12 +182,59 @@ bool closureLifter::bindClassStatics(liftReport & out) {
     // `this`, not its receiver, so it counts as a stray read here until the
     // arrow-`this` lowering (ArrowThis.cpp) gives the arrow the method's
     // receiver.
-    mlir::Operation * strayConstructorRead = nullptr;
-    module.walk([&](ctjs::GetPropertyOp read) {
-        if (!strayConstructorRead && ctjs::constantKey(read.getKey()) == "constructor" &&
-            !instanceThis.contains(read.getObject())) {
-            strayConstructorRead = read;
+    // A read of `this` held in a cell (a derived constructor's this-binding,
+    // which only its receiver or the bind-this helper's answer is written
+    // to) names that member's class, or a class extending it; any other
+    // stray read may name any class.
+    const auto heldThis = [&](mlir::Value object, mlir::Operation * holder) {
+        auto read = object.getDefiningOp<ctjs::CellGetOp>();
+        auto cell =
+            read ? read.getCell().getDefiningOp<ctjs::CreateCellOp>() : ctjs::CreateCellOp{};
+        if (!cell || cell->getParentOfType<ctjs::FuncOp>().getOperation() != holder) {
+            return false;
         }
+        const mlir::Value receiver =
+            llvm::cast<ctjs::FuncOp>(holder).getBody().front().getArgument(ctjs::arg_receiver);
+        const auto thisValue = [&](mlir::Value v) {
+            if (v == receiver || ctjs::isUndefinedConstant(v)) { return true; }
+            auto call = v.getDefiningOp<ctjs::CallOp>();
+            auto load =
+                call ? call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>() : ctjs::LoadGlobalOp{};
+            return load && load.getName() == "__ctbrowser_bind_this";
+        };
+        if (!thisValue(cell.getInitial())) { return false; }
+        return llvm::all_of(cell.getResult().getUses(), [&](mlir::OpOperand & use) {
+            auto set = llvm::dyn_cast<ctjs::CellSetOp>(use.getOwner());
+            return !set || use.getOperandNumber() != 1 || thisValue(set.getValue());
+        });
+    };
+    // Each stray read, with the class whose member it is in when it reads
+    // that member's `this`, or null.
+    llvm::SmallVector<std::pair<mlir::Operation *, mlir::Operation *>> strayReads;
+    module.walk([&](ctjs::GetPropertyOp read) {
+        if (ctjs::constantKey(read.getKey()) != "constructor" ||
+            instanceThis.contains(read.getObject())) {
+            return;
+        }
+        auto holder = read->getParentOfType<ctjs::FuncOp>();
+        // A function nothing creates or names cannot run (flattening's
+        // erased subclass sources stay until the unreachable pass).
+        if (holder && holder.getSymName() != "_script_$0") {
+            const auto index = ctjs::functionIndex(holder);
+            bool made = false;
+            module.walk([&](ctjs::CreateClosureOp c) {
+                made |= index && ctjs::closureFunction(c) == index;
+            });
+            if (!made && mlir::SymbolTable::symbolKnownUseEmpty(holder, module)) { return; }
+        }
+        const auto owner = holder ? memberOf.find(holder.getOperation()) : memberOf.end();
+        // `super(...)` looks up the parent's constructor as the `constructor`
+        // of the home object's prototype: a class in the member's heritage.
+        auto proto = read.getObject().getDefiningOp<ctjs::GetProtoOp>();
+        const bool superLookup = proto && proto->getOperand(0).getDefiningOp<ctjs::LoadHomeOp>();
+        const bool own =
+            owner != memberOf.end() && (superLookup || heldThis(read.getObject(), holder));
+        strayReads.push_back({read, own ? owner->second : nullptr});
     });
     // Rule 4, from every heritage call in the module, including the ones
     // whose shape the class census does not recognise (and so records no
@@ -225,8 +322,10 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                    "in a static member may not be one class");
             continue;
         }
-        if (strayConstructorRead) {
-            refuse("`x.constructor` is read" + where(strayConstructorRead) +
+        if (const auto stray = llvm::find_if(
+                strayReads, [&](auto & read) { return !read.second || read.second == key; });
+            stray != strayReads.end()) {
+            refuse("`x.constructor` is read" + where(stray->first) +
                    ", where `x` may be an instance of the class");
             continue;
         }
@@ -331,6 +430,9 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         llvm::SmallPtrSet<mlir::Operation *, 8> receiving;
         // Each `new this` or `new this.constructor`.
         llvm::SmallVector<mlir::Operation *> selfConstructs;
+        // Each truth test of the class (`if (C)`, `!C`): a class is a
+        // function, always truthy.
+        llvm::SmallVector<mlir::Operation *> truths;
         const std::string className = classNameOf(targetOf(cls.constructor));
         // A capture slot of a closure that holds the class: its reads in the
         // target, and the slots of closures there that are filled from it.
@@ -506,6 +608,165 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             revert();
             return true;
         };
+        // The class stored as a field of an object that is published as a
+        // global (`return {Alert: Alert}` by a library's factory, which a UMD
+        // header writes to `globalThis.bootstrap`): the reads of that field,
+        // through the factory's result or the global, each name the class. A
+        // reason when the object, the result or the global is used any other
+        // way, or when a read of the global may come before the write.
+        llvm::SmallVector<ctjs::SetPropertyOp> exports;
+        // The reads of a published field, which follow the class's
+        // definition by condition 4 of the export proof.
+        llvm::DenseSet<mlir::Value> exported;
+        const auto exportReads = [&](ctjs::SetPropertyOp store)
+            -> std::variant<llvm::SmallVector<mlir::Value>, std::string> {
+            using reason = std::string;
+            const llvm::StringRef field = ctjs::constantKey(store.getKey());
+            auto object = store.getObject().getDefiningOp<ctjs::CreateObjectOp>();
+            if (!object || field.empty() || !store->hasAttr(ctjs::defineOwnMarker)) {
+                return reason("is stored into something other than an object literal's own "
+                              "field");
+            }
+            bool returned = false;
+            llvm::SmallVector<mlir::Value> reads;
+            for (mlir::OpOperand & use : object.getResult().getUses()) {
+                mlir::Operation * user = use.getOwner();
+                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    set && use.getOperandNumber() == 0 && set->hasAttr(ctjs::defineOwnMarker) &&
+                    !ctjs::constantKey(set.getKey()).empty()) {
+                    if (set != store && ctjs::constantKey(set.getKey()) == field) {
+                        return reason("is stored into an object field that is defined twice");
+                    }
+                    continue;
+                }
+                // A read of the field in the object's own frame, after the
+                // store that defines it.
+                if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                    read && use.getOperandNumber() == 0 &&
+                    !ctjs::constantKey(read.getKey()).empty()) {
+                    if (ctjs::constantKey(read.getKey()) != field) { continue; }
+                    if (!reachesInFrame(store.getOperation(), read.getOperation())) {
+                        return "is stored into an object field read" + where(read) +
+                               " where the store may not have run";
+                    }
+                    reads.push_back(read.getResult());
+                    continue;
+                }
+                if (llvm::isa<ctjs::ReturnOp>(user)) {
+                    // The class is defined before the object is returned, on
+                    // the factory's own path: a read of the published field
+                    // then follows the definition (rule 3).
+                    returned = defined && defined->getBlock() == user->getBlock() &&
+                               defined->isBeforeInBlock(user);
+                    if (!returned) {
+                        return reason("is returned in an object before it is defined");
+                    }
+                    continue;
+                }
+                return ("is stored into an object that `" + user->getName().getStringRef() +
+                        "` uses" + where(user))
+                    .str();
+            }
+            auto factory = object->getParentOfType<ctjs::FuncOp>();
+            if (!returned) { return reads; }
+            // Every call of the factory is a direct call, and its result is
+            // read by constant keys or written once through the global object.
+            llvm::SmallVector<ctjs::SetPropertyOp> published;
+            auto uses = mlir::SymbolTable::getSymbolUses(factory, module.getOperation());
+            if (!uses) { return reason("is returned by a function this rewrite cannot follow"); }
+            for (const mlir::SymbolTable::SymbolUse & symbol : *uses) {
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(symbol.getUser());
+                if (!call) {
+                    return ("is returned by `" + factory.getSymName() +
+                            "`, which is also named by `" +
+                            symbol.getUser()->getName().getStringRef() + "`")
+                        .str();
+                }
+                for (mlir::OpOperand & use : call.getResult().getUses()) {
+                    mlir::Operation * user = use.getOwner();
+                    if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                        read && use.getOperandNumber() == 0 &&
+                        !ctjs::constantKey(read.getKey()).empty()) {
+                        if (ctjs::constantKey(read.getKey()) == field) {
+                            reads.push_back(read.getResult());
+                        }
+                        continue;
+                    }
+                    auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    if (set && use.getOperandNumber() == 2 &&
+                        isGlobalObject(module, set.getObject()) &&
+                        !ctjs::constantKey(set.getKey()).empty()) {
+                        published.push_back(set);
+                        continue;
+                    }
+                    return ("is returned in an object that `" + user->getName().getStringRef() +
+                            "` uses" + where(user))
+                        .str();
+                }
+            }
+            if (published.size() > 1) {
+                return reason("is returned in an object written to more than one global");
+            }
+            if (published.empty()) { return reads; }
+            ctjs::SetPropertyOp write = published.front();
+            const llvm::StringRef global = ctjs::constantKey(write.getKey());
+            // The write always runs once its function runs, and that function
+            // is started by one call, which every read of the global follows.
+            auto writer = write->getParentOfType<ctjs::FuncOp>();
+            // A call reached both through the closure and by symbol is listed
+            // twice; it is still one start.
+            const auto starts = starters.lookup(writer.getOperation());
+            const bool once = !starts.empty() && llvm::all_of(starts, [&](mlir::Operation * start) {
+                return start == starts.front();
+            });
+            if (write->getBlock() != &writer.getBody().front() || !once) {
+                return ("is published as global `" + global +
+                        "` by a write that may not run, or runs more than once")
+                    .str();
+            }
+            bool other = false;
+            std::string misuse;
+            const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> noFields;
+            module.walk([&](mlir::Operation * op) {
+                if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op);
+                    store && store.getName() == global) {
+                    other = true;
+                }
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(op);
+                    set && set != write && ctjs::constantKey(set.getKey()) == global) {
+                    if (isGlobalObject(module, set.getObject())) { other = true; }
+                }
+                auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+                if (!load || load.getName() != global || !misuse.empty()) { return; }
+                for (mlir::OpOperand & use : load.getResult().getUses()) {
+                    mlir::Operation * user = use.getOwner();
+                    if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                    auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                    if (!read || use.getOperandNumber() != 0 ||
+                        ctjs::constantKey(read.getKey()).empty()) {
+                        misuse = ("is published as global `" + global + "`, which `" +
+                                  user->getName().getStringRef() + "` uses" + where(user))
+                                     .str();
+                        return;
+                    }
+                    if (ctjs::constantKey(read.getKey()) != field) { continue; }
+                    if (!runsAfter(read, starts.front(), noFields)) {
+                        misuse = ("is published as global `" + global + "`, which" + where(read) +
+                                  " may read before it is written")
+                                     .str();
+                        return;
+                    }
+                    reads.push_back(read.getResult());
+                }
+            });
+            if (other) {
+                return ("is published as global `" + global + "`, which is also written").str();
+            }
+            if (!misuse.empty()) { return misuse; }
+            return reads;
+        };
         // A use inside a static member is refused only if that member can
         // run (see `reached` below); until then it waits here.
         llvm::SmallPtrSet<mlir::Operation *, 8> staticTargets, reached;
@@ -543,6 +804,12 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                     if (selves.contains(name)) { selfConstructs.push_back(user); }
                     continue;
                 }
+                if (auto unary = llvm::dyn_cast<ctjs::UnaryOp>(user);
+                    llvm::isa<ctjs::TruthyOp>(user) ||
+                    (unary && unary.getKind() == ctjs::UnaryKind::Not)) {
+                    truths.push_back(user);
+                    continue;
+                }
                 if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
                     set && use.getOperandNumber() == 1) {
                     if (auto cell = set.getCell().getDefiningOp<ctjs::CreateCellOp>()) {
@@ -553,6 +820,24 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
                     made && use.getOperandNumber() >= kFirstCapture) {
                     captured(made, use.getOperandNumber() - kFirstCapture);
+                    continue;
+                }
+                // Stored as a field of a published object: its reads name it.
+                if (auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                    store && use.getOperandNumber() == 2) {
+                    auto found = exportReads(store);
+                    if (auto * reads = std::get_if<llvm::SmallVector<mlir::Value>>(&found)) {
+                        exports.push_back(store);
+                        for (mlir::Value read : *reads) {
+                            names.insert(read);
+                            exported.insert(read);
+                        }
+                        continue;
+                    }
+                    if (refuseAt(user, "`" + className + "` " + std::get<std::string>(found) +
+                                           where(user))) {
+                        break;
+                    }
                     continue;
                 }
                 // A binding (a captured parameter's box) that starts with it.
@@ -698,6 +983,15 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             if (ctjs::FuncOp fn = targetOf(entry.getValue())) { startedBy[fn.getOperation()]; }
         }
         const auto early = [&](mlir::Operation * read) {
+            const auto through = [&](mlir::Value object) { return exported.contains(object); };
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(read);
+                call && through(call.getReceiver())) {
+                return false;
+            }
+            if (auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(read);
+                load && through(load.getObject())) {
+                return false;
+            }
             if (runsAfter(read, defined, startedBy)) { return false; }
             refuse("a read of a static member" + where(read) +
                    " can run before the class is defined");
@@ -709,12 +1003,22 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             continue;
         }
 
-        // The rewrite.
+        // The rewrite. A read of a published field, and each direct call
+        // made through one, is marked with the class it resolves to.
+        const auto exportMark = mlir::StringAttr::get(context, className);
+        for (mlir::Value read : exported) {
+            if (mlir::Operation * made = read.getDefiningOp()) {
+                made->setAttr(kNativeExportClass, exportMark);
+            }
+        }
         for (staticCall & s : calls) {
             mlir::OpBuilder at(s.call);
             const mlir::Value undefined = undefinedAt(at, s.call.getLoc());
             auto direct = directCall(at, s.call.getLoc(), s.target, undefined, undefined, undefined,
                                      {}, s.call.getArgs(), parametersOf(s.target));
+            if (exported.contains(s.call.getReceiver())) {
+                direct->setAttr(kNativeExportClass, exportMark);
+            }
             s.call.getResult().replaceAllUsesWith(direct.getResult());
             s.call.erase();
             ++out.calls;
@@ -724,9 +1028,34 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             const mlir::Value undefined = undefinedAt(at, load.getLoc());
             auto direct = directCall(at, load.getLoc(), target, undefined, undefined, undefined, {},
                                      mlir::ValueRange{}, parametersOf(target));
+            if (exported.contains(load.getObject())) {
+                direct->setAttr(kNativeExportClass, exportMark);
+            }
             load.getResult().replaceAllUsesWith(direct.getResult());
             eraseWithFeeders(load);
             ++out.calls;
+        }
+        for (mlir::Operation * test : truths) {
+            mlir::OpBuilder here(test);
+            mlir::Value folded =
+                llvm::isa<ctjs::TruthyOp>(test)
+                    ? mlir::arith::ConstantOp::create(here, test->getLoc(), here.getBoolAttr(true))
+                          .getResult()
+                    : ctjs::ConstantOp::create(here, test->getLoc(), ctjs::ValueType::get(context),
+                                               ctjs::BooleanAttr::get(context, false))
+                          .getResult();
+            test->getResult(0).replaceAllUsesWith(folded);
+            test->erase();
+        }
+        // A field of a published object holds the class: it now holds a
+        // value of the class's tag type, which carries no data, since every
+        // read of the field resolved above.
+        for (ctjs::SetPropertyOp store : exports) {
+            mlir::OpBuilder at(store);
+            auto tag = ctjs::ConstantOp::create(at, store.getLoc(), ctjs::ValueType::get(context),
+                                                ctjs::UndefinedAttr::get(context));
+            tag->setAttr(kNativeClassTag, exportMark);
+            store.getValueMutable().assign(tag.getResult());
         }
         llvm::SetVector<mlir::Operation *> loads;
         for (staticCall & s : calls) { loads.insert(s.load); }

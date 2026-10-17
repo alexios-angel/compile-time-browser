@@ -49,6 +49,13 @@ inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason
 /// (the constructor lift's `new K(...)`): the class's name, which the lowering
 /// gives the C++ class it emits for that shape.
 inline constexpr llvm::StringLiteral kNativeClassName = "ctnative.class_name";
+/// On a ctjs.constant that stands for a class held as an object field (the
+/// class's name): its value has the class's tag type, which carries no
+/// runtime data (ClosureLifting/ClassStatics.cpp).
+inline constexpr llvm::StringLiteral kNativeClassTag = "ctnative.class_tag";
+/// On a read of a published object's field that holds a class, and on each
+/// direct call made through such a read: the class it resolves to.
+inline constexpr llvm::StringLiteral kNativeExportClass = "ctnative.export_class";
 /// On the static box of a binding that holds an object literal: why calls of
 /// its methods stay calls through the literal (ClosureLifting/Singletons.cpp).
 inline constexpr llvm::StringLiteral kNativeSingletonReason = "ctnative.singleton_reason";

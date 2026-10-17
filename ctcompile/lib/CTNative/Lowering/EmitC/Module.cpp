@@ -223,6 +223,7 @@ void lowering::declareGlobals() {
     }
     if (needsObjectIdentity) { verbatim(b, identityDefinition()); }
     if (!identityFields.empty()) { verbatim(b, identityFieldHelpers()); }
+    for (const std::string & tag : classTags) { verbatim(b, "struct " + tag + " {};\n"); }
     for (const std::string & definition : environments) { verbatim(b, definition); }
     for (const std::string & definition : methodTables) { verbatim(b, definition); }
     if (!domDataSession.empty()) { verbatim(b, domDataDefinition()); }

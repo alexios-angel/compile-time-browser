@@ -203,6 +203,12 @@ mlir::Type staticResultType(mlir::Operation * op) {
 
     if (op->getName().getStringRef() == "ub.poison") { return BottomType::get(c); }
 
+    // A class held as an object field: the static-member rewrite proved every
+    // read of the field, and the value is the class's tag.
+    if (auto tag = op->getAttrOfType<mlir::StringAttr>(kNativeClassTag);
+        tag && llvm::isa<ctjs::ConstantOp>(op)) {
+        return ClassTagType::get(c, tag.getValue());
+    }
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
 
     // Every comparison is a boolean, including the relational ones on BigInts:

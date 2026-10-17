@@ -110,7 +110,10 @@ enum class carrier {
     timer,
     /// An instance of a class a registry Map owns, or null or undefined:
     /// `std::shared_ptr<C>`, spelled per class (EmitC/Instances.cpp).
-    instance
+    instance,
+    /// A class held as an object field: an empty struct named after the
+    /// class (classTagCarrierType), with no runtime data.
+    classTag
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -190,8 +193,9 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::nullableElement, kNullableElementType},
     {carrier::timer, kTimerType},
     {carrier::instance, ""},
+    {carrier::classTag, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::instance) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::classTag) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -327,6 +331,10 @@ std::string dictionarySpelling(mlir::Type type);
 /// spelling for a table of tables.
 std::string dictionaryValueSpelling(DictType type);
 mlir::Type closureCarrierType(ClosureType type);
+/// The C++ spelling of the class tag a field holding class `name` has:
+/// `<name>_class`, an empty struct the module declares once.
+std::string classTagSpelling(ClassTagType type);
+mlir::Type classTagCarrierType(ClassTagType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 /// `type` printed as text, or `<unvisited>` for a null type (a value the

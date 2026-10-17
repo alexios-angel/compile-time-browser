@@ -71,7 +71,9 @@ bool readsOnlyItsTable(ctjs::FuncOp target, ctjs::CreateClosureOp closure, mlir:
 
 /// What can start each function: each call of a closure of it, each call
 /// through a static variable it is stored in when that variable is only
-/// ever called, the closure's creation when it is used any other way
+/// ever called, each call through a global written once with it when the
+/// global is only ever called, the closure's creation when it is used any
+/// other way
 /// (whoever receives it may call it from then on), and each call of the
 /// function by symbol. Fills `starters` and `closuresOf`; a rewrite that
 /// erases calls rebuilds them.
@@ -103,6 +105,30 @@ void closureLifter::indexStarters() {
             }
         }
     });
+    // The same for a global a function declaration is stored in: when the
+    // global is written once and every read of it is only called, those
+    // calls are what can start the function.
+    llvm::StringMap<std::optional<llvm::SmallVector<mlir::Operation *>>> globalCalls;
+    llvm::StringMap<unsigned> globalWrites;
+    module.walk([&](mlir::Operation * op) {
+        if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(op)) {
+            ++globalWrites[store.getName()];
+            return;
+        }
+        auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(op);
+        if (!load) { return; }
+        auto & calls =
+            globalCalls.try_emplace(load.getName(), llvm::SmallVector<mlir::Operation *>{})
+                .first->second;
+        for (mlir::OpOperand & use : load.getResult().getUses()) {
+            if (llvm::isa<ctjs::RootOp>(use.getOwner())) { continue; }
+            if (calls && onlyCallee(use)) {
+                calls->push_back(use.getOwner());
+            } else {
+                calls.reset();
+            }
+        }
+    });
     module.walk([&](ctjs::CreateClosureOp made) {
         ctjs::FuncOp target = targetOf(made);
         if (!target) { return; }
@@ -114,6 +140,17 @@ void closureLifter::indexStarters() {
             if (onlyCallee(use)) {
                 into.push_back(user);
                 continue;
+            }
+            if (auto store = llvm::dyn_cast<ctjs::StoreGlobalOp>(user);
+                store && globalWrites.lookup(store.getName()) == 1) {
+                // ponytail: an embedder that calls the global by name does so
+                // after the script's top level returns, so it is not listed;
+                // a top level that throws first would need it listed.
+                const auto calls = globalCalls.find(store.getName());
+                if (calls != globalCalls.end() && calls->second) {
+                    llvm::append_range(into, *calls->second);
+                    continue;
+                }
             }
             mlir::Operation * box = llvm::isa<ctjs::CreateCellOp>(user) ? user : nullptr;
             if (auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);

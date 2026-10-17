@@ -536,6 +536,21 @@ def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
   let genVerifyDecl = 1;
 }
 
+def CTNative_ClassTagType
+    : CTNative_WrapperType<"ClassTag", "class_tag", (ins StringRefParameter<>:$className)> {
+  let summary = "A JavaScript class held as a field value, with no runtime data";
+  let description = [{
+    The value of a field that holds a class, such as each entry of the object
+    a library publishes as a global (`bootstrap.Alert`). It carries no
+    runtime data: every read of the field is resolved at compile time to the
+    class it names (ClosureLifting/ClassStatics.cpp), so the value is only
+    the field's content, an empty `struct <className>_class {}` in C++.
+
+    It meets only with itself; against anything else the meet is `boxed`,
+    because a class never merges with an ordinary value.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // The three smart pointers. Escape analysis
 // (ctcompile/CTNative/Analysis/EscapeAnalysis.h) chooses between them.

@@ -711,6 +711,7 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
+        if (carrierOf(typeOf(k.getResult())) == carrier::classTag) { return true; }
         if (llvm::isa<NumberAttr, BooleanAttr, UndefinedAttr, NullAttr>(k.getValue())) {
             return true;
         }
@@ -1149,6 +1150,18 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
             if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
                 (c == carrier::closure && set.getValue().getDefiningOp() &&
                  set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
+                continue;
+            }
+            // A class held as a field: every read of it was resolved to the
+            // class at compile time, so the field is only its empty tag.
+            if (c == carrier::classTag) {
+                const bool read = llvm::any_of(accesses, [&](mlir::Operation * other) {
+                    auto get = llvm::dyn_cast<GetPropertyOp>(other);
+                    return get && ctjs::constantKey(get.getKey()) == key;
+                });
+                if (read) {
+                    return refuse(("field `" + key + "` holds a class and is still read").str());
+                }
                 continue;
             }
             if (!isScalarCarrier(c) && c != carrier::string) {

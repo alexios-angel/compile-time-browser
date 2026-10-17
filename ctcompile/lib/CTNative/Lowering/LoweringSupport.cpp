@@ -84,6 +84,7 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
     if (llvm::isa<EventType>(type)) { return carrier::domEvent; }
     if (llvm::isa<TimerType>(type)) { return carrier::timer; }
+    if (llvm::isa<ClassTagType>(type)) { return carrier::classTag; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -521,6 +522,14 @@ mlir::Type mapCarrierType(MapType type) {
     return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<" + body + ">");
 }
 
+std::string classTagSpelling(ClassTagType type) {
+    return type.getClassName().str() + "_class";
+}
+
+mlir::Type classTagCarrierType(ClassTagType type) {
+    return ec::OpaqueType::get(type.getContext(), classTagSpelling(type));
+}
+
 mlir::Type closureCarrierType(ClosureType type) {
     return ec::OpaqueType::get(type.getContext(), "ctnative::" + environmentType(type.getTarget()));
 }
@@ -537,6 +546,9 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // through, so crash with a clear message rather than invent a type.
     if (which == carrier::methodTable) {
         llvm::report_fatal_error("method table carrier needs its proved schema");
+    }
+    if (which == carrier::classTag) {
+        llvm::report_fatal_error("class tag carrier needs its class (classTagCarrierType)");
     }
     if (const auto spelling = carrierInfo(which).spelling; !spelling.empty()) {
         return ec::OpaqueType::get(c, spelling);

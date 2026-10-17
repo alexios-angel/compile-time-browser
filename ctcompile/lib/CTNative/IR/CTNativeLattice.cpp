@@ -303,6 +303,10 @@ Type meet(Type a, Type b) {
     if (llvm::isa<BottomType>(a)) { return b; }
     if (llvm::isa<BottomType>(b)) { return a; }
     if (llvm::isa<BoxedType>(a) || llvm::isa<BoxedType>(b)) { return BoxedType::get(context); }
+    // A class tag never merges with a value, nor with another class.
+    if (llvm::isa<ClassTagType>(a) || llvm::isa<ClassTagType>(b)) {
+        return a == b ? a : BoxedType::get(context);
+    }
     if (llvm::isa<JsonType>(a) || llvm::isa<JsonType>(b)) { return JsonType::get(context); }
 
     if (Type merged = mergeSameFamily(a, b)) { return merged; }
