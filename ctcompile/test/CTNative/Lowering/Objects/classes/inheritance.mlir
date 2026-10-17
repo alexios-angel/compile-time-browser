@@ -45,7 +45,8 @@
 // Classes of a factory function are stored in bindings, and a child's
 // `extends` reads its parent's binding. Once flattening drops the heritage
 // call, that read is unused, and the parents (never constructed) are erased
-// with their members like any unreachable parent.
+// with their members like any unreachable parent. Base's own copies of
+// Config's members go with Base, so ctnative.copies no longer lists them.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/factory.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=FACTORY
@@ -68,6 +69,8 @@
 // CPP-DAG: Base_Toast_{{[0-9]+}}(Toast* const
 // OBSERVATION: r=109036004
 
+// FACTORY: ctnative.copies = {
+// FACTORY-NOT: _Base$
 // FACTORY: ctnative.inheritance_erased = [{{.*}}"Config$3"{{.*}}"Base$5"]
 // ARROW: ctjs.call_direct @fn$4({{.*}}ctnative.object_args
 // ARROW: ctjs.func private @fn$4({{.*}}ctnative.captures = 1 : i32, ctnative.lexical_this = 0 : i32

@@ -32,7 +32,8 @@
 // copies (never constructed, its statics never read, its binding never read)
 // is erased with its members, as are functions no closure names any more.
 // The module's ctnative.inheritance_summary counts the copies and erasures;
-// ctnative.copies maps every copy to the source function it stands for, and
+// ctnative.copies maps every copy still in the module to the source function
+// it stands for (a copy erased with its class stands for nothing), and
 // ctnative.inheritance_erased lists the source functions erased, so a count
 // of source functions can be rebuilt after later passes prune functions.
 //
@@ -1251,7 +1252,11 @@ struct flattener {
         llvm::SmallVector<ctjs::FuncOp> nested;
         fn.walk([&](ctjs::CreateClosureOp made) { nested.push_back(targetOf(made)); });
         byIndex.erase(*ctjs::functionIndex(fn));
-        if (!fn->hasAttr(kNativeCopyOf)) {
+        // A copy, made by this run or an earlier one, is no source function:
+        // it leaves ctnative.copies instead (run() keeps only copies that
+        // still exist).
+        auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies);
+        if (!fn->hasAttr(kNativeCopyOf) && !(earlier && earlier.get(fn.getSymName()))) {
             erasedSources.push_back(mlir::StringAttr::get(context, fn.getSymName()));
         }
         fn.erase();
@@ -1317,15 +1322,28 @@ struct flattener {
                 }));
         }
         module.walk([](ctjs::FuncOp fn) { fn->removeAttr(kNativeCopyOf); });
-        if (!copiesOf.empty()) {
+        if (!copiesOf.empty() || erased) {
+            // Copies erased as unreachable (a parent's copies of its own
+            // parent's members, erased with it) are dropped: they are neither
+            // in the module nor a source function, so a count of source
+            // functions rebuilt from this map must not expect them.
             llvm::SmallVector<mlir::NamedAttribute> all;
+            const auto keep = [&](mlir::StringAttr copy, mlir::Attribute source) {
+                if (module.lookupSymbol(copy)) { all.emplace_back(copy, source); }
+            };
             if (auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies)) {
-                all.append(earlier.begin(), earlier.end());
+                for (mlir::NamedAttribute entry : earlier) {
+                    keep(entry.getName(), entry.getValue());
+                }
             }
             for (auto & [copy, source] : copiesOf) {
-                all.emplace_back(mlir::StringAttr::get(context, copy), source);
+                keep(mlir::StringAttr::get(context, copy), source);
             }
-            module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
+            if (all.empty()) {
+                module->removeAttr(kNativeCopies);
+            } else {
+                module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
+            }
         }
         if (!erasedSources.empty()) {
             llvm::SmallVector<mlir::Attribute> all;
