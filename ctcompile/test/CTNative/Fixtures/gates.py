@@ -1,3 +1,5 @@
+# GATES below copies the gate RUN lines from each case's .test until that
+# case's switch commit deletes them there; until then, edit both copies.
 """The fixtures' gate RUN lines as pytest tests: %compilation_unit,
 %compile_clean and %print_deduced, one test per gate parametrized over the
 fixture cases below, with each case's lit path (relative to this folder,
