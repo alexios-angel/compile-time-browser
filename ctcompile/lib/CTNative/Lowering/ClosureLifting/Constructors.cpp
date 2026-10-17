@@ -128,9 +128,20 @@ bool closureLifter::isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp
 std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     ctjs::CreateClosureOp c) {
     prototypeFields proof;
+    // The last write of a static variable holding the class, which every
+    // read through it follows (markStaticClassReads).
+    mlir::Operation * staticWrite = nullptr;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         // A proved class's setup lowers to nothing (Classes.cpp).
         if (use.getOwner()->hasAttr(kNativeClassSetup)) { continue; }
+        if (llvm::isa<ctjs::CellSetOp>(use.getOwner()) &&
+            use.getOwner()->hasAttr(kNativeStaticClass)) {
+            if (use.getOwner()->getBlock() != c->getBlock()) { return std::nullopt; }
+            if (!staticWrite || staticWrite->isBeforeInBlock(use.getOwner())) {
+                staticWrite = use.getOwner();
+            }
+            continue;
+        }
         if (llvm::isa<ctjs::ConstructOp>(use.getOwner())) {
             if (!isSelfConstruct(use, c)) { return std::nullopt; }
             continue;
@@ -164,7 +175,18 @@ std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     for (ctjs::ConstructOp made : sites->second) {
         // A marked `new this` runs in a static member, which only a call
         // through the defined class reaches (ClassStatics.cpp's rule 3).
-        if (isClassConstruct(made) && constructsClosure(made, c)) { continue; }
+        if (made->hasAttr(kNativeClassConstruct) && constructsClosure(made, c)) { continue; }
+        // A `new` through the static variable runs after its last write, so
+        // the prototype must be complete by then.
+        if (isClassConstruct(made) && constructsClosure(made, c)) {
+            if (!staticWrite || !proof.attachment->isBeforeInBlock(staticWrite) ||
+                !llvm::all_of(proof.fields, [&](ctjs::SetPropertyOp field) {
+                    return field->isBeforeInBlock(staticWrite);
+                })) {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (made.getCallee() != c.getResult() || made->getBlock() != c->getBlock() ||
             !proof.attachment->isBeforeInBlock(made) ||
             !llvm::all_of(proof.fields, [&](ctjs::SetPropertyOp field) {
@@ -294,6 +316,9 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
         mlir::Operation * user = use.getOwner();
         if (prototype && user == prototype->attachment) { continue; }
         if (user->hasAttr(kNativeClassSetup)) { continue; }
+        // A write of the static variable whose every read is a marked `new`
+        // (markStaticClassReads); the lift erases it with those reads.
+        if (llvm::isa<ctjs::CellSetOp>(user) && user->hasAttr(kNativeStaticClass)) { continue; }
         if (!isSelfConstruct(use, c)) {
             return ("it is used as a constructor and also reaches `" +
                     user->getName().getStringRef() +
