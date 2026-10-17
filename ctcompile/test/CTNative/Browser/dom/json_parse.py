@@ -500,42 +500,48 @@ def main():
         "json_config_typeof": intrinsics,
         **dict.fromkeys(SPREAD_CASES, intrinsics),
     }
-    prepared = [
-        (
-            name,
-            ir,
-            dict(
-                contract,
-                initial_intrinsics=source_intrinsics.get(name, intrinsics[:2]),
-            ),
-        )
-        for name, source in SOURCES.items()
-        for ir, contract in [dom.prepare(args, name, source, 1, entry_name=name)]
-    ]
+
+    def prepare(row):
+        name, source = row
+        ir, contract = dom.prepare(args, name, source, 1, entry_name=name)
+        initial = source_intrinsics.get(name, intrinsics[:2])
+        return name, ir, dict(contract, initial_intrinsics=initial)
+
+    # Every source, variant and refusal writes only files named after itself,
+    # so they run side by side (dom.parallel).
+    prepared = dom.parallel(prepare, SOURCES.items())
     for optimize in (False, True):
-        modules = []
-        for provider in dom.PROVIDERS:
-            owned = "session" in provider
-            for name, ir, contract in prepared:
-                label = f"{name}-{owned}-{optimize}"
-                native = dom.lower(
-                    args,
-                    ir,
-                    dict(
-                        contract,
-                        provider=provider,
-                        initial_intrinsics=(
-                            list(reversed(contract["initial_intrinsics"]))
-                            if owned
-                            else contract["initial_intrinsics"]
-                        ),
+
+        def lower(task, optimize=optimize):
+            label, name, ir, contract, provider, owned = task
+            native = dom.lower(
+                args,
+                ir,
+                dict(
+                    contract,
+                    provider=provider,
+                    initial_intrinsics=(
+                        list(reversed(contract["initial_intrinsics"]))
+                        if owned
+                        else contract["initial_intrinsics"]
                     ),
-                    label,
-                    optimize=optimize,
-                )
-                deduced = args.work / f"{label}.deduced.mlir"
-                run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
-                modules.append((name, owned, {"explicit": native, "deduced": deduced}))
+                ),
+                label,
+                optimize=optimize,
+            )
+            deduced = args.work / f"{label}.deduced.mlir"
+            run([args.opt, str(native), "--ctnative-print-deduced", "-o", str(deduced)])
+            return name, owned, {"explicit": native, "deduced": deduced}
+
+        modules = dom.parallel(
+            lower,
+            [
+                (f"{name}-{owned}-{optimize}", name, ir, contract, provider, owned)
+                for provider in dom.PROVIDERS
+                for owned in ["session" in provider]
+                for name, ir, contract in prepared
+            ],
+        )
         for layout in ("explicit", "deduced"):
             headers, bodies, runs = set(), [], []
             for name, owned, layouts in modules:
@@ -569,11 +575,15 @@ def main():
                 + CLIENT.replace("@RUNS@", "\n".join(runs))
             )
             flags = [*FLAGS, *includes]
-            for index, compiler in enumerate(compilers):
+
+            def build(case, path=path, flags=flags):
+                index, compiler = case
                 binary = path.with_suffix(f".{index}")
-                result = build_and_run(
+                return build_and_run(
                     compiler, path, binary, flags=flags, libraries=libraries, nm=args.nm, vm=dom.VM
                 )
+
+            for index, result in enumerate(dom.parallel(build, enumerate(compilers))):
                 if result.stdout.splitlines() != expected * 2:
                     raise RuntimeError(
                         f"{path.name}/{index}: native JSON observations disagree with Node"
@@ -585,8 +595,9 @@ def main():
                 )
                 if result.stdout.splitlines() != expected * 2 or result.stderr:
                     raise RuntimeError("native JSON lifetime sanitizer check failed")
-    refusals = 0
-    for name, body in REFUSALS.items():
+
+    def refuse(row):
+        name, body = row
         ir, contract = dom.prepare(
             args,
             name,
@@ -604,7 +615,9 @@ def main():
                 f"{name}-{provider}",
                 "DOM",
             )
-            refusals += 2  # dom.refuse lowers with and without optimization.
+        return 2 * len(dom.PROVIDERS)  # dom.refuse lowers with and without optimization.
+
+    refusals = sum(dom.parallel(refuse, REFUSALS.items()))
     # Missing or duplicated initial_intrinsics bindings must be refused; None
     # removes the key entirely.
     premises = {
@@ -628,6 +641,16 @@ def main():
     }
     premises["json_config_typeof_direct"] = premises["json_bootstrap_m"]
     premises["json_config_spread"] = premises["json_bootstrap_m"]
+
+    def premise_refusal(task):
+        label, name, ir, premise, provider, optimize = task
+        diagnostic = dom.lower(
+            args, ir, dict(premise, provider=provider), label, optimize=optimize, success=False
+        )
+        if "DOM" not in diagnostic and "initial_intrinsics" not in diagnostic:
+            raise RuntimeError(f"{name}: missing or duplicate intrinsic binding\n{diagnostic}")
+
+    tasks = []
     for name, variants in premises.items():
         _, ir, contract = next(row for row in prepared if row[0] == name)
         for index, names in enumerate(variants):
@@ -638,19 +661,10 @@ def main():
                 premise["initial_intrinsics"] = names
             for provider in dom.PROVIDERS:
                 for optimize in (False, True):
-                    diagnostic = dom.lower(
-                        args,
-                        ir,
-                        dict(premise, provider=provider),
-                        f"{name}-premise-{index}-{provider}-{optimize}",
-                        optimize=optimize,
-                        success=False,
-                    )
-                    if "DOM" not in diagnostic and "initial_intrinsics" not in diagnostic:
-                        raise RuntimeError(
-                            f"{name}: missing or duplicate intrinsic binding\n{diagnostic}"
-                        )
-                    refusals += 1
+                    label = f"{name}-premise-{index}-{provider}-{optimize}"
+                    tasks.append((label, name, ir, premise, provider, optimize))
+    dom.parallel(premise_refusal, tasks)
+    refusals += len(tasks)
     print(
         f"native DOM JSON: {len(SOURCES)} sources, {len(expected)} Node/VM observations, "
         f"8 GCC/Clang binaries, lifetime sanitizer, both providers/policies/layouts, {refusals} refusals"

@@ -1,0 +1,21 @@
+# Differential test of for-of.js: a for-of over an array this tier holds
+# keeps only its index loop, and a `[name, value]` head reads the row's two
+# positions (Lowering/ForOf.cpp), so no iterator helper is left in the C++.
+# The C++ is compiled against public Core, checked for interpreter symbols
+# with nm, run, and every global compared with the interpreter's
+# (compilation-unit.py). The negative prefixes the printed String `e`
+# (--mutate-as string) and requires the comparison to fail naming it.
+# compile-clean.py checks a warning-free build on both toolchains.
+# string-arrays-calls.py is the generic pipeline driver for a fixture that is
+# not registered in NativeFixtures.cmake.
+
+# RUN: python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/for-of.js --out %t/for-of.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/for-of.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/for-of.emitc.mlir --js %S/for-of.js --work %t --name for_of --core-build %build
+# RUN: not %compilation_unit --module %t/for-of.emitc.mlir --js %S/for-of.js --work %t --name for_of_negative --core-build %build --mutate e --mutate-as string 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# RUN: %compile_clean --module %t/for-of.emitc.mlir --work %t --name for_of
+
+# CHECK-DAG: ctnative::String.prototype.split.call(
+# CHECK-DAG: ctnative::Array.prototype.map.call(
+# CHECK-NOT: __ctbrowser
+# NEGATIVE: global 'e' differs

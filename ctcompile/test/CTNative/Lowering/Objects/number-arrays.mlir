@@ -1,6 +1,7 @@
 // Built-in statics and arrays of Numbers. EMIT checks that a map to Numbers
 // lowers to a std::vector<ctnative::js_num>, parseInt to
-// ctnative::Number.parseInt and Math.min to ctnative::Math.min, with nothing
+// ctnative::Number.parseInt, Math.min to ctnative::Math.min and
+// String.prototype.toLowerCase.call to its runtime spelling, with nothing
 // refused. NUMBER is the refusal of parseInt of a value that is not a
 // String, and SHADOW checks that a parseInt read off a `Number` the program
 // binds itself, which is not the realm's, is not lowered to the runtime's.
@@ -24,6 +25,7 @@
 
 // EMIT-DAG: call_opaque "ctnative::Number.parseInt"
 // EMIT-DAG: call_opaque "ctnative::Math.min"
+// EMIT-DAG: call_opaque "ctnative::String.prototype.toLowerCase.call"
 // EMIT-DAG: call_opaque "ctnative::Array.prototype.map.call"{{.*}}std::vector<ctnative::js_num>
 // MARKED-DAG: {host_binding, name = "Math"
 // MARKED-DAG: {host_binding, name = "Number"
@@ -39,7 +41,8 @@ function sum(text) {
     var parts = text.split(',').map(function (t) {
         return Number.parseInt(t, 10);
     });
-    return Math.min(parts.length, 5) + Number.parseInt(text);
+    return Math.min(parts.length, 5) + Number.parseInt(text) +
+        String.prototype.toLowerCase.call(text).length;
 }
 var total = sum('1,2');
 

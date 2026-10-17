@@ -10,8 +10,11 @@
 
 #include "../../Analysis/OwnedGlobalRoots.h"
 #include "../../Analysis/OwnedMethodTableSlots.h"
+#include "../ForOf.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -23,6 +26,12 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits an addEventListener call specialised for its listener
 /// (HostCallbacks.cpp).
 bool hostCallbackOperation(admission & self, ctjs::CallOp call);
+/// Admits a use of a listener's Event (HostCallbacks.cpp); nullopt when `o`
+/// uses none.
+std::optional<bool> eventOperation(admission & self, mlir::Operation * o);
+/// Admits an element member call or read (Elements.cpp); nullopt when `o`
+/// is none.
+std::optional<bool> elementOperation(admission & self, mlir::Operation * o);
 
 namespace {
 
@@ -45,6 +54,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         if (vector && llvm::isa<TupleType>(vector.getElementType())) {
             return TypeInference::isTupleLiteral(value) &&
                    carrierOf(self.typeOf(value)) == carrier::tuple;
+        }
+        // An element into an array of elements (`[i]`, the spread loop).
+        if (vector && llvm::isa<DOMElementType>(vector.getElementType())) {
+            return carrierOf(self.typeOf(value)) == carrier::domElement;
         }
         return isString(value);
     };
@@ -177,9 +190,14 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     case VectorCall::builtinStatic: {
         const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
         const std::string name =
-            row.member.empty() ? row.global.str() : (row.global + "." + row.member).str();
+            row.member.empty()
+                ? row.global.str()
+                : (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
+        using Param = TypeInference::BuiltinStatic::Param;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
-            if (row.params[index] == TypeInference::BuiltinStatic::Param::record) {
+            const Param kind = row.params[index];
+            const carrier held = carrierOf(self.typeOf(argument));
+            if (kind == Param::record) {
                 // A table serializes its own keys itself (Runtime/Json.hpp);
                 // its site's admission checked its values.
                 if (auto table = llvm::dyn_cast_or_null<DictType>(self.typeOf(argument))) {
@@ -207,12 +225,35 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
                 }
                 continue;
             }
-            const bool string = row.params[index] == TypeInference::BuiltinStatic::Param::string;
-            if (string ? !isString(argument)
-                       : carrierOf(self.typeOf(argument)) != carrier::number) {
+            // An element that may be null is passed through present_element,
+            // which throws the VM's TypeError for null as the call would. A
+            // printable is a carrier Runtime/Console.hpp's console_detail::append
+            // takes.
+            const bool printable = held == carrier::string || held == carrier::number ||
+                                   held == carrier::boolean || held == carrier::nullable ||
+                                   held == carrier::nullableString;
+            if (auto why = call->getAttrOfType<mlir::StringAttr>(kNativeStaticTableLoopRefusal)) {
+                return self.refuse(why.getValue().str());
+            }
+            // A constant table only where its proof marked the call.
+            const bool table =
+                held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
+            const bool fits = kind == Param::string        ? isString(argument)
+                              : kind == Param::number      ? held == carrier::number
+                              : kind == Param::element     ? held == carrier::domElement ||
+                                                             held == carrier::nullableElement
+                              : kind == Param::staticTable ? table
+                                                           : printable;
+            if (!fits) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
-                                   printed(self.typeOf(argument)) + ", not a " +
-                                   (string ? "String" : "Number"));
+                                   printed(self.typeOf(argument)) + ", not " +
+                                   (kind == Param::string    ? "a String"
+                                    : kind == Param::number  ? "a Number"
+                                    : kind == Param::element ? "an Element"
+                                    : kind == Param::staticTable
+                                        ? "a constant table of Strings"
+                                        : "a String, Number, Boolean, null "
+                                          "or undefined"));
             }
         }
         return true;
@@ -243,6 +284,8 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     if (TypeInference::isHostCallbackCall(o)) {
         return hostCallbackOperation(self, llvm::cast<CallOp>(o));
     }
+    if (auto admitted = eventOperation(self, o)) { return *admitted; }
+    if (auto admitted = elementOperation(self, o)) { return *admitted; }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
     if (TypeInference::isRectCall(o)) {
         auto call = llvm::cast<CallOp>(o);
@@ -392,11 +435,45 @@ std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * 
 bool admission::op(mlir::Operation * o) {
     using namespace ctjs;
     if (auto admitted = domOperation(o)) { return *admitted; }
+    // A folded for-of indexes its source as an array (ForOf.cpp).
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+        read && o->hasAttr(kForOfArray) &&
+        !isElementArray(read.getObject(), typeOf(read.getObject()), pageViews())) {
+        return refuse("a for-of over " + printed(typeOf(read.getObject())) +
+                      ", not an array this tier holds");
+    }
+    // A folded array destructuring reads its value as a tuple or an array.
+    if (auto read = llvm::dyn_cast<GetPropertyOp>(o);
+        read && o->hasAttr(kDestructureArray) &&
+        carrierOf(typeOf(read.getObject())) != carrier::tuple &&
+        !isElementArray(read.getObject(), typeOf(read.getObject()), pageViews())) {
+        return refuse("array destructuring of " + printed(typeOf(read.getObject())) +
+                      ", not a tuple or an array this tier holds");
+    }
+    if (auto why = o->getAttrOfType<mlir::StringAttr>(kIterationRefusal)) {
+        return refuse(why.str());
+    }
     if (auto admitted = staticTableOperation(o)) { return *admitted; }
+    if (auto admitted = instanceOperation(o)) { return *admitted; }
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
     if (auto admitted = dictionaryOperation(*this, o)) { return *admitted; }
+    if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
+        // The same carrier, or the String or Number alternative of one that
+        // holds several kinds (Runtime/Narrowing.hpp spells the conversion).
+        const carrier from = carrierOf(typeOf(refined.getValue()));
+        const carrier to = carrierOf(typeOf(refined.getResult()));
+        const bool alternative =
+            (to == carrier::string &&
+             (from == carrier::nullableString || from == carrier::numberString ||
+              from == carrier::nullableNumberString || from == carrier::booleanString)) ||
+            (to == carrier::number &&
+             (from == carrier::numberString || from == carrier::nullableNumberString));
+        return (from == to && to != carrier::none) || alternative ||
+               refuse(("a value narrowed by `" + refined.getKind() + "` from ").str() +
+                      printed(typeOf(refined.getValue())));
+    }
     if (ownedGlobals && ownedGlobals->lookup(o)) { return ownedGlobalOperation(o); }
     if (const auto * edge = ownedGlobals ? ownedGlobals->objectGlobal(o) : nullptr) {
         auto object = edge->object;
@@ -1044,6 +1121,12 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                            "would find undefined")
                               .str());
         }
+        // A field joining String with absence, Boolean or Number is a union
+        // member (Admission/VariantFields.cpp).
+        if (auto admitted = variantField(key, user, accesses)) {
+            if (!*admitted) { return false; }
+            continue;
+        }
         // The existing shape census already spells one definite string as
         // std::string. Mixed or possibly absent reads need a different join;
         // do not route them through the numeric nullable carrier.
@@ -1058,6 +1141,14 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
             const carrier c = carrierOf(typeOf(set.getValue()));
             if (c == carrier::methodTable) {
                 if (!ownedTableField(set)) { return false; }
+                continue;
+            }
+            // A field one of a proved set of closures (ClosureSets.cpp) is
+            // stored as that set's std::variant, whether the stored value is
+            // the set or one member's closure.
+            if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
+                (c == carrier::closure && set.getValue().getDefiningOp() &&
+                 set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
                 continue;
             }
             if (!isScalarCarrier(c) && c != carrier::string) {
@@ -1091,7 +1182,10 @@ bool admission::directCall(ctjs::CallDirectOp call) {
     // is the generated class, so it must really be a closed-shape object and
     // not some other value the lift never looked at.
     const auto operands = call.getArgOperands();
-    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver())) {
+    // An instance a registry Map owns is passed as its owner or borrowed
+    // (EmitC/Instances.cpp).
+    if (o->hasAttr(kNativeReceiver) && !isClosedObject(call.getReceiver()) &&
+        carrierOf(typeOf(call.getReceiver())) != carrier::instance) {
         return refuse("a method call whose receiver is not a closed-shape object");
     }
     for (unsigned i = 3; i < operands.size(); ++i) {
@@ -1129,6 +1223,7 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&
+            carrierOf(typeOf(operands[i])) != carrier::instance &&
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
@@ -1136,6 +1231,9 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             carrierOf(typeOf(operands[i])) != carrier::dictionary &&
             // An element array is lent to the callee as a std::span.
             !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
+            // An ordinary script's element (or element or null) is a copied view.
+            !(pageViews() && (carrierOf(typeOf(operands[i])) == carrier::domElement ||
+                              carrierOf(typeOf(operands[i])) == carrier::nullableElement)) &&
             !numeric(operands[i], "argument")) {
             return false;
         }

@@ -18,6 +18,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 #include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 
 #include "llvm/ADT/MapVector.h"
@@ -25,10 +26,21 @@
 #include "llvm/ADT/StringSet.h"
 
 #include <cmath>
+#include <cstdint>
 #include <optional>
 #include <string>
 
 namespace ctcompile::ctnative {
+
+std::string tableKey(mlir::Value key) {
+    if (auto text = ctjs::constantAttr<ctjs::StringAttr>(key)) { return text.getValue().str(); }
+    auto number = ctjs::constantAttr<ctjs::NumberAttr>(key);
+    if (!number) { return {}; }
+    const double value = number.getDouble();
+    if (!(value >= 0.0 && value < 4294967295.0) || value != std::floor(value)) { return {}; }
+    return std::to_string(static_cast<std::uint64_t>(value));
+}
+
 namespace {
 
 using Reason = std::optional<std::string>;
@@ -50,6 +62,9 @@ mlir::Attribute scalarConstant(mlir::Value value) {
 struct table {
     llvm::StringMap<mlir::Attribute> scalars;
     llvm::StringSet<> arrays;
+    /// Every field's key operand, in property order (OrdinaryOwnPropertyKeys:
+    /// array indices ascending, then the rest as the literal defines them).
+    llvm::SmallVector<mlir::Value> order;
     llvm::SmallVector<mlir::Operation *> parts;
 };
 
@@ -90,6 +105,7 @@ Reason arrayField(ctjs::CreateArrayOp array, llvm::StringRef key, table & into) 
 /// Why `literal`, stored into its static by `write`, is not a table of
 /// constants complete before that write; fills `into` otherwise.
 Reason literalFields(ctjs::CreateObjectOp literal, ctjs::CellSetOp write, table & into) {
+    llvm::SmallVector<ctjs::SetPropertyOp> stores;
     for (mlir::OpOperand & use : literal.getResult().getUses()) {
         mlir::Operation * user = use.getOwner();
         if (user == write.getOperation() && use.getOperandNumber() == 1) { continue; }
@@ -98,26 +114,33 @@ Reason literalFields(ctjs::CreateObjectOp literal, ctjs::CellSetOp write, table 
             return "is built with `" + user->getName().getStringRef().str() +
                    "`, not only with constant fields";
         }
-        const llvm::StringRef key = ctjs::constantKey(store.getKey());
+        const std::string key = tableKey(store.getKey());
         if (key.empty() || key == "__proto__") {
             return std::string("defines a field through a key that is not a constant");
         }
         if (into.scalars.contains(key) || into.arrays.contains(key)) {
-            return "defines `" + key.str() + "` twice";
+            return "defines `" + key + "` twice";
         }
         if (store->getBlock() != write->getBlock() || !store->isBeforeInBlock(write)) {
-            return "defines `" + key.str() + "` after it is stored";
+            return "defines `" + key + "` after it is stored";
         }
         if (const mlir::Attribute constant = scalarConstant(store.getValue())) {
             into.scalars[key] = constant;
         } else if (auto array = store.getValue().getDefiningOp<ctjs::CreateArrayOp>()) {
             if (auto why = arrayField(array, key, into)) { return why; }
         } else {
-            return "holds `" + key.str() +
+            return "holds `" + key +
                    "`, which is not a constant number, boolean, string, null or array of them";
         }
         into.parts.push_back(store);
+        stores.push_back(store);
     }
+    // Every store is in the write's block (checked above), so block order is
+    // definition order.
+    llvm::sort(stores,
+               [](ctjs::SetPropertyOp a, ctjs::SetPropertyOp b) { return a->isBeforeInBlock(b); });
+    for (ctjs::SetPropertyOp store : stores) { into.order.push_back(store.getKey()); }
+    sortOwnKeyOrder(into.order, [](mlir::Value key) { return tableKey(key); });
     return std::nullopt;
 }
 
@@ -127,7 +150,27 @@ struct readers {
     const table & fields;
     const llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> & calls;
     llvm::SmallVector<std::pair<ctjs::GetPropertyOp, mlir::Attribute>> reads;
+    /// Spreads of the table into a fresh literal, written out once proved.
+    llvm::SmallVector<ctjs::CopyPropsOp> spreads;
+    /// `Object.entries`, `keys` or `values` calls of the table, marked once
+    /// proved.
+    llvm::SmallVector<ctjs::CallOp> enumerations;
     llvm::DenseSet<mlir::Operation *> followed;
+
+    /// Whether `use` is the argument of a built-in statics row that takes a
+    /// constant table (Object.entries, keys, values) and every field of this
+    /// table is a String, which is what the row answers.
+    bool enumerates(ctjs::CallOp call, mlir::OpOperand & use) const {
+        const auto * row = TypeInference::builtinStaticOf(call);
+        if (!row || row->params[0] != TypeInference::BuiltinStatic::Param::staticTable ||
+            call.getArgs().size() != 1 || call.getArgs().front() != use.get() ||
+            !fields.arrays.empty()) {
+            return false;
+        }
+        return llvm::all_of(fields.scalars, [](const auto & field) {
+            return llvm::isa<ctjs::StringAttr>(field.getValue());
+        });
+    }
 
     Reason check(mlir::Value value) {
         for (mlir::OpOperand & use : value.getUses()) {
@@ -146,6 +189,22 @@ struct readers {
                     return "is read at `" + key.str() + "`, which the literal does not define";
                 }
                 reads.emplace_back(read, found->second);
+                continue;
+            }
+            if (auto spread = llvm::dyn_cast<ctjs::CopyPropsOp>(user);
+                spread && use.getOperandNumber() == 1) {
+                if (!spread.getTarget().getDefiningOp<ctjs::CreateObjectOp>()) {
+                    return std::string("is spread into an object that is not a fresh literal");
+                }
+                if (!fields.arrays.empty()) {
+                    return "is spread while it holds the array field `" +
+                           fields.arrays.begin()->first().str() + "`";
+                }
+                spreads.push_back(spread);
+                continue;
+            }
+            if (auto call = llvm::dyn_cast<ctjs::CallOp>(user); call && enumerates(call, use)) {
+                enumerations.push_back(call);
                 continue;
             }
             if (llvm::isa<ctjs::ReturnOp>(user)) {
@@ -173,6 +232,28 @@ struct readers {
         return std::nullopt;
     }
 };
+
+/// Writes out `spread`, a proved spread of table `name`: per field, a read
+/// marked as the table's (and as a spread's, since the table may still be
+/// undefined) and an own definition on the target.
+void expandSpread(ctjs::CopyPropsOp spread, mlir::StringAttr name, const table & fields) {
+    mlir::OpBuilder builder{spread};
+    const mlir::Location where = spread.getLoc();
+    const mlir::Value source = spread.getSource();
+    for (mlir::Value definedKey : fields.order) {
+        const std::string text = tableKey(definedKey);
+        const mlir::Value key =
+            ctjs::ConstantOp::create(builder, where, definedKey.getType(),
+                                     ctjs::StringAttr::get(builder.getContext(), text));
+        auto read = ctjs::GetPropertyOp::create(builder, where, source.getType(), source, key);
+        read->setAttr(kNativeStaticTable, name);
+        read->setAttr(kNativeStaticTableField, fields.scalars.lookup(text));
+        read->setAttr(kNativeStaticTableSpread, builder.getUnitAttr());
+        ctjs::SetPropertyOp::create(builder, where, spread.getTarget(), key, read.getResult())
+            ->setAttr(ctjs::defineOwnMarker, builder.getUnitAttr());
+    }
+    spread.erase();
+}
 
 } // namespace
 
@@ -244,7 +325,14 @@ void markStaticTables(mlir::ModuleOp module) {
             read->setAttr(kNativeStaticTable, name);
             read->setAttr(kNativeStaticTableField, constant);
         }
+        for (ctjs::CopyPropsOp spread : uses.spreads) { expandSpread(spread, name, fields); }
+        for (ctjs::CallOp call : uses.enumerations) {
+            call->setAttr(kNativeStaticTableEnumeration, name);
+            call->setAttr(kNativeStaticTableMethod,
+                          mlir::StringAttr::get(call.getContext(), ctjs::methodKey(call)));
+        }
     }
+    unrollTableLoops(module);
 }
 
 } // namespace ctcompile::ctnative

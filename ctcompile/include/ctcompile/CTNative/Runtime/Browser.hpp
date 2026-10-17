@@ -20,6 +20,11 @@
 
 #include <ctbrowser/style/engine.hpp>
 
+#include <algorithm>
+#include <optional>
+#include <ranges>
+#include <span>
+
 namespace ctnative {
 
 /// A borrowed view of one element and the style engine used for selector
@@ -100,8 +105,62 @@ public:
         }
         return snapshot;
     }
+    /// Node.parentElement (DOM §4.4): the parent when it is an element, else
+    /// null (the document element's parent is the Document).
+    std::optional<js_element_t> parentElement() const {
+        const ctbrowser::element_ref element = value();
+        const auto txn = element.owner->read();
+        const ctbrowser::node_id parent = ctbrowser::dom_parent(txn, element.id);
+        if (!parent || !txn.tag(parent).has_value()) { return std::nullopt; }
+        return js_element_t{{element.owner, parent}, *styles};
+    }
+    /// NonDocumentTypeChildNode.previousElementSibling (DOM §4.2.7): the
+    /// nearest preceding sibling that is an element, or null.
+    std::optional<js_element_t> previousElementSibling() const { return sibling(false); }
+    /// NonDocumentTypeChildNode.nextElementSibling (DOM §4.2.7): the nearest
+    /// following sibling that is an element, or null.
+    std::optional<js_element_t> nextElementSibling() const { return sibling(true); }
+    /// Element.getAttribute (DOM §4.9): the first attribute with that
+    /// qualified name, or null.
+    nullable_string getAttribute(const js_string & name) const {
+        auto found = get_attribute(value(), name.value());
+        if (found) { return *found; }
+        nullable_string absent;
+        absent.tag = nullable_string::kind::null_value;
+        return absent;
+    }
+    /// Element.setAttribute (DOM §4.9) with a String value; an invalid name
+    /// throws, as the VM's InvalidCharacterError does.
+    void setAttribute(const js_string & name, const js_string & text) const {
+        set_attribute(value(), name.value(), text.value());
+    }
+    /// Element.removeAttribute (DOM §4.9): removes the first attribute with
+    /// that qualified name; an absent one is not an error.
+    void removeAttribute(const js_string & name) const { remove_attribute(value(), name.value()); }
 
 private:
+    /// The nearest element sibling after (`forward`) or before this element,
+    /// among its DOM parent's children; null when it has no parent.
+    std::optional<js_element_t> sibling(bool forward) const {
+        const ctbrowser::element_ref element = value();
+        const auto txn = element.owner->read();
+        const ctbrowser::node_id parent = ctbrowser::dom_parent(txn, element.id);
+        if (!parent) { return std::nullopt; }
+        const std::span<const ctbrowser::node_id> all = txn.children(parent);
+        const auto at = std::ranges::find(all, element.id);
+        if (at == all.end()) { return std::nullopt; }
+        const auto element_child = [&](ctbrowser::node_id id) { return txn.tag(id).has_value(); };
+        if (forward) {
+            const auto found = std::find_if(std::next(at), all.end(), element_child);
+            if (found == all.end()) { return std::nullopt; }
+            return js_element_t{{element.owner, *found}, *styles};
+        }
+        const auto before = std::ranges::subrange(all.begin(), at) | std::views::reverse;
+        const auto found = std::ranges::find_if(before, element_child);
+        if (found == before.end()) { return std::nullopt; }
+        return js_element_t{{element.owner, *found}, *styles};
+    }
+
     /// A reflected DOMString attribute (HTML §2.6.1): the content attribute's
     /// value, or "" when it is absent.
     js_string reflected(std::string_view attribute) const {
@@ -194,16 +253,42 @@ inline std::vector<js_element_t> document_object::querySelectorAll(
 
 /// `document.documentElement` where the program uses it as an element without
 /// a null check (css-dump.js's walk starts there), and `reading` is the first
-/// property the program reads of it. A document with no root element throws
-/// the TypeError the interpreter throws at that read of null. Like the other
-/// DOM errors in this header it is a C++ exception native `catch` cannot see,
-/// so admission keeps a `try` around such a read refused.
-inline js_element_t require_document_element(const char * reading) {
+/// property the program reads of it, or empty when the compiler found none. A
+/// document with no root element throws the TypeError the interpreter throws
+/// at that read of null; with no property known, the message names none. A
+/// parsed page always has a root, so only a program that removed it reaches
+/// this. Like the other DOM errors in this header it is a C++ exception native
+/// `catch` cannot see, so admission keeps a `try` around such a read refused.
+inline js_element_t require_document_element(const char * reading = "") {
     std::optional<js_element_t> root = document.documentElement();
     if (!root) {
-        throw type_error(std::string{"Cannot read properties of null (reading '"} + reading + "')");
+        const std::string named =
+            *reading == '\0' ? std::string{} : std::string{" (reading '"} + reading + "')";
+        throw type_error("Cannot read properties of null" + named);
     }
     return *std::move(root);
+}
+
+/// The element `element` holds, for a member of a value that may be null
+/// (`i.matches(s)` where `i` is an element sibling). Null throws the VM's
+/// TypeError text; like the other DOM errors in this header it is a C++
+/// exception native `catch` cannot see.
+inline const js_element_t & present_element(const std::optional<js_element_t> & element) {
+    if (!element) { throw std::invalid_argument("TypeError: Cannot read properties of null"); }
+    return *element;
+}
+
+/// Appends to an array of elements (ECMA-262 23.1.3.23, Array.prototype.push):
+/// the spread loop of `[].concat(...nodes)` and `[i]` fill one this way.
+inline void vec_push(std::vector<js_element_t> & elements, const js_element_t & element) {
+    elements.push_back(element);
+}
+
+/// Appends an element or null that the program proved present (`[i]` inside
+/// `for (; i;)`); a null throws as present_element does.
+inline void vec_push(std::vector<js_element_t> & elements,
+                     const std::optional<js_element_t> & element) {
+    elements.push_back(present_element(element));
 }
 
 /// Converts an optional view to the plain element_ref carrier, with an empty

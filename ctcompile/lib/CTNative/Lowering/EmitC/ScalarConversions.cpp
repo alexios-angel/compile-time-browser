@@ -40,6 +40,25 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
     if (isDictionaryCarrier(target) && !isDictionaryCarrier(value.getType())) {
         return ec::LiteralOp::create(b, where, target, "nullptr");
     }
+    // Joined into an instance (EmitC/Instances.cpp), anything that is not one
+    // is null, undefined or a falsy `has` result: the registry proof allows no
+    // other, and a null pointer stands for each.
+    if (instanceSpellings.contains(opaqueSpelling(target)) && !isInstanceValue(value)) {
+        return ec::LiteralOp::create(b, where, target, b.getStringAttr("nullptr"));
+    }
+    // An ordinary script's element or null: an element view converts, and an
+    // absent scalar (null or undefined) is the empty optional.
+    if (target == carrierType(context, carrier::nullableElement)) {
+        if (value.getType() == ec::OpaqueType::get(context, kPageElementType)) {
+            return ec::CastOp::create(b, where, target, value);
+        }
+        if (isNullableCarrier(value.getType())) {
+            return ec::ConstantOp::create(b, where, target,
+                                          ec::OpaqueAttr::get(context, "std::nullopt"));
+        }
+    }
+    // ClosureSets.cpp: a set's variant where the set may be absent.
+    if (mlir::Value set = convertClosureSet(b, where, value, target)) { return set; }
     // Host null uses optional String storage. Preserve its exact null tag in
     // scalar joins, or convert it to positive zero for numeric consumers.
     // Region edges are converted before ctjs constants become EmitC constants.
@@ -216,7 +235,11 @@ void lowering::censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted,
                              const OwnedGlobalRoots * roots) {
     const auto scalarType = [&](mlir::Type type) -> mlir::Type {
         const auto c = carrierOf(type);
-        if (!isPrimitiveCarrier(c) && !isObjectCarrier(c)) { return {}; }
+        // An element or null converts at a call edge like a scalar: an
+        // omitted argument is the empty optional.
+        if (!isPrimitiveCarrier(c) && !isObjectCarrier(c) && c != carrier::nullableElement) {
+            return {};
+        }
         needsObjectValue |= c == carrier::objectValue;
         return carrierType(context, c);
     };

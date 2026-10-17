@@ -42,6 +42,8 @@ void lowering::finish() {
                 break;
             }
         }
+        // A class field holding a closure set names its members' functions.
+        declareClosureSetMembers(b, lowered); // ClosureSets.cpp
         // One emitc.class per object shape (not per allocation site), with
         // public fields only. A shape family whose members disagree on a field
         // type becomes a class template: the varying fields' types are template
@@ -162,14 +164,18 @@ void lowering::declareGlobals() {
     needsObjectIdentity |= needsObjectValue;
     // Snapshot projections remain ordered even after their producer has
     // been deforested. The choice only becomes more conservative here.
-    // Only programs that register listeners parse the listener table.
+    // Only programs that register listeners or timers parse their tables.
     bool needsEvents = false;
     // A table's type can appear in signatures and statics, so its header goes
     // right after the runtime's.
     bool needsDictionaries = false;
+    bool needsTimers = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
         needsDictionaries |= call.getCallee().starts_with("ctnative::make_dictionary<");
+        needsTimers |= llvm::is_contained({"ctnative::setTimeout", "ctnative::setInterval",
+                                           "ctnative::clearTimeout", "ctnative::clearInterval"},
+                                          call.getCallee());
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");
@@ -217,6 +223,11 @@ void lowering::declareGlobals() {
     if (needsEvents) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Events.hpp"),
+                              b.getUnitAttr());
+    }
+    if (needsTimers) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Timers.hpp"),
                               b.getUnitAttr());
     }
     if (needsObjectIdentity) { verbatim(b, identityDefinition()); }

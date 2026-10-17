@@ -57,6 +57,10 @@ CARRIERS = [
     re.compile(
         r"^([ \t]*(constexpr )?)std::shared_ptr<ctnative::identity_object>(( const)? [A-Za-z_0-9]+ = )"
     ),
+    # An instance of a class a registry Map owns: its class's owner.
+    re.compile(
+        r"^([ \t]*(constexpr )?)std::shared_ptr<[A-Za-z_][A-Za-z_0-9]*>(( const)? [A-Za-z_0-9]+ = )"
+    ),
     re.compile(
         r"^([ \t]*(constexpr )?)std::shared_ptr<ctnative::string_to_number_map>"
         r"(( const)? [A-Za-z_0-9]+ = )"

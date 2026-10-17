@@ -154,12 +154,30 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
             add(selected.thenYield().getOperand(index));
             add(selected.elseYield().getOperand(index));
+        } else if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(definition)) {
+            // A loop's exits, as the importer structures an early return
+            // from inside it: one arm per exit.
+            borrowed = true;
+            const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
+            for (mlir::Region & arm : cases->getRegions()) {
+                add(llvm::cast<mlir::scf::YieldOp>(arm.front().getTerminator()).getOperand(index));
+            }
         } else if (llvm::isa<ctjs::CreateArrayOp, ctjs::CallDirectOp>(definition)) {
             // A literal, or the array a direct call returned by value.
             owners.push_back(definition);
         } else if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(definition);
                    read && ctjs::constantKey(read.getKey()) == "children") {
             collection = true;
+            owners.push_back(definition);
+        } else if (vectorCallOf(definition) == VectorCall::builtinStatic) {
+            // querySelectorAll's snapshot (Inference/Elements.cpp): a NodeList,
+            // which has no push, join or sort.
+            collection = true;
+            owners.push_back(definition);
+        } else if (llvm::isa<ctjs::IterableOp>(definition)) {
+            add(definition->getOperand(0));
+        } else if (spreadCopySource(definition)) {
+            // `[].concat(...a)`: a new array (Inference/Elements.cpp).
             owners.push_back(definition);
         } else if (const VectorCall made = vectorCallOf(definition);
                    made == VectorCall::split || made == VectorCall::splitSpace ||
@@ -198,6 +216,11 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                     before(loop, use.getOperandNumber());
                     continue;
                 }
+                if (auto cases = llvm::dyn_cast<mlir::scf::IndexSwitchOp>(yield->getParentOp())) {
+                    borrowed = true;
+                    add(cases.getResult(use.getOperandNumber()));
+                    continue;
+                }
                 auto selected = llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp());
                 if (!selected || use.getOperandNumber() >= selected.getNumResults()) {
                     return fail("an array yielded out of a region that is not an if or a loop");
@@ -206,6 +229,13 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                 add(selected.getResult(use.getOperandNumber()));
                 continue;
             }
+            // The spread loop's iterator over the array, and the copy
+            // `[].concat(...a)` makes of it (Inference/Elements.cpp).
+            if (llvm::isa<ctjs::IterableOp>(user)) {
+                add(user->getResult(0));
+                continue;
+            }
+            if (spreadCopySource(user) == member) { continue; }
             if (llvm::isa<ctjs::AppendOp>(user)) {
                 // Operand 1 is the element: an array appended into another
                 // array has escaped into it.
@@ -303,7 +333,15 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
     if (borrowed && !parameter) {
         if (!function) { return fail("an array outside a function"); }
         for (mlir::Operation * owner : owners) {
-            if (owner->getBlock() != &function.getBody().front()) {
+            // An empty literal in a branch that runs at most once per call
+            // (`return [i]` and `return []` in a loop's exit arms) can take
+            // its frame slot at the function's entry: making an empty array
+            // has no effect to move.
+            auto literal = llvm::dyn_cast<ctjs::CreateArrayOp>(owner);
+            const bool hoistable = literal && literal.getElements().empty() &&
+                                   !owner->getParentOfType<mlir::scf::WhileOp>() &&
+                                   !owner->getParentOfType<mlir::scf::ForOp>();
+            if (owner->getBlock() != &function.getBody().front() && !hoistable) {
                 return fail("an array created inside a branch or a loop and carried out of it - "
                             "its storage has to be one frame slot");
             }
@@ -406,11 +444,75 @@ bool TypeInference::isTupleLiteral(mlir::Value array) {
     });
 }
 
+namespace {
+
+/// Whether every value `counter`, a before-region argument of an scf.while,
+/// can hold is an integer at least 0: following the loop's back edge and the
+/// structured results it passes through, each value that reaches it is a
+/// constant index at least 0, `counter + 1`, or `ub.poison`, which the
+/// structuring pass yields only on the path that leaves the loop.
+bool nonNegativeCounter(mlir::BlockArgument counter, mlir::scf::WhileOp loop) {
+    llvm::SmallVector<mlir::Value> work{loop.getInits()[counter.getArgNumber()],
+                                        loop.getYieldOp().getOperand(counter.getArgNumber())};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+        const mlir::Value value = work.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+            // The after-region receives what the condition forwards.
+            if (argument.getOwner()->getParent() != &loop.getAfter()) { return false; }
+            work.push_back(loop.getConditionOp().getArgs()[argument.getArgNumber()]);
+            continue;
+        }
+        mlir::Operation * producer = value.getDefiningOp();
+        const unsigned index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+        if (llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(producer)) {
+            for (mlir::Region & region : producer->getRegions()) {
+                if (region.empty()) { return false; }
+                work.push_back(region.front().getTerminator()->getOperand(index));
+            }
+            continue;
+        }
+        if (producer->getName().getStringRef() == "ub.poison" ||
+            TypeInference::constantIndex(value) >= 0) {
+            continue;
+        }
+        auto add = llvm::dyn_cast<ctjs::BinaryStaticOp>(producer);
+        if (!add || add.getKind() != ctjs::BinaryKind::Add || add.getLhs() != counter ||
+            TypeInference::constantIndex(add.getRhs()) != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
     auto counter = read ? llvm::dyn_cast<mlir::BlockArgument>(read.getKey()) : nullptr;
     if (!counter) { return false; }
     auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(counter.getOwner()->getParentOp());
+    // A folded for-of (Lowering/ForOf.cpp) reads in the before-region, under
+    // `counter < array.length`, with the counter stepped through the
+    // structured exits of its body.
+    if (loop && counter.getOwner()->getParent() == &loop.getBefore()) {
+        for (mlir::Operation * at = read->getParentOp(); at != loop; at = at->getParentOp()) {
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at);
+            if (!branch || !branch.getThenRegion().isAncestor(read->getParentRegion())) {
+                continue;
+            }
+            auto truthy = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            auto compare = truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : nullptr;
+            auto length = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : nullptr;
+            if (compare && compare.getKind() == ctjs::CompareKind::Lt &&
+                compare.getLhs() == counter && length && length.getObject() == read.getObject() &&
+                ctjs::constantKey(length.getKey()) == "length") {
+                return nonNegativeCounter(counter, loop);
+            }
+        }
+        return false;
+    }
     if (!loop || counter.getOwner()->getParent() != &loop.getAfter()) { return false; }
     const unsigned index = counter.getArgNumber();
     // The condition forwards the before-region counter unchanged ...
@@ -444,6 +546,22 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     return false;
 }
 
+namespace {
+/// Whether `op` is a built-in call (TypeInference::builtinStaticOf) that takes
+/// `value` as an Element argument.
+bool builtinElementUse(mlir::Operation * op, mlir::Value value) {
+    const TypeInference::BuiltinStatic * row = TypeInference::builtinStaticOf(op);
+    if (!row) { return false; }
+    auto args = llvm::cast<ctjs::CallOp>(op).getArgs();
+    for (unsigned i = 0; i < args.size() && i < row->arity; ++i) {
+        if (args[i] == value && row->params[i] == TypeInference::BuiltinStatic::Param::element) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
     llvm::DenseSet<mlir::Value> seen;
     while (value && seen.insert(value).second) {
@@ -457,8 +575,11 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
             if (first) { return mlir::WalkResult::interrupt(); }
             auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
             auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op);
             if ((read && read.getObject() == value && !ctjs::constantKey(read.getKey()).empty()) ||
-                (call && llvm::is_contained(call->getOperands().drop_front(3), value))) {
+                (call && llvm::is_contained(call->getOperands().drop_front(3), value)) ||
+                (yield && llvm::is_contained(yield->getOperands(), value)) ||
+                builtinElementUse(op, value)) {
                 first = op;
                 return mlir::WalkResult::interrupt();
             }
@@ -466,6 +587,18 @@ llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
         });
         if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(first)) {
             return ctjs::constantKey(read.getKey());
+        }
+        // A built-in that takes it as an Element reads it as its receiver,
+        // `Element.prototype.querySelectorAll.call(root, s)`.
+        if (first && builtinElementUse(first, value)) { return builtinStaticOf(first)->member; }
+        // Out of a branch it is yielded from, as a default parameter's value
+        // `e = document.documentElement` is, into the branch's result.
+        if (auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(first)) {
+            mlir::Operation * branch = yield->getParentOp();
+            const auto at = static_cast<unsigned>(llvm::find(yield->getOperands(), value) -
+                                                  yield->getOperands().begin());
+            value = at < branch->getNumResults() ? branch->getResult(at) : mlir::Value{};
+            continue;
         }
         auto call = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(first);
         ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};

@@ -20,6 +20,8 @@ namespace ctnative {
 
 template <class V> class dictionary;
 
+};
+
 /// Object.keys, Object.values and Object.entries (ECMA-262 20.1.2, through
 /// EnumerableOwnProperties, 7.3.23). On a dictionary they enumerate its keys in
 /// dictionary::order(), the OrdinaryOwnPropertyKeys order.

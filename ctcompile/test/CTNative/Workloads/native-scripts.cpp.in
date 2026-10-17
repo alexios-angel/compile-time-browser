@@ -37,7 +37,7 @@ namespace {
 
 /// Calls a string entry with the engine's arguments, one String each.
 template <class Entry, class... Params, std::size_t... Index>
-std::string call_with(Entry entry, std::span<const std::string_view> args,
+std::string call_with(Entry entry, [[maybe_unused]] std::span<const std::string_view> args,
                       std::index_sequence<Index...>) {
     return entry(std::remove_cvref_t<Params>{args[Index]}...).value();
 }

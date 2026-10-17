@@ -95,6 +95,14 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             }
         });
     }
+    llvm::StringSet<> enumeratedTables;
+    for (ctjs::FuncOp fn : accepted) {
+        fn.walk([&](ctjs::CallOp call) {
+            if (auto table = call->getAttrOfType<mlir::StringAttr>(kNativeStaticTableEnumeration)) {
+                enumeratedTables.insert(table.getValue());
+            }
+        });
+    }
     module.walk([&](ctjs::CreateObjectOp literal) {
         auto name = literal->getAttrOfType<mlir::StringAttr>(kNativeStaticTable);
         if (!name) { return; }
@@ -108,9 +116,10 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             return a->isBeforeInBlock(b);
         });
         const std::string type = staticTableStruct(name.getValue());
-        std::string members, values;
+        std::string members, values, keys, listed;
+        llvm::SmallVector<std::string> defined;
         for (ctjs::SetPropertyOp store : stores) {
-            const llvm::StringRef key = ctjs::constantKey(store.getKey());
+            const std::string key = tableKey(store.getKey());
             std::string spelled, value;
             if (auto array = store.getValue().getDefiningOp<ctjs::CreateArrayOp>()) {
                 // The literal's own elements, then its appends in program order.
@@ -139,6 +148,23 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
             }
             members += "    " + spelled + " " + tableMember(key) + ";\n";
             values += ", " + value;
+            defined.push_back(key);
+        }
+        // An enumerated table (all Strings, proved by the table proof) names
+        // its keys and values for object_table (Runtime/StaticTable.hpp), in
+        // property order: array indices ascending, then definition order.
+        sortOwnKeyOrder(defined, [](const std::string & key) { return llvm::StringRef(key); });
+        for (const std::string & key : defined) {
+            keys += (keys.empty() ? "" : ", ") +
+                    cpp::c_string_literal(std::string_view(key.data(), key.size()));
+            listed += (listed.empty() ? "" : ", ") + tableMember(key);
+        }
+        if (enumeratedTables.contains(name.getValue())) {
+            members += "    using value_type = " + kStringType.str() +
+                       ";\n    static constexpr std::array<std::string_view, " +
+                       std::to_string(stores.size()) + "> keys{" + keys +
+                       "};\n    std::array<value_type, " + std::to_string(stores.size()) +
+                       "> values() const { return {" + listed + "}; }\n";
         }
         staticTables[name.getValue().str()] = "struct " + type + " : ctnative::static_table {\n" +
                                               members + "};\ninline const " + type + " " +
@@ -147,6 +173,30 @@ void lowering::censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted) {
 }
 
 bool lowering::replaceStaticTable(mlir::Operation * o) {
+    // Object.entries, keys or values of a proved table: object_table's
+    // member of the same name, over the table's struct.
+    if (auto call = llvm::dyn_cast<ctjs::CallOp>(o)) {
+        auto table = o->getAttrOfType<mlir::StringAttr>(kNativeStaticTableEnumeration);
+        if (!table) { return false; }
+        mlir::OpBuilder at(o);
+        const std::string callee = "ctnative::object_table<" + staticTableStruct(table.getValue()) +
+                                   ">::" + ctjs::stringAttrOf(o, kNativeStaticTableMethod).str();
+        // The answer is an element vector, which lands in a local that owns
+        // it, as a built-in static's returned array does (EmitC/Vectors.cpp).
+        mlir::Type type = call.getResult().getType();
+        auto owner = llvm::dyn_cast<ec::LValueType>(type);
+        mlir::Value value = callValue(at, o->getLoc(), owner ? owner.getValueType() : type, callee,
+                                      call.getArgs().front());
+        if (owner) {
+            mlir::Value local =
+                ec::VariableOp::create(at, o->getLoc(), owner, ec::OpaqueAttr::get(context, ""));
+            ec::AssignOp::create(at, o->getLoc(), local, value);
+            value = local;
+        }
+        call.getResult().replaceAllUsesWith(value);
+        eraseIfUnused(o);
+        return true;
+    }
     // The owner's box: the variable starts as undefined, a null pointer.
     if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(o);
         cell && !o->hasAttr(kNativeStaticReference) &&
@@ -179,17 +229,27 @@ bool lowering::replaceStaticTable(mlir::Operation * o) {
         return true;
     }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(o)) {
-        const std::string field =
-            "<&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o) + ">";
-        // The key, which the error of a read of an unset table names.
-        const llvm::StringRef key =
-            o->getAttrOfType<mlir::StringAttr>("ctnative.static_table_key").getValue();
-        const mlir::Value named = ec::LiteralOp::create(
-            at, o->getLoc(), ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
-            cpp::c_string_literal(std::string_view(key.data(), key.size())));
-        mlir::Value value =
-            callValue(at, o->getLoc(), read.getResult().getType(), "ctnative::table_field" + field,
-                      mlir::ValueRange{read.getObject(), named});
+        const std::string member =
+            "&" + staticTableStruct(name.getValue()) + "::" + staticTableReads.lookup(o);
+        const mlir::Type type = read.getResult().getType();
+        mlir::Value value;
+        if (o->hasAttr(kNativeStaticTableSpread)) {
+            // A spread's read names its result type, which also holds
+            // undefined for a table not stored yet.
+            value = callValue(at, o->getLoc(), type,
+                              "ctnative::table_field_or_undefined<" + member + ", " +
+                                  llvm::cast<ec::OpaqueType>(type).getValue().str() + ">",
+                              read.getObject());
+        } else {
+            // The key, which the error of a read of an unset table names.
+            const llvm::StringRef key =
+                o->getAttrOfType<mlir::StringAttr>("ctnative.static_table_key").getValue();
+            const mlir::Value named = ec::LiteralOp::create(
+                at, o->getLoc(), ec::PointerType::get(ec::OpaqueType::get(context, "const char")),
+                cpp::c_string_literal(std::string_view(key.data(), key.size())));
+            value = callValue(at, o->getLoc(), type, "ctnative::table_field<" + member + ">",
+                              mlir::ValueRange{read.getObject(), named});
+        }
         read.getResult().replaceAllUsesWith(value);
         eraseIfUnused(o);
         return true;

@@ -765,6 +765,12 @@ struct object_value {
 template <> struct read_carrier<object_value> {
     using type = object_value;
 };
+/// A Map holding instances of a class (ctcompile's registry Maps) reads back
+/// the owner itself, or a null one for a missing key: `map.get(k)` is the
+/// instance or undefined.
+template <class C> struct read_carrier<std::shared_ptr<C>> {
+    using type = std::shared_ptr<C>;
+};
 inline nullable_scalar global_scalar(const object_value & value) {
     if (value.object) { std::terminate(); }
     return value.scalar;
@@ -1477,3 +1483,9 @@ template <> struct map_key_less<ctbrowser::element_ref> {
 #endif
 
 } // namespace ctnative
+
+// The console object, whose members need the carriers above.
+#include "ctcompile/CTNative/Runtime/Console.hpp"
+
+// Needs the carriers above, so it comes last.
+#include "ctcompile/CTNative/Runtime/Narrowing.hpp"

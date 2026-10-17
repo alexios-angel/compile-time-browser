@@ -2,9 +2,9 @@
 // std::vector<ctnative::js_num>: Bootstrap's
 // `text.split(",").map(t => Number.parseInt(t, 10))`, read in a counted loop,
 // at a constant index and through length, then filtered and reduced.
-// Number.parseInt itself with radix 10, 16 and none, and Math.min, the other
-// built-in static. Arrays stay inside functions; every global is a scalar
-// compared with the interpreter.
+// Number.parseInt itself with radix 10, 16 and none, Math.min, and the
+// prototype row String.prototype.toLowerCase.call. Arrays stay inside
+// functions; every global is a scalar compared with the interpreter.
 function numbers(text) {
     return text.split(',').map(function (t) {
         return Number.parseInt(t, 10);
@@ -38,6 +38,9 @@ function lengthSum() {
 function radices(text) {
     return Number.parseInt(text, 16) + Number.parseInt(' -12px') + Number.parseInt('0x10');
 }
+function lowered(text) {
+    return String.prototype.toLowerCase.call(text) === 'abc';
+}
 function smaller(text) {
     return Math.min(Number.parseInt(text), 3) + Math.min(-1, Number.parseInt(text, 8));
 }
@@ -47,3 +50,4 @@ var big = bigOnes('1,2,3,40');
 var lengths = lengthSum();
 var parsed = radices('ff');
 var least = smaller('7');
+var lower = lowered('AbC');

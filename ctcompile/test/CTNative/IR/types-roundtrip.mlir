@@ -83,6 +83,12 @@ func.func private @containers(!ctnative.vec<!ctnative.num<f64>>,
 func.func private @callables(!ctnative.closure<"get$1">,
                              !ctnative.closure<"get$2">) -> !ctnative.closure<"get$1">
 
+// A set of callables keeps every target, in sorted order, through printing
+// and a second parse.
+// CHECK-LABEL: func.func private @callable_set
+// CHECK-SAME: (!ctnative.closure_set<"get$1", "get$2">)
+func.func private @callable_set(!ctnative.closure_set<"get$1", "get$2">)
+
 // Targets are MLIR strings, including names that cannot be C++ identifiers.
 // Both legal input spellings must print the same quoted target and retain it
 // through the second parse. This catches dropped or double-escaped bytes.
@@ -95,9 +101,9 @@ func.func private @escaped_callable(!ctnative.closure<"get \"quoted\" \\owner$7"
 func.func private @hex_escaped_callable(!ctnative.closure<"get \22quoted\22 \5Cowner$7">)
 
 // CHECK-LABEL: func.func private @optional_callables
-// CHECK-SAME: (!ctnative.opt<!ctnative.variant<!ctnative.closure<"get$1">, !ctnative.closure<"get$2">>>)
+// CHECK-SAME: (!ctnative.opt<!ctnative.closure_set<"get$1", "get$2">>)
 func.func private @optional_callables(
-    !ctnative.opt<!ctnative.variant<!ctnative.closure<"get$1">, !ctnative.closure<"get$2">>>)
+    !ctnative.opt<!ctnative.closure_set<"get$1", "get$2">>)
 
 // --- nominal method-table sites --------------------------------------------
 

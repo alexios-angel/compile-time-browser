@@ -17,5 +17,6 @@
 # CHECK-DAG: std::vector<ctnative::js_num>
 # CHECK-DAG: ctnative::Number.parseInt(
 # CHECK-DAG: ctnative::Math.min(
+# CHECK-DAG: ctnative::String.prototype.toLowerCase.call(
 # CHECK-DAG: ctnative::Array.prototype.map.call(
 # NEGATIVE: global 'offsets' differs

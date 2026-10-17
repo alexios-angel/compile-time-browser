@@ -11,7 +11,7 @@ separate homes.
 | `Analysis/Ownership/` | Global roots, method tables and captured Map owners |
 | `CTJS/` | Dialect IR, bytecode import and transformations |
 | `CTNative/` | Native IR and pass tests in `IR/`, `BindingTime/`, `Optimization/`, `PartialEvaluation/`, `Precomputation/`, `Specialization/` and `Supercompilation/` |
-| `CTNative/Browser/` | DOM entry drivers in `dom/`, `class_dom/` and `bootstrap/`: each case is a `.test` beside its same-stem `.py` driver |
+| `CTNative/Browser/` | DOM entry drivers, one folder per subject: each case is a `.test` beside its same-stem `.py` driver |
 | `CTNative/Lowering/` | Native admission and emission tests grouped into `Maps/`, `Objects/`, `Closures/`, `Scalars/`, `Exceptions/`, `Admission/` and `Emission/` |
 | `CTNative/Ownership/` | Owned global execution checks, and `global_maps/`: the owned-global-maps package (`driver/`, `harness/`, `sources/`) beside its tests |
 | `CTNative/Exports/` | Published native entry points and their source specimen |
@@ -52,33 +52,47 @@ helper the same stem. Keep standard tool filenames and upstream fixture names.
 
 CMake target names and generated filenames are independent of source locations.
 Update registrations and relative references when moving a test, and use
-`git mv` under the repository Git lock. Build and run the affected CTests on the
-devbox through `tools/remote-build.sh`, following the repository synchronization
-protocol and the focused validation policy in [CLAUDE.md](../../CLAUDE.md).
-For example, this builds and runs one CTest under the shared devbox lock:
+`git mv`. Build only the targets a change needs and run only the affected
+tests. For example, one CTest:
 
 ```bash
-flock /tmp/ctbrowser-devbox-build.lock bash <<'GATE'
-set -e
-tools/remote-build.sh ctcompile-test-native-runtime
-ssh devbox 'ctest --test-dir projects/compile-time-browser/build --output-on-failure --no-tests=error -R "^ctcompile_native_runtime$"'
-GATE
+cmake --build build --target ctcompile-test-native-runtime
+ctest --test-dir build --output-on-failure --no-tests=error -R "^ctcompile_native_runtime$"
 ```
 
 For a native DOM assignment change, build `ctjs-opt`, `ctjs-translate`,
-`ctcompile-tool` and `ctcompile-test-native-reference` with the same helper,
-then run only that lit case on the devbox under the same lock:
+`ctcompile-tool` and `ctcompile-test-native-reference`, then run just that lit
+case:
 
 ```bash
-projects/compile-time-browser/.venv/bin/lit -sv projects/compile-time-browser/build/ctcompile/test \
+.venv/bin/lit -sv build/ctcompile/test \
   --filter='^ctcompile :: CTNative/Browser/dom/assignment[.]test$'
 ```
 
+A `CTNative/Fixtures` test also reads the native pipeline modules the build
+writes (`%{obj}/<name>.pipeline*.emitc.mlir`) and runs nm on
+`ctcompile-test-type-oracle`; build `ctcompile-fixture-inputs` as well, which
+makes both. Until it has been built after the last `ctjs-opt` or `ctjs-translate`
+build, lit points `%{obj}` at a missing `stale-inputs-build-target-ctcompile-fixture-inputs`
+directory, so those tests fail instead of passing on a previous compiler's
+output.
+
+The Python drivers run their cases on every CPU, and lit runs one driver per
+CPU, so the tools they start share one machine-wide limit: a tool runs only
+while it holds one of `nproc` slot files in `/tmp/ctcompile-job-slots`, locked
+with flock (`job_slot()` and `slotted_run()` in `Target/Cpp/harness.py`).
+Every checkout and every agent on a box shares the directory. The files are
+empty, and a slot is held only by an open file descriptor, so a process that
+dies gives its slot back and a leftover file is harmless. To see who holds
+slots: `ls /tmp/ctcompile-job-slots` and `lslocks | grep ctcompile-job-slots`.
+A driver that starts a compiler or `ctjs-opt` itself calls `slotted_run()`, not
+`subprocess.run()`.
+
 Use the generated build-tree lit configuration so substitutions and features
-are available. Adjust the targets, test selection, host and remote directory to
-the change; a selection that runs zero tests is not a pass. Full lit runs through
-`ctcompile_lit` or `check-ctcompile` require an explicit user request. The full
+are available. Adjust the targets and test selection to the
+change; a selection that runs zero tests is not a pass. Full lit runs through
+`ctcompile_lit` or `check-ctcompile` take a long time; save them for releases. The full
 lit CTest allows an hour, and so does each lit case: `lit.cfg.py` sets the limit,
 and a case that runs past it reports TIMEOUT and fails the run. lit needs `psutil`
 in its environment to enforce that; pyproject.toml's `test` group installs it
-beside lit (`uv sync --group test`, which `tools/remote-build.sh` runs on the box).
+beside lit (`uv sync --group test`).

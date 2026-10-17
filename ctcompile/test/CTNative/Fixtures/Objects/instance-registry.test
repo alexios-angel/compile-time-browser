@@ -1,0 +1,17 @@
+# Native differential test of instance-registry.js: class instances a
+# registry Map owns, lowered to std::shared_ptr<Widget>. The modules come from
+# ctcompile_add_native_pipeline in Native.cmake, which writes no module while
+# any function carries `ctnative.not_native`. compilation-unit.py compiles a
+# module standalone with both toolchains, checks with nm that it calls no
+# interpreter, runs it, and compares every global with the interpreter's;
+# compile-clean.py checks a warning-free build with a provenance comment over
+# every definition; print-deduced.py checks the deduced module and that a
+# wrong type pin fails. The `--mutate` line proves the comparison can fail.
+
+# RUN: %compilation_unit --module %{obj}/instance_registry.pipeline.emitc.mlir --js %S/instance-registry.js --work %t --name instance_registry
+# RUN: not %compilation_unit --module %{obj}/instance_registry.pipeline.emitc.mlir --js %S/instance-registry.js --work %t --name instance_registry_off_by_one --mutate total 2>&1 | FileCheck %s --check-prefix=OFF-BY-ONE
+# OFF-BY-ONE: global 'total' differs
+# RUN: %compilation_unit --module %{obj}/instance_registry.pipeline.deduced.emitc.mlir --js %S/instance-registry.js --work %t --name instance_registry_deduced
+# RUN: %compile_clean --module %{obj}/instance_registry.pipeline.emitc.mlir --work %t --name instance_registry
+# RUN: %compile_clean --module %{obj}/instance_registry.pipeline.deduced.emitc.mlir --work %t --name instance_registry_deduced
+# RUN: %print_deduced --plain %{obj}/instance_registry.pipeline.emitc.mlir --deduced %{obj}/instance_registry.pipeline.deduced.emitc.mlir --mutated %{obj}/instance_registry.pipeline.mutated.emitc.mlir --work %t --name instance_registry
