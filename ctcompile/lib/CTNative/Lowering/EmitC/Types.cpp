@@ -182,8 +182,7 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         if (c == carrier::dictionary) {
-            v.setType(
-                ec::OpaqueType::get(context, dictionarySpelling(llvm::cast<DictType>(typeOf(v)))));
+            v.setType(ec::OpaqueType::get(context, dictionarySpelling(typeOf(v))));
             return;
         }
         if (c == carrier::map) {

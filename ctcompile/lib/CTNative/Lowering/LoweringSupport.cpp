@@ -147,11 +147,17 @@ carrier carrierOf(mlir::Type type) {
             return carrier::nullable;
         }
     }
-    // A table holds one value carrier (Admission/Dictionaries.cpp says which).
+    // A table holds one value carrier (Admission/Dictionaries.cpp says which),
+    // or tables. A table that may be undefined is the same pointer, null.
+    if (auto optional = llvm::dyn_cast<OptType>(type);
+        optional && llvm::isa<DictType>(optional.getElementType())) {
+        return carrierOf(optional.getElementType());
+    }
     if (auto table = llvm::dyn_cast<DictType>(type)) {
-        return carrierInfo(carrierOf(table.getElementType())).spelling.empty()
-                   ? carrier::none
-                   : carrier::dictionary;
+        const carrier value = carrierOf(table.getElementType());
+        return value == carrier::dictionary || !carrierInfo(value).spelling.empty()
+                   ? carrier::dictionary
+                   : carrier::none;
     }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         const auto key = map.getKeyType();
@@ -490,10 +496,16 @@ bool mapNeedsNullableStringKey(MapType type) {
         type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
 }
 
-std::string dictionarySpelling(DictType type) {
-    return ("std::shared_ptr<ctnative::dictionary<" +
-            carrierInfo(carrierOf(type.getElementType())).spelling + ">>")
-        .str();
+std::string dictionaryValueSpelling(DictType type) {
+    const mlir::Type value = type.getElementType();
+    return carrierOf(value) == carrier::dictionary ? dictionarySpelling(value)
+                                                   : carrierInfo(carrierOf(value)).spelling.str();
+}
+
+std::string dictionarySpelling(mlir::Type type) {
+    if (auto optional = llvm::dyn_cast<OptType>(type)) { type = optional.getElementType(); }
+    return "std::shared_ptr<ctnative::dictionary<" +
+           dictionaryValueSpelling(llvm::cast<DictType>(type)) + ">>";
 }
 
 mlir::Type mapCarrierType(MapType type) {
