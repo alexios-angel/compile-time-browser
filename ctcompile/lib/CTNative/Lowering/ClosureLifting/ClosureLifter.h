@@ -906,6 +906,17 @@ struct closureLifter {
     /// True when `use` is `new c(...)` naming `c` as both its callee and its
     /// new.target.
     static bool isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp c);
+    /// Whether `made` constructs `c`'s function: `c` is its callee, or it is a
+    /// marked `new` of that function: a `new this` ClassStatics.cpp proved
+    /// (kNativeClassConstruct) or a `new` of a run-once static cell holding
+    /// the class (kNativeStaticClass on the read).
+    bool constructsClosure(ctjs::ConstructOp made, ctjs::CreateClosureOp c);
+    /// Whether `made` is such a marked `new`, which may sit outside the frame
+    /// that makes the class's closure.
+    static bool isClassConstruct(ctjs::ConstructOp made);
+    /// The closure `made` constructs: its callee's ctjs.create_closure, or for
+    /// a marked `new` the one closure of the marked function.
+    ctjs::CreateClosureOp constructedClosure(ctjs::ConstructOp made);
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
