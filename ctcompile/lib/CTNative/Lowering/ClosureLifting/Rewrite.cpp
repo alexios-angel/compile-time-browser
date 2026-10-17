@@ -121,8 +121,10 @@ liftReport closureLifter::run() {
     constructorCensus();
     argumentCensus();
     methodCensus();
-    arrayCallbackCensus();
-    stringCallbackCensus();
+    if (specialiseCallbacks) {
+        arrayCallbackCensus();
+        stringCallbackCensus();
+    }
     hostCallbackCensus();
     promiseCallbackCensus();
     keptCellCensus();
