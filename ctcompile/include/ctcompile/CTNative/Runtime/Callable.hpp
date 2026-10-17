@@ -84,6 +84,28 @@ bound<F, std::decay_t<Captures>...> bind(Captures &&... captures) {
     return {{std::forward<Captures>(captures)...}};
 }
 
+namespace detail {
+template <class Function> struct parameters_of;
+template <class R, class... P> struct parameters_of<R (*)(P...)> {
+    using type = std::tuple<std::decay_t<P>...>;
+};
+template <auto F, class Parameters, class Indices> struct bound_prefix;
+template <auto F, class Parameters, std::size_t... I>
+struct bound_prefix<F, Parameters, std::index_sequence<I...>> {
+    using type = bound<F, std::tuple_element_t<I, Parameters>...>;
+};
+} // namespace detail
+
+/// The member of a closure set that binds `F`'s first `N` parameters, its
+/// captures, as the types `F` declares them: what bind<F> makes from those
+/// captures. Generated code spells a member this way when a capture's type is
+/// one only `F`'s signature names, such as the pointer to an arrow's lexical
+/// `this`.
+template <auto F, std::size_t N>
+using bound_prefix =
+    typename detail::bound_prefix<F, typename detail::parameters_of<decltype(F)>::type,
+                                  std::make_index_sequence<N>>::type;
+
 /// Calls the member of a closure set that `callable` holds. Admission proved
 /// every member takes `Args` and returns one type.
 template <class... Members, class... Args>
