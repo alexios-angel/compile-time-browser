@@ -50,8 +50,11 @@
 // getter (Node runs the getter), so a static member of that name is refused.
 // HOME: ctnative.class_reason = "it has static getter `__home`; its static member `__home` is the engine's home-object key"
 //
-// `new this(v)` in a static member: the direct call passes no `this`.
-// NEWTHIS: ctnative.class_reason = "it has static method `make`; it constructs `new this` or `new this.constructor` in `make${{[0-9]+}}`"
+// `new this(v)` in a static member constructs Box (new-this.mlir has the
+// cases): the class is proved, and the instance make returns is refused as
+// an escape, since a class instance is not a returned record.
+// NEWTHIS-NOT: ctnative.class_reason
+// NEWTHIS: ctjs.func private @make${{[0-9]+}}({{.*}}ctnative.not_native = "an object literal that escapes - it is returned"
 //
 // A static member that is called and relays its capture of `base` to a
 // nested function through its own closure: the direct call passes no closure.

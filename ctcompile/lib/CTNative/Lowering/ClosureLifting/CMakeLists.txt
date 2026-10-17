@@ -16,6 +16,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   Diagnostics.cpp
   Constructors.cpp
   HostCallbacks.cpp
+  Promises.cpp
   Rewrite.cpp
   ReturnedClosures.cpp
   MethodTables.cpp

@@ -121,9 +121,13 @@ liftReport closureLifter::run() {
     constructorCensus();
     argumentCensus();
     methodCensus();
-    arrayCallbackCensus();
-    stringCallbackCensus();
+    if (specialiseCallbacks) {
+        arrayCallbackCensus();
+        stringCallbackCensus();
+    }
     hostCallbackCensus();
+    promiseCallbackCensus();
+    keptCellCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // Closure -> its own reason.
     // The closure that names each function, for the chained reason below: a
     // capture filled from the enclosing closure is refused with that
@@ -193,6 +197,7 @@ liftReport closureLifter::run() {
                 : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
                 : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
                 : hostCallbacks.contains(c.getOperation())       ? whyNotHostCallback(c)
+                : promiseCallbacks.contains(c.getOperation())    ? whyNotPromiseCallback(c)
                 : closureSets.contains(c.getOperation())         ? whyNotInClosureSet(c)
                                                                  : whyNotLiftable(c);
             if (why) {
@@ -332,6 +337,15 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             cellArgs.push_back(static_cast<int32_t>(captureArgument(i)));
         }
     }
+    // Which of those receive a shared cell's handle rather than a pointer
+    // (rule 2b in ClosureLifter.h).
+    llvm::SmallVector<int32_t> sharedArgs;
+    for (unsigned i = 0; i < captures; ++i) {
+        if (llvm::all_of(made, [&](ctjs::CreateClosureOp c) { return slotIsShared(c, i); })) {
+            sharedArgs.push_back(static_cast<int32_t>(captureArgument(i)));
+        }
+    }
+    const auto sharedSlots = mlir::Builder(context).getDenseI32ArrayAttr(sharedArgs);
     const auto cellSlots = mlir::Builder(context).getDenseI32ArrayAttr(cellArgs);
     const auto objectSlots = mlir::Builder(context).getDenseI32ArrayAttr(objectArgs);
     const auto carriedSlot = [&](unsigned k) {
@@ -340,6 +354,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     // Copies the slot lists onto a rewritten call, matching its callee's.
     const auto tagSlots = [&](mlir::Operation * site) {
         if (!cellArgs.empty()) { site->setAttr(kNativeCellArgs, cellSlots); }
+        if (!sharedArgs.empty()) { site->setAttr(kNativeSharedCellArgs, sharedSlots); }
         if (!objectArgs.empty()) { site->setAttr(kNativeObjectArgs, objectSlots); }
     };
 
@@ -360,6 +375,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         target->setAttr(kNativeCellArgs, cellSlots);
         out.carried += static_cast<unsigned>(cellArgs.size());
     }
+    if (!sharedArgs.empty()) { target->setAttr(kNativeSharedCellArgs, sharedSlots); }
 
     llvm::SmallVector<ctjs::LoadUpvalueOp> reads;
     target.getBody().walk([&](ctjs::LoadUpvalueOp read) {
@@ -444,6 +460,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     }
     if (hostCallbacks.contains(made.front())) {
         rewriteHostCallback(made.front(), target, out);
+        return;
+    }
+    if (promiseCallbacks.contains(made.front())) {
+        rewritePromiseCallback(made.front(), target, out);
         return;
     }
     if (closureSets.contains(made.front())) { // ClosureSets.cpp
@@ -532,6 +552,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // operand, and a symbol lookup there would cost one lookup per
             // argument per call.
             if (!cellArgs.empty()) { direct->setAttr(kNativeCellArgs, cellSlots); }
+            if (!sharedArgs.empty()) { direct->setAttr(kNativeSharedCellArgs, sharedSlots); }
             // `new` evaluates to the instance, not to the call's result. The
             // interpreter's context::construct ends with
             // `produced.is_object_like() ? produced : self`, and
@@ -593,6 +614,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // Mark address arguments on the call too, as in the constructor
             // branch above.
             if (!cellArgs.empty()) { direct->setAttr(kNativeCellArgs, cellSlots); }
+            if (!sharedArgs.empty()) { direct->setAttr(kNativeSharedCellArgs, sharedSlots); }
             at.call.getResult().replaceAllUsesWith(direct.getResult());
             at.call.erase();
             // Erase the method load too. Leaving it would keep a use of the

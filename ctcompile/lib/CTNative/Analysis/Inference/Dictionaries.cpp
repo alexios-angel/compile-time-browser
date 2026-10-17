@@ -11,9 +11,18 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -47,7 +56,7 @@ bool constantKeyOperand(mlir::Value key) {
            static_cast<bool>(ctjs::constantAttr<ctjs::NumberAttr>(key));
 }
 
-/// One proved use of a dictionary: the operation and what it does.
+/// One proved use of a table: the operation and what it does.
 struct tableUse {
     mlir::Operation * op;
     llvm::StringRef action;
@@ -56,11 +65,17 @@ struct tableUse {
 /// The table operations `object` reaches, or why one of its uses is not one.
 /// `computed` is set when some use is not a get or set under a literal key: a
 /// literal with only those is a record's (TypeInference::hasClosedShape).
-std::string tableUses(mlir::Value object, llvm::SmallVectorImpl<tableUse> & uses, bool & computed) {
+/// `isMember` says which values are tables, for a table stored into another.
+std::string tableUses(mlir::Value object, llvm::SmallVectorImpl<tableUse> & uses, bool & computed,
+                      llvm::function_ref<bool(mlir::Value)> isMember) {
     for (mlir::OpOperand & use : object.getUses()) {
         mlir::Operation * user = use.getOwner();
         if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-            if (use.getOperandNumber() != 0) { return "it is stored as a value or used as a key"; }
+            // Stored as the value of another table: that table's to check.
+            if (use.getOperandNumber() == 2 && isMember(set.getObject())) { continue; }
+            if (use.getOperandNumber() != 0) {
+                return "it is stored into something that is not a table, or used as a key";
+            }
             computed |= !constantKeyOperand(set.getKey());
             uses.push_back({user, "set"});
             continue;
@@ -104,6 +119,32 @@ std::string tableUses(mlir::Value object, llvm::SmallVectorImpl<tableUse> & uses
             uses.push_back({user, "object"});
             continue;
         }
+        // `o === undefined` or `o == undefined` (`!==` negates it): a table
+        // read from a table lacking the key is undefined, and a table is
+        // never null.
+        if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(user)) {
+            const mlir::Value other =
+                use.getOperandNumber() == 0 ? compare.getRhs() : compare.getLhs();
+            const bool undefinedOther = ctjs::isUndefinedConstant(other) ||
+                                        TypeInference::isUndefinedGlobal(other.getDefiningOp());
+            if (undefinedOther && (compare.getKind() == ctjs::CompareKind::StrictEq ||
+                                   compare.getKind() == ctjs::CompareKind::Eq)) {
+                uses.push_back({user, "absent"});
+                continue;
+            }
+            return "it is compared with something other than undefined";
+        }
+        // Kept in a variable, returned or passed: the variable's reads, the
+        // calls' results and the parameter are tables too (growFamilies).
+        if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 1) { continue; }
+        if (llvm::isa<ctjs::ReturnOp>(user)) { continue; }
+        if (llvm::isa<ctjs::CallDirectOp>(user) && use.getOperandNumber() >= 3) { continue; }
+        // `o || d` tests it; an `if` that yields it is the same table.
+        if (llvm::isa<ctjs::TruthyOp>(user)) { continue; }
+        if (llvm::isa<mlir::scf::YieldOp>(user) &&
+            llvm::isa<mlir::scf::IfOp>(user->getParentOp())) {
+            continue;
+        }
         // JSON.stringify(o): the runtime serializes a table's own keys
         // (Runtime/Json.hpp); the call is the built-in statics row's.
         if (TypeInference::passesARecord(use)) { continue; }
@@ -132,8 +173,219 @@ void markPlumbing(mlir::ModuleOp module) {
     });
 }
 
+/// The values that name tables, grouped into families of one schema: a
+/// literal, the `if` results it is yielded into, and, when a table holds
+/// tables, every value stored into it and every read of it. A family may hold
+/// several run-time tables; it is one C++ type, not one object.
+class tableFamilies {
+public:
+    void add(mlir::Value value) {
+        if (parent_.try_emplace(value, value).second) { members_.push_back(value); }
+    }
+    [[nodiscard]] bool contains(mlir::Value value) const { return parent_.contains(value); }
+    mlir::Value find(mlir::Value value) {
+        mlir::Value root = value;
+        while (parent_[root] != root) { root = parent_[root]; }
+        return parent_[value] = root;
+    }
+    bool unite(mlir::Value left, mlir::Value right) {
+        add(left);
+        add(right);
+        const mlir::Value a = find(left), b = find(right);
+        if (a == b) { return false; }
+        parent_[b] = a;
+        return true;
+    }
+    [[nodiscard]] llvm::ArrayRef<mlir::Value> members() const { return members_; }
+
+private:
+    llvm::DenseMap<mlir::Value, mlir::Value> parent_;
+    llvm::SmallVector<mlir::Value> members_;
+};
+
+/// Where tables flow between functions and variables: each variable's
+/// cells (a run-once static's cells are one variable, ClosureLifting/
+/// RunOnce.cpp), and each function's direct calls.
+struct tableFlow {
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> variable; // cell -> its group
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> calls;
+
+    explicit tableFlow(mlir::ModuleOp module) {
+        llvm::StringMap<llvm::SmallVector<mlir::Value>> statics;
+        llvm::SmallVector<mlir::Value> cells;
+        module.walk([&](ctjs::CreateCellOp cell) {
+            cells.push_back(cell.getResult());
+            if (auto name = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+                statics[name.getValue()].push_back(cell.getResult());
+            }
+        });
+        for (mlir::Value cell : cells) {
+            auto name = cell.getDefiningOp()->getAttrOfType<mlir::StringAttr>(kNativeStaticCell);
+            variable[cell] = name ? statics[name.getValue()] : llvm::SmallVector<mlir::Value>{cell};
+        }
+        module.walk([&](ctjs::CallDirectOp call) {
+            if (auto target = call.getTarget()) { calls[target.getOperation()].push_back(call); }
+        });
+    }
+
+    /// The reads of the variable `cell` names.
+    llvm::SmallVector<mlir::Value> reads(mlir::Value cell) const {
+        llvm::SmallVector<mlir::Value> out;
+        for (mlir::Value each : variable.lookup(cell)) {
+            for (mlir::Operation * user : each.getUsers()) {
+                if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(user);
+                    read && read.getCell() == each) {
+                    out.push_back(read.getResult());
+                }
+            }
+        }
+        return out;
+    }
+
+    /// The values stored into the variable `cell` names.
+    llvm::SmallVector<mlir::Value> writes(mlir::Value cell) const {
+        llvm::SmallVector<mlir::Value> out;
+        for (mlir::Value each : variable.lookup(cell)) {
+            for (mlir::Operation * user : each.getUsers()) {
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                    write && write.getCell() == each) {
+                    out.push_back(write.getValue());
+                }
+            }
+        }
+        return out;
+    }
+};
+
+/// Grows the families to a fixpoint: a table yielded by an `if` makes the
+/// `if`'s result one with it, and a family that holds a table holds tables
+/// only, so everything stored into it and read from it is one child family.
+/// Returns each family's child, by root.
+llvm::DenseMap<mlir::Value, mlir::Value> growFamilies(tableFamilies & tables,
+                                                      const tableFlow & flow) {
+    llvm::DenseMap<mlir::Value, mlir::Value> child;
+    for (bool grew = true; grew;) {
+        grew = false;
+        // Roots move as families merge; the last pass, which grows nothing,
+        // records every child under its final root.
+        child.clear();
+        for (std::size_t at = 0; at < tables.members().size(); ++at) {
+            const mlir::Value member = tables.members()[at];
+            for (mlir::OpOperand & use : member.getUses()) {
+                auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(use.getOwner());
+                auto choice = yield ? llvm::dyn_cast<mlir::scf::IfOp>(yield->getParentOp())
+                                    : mlir::scf::IfOp{};
+                if (choice && use.getOperandNumber() < choice.getNumResults()) {
+                    grew |= tables.unite(member, choice.getResult(use.getOperandNumber()));
+                }
+                mlir::Operation * user = use.getOwner();
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                    write && use.getOperandNumber() == 1) {
+                    for (mlir::Value read : flow.reads(write.getCell())) {
+                        grew |= tables.unite(member, read);
+                    }
+                } else if (llvm::isa<ctjs::ReturnOp>(user)) {
+                    auto function = user->getParentOfType<ctjs::FuncOp>();
+                    for (ctjs::CallDirectOp call : flow.calls.lookup(function.getOperation())) {
+                        grew |= tables.unite(member, call->getResult(0));
+                    }
+                } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                           call && use.getOperandNumber() >= 3 && call.getTarget() &&
+                           !call.getTarget().getBody().empty()) {
+                    mlir::Block & entry = call.getTarget().getBody().front();
+                    if (use.getOperandNumber() < entry.getNumArguments()) {
+                        grew |= tables.unite(member, entry.getArgument(use.getOperandNumber()));
+                    }
+                }
+            }
+        }
+        // Per family, the values stored into it and the reads of it.
+        llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>> payload;
+        llvm::DenseSet<mlir::Value> holdsTables;
+        for (const mlir::Value member : llvm::to_vector(tables.members())) {
+            const mlir::Value root = tables.find(member);
+            for (mlir::OpOperand & use : member.getUses()) {
+                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+                    set && use.getOperandNumber() == 0) {
+                    payload[root].push_back(set.getValue());
+                    if (tables.contains(set.getValue())) { holdsTables.insert(root); }
+                } else if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+                           get && use.getOperandNumber() == 0) {
+                    payload[root].push_back(get.getResult());
+                }
+            }
+        }
+        for (auto & [root, values] : payload) {
+            if (!holdsTables.contains(root)) { continue; }
+            for (const mlir::Value value : values) { grew |= tables.unite(values.front(), value); }
+            child[root] = values.front();
+        }
+    }
+    return child;
+}
+
+/// Why `member` is not made the way a table is: a literal, an `if` result
+/// yielding only tables, or a read of a table that holds tables. Empty when
+/// it is.
+std::string producerProblem(mlir::Value member, const tableFamilies & tables,
+                            const llvm::DenseSet<mlir::Value> & tableReads,
+                            const tableFlow & flow) {
+    if (member.getDefiningOp<ctjs::CreateObjectOp>() || tableReads.contains(member)) { return {}; }
+    const auto allTables = [&](llvm::ArrayRef<mlir::Value> values) {
+        return !values.empty() &&
+               llvm::all_of(values, [&](mlir::Value value) { return tables.contains(value); });
+    };
+    if (auto choice = member.getDefiningOp<mlir::scf::IfOp>()) {
+        const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
+        if (choice.elseBlock() && tables.contains(choice.thenYield().getOperand(index)) &&
+            tables.contains(choice.elseYield().getOperand(index))) {
+            return {};
+        }
+        return "an `if` chooses between a table and something else";
+    }
+    // A variable holds only tables (and undefined until the first store).
+    if (auto read = member.getDefiningOp<ctjs::CellGetOp>()) {
+        return allTables(flow.writes(read.getCell()))
+                   ? std::string{}
+                   : "a variable holds both a table and something else";
+    }
+    // Every return of the function returns a table.
+    if (auto call = member.getDefiningOp<ctjs::CallDirectOp>()) {
+        llvm::SmallVector<mlir::Value> returned;
+        if (auto target = call.getTarget()) {
+            target.walk([&](ctjs::ReturnOp ret) { returned.push_back(ret.getValue()); });
+        }
+        return allTables(returned) ? std::string{}
+                                   : "a function returns both a table and something else";
+    }
+    // Every direct call passes a table for the parameter.
+    if (auto parameter = llvm::dyn_cast<mlir::BlockArgument>(member)) {
+        auto function = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+        if (function && parameter.getOwner()->isEntryBlock() && parameter.getArgNumber() >= 3) {
+            llvm::SmallVector<mlir::Value> passed;
+            for (ctjs::CallDirectOp call : flow.calls.lookup(function.getOperation())) {
+                if (parameter.getArgNumber() < call->getNumOperands()) {
+                    passed.push_back(call->getOperand(parameter.getArgNumber()));
+                }
+            }
+            if (allTables(passed)) { return {}; }
+        }
+        return "a parameter receives both a table and something else";
+    }
+    if (auto * op = member.getDefiningOp()) {
+        return ("a table holds a value made by `" + op->getName().getStringRef() + "`").str();
+    }
+    return "a table holds a value that is not a table";
+}
+
 } // namespace
 
+/// Tables are acyclic by the type rule: a family's value type is its child
+/// family's type, so a table stored into itself, or into a table it holds,
+/// would need a type that contains itself. growFamilies would make such a
+/// family its own child, and this proof refuses it by name, so every
+/// accepted table's values form a tree of families and shared_ptr ownership
+/// cannot cycle.
 void prepareNativeDictionaries(mlir::ModuleOp module) {
     // The attributes are this proof's output, never its input: clear a
     // previous run's.
@@ -141,26 +393,97 @@ void prepareNativeDictionaries(mlir::ModuleOp module) {
         op->removeAttr(kNativeDictionarySite);
         op->removeAttr(kNativeDictionaryAction);
         op->removeAttr(kNativeDictionaryReason);
+        op->removeAttr(kNativeDictionaryGroup);
     });
-    module.walk([&](ctjs::CreateObjectOp made) {
-        llvm::SmallVector<tableUse> uses;
-        bool computed = false;
-        const std::string why = tableUses(made.getResult(), uses, computed);
-        auto * context = made.getContext();
-        if (!why.empty()) {
-            if (computed) {
-                made->setAttr(
-                    kNativeDictionaryReason,
-                    mlir::StringAttr::get(context, "an object used as a table, but " + why));
+    tableFamilies tables;
+    module.walk([&](ctjs::CreateObjectOp made) { tables.add(made.getResult()); });
+    const tableFlow flow(module);
+    const llvm::DenseMap<mlir::Value, mlir::Value> child = growFamilies(tables, flow);
+    llvm::DenseSet<mlir::Value> tableReads;
+    for (const mlir::Value member : tables.members()) {
+        for (mlir::Operation * user : member.getUsers()) {
+            if (auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                get && get.getObject() == member && tables.contains(get.getResult())) {
+                tableReads.insert(get.getResult());
             }
-            return;
         }
-        if (!computed) { return; }
-        made->setAttr(kNativeDictionarySite, mlir::UnitAttr::get(context));
-        for (const tableUse & use : uses) {
-            use.op->setAttr(kNativeDictionaryAction, mlir::StringAttr::get(context, use.action));
+    }
+    // Per family: its operations, whether it is a table at all, and why not.
+    struct family {
+        llvm::SmallVector<tableUse> uses;
+        llvm::SmallVector<mlir::Operation *> sites;
+        bool computed = false;
+        std::string problem;
+    };
+    llvm::MapVector<mlir::Value, family> families;
+    for (const mlir::Value member : tables.members()) {
+        family & f = families[tables.find(member)];
+        if (auto made = member.getDefiningOp<ctjs::CreateObjectOp>()) { f.sites.push_back(made); }
+        std::string why = producerProblem(member, tables, tableReads, flow);
+        if (why.empty()) {
+            why = tableUses(member, f.uses, f.computed,
+                            [&](mlir::Value value) { return tables.contains(value); });
         }
-    });
+        if (f.problem.empty()) { f.problem = why; }
+    }
+    // A family and every family it holds or is held by stand or fall
+    // together: one C++ type spells them all.
+    llvm::DenseMap<mlir::Value, mlir::Value> holder;
+    for (const auto & [root, member] : child) { holder[tables.find(member)] = root; }
+    const auto top = [&](mlir::Value root) {
+        llvm::DenseSet<mlir::Value> seen;
+        while (holder.contains(root) && seen.insert(root).second) { root = holder[root]; }
+        return root;
+    };
+    llvm::MapVector<mlir::Value, llvm::SmallVector<mlir::Value>> trees;
+    for (auto & [root, f] : families) { trees[top(root)].push_back(root); }
+    int64_t group = 0;
+    for (auto & [treeTop, roots] : trees) {
+        std::string problem;
+        // Only a table operation makes a table: literals that merely hold one
+        // another under literal keys are records' to prove or refuse.
+        bool computed = false;
+        for (const mlir::Value root : roots) {
+            const family & f = families[root];
+            if (problem.empty()) { problem = f.problem; }
+            computed |= f.computed;
+            // Each family holds at most one child family, so a cycle is a
+            // chain of children that comes back to a family it passed.
+            llvm::DenseSet<mlir::Value> chain{root};
+            for (auto held = child.find(root); problem.empty() && held != child.end();
+                 held = child.find(tables.find(held->second))) {
+                if (!chain.insert(tables.find(held->second)).second) {
+                    problem = "a table is stored into itself or into a table it holds";
+                }
+            }
+        }
+        auto * context = module.getContext();
+        if (!problem.empty() || !computed) {
+            if (computed) {
+                for (const mlir::Value root : roots) {
+                    for (mlir::Operation * site : families[root].sites) {
+                        site->setAttr(kNativeDictionaryReason,
+                                      mlir::StringAttr::get(
+                                          context, "an object used as a table, but " + problem));
+                    }
+                }
+            }
+            continue;
+        }
+        for (const mlir::Value root : roots) {
+            const auto id = mlir::IntegerAttr::get(mlir::IntegerType::get(context, 64), group++);
+            family & f = families[root];
+            for (mlir::Operation * site : f.sites) {
+                site->setAttr(kNativeDictionarySite, mlir::UnitAttr::get(context));
+                site->setAttr(kNativeDictionaryGroup, id);
+            }
+            for (const tableUse & use : f.uses) {
+                use.op->setAttr(kNativeDictionaryAction,
+                                mlir::StringAttr::get(context, use.action));
+                use.op->setAttr(kNativeDictionaryGroup, id);
+            }
+        }
+    }
     markPlumbing(module);
 }
 
@@ -177,26 +500,36 @@ mlir::Type TypeInference::dictionaryType(mlir::Operation * op,
                                          llvm::ArrayRef<const TypeLattice *> operands) {
     mlir::MLIRContext * c = op->getContext();
     if (isNativeDictionarySite(op)) {
-        // The table holds whatever is stored into it; one value type V.
-        llvm::SmallVector<mlir::Value> stored;
-        for (mlir::Operation * user : op->getResult(0).getUsers()) {
-            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user)) {
-                stored.push_back(set.getValue());
-            }
+        // A family's tables hold whatever is stored into any of them: one
+        // value type V. The stores are indexed once per module.
+        if (!dictionaryStoresIndexed_) {
+            dictionaryStoresIndexed_ = true;
+            op->getParentOfType<mlir::ModuleOp>().walk([&](ctjs::SetPropertyOp set) {
+                if (auto group = set->getAttrOfType<mlir::IntegerAttr>(kNativeDictionaryGroup)) {
+                    dictionaryStores_[group.getInt()].push_back(set.getValue());
+                }
+            });
         }
-        return DictType::get(c, joinLattices(op, stored, BottomType::get(c)));
+        const auto group = op->getAttrOfType<mlir::IntegerAttr>(kNativeDictionaryGroup).getInt();
+        return DictType::get(c,
+                             joinLattices(op, dictionaryStores_.lookup(group), BottomType::get(c)));
     }
     const llvm::StringRef action = nativeDictionaryAction(op);
     if (action.empty() || action == "set" || action == "plumbing") { return {}; }
     if (action == "get") {
-        // A missing key reads undefined.
-        auto table = llvm::dyn_cast_or_null<DictType>(operands[0]->getValue().getType());
+        // A missing key reads undefined. The table itself may be a read of
+        // another table, which may be undefined too (opt<dict<V>>).
+        mlir::Type type = operands[0]->getValue().getType();
+        if (auto optional = llvm::dyn_cast_or_null<OptType>(type)) {
+            type = optional.getElementType();
+        }
+        auto table = llvm::dyn_cast_or_null<DictType>(type);
         if (!table) { return {}; }
         return meet(OptType::get(c, BottomType::get(c)), table.getElementType());
     }
     if (action == "object") { return operands[2]->getValue().getType(); }
     if (action == "key") { return defaultStringType(c); }
-    // `delete` and `in` answer a Boolean.
+    // `delete`, `in` and a comparison with undefined answer a Boolean.
     return BoolType::get(c);
 }
 

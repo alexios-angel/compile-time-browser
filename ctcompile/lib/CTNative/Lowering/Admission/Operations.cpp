@@ -26,6 +26,7 @@ bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits an addEventListener call specialised for its listener
 /// (HostCallbacks.cpp).
 bool hostCallbackOperation(admission & self, ctjs::CallOp call);
+bool promiseOperation(admission & self, mlir::Operation * o);
 /// Admits a use of a listener's Event (HostCallbacks.cpp); nullopt when `o`
 /// uses none.
 std::optional<bool> eventOperation(admission & self, mlir::Operation * o);
@@ -62,6 +63,26 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return isString(value);
     };
     if (isVectorCallPlumbing(o)) { return true; }
+    // The Array and String methods below are lowered as the built-ins, which
+    // the program must not be able to replace (ForOf.cpp).
+    if (auto call = llvm::dyn_cast<CallOp>(o)) {
+        const VectorCall kind = TypeInference::vectorCallOf(call);
+        const auto * row =
+            kind == VectorCall::builtinStatic ? TypeInference::builtinStaticOf(call) : nullptr;
+        const bool builtin =
+            (kind != VectorCall::none && kind != VectorCall::regexp &&
+             kind != VectorCall::builtinStatic) ||
+            (row && row->prototype && (row->global == "Array" || row->global == "String"));
+        auto module = call->getParentOfType<mlir::ModuleOp>();
+        auto why =
+            module ? module->getAttrOfType<mlir::StringAttr>(kRealmBuiltinsUnproved) : nullptr;
+        if (builtin && why) {
+            return self.refuse(
+                ("`" + ctjs::methodKey(call) +
+                 "` needs the realm's own Array and String built-ins: " + why.getValue())
+                    .str());
+        }
+    }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
         literal && TypeInference::isTupleLiteral(literal.getResult())) {
         // An element in a row is the runtime's view, which only an ordinary
@@ -200,7 +221,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             if (kind == Param::record) {
                 // A table serializes its own keys itself (Runtime/Json.hpp);
                 // its site's admission checked its values.
-                if (held == carrier::dictionary) { continue; }
+                if (auto table = llvm::dyn_cast_or_null<DictType>(self.typeOf(argument))) {
+                    if (carrierOf(table.getElementType()) != carrier::dictionary) { continue; }
+                    return self.refuse(name + " of a table of tables");
+                }
                 if (!admission::isClosedObject(argument)) {
                     return self.refuse(name +
                                        " of a value that is not a closed-shape object literal");
@@ -281,6 +305,7 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
     if (TypeInference::isHostCallbackCall(o)) {
         return hostCallbackOperation(self, llvm::cast<CallOp>(o));
     }
+    if (TypeInference::isPromiseCall(o)) { return promiseOperation(self, o); }
     if (auto admitted = eventOperation(self, o)) { return *admitted; }
     if (auto admitted = elementOperation(self, o)) { return *admitted; }
     const auto rect = [&](mlir::Value v) { return carrierOf(self.typeOf(v)) == carrier::domRect; };
@@ -648,6 +673,17 @@ bool admission::op(mlir::Operation * o) {
     // for passing the address are listed beside `carriedCells` in
     // ClosureLifter.h.)
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && isCarriedCell(o)) {
+        // A binding a kept callback shares (rule 2b in ClosureLifter.h) may
+        // hold only values that reference no closure, so no closure over the
+        // cell can be stored in it and the cell is never in a cycle.
+        if (o->hasAttr(kNativeSharedCell) &&
+            !isPrimitiveCarrier(carrierOf(typeOf(cell.getResult())))) {
+            return refuse("a binding a kept callback writes holds " +
+                          printed(typeOf(cell.getResult())) +
+                          " - its shared cell holds only a Number, a Boolean, a String or an "
+                          "optional one; a function there could capture the cell holding it, "
+                          "a reference cycle");
+        }
         if (carrierOf(typeOf(cell.getResult())) == carrier::none) {
             if (o->hasAttr(kNativeStaticReference)) {
                 return refuse(staticReferenceRefusal(cell, printed(typeOf(cell.getResult()))));
@@ -708,6 +744,7 @@ bool admission::op(mlir::Operation * o) {
         return true;
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
+        if (carrierOf(typeOf(k.getResult())) == carrier::classTag) { return true; }
         if (llvm::isa<NumberAttr, BooleanAttr, UndefinedAttr, NullAttr>(k.getValue())) {
             return true;
         }
@@ -1148,6 +1185,18 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                  set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
                 continue;
             }
+            // A class held as a field: every read of it was resolved to the
+            // class at compile time, so the field is only its empty tag.
+            if (c == carrier::classTag) {
+                const bool read = llvm::any_of(accesses, [&](mlir::Operation * other) {
+                    auto get = llvm::dyn_cast<GetPropertyOp>(other);
+                    return get && ctjs::constantKey(get.getKey()) == key;
+                });
+                if (read) {
+                    return refuse(("field `" + key + "` holds a class and is still read").str());
+                }
+                continue;
+            }
             if (!isScalarCarrier(c) && c != carrier::string) {
                 return refuse(("field `" + key + "` is stored a " +
                                printed(typeOf(set.getValue())) + ", not a number or a boolean")
@@ -1224,6 +1273,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
+            // A table is shared with the callee (Admission/Dictionaries.cpp).
+            carrierOf(typeOf(operands[i])) != carrier::dictionary &&
             // An element array is lent to the callee as a std::span.
             !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
             // An ordinary script's element (or element or null) is a copied view.

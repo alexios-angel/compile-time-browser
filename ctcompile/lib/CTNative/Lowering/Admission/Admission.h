@@ -109,6 +109,14 @@ struct admission {
     /// True for an entry-block argument that receives a shared cell by pointer.
     static bool isCellParameter(mlir::Value v);
 
+    /// True when argument `index` of `o` receives a shared cell's handle
+    /// rather than a pointer (`ctnative.shared_cell_args`, rule 2b in
+    /// ClosureLifter.h).
+    static bool isSharedCellArg(mlir::Operation * o, unsigned index);
+
+    /// True for an entry-block argument that receives a shared cell's handle.
+    static bool isSharedCellParameter(mlir::Value v);
+
     /// True when `v` is a shared binding: a carried cell or a cell parameter.
     static bool namesASharedCell(mlir::Value v);
 

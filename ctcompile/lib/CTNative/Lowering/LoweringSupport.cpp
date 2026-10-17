@@ -82,8 +82,18 @@ carrier carrierOf(mlir::Type type) {
     if (llvm::isa<DOMElementType>(type)) { return carrier::domElement; }
     if (llvm::isa<DOMRectType>(type)) { return carrier::domRect; }
     if (llvm::isa<ComputedStyleType>(type)) { return carrier::computedStyle; }
+    // A promise, or its resolve function, of a scalar value
+    // (Runtime/Promise.hpp); any other value is refused.
+    if (llvm::isa<PromiseType, PromiseResolveType>(type)) {
+        const mlir::Type value = llvm::isa<PromiseType>(type)
+                                     ? llvm::cast<PromiseType>(type).getElementType()
+                                     : llvm::cast<PromiseResolveType>(type).getElementType();
+        if (!isScalarPromiseValue(carrierOf(value))) { return carrier::none; }
+        return llvm::isa<PromiseType>(type) ? carrier::promise : carrier::promiseResolve;
+    }
     if (llvm::isa<EventType>(type)) { return carrier::domEvent; }
     if (llvm::isa<TimerType>(type)) { return carrier::timer; }
+    if (llvm::isa<ClassTagType>(type)) { return carrier::classTag; }
     if (llvm::isa<JsonType>(type)) { return carrier::json; }
     if (llvm::isa<NumType>(type)) { return carrier::number; }
     if (llvm::isa<ClosureType>(type)) { return carrier::closure; }
@@ -147,11 +157,17 @@ carrier carrierOf(mlir::Type type) {
             return carrier::nullable;
         }
     }
-    // A table holds one value carrier (Admission/Dictionaries.cpp says which).
+    // A table holds one value carrier (Admission/Dictionaries.cpp says which),
+    // or tables. A table that may be undefined is the same pointer, null.
+    if (auto optional = llvm::dyn_cast<OptType>(type);
+        optional && llvm::isa<DictType>(optional.getElementType())) {
+        return carrierOf(optional.getElementType());
+    }
     if (auto table = llvm::dyn_cast<DictType>(type)) {
-        return carrierInfo(carrierOf(table.getElementType())).spelling.empty()
-                   ? carrier::none
-                   : carrier::dictionary;
+        const carrier value = carrierOf(table.getElementType());
+        return value == carrier::dictionary || !carrierInfo(value).spelling.empty()
+                   ? carrier::dictionary
+                   : carrier::none;
     }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         const auto key = map.getKeyType();
@@ -251,6 +267,22 @@ bool isPageGlobal(mlir::Operation * o) {
                    TypeInference::isTimerCall(use.getOwner());
         });
     }
+    // Promise only as the callee and new.target of a `new Promise(f)` closure
+    // lifting specialised, or to read `Promise.resolve` for a call
+    // (Runtime/Promise.hpp).
+    if (load.getName() == "Promise") {
+        return TypeInference::isRealmGlobal(load, load.getName()) &&
+               llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
+                   mlir::Operation * user = use.getOwner();
+                   if (llvm::isa<ctjs::ConstructOp>(user)) {
+                       return use.getOperandNumber() < 2 && TypeInference::isPromiseCall(user);
+                   }
+                   if (llvm::isa<ctjs::CallOp>(user)) {
+                       return use.getOperandNumber() == 1 && TypeInference::isPromiseCall(user);
+                   }
+                   return isPageMethodRead(user);
+               });
+    }
     if (load.getName() == "clearTimeout" || load.getName() == "clearInterval") {
         return llvm::all_of(load.getResult().getUses(), [](mlir::OpOperand & use) {
             return use.getOperandNumber() == 0 && TypeInference::isTimerClear(use.getOwner());
@@ -295,8 +327,8 @@ bool isPageMethodRead(mlir::Operation * o) {
     auto call = llvm::dyn_cast<ctjs::CallOp>(*read.getResult().getUsers().begin());
     return call &&
            (TypeInference::isRectCall(call) || TypeInference::isStylePropertyCall(call) ||
-            TypeInference::isHostCallbackCall(call) || TypeInference::isEventCall(call) ||
-            TypeInference::isDispatchEventCall(call) ||
+            TypeInference::isHostCallbackCall(call) || TypeInference::isPromiseCall(call) ||
+            TypeInference::isEventCall(call) || TypeInference::isDispatchEventCall(call) ||
             !TypeInference::elementCallKey(call).empty()) &&
            ctjs::receiverMethod(call) == read;
 }
@@ -350,6 +382,22 @@ bool isVectorCallPlumbing(mlir::Operation * o) {
 
 bool isScalarCarrier(carrier value) {
     return value == carrier::number || value == carrier::boolean || value == carrier::nullable;
+}
+
+bool isScalarPromiseValue(carrier value) {
+    return value == carrier::number || value == carrier::boolean || value == carrier::string ||
+           value == carrier::nullable;
+}
+
+std::string promiseSpelling(mlir::Type type) {
+    if (auto promise = llvm::dyn_cast_or_null<PromiseType>(type)) {
+        return "ctnative::js_promise<" +
+               carrierInfo(carrierOf(promise.getElementType())).spelling.str() + ">";
+    }
+    auto resolve = llvm::cast<PromiseResolveType>(type);
+    return "ctnative::promise_resolve_function<" +
+           carrierInfo(carrierOf(resolve.getElementType())).spelling.str() +
+           ", ctnative::no_rejection>";
 }
 
 bool isStringUnionCarrier(carrier value) {
@@ -490,10 +538,27 @@ bool mapNeedsNullableStringKey(MapType type) {
         type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
 }
 
-std::string dictionarySpelling(DictType type) {
-    return ("std::shared_ptr<ctnative::dictionary<" +
-            carrierInfo(carrierOf(type.getElementType())).spelling + ">>")
-        .str();
+std::string dictionaryValueSpelling(DictType type) {
+    const mlir::Type value = type.getElementType();
+    return carrierOf(value) == carrier::dictionary ? dictionarySpelling(value)
+                                                   : carrierInfo(carrierOf(value)).spelling.str();
+}
+
+std::string dictionarySpelling(mlir::Type type) {
+    if (auto optional = llvm::dyn_cast<OptType>(type)) { type = optional.getElementType(); }
+    return "std::shared_ptr<ctnative::dictionary<" +
+           dictionaryValueSpelling(llvm::cast<DictType>(type)) + ">>";
+}
+
+mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type) {
+    return carrierOf(type) == carrier::dictionary
+               ? mlir::Type(ec::OpaqueType::get(context, dictionarySpelling(type)))
+               : carrierType(context, carrierOf(type));
+}
+
+bool isDictionaryCarrier(mlir::Type type) {
+    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+    return opaque && opaque.getValue().starts_with("std::shared_ptr<ctnative::dictionary<");
 }
 
 mlir::Type mapCarrierType(MapType type) {
@@ -507,6 +572,14 @@ mlir::Type mapCarrierType(MapType type) {
         : llvm::isa<StrType>(type.getKeyType()) ? std::string{"ctnative::string_to_number_map"}
                                                 : ("ctnative::number_map<" + key + ">").str();
     return ec::OpaqueType::get(type.getContext(), "std::shared_ptr<" + body + ">");
+}
+
+std::string classTagSpelling(ClassTagType type) {
+    return type.getClassName().str() + "_class";
+}
+
+mlir::Type classTagCarrierType(ClassTagType type) {
+    return ec::OpaqueType::get(type.getContext(), classTagSpelling(type));
 }
 
 mlir::Type closureCarrierType(ClosureType type) {
@@ -525,6 +598,9 @@ mlir::Type carrierType(mlir::MLIRContext * c, carrier which) {
     // through, so crash with a clear message rather than invent a type.
     if (which == carrier::methodTable) {
         llvm::report_fatal_error("method table carrier needs its proved schema");
+    }
+    if (which == carrier::classTag) {
+        llvm::report_fatal_error("class tag carrier needs its class (classTagCarrierType)");
     }
     if (const auto spelling = carrierInfo(which).spelling; !spelling.empty()) {
         return ec::OpaqueType::get(c, spelling);

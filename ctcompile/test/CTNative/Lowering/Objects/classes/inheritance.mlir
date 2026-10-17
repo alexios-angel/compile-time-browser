@@ -28,17 +28,34 @@
 //
 // The static members of a parent are copied onto each child too, so the
 // static-member rule sees an ordinary class. That rule is a separate slice;
-// here only the copies are checked.
+// here only the copies are checked. name_D lowers natively; make_D returns
+// the instance it builds, which is refused as an escape, so this program
+// cannot run natively. new-this.mlir's names.js runs the same name_D
+// natively with GCC and Clang against the interpreter and Node; here the
+// interpreter and Node pin the value the copies must keep.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/statics.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STATICS
+// RUN: %native_reference %t/statics.js | FileCheck %s --check-prefix=STATICS-RUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/statics.js | FileCheck %s --check-prefix=STATICS-RUN
 //
 // An arrow made after `super(...)` reads the importer's flag for `this` as
-// set, so the class is flattened; the arrow keeps no check of the flag (its
-// lexical `this` is the arrow rule's to lift).
+// set, so the class is flattened; the arrow keeps no check of the flag, and
+// no capture of it either, so the arrow rule lifts it with its lexical `this`
+// as an object argument and the arrow reads no upvalue. The flag's slot is
+// gone, so `this` is the arrow's only capture.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason
+//
+// Classes of a factory function are stored in bindings, and a child's
+// `extends` reads its parent's binding. Once flattening drops the heritage
+// call, that read is unused, and the parents (never constructed) are erased
+// with their members like any unreachable parent. Base's own copies of
+// Config's members go with Base, so ctnative.copies no longer lists them.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/factory.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=FACTORY
 
 // The module lists every copy with the source function it stands for (the
 // forwarding constructor Alert never wrote is erased and its copy stands for
@@ -58,13 +75,18 @@
 // CPP-DAG: Base_Toast_{{[0-9]+}}(Toast* const
 // OBSERVATION: r=109036004
 
-// ARROW: ctjs.func @fn$4(
+// FACTORY: ctnative.copies = {
+// FACTORY-NOT: _Base$
+// FACTORY: ctnative.inheritance_erased = [{{.*}}"Config$3"{{.*}}"Base$5"]
+// ARROW: ctjs.call_direct @fn$4({{.*}}ctnative.object_args
+// ARROW: ctjs.func private @fn$4({{.*}}ctnative.captures = 1 : i32, ctnative.lexical_this = 0 : i32
 // ARROW-NOT: ctjs.load_upvalue
 // ARROW-NOT: ReferenceError
 // ARROW: ctjs.return
 // STATICS-NOT: ctnative.inheritance_reason
-// STATICS-DAG: ctjs.func @make_D$
-// STATICS-DAG: ctjs.func @name_D$
+// STATICS-DAG: ctjs.func private @make_D$
+// STATICS-DAG: emitc.func @name_D_
+// STATICS-RUN: r={{"?dp"?$}}
 
 //--- chain.js
 function run() {
@@ -113,3 +135,12 @@ function run() {
     return new D(4).m;
 }
 var r = run();
+
+//--- factory.js
+var r = (function () {
+    class Config { base() { return 2; } }
+    class Base extends Config { constructor(n) { super(); this.n = n; } get2() { return this.n * this.base(); } }
+    class Alert extends Base { close() { return this.get2() + 1; } }
+    function make(n) { return new Alert(n).close(); }
+    return make(5);
+})();

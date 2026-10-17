@@ -227,6 +227,28 @@ struct closureLifter {
     /// structural clause can fail here; the carrier is admission's question.
     llvm::DenseMap<mlir::Operation *, std::string> whyNotCarried;
 
+    // --- Rule 2b: a shared cell, kept by a callback the runtime holds -------
+    //
+    // A carried cell is a frame-local variable reached by pointer, which is
+    // sound only because every closure over it is called while the frame is
+    // live (rule 2, condition 1). A callback the runtime keeps (a timer
+    // handler, a listener, a promise handler; hostCallbacks and
+    // promiseCallbacks) runs after the frame has returned, so a carried cell
+    // such a callback captures directly becomes a std::shared_ptr to a
+    // ctnative::cell (Runtime/Cell.hpp) instead. The frame, the kept callback
+    // and every other closure over the binding hold the same handle, so the
+    // binding lives as long as its last holder. Admission limits the cell to
+    // values that reference no closure, which keeps it out of any cycle.
+    //
+    // A kept callback reaching the binding through an enclosing closure's
+    // capture is not taken yet: it is refused, as before.
+    llvm::DenseSet<mlir::Operation *> keptCells;
+    void keptCellCensus();
+    /// Whether capture slot i of `c` receives a shared cell's handle: its
+    /// operand is a kept cell of this frame, or the enclosing function
+    /// received the slot as a handle (`ctnative.shared_cell_args`).
+    bool slotIsShared(ctjs::CreateClosureOp c, unsigned i);
+
     // --- Rule 3: dropping the hoisted `undefined` from a carried cell's type ---
     //
     // Rule 2 emits the box as a frame-scope variable assigned the initial, so
@@ -506,6 +528,12 @@ struct closureLifter {
     /// once lift() has made its captures parameters, its call is rewritten by
     /// rewriteArrayCallback instead of lift()'s call-site loop.
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> arrayCallbacks;
+    /// Whether run() specialises Array-method and String.replace callbacks
+    /// for their call. A DOM class's preparation (HostContract/DOM/
+    /// Preparation.cpp) clears it: its source proof lowers those calls
+    /// itself, and a specialised callback would look to it like an unused
+    /// helper whose body it must prove.
+    bool specialiseCallbacks = true;
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -525,6 +553,15 @@ struct closureLifter {
     void hostCallbackCensus();
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
+
+    /// Callbacks a promise keeps (Promises.cpp): each closure whose one use is
+    /// the executor of `new Promise(f)` or the handler of `p.then(f)`, with
+    /// that construct or call. Judged by whyNotPromiseCallback and rewritten
+    /// by rewritePromiseCallback, as hostCallbacks are.
+    llvm::DenseMap<mlir::Operation *, mlir::Operation *> promiseCallbacks;
+    void promiseCallbackCensus();
+    std::optional<std::string> whyNotPromiseCallback(ctjs::CreateClosureOp c);
+    void rewritePromiseCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
     /// With `cellFactsOnly`, only what isConstantCell reads: no class census
     /// and no shared-cell census, so it writes no attribute.
@@ -906,6 +943,17 @@ struct closureLifter {
     /// True when `use` is `new c(...)` naming `c` as both its callee and its
     /// new.target.
     static bool isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp c);
+    /// Whether `made` constructs `c`'s function: `c` is its callee, or it is a
+    /// marked `new` of that function: a `new this` ClassStatics.cpp proved
+    /// (kNativeClassConstruct) or a `new` of a run-once static cell holding
+    /// the class (kNativeStaticClass on the read).
+    bool constructsClosure(ctjs::ConstructOp made, ctjs::CreateClosureOp c);
+    /// Whether `made` is such a marked `new`, which may sit outside the frame
+    /// that makes the class's closure.
+    static bool isClassConstruct(ctjs::ConstructOp made);
+    /// The closure `made` constructs: its callee's ctjs.create_closure, or for
+    /// a marked `new` the one closure of the marked function.
+    ctjs::CreateClosureOp constructedClosure(ctjs::ConstructOp made);
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);

@@ -545,7 +545,6 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         });
         if (!hostContract) {
             prepareNativeMaps(module);
-            prepareNativeDictionaries(module);
             prepareNativeObjectIdentities(module);
         }
         if (census) {
@@ -620,6 +619,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // constant table is a constant (`new RegExp(expected).test(type)`).
         markStaticTables(module);
         TypeInference::markStringMethodCalls(module);
+        // After markStaticTables, whose unrolled loops over a constant table
+        // read `config[key]` under each key as a constant: a literal read only
+        // that way is a record, not a table.
+        if (!hostContract) { prepareNativeDictionaries(module); }
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -781,6 +784,15 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                             callback =
                                 call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback);
                         }
+                        if (!callback) { return; }
+                        edge(symbols.lookup(callback.getValue()),
+                             "calls back `" + callback.getValue() + "`, which is not native",
+                             "called back by `" + fn.getSymName() + "`, which is not native");
+                    });
+                    // A promise operation names its executor or handler.
+                    fn.getBody().walk([&](mlir::Operation * op) {
+                        auto callback =
+                            op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativePromiseCallback);
                         if (!callback) { return; }
                         edge(symbols.lookup(callback.getValue()),
                              "calls back `" + callback.getValue() + "`, which is not native",

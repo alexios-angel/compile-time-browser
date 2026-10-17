@@ -128,6 +128,17 @@ bool admission::isCellParameter(mlir::Value v) {
     return fn && isCellArg(fn.getOperation(), arg.getArgNumber());
 }
 
+bool admission::isSharedCellArg(mlir::Operation * o, unsigned index) {
+    return llvm::is_contained(listedSlots(o, kNativeSharedCellArgs), static_cast<int32_t>(index));
+}
+
+bool admission::isSharedCellParameter(mlir::Value v) {
+    auto arg = llvm::dyn_cast<mlir::BlockArgument>(v);
+    if (!arg || !arg.getOwner()->isEntryBlock()) { return false; }
+    auto fn = llvm::dyn_cast<ctjs::FuncOp>(arg.getOwner()->getParentOp());
+    return fn && isSharedCellArg(fn.getOperation(), arg.getArgNumber());
+}
+
 /// Where a shared binding is reached from: the variable in this frame, or the
 /// pointer a lifted call handed this one. Both are lvalues after lowering, and
 /// every rule that asks about a cell accepts either.

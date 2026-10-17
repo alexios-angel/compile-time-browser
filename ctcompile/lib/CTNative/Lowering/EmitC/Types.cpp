@@ -152,12 +152,27 @@ void lowering::retype(ctjs::FuncOp fn) {
         // `ctn_x * self` receiver. Both checks must run before the scalar case
         // below, because the lattice type of either value describes what the
         // cell holds, not the cell itself.
+        // A shared cell (rule 2b in ClosureLifter.h) is a handle instead: the
+        // frame's variable holds it and a lifted callee takes it by value.
+        const auto handle = [&] {
+            return ec::OpaqueType::get(
+                context, sharedCellSpelling(spelled(carrierType(context, carrierOf(typeOf(v))))));
+        };
+        if (admission::isCarriedCell(v.getDefiningOp()) &&
+            v.getDefiningOp()->hasAttr(kNativeSharedCell)) {
+            v.setType(ec::LValueType::get(handle()));
+            return;
+        }
+        if (admission::isSharedCellParameter(v)) {
+            v.setType(handle());
+            return;
+        }
         if (admission::isCarriedCell(v.getDefiningOp())) {
-            v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
+            v.setType(ec::LValueType::get(valueCarrierType(context, typeOf(v))));
             return;
         }
         if (admission::isCellParameter(v)) {
-            v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
+            v.setType(ec::PointerType::get(valueCarrierType(context, typeOf(v))));
             return;
         }
         const carrier c = carrierOf(typeOf(v));
@@ -182,8 +197,17 @@ void lowering::retype(ctjs::FuncOp fn) {
             return;
         }
         if (c == carrier::dictionary) {
-            v.setType(
-                ec::OpaqueType::get(context, dictionarySpelling(llvm::cast<DictType>(typeOf(v)))));
+            v.setType(ec::OpaqueType::get(context, dictionarySpelling(typeOf(v))));
+            return;
+        }
+        if (c == carrier::classTag) {
+            const auto tag = llvm::cast<ClassTagType>(typeOf(v));
+            classTags.insert(classTagSpelling(tag));
+            v.setType(classTagCarrierType(tag));
+            return;
+        }
+        if (c == carrier::promise || c == carrier::promiseResolve) {
+            v.setType(ec::OpaqueType::get(context, promiseSpelling(typeOf(v))));
             return;
         }
         if (c == carrier::map) {

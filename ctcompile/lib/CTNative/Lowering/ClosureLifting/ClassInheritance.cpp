@@ -32,7 +32,8 @@
 // copies (never constructed, its statics never read, its binding never read)
 // is erased with its members, as are functions no closure names any more.
 // The module's ctnative.inheritance_summary counts the copies and erasures;
-// ctnative.copies maps every copy to the source function it stands for, and
+// ctnative.copies maps every copy still in the module to the source function
+// it stands for (a copy erased with its class stands for nothing), and
 // ctnative.inheritance_erased lists the source functions erased, so a count
 // of source functions can be rebuilt after later passes prune functions.
 //
@@ -604,14 +605,46 @@ struct flattener {
                 }
                 read.erase();
             }
-            mlir::OpBuilder at(site.closure);
-            site.closure->setOperand(site.operand, undefinedAt(at, site.closure.getLoc()));
+            dropCapture(site.closure,
+                        site.operand - site.closure.getUpvalues().getBeginOperandIndex());
             foldConstantBranches(targetOf(site.closure));
         }
         raised.erase();
         eraseWithFeeders(flag);
         foldConstantBranches(fn);
         return std::nullopt;
+    }
+
+    /// Removes capture `slot`, which nothing reads any more, from `closure`
+    /// and its function, the only closure of that function (flagCapture), so
+    /// the slot leaves no `undefined` capture behind for the capture rules to
+    /// refuse. Later slots move down one, in the function's reads and writes
+    /// and in what its nested closures relay from it.
+    void dropCapture(ctjs::CreateClosureOp closure, unsigned slot) {
+        ctjs::FuncOp target = targetOf(closure);
+        closure.getUpvaluesMutable().erase(slot);
+        if (const mlir::DenseI32ArrayAttr indices = closure.getEnclosingIndicesAttr()) {
+            llvm::SmallVector<int32_t> kept(indices.asArrayRef());
+            kept.erase(kept.begin() + slot);
+            closure.setEnclosingIndicesAttr(mlir::DenseI32ArrayAttr::get(context, kept));
+        }
+        const auto moved = [&](auto index) { return index > slot ? index - 1 : index; };
+        target.walk([&](mlir::Operation * op) {
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+                read.setIndex(moved(read.getIndex()));
+            } else if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op)) {
+                write.setIndex(moved(write.getIndex()));
+            } else if (auto inner = llvm::dyn_cast<ctjs::CreateClosureOp>(op);
+                       inner && inner.getEnclosingIndicesAttr()) {
+                llvm::SmallVector<int32_t> relayed(inner.getEnclosingIndicesAttr().asArrayRef());
+                for (int32_t & index : relayed) {
+                    if (index > static_cast<int32_t>(slot)) { --index; }
+                }
+                inner.setEnclosingIndicesAttr(mlir::DenseI32ArrayAttr::get(context, relayed));
+            }
+        });
+        target->setAttr("upvalue_count", mlir::Builder(context).getI32IntegerAttr(
+                                             static_cast<int32_t>(target.getUpvalueCount() - 1)));
     }
 
     /// Erases `op` and each constant or global load only it used.
@@ -1148,8 +1181,13 @@ struct flattener {
                 }
             } else if (auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
                        store && use.getOperandNumber() == 1) {
+                // The binding may still be read where a child's heritage call
+                // was: a read nothing uses goes with the class.
                 for (mlir::Operation * reader : store.getCell().getUsers()) {
-                    if (!llvm::isa<ctjs::CellSetOp>(reader)) { return false; }
+                    if (llvm::isa<ctjs::CellSetOp>(reader)) { continue; }
+                    auto read = llvm::dyn_cast<ctjs::CellGetOp>(reader);
+                    if (!read || !read.getResult().use_empty()) { return false; }
+                    doomed.insert(reader);
                 }
                 doomed.insert(user);
             } else {
@@ -1214,7 +1252,11 @@ struct flattener {
         llvm::SmallVector<ctjs::FuncOp> nested;
         fn.walk([&](ctjs::CreateClosureOp made) { nested.push_back(targetOf(made)); });
         byIndex.erase(*ctjs::functionIndex(fn));
-        if (!fn->hasAttr(kNativeCopyOf)) {
+        // A copy, made by this run or an earlier one, is no source function:
+        // it leaves ctnative.copies instead (run() keeps only copies that
+        // still exist).
+        auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies);
+        if (!fn->hasAttr(kNativeCopyOf) && !(earlier && earlier.get(fn.getSymName()))) {
             erasedSources.push_back(mlir::StringAttr::get(context, fn.getSymName()));
         }
         fn.erase();
@@ -1280,15 +1322,28 @@ struct flattener {
                 }));
         }
         module.walk([](ctjs::FuncOp fn) { fn->removeAttr(kNativeCopyOf); });
-        if (!copiesOf.empty()) {
+        if (!copiesOf.empty() || erased) {
+            // Copies erased as unreachable (a parent's copies of its own
+            // parent's members, erased with it) are dropped: they are neither
+            // in the module nor a source function, so a count of source
+            // functions rebuilt from this map must not expect them.
             llvm::SmallVector<mlir::NamedAttribute> all;
+            const auto keep = [&](mlir::StringAttr copy, mlir::Attribute source) {
+                if (module.lookupSymbol(copy)) { all.emplace_back(copy, source); }
+            };
             if (auto earlier = module->getAttrOfType<mlir::DictionaryAttr>(kNativeCopies)) {
-                all.append(earlier.begin(), earlier.end());
+                for (mlir::NamedAttribute entry : earlier) {
+                    keep(entry.getName(), entry.getValue());
+                }
             }
             for (auto & [copy, source] : copiesOf) {
-                all.emplace_back(mlir::StringAttr::get(context, copy), source);
+                keep(mlir::StringAttr::get(context, copy), source);
             }
-            module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
+            if (all.empty()) {
+                module->removeAttr(kNativeCopies);
+            } else {
+                module->setAttr(kNativeCopies, mlir::DictionaryAttr::get(context, all));
+            }
         }
         if (!erasedSources.empty()) {
             llvm::SmallVector<mlir::Attribute> all;

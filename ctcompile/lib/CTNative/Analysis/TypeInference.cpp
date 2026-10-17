@@ -36,6 +36,7 @@
 #include "ctcompile/CTNative/Analysis/EscapeAnalysis.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
@@ -202,6 +203,12 @@ mlir::Type staticResultType(mlir::Operation * op) {
 
     if (op->getName().getStringRef() == "ub.poison") { return BottomType::get(c); }
 
+    // A class held as an object field: the static-member rewrite proved every
+    // read of the field, and the value is the class's tag.
+    if (auto tag = op->getAttrOfType<mlir::StringAttr>(kNativeClassTag);
+        tag && llvm::isa<ctjs::ConstantOp>(op)) {
+        return ClassTagType::get(c, tag.getValue());
+    }
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
 
     // Every comparison is a boolean, including the relational ones on BigInts:
@@ -657,6 +664,7 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
     if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
+    if (isPromiseCallbackParameter(value)) { return; }
     // A specialised replace callback's parameters come from its call.
     if (isStringCallbackParameter(value)) { return; }
     const bool domInput =
@@ -856,8 +864,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return answer(doubleType(c));
     }
 
-    if (op->getNumResults() == 1) {
-        if (const mlir::Type table = dictionaryType(op, operands)) { return answer(table); }
+    // A table operation answers only its own rule, and nothing while its
+    // table's type is pending: the general property read would answer boxed,
+    // which nothing can undo (Inference/Dictionaries.cpp).
+    if (isNativeDictionarySite(op) ||
+        (!nativeDictionaryAction(op).empty() && nativeDictionaryAction(op) != "plumbing")) {
+        const mlir::Type table = op->getNumResults() == 1 ? dictionaryType(op, operands) : nullptr;
+        return table ? answer(table) : mlir::success();
     }
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
@@ -910,6 +923,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         if (const mlir::Type registered = hostCallbackType(op, operands)) {
             return answer(registered);
         }
+        if (const mlir::Type promised = promiseType(op, operands)) { return answer(promised); }
     }
     // A group of toType's match: a String; admission checks the text.
     if (op->hasAttr(kNativeMatchGroup)) { return answer(stringType(c)); }

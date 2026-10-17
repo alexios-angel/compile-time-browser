@@ -536,6 +536,21 @@ def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
   let genVerifyDecl = 1;
 }
 
+def CTNative_ClassTagType
+    : CTNative_WrapperType<"ClassTag", "class_tag", (ins StringRefParameter<>:$className)> {
+  let summary = "A JavaScript class held as a field value, with no runtime data";
+  let description = [{
+    The value of a field that holds a class, such as each entry of the object
+    a library publishes as a global (`bootstrap.Alert`). It carries no
+    runtime data: every read of the field is resolved at compile time to the
+    class it names (ClosureLifting/ClassStatics.cpp), so the value is only
+    the field's content, an empty `struct <className>_class {}` in C++.
+
+    It meets only with itself; against anything else the meet is `boxed`,
+    because a class never merges with an ordinary value.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // The three smart pointers. Escape analysis
 // (ctcompile/CTNative/Analysis/EscapeAnalysis.h) chooses between them.
@@ -582,6 +597,34 @@ def CTNative_WeakType : CTNative_WrapperType<"Weak", "weak", (ins "::mlir::Type"
     reference, so meeting it with either gives a `variant` and not a
     pointer. That is deliberately awkward, because silently unifying a
     strong and a weak reference is the miscompile above.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Promises (Runtime/Promise.hpp)
+//===----------------------------------------------------------------------===//
+
+def CTNative_PromiseType
+    : CTNative_WrapperType<"Promise", "promise", (ins "::mlir::Type":$elementType)> {
+  let summary = "`ctnative::js_promise<T>` - a Promise whose value is a `T`";
+  let description = [{
+    The element is the join of every value the promise can be fulfilled
+    with, so two promises meet elementwise, like `vec`. It is nominal
+    against everything else: a promise and its value are different things,
+    and meeting either with another kind gives a `variant`. Only a proved
+    element lowers; admission refuses the rest by name, an object among them
+    because it could carry a `then` key and so be adopted instead.
+  }];
+}
+
+def CTNative_PromiseResolveType
+    : CTNative_WrapperType<"PromiseResolve", "promise_resolve",
+                           (ins "::mlir::Type":$elementType)> {
+  let summary = "The resolve function of a `promise<T>`";
+  let description = [{
+    `ctnative::promise_resolve_function<T>`, the value `new Promise` hands
+    its executor. It meets elementwise with itself and is unordered against
+    `promise<T>` and every other type.
   }];
 }
 

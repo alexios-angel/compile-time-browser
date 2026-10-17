@@ -479,6 +479,15 @@ public:
     /// and next return `[i]` from inside the loop).
     static bool presentElement(mlir::Value value, mlir::Operation * user);
 
+    // Promises (Inference/Promises.cpp).
+    /// Whether `op` is a promise operation: a `new Promise(f)` or `p.then(f)`
+    /// closure lifting specialised for its callback, a call of the realm's
+    /// `Promise.resolve`, or a call of an executor's resolve function.
+    static bool isPromiseCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a callback, which its operation
+    /// types rather than the entry state.
+    static bool isPromiseCallbackParameter(mlir::Value value);
+
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
     /// `a.sort()` results, and the values that borrow it through `scf`
@@ -627,6 +636,10 @@ private:
     /// solver runs: the closure lift and every rewrite in
     /// `--ctnative-lower-to-emitc` happen before it is loaded.
     mlir::DominanceInfo dominance_{nullptr};
+    /// Each table family's stored values (Inference/Dictionaries.cpp), by
+    /// its ctnative.dict_group, indexed on the first visit of a table literal.
+    llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value>> dictionaryStores_;
+    bool dictionaryStoresIndexed_ = false;
     // array value -> everything appended or stored into it, for
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
@@ -663,6 +676,10 @@ private:
     /// captured values (and a listener's Event) into the callback's
     /// parameters; and the type of a read or call on such an Event.
     mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of a promise operation (isPromiseCall), after joining its
+    /// captured values and, for an executor, the values its resolve function
+    /// is called with into the callback's parameters.
+    mlir::Type promiseType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     /// The type of an element member call or read (Inference/Elements.cpp),
     /// or null.
     mlir::Type elementMemberType(mlir::Operation * op,
