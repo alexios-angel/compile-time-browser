@@ -12,6 +12,8 @@
 #   moving every RUN line to lit's internal shell is a change of its own.
 # - compare: Playwright and Pillow, for tools/check/compare.py and
 #   css-parity.py (`tools/check/compare.py setup` syncs them).
+# - tools: Fabric, which tools/remote_build.py (behind tools/remote-build.sh)
+#   uses for every command it runs on a build box.
 # - dev: ruff, the Python half of tools/format.sh (`uv run ruff`). uv installs
 #   this group by default.
 #
@@ -25,6 +27,7 @@ dependencies = []
 [dependency-groups]
 test = ["lit==18.1.8", "psutil", "pytest", "pytest-timeout", "pytest-xdist"]
 compare = ["playwright>=1.40,<2", "pillow>=10,<13"]
+tools = ["fabric>=3,<4"]
 dev = ["ruff"]
 
 # tools/format.sh runs `ruff format` over every tracked .py with this file as its
