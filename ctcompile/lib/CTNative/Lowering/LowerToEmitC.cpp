@@ -531,7 +531,6 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         });
         if (!hostContract) {
             prepareNativeMaps(module);
-            prepareNativeDictionaries(module);
             prepareNativeObjectIdentities(module);
         }
         if (census) {
@@ -604,6 +603,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         TypeInference::markRecordReturns(module);
         TypeInference::markStringMethodCalls(module);
         markStaticTables(module);
+        // After markStaticTables, whose unrolled loops over a constant table
+        // read `config[key]` under each key as a constant: a literal read only
+        // that way is a record, not a table.
+        if (!hostContract) { prepareNativeDictionaries(module); }
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
