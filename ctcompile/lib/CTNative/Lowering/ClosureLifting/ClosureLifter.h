@@ -506,6 +506,12 @@ struct closureLifter {
     /// once lift() has made its captures parameters, its call is rewritten by
     /// rewriteArrayCallback instead of lift()'s call-site loop.
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> arrayCallbacks;
+    /// Whether run() specialises Array-method and String.replace callbacks
+    /// for their call. A DOM class's preparation (HostContract/DOM/
+    /// Preparation.cpp) clears it: its source proof lowers those calls
+    /// itself, and a specialised callback would look to it like an unused
+    /// helper whose body it must prove.
+    bool specialiseCallbacks = true;
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);

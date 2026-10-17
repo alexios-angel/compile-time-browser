@@ -121,8 +121,10 @@ liftReport closureLifter::run() {
     constructorCensus();
     argumentCensus();
     methodCensus();
-    arrayCallbackCensus();
-    stringCallbackCensus();
+    if (specialiseCallbacks) {
+        arrayCallbackCensus();
+        stringCallbackCensus();
+    }
     hostCallbackCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // Closure -> its own reason.
     // The closure that names each function, for the chained reason below: a
