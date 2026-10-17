@@ -208,6 +208,17 @@ void closureLifter::closureSetCensus() {
                 closed &= use.getOperandNumber() == 0 && !fieldOf(user, on).empty();
             }
         }
+        // The one function the set lives in, when it lives in one.
+        const auto frameOf = [](mlir::Value v) -> mlir::Operation * {
+            return v.getParentRegion()->getParentOfType<ctjs::FuncOp>();
+        };
+        group.frame = frameOf(start.getResult());
+        for (mlir::Value v : values) {
+            if (frameOf(v) != group.frame) { group.frame = nullptr; }
+        }
+        for (const auto & entry : fields) {
+            if (frameOf(entry.first) != group.frame) { group.frame = nullptr; }
+        }
         for (mlir::Value v : values) {
             if (auto made = v.getDefiningOp<ctjs::CreateClosureOp>()) {
                 seen.insert(made.getOperation());
@@ -245,9 +256,14 @@ std::optional<std::string> closureLifter::whyNotClosureSetMember(ctjs::CreateClo
     if (!entry.getArgument(ctjs::arg_new_target).use_empty()) {
         return "a closure called through a set of closures reads new.target";
     }
-    // An arrow's lexical `this` (ArrowThis.cpp) is an object capture, which
-    // a member's by-value copy does not carry yet.
-    if (target->hasAttr("ctnative.lexical_this")) {
+    // An arrow's lexical `this` (ArrowThis.cpp) is an object capture. A member
+    // binds it as the pointer lift() passes (lexicalThisObjectArgs) when the
+    // whole set lives in the frame that made the closure, the method whose
+    // `this` it is: no value of the set leaves that frame, so no call through
+    // the set outlives the receiver. Anything else is not carried.
+    if (target->hasAttr("ctnative.lexical_this") &&
+        (closureSets.lookup(c.getOperation())->frame != c->getParentOfType<ctjs::FuncOp>() ||
+         lexicalThisObjectArgs(std::array<ctjs::CreateClosureOp, 1>{c}).empty())) {
         return "a closure called through a set of closures captures its lexical `this`, which a "
                "member does not carry";
     }

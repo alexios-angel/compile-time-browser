@@ -43,6 +43,20 @@
 // RUN: %t/reassigned-clang | FileCheck %s --check-prefix=REASSIGNEDOUT
 // RUN: %native_reference %t/reassigned.js | FileCheck %s --check-prefix=REASSIGNEDOUT
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/reassigned.js | FileCheck %s --check-prefix=REASSIGNEDOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/thisset.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/thisset.mlir
+// RUN: FileCheck %s --check-prefix=THISSET --implicit-check-not=ctnative.not_native < %t/thisset.mlir
+// RUN: ctjs-opt %t/thisset.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/thisset.cpp
+// RUN: FileCheck %s --check-prefix=THISSETCPP < %t/thisset.cpp
+// RUN: %gxx -O2 %t/thisset.cpp -o %t/thisset-gcc
+// RUN: %t/thisset-gcc | FileCheck %s --check-prefix=THISSETOUT
+// RUN: %clangxx -O2 %t/thisset.cpp -o %t/thisset-clang
+// RUN: %t/thisset-clang | FileCheck %s --check-prefix=THISSETOUT
+// RUN: %native_reference %t/thisset.js | FileCheck %s --check-prefix=THISSETOUT
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/thisset.js | FileCheck %s --check-prefix=THISSETOUT
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/thisescapes.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=THISESCAPES
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/fieldescape.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=FIELDESCAPE
@@ -98,6 +112,19 @@
 // REASSIGNED: emitc.func @run_1
 // REASSIGNEDCPP: std::variant<ctnative::bound<fn_2>, ctnative::bound<fn_3>, ctnative::bound<fn_4>> fn;
 // REASSIGNEDOUT: r=2108
+
+// Two arrows that read their method's `this`, merged by an `if` in the
+// method and called there. Each member binds the receiver as the pointer the
+// method passes (ArrowThis.cpp); the set never leaves the method's frame, so
+// no call through it outlives the receiver.
+// THISSET: emitc.func @pick_
+// THISSETCPP: std::variant<ctnative::bound_prefix<fn_{{[0-9]+}}, 1>, ctnative::bound_prefix<fn_{{[0-9]+}}, 1>>
+// THISSETCPP: ctnative::invoke_callable(
+// THISSETOUT: r=1424
+
+// Negative: one arrow also hands its `this` to an array, so the receiver is
+// not a pointer the member can bind, and the set keeps the refusal.
+// THISESCAPES: closure_reason = "a closure called through a set of closures captures its lexical `this`, which a member does not carry"
 
 // Negative: the record is passed to a function, so a write of its field
 // might happen out of sight, and it is no set.
@@ -226,3 +253,25 @@ function run(c, d) {
     return m.fn(5) + m.effect(1);
 }
 var r = run(true, true);
+
+//--- thisset.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; }
+        pick(c) { const f = c ? y => y + this._x : y => y * this._x; return f(5) + f(1); }
+    }
+    const b = new Box(4);
+    return b.pick(true) * 100 + b.pick(false);
+}
+var r = run();
+
+//--- thisescapes.js
+function run() {
+    class Box {
+        constructor(x) { this._x = x; }
+        pick(c) { const f = c ? y => y + this._x : y => y * [this].length; return f(5) + f(1); }
+    }
+    const b = new Box(4);
+    return b.pick(true) * 100 + b.pick(false);
+}
+var r = run();
