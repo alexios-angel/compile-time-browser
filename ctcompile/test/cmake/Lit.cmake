@@ -58,18 +58,20 @@ if(CTCOMPILE_ENABLE_MLIR)
     # browser for the packaging round trip, and every native pipeline module
     # (Native.cmake's ctcompile_add_native_pipeline records its target).
     get_property(_native_pipelines GLOBAL PROPERTY CTCOMPILE_NATIVE_PIPELINES)
+    set(_ctcompile_check_depends
+      ctjs-opt ctjs-translate ctcompile-tool ctcompile-test-native-reference
+      ctcompile-test-type-oracle ctcompile-test-type-claims
+      ctcompile-test-escape-claims ctcompile-test-escape-oracle-aot
+      ctcompile-test-escape-oracle-aot-return
+      ctcompile-test-launcher-vm ctcompile-test-launcher-aot
+      ctcompile-test-launcher-page-vm ctcompile-test-launcher-page-aot
+      ctcompile-test-native-vm-linked ctcompile-test-native-values-vm-linked
+      ctcompile-test-app_bundle ctbrowser-tool-ctrun ctbrowser-tool-ctbrowse
+      ${_native_pipelines}
+      FileCheck count not)
     add_lit_testsuite(check-ctcompile "Running the ctcompile regression tests"
       "${CMAKE_CURRENT_BINARY_DIR}"
-      DEPENDS ctjs-opt ctjs-translate ctcompile-tool ctcompile-test-native-reference
-              ctcompile-test-type-oracle ctcompile-test-type-claims
-              ctcompile-test-escape-claims ctcompile-test-escape-oracle-aot
-              ctcompile-test-escape-oracle-aot-return
-              ctcompile-test-launcher-vm ctcompile-test-launcher-aot
-              ctcompile-test-launcher-page-vm ctcompile-test-launcher-page-aot
-              ctcompile-test-native-vm-linked ctcompile-test-native-values-vm-linked
-              ctcompile-test-app_bundle ctbrowser-tool-ctrun ctbrowser-tool-ctbrowse
-              ${_native_pipelines}
-              FileCheck count not)
+      DEPENDS ${_ctcompile_check_depends})
 
     # Also run lit from ctest, so a green `ctest` means the IR tests ran.
     # tools/remote-build.sh runs ctest and nothing else, so without this the
@@ -93,5 +95,28 @@ if(CTCOMPILE_ENABLE_MLIR)
     # run should fail, not be waited out.
     set_tests_properties(ctcompile_lit PROPERTIES
       TIMEOUT 3600 PROCESSORS ${ctcompile_lit_processors})
+
+    # The drivers converted to pytest (conftest.py beside lit.cfg.py), run
+    # from the same uv environment and the same generated lit.site.cfg.py, so
+    # both runners use the same tools. -n auto is lit's all-cores pool;
+    # --basetemp keeps each case's %t in the build tree, as lit's Output/ does.
+    # A case whose .test still exists runs under both gates until its switch.
+    find_program(CTCOMPILE_UV uv DOC "uv, which runs the ctcompile pytest drivers")
+    if(NOT CTCOMPILE_UV)
+      message(STATUS "ctcompile: uv not found - ctcompile_pytest is unavailable")
+    else()
+      set(_ctcompile_pytest
+        "${CTCOMPILE_UV}" run --project "${_ctcompile_repo_root}" --frozen --group test
+        pytest -n auto -p no:cacheprovider --ctcompile-build "${CMAKE_BINARY_DIR}"
+        --basetemp "${CMAKE_CURRENT_BINARY_DIR}/pytest" "${CMAKE_CURRENT_SOURCE_DIR}")
+      add_custom_target(check-ctcompile-pytest
+        COMMAND ${_ctcompile_pytest}
+        DEPENDS ${_ctcompile_check_depends}
+        USES_TERMINAL
+        COMMENT "Running the ctcompile pytest drivers")
+      add_test(NAME ctcompile_pytest COMMAND ${_ctcompile_pytest})
+      set_tests_properties(ctcompile_pytest PROPERTIES
+        TIMEOUT 3600 PROCESSORS ${ctcompile_lit_processors})
+    endif()
   endif()
 endif()
