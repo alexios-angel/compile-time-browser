@@ -15,6 +15,11 @@
 # 103 more calls. SelectorEngine's and Manipulator's methods follow (one
 # calls another through `this`, one creates a filter arrow): 13 more targets,
 # 63 more calls.
+# Flattening copies each component's inherited methods and statics onto it
+# and erases the parents nothing reaches, and the static-member rewrite calls
+# static members directly; on its own branch that gave 100 targets over 502
+# calls. The combined count below is still the integration side's and is
+# re-pinned once measured.
 # BOOTSTRAP: post-native graph: 100 distinct targets over 431 ctjs.call_direct and 0 emitc.call site(s)
 # The factory itself calls EventHandler's `on` (fn$136), now a direct call.
 # One of those arrows, fn$126, is called from the startup path itself.
