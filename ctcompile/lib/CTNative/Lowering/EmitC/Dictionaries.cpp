@@ -22,24 +22,6 @@
 
 namespace ctcompile::ctnative::lowering_detail {
 
-namespace {
-
-constexpr llvm::StringLiteral kDictionaryHeader = "ctcompile/CTNative/Runtime/Dictionary.hpp";
-
-/// Adds `#include "Runtime/Dictionary.hpp"` once, at the top of the module;
-/// the runtime header and its defines go in front of it later
-/// (lowering::declareGlobals), and Dictionary.hpp includes ctnative.hpp.
-void includeDictionaryHeader(mlir::ModuleOp module) {
-    for (auto include : module.getBody()->getOps<ec::IncludeOp>()) {
-        if (include.getInclude() == kDictionaryHeader) { return; }
-    }
-    mlir::OpBuilder b(module.getContext());
-    b.setInsertionPointToStart(module.getBody());
-    ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kDictionaryHeader), mlir::UnitAttr{});
-}
-
-} // namespace
-
 bool replaceDictionary(lowering & lower, mlir::Operation * o) {
     const llvm::StringRef action = nativeDictionaryAction(o);
     const bool site = isNativeDictionarySite(o);
@@ -54,7 +36,6 @@ bool replaceDictionary(lowering & lower, mlir::Operation * o) {
         return callValue(b, where, o->getResult(0).getType(), callee, operands);
     };
     if (site) {
-        includeDictionaryHeader(lower.module);
         auto table = llvm::cast<DictType>(lower.typeOf(o->getResult(0)));
         swap(call("ctnative::make_dictionary<" + dictionaryValueSpelling(table) + ">", {}));
         return true;
@@ -84,11 +65,8 @@ bool replaceDictionary(lowering & lower, mlir::Operation * o) {
         // `t === undefined` or `t == undefined` of a table read.
         // The operands are emitted values by now; the table is the one
         // spelled as a table.
-        const auto isTable = [](mlir::Value value) {
-            auto type = llvm::dyn_cast<ec::OpaqueType>(value.getType());
-            return type && type.getValue().starts_with("std::shared_ptr<ctnative::dictionary<");
-        };
-        const mlir::Value table = isTable(compare.getLhs()) ? compare.getLhs() : compare.getRhs();
+        const mlir::Value table =
+            isDictionaryCarrier(compare.getLhs().getType()) ? compare.getLhs() : compare.getRhs();
         swap(call("ctnative::dictionary_absent", {table}));
         return true;
     }

@@ -34,6 +34,12 @@ mlir::Value lowering::convertScalar(mlir::OpBuilder & b, mlir::Location where, m
         value = ec::LoadOp::create(b, where, lvalue.getValueType(), value);
     }
     if (value.getType() == target) { return value; }
+    // A table variable starts as undefined, its null pointer: the table proof
+    // lets only tables and the hoisted undefined into such a variable, so a
+    // value that is not a table here is that undefined.
+    if (isDictionaryCarrier(target) && !isDictionaryCarrier(value.getType())) {
+        return ec::LiteralOp::create(b, where, target, "nullptr");
+    }
     // Joined into an instance (EmitC/Instances.cpp), anything that is not one
     // is null, undefined or a falsy `has` result: the registry proof allows no
     // other, and a null pointer stands for each.

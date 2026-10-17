@@ -1253,6 +1253,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
             !isStringCarrier(carrierOf(typeOf(operands[i]))) &&
             !isStringUnionCarrier(carrierOf(typeOf(operands[i]))) &&
             !(carrierOf(typeOf(operands[i])) == carrier::map && nativeMapGroup(operands[i]) >= 0) &&
+            // A table is shared with the callee (Admission/Dictionaries.cpp).
+            carrierOf(typeOf(operands[i])) != carrier::dictionary &&
             // An element array is lent to the callee as a std::span.
             !isElementArray(operands[i], typeOf(operands[i]), pageViews()) &&
             // An ordinary script's element (or element or null) is a copied view.

@@ -346,6 +346,11 @@ std::string dictionarySpelling(mlir::Type type);
 /// The C++ type of the values of a table: a scalar carrier, or a table's
 /// spelling for a table of tables.
 std::string dictionaryValueSpelling(DictType type);
+/// The C++ type that holds a value of `type` (carrierType), with a table's
+/// full spelling, which its carrier alone does not give.
+mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type);
+/// Whether an emitted type is a table's std::shared_ptr.
+bool isDictionaryCarrier(mlir::Type type);
 mlir::Type closureCarrierType(ClosureType type);
 /// The C++ spelling of the class tag a field holding class `name` has:
 /// `<name>_class`, an empty struct the module declares once.
