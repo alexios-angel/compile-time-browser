@@ -257,6 +257,10 @@ static Type mergeSameFamily(Type a, Type b) {
     }
     if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
     if (llvm::isa<DictType>(a)) { return mergeElements<DictType>(a, b); }
+    // Promises and their resolve functions meet by value type
+    // (CTNativeTypes.td).
+    if (llvm::isa<PromiseType>(a)) { return mergeElements<PromiseType>(a, b); }
+    if (llvm::isa<PromiseResolveType>(a)) { return mergeElements<PromiseResolveType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);
         if (!mapB) { return Type(); }

@@ -7,6 +7,8 @@ ctcompile_test_sources(ctcompile-test-native-array-callbacks NativeArrayCallback
 ctcompile_test_sources(ctcompile-test-native-callable NativeCallable.cpp)
 ctcompile_test_sources(ctcompile-test-native-events NativeEvents.cpp)
 
+ctcompile_test_sources(ctcompile-test-native-promise NativePromise.cpp)
+
 ctcompile_test_sources(ctcompile-test-native-handlers NativeHandlers.cpp)
 
 ctcompile_test_sources(ctcompile-test-native-json NativeJson.cpp)

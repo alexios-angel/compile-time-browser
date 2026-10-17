@@ -59,6 +59,20 @@ function listen(name) {
 }
 listen('b');
 
+// A listener that writes a binding of the frame that registered it: the frame
+// and the listener share `on` through a cell, so each click flips the one
+// binding and the frame's own write after registering is what the first
+// click sees.
+function toggler() {
+    var on = true;
+    document.documentElement.addEventListener('click', function () {
+        on = !on;
+        order = order + (on ? '+' : '-');
+    });
+    on = false;
+}
+toggler();
+
 // The capture phase, from the window down: a capturing listener on the
 // document and one on the root, and a bubbling one on the window, which a
 // click stopped at <body> never reaches.
@@ -112,6 +126,26 @@ function wire(mark) {
 }
 wire('h');
 
+// Promise jobs a listener queues run at the next microtask checkpoint: when a
+// host click returns, but only after the rest of the script when the script
+// dispatches the event itself.
+var jobs = '';
+document.documentElement.addEventListener('ping', function () {
+    Promise.resolve(0).then(function () {
+        jobs = jobs + 'j';
+    });
+});
+function ping() {
+    document.documentElement.dispatchEvent(new Event('ping'));
+    jobs = jobs + 's';
+}
+ping();
+document.documentElement.addEventListener('click', function () {
+    Promise.resolve(0).then(function () {
+        jobs = jobs + 'c';
+    });
+});
+
 function events_report() {
-    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted + '| named=' + named;
+    return 'clicks=' + clicks + ' order=' + order + ' seen=' + seen + '| phases=' + phases + '| notes=' + notes + '| counted=' + counted + '| named=' + named + '| jobs=' + jobs;
 }

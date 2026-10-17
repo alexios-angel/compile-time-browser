@@ -22,6 +22,14 @@ inline constexpr llvm::StringLiteral kNativeCaptures = "ctnative.captures";
 inline constexpr llvm::StringLiteral kNativeLifted = "ctnative.lifted";
 inline constexpr llvm::StringLiteral kNativeUnboxed = "ctnative.unboxed";
 inline constexpr llvm::StringLiteral kNativeCarried = "ctnative.carried";
+/// On a carried `ctjs.create_cell`: a callback the runtime keeps (a timer
+/// handler, a listener, a promise handler) captures it, so the binding lives
+/// in a std::shared_ptr<ctnative::cell<T>> (Runtime/Cell.hpp) rather than a
+/// frame-local variable. On a ctjs.func or a call site, the entry-block
+/// indices among `ctnative.cell_args` that receive such a handle rather than
+/// a pointer.
+inline constexpr llvm::StringLiteral kNativeSharedCell = "ctnative.shared_cell";
+inline constexpr llvm::StringLiteral kNativeSharedCellArgs = "ctnative.shared_cell_args";
 inline constexpr llvm::StringLiteral kNativeClosureReason = "ctnative.closure_reason";
 inline constexpr llvm::StringLiteral kNativeCellReason = "ctnative.cell_reason";
 inline constexpr llvm::StringLiteral kNativeObjectReason = "ctnative.object_reason";
@@ -78,6 +86,18 @@ inline constexpr llvm::StringLiteral kNativeHostCallback = "ctnative.host_callba
 /// naming which, since the lowering replaces the load the call was recognised
 /// by before the call itself.
 inline constexpr llvm::StringLiteral kNativeHostTimer = "ctnative.host_timer";
+/// A callback a promise operation keeps: the executor of `new Promise(f)` or
+/// the handler of `p.then(f)`, which closure lifting specialised for that one
+/// construct or call. On the `ctjs.construct` or `ctjs.call` it is a symbol
+/// reference to the callback, whose captures are the operation's arguments.
+/// Written by ClosureLifting/Promises.cpp and read by type inference,
+/// admission and the lowering.
+inline constexpr llvm::StringLiteral kNativePromiseCallback = "ctnative.promise_callback";
+/// On such a callback's `ctjs.func`, the entry-block index of its JavaScript
+/// parameter (the executor's resolve function, or the handler's value),
+/// which follows the captures; a handler that declares none has no
+/// parameter at that index.
+inline constexpr llvm::StringLiteral kNativePromiseParameter = "ctnative.promise_parameter";
 /// On a specialised `addEventListener` call whose receiver is the realm's own
 /// `document` or `window`: that name, since the lowering replaces the load.
 inline constexpr llvm::StringLiteral kNativeHostTarget = "ctnative.host_target";
