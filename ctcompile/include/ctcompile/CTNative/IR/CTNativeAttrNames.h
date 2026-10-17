@@ -64,8 +64,8 @@ inline constexpr llvm::StringLiteral kNativeClassConstruct = "ctnative.class_con
 /// (ClosureLifting/Singletons.cpp).
 inline constexpr llvm::StringLiteral kNativeStaticClass = "ctnative.static_class";
 /// On the owning ctjs.create_cell of such a static cell whose reads are all
-/// `new`s but which markStaticClassReads did not mark: why (it is written
-/// with another value, or a read can run before the write).
+/// `new`s but which markStaticClassReads did not mark because a read can run
+/// before the class is written.
 inline constexpr llvm::StringLiteral kNativeStaticClassReason = "ctnative.static_class_reason";
 /// On a class constructor's closure: why the class census did not prove it.
 inline constexpr llvm::StringLiteral kNativeClassReason = "ctnative.class_reason";
