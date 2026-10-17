@@ -164,8 +164,12 @@ void lowering::declareGlobals() {
     // been deforested. The choice only becomes more conservative here.
     // Only programs that register listeners parse the listener table.
     bool needsEvents = false;
+    // A table's type can appear in signatures and statics, so its header goes
+    // right after the runtime's.
+    bool needsDictionaries = false;
     module.walk([&](ec::CallOpaqueOp call) {
         needsEvents |= call.getCallee().starts_with("ctnative::EventTarget.");
+        needsDictionaries |= call.getCallee().starts_with("ctnative::make_dictionary<");
         needsMapOrder |= call.getCallee() == "ctnative::map_keys" ||
                          call.getCallee() == "ctnative::map_values" ||
                          call.getCallee().starts_with("ctnative::map_snapshot_at<");
@@ -187,6 +191,11 @@ void lowering::declareGlobals() {
     if (needsDOM) { verbatim(b, kDOMDefine); }
     if (pageReads) { verbatim(b, ("#ifndef CTNATIVE_DOM\n" + kDOMDefine + "\n#endif").str()); }
     ec::IncludeOp::create(b, module.getLoc(), b.getStringAttr(kRuntimeHeader), mlir::UnitAttr{});
+    if (needsDictionaries) {
+        ec::IncludeOp::create(b, module.getLoc(),
+                              b.getStringAttr("ctcompile/CTNative/Runtime/Dictionary.hpp"),
+                              mlir::UnitAttr{});
+    }
     if (pageReads) {
         ec::IncludeOp::create(b, module.getLoc(),
                               b.getStringAttr("ctcompile/CTNative/Runtime/Page.hpp"),

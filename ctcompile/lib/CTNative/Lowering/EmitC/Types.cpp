@@ -151,11 +151,11 @@ void lowering::retype(ctjs::FuncOp fn) {
         // below, because the lattice type of either value describes what the
         // cell holds, not the cell itself.
         if (admission::isCarriedCell(v.getDefiningOp())) {
-            v.setType(ec::LValueType::get(carrierType(context, carrierOf(typeOf(v)))));
+            v.setType(ec::LValueType::get(valueCarrierType(context, typeOf(v))));
             return;
         }
         if (admission::isCellParameter(v)) {
-            v.setType(ec::PointerType::get(carrierType(context, carrierOf(typeOf(v)))));
+            v.setType(ec::PointerType::get(valueCarrierType(context, typeOf(v))));
             return;
         }
         const carrier c = carrierOf(typeOf(v));

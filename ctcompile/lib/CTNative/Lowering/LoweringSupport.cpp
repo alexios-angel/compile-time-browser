@@ -430,6 +430,17 @@ std::string dictionarySpelling(mlir::Type type) {
            dictionaryValueSpelling(llvm::cast<DictType>(type)) + ">>";
 }
 
+mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type) {
+    return carrierOf(type) == carrier::dictionary
+               ? mlir::Type(ec::OpaqueType::get(context, dictionarySpelling(type)))
+               : carrierType(context, carrierOf(type));
+}
+
+bool isDictionaryCarrier(mlir::Type type) {
+    auto opaque = llvm::dyn_cast<ec::OpaqueType>(type);
+    return opaque && opaque.getValue().starts_with("std::shared_ptr<ctnative::dictionary<");
+}
+
 mlir::Type mapCarrierType(MapType type) {
     const auto key = mapKeySpelling(type.getKeyType());
     const auto value = type.getValueType();
