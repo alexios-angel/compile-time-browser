@@ -5,7 +5,9 @@
 // pattern one the native runtime runs as JavaScript does (Runtime/RegExp.hpp),
 // and the callback has to return a String or a Number, which the runtime
 // converts with ToString. The method read and the RegExp literal the call
-// consumes lower to nothing. `text.toLowerCase()` needs a String receiver.
+// consumes lower to nothing. `text.toLowerCase()` and `text.trim()` need a
+// String receiver, and `text.replace(/re/, s)` a String receiver, a pattern
+// as above and a String replacement.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,9 +20,26 @@ std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * 
     if (TypeInference::isStringMethodCall(o)) {
         auto call = llvm::cast<ctjs::CallOp>(o);
         const mlir::Type receiver = self.typeOf(call.getReceiver());
-        return carrierOf(receiver) == carrier::string ||
-               self.refuse("the receiver of String.prototype.toLowerCase is " + printed(receiver) +
-                           ", not a String");
+        const llvm::StringRef name = o->getAttrOfType<mlir::StringAttr>(kNativeStringMethod);
+        if (carrierOf(receiver) != carrier::string) {
+            return self.refuse(("the receiver of String.prototype." + name + " is ").str() +
+                               printed(receiver) + ", not a String");
+        }
+        if (name != "replace") { return true; }
+        // replace with a RegExp literal the runtime runs as JavaScript does,
+        // and a String replacement (its `$` patterns are GetSubstitution's).
+        const mlir::Type replacement = self.typeOf(call.getArgs()[1]);
+        if (carrierOf(replacement) != carrier::string) {
+            return self.refuse("the replacement of String.prototype.replace is " +
+                               printed(replacement) + ", not a String or a function");
+        }
+        const auto literal = TypeInference::regExpLiteral(call.getArgs()[0]);
+        if (!literal) {
+            return self.refuse("a String.prototype.replace call that lost its RegExp");
+        }
+        const std::string why =
+            TypeInference::replacePatternProblem(literal->first, literal->second, 0);
+        return why.empty() || self.refuse("String.prototype.replace " + why);
     }
     if (!TypeInference::isStringCallbackCall(o)) { return std::nullopt; }
     auto call = llvm::cast<ctjs::CallOp>(o);

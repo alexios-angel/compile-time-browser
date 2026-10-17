@@ -196,6 +196,7 @@ bool admission::function(ctjs::FuncOp fn) {
         // list, plus the bookkeeping, literal and owned-global rows here.
         // Map bookkeeping is asked of the operation, which may have no result.
         if (isNativeMapBookkeeping(o)) { return; }
+        if (nativeDictionaryAction(o) == "plumbing") { return; }
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
         // An object literal, or a record its callee returned, is its class.

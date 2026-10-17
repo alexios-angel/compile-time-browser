@@ -43,6 +43,7 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -471,8 +472,9 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         // An index proved in bounds reads the element; otherwise one past
         // the end, a fraction or a negative reads undefined.
         if (key.empty() && isProvedNumeric(operands[1])) {
-            return isBoundedIndexRead(op) ? vector.getElementType()
-                                          : meet(absentType(c), vector.getElementType());
+            const bool exists = isBoundedIndexRead(op) ||
+                                (llvm::isa<TupleType>(vector.getElementType()) && isRowRead(op));
+            return exists ? vector.getElementType() : meet(absentType(c), vector.getElementType());
         }
         return {};
     }
@@ -710,6 +712,12 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return mlir::success();
     };
 
+    if (auto refine = llvm::dyn_cast<RefineOp>(op)) {
+        const TypeValue & from = operands[0]->getValue();
+        if (from.isUninitialized() && refine.getKind() == "truthy") { return mlir::success(); }
+        return answer(refinedType(c, refine.getKind(), from.getType()));
+    }
+
     if (auto visited = visitBorrowedCallback(op, operands, results)) { return *visited; }
     // A run-once static's constant table (Inference/StaticTables.cpp): the
     // literal is the table, and a proved read is the constant in its field.
@@ -848,6 +856,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return answer(doubleType(c));
     }
 
+    if (op->getNumResults() == 1) {
+        if (const mlir::Type table = dictionaryType(op, operands)) { return answer(table); }
+    }
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
         mapAnswer = mapTypeOf(op, made.getResult());
@@ -902,6 +913,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
     // String.prototype.toLowerCase, and replace with a specialised function.
     if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    // `text[i]` with a Number index: a one-unit String, or undefined past the
+    // end (ECMA-262 10.4.3.5).
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && ctjs::constantKey(read.getKey()).empty() && isProvedString(operands[0]) &&
+        llvm::isa_and_nonnull<NumType>(operands[1]->getValue().getType())) {
+        return answer(meet(absentType(c), stringType(c)));
+    }
     if (isStringCallbackCall(op)) {
         bool pending = false;
         const mlir::Type replaced = stringCallbackType(op, operands, pending);

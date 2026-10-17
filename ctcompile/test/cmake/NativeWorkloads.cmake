@@ -74,13 +74,15 @@ set_tests_properties(css_syntax_native_gate_control PROPERTIES WILL_FAIL TRUE)
 
 # bootstrap_layout.native: unittests/unit/bootstrap_layout.cpp on a VM-free
 # page (ctbrowser::page::static_page), with tools/check/css-dump.js compiled by
-# the native pipeline into the C++ its engine calls. The rule is complete, but
-# the target is EXCLUDE_FROM_ALL and its test is not registered yet:
-# css-dump.js does not compile natively yet, so building it fails in
-# pipeline.cmake, and `all` must keep working. Build it by name to try
-# (ctbrowser-test-bootstrap_layout-native). Once css-dump.js compiles, drop
-# EXCLUDE_FROM_ALL and register `bootstrap_layout.native` through
-# ${_native_gate}, as css_syntax.native is.
+# the native pipeline into the C++ its engine calls. It is registered as
+# check-workload.py's native-run stage asks (`ctest -R
+# '^bootstrap_layout[.]native$'`), through ${_native_gate} as css_syntax.native
+# is, with the environment and working directory ctbrowser_test() gives
+# bootstrap_layout. CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE=OFF keeps the target out
+# of `all` and the test unregistered, for a tree whose compiler cannot lower
+# css-dump.js (pipeline.cmake then fails the build).
+option(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE
+       "Build and register bootstrap_layout.native (css-dump.js compiled natively)" ON)
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set(_css_dump "${CTCOMPILE_MONOREPO_ROOT}/tools/check/css-dump.js")
   set(_css_dump_emitc "${CMAKE_CURRENT_BINARY_DIR}/css-dump.emitc.mlir")
@@ -110,13 +112,25 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/bootstrap_layout_scripts.cpp"
                               PROPERTIES OBJECT_DEPENDS "${_css_dump_cpp}")
 
-  add_executable(ctbrowser-test-bootstrap_layout-native EXCLUDE_FROM_ALL
+  add_executable(ctbrowser-test-bootstrap_layout-native
     "${_native_ctbrowser}/unittests/unit/bootstrap_layout.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/bootstrap_layout_scripts.cpp")
   target_compile_definitions(ctbrowser-test-bootstrap_layout-native PRIVATE
     CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctbrowser-test-bootstrap_layout-native PRIVATE ctbrowser::page)
   ctcompile_target(ctbrowser-test-bootstrap_layout-native)
+  if(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE)
+    add_test(NAME bootstrap_layout.native
+             COMMAND "${CMAKE_COMMAND}" "-DNM=${_native_gate_nm}"
+                     "-DEXE=$<TARGET_FILE:ctbrowser-test-bootstrap_layout-native>"
+                     -P "${_native_gate}"
+             WORKING_DIRECTORY "${_native_ctbrowser}")
+    set_tests_properties(bootstrap_layout.native PROPERTIES ENVIRONMENT
+      "CTBROWSER_TEST_ENGINE=native;CTBROWSER_FONT_PATH=${_native_ctbrowser}/resources/fonts")
+  else()
+    set_target_properties(ctbrowser-test-bootstrap_layout-native PROPERTIES
+                          EXCLUDE_FROM_ALL TRUE)
+  endif()
 
   # dom-reads.test: CTNative/Browser/page/dom-reads.js over the interpreter
   # and compiled natively, through the same engine seam and wrapper as

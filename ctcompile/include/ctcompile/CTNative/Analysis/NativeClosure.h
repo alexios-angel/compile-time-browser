@@ -44,10 +44,11 @@ inline constexpr llvm::StringLiteral kNativeBorrowedCall = "ctnative.borrowed_ca
 inline constexpr llvm::StringLiteral kNativeClosureSet = "ctnative.closure_set";
 
 /// Whether `type` is a closure set every target of which the closure-set lift
-/// made a member (kNativeClosureSet on the target's ctjs.func), looked up
-/// from `at`. Any other `closure_set` (callers passing different callbacks
-/// to one borrowed parameter, say) has no closure-set representation.
+/// made a member (kNativeClosureSet on the target's ctjs.func), possibly
+/// absent (`opt`), looked up from `at`. Any other `closure_set` (callers passing different
+/// callbacks to one borrowed parameter, say) has no closure-set representation.
 inline bool isProvedClosureSet(mlir::Operation * at, mlir::Type type) {
+    if (auto optional = llvm::dyn_cast_or_null<OptType>(type)) { type = optional.getElementType(); }
     auto set = llvm::dyn_cast_or_null<ClosureSetType>(type);
     if (!set) { return false; }
     return llvm::all_of(set.getTargets(), [&](mlir::StringAttr target) {

@@ -77,6 +77,14 @@ std::string TypeInference::replacePatternProblem(llvm::StringRef pattern, llvm::
         if (static_cast<unsigned char>(ch) >= 0x80) {
             return "with a non-ASCII pattern - std::regex reads it byte by byte";
         }
+        // A control escape (\t, \n, \v, \f, \r) is one ASCII character to both
+        // engines, inside a class or out.
+        const bool controlEscape = ch == '\\' && i + 1 < pattern.size() &&
+                                   llvm::StringRef{"tnvfr"}.contains(pattern[i + 1]);
+        if (controlEscape) {
+            previous = pattern[++i];
+            continue;
+        }
         if (inClass) {
             if (ch == '\\') { return "with an escape inside a class"; }
             if (ch == ']') { inClass = false; }
@@ -96,8 +104,16 @@ std::string TypeInference::replacePatternProblem(llvm::StringRef pattern, llvm::
             continue;
         }
         case '.': return "with `.` - it matches one UTF-16 unit in JavaScript and one byte here";
-        case '^':
         case '$':
+            // At the end, after an atom, `$` is the end of the input to both
+            // engines (no `m` flag) and the atom before it keeps the pattern
+            // from matching the empty string.
+            if (i + 1 == pattern.size() && previous != '|' && previous != '(') {
+                previous = 'a';
+                continue;
+            }
+            [[fallthrough]];
+        case '^':
             return std::string{"with the anchor `"} + ch + "` - it can match the empty string";
         case '*':
         case '?':
@@ -151,12 +167,27 @@ bool TypeInference::isStringCallbackCall(mlir::Operation * op) {
 
 void TypeInference::markStringMethodCalls(mlir::Operation * top) {
     top->walk([](ctjs::CallOp call) {
-        if (!call.getArgs().empty()) { return; }
         auto read = ctjs::receiverMethod(call);
+        const llvm::StringRef name = ctjs::methodKey(call);
         if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
-            ctjs::methodKey(call) == "toLowerCase") {
-            call->setAttr(kNativeStringMethod,
-                          mlir::StringAttr::get(call.getContext(), "toLowerCase"));
+            call.getArgs().empty() && (name == "toLowerCase" || name == "trim")) {
+            call->setAttr(kNativeStringMethod, mlir::StringAttr::get(call.getContext(), name));
+        }
+        // `text.replace(/pattern/, replacement)` with a replacement that is
+        // not a function: closure lifting specialises the function case.
+        if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
+            name == "replace" && call.getArgs().size() == 2 &&
+            !call->hasAttr(kNativeStringCallback) &&
+            !call.getArgs()[1].getDefiningOp<ctjs::CreateClosureOp>() &&
+            call.getArgs()[0].hasOneUse()) {
+            if (const auto literal = regExpLiteral(call.getArgs()[0])) {
+                // The source, kept for the emitter: the literal's constant
+                // operands are lowered before the call is.
+                mlir::MLIRContext * c = call.getContext();
+                call->setAttr(kNativeStringMethod, mlir::StringAttr::get(c, name));
+                call->setAttr("ctnative.replace_pattern", mlir::StringAttr::get(c, literal->first));
+                call->setAttr("ctnative.replace_flags", mlir::StringAttr::get(c, literal->second));
+            }
         }
     });
 }
@@ -175,7 +206,13 @@ bool TypeInference::consumedByStringCallback(mlir::Operation * op) {
     if (isStringCallbackCall(user)) {
         return use.getOperandNumber() == 0 || use.getOperandNumber() == 2;
     }
-    if (isStringMethodCall(user)) { return use.getOperandNumber() == 0; }
+    // A marked method call consumes its method read, and replace its RegExp
+    // literal too.
+    if (isStringMethodCall(user)) {
+        return use.getOperandNumber() == 0 ||
+               (use.getOperandNumber() == 2 &&
+                user->getAttrOfType<mlir::StringAttr>(kNativeStringMethod) == "replace");
+    }
     return llvm::isa<ctjs::LoadGlobalOp>(op) && use.getOperandNumber() == 0 &&
            consumedByStringCallback(user);
 }

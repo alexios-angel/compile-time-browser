@@ -96,13 +96,16 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
     llvm::DenseSet<mlir::Value> seen{array};
     llvm::SmallVector<mlir::Operation *> owners;
     bool borrowed = false;
-    // A parameter is a read-only borrow of the caller's array: nothing here
-    // may write it, return it or mix it with an array this function owns.
+    // A parameter is a borrow of the caller's array: nothing here may return
+    // it or mix it with an array this function owns.
     bool parameter = false, writes = false, returned = false;
     // An element's `children` is an HTMLCollection, which has no push, join
     // or sort, and which the native runtime snapshots (Browser.hpp): it may
     // only be read.
     bool collection = false, joined = false, lent = false;
+    // A call the array is lent to; one lent twice to the same call would be
+    // two borrows of one vector, and a push through one would move the other.
+    llvm::DenseSet<mlir::Operation *> lentTo;
     std::size_t work = 0;
     const auto add = [&](mlir::Value value) {
         if (seen.insert(value).second) { members.push_back(value); }
@@ -288,6 +291,9 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
             // parameter read-only; a refused callee refuses this caller too.
             if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
                 call && use.getOperandNumber() >= 3) {
+                if (!lentTo.insert(call).second) {
+                    return fail("an array passed twice to one call");
+                }
                 lent = true;
                 continue;
             }
@@ -315,10 +321,10 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
                                          "a function"
                                        : "an element's children called with an Array method");
     }
-    if (parameter && (!owners.empty() || writes || returned)) {
+    // A parameter borrows the caller's array: read-only as a span, or, when
+    // the function pushes to it or sorts it, by address (elementParameterWritten).
+    if (parameter && (!owners.empty() || returned)) {
         return fail(!owners.empty() ? "a parameter array mixed with an array this function owns"
-                    : writes        ? "a parameter array the function pushes to or sorts - a "
-                                      "parameter is a read-only borrow"
                                     : "a parameter array returned from the function");
     }
     // A value carried through scf control flow is the address of its owner, so
@@ -345,8 +351,25 @@ llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorAliases(mlir::Valu
 }
 
 llvm::SmallVector<mlir::Value, 4> TypeInference::elementVectorStores(
-    llvm::ArrayRef<mlir::Value> members) {
+    llvm::ArrayRef<mlir::Value> group) {
     llvm::SmallVector<mlir::Value, 4> stores;
+    // The array's own members, then the parameter groups of every callee it is
+    // lent to: a push there stores into this array too.
+    llvm::SmallVector<mlir::Value, 8> members(group);
+    llvm::DenseSet<mlir::Value> seen(group.begin(), group.end());
+    for (std::size_t at = 0; at < members.size(); ++at) {
+        mlir::Value member = members[at];
+        for (mlir::OpOperand & use : member.getUses()) {
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
+            if (!callee || use.getOperandNumber() < 3 || callee.getBody().empty()) { continue; }
+            mlir::Value parameter = callee.getBody().front().getArgument(use.getOperandNumber());
+            if (seen.contains(parameter)) { continue; }
+            for (mlir::Value borrowed : elementVectorAliases(parameter)) {
+                if (seen.insert(borrowed).second) { members.push_back(borrowed); }
+            }
+        }
+    }
     for (mlir::Value member : members) {
         if (auto literal = member.getDefiningOp<ctjs::CreateArrayOp>()) {
             llvm::append_range(stores, literal.getElements());
@@ -421,11 +444,75 @@ bool TypeInference::isTupleLiteral(mlir::Value array) {
     });
 }
 
+namespace {
+
+/// Whether every value `counter`, a before-region argument of an scf.while,
+/// can hold is an integer at least 0: following the loop's back edge and the
+/// structured results it passes through, each value that reaches it is a
+/// constant index at least 0, `counter + 1`, or `ub.poison`, which the
+/// structuring pass yields only on the path that leaves the loop.
+bool nonNegativeCounter(mlir::BlockArgument counter, mlir::scf::WhileOp loop) {
+    llvm::SmallVector<mlir::Value> work{loop.getInits()[counter.getArgNumber()],
+                                        loop.getYieldOp().getOperand(counter.getArgNumber())};
+    llvm::DenseSet<mlir::Value> seen;
+    while (!work.empty()) {
+        const mlir::Value value = work.pop_back_val();
+        if (!seen.insert(value).second) { continue; }
+        if (auto argument = llvm::dyn_cast<mlir::BlockArgument>(value)) {
+            // The after-region receives what the condition forwards.
+            if (argument.getOwner()->getParent() != &loop.getAfter()) { return false; }
+            work.push_back(loop.getConditionOp().getArgs()[argument.getArgNumber()]);
+            continue;
+        }
+        mlir::Operation * producer = value.getDefiningOp();
+        const unsigned index = llvm::cast<mlir::OpResult>(value).getResultNumber();
+        if (llvm::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(producer)) {
+            for (mlir::Region & region : producer->getRegions()) {
+                if (region.empty()) { return false; }
+                work.push_back(region.front().getTerminator()->getOperand(index));
+            }
+            continue;
+        }
+        if (producer->getName().getStringRef() == "ub.poison" ||
+            TypeInference::constantIndex(value) >= 0) {
+            continue;
+        }
+        auto add = llvm::dyn_cast<ctjs::BinaryStaticOp>(producer);
+        if (!add || add.getKind() != ctjs::BinaryKind::Add || add.getLhs() != counter ||
+            TypeInference::constantIndex(add.getRhs()) != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
     auto counter = read ? llvm::dyn_cast<mlir::BlockArgument>(read.getKey()) : nullptr;
     if (!counter) { return false; }
     auto loop = llvm::dyn_cast<mlir::scf::WhileOp>(counter.getOwner()->getParentOp());
+    // A folded for-of (Lowering/ForOf.cpp) reads in the before-region, under
+    // `counter < array.length`, with the counter stepped through the
+    // structured exits of its body.
+    if (loop && counter.getOwner()->getParent() == &loop.getBefore()) {
+        for (mlir::Operation * at = read->getParentOp(); at != loop; at = at->getParentOp()) {
+            auto branch = llvm::dyn_cast<mlir::scf::IfOp>(at);
+            if (!branch || !branch.getThenRegion().isAncestor(read->getParentRegion())) {
+                continue;
+            }
+            auto truthy = branch.getCondition().getDefiningOp<ctjs::TruthyOp>();
+            auto compare = truthy ? truthy.getValue().getDefiningOp<ctjs::CompareOp>() : nullptr;
+            auto length = compare ? compare.getRhs().getDefiningOp<ctjs::GetPropertyOp>() : nullptr;
+            if (compare && compare.getKind() == ctjs::CompareKind::Lt &&
+                compare.getLhs() == counter && length && length.getObject() == read.getObject() &&
+                ctjs::constantKey(length.getKey()) == "length") {
+                return nonNegativeCounter(counter, loop);
+            }
+        }
+        return false;
+    }
     if (!loop || counter.getOwner()->getParent() != &loop.getAfter()) { return false; }
     const unsigned index = counter.getArgNumber();
     // The condition forwards the before-region counter unchanged ...
@@ -455,6 +542,113 @@ bool TypeInference::isBoundedIndexRead(mlir::Operation * op) {
     }
     if (auto add = llvm::dyn_cast_or_null<ctjs::BinaryOp>(step)) {
         return add.getKind() == ctjs::BinaryKind::Add && addsOne(add.getLhs(), add.getRhs());
+    }
+    return false;
+}
+
+namespace {
+/// Whether `op` is a built-in call (TypeInference::builtinStaticOf) that takes
+/// `value` as an Element argument.
+bool builtinElementUse(mlir::Operation * op, mlir::Value value) {
+    const TypeInference::BuiltinStatic * row = TypeInference::builtinStaticOf(op);
+    if (!row) { return false; }
+    auto args = llvm::cast<ctjs::CallOp>(op).getArgs();
+    for (unsigned i = 0; i < args.size() && i < row->arity; ++i) {
+        if (args[i] == value && row->params[i] == TypeInference::BuiltinStatic::Param::element) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+llvm::StringRef TypeInference::firstPropertyRead(mlir::Value value) {
+    llvm::DenseSet<mlir::Value> seen;
+    while (value && seen.insert(value).second) {
+        auto fn = value.getParentRegion()->getParentOfType<ctjs::FuncOp>();
+        if (!fn) { return {}; }
+        // ponytail: text order, not execution order; a read in a branch that
+        // does not run can name the wrong key. Only the error message depends
+        // on it.
+        mlir::Operation * first = nullptr;
+        fn.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation * op) {
+            if (first) { return mlir::WalkResult::interrupt(); }
+            auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+            auto call = llvm::dyn_cast<ctjs::CallDirectOp>(op);
+            auto yield = llvm::dyn_cast<mlir::scf::YieldOp>(op);
+            if ((read && read.getObject() == value && !ctjs::constantKey(read.getKey()).empty()) ||
+                (call && llvm::is_contained(call->getOperands().drop_front(3), value)) ||
+                (yield && llvm::is_contained(yield->getOperands(), value)) ||
+                builtinElementUse(op, value)) {
+                first = op;
+                return mlir::WalkResult::interrupt();
+            }
+            return mlir::WalkResult::advance();
+        });
+        if (auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(first)) {
+            return ctjs::constantKey(read.getKey());
+        }
+        // A built-in that takes it as an Element reads it as its receiver,
+        // `Element.prototype.querySelectorAll.call(root, s)`.
+        if (first && builtinElementUse(first, value)) { return builtinStaticOf(first)->member; }
+        // Out of a branch it is yielded from, as a default parameter's value
+        // `e = document.documentElement` is, into the branch's result.
+        if (auto yield = llvm::dyn_cast_or_null<mlir::scf::YieldOp>(first)) {
+            mlir::Operation * branch = yield->getParentOp();
+            const auto at = static_cast<unsigned>(llvm::find(yield->getOperands(), value) -
+                                                  yield->getOperands().begin());
+            value = at < branch->getNumResults() ? branch->getResult(at) : mlir::Value{};
+            continue;
+        }
+        auto call = llvm::dyn_cast_or_null<ctjs::CallDirectOp>(first);
+        ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
+        if (!callee || callee.getBody().empty()) { return {}; }
+        // Into the callee, at the first argument position that passes it.
+        const mlir::Value passed = value;
+        value = {};
+        for (unsigned i = 3; i < call->getNumOperands(); ++i) {
+            if (call->getOperand(i) == passed) {
+                value = callee.getBody().front().getArgument(i);
+                break;
+            }
+        }
+    }
+    return {};
+}
+
+bool TypeInference::isRowRead(mlir::Operation * op) {
+    auto read = llvm::dyn_cast_or_null<ctjs::GetPropertyOp>(op);
+    if (!read || !ctjs::constantKey(read.getKey()).empty() || read.getResult().use_empty()) {
+        return false;
+    }
+    return llvm::all_of(read.getResult().getUses(), [](mlir::OpOperand & use) {
+        auto position = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+        if (!position || use.getOperandNumber() != 0) { return false; }
+        const int64_t index = constantIndex(position.getKey());
+        return index == 0 || index == 1;
+    });
+}
+
+bool TypeInference::elementParameterWritten(mlir::Value parameter) {
+    llvm::SmallVector<mlir::Value, 4> pending{parameter};
+    llvm::DenseSet<mlir::Value> seen{parameter};
+    while (!pending.empty()) {
+        for (mlir::Value member : elementVectorAliases(pending.pop_back_val())) {
+            for (mlir::OpOperand & use : member.getUses()) {
+                const VectorCall kind = vectorCallOf(use.getOwner());
+                if (use.getOperandNumber() == 1 &&
+                    (kind == VectorCall::push || kind == VectorCall::sort)) {
+                    return true;
+                }
+                // Lent on to a callee that writes it.
+                auto call = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+                ctjs::FuncOp callee = call ? call.getTarget() : ctjs::FuncOp{};
+                if (callee && use.getOperandNumber() >= 3 && !callee.getBody().empty()) {
+                    mlir::Value next = callee.getBody().front().getArgument(use.getOperandNumber());
+                    if (seen.insert(next).second) { pending.push_back(next); }
+                }
+            }
+        }
     }
     return false;
 }

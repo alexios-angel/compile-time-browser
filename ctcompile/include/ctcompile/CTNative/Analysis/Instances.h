@@ -79,7 +79,17 @@ struct InstanceRegistry {
     /// The class's fields, in the order its constructor first writes them:
     /// the own properties every instance has.
     llvm::SmallVector<std::string> fields;
+    /// For a family of classes sharing one Map, the key each class registers
+    /// under (one constant string per class, different across classes), and
+    /// the calls whose result is read back under a key of this class: the
+    /// result is an instance of this class or neither.
+    std::string key;
+    llvm::SmallVector<mlir::Operation *> keyedReads;
 };
+
+/// The mark markInstanceRegistries puts on a call that reads a family's Map
+/// under one class's key: that class's name.
+inline constexpr llvm::StringLiteral kNativeInstanceKeyClass = "ctnative.instance_key_class";
 
 /// The mark markInstanceRegistries puts on each method of a proved class: the
 /// class's name. Only the constructor and these write the class's fields.

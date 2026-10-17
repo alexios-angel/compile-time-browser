@@ -526,7 +526,9 @@ struct closureLifter {
     std::optional<std::string> whyNotHostCallback(ctjs::CreateClosureOp c);
     void rewriteHostCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
 
-    void census();
+    /// With `cellFactsOnly`, only what isConstantCell reads: no class census
+    /// and no shared-cell census, so it writes no attribute.
+    void census(bool cellFactsOnly = false);
 
     void singleWriteCensus();
 
@@ -762,7 +764,10 @@ struct closureLifter {
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> chainedThrough;
     std::optional<std::string> whyCapturesDoNotLift(ctjs::CreateClosureOp c);
 
-    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target);
+    /// With `selfCalls`, a call the target makes of itself through its own
+    /// closure is not an escape: liftSelfCalls (SelfCalls.cpp) makes it direct.
+    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target, bool selfCalls = false);
+    void liftSelfCalls(ctjs::FuncOp target, unsigned captures, unsigned parameters);
 
     std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
                                                         ctjs::FuncOp target);

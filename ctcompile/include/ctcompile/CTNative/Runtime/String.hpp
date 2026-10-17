@@ -199,6 +199,8 @@ class reg_exp;
 struct replace_method {
     template <class Callback>
     js_string call(const js_string & self, const reg_exp & pattern, Callback callback) const;
+    js_string call(const js_string & self, const reg_exp & pattern,
+                   const js_string & replacement) const;
 };
 
 /// The String.prototype methods native code calls, as stateless method

@@ -2,8 +2,11 @@ target_sources(${CTNATIVE_ANALYSIS_SOURCE_TARGET} PRIVATE
   ArrayCallbacks.cpp
   BorrowedCallbacks.cpp
   BuiltinStatics.cpp
+  Dictionaries.cpp
   Elements.cpp
   Initialization.cpp
+  JsonRecords.cpp
+  Refinements.cpp
   Exceptions.cpp
   Instances.cpp
   Records.cpp

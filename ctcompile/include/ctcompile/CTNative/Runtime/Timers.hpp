@@ -38,6 +38,13 @@ namespace ctnative {
 struct timer_id {
     std::uint32_t value = 0;
 
+    constexpr timer_id() = default;
+    explicit constexpr timer_id(std::uint32_t handle) noexcept : value(handle) {}
+    /// The handle a null or undefined becomes where a program keeps either in
+    /// a handle's place (a field that starts null): the lowering converts
+    /// only those, through ToNumber (0 and NaN), and neither names a timer.
+    constexpr timer_id(js_num /*absent*/) noexcept {}
+
     /// Whether the handle names a timer: every handle a program gets does,
     /// as the VM's handles are all greater than zero.
     [[nodiscard]] constexpr bool is_set() const noexcept { return value != 0; }

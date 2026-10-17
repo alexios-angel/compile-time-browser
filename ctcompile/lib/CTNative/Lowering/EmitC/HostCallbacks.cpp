@@ -95,7 +95,12 @@ std::optional<std::string> eventAction(lowering & lower, mlir::Operation * o) {
     // the load that names it is gone. A handle's truthiness is whether it
     // names a timer.
     if (TypeInference::isTimerClear(o)) {
-        auto load = llvm::cast<ctjs::CallOp>(o).getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
+        auto call = llvm::cast<ctjs::CallOp>(o);
+        // Clearing with null or undefined does nothing, so it prints nothing.
+        if (carrierOf(lower.typeOf(call.getArgs()[0])) != carrier::timer) {
+            return std::string{"timer_clear_nothing"};
+        }
+        auto load = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>();
         return ("timer_clear:" + load.getName()).str();
     }
     if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(o);
@@ -135,10 +140,12 @@ bool replaceEvent(lowering & lower, mlir::Operation * o, llvm::StringRef kind) {
     mlir::MLIRContext * context = o->getContext();
     mlir::OpBuilder b(o);
     const mlir::Location where = o->getLoc();
-    if (llvm::StringRef function = kind; function.consume_front("timer_clear:")) {
-        const mlir::Value operands[] = {llvm::cast<ctjs::CallOp>(o).getArgs()[0]};
-        callWithConstValueOperands(b, where, mlir::TypeRange{},
-                                   b.getStringAttr(("ctnative::" + function).str()), operands);
+    if (llvm::StringRef function = kind; function.consume_front("timer_clear")) {
+        if (function.consume_front(":")) {
+            const mlir::Value operands[] = {llvm::cast<ctjs::CallOp>(o).getArgs()[0]};
+            callWithConstValueOperands(b, where, mlir::TypeRange{},
+                                       b.getStringAttr(("ctnative::" + function).str()), operands);
+        }
         lowering::eraseIfUnused(o);
         return true;
     }

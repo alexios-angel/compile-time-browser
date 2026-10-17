@@ -65,11 +65,11 @@ std::array<mlir::Value, 2> sourcesOf(mlir::OpResult merge) {
 ///
 /// A field counts when the object is a literal of this program used only
 /// through constant keys, so every write of the field is visible: its writes
-/// are the group's values, the literal's own initialization dominates every
-/// read, and each read is one of the group's values. A call through a read
-/// with the object as its receiver passes the object only as `this`, which no
-/// member reads; rewriteClosureSetMember drops it, so the object stays a
-/// closed shape.
+/// are the group's values and each read is one of the group's values, or
+/// absent when no write has run. A call through a field of the object with
+/// the object as its receiver passes it only as `this`, which no closure the
+/// field can hold reads; rewriteClosureSetMember drops it, so the object stays
+/// a closed shape.
 void closureLifter::closureSetCensus() {
     closureSets.clear();
     llvm::DenseSet<mlir::Operation *> seen;
@@ -87,6 +87,43 @@ void closureLifter::closureSetCensus() {
         }
         if (!object.getDefiningOp<ctjs::CreateObjectOp>()) { return {}; }
         return ctjs::constantKey(key);
+    };
+    // Whether `object`, the receiver of `call`, is unseen by the callee: the
+    // callee is a constant-key read of `object` whose every write is a
+    // closure (directly or through scf.if merges) that does not read `this`.
+    // Such a call cannot write `object`'s fields out of sight, and when the
+    // field is a set, rewriteClosureSetMember drops the receiver.
+    const auto receiverIsUnread = [&](ctjs::CallOp call, mlir::Value object) {
+        mlir::Value on;
+        mlir::Operation * read = call.getCallee().getDefiningOp();
+        const llvm::StringRef key = read ? fieldOf(read, on) : llvm::StringRef{};
+        if (key.empty() || on != object) { return false; }
+        llvm::SmallVector<mlir::Value> sources;
+        for (mlir::Operation * user : object.getUsers()) {
+            if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                set && set.getObject() == object && fieldOf(user, on) == key) {
+                sources.push_back(set.getValue());
+            }
+        }
+        if (sources.empty()) { return false; }
+        for (size_t i = 0; i < sources.size(); ++i) {
+            if (auto made = sources[i].getDefiningOp<ctjs::CreateClosureOp>()) {
+                ctjs::FuncOp target = targetOf(made);
+                if (!target || target.getBody().empty() ||
+                    !target.getBody().front().getArgument(ctjs::arg_receiver).use_empty()) {
+                    return false;
+                }
+            } else if (auto merge = llvm::dyn_cast<mlir::OpResult>(sources[i]);
+                       merge && llvm::isa<mlir::scf::IfOp>(merge.getOwner())) {
+                for (mlir::Value source : sourcesOf(merge)) {
+                    if (!source) { return false; }
+                    sources.push_back(source);
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
     };
     for (ctjs::CreateClosureOp start : closures) {
         if (seen.contains(start.getOperation()) || lifted.contains(start.getOperation()) ||
@@ -133,6 +170,10 @@ void closureLifter::closureSetCensus() {
                 if (auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
                     call && use.getOperandNumber() == 0) {
                     group.calls.insert(call);
+                } else if (auto test = llvm::dyn_cast<ctjs::UnaryOp>(use.getOwner());
+                           test && test.getKind() == ctjs::UnaryKind::TypeOf) {
+                    // `typeof f` reads only the kind of value, which the set
+                    // decides; it does not let the value out.
                 } else if (const mlir::Value merged = mergedBy(use)) {
                     add(merged);
                 } else if (llvm::isa<ctjs::SetPropertyOp>(use.getOwner()) &&
@@ -150,33 +191,21 @@ void closureLifter::closureSetCensus() {
             }
         }
         // Each field's object: used only through constant keys, or as the
-        // receiver of a call through the group; initialized by the literal
-        // before every read.
-        for (const auto & [object, key] : fields) {
-            if (!closed) { break; }
-            ctjs::SetPropertyOp initialization;
+        // receiver of a call that cannot see it.
+        // A read no write dominates may find the field absent: type inference
+        // types it opt<closure_set>, and a call through it is refused until a
+        // typeof test narrows it.
+        for (const auto & entry : fields) {
+            const mlir::Value object = entry.first;
             for (mlir::OpOperand & use : object.getUses()) {
+                if (!closed) { break; }
                 mlir::Operation * user = use.getOwner();
                 if (auto call = llvm::dyn_cast<ctjs::CallOp>(user)) {
-                    closed &= use.getOperandNumber() == 1 && group.calls.contains(call);
+                    closed &= use.getOperandNumber() == 1 && receiverIsUnread(call, object);
                     continue;
                 }
                 mlir::Value on;
-                if (use.getOperandNumber() != 0 || fieldOf(user, on).empty()) {
-                    closed = false;
-                    break;
-                }
-                if (auto set = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
-                    set && fieldOf(user, on) == key && set->hasAttr("ctjs.define_own")) {
-                    initialization = set;
-                }
-            }
-            closed &= static_cast<bool>(initialization);
-            for (mlir::Operation * user : object.getUsers()) {
-                mlir::Value on;
-                if (closed && llvm::isa<ctjs::GetPropertyOp>(user) && fieldOf(user, on) == key) {
-                    closed &= reachesInFrame(initialization.getOperation(), user);
-                }
+                closed &= use.getOperandNumber() == 0 && !fieldOf(user, on).empty();
             }
         }
         for (mlir::Value v : values) {

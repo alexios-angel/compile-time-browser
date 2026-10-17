@@ -318,6 +318,17 @@ const MeetRow kMeetTable[] = {
      "!ctnative.num<f64>>",
      "mixed object and string keys remain visible for admission to refuse"},
 
+    // --- dictionaries (an object used as a table) ---------------------------
+    {"!ctnative.dict<!ctnative.num<i32>>", "!ctnative.dict<!ctnative.num<f64>>",
+     "!ctnative.dict<!ctnative.num<f64>>", "a dictionary's values meet like a vector's elements"},
+    {"!ctnative.dict<!ctnative.str<utf8>>", "!ctnative.dict<!ctnative.num<f64>>",
+     "!ctnative.dict<!ctnative.variant<!ctnative.num<f64>, !ctnative.str<utf8>>>",
+     "a css-dump table of Number and String values keeps both alternatives"},
+    {"!ctnative.dict<!ctnative.num<f64>>", "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>",
+     "!ctnative.variant<!ctnative.dict<!ctnative.num<f64>>, "
+     "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>>",
+     "a dictionary is not a Map of the same schema: they need different storage"},
+
     // --- containers ---------------------------------------------------------
     {"!ctnative.vec<!ctnative.num<i32>>", "!ctnative.vec<!ctnative.num<f64>>",
      "!ctnative.vec<!ctnative.num<f64>>", "containers meet elementwise"},
@@ -418,6 +429,7 @@ const char * const kSampleTypes[] = {
     "!ctnative.vec<!ctnative.bool>",
     "!ctnative.set<!ctnative.bool>",
     "!ctnative.map<!ctnative.str<utf8>, !ctnative.num<f64>>",
+    "!ctnative.dict<!ctnative.num<f64>>",
     "!ctnative.owned<!ctnative.bool>",
     "!ctnative.shared<!ctnative.bool>",
     "!ctnative.weak<!ctnative.bool>",

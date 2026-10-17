@@ -32,6 +32,13 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/statics.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STATICS
+//
+// An arrow made after `super(...)` reads the importer's flag for `this` as
+// set, so the class is flattened; the arrow keeps no check of the flag (its
+// lexical `this` is the arrow rule's to lift).
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason
 
 // The module lists every copy with the source function it stands for (the
 // forwarding constructor Alert never wrote is erased and its copy stands for
@@ -51,6 +58,10 @@
 // CPP-DAG: Base_Toast_{{[0-9]+}}(Toast* const
 // OBSERVATION: r=109036004
 
+// ARROW: ctjs.func @fn$4(
+// ARROW-NOT: ctjs.load_upvalue
+// ARROW-NOT: ReferenceError
+// ARROW: ctjs.return
 // STATICS-NOT: ctnative.inheritance_reason
 // STATICS-DAG: ctjs.func @make_D$
 // STATICS-DAG: ctjs.func @name_D$
@@ -90,5 +101,15 @@ function run() {
     class P { static make() { return new this(); } static get NAME() { return "p"; } name() { return this.constructor.NAME; } }
     class D extends P { static get NAME() { return "d"; } }
     return D.make().name() + P.make().name();
+}
+var r = run();
+
+//--- arrow.js
+function run() {
+    class P { constructor(n) { this.n = n; } }
+    class D extends P {
+        constructor(n) { super(n); const f = () => this.n + 1; this.m = f(); }
+    }
+    return new D(4).m;
 }
 var r = run();

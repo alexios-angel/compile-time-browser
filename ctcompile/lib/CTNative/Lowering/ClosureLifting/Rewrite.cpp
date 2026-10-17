@@ -419,6 +419,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         }
         out.objects += static_cast<unsigned>(objectArgs.size());
     }
+    liftSelfCalls(target, captures, parameters);
     // Making the function private is required, not cosmetic. MLIR's
     // DeadCodeAnalysis gives a public symbol unknown predecessors, so
     // TypeInference falls back to setToEntryState and every parameter,

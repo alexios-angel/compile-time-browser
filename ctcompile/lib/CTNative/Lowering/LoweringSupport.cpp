@@ -115,6 +115,12 @@ carrier carrierOf(mlir::Type type) {
         if (inner == carrier::numberString) { return carrier::nullableNumberString; }
         if (inner == carrier::string) { return carrier::nullableString; }
         if (inner == carrier::domElement) { return carrier::nullableElement; }
+        // A timer's handle that may be null or undefined: the empty
+        // ctnative::timer_id, which names no timer.
+        if (inner == carrier::timer) { return carrier::timer; }
+        // A possibly absent member of a closure set: std::optional of its
+        // variant (EmitC/ClosureSets.cpp).
+        if (inner == carrier::closureSet) { return carrier::closureSet; }
         if (llvm::isa<BottomType>(opt.getElementType()) || isScalarCarrier(inner)) {
             return carrier::nullable;
         }
@@ -141,6 +147,12 @@ carrier carrierOf(mlir::Type type) {
             return carrier::nullable;
         }
     }
+    // A table holds one value carrier (Admission/Dictionaries.cpp says which).
+    if (auto table = llvm::dyn_cast<DictType>(type)) {
+        return carrierInfo(carrierOf(table.getElementType())).spelling.empty()
+                   ? carrier::none
+                   : carrier::dictionary;
+    }
     if (auto map = llvm::dyn_cast<MapType>(type)) {
         const auto key = map.getKeyType();
         const auto string = llvm::dyn_cast<StrType>(key);
@@ -163,11 +175,13 @@ carrier carrierOf(mlir::Type type) {
     // strings and of borrowed DOM elements have their own carriers and
     // admission rules.
     // A tuple has a carrier when it has two positions and each is a String, a
-    // Number or a Number|String, which is what a std::pair of them can hold.
+    // Number, a Number|String or an ordinary script's element (admission
+    // refuses one under a host contract), which a std::pair of them can hold.
     if (auto tuple = llvm::dyn_cast<TupleType>(type)) {
         const auto position = [](mlir::Type part) {
             const carrier c = carrierOf(part);
-            return c == carrier::string || c == carrier::number || c == carrier::numberString;
+            return c == carrier::string || c == carrier::number || c == carrier::numberString ||
+                   c == carrier::domElement;
         };
         return tuple.getElements().size() == 2 && llvm::all_of(tuple.getElements(), position)
                    ? carrier::tuple
@@ -474,6 +488,12 @@ bool mapNeedsNullableString(MapType type) {
 bool mapNeedsNullableStringKey(MapType type) {
     return anyMapLevel(
         type, [](MapType level) { return !nullableMapSpelling(level.getKeyType()).empty(); });
+}
+
+std::string dictionarySpelling(DictType type) {
+    return ("std::shared_ptr<ctnative::dictionary<" +
+            carrierInfo(carrierOf(type.getElementType())).spelling + ">>")
+        .str();
 }
 
 mlir::Type mapCarrierType(MapType type) {
