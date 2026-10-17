@@ -3,9 +3,10 @@
 # each has its own dependency group, installed into /.venv at the repository root
 # and pinned by uv.lock:
 #
-# - test: lit and psutil, which lit needs to enforce the per-test time limit
-#   (ctcompile/test/lit.cfg.py). tools/remote-build.sh syncs this group on the
-#   build box, and ctcompile/test/cmake/Lit.cmake finds .venv/bin/lit. lit is
+# - test: pytest for the tools/ unit tests (`uv run --group test pytest
+#   <file>`), lit, and psutil, which lit needs to enforce the per-test time
+#   limit (ctcompile/test/lit.cfg.py). tools/remote-build.sh syncs this group
+#   on the build box, and ctcompile/test/cmake/Lit.cmake finds .venv/bin/lit. lit is
 #   held at 18.1.8, the version the boxes' ~/.lit-venv ran the suite with: lit
 #   23 refuses lit.cfg.py's external shell (ShTest(execute_external=True)), and
 #   moving every RUN line to lit's internal shell is a change of its own.
@@ -22,7 +23,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
-test = ["lit==18.1.8", "psutil"]
+test = ["lit==18.1.8", "psutil", "pytest"]
 compare = ["playwright>=1.40,<2", "pillow>=10,<13"]
 dev = ["ruff"]
 
