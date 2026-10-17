@@ -969,11 +969,14 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         // (Constructors.cpp), which builds the instance there. A `new` of
         // `this.constructor`, or of a `this` that is not the member's own,
         // has no such proof.
+        // A static member nothing reaches is removed before the class proof,
+        // so its `new this` is left alone: marking it would make the class's
+        // constructor depend on a function that is about to be refused.
         llvm::SmallVector<ctjs::ConstructOp> classConstructs;
         for (mlir::Operation * made : selfConstructs) {
             auto built = llvm::cast<ctjs::ConstructOp>(made);
             mlir::Operation * holder = holderOf(made);
-            if (staticTargets.contains(holder)) {
+            if (staticTargets.contains(holder) && reached.contains(holder)) {
                 const mlir::Value self =
                     llvm::cast<ctjs::FuncOp>(holder).getBody().front().getArgument(0);
                 if (built.getCallee() == self && built.getNewTarget() == self) {
