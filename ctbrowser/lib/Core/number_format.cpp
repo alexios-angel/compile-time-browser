@@ -579,4 +579,37 @@ double string_to_number_prefix(std::string_view text) {
     return sign * parsed;
 }
 
+double parse_int(std::string_view text, std::int32_t radix) {
+    std::string_view rest = trim_js_space(text, true, false);
+    double sign = 1;
+    if (!rest.empty() && (rest.front() == '+' || rest.front() == '-')) {
+        if (rest.front() == '-') { sign = -1; }
+        rest.remove_prefix(1);
+    }
+    bool strip_prefix = true;
+    if (radix != 0) {
+        if (radix < 2 || radix > 36) { return std::numeric_limits<double>::quiet_NaN(); }
+        strip_prefix = radix == 16;
+    } else {
+        radix = 10;
+    }
+    if (strip_prefix && rest.size() >= 2 && rest[0] == '0' && (rest[1] == 'x' || rest[1] == 'X')) {
+        rest.remove_prefix(2);
+        radix = 16;
+    }
+    const auto digit = [](char ch) {
+        if (ch >= '0' && ch <= '9') { return ch - '0'; }
+        if (ch >= 'a' && ch <= 'z') { return ch - 'a' + 10; }
+        if (ch >= 'A' && ch <= 'Z') { return ch - 'A' + 10; }
+        return 36;
+    };
+    std::size_t used = 0;
+    while (used < rest.size() && digit(rest[used]) < radix) { ++used; }
+    if (used == 0) { return std::numeric_limits<double>::quiet_NaN(); }
+    if (radix == 10) { return sign * string_to_number_prefix(rest.substr(0, used)); }
+    double out = 0;
+    for (std::size_t i = 0; i < used; ++i) { out = out * radix + digit(rest[i]); }
+    return sign * out;
+}
+
 } // namespace ctbrowser

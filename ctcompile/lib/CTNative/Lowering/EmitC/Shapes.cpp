@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
 #include "Emitter.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -105,6 +106,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     const auto carried = [&](mlir::Value v) {
         auto type = typeOf(v);
         if (auto table = llvm::dyn_cast_or_null<MethodTableType>(type)) { return tableType(table); }
+        if (mlir::Type set = closureSetCarrierOf(v)) { return set; } // ClosureSets.cpp
         if (auto closure = llvm::dyn_cast_or_null<ClosureType>(type)) {
             return closureCarrierType(closure);
         }
@@ -116,7 +118,11 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     const auto join = [&](llvm::StringMap<mlir::Type> & into, llvm::StringRef key,
                           mlir::Type type) {
         auto [at, fresh] = into.try_emplace(key, type);
-        if (!fresh && at->second != type) { at->second = carrierType(context, carrier::nullable); }
+        if (!fresh && at->second != type) {
+            // ClosureSets.cpp: a set and its possibly absent read join as optional.
+            const mlir::Type set = joinClosureSetCarriers(at->second, type);
+            at->second = set ? set : carrierType(context, carrier::nullable);
+        }
     };
     // Walk every alias in the group: a lifted method's `this.x` reads this
     // shape through a different value in a different function, and a field
@@ -147,6 +153,7 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
     }
     // Every field, read-only ones included, with its joined carrier.
     for (const auto & entry : read) { join(stored, entry.getKey(), entry.getValue()); }
+    variantFields(object, stored);
     for (mlir::Value alias : aliasesOf(groups, object)) {
         for (mlir::Operation * user : alias.getUsers()) {
             const auto key = accessKey.find(user);
@@ -170,13 +177,17 @@ llvm::SmallVector<std::pair<std::string, mlir::Type>> lowering::fieldsOf(mlir::V
 /// every site in the program, so no site can be spelled until all of them
 /// have been seen.
 void lowering::censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted) {
+    joinInstanceValues(accepted);
     std::vector<llvm::StringSet<>> keys; // per family, its distinct (name, type) keys
     for (ctjs::FuncOp fn : accepted) {
         fn.getBody().walk([&](ctjs::CreateObjectOp object) {
             if (carrierOf(typeOf(object.getResult())) == carrier::json) { return; }
-            if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity)) {
+            if (!methodTableName(object).empty() || object->hasAttr(kNativeObjectIdentity) ||
+                object->hasAttr(kNativeStaticTable)) {
                 return;
             }
+            // A table is a dictionary, not a struct (EmitC/Dictionaries.cpp).
+            if (isNativeDictionarySite(object)) { return; }
             const auto fields = fieldsOf(object.getResult());
             std::string nameKey; // the family key: just the names
             std::string typeKey; // the instantiation key: names AND types

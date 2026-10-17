@@ -250,7 +250,13 @@ closureLifter::trialOutcome closureLifter::trialLift() {
     trialOutcome outcome;
     copy->walk([&](ctjs::CreateClosureOp made) {
         auto id = made->getAttrOfType<mlir::IntegerAttr>(kTrialClosure);
-        if (id && !made->hasAttr(kNativeLifted) && !isDeclarationClosure(made)) {
+        // A field of a proved returned method table is not lifted either, but
+        // it is not refused: emission lowers the table to a struct that holds
+        // the field's captures, so its bindings must stay where they are.
+        const bool tableField = llvm::any_of(made->getUsers(), [](mlir::Operation * user) {
+            return llvm::isa<ctjs::SetPropertyOp>(user) && user->hasAttr(kNativeTableField);
+        });
+        if (id && !made->hasAttr(kNativeLifted) && !isDeclarationClosure(made) && !tableField) {
             outcome.refused.insert(id.getInt());
         }
     });
@@ -356,6 +362,108 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
         if (usable) { plans.push_back(std::move(p)); }
     }
     if (plans.empty()) { return false; }
+    // A binding holding a table of methods (bindSingletonMethods' shape:
+    // written once in its owner with an object literal made there, and read
+    // only as the receiver of calls through constant keys) is kept even when
+    // every closure over it lifts: lifted, the table would be a capture of a
+    // boxed object and its methods would stay calls through it; static, its
+    // calls become direct. The bindings the table's methods capture are kept
+    // too, since a method with captures does not bind.
+    llvm::DenseSet<mlir::Operation *> tables;
+    {
+        // Whether every use of `table` is the receiver of a call through a
+        // constant key of it.
+        const auto onlyReceives = [](mlir::Value table) {
+            for (mlir::OpOperand & use : table.getUses()) {
+                mlir::Operation * user = use.getOwner();
+                if (llvm::isa<ctjs::RootOp>(user)) { continue; }
+                if (auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+                    call && use.getOperandNumber() == 1) {
+                    auto load = call.getCallee().getDefiningOp<ctjs::GetPropertyOp>();
+                    if (load && load.getObject() == table) { continue; }
+                    return false;
+                }
+                auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(user);
+                if (!load || load.getObject() != table ||
+                    ctjs::constantKey(load.getKey()).empty()) {
+                    return false;
+                }
+                for (mlir::OpOperand & loaded : load.getResult().getUses()) {
+                    auto call = llvm::dyn_cast<ctjs::CallOp>(loaded.getOwner());
+                    if (llvm::isa<ctjs::RootOp>(loaded.getOwner())) { continue; }
+                    if (!call || loaded.getOperandNumber() != 0 || call.getReceiver() != table) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        llvm::DenseSet<mlir::Operation *> methodCaptures;
+        llvm::SmallVector<ctjs::CreateObjectOp> literals;
+        for (plan & p : plans) {
+            auto owner = p.cell->getParentOfType<ctjs::FuncOp>();
+            ctjs::CreateObjectOp literal;
+            bool shaped = true;
+            for (mlir::OpOperand & use : p.cell.getResult().getUses()) {
+                const cellUse kind = classify(use);
+                if (kind == cellUse::write) {
+                    auto stored = llvm::cast<ctjs::CellSetOp>(use.getOwner())
+                                      .getValue()
+                                      .getDefiningOp<ctjs::CreateObjectOp>();
+                    shaped = shaped && !literal && stored &&
+                             stored->getParentOfType<ctjs::FuncOp>() == owner;
+                    literal = stored;
+                } else if (kind == cellUse::read) {
+                    shaped = shaped &&
+                             onlyReceives(llvm::cast<ctjs::CellGetOp>(use.getOwner()).getResult());
+                }
+            }
+            for (const auto & [made, slot] : p.slots) {
+                ctjs::FuncOp target = targetOf(made);
+                target.getBody().walk([&](mlir::Operation * op) {
+                    auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
+                    auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op);
+                    if (read && read.getIndex() == slot) {
+                        shaped = shaped && onlyReceives(read.getResult());
+                    } else if (write && write.getIndex() == slot) {
+                        shaped = false;
+                    }
+                });
+            }
+            if (!shaped || !literal) { continue; }
+            tables.insert(p.cell.getOperation());
+            literals.push_back(literal);
+        }
+        // A table made static by an earlier call (the pass that keeps only
+        // non-function bindings runs first) still needs its methods'
+        // function-holding captures.
+        module.walk([&](ctjs::CreateCellOp cell) {
+            if (!cell->hasAttr(kNativeStaticCell) || cell->hasAttr(kNativeStaticReference)) {
+                return;
+            }
+            for (mlir::Operation * user : cell->getUsers()) {
+                auto set = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                if (auto literal =
+                        set ? set.getValue().getDefiningOp<ctjs::CreateObjectOp>() : nullptr) {
+                    literals.push_back(literal);
+                }
+            }
+        });
+        for (ctjs::CreateObjectOp literal : literals) {
+            for (mlir::Operation * user : literal->getUsers()) {
+                auto field = llvm::dyn_cast<ctjs::SetPropertyOp>(user);
+                auto method =
+                    field ? field.getValue().getDefiningOp<ctjs::CreateClosureOp>() : nullptr;
+                if (!method) { continue; }
+                for (mlir::Value captured : method.getUpvalues()) {
+                    if (auto box = captured.getDefiningOp<ctjs::CreateCellOp>()) {
+                        methodCaptures.insert(box.getOperation());
+                    }
+                }
+            }
+        }
+        tables.insert(methodCaptures.begin(), methodCaptures.end());
+    }
     // Keep the bindings some closure over them would otherwise be refused
     // for; a binding whose closures all lift stays as the lift leaves it. A
     // binding the lift turns into direct calls (bindLocalFunctions: `function
@@ -372,9 +480,10 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
     llvm::erase_if(plans, [&](const plan & p) {
         ctjs::CreateCellOp cell = p.cell;
         if (trial.bound.contains(idOf.lookup(cell.getOperation()))) { return true; }
-        const bool needed = llvm::any_of(p.slots, [&](auto entry) {
-            return trial.refused.contains(idOf.lookup(entry.first.getOperation()));
-        });
+        const bool needed =
+            tables.contains(cell.getOperation()) || llvm::any_of(p.slots, [&](auto entry) {
+                return trial.refused.contains(idOf.lookup(entry.first.getOperation()));
+            });
         if (!needed) { return true; }
         auto owner = cell->getParentOfType<ctjs::FuncOp>();
         if (!owner) { return true; }
@@ -395,7 +504,16 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
     // Rewrite: name the variable, give each reader a reference cell, and
     // remove the slots, deepest closure first (see bindLocalFunctions for why
     // the order matters to removeCaptureSlots).
+    // Names given by an earlier call (run() makes one for data and one for
+    // functions) are taken too: static cells are attributes, not symbols, so
+    // the symbol table lookup below cannot see them, and two bindings sharing
+    // a name would be one variable to every later rule.
     llvm::StringSet<> taken;
+    module.walk([&](ctjs::CreateCellOp cell) {
+        if (auto name = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+            taken.insert(name.getValue());
+        }
+    });
     const auto valueType = ctjs::ValueType::get(context);
     llvm::MapVector<mlir::Operation *, slotRemoval> removals;
     for (plan & p : plans) {

@@ -1,11 +1,12 @@
 //===- dom_reads.cpp - dom-reads.js on either engine ----------------------===//
 //
-// Loads a page and dom-reads.js, calls dom_reads() and prints its answer. Built
+// Loads a page and dom-reads.js, calls dom_reads(FROM) and prints its answer,
+// or `threw: <message>` when the call throws. Built
 // twice by cmake/NativeWorkloads.cmake, as bootstrap_layout is: over the
 // interpreter, and with CTBROWSER_TEST_NATIVE over a static page and the C++
 // ctcompile generated from the script. dom-reads.test diffs the two.
 //
-//   ctcompile-test-dom-reads[-native] PAGE.html SCRIPT.js
+//   ctcompile-test-dom-reads[-native] PAGE.html SCRIPT.js [FROM]
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,8 +24,8 @@ using fixture_options = ctbrowser::shell::browser_options;
 #endif
 
 int main(int argc, char ** argv) {
-    if (argc != 3) {
-        std::fprintf(stderr, "usage: %s PAGE.html SCRIPT.js\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        std::fprintf(stderr, "usage: %s PAGE.html SCRIPT.js [FROM]\n", argv[0]);
         return 2;
     }
     const std::string html = read_file(argv[1]);
@@ -41,6 +42,6 @@ int main(int argc, char ** argv) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-    std::printf("%s\n", engine->call("dom_reads").c_str());
+    std::printf("%s\n", engine->call("dom_reads", {argc == 4 ? argv[3] : "0"}).c_str());
     return 0;
 }

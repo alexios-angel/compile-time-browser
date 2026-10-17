@@ -30,7 +30,11 @@
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
+#include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
+#include "ForOf.h"
+#include "Refinements.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/CTNative/Analysis/WorkBudget.h"
 #include "ctcompile/CTNative/Transforms/Passes.h"
 #include "mlir/IR/IRMapping.h"
@@ -227,7 +231,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
     /// function behind that no code reaches. This walk starts only from the
     /// script, the functions the embedder calls by name and what a module
     /// attribute names (reachability::roots::entries), and it never removes
-    /// an admitted function. Removal is never silent: each function gets a
+    /// an admitted function. A module with no top-level script also keeps
+    /// every public function, since it is not a whole script and something
+    /// outside it may call them. Removal is never silent: each function gets a
     /// row in `ctnative.unreachable_refusals`, which tools/check counts as
     /// removed, not as native. One walk finds every unreachable function, so
     /// nothing a removal orphans is left for a second round.
@@ -457,6 +463,19 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 {.maxSteps = precomputeMaxSteps, .report = optimizationReport}));
             if (failed(runPipeline(guards, module))) { return signalPassFailure(); }
         }
+        // Values a branch tested get a narrowed name in that branch, after the
+        // lift has unboxed the cells it could; a fresh census answers which of
+        // the remaining cells hold one value (Refinements.cpp).
+        // A for-of over an array keeps only its index loop (ForOf.cpp); a
+        // refused function gets its body back below.
+        ForOfOriginals forOfOriginals;
+        if (!hostContract) { forOfOriginals = foldArrayForOf(module); }
+        if (!hostContract) {
+            closureLifter cells{module};
+            cells.census(/*cellFactsOnly=*/true);
+            insertRefinements(module,
+                              [&](ctjs::CreateCellOp cell) { return cells.isConstantCell(cell); });
+        }
         // Exception recovery and structured-exit normalization are
         // speculative. They stay only if the function and its whole closed
         // call component pass admission. Refused functions get their original
@@ -512,6 +531,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         });
         if (!hostContract) {
             prepareNativeMaps(module);
+            prepareNativeDictionaries(module);
             prepareNativeObjectIdentities(module);
         }
         if (census) {
@@ -582,6 +602,8 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 : nullptr;
         // Data records returned by value join their callers' groups.
         TypeInference::markRecordReturns(module);
+        TypeInference::markStringMethodCalls(module);
+        markStaticTables(module);
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {
@@ -613,8 +635,12 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
             hostContract && !domEntry
                 ? std::make_unique<OwnedGlobalRoots>(module, *hostContract, hostMaxSteps)
                 : nullptr;
+        // The fingerprint is checked against the module as it arrived (the
+        // first analysis, above); the lowering's markers have annotated the
+        // module since, and every other DOM check reruns here on it as it is.
         auto admittedDOM =
-            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps)
+            domEntry ? std::make_unique<DOMEntryAnalysis>(module, *hostContract, hostMaxSteps,
+                                                          domEntry->fingerprint())
                      : nullptr;
         if (admittedDOM && !admittedDOM->proved()) {
             return fail("native DOM entry admission: " + admittedDOM->reason());
@@ -726,6 +752,24 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                              "calls `" + call.getCallee() + "`, which is not native",
                              "called by `" + fn.getSymName() + "`, which is not native");
                     });
+                    // A specialised Array-method call or replace call names its
+                    // callback, and an addEventListener call its listener.
+                    fn.getBody().walk([&](ctjs::CallOp call) {
+                        auto callback =
+                            call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeArrayCallback);
+                        if (!callback) {
+                            callback =
+                                call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeStringCallback);
+                        }
+                        if (!callback) {
+                            callback =
+                                call->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeHostCallback);
+                        }
+                        if (!callback) { return; }
+                        edge(symbols.lookup(callback.getValue()),
+                             "calls back `" + callback.getValue() + "`, which is not native",
+                             "called back by `" + fn.getSymName() + "`, which is not native");
+                    });
                 }
             }
             llvm::erase_if(accepted,
@@ -757,6 +801,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 lower.domParameters.insert(parameter);
             }
         }
+        // A program with string entries is embedded: its host asks the
+        // entries, and its top level runs inside the host's own output, as a
+        // script's top level prints nothing in the VM. So it prints no
+        // globals.
+        if (!stringEntries.empty()) { lower.explicitObservations = true; }
         if (admittedGlobals && admittedGlobals->proved()) {
             lower.explicitObservations = true;
             for (const auto & name : hostContract->observations) {
@@ -822,12 +871,21 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
                         if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
                         if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
-                        // The RegExp literal factory behind split(/\s+/) lowers
-                        // to nothing; it is not a program global.
-                        if (isVectorCallPlumbing(load)) { return; }
+                        if (nativeDictionaryAction(load) == "plumbing") { return; }
+                        // The RegExp literal factory behind split(/\s+/) and a
+                        // specialised replace lowers to nothing; it is not a
+                        // program global.
+                        if (isVectorCallPlumbing(load) ||
+                            TypeInference::consumedByStringCallback(load)) {
+                            return;
+                        }
                         // Nor are `document` and `window` when only their
                         // page reads use them; those lower to runtime calls.
                         if (!hostContract && isPageGlobal(load)) { return; }
+                        // Nor is a declared function's value handed to the
+                        // listener table: it becomes the declaration's
+                        // identity (EmitC/HostCallbacks.cpp).
+                        if (load->hasAttr(kNativeHostDeclared)) { return; }
                         // Nor is the global `undefined`, which is a constant.
                         if (!hostContract && TypeInference::isUndefinedGlobal(load)) { return; }
                         name = load.getName();
@@ -863,11 +921,18 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         // not on its creation site, and whether a shape's definition is a
         // template depends on every site in the program, so no site's type can
         // be written until all of them have been seen. First, refused
-        // functions get back the bodies speculative recovery replaced.
+        // functions get back the bodies speculative recovery replaced. The
+        // static tables are read first: a refused run-once function's original
+        // body predates markStaticTables, so its literals carry no mark.
+        lower.censusStaticTables(accepted);
         for (auto & [fn, original] : recoveryOriginals) {
             if (llvm::is_contained(accepted, fn)) { continue; }
             fn.getBody().takeBody(original->getBody());
             setOrRemoveAttr(fn, "ctjs.not_structured", (*original)->getAttr("ctjs.not_structured"));
+        }
+        // After recovery's, which may hold the folded body.
+        for (auto & [fn, original] : forOfOriginals) {
+            if (!llvm::is_contained(accepted, fn)) { fn.getBody().takeBody(original->getBody()); }
         }
         if (admittedDOM && llvm::is_contained(accepted, admittedDOM->entry())) {
             lower.censusDOM(*admittedDOM,
@@ -888,7 +953,11 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusMethodTables(accepted);
 
         removeUnreachableRefusals(functions, hostContract.has_value());
+        // Which element-array parameters borrow by address, read while every
+        // function is still ctjs.
+        markWrittenArrays(accepted);
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
+        dropRefinements(module);
         if (!accepted.empty()) { lower.declareGlobals(); }
         lower.finish();
     }

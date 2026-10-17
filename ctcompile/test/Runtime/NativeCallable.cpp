@@ -8,6 +8,11 @@
 // caller's object rather than a copy, and that the declared result type
 // converts the callable's answer.
 //
+// It also tests a closure set: a std::variant of ctnative::bound members,
+// called through invoke_callable. The cases pin that two members with one
+// signature are still two alternatives, that the member the variant holds is
+// the one called, with its own captures, and that the captures are copies.
+//
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTNative/Runtime/Callable.hpp"
@@ -87,6 +92,30 @@ void test_a_reference_copies_as_the_same_callable() {
     CHECK(total == 3.0);
 }
 
+double scaled(double by, double value) {
+    return value * by;
+}
+
+/// `c ? (v => v + k) : (v => v * k)`: one signature, two members.
+using offset_or_scaled =
+    std::variant<ctnative::bound<offset, double>, ctnative::bound<scaled, double>>;
+static_assert(std::variant_size_v<offset_or_scaled> == 2);
+static_assert(!std::is_same_v<ctnative::bound<offset, double>, ctnative::bound<scaled, double>>);
+
+void test_a_set_calls_the_member_it_holds() {
+    offset_or_scaled f = ctnative::bind<offset>(3.0);
+    CHECK(ctnative::invoke_callable(f, 2.0) == 5.0);
+    f = ctnative::bind<scaled>(3.0);
+    CHECK(ctnative::invoke_callable(f, 2.0) == 6.0);
+}
+
+void test_a_set_member_copies_its_captures() {
+    double k = 2.0;
+    const offset_or_scaled f = ctnative::bind<offset>(k);
+    k = 100.0;
+    CHECK(ctnative::invoke_callable(f, 1.0) == 3.0);
+}
+
 } // namespace
 
 int main() {
@@ -95,5 +124,7 @@ int main() {
     test_the_callers_object_is_called_not_a_copy();
     test_the_result_converts_to_the_declared_type();
     test_a_reference_copies_as_the_same_callable();
+    test_a_set_calls_the_member_it_holds();
+    test_a_set_member_copies_its_captures();
     REPORT("native_callable");
 }

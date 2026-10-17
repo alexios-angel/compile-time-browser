@@ -17,6 +17,7 @@
 //===----------------------------------------------------------------------===//
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -69,6 +70,9 @@ public:
 
     /// The trees the queries below read, as of the last frame().
     [[nodiscard]] page_view view();
+    /// How many times frame() has run: the queries below answer the same until
+    /// it changes, so a caller may keep an answer keyed on it.
+    [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
 
     /// getBoundingClientRect (CSSOM View §7): the rectangle round \p id's
     /// border boxes, in viewport coordinates.
@@ -97,6 +101,7 @@ private:
     shell::asset_registry assets_;
     std::string style_error_;
     float layout_width_ = 0;
+    std::uint64_t frames_ = 0;
 };
 
 } // namespace ctbrowser::page

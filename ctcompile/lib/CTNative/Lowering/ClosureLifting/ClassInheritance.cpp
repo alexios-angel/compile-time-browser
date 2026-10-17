@@ -41,7 +41,9 @@
 // or is not flattened, when it or a class in its chain declares fields (the
 // importer's `__fields`) or a prototype accessor, when its constructor reads
 // `super` other than as one `super(...)` call or reaches `this` from a nested
-// function, when a member reads `super` other than as a `super.m(...)` call
+// function that may run before it (an arrow made after `super(...)` sees the
+// importer's flag for `this` set, and its checks fold), when a member reads
+// `super` other than as a `super.m(...)` call
 // on `this`, when a constructor in the chain reads new.target or may return
 // an object (which `super(...)` would make `this`), or when an
 // `instanceof` test names a class of the chain, which a flattened class
@@ -406,6 +408,65 @@ struct flattener {
         return std::nullopt;
     }
 
+    /// A nested function of a constructor that captures the importer's flag
+    /// for `this`: its closure, the operand that captures the flag, and the
+    /// reads of that capture in its body.
+    struct capturedFlag {
+        ctjs::CreateClosureOp closure;
+        unsigned operand;
+        llvm::SmallVector<ctjs::LoadUpvalueOp> reads;
+    };
+
+    /// Why the flag `use`, a capture by `closure`, cannot be read as set;
+    /// records the site otherwise. The closure must be made where
+    /// `super(...)` has run, be the only closure of its function, and its
+    /// function must only read the capture (never write it or hand it to a
+    /// closure of its own).
+    Reason flagCapture(ctjs::CreateClosureOp closure, mlir::OpOperand & use, ctjs::CellSetOp raised,
+                       mlir::DominanceInfo & dominance, llvm::SmallVectorImpl<capturedFlag> & out) {
+        const std::string before = "its constructor's `this` is reached from a nested function "
+                                   "that may run before `super(...)`";
+        const unsigned first = closure.getUpvalues().getBeginOperandIndex();
+        if (use.getOperandNumber() < first ||
+            !dominance.dominates(raised.getOperation(), closure.getOperation())) {
+            return before;
+        }
+        const unsigned slot = use.getOperandNumber() - first;
+        if (auto indices = closure.getEnclosingIndicesAttr();
+            indices && indices.asArrayRef()[slot] != -1) {
+            return before;
+        }
+        ctjs::FuncOp target = targetOf(closure);
+        if (!target) { return before; }
+        unsigned named = 0;
+        module.walk([&](ctjs::CreateClosureOp other) { named += targetOf(other) == target; });
+        if (named != 1) {
+            return std::string("its constructor's `this` is reached from a function made by "
+                               "more than one closure");
+        }
+        capturedFlag site{closure, use.getOperandNumber(), {}};
+        Reason why;
+        target.walk([&](mlir::Operation * op) {
+            if (auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op)) {
+                if (read.getIndex() == slot) { site.reads.push_back(read); }
+            } else if (auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op);
+                       write && write.getIndex() == slot) {
+                why =
+                    std::string("a nested function of its constructor writes its flag for `this`");
+            } else if (auto inner = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
+                if (auto indices = inner.getEnclosingIndicesAttr();
+                    indices &&
+                    llvm::is_contained(indices.asArrayRef(), static_cast<int32_t>(slot))) {
+                    why = std::string(
+                        "a function nested twice in its constructor reaches its `this`");
+                }
+            }
+        });
+        if (why) { return why; }
+        out.push_back(std::move(site));
+        return std::nullopt;
+    }
+
     /// Rewrites `super(...)` in the constructor `fn` of a class whose parent
     /// constructor is stored under `superKey`, or says why it cannot.
     Reason flattenConstructor(ctjs::FuncOp fn, llvm::StringRef superKey,
@@ -449,13 +510,20 @@ struct flattener {
         }
         mlir::DominanceInfo dominance(fn);
         llvm::SmallVector<std::pair<ctjs::CellGetOp, bool>> checks;
-        for (mlir::Operation * user : flag.getResult().getUsers()) {
+        llvm::SmallVector<capturedFlag> captured;
+        for (mlir::OpOperand & use : flag.getResult().getUses()) {
+            mlir::Operation * user = use.getOwner();
             if (user == raised.getOperation()) { continue; }
+            if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(user)) {
+                if (auto why = flagCapture(closure, use, raised, dominance, captured)) {
+                    return why;
+                }
+                continue;
+            }
             auto get = llvm::dyn_cast<ctjs::CellGetOp>(user);
             if (!get) {
-                return std::string(
-                    "its constructor's `this` is reached from a nested function, before "
-                    "`super(...)` is known to have run");
+                return "its constructor's flag for `this` is used by `" +
+                       user->getName().getStringRef().str() + "`";
             }
             if (dominance.dominates(raised.getOperation(), get.getOperation())) {
                 checks.emplace_back(get, true);
@@ -514,6 +582,31 @@ struct flattener {
                                                  ctjs::BooleanAttr::get(context, ran)));
             }
             get.erase();
+        }
+        // A nested function made after `super(...)` sees the flag set: its
+        // reads are true, and its closure stops capturing the flag.
+        for (capturedFlag & site : captured) {
+            for (ctjs::LoadUpvalueOp read : site.reads) {
+                for (mlir::OpOperand & use :
+                     llvm::make_early_inc_range(read.getResult().getUses())) {
+                    mlir::OpBuilder here(use.getOwner());
+                    if (auto truthy = llvm::dyn_cast<ctjs::TruthyOp>(use.getOwner())) {
+                        truthy.getResult().replaceAllUsesWith(
+                            mlir::arith::ConstantOp::create(here, truthy.getLoc(),
+                                                            here.getBoolAttr(true))
+                                .getResult());
+                        truthy.erase();
+                        continue;
+                    }
+                    use.set(ctjs::ConstantOp::create(here, read.getLoc(),
+                                                     ctjs::ValueType::get(context),
+                                                     ctjs::BooleanAttr::get(context, true)));
+                }
+                read.erase();
+            }
+            mlir::OpBuilder at(site.closure);
+            site.closure->setOperand(site.operand, undefinedAt(at, site.closure.getLoc()));
+            foldConstantBranches(targetOf(site.closure));
         }
         raised.erase();
         eraseWithFeeders(flag);

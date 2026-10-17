@@ -88,12 +88,14 @@ void closureLifter::indexAndNewTargets() {
 
 /// Records every closure, object literal, call and `new` site, computes
 /// `mutatesUpvalue`, and runs the single-write and shared-cell censuses. Runs
-/// before any rewrite.
-void closureLifter::census() {
+/// before any rewrite. With `cellFactsOnly` it skips the class and
+/// shared-cell censuses, which write attributes, for a caller that only asks
+/// isConstantCell after the lift (Lowering/Refinements.cpp).
+void closureLifter::census(bool cellFactsOnly) {
     indexAndNewTargets();
     // Before any rule asks about a prototype: the class census marks the
     // setup operations those rules skip.
-    classCensus();
+    if (!cellFactsOnly) { classCensus(); }
     module.walk([&](mlir::Operation * o) {
         auto holder = o->getParentOfType<ctjs::FuncOp>();
         if (llvm::isa<ctjs::StoreUpvalueOp>(o)) {
@@ -136,6 +138,7 @@ void closureLifter::census() {
     // singleWriteCensus skips targets in `mutatesUpvalue` and the fixpoint
     // above is what completes that set.
     singleWriteCensus();
+    if (cellFactsOnly) { return; }
     // Shared cells come after that, because the by-value path has first
     // choice: a cell singleWriteCensus took is copied into a parameter,
     // which costs no pointer and no indirection.

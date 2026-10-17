@@ -27,6 +27,7 @@ public:
     result run() {
         for (ctjs::FuncOp function : module.getOps<ctjs::FuncOp>()) {
             functions.push_back(function);
+            wholeScript |= functionIndex(function) == 0;
         }
         if (inventory() && symbolEdges() && closureEdges()) {
             while (!pending.empty() && output.reason.empty()) {
@@ -89,10 +90,14 @@ private:
             // strings or custom properties, so they are refused. This pass runs
             // before native lowering, while ctjs's reference forms are still
             // explicit.
-            const bool supported = op->getName().isRegistered() &&
-                                   llvm::StringSwitch<bool>(op->getName().getDialectNamespace())
-                                       .Cases({"builtin", "ctjs", "arith", "scf", "cf", "ub"}, true)
-                                       .Default(false);
+            // A typeof test's narrowing (Lowering/Refinements.cpp) holds a
+            // value and a typeof result, no reference.
+            const bool supported =
+                op->getName().isRegistered() &&
+                (llvm::StringSwitch<bool>(op->getName().getDialectNamespace())
+                     .Cases({"builtin", "ctjs", "arith", "scf", "cf", "ub"}, true)
+                     .Default(false) ||
+                 op->getName().getStringRef() == "ctnative.refine");
             if (!supported) {
                 refuse("operation has no CTJS reachability contract");
                 return mlir::WalkResult::interrupt();
@@ -108,11 +113,16 @@ private:
                 // (function index 0), and anything not private or, under
                 // roots::entries, what the embedder calls by name and every
                 // admitted function, so nothing a native function names is
-                // ever reported dead.
-                const bool named = from == roots::nonPrivate
-                                       ? !function.isPrivate()
-                                       : function->hasAttr("ctnative.string_entry") ||
-                                             !function->hasAttr("ctnative.not_native");
+                // ever reported dead. A module with no top-level script is
+                // not one whole script, so its public functions may be
+                // called from outside it and stay roots then too.
+                const bool named =
+                    from == roots::nonPrivate || !wholeScript
+                        ? !function.isPrivate() || (from == roots::entries &&
+                                                    (function->hasAttr("ctnative.string_entry") ||
+                                                     !function->hasAttr("ctnative.not_native")))
+                        : function->hasAttr("ctnative.string_entry") ||
+                              !function->hasAttr("ctnative.not_native");
                 if (function.getBody().empty() || index == 0 || named) { mark(function); }
             }
             if (auto closure = llvm::dyn_cast<ctjs::CreateClosureOp>(op)) {
@@ -161,6 +171,9 @@ private:
     mlir::ModuleOp module;
     unsigned limit;
     roots from;
+    /// Whether the module holds the top-level script (function index 0), the
+    /// one function of a whole script that its embedder calls.
+    bool wholeScript = false;
     result output;
     llvm::SmallVector<ctjs::FuncOp> functions;
     llvm::SmallVector<ctjs::CreateClosureOp> closures;

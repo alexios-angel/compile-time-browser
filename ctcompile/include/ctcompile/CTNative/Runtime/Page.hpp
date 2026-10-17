@@ -22,6 +22,8 @@
 #include <ctbrowser/page/static_page.hpp>
 #include <ctbrowser/style/css/properties.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -97,12 +99,16 @@ inline js_dom_rect getBoundingClientRect(const js_element_t & element) {
 }
 
 /// The result of getComputedStyle(element) (CSSOM §9). Live, like the VM's
-/// object: every read computes from the page as it stands, so a program that
-/// writes the DOM and lays out again between the call and a read sees the
-/// write. It borrows the page and names the element; the page must outlive it.
+/// object: a read sees the page as of its last frame(). The page answers the
+/// same until its next frame (static_page::frames), so the element's entries are
+/// computed at the first read after a frame and looked up by the reads after
+/// it, as the VM's object does while its cache is fresh. It borrows the page and
+/// names the element; the page must outlive it.
 class js_computed_style {
     ctbrowser::page::static_page * page;
     ctbrowser::node_id id;
+    mutable std::vector<std::pair<std::string, std::string>> entries;
+    mutable std::optional<std::uint64_t> computed_at;
 
 public:
     js_computed_style(ctbrowser::page::static_page & bound, ctbrowser::node_id element)
@@ -112,11 +118,11 @@ public:
     /// name, the IDL spelling accepted too, or "" for a property with none.
     js_string getPropertyValue(const js_string & name) const {
         const std::string css = ctbrowser::style::css::css_name_of(name.value());
-        // ponytail: each read computes the element's whole entry list, as the
-        // VM's object does when its cache is stale. A query for one property
-        // in ctbrowser::page is the upgrade when a dump of many properties
-        // per element shows up in a profile.
-        for (const auto & [property, text] : page->computed_style(id)) {
+        if (computed_at != page->frames()) {
+            entries = page->computed_style(id);
+            computed_at = page->frames();
+        }
+        for (const auto & [property, text] : entries) {
             if (property == css) { return js_string{text}; }
         }
         return js_string{};
