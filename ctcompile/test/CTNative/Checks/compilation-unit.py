@@ -127,7 +127,7 @@ PROBE_COUNTS = (
 )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--module", required=True)
@@ -142,7 +142,7 @@ def main():
     parser.add_argument("--mutate-as", default="number")
     parser.add_argument("--prebuilt")
     parser.add_argument("--core-build", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     name = args.name
 
     def fail(message):
