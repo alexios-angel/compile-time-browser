@@ -32,7 +32,8 @@ std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClo
     // non-undefined $enclosing_this is the only place the IR says a target is
     // an arrow. A lifted call passes the call's receiver as %arg0, which for
     // an arrow is not what the interpreter reads, so an arrow may be lifted
-    // only when it never reads `this`.
+    // only when it never reads `this`. run() first makes every such read a
+    // capture (captureLexicalThis), so this fires only on paths that skip it.
     //
     // This guard keeps arrows out of the receiver lift, and removing it would
     // give a wrong answer rather than a refusal: `{ f: () => this.x }` reads
@@ -41,7 +42,8 @@ std::optional<std::string> closureLifter::whyTargetIsNotLiftable(ctjs::CreateClo
     // the literal. It is checked first for that reason, before any rule that
     // admits a `this` use.
     if (!ctjs::isUndefinedConstant(c.getEnclosingThis()) && !entry.getArgument(0).use_empty()) {
-        return "it is an arrow function that reads its lexical `this` - Stage 59B";
+        return "it is an arrow function that reads its lexical `this`, which this path does "
+               "not turn into a capture";
     }
     return std::nullopt;
 }
@@ -325,11 +327,35 @@ std::optional<std::string> closureLifter::whyCapturesDoNotLift(ctjs::CreateClosu
 
 /// Refuses a target whose own closure value is used for anything other than
 /// nested closures and upvalue reads (the same test ResolveGlobals applies,
-/// via ctjs::ownClosureEscape). Lifting marks the target `private`, which
-/// claims every caller is visible; a leaked closure value could be called
-/// from somewhere this IR cannot see.
-std::optional<std::string> closureLifter::whyOwnClosureEscapes(ctjs::FuncOp target) {
-    if (mlir::Operation * user = ctjs::ownClosureEscape(target)) {
+/// via ctjs::ownClosureEscape), and with `selfCalls` the callee of a call of
+/// itself. Lifting marks the target `private`, which claims every caller is
+/// visible; a leaked closure value could be called from somewhere this IR
+/// cannot see. As a receiver or an argument the closure is such a value.
+std::optional<std::string> closureLifter::whyOwnClosureEscapes(ctjs::FuncOp target,
+                                                               bool selfCalls) {
+    if (selfCalls) {
+        const unsigned parameters =
+            target.getBody().front().getNumArguments() - ctjs::implicit_arguments;
+        for (mlir::OpOperand & use :
+             target.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+            auto call = llvm::dyn_cast<ctjs::CallOp>(use.getOwner());
+            // A surplus argument has no parameter to land in, and the
+            // interpreter's `arguments` would still see it.
+            if (call && use.getOperandNumber() == 0 && call.getArgs().size() > parameters) {
+                return std::string{"it calls itself with more arguments than it declares"};
+            }
+        }
+    }
+    for (mlir::OpOperand & use : target.getBody().front().getArgument(ctjs::arg_callee).getUses()) {
+        if (selfCalls && use.getOperandNumber() == 0 && llvm::isa<ctjs::CallOp>(use.getOwner())) {
+            continue;
+        }
+        if (use.getOperandNumber() == 0 &&
+            llvm::isa<ctjs::CreateClosureOp, ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(
+                use.getOwner())) {
+            continue;
+        }
+        mlir::Operation * user = use.getOwner();
         return ("its target's own closure escapes into `" + user->getName().getStringRef() +
                 "`, so a call of it may come from somewhere this rewrite cannot see")
             .str();
@@ -479,8 +505,14 @@ std::optional<std::string> closureLifter::whyNotLiftable(ctjs::CreateClosureOp c
     // The captured values must also reach every one of those sites. The loop
     // above has established that every use of the closure value is a call
     // this rewrite lowers, so its users are exactly the sites lift() will
-    // prepend the captures at.
-    return whyLiftTailFails(c, target, c.getResult().getUsers());
+    // prepend the captures at. whyLiftTailFails, except that a call the
+    // target makes of itself is allowed: lift() makes it direct
+    // (liftSelfCalls).
+    for (mlir::Operation * site : c.getResult().getUsers()) {
+        if (std::optional<std::string> why = whyCapturesDoNotReach(c, site)) { return why; }
+    }
+    if (std::optional<std::string> escapes = whyOwnClosureEscapes(target, true)) { return escapes; }
+    return whyUpvalueReadsDoNotLift(c, target);
 }
 
 } // namespace ctcompile::ctnative::lowering_detail

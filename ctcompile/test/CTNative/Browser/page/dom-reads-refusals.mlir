@@ -4,8 +4,11 @@
 // of an element other than the root, an Array method on an element's
 // children, an element member that is not native yet, an element read at an
 // index not proved in bounds, a rect field that is not native yet,
-// getBoundingClientRect read as a value rather than tested or called, and a
-// computed style read through anything but getPropertyValue.
+// getBoundingClientRect read as a value rather than tested or called, a
+// computed style read through anything but getPropertyValue, and the root
+// passed on before any property of it is read (the native read throws for a
+// null root, and its message must name the property the interpreter reads
+// first).
 //
 // RUN: split-file %s %t
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/try.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=TRY
@@ -15,6 +18,7 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/field.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=FIELD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/method.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=METHOD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/style.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=STYLE
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/noread.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=NOREAD
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/index.js 2>/dev/null | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=INDEX
 
 // TRY: ctjs.func private @guarded$1
@@ -40,6 +44,9 @@
 
 // STYLE: ctjs.func private @display$1
 // STYLE-SAME: ctnative.not_native = "a computed style read through `display` - only getPropertyValue is native"
+
+// NOREAD: ctjs.func private @display$1
+// NOREAD-SAME: ctnative.not_native = "document.documentElement with no property read of it found - a null root would not throw where the native read does"
 
 //--- try.js
 function guarded(stop) {
@@ -103,6 +110,14 @@ var methodMissing = method();
 
 //--- style.js
 function display() {
-    return getComputedStyle(document.documentElement).display;
+    var root = document.documentElement;
+    var tag = root.tagName;
+    return getComputedStyle(root).display + tag;
+}
+var shown = display();
+
+//--- noread.js
+function display() {
+    return getComputedStyle(document.documentElement).getPropertyValue('display');
 }
 var shown = display();

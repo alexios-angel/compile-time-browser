@@ -69,6 +69,25 @@ case:
   --filter='^ctcompile :: CTNative/Browser/dom/assignment[.]test$'
 ```
 
+A `CTNative/Fixtures` test also reads the native pipeline modules the build
+writes (`%{obj}/<name>.pipeline*.emitc.mlir`) and runs nm on
+`ctcompile-test-type-oracle`; build `ctcompile-fixture-inputs` as well, which
+makes both. Until it has been built after the last `ctjs-opt` or `ctjs-translate`
+build, lit points `%{obj}` at a missing `stale-inputs-build-target-ctcompile-fixture-inputs`
+directory, so those tests fail instead of passing on a previous compiler's
+output.
+
+The Python drivers run their cases on every CPU, and lit runs one driver per
+CPU, so the tools they start share one machine-wide limit: a tool runs only
+while it holds one of `nproc` slot files in `/tmp/ctcompile-job-slots`, locked
+with flock (`job_slot()` and `slotted_run()` in `Target/Cpp/harness.py`).
+Every checkout and every agent on a box shares the directory. The files are
+empty, and a slot is held only by an open file descriptor, so a process that
+dies gives its slot back and a leftover file is harmless. To see who holds
+slots: `ls /tmp/ctcompile-job-slots` and `lslocks | grep ctcompile-job-slots`.
+A driver that starts a compiler or `ctjs-opt` itself calls `slotted_run()`, not
+`subprocess.run()`.
+
 Use the generated build-tree lit configuration so substitutions and features
 are available. Adjust the targets and test selection to the
 change; a selection that runs zero tests is not a pass. Full lit runs through

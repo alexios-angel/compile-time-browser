@@ -9,6 +9,7 @@
 #pragma once
 
 #include "ctbrowser/core/number.hpp"
+#include "ctbrowser/core/number_format.hpp"
 
 #include <cmath>
 #include <compare>
@@ -83,13 +84,36 @@ public:
 
 using js_num = js_basic_num<double>;
 
+/// Number.parseInt (ECMA-262 21.1.2.13), the same function as the global
+/// parseInt (19.2.5): `text` is a String carrier (its `value()` is the text)
+/// and `radix` goes through ToInt32, so a missing radix is 0.
+struct parse_int_function {
+    template <class String>
+    js_num operator()(const String & text, js_num radix = js_num{0.0}) const {
+        return js_num{ctbrowser::parse_int(text.value(), radix.to_int32())};
+    }
+};
+
+/// Number.parseFloat (ECMA-262 21.1.2.12), the same function as the global
+/// parseFloat (19.2.4): the longest StrDecimalLiteral prefix of `text` after
+/// its leading whitespace, NaN when there is none. `text` is a String carrier.
+struct parse_float_function {
+    template <class String> js_num operator()(const String & text) const {
+        return js_num{ctbrowser::string_to_number_prefix(text.value())};
+    }
+};
+
 /// The Number constructor's members native code calls: generated code reads
-/// `ctnative::Number(s)`. `Number(value)` (ECMA-262 21.1.1.1) is ToNumber for
-/// every value a native carrier holds (none is a BigInt), so the call
-/// operator forwards to the to_number overload set, which ADL finds for each
-/// carrier at the call. No prototype method or static is lowered yet.
+/// `ctnative::Number(s)`, `ctnative::Number.parseInt(s, 10)` and
+/// `ctnative::Number.parseFloat(s)`.
+/// `Number(value)` (ECMA-262 21.1.1.1) is ToNumber for every value a native
+/// carrier holds (none is a BigInt), so the call operator forwards to the
+/// to_number overload set, which ADL finds for each carrier at the call.
 struct number_constructor {
     template <class T> js_num operator()(const T & value) const { return to_number(value); }
+    /// Static, so the constructor stays an empty, stateless object.
+    static constexpr parse_int_function parseInt{};
+    static constexpr parse_float_function parseFloat{};
 };
 inline constexpr number_constructor Number{};
 

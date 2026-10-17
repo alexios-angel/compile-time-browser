@@ -78,6 +78,7 @@ void static_page::load_html(std::string_view html) {
 }
 
 void static_page::frame() {
+    ++frames_;
     resolve();
     lay_out();
     // Container queries asked the previous layout's sizes; re-run until they
@@ -120,6 +121,7 @@ page_view static_page::view() {
     out.fragments = &fragments_;
     out.viewport_width = viewport_client_width();
     out.viewport_height = options_.height;
+    out.viewport_scroll = scroll_;
     return out;
 }
 

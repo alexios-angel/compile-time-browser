@@ -11,11 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-// The generated file's DOM and page views must be declared before it calls
-// them.
-// ponytail: the wrapper supplies CTNATIVE_DOM and Page.hpp, so a generated
-// file that reads the page does not compile on its own. Emit both from
-// Module.cpp when a workload needs the output to stand alone.
+// The page views, for page_scope below. A generated file that reads the page
+// defines CTNATIVE_DOM and includes Page.hpp itself (EmitC/Module.cpp), with
+// the define guarded, so defining it here first is not a second definition.
 #define CTNATIVE_DOM 1
 #include "ctcompile/CTNative/Runtime/Page.hpp"
 
@@ -39,7 +37,7 @@ namespace {
 
 /// Calls a string entry with the engine's arguments, one String each.
 template <class Entry, class... Params, std::size_t... Index>
-std::string call_with(Entry entry, std::span<const std::string_view> args,
+std::string call_with(Entry entry, [[maybe_unused]] std::span<const std::string_view> args,
                       std::index_sequence<Index...>) {
     return entry(std::remove_cvref_t<Params>{args[Index]}...).value();
 }

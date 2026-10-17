@@ -3,10 +3,13 @@
 # also reuses compiler-side primitive helpers from ctbrowser; the generated
 # C++ uses only the public platform libraries it needs, never Script.
 add_library(ctcompile-ctnative-lowering
+  ForOf.cpp
   LowerToEmitC.cpp
   LoweringSupport.cpp
   PrintDeduced.cpp
-  PruneDeadStores.cpp)
+  PruneDeadStores.cpp
+  Refinements.cpp
+  TestInstances.cpp)
 ctcompile_target(ctcompile-ctnative-lowering)
 add_dependencies(ctcompile-ctnative-lowering CTNativeTransformsPassIncGen)
 

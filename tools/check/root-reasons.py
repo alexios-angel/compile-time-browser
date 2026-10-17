@@ -36,7 +36,14 @@ import sys
 # The same IR patterns tools/check/named-callees.py matches.
 FUNC = re.compile(r"^  (emitc\.func|ctjs\.func) (?:private )?@([A-Za-z0-9_$]+)\(([^\n]*)")
 REASON = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
-DIRECT = re.compile(r"\b(?:ctjs\.call_direct|emitc\.call) @([A-Za-z0-9_$]+)")
+# A call closure lifting specialised for its callback (String.prototype.replace,
+# an Array method, addEventListener or setTimeout) names the callback by
+# attribute; the callback's parameters are typed from that call, so the
+# function holding it is the callback's caller.
+DIRECT = re.compile(
+    r"\b(?:ctjs\.call_direct|emitc\.call|ctnative\.(?:string|array|host)_callback =) "
+    r"@([A-Za-z0-9_$]+)"
+)
 CLOSURE = re.compile(r"ctjs\.create_closure %arg2\[(\d+)\]")
 CLOSURE_REASON = re.compile(r'ctnative\.closure_reason = "((?:[^"\\]|\\.)*)"')
 CLASS_REASON = re.compile(r'ctnative\.class_reason = "((?:[^"\\]|\\.)*)"')
@@ -269,6 +276,7 @@ PLANTED = """\
   ctjs.func @f$6(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
     %1 = ctjs.create_closure %arg2[8] this %arg0 {ctnative.closure_reason = "it is stored into an object or an array"}
     %2 = ctjs.call_direct @c$3(%x)
+    %3 = ctjs.call %y(%x) {ctnative.string_callback = @p$13}
   }
   ctjs.func @g$7(%arg0) -> !ctjs.value attributes {ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it (x)"} {
   }
@@ -282,6 +290,8 @@ PLANTED = """\
   }
   ctjs.func @n$12(%arg0) -> !ctjs.value attributes {ctnative.not_native = "uses `this` - a closure used as a value: it is stored into an object or an array"} {
   }
+  ctjs.func private @p$13(%arg0) -> !ctjs.value attributes {ctnative.not_native = "parameter 0 is !ctnative.boxed - no caller proves it (x)"} {
+  }
 """
 
 # Expected rows for PLANTED: (reason, roots, blocks, solely).
@@ -291,11 +301,13 @@ PLANTED = """\
 #    a closure filled from e$5's) are behind it. d$4 lowered and is no node.
 #  - f$6 and h$8 are behind the closure of h$8 (stored into an object), and
 #    i$9 behind its own closure, refused for the same reason: two roots.
+#    p$13, the callback of a replace call in f$6, is behind f$6 too: its
+#    parameter comes from that call.
 #  - k$10 is a refused class's constructor, m$11 a prototype method stored on
 #    it and n$12 a static getter: all three are behind the class, not behind
 #    their closures' own reasons.
 EXPECTED = [
-    ("it is stored into an object or an array", 2, 4, 3),
+    ("it is stored into an object or an array", 2, 5, 4),
     ("class: it has static method `X`; static members are the next slice", 1, 3, 3),
     ("a regular expression literal", 1, 3, 2),
     ("it is passed as an argument", 1, 2, 2),
