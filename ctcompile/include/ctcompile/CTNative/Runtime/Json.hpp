@@ -1,27 +1,34 @@
 //===- Json.hpp - Native JSON.stringify ------------------------*- C++ -*-===//
 //
 // ctnative::JSON, whose stringify serializes the values native code builds as
-// ctbrowser::json_value trees. Only programs that call it include
-// this header; the quoting is ctbrowser core's, which the VM's JSON.stringify
-// also calls, so the two cannot escape a string differently.
+// ctbrowser::json_value trees and dictionaries (Dictionary.hpp), and
+// json_record, which builds the tree of an object literal's own properties.
+// Only programs that call it include this header; the quoting is ctbrowser
+// core's, which the VM's JSON.stringify also calls, so the two cannot escape
+// a string differently.
 //
 //===----------------------------------------------------------------------===//
 
 #pragma once
 
+#include "Number.hpp"
 #include "String.hpp"
+#include "ctnative.hpp"
 
 #include <ctbrowser/core/json.hpp>
 #include <ctbrowser/core/number_format.hpp>
 
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
 namespace ctnative {
+
+template <class V> class dictionary;
 
 namespace detail {
 /// SerializeJSONProperty (ECMA-262 25.5.2.2) for one node, with no replacer
@@ -62,7 +69,44 @@ inline void json_write(const ctbrowser::json_value & value, std::string & out) {
         },
         value.data);
 }
+
+/// The JSON node of one property value. Only these carriers are admitted
+/// into a record JSON.stringify serializes; each always serializes.
+inline ctbrowser::json_value to_json(js_num value) {
+    return ctbrowser::json_value{value.value()};
+}
+inline ctbrowser::json_value to_json(double value) {
+    return ctbrowser::json_value{value};
+}
+inline ctbrowser::json_value to_json(js_boolean_t value) {
+    return ctbrowser::json_value{static_cast<bool>(value)};
+}
+inline ctbrowser::json_value to_json(const js_string & value) {
+    return ctbrowser::json_value{value.value()};
+}
+inline ctbrowser::json_value to_json(const number_string & value) {
+    return std::visit([](const auto & alternative) { return to_json(alternative); }, value);
+}
+
+inline void define_json_properties(ctbrowser::json_value::object &) {}
+template <class Value, class... Rest>
+void define_json_properties(ctbrowser::json_value::object & out, const char * key,
+                            const Value & value, const Rest &... rest) {
+    out.push_back({key, to_json(value)});
+    define_json_properties(out, rest...);
+}
 } // namespace detail
+
+/// The object an object literal is, for JSON.stringify: `fields` alternate a
+/// key and its value, in the order the literal defined them. The compiler
+/// passes distinct keys none of which is an array index, so that order is
+/// OrdinaryOwnPropertyKeys order (ECMA-262 10.1.11.1), the order
+/// SerializeJSONObject (25.5.2.5) enumerates.
+template <class... Fields> ctbrowser::json_value json_record(const Fields &... fields) {
+    ctbrowser::json_value::object members;
+    detail::define_json_properties(members, fields...);
+    return ctbrowser::json_value{std::move(members)};
+}
 
 /// JSON.stringify(value) (ECMA-262 25.5.2.1) with no replacer and no space
 /// argument. The tree holds no undefined, function or symbol, so every value
@@ -72,6 +116,20 @@ struct stringify_method {
         std::string out;
         detail::json_write(value, out);
         return js_string{std::move(out)};
+    }
+    /// A dictionary (Dictionary.hpp) serializes its own keys in
+    /// OrdinaryOwnPropertyKeys order, as SerializeJSONObject (25.5.2.5)
+    /// enumerates them.
+    template <class V> js_string operator()(const dictionary<V> & table) const {
+        ctbrowser::json_value::object members;
+        for (const std::size_t at : table.order()) {
+            const auto & [key, value] = table.at(at);
+            members.push_back({key, detail::to_json(value)});
+        }
+        return (*this)(ctbrowser::json_value{std::move(members)});
+    }
+    template <class V> js_string operator()(const std::shared_ptr<dictionary<V>> & table) const {
+        return (*this)(*table);
     }
 };
 

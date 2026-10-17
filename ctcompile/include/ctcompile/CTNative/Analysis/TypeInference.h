@@ -42,11 +42,15 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <array>
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace ctcompile::ctnative {
 
@@ -75,6 +79,17 @@ inline constexpr llvm::StringLiteral kAssignedBeforeRead = "ctnative.assigned_be
 /// and on each direct call of it, when markRecordReturns proved that the call's
 /// result can receive a copy (Analysis/Inference/Records.cpp).
 inline constexpr llvm::StringLiteral kRecordReturn = "ctnative.record_return";
+
+/// A callback of `text.replace(/pattern/g, fn)` that closure lifting
+/// specialised for its one call (Lowering/ClosureLifting/StringCallbacks.cpp).
+/// On the `ctjs.call` it is a symbol reference to the callback, whose captures
+/// follow the RegExp literal in the call's arguments; on the callback's
+/// `ctjs.func` it is a unit attribute.
+inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_callback";
+/// The String.prototype method a `ctjs.call` invokes on its receiver, written
+/// by TypeInference::markStringMethodCalls: "toLowerCase", "trim", or
+/// "replace" with a RegExp literal and a replacement that is not a function.
+inline constexpr llvm::StringLiteral kNativeStringMethod = "ctnative.string_method";
 
 /// One SSA value's inferred type, as a lattice element.
 ///
@@ -226,6 +241,30 @@ public:
     /// Whether `ret` is a `ctjs.return` of a function kRecordReturn marks.
     static bool returnsRecord(mlir::Operation * ret);
 
+    // String.prototype.replace with a function (Inference/StringCallbacks.cpp).
+    /// The pattern and flags of the RegExp literal `value` is, or none.
+    static std::optional<std::pair<std::string, std::string>> regExpLiteral(mlir::Value value);
+    /// Why the native runtime cannot run `pattern` with `flags` for a callback
+    /// that declares `declared` parameters the way JavaScript does, or empty.
+    static std::string replacePatternProblem(llvm::StringRef pattern, llvm::StringRef flags,
+                                             unsigned declared);
+    /// Whether `op` is a replace call closure lifting specialised.
+    static bool isStringCallbackCall(mlir::Operation * op);
+    /// Marks each `text.toLowerCase()`, `text.trim()` and
+    /// `text.replace(/re/, replacement)` call with kNativeStringMethod, while
+    /// its key is still a constant the lowering has not rewritten.
+    static void markStringMethodCalls(mlir::Operation * top);
+    /// Whether `op` is a marked String method call, which the runtime spells
+    /// `ctnative::String.prototype.<name>.call(text)` on a String.
+    static bool isStringMethodCall(mlir::Operation * op);
+    /// Whether `op` is the method read, the RegExp literal or the literal
+    /// factory's global that only such a call (or a toLowerCase call)
+    /// consumes; it lowers to nothing.
+    static bool consumedByStringCallback(mlir::Operation * op);
+    /// Whether `value` is a parameter of a specialised replace callback, which
+    /// its call types rather than the entry state.
+    static bool isStringCallbackParameter(mlir::Value value);
+
     /// Whether `array` is a dense array literal that can be a `std::vector`:
     /// its uses keep it dense (no holes) and local. Allowed uses are appends,
     /// index and length reads, overwrites of elements proved to exist, and
@@ -258,9 +297,183 @@ public:
         sort,
         split,
         splitSpace,
-        regexp
+        regexp,
+        /// `a.includes(x)` on an array of Strings.
+        includes,
+        /// A static method of a built-in namespace object, such as
+        /// `Number.parseInt(s, radix)` (builtinStaticOf).
+        builtinStatic,
+        /// A callback method closure lifting specialised
+        /// (Inference/ArrayCallbacks.cpp).
+        callback
     };
     static VectorCall vectorCallOf(mlir::Operation * op);
+
+    /// One built-in native code calls as `<callee>(args...)`: a static of a
+    /// namespace object (`Number.parseInt(s)`), the global itself
+    /// (`Number(s)`, an empty `member`), or a prototype method called through
+    /// `call` (`String.prototype.toLowerCase.call(s)`), whose first argument
+    /// is the receiver.
+    struct BuiltinStatic {
+        /// What an argument must be for the call to lower.
+        enum class Param {
+            string,
+            number,
+            /// An ordinary script's element, or one that may be null
+            /// (present_element throws the VM's TypeError for null).
+            element,
+            /// An object literal or a dictionary JSON.stringify serializes
+            /// (stringifiedRecordProblem).
+            record,
+            /// What console.log prints (Runtime/Console.hpp): a String, a
+            /// Number, a Boolean, null or undefined, or an optional of them.
+            printable,
+            /// A run-once static's constant table whose fields are all
+            /// Strings, proved by Inference/StaticTables.cpp, which marks the
+            /// call (kNativeStaticTableEnumeration).
+            staticTable
+        };
+        /// What the call answers.
+        enum class Result {
+            number,
+            string,
+            /// An ordinary script's elements (querySelectorAll's snapshot).
+            elementVector,
+            /// An ordinary script's element or null.
+            nullableElement,
+            undefined,
+            /// Object.entries, Object.keys and Object.values of a proved
+            /// constant table of Strings: [key, value] pairs, the keys and the
+            /// values, in definition order. A call the table proof did not
+            /// mark has no type.
+            tableEntries,
+            tableKeys,
+            tableValues
+        };
+        llvm::StringLiteral global; ///< `Number`, `Math`, `String`.
+        /// `parseInt`, `min`, `toLowerCase`; empty for a call of the global
+        /// itself (`Number(s)`).
+        llvm::StringLiteral member;
+        llvm::StringLiteral callee; ///< `ctnative::Number.parseInt`.
+        std::array<Param, 3> params;
+        unsigned arity;    ///< How many of `params` the method takes.
+        unsigned required; ///< How many of them a call must pass.
+        Result result = Result::number;
+        /// Called as `global.prototype.member.call(receiver, ...)`, with the
+        /// receiver as params[0].
+        bool prototype = false;
+    };
+    /// The type of an operation of a proved dictionary (Analysis/
+    /// NativeDictionary.h), or null when `op` is not one or answers nothing
+    /// (Inference/Dictionaries.cpp).
+    mlir::Type dictionaryType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+
+    /// The row of the built-in statics table (Inference/BuiltinStatics.cpp)
+    /// that `op` calls, or null. The table is the one place built-in statics
+    /// are recognised; a new one is a row there plus its runtime member.
+    static const BuiltinStatic * builtinStaticOf(mlir::Operation * op);
+    /// Whether `use` passes an object literal to a Param::record parameter.
+    static bool passesARecord(mlir::OpOperand & use);
+    /// Why the object literal `object`, passed to JSON.stringify by `call`,
+    /// cannot be serialized from its C++ struct, or empty: every write to it
+    /// must be in its own block before the call, under a constant key that is
+    /// not an array index, so its own keys at the call are exactly those
+    /// keys, in the order they were first written. Admission checks the
+    /// values' types.
+    static std::string stringifiedRecordProblem(mlir::Value object, mlir::Operation * call);
+    /// The keys of a record stringifiedRecordProblem accepts, in definition
+    /// order.
+    static llvm::SmallVector<llvm::StringRef> recordKeys(mlir::Value object);
+
+    /// The type of `ctnative.refine` of a `from` value by `kind`
+    /// (Inference/Refinements.cpp): `"string"` and `"number"` are the String
+    /// or Number alternative of `from` (any String or Number when `from` has
+    /// none, since the test proved it), and `"truthy"` drops the null and
+    /// undefined of an optional. Any other kind leaves `from` as it is.
+    static mlir::Type refinedType(mlir::MLIRContext * c, llvm::StringRef kind, mlir::Type from);
+
+    // Array-method callbacks (Inference/ArrayCallbacks.cpp).
+    /// Whether `key` names an Array method the runtime calls back from.
+    static bool isArrayCallbackMethod(llvm::StringRef key);
+    /// Whether `op` is a call closure lifting specialised for its callback.
+    static bool isArrayCallbackCall(mlir::Operation * op);
+    /// Whether that call answers a new array (filter and map).
+    static bool arrayCallbackMakesArray(mlir::Operation * op);
+    /// Whether operand `index` of that call only lends an array to it: the
+    /// receiver, or a captured value the callback reads.
+    static bool arrayCallbackBorrows(mlir::Operation * op, unsigned index);
+    /// Whether `array` is a vector of Numbers the element-vector proof accepts
+    /// and no array literal owns (a map result, or an array a call returns
+    /// or lends): `std::vector<ctnative::js_num>`. Number literals keep the
+    /// dense proof (Shapes.cpp) and its `std::vector<double>`.
+    static bool isNumberElementVector(mlir::Value array);
+    /// Whether `value` is a parameter of a specialised callback, which its
+    /// call types rather than the entry state.
+    static bool isArrayCallbackParameter(mlir::Value value);
+
+    // Callbacks handed to the host (Inference/HostCallbacks.cpp).
+    /// Whether `op` is an `addEventListener` or `setTimeout` call closure
+    /// lifting specialised for its callback.
+    static bool isHostCallbackCall(mlir::Operation * op);
+    /// Whether `op` is a call of the realm's own `setTimeout` or
+    /// `setInterval`.
+    static bool isTimerCall(mlir::Operation * op);
+    /// Whether `op` is `clearTimeout(handle)` or `clearInterval(handle)` of
+    /// the realm's own function.
+    static bool isTimerClear(mlir::Operation * op);
+    /// Whether `load` reads `window`, `self` or `globalThis` only for uses that
+    /// cannot write the globals table, so it leaves the globals typed
+    /// (Inference/HostCallbacks.cpp holds the one list of such uses).
+    static bool isInertWindowLoad(mlir::Operation * load);
+    /// Whether `op` is `new Event(type)` or `new Event(type, init)` of the
+    /// realm's own Event, with `init` an object literal eventInitFields reads.
+    static bool isEventConstruct(mlir::Operation * op);
+    /// The fields of such a construct's init, as (key, value) pairs in the
+    /// literal's order: an object literal used only for `bubbles` and
+    /// `cancelable` definitions and as the init. Empty with no init; nullopt
+    /// when the init is anything else.
+    static std::optional<llvm::SmallVector<std::pair<llvm::StringRef, mlir::Value>>>
+    eventInitFields(mlir::Operation * construct);
+    /// Whether `op` is the object literal of an Event construct's init, or one
+    /// of its field definitions.
+    static bool isEventInitPart(mlir::Operation * op);
+    /// Whether `op` is `x.dispatchEvent(e)` with the method read only for the
+    /// call; x is an element and e an Event when their types say so.
+    static bool isDispatchEventCall(mlir::Operation * op);
+    /// Whether `op` is `x.preventDefault()` or `x.stopPropagation()` with the
+    /// method read only for the call; x is an Event when its type says so.
+    static bool isEventCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a callback, which its call
+    /// types rather than the entry state.
+    static bool isHostCallbackParameter(mlir::Value value);
+    /// The key of `el.key(args)` when it is an element method an ordinary
+    /// script calls, with its callee read only for the call
+    /// (Inference/Elements.cpp); empty otherwise.
+    static llvm::StringRef elementCallKey(mlir::Operation * op);
+    /// Whether `key` is previousElementSibling, nextElementSibling or
+    /// parentElement: a read that answers an element or null.
+    static bool isElementLink(llvm::StringRef key);
+    /// For `[].concat(...a)`, the array `a` that the spread loop filled:
+    /// the call makes a copy of it (Inference/Elements.cpp). Null otherwise.
+    static mlir::Value spreadCopySource(mlir::Operation * op);
+    /// Whether `op` is the empty literal of `[].concat(...a)` or its `concat`
+    /// read, which lower to nothing.
+    static bool isSpreadCopyPlumbing(mlir::Operation * op);
+    /// Whether `value`, an element that may be null, is known non-null where
+    /// `user` uses it (Inference/Elements.cpp): `user` sits in the
+    /// then-branch of `if (value)`, or `value` leaves a `for (; i;)` loop on
+    /// an exit that only the loop's truthy arm takes (SelectorEngine's prev
+    /// and next return `[i]` from inside the loop).
+    static bool presentElement(mlir::Value value, mlir::Operation * user);
+
+    // Promises (Inference/Promises.cpp).
+    /// Whether `op` is a promise operation: a `new Promise(f)` or `p.then(f)`
+    /// closure lifting specialised for its callback, a call of the realm's
+    /// `Promise.resolve`, or a call of an executor's resolve function.
+    static bool isPromiseCall(mlir::Operation * op);
+    /// Whether `value` is a parameter of such a callback, which its operation
+    /// types rather than the entry state.
+    static bool isPromiseCallbackParameter(mlir::Value value);
 
     /// The values that name one array lowered to `std::vector<T>` for a
     /// proved element type T: its owners (array literals and split results),
@@ -273,8 +486,9 @@ public:
     static llvm::SmallVector<mlir::Value, 4> elementVectorAliases(mlir::Value array,
                                                                   std::string * why = nullptr);
     /// Everything stored into the array `members` names: literal elements,
-    /// appends and pushed values. A split result's Strings are not listed;
-    /// splitsAString says whether there is one.
+    /// appends and pushed values, its own and those of every callee it is
+    /// lent to. A split result's Strings are not listed; splitsAString says
+    /// whether there is one.
     static llvm::SmallVector<mlir::Value, 4> elementVectorStores(
         llvm::ArrayRef<mlir::Value> members);
     /// Whether `op` reads the global `undefined` in a program that never
@@ -300,9 +514,13 @@ public:
     /// to it, so the load is the realm's own binding of that name.
     static bool isRealmGlobal(mlir::Operation * op, llvm::StringRef name);
 
-    /// Whether the array `members` names is a function's parameter: a
-    /// read-only borrow of the caller's array, lowered as std::span.
+    /// Whether the array `members` names is a function's parameter: a borrow
+    /// of the caller's array, lowered as std::span, or as a pointer when
+    /// elementParameterWritten.
     static bool elementVectorParameter(llvm::ArrayRef<mlir::Value> members);
+    /// Whether the element-array parameter `parameter` is pushed to or sorted,
+    /// in its function or in a callee it is lent to.
+    static bool elementParameterWritten(mlir::Value parameter);
     /// Whether one owner in `members` is a split result.
     static bool splitsAString(llvm::ArrayRef<mlir::Value> members);
 
@@ -322,6 +540,16 @@ public:
     /// non-negative integer constant and steps by 1. Element vectors never
     /// shrink, so the element exists when the body reads it.
     static bool isBoundedIndexRead(mlir::Operation * read);
+    /// Whether `read` is `rows[i]` with every use a read of a constant
+    /// position of the row (`rows[i][1]`). Past the end that next read
+    /// throws a TypeError, so the row is read as one that exists, and
+    /// ctnative::vec_row throws instead when it does not.
+    static bool isRowRead(mlir::Operation * read);
+    /// The key of the first constant-key property read of `value`, in program
+    /// text order, following it into a direct callee's parameter when it is
+    /// passed on first; empty when none is found. That read is where the
+    /// interpreter throws when `value` is null, and its error names the key.
+    static llvm::StringRef firstPropertyRead(mlir::Value value);
 
     /// A value that names a shared binding the closure lift made a
     /// frame-local variable: the `ctjs.create_cell` it marked
@@ -395,6 +623,10 @@ private:
     /// solver runs: the closure lift and every rewrite in
     /// `--ctnative-lower-to-emitc` happen before it is loaded.
     mlir::DominanceInfo dominance_{nullptr};
+    /// Each table family's stored values (Inference/Dictionaries.cpp), by
+    /// its ctnative.dict_group, indexed on the first visit of a table literal.
+    llvm::DenseMap<int64_t, llvm::SmallVector<mlir::Value>> dictionaryStores_;
+    bool dictionaryStoresIndexed_ = false;
     // array value -> everything appended or stored into it, for
     // dense vector sites only; built in initialize() beside fieldStores_.
     llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value, 4>> appends_;
@@ -426,6 +658,33 @@ private:
     mlir::Type domReadType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
     mlir::Type elementVectorType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
                                  bool & pending);
+    /// The type of a specialised host-callback call (undefined for
+    /// `addEventListener`, a Number for `setTimeout`), after joining its
+    /// captured values (and a listener's Event) into the callback's
+    /// parameters; and the type of a read or call on such an Event.
+    mlir::Type hostCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of a promise operation (isPromiseCall), after joining its
+    /// captured values and, for an executor, the values its resolve function
+    /// is called with into the callback's parameters.
+    mlir::Type promiseType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands);
+    /// The type of an element member call or read (Inference/Elements.cpp),
+    /// or null.
+    mlir::Type elementMemberType(mlir::Operation * op,
+                                 llvm::ArrayRef<const TypeLattice *> operands);
+    /// `joined`, the element type of the array `members` names, narrowed
+    /// from an element or null to an element when every value stored into
+    /// it is an element or is present where it is stored (presentElement).
+    mlir::Type presentElements(mlir::Operation * op, llvm::ArrayRef<mlir::Value> members,
+                               mlir::Type joined);
+    /// The type of a specialised Array-method call, after joining its
+    /// receiver's element type, the index and its captured values into the
+    /// callback's parameters.
+    mlir::Type arrayCallbackType(mlir::Operation * op, llvm::ArrayRef<const TypeLattice *> operands,
+                                 bool & pending);
+    /// The type of a specialised replace call, after joining its captures, and
+    /// the match and groups (Strings), into the callback's parameters.
+    mlir::Type stringCallbackType(mlir::Operation * op,
+                                  llvm::ArrayRef<const TypeLattice *> operands, bool & pending);
 
     /// The element type of a dense array: the join over everything appended or
     /// stored into it, from `undefined`. `op` is the operation asking, so every
@@ -435,6 +694,23 @@ private:
     /// `seed` met with the type of every value after `op`, subscribing `op` to
     /// each. A value not visited yet contributes nothing now and revisits `op`.
     mlir::Type joinLattices(mlir::Operation * op, mlir::ValueRange values, mlir::Type seed);
+
+    /// Instances of a class a registry Map owns (Inference/Instances.cpp):
+    /// the `new` of such a class is `instance<C>`, and a field read on any
+    /// value of that type is the join of the class's field stores. Nullopt
+    /// when `op` is none of these; a null Type while a store is pending.
+    std::optional<mlir::Type> instanceTypeOf(mlir::Operation * op,
+                                             llvm::ArrayRef<const TypeLattice *> operands);
+    /// Joins the `this` of an identity class's constructor and methods with
+    /// its `new` objects, so the class has one struct holding every field
+    /// they write, whichever instance a method is called on.
+    static void joinInstanceReceivers(mlir::Operation * top,
+                                      llvm::EquivalenceClasses<mlir::Value> & classes);
+    /// Per identity class and field (`class` NUL `key`), every value its
+    /// constructor and methods store into that field of `this`, the only
+    /// writes the registry proof allows; built on first use.
+    llvm::StringMap<llvm::SmallVector<mlir::Value, 2>> instanceStores_;
+    bool instanceStoresBuilt_ = false;
 
     /// What a shared (carried) binding holds. The closure lift marks a
     /// `ctjs.create_cell` it can make a frame-local variable

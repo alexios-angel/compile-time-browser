@@ -19,6 +19,7 @@
 //===----------------------------------------------------------------------===//
 #include "ClosureLifter.h"
 #include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
 
@@ -735,7 +736,7 @@ void closureLifter::methodCensus() {
     // whyConstructorSetupDoesNotLift skips only receiver resolution; full
     // constructor admission rechecks that after this census settles.
     for (ctjs::ConstructOp built : allConstructs) {
-        auto closure = built.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        auto closure = constructedClosure(built);
         if (!closure || whyConstructorSetupDoesNotLift(closure)) { continue; }
         auto prototype = immutablePrototype(closure);
         if (!prototype) { continue; }
@@ -766,6 +767,13 @@ void closureLifter::methodCensus() {
             (void)retainedByLocalMap(use, &reads);
         }
         for (const auto & [read, owner] : reads) { behind[read] = {owner}; }
+    }
+    // An instance read back from a registry Map names every instance of its
+    // class (Analysis/Instances.h), and those share the prototype's methods.
+    for (const InstanceRegistry & registry : markInstanceRegistries(module)) {
+        for (mlir::Value read : registry.readBack) {
+            behind[read].assign(registry.instances.begin(), registry.instances.end());
+        }
     }
     // Fixpoint over the receiver chain. `this.other()` inside a method has
     // `%arg0` as its receiver, and `%arg0` names whatever the call sites pass,
@@ -829,7 +837,10 @@ std::optional<std::string> closureLifter::whyThisLeaks(ctjs::FuncOp target) {
         mlir::Operation * user = use.getOwner();
         // Reuse the settled argument census: a constructor's receiver may be
         // passed on only through a proved object-argument slot.
-        if ((constructed && carriesObjectArgument(use)) || isConstantKeyAccess(use)) { continue; }
+        if ((constructed && carriesObjectArgument(use)) || isConstantKeyAccess(use) ||
+            passesLexicalThis(use)) { // ArrowThis.cpp
+            continue;
+        }
         if (llvm::isa<ctjs::GetPropertyOp>(user)) {
             return "it reads `this` through a dynamic key";
         }

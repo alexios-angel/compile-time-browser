@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #pragma once
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -59,5 +60,14 @@ namespace ctbrowser {
 /// `Number("3.14xyz")` is NaN. Returns NaN when nothing numeric starts the
 /// string.
 [[nodiscard]] double string_to_number_prefix(std::string_view text);
+
+/// `parseInt` (ECMA-262 19.2.5) from step 3, once `text` is a String and
+/// `radix` has been through ToInt32: StrWhiteSpaceChar trimmed from the front,
+/// a sign, a radix of 0 meaning 10 (or 16 with a `0x` prefix), any other radix
+/// outside [2, 36] giving NaN, and the longest prefix of digits in the radix,
+/// NaN when there is none. Base 10 goes through the exact decimal-to-double
+/// conversion; the other radices accumulate in a double, which rounds past
+/// 2^53 as the note allows.
+[[nodiscard]] double parse_int(std::string_view text, std::int32_t radix);
 
 } // namespace ctbrowser

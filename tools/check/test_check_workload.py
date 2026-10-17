@@ -39,6 +39,14 @@ def probe_sleep(ctx, name):
     ctx.each(name, list(ctx.scripts), body)
 
 
+@stage("probe-binary", "a native binary that prints a=1", "write it", needs="discover")
+def probe_binary(ctx, name):
+    def body(item):
+        ctx.artifacts[item] = {"binaries": [ctx.root / "native.sh"]}
+        ctx.add(name, item, "PASS", "probe")
+    ctx.each(name, list(ctx.scripts), body)
+
+
 @stage("probe-missing", "a capability that does not exist yet", "build it", needs="discover")
 def probe_missing(ctx, name):
     ctx.each(name, list(ctx.scripts), lambda item: ctx.add(name, item, "MISSING", "absent"))
@@ -58,6 +66,12 @@ WORKLOADS = {
     "stale": {"scripts": ["missing.js"]},
     "gap": {"scripts": ["a.js"], "stages": ["discover", "probe-missing"]},
     "entry": {"scripts": [{"pattern": "a.js", "string_entries": ["f", "g"]}]},
+    "globals": {"scripts": ["a.js"], "stages": ["discover", "probe-binary", "script-run"]},
+    "vacuous": {"scripts": ["b.js"], "stages": ["discover", "probe-binary", "script-run"]},
+    "unnamed-skip": {
+        "scripts": [{"pattern": "b.js", "script-run": {"skip": "no globals"}}],
+        "stages": ["discover", "probe-binary", "script-run"],
+    },
 }
 
 
@@ -75,6 +89,14 @@ def planted():
     defaults = {"schema": 1, "done_means": "test", "stages": ["discover", "probe-check"]}
     defaults["timeouts"] = {"command": 5, "item": 10, "total": 60}
     (defs / "defaults.json").write_text(json.dumps(defaults))
+    # script-run's reference prints a=1 for a.js and nothing for b.js; the
+    # native binary prints a=1.
+    reference = root / "ctcompile/test/ctcompile-test-native-reference"
+    reference.parent.mkdir(parents=True)
+    reference.write_text('#!/bin/sh\ncase "$1" in */a.js) echo a=1;; esac\n')
+    (root / "native.sh").write_text("#!/bin/sh\necho a=1\n")
+    for program in (reference, root / "native.sh"):
+        program.chmod(0o755)
     for name, body in WORKLOADS.items():
         (defs / f"{name}.json").write_text(json.dumps(body))
     loaded = workload.load(defs)
@@ -152,6 +174,24 @@ def test_unknown_stage_cannot_check():
 def test_stale_pattern_cannot_check():
     stale = planted().results["stale"]
     assert stale["verdict"] == "CANNOT CHECK", stale
+
+
+def test_globals_match_reference():
+    globals_ = planted().results["globals"]
+    assert globals_["verdict"] == "DONE", globals_
+
+
+def test_vacuous_comparison_fails():
+    results = planted().results["vacuous"]["results"]
+    vacuous = [r for r in results if r["stage"] == "script-run"]
+    assert vacuous[0]["status"] == "FAIL" and "no globals" in vacuous[0]["summary"], vacuous
+
+
+def test_opt_out_without_ctest_is_refused():
+    # An opt-out that names no CTest of the workload is refused.
+    results = planted().results["unnamed-skip"]["results"]
+    skip = [r for r in results if r["stage"] == "script-run"]
+    assert skip[0]["status"] == "FAIL" and "opt-out" in skip[0]["summary"], skip
 
 
 def test_missing_capability_is_first_gap():

@@ -25,7 +25,15 @@ set(_vm "ctbrowser::(script|aot)::|ct_aot_")
 if(DEFINED FORBID)
   set(_vm "${_vm}|${FORBID}")
 endif()
-string(REGEX MATCHALL "[^\n]*(${_vm})[^\n]*" hits "${symbols}")
+# One line per list item, then a filter: a single regex over the whole
+# listing that matches `[^\n]*(...)` scans each line again from every start
+# position, which took 17 s on bootstrap_layout.native's 4,000 symbols.
+# `;`, `[` and `]` would split or bracket CMake list items, so they become
+# `_` in the lines (only the report shows them).
+string(REGEX REPLACE "[];[]" "_" lines "${symbols}")
+string(REPLACE "\n" ";" lines "${lines}")
+set(hits ${lines})
+list(FILTER hits INCLUDE REGEX "${_vm}")
 if(hits)
   list(LENGTH hits count)
   list(SUBLIST hits 0 12 shown)

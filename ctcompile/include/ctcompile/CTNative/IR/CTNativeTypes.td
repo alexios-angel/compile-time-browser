@@ -119,6 +119,29 @@ def CTNative_ComputedStyleType : CTNative_Type<"ComputedStyle", "computed_style"
   }];
 }
 
+def CTNative_EventType : CTNative_Type<"Event", "event"> {
+  let summary = "The Event a native listener receives, as ctnative::js_event";
+  let description = [{
+    The parameter of a listener an ordinary script hands to
+    `el.addEventListener(type, f)`: a view of the host's dispatch
+    (Runtime/Events.hpp), valid only while the listener runs. Admission lets
+    it be only the receiver of its type, target, currentTarget and
+    defaultPrevented reads and its preventDefault and stopPropagation calls,
+    so it never outlives the dispatch. It meets only itself.
+  }];
+}
+
+def CTNative_TimerType : CTNative_Type<"Timer", "timer"> {
+  let summary = "A timer's handle, as ctnative::timer_id";
+  let description = [{
+    What `setTimeout` and `setInterval` return in an ordinary script, which a
+    program may keep and pass to `clearTimeout` or `clearInterval`
+    (Runtime/Timers.hpp). The VM's handle is a Number, but its value counts
+    the host's own timers too, so the native one is opaque: admission refuses
+    every use that would read it as a Number. It meets only itself.
+  }];
+}
+
 def CTNative_BoolType : CTNative_Type<"Bool", "bool"> {
   let summary = "A JavaScript boolean, as a C++ `bool`";
   let description = [{
@@ -382,6 +405,21 @@ def CTNative_MapType : CTNative_Type<"Map", "map"> {
   let assemblyFormat = "`<` $keyType `,` $valueType `>`";
 }
 
+def CTNative_DictType : CTNative_WrapperType<"Dict", "dict", (ins "::mlir::Type":$elementType)> {
+  let summary = "`std::shared_ptr<ctnative::dictionary<V>>` - an object used as a table";
+  let description = [{
+    An object literal that a program uses only as a string-keyed table:
+    every key may be computed, every value has the one type V, and the
+    object is otherwise only deleted from, tested with `in` or enumerated.
+    Bootstrap's EventHandler keeps its listener registry this way. The
+    proof is prepareNativeDictionaries (Analysis/NativeDictionary.h); the
+    type records its conclusion, the value type V, which is the element
+    type here. A dictionary is an object, so a value of this type is a
+    reference to one table, never a copy. Two dictionaries meet value type
+    by value type, like the other one-element containers.
+  }];
+}
+
 def CTNative_SetType : CTNative_WrapperType<"Set", "set", (ins "::mlir::Type":$elementType)> {
   let summary = "`std::unordered_set<T>` - a JavaScript `Set`";
   let description = [{
@@ -418,6 +456,34 @@ def CTNative_GlobalObjectType
   }];
 }
 
+def CTNative_StaticTableType
+    : CTNative_WrapperType<"StaticTable", "static_table", (ins StringRefParameter<>:$binding)> {
+  let summary = "The constant table a run-once static variable holds";
+  let description = [{
+    The binding names one static variable of a run-once function that
+    markStaticTables (Analysis/Inference/StaticTables.cpp) proved holds one
+    object literal of constants, never written after it is made. Its C++
+    carrier is a pointer to the one namespace-scope `const` struct, so a copy
+    of the value is the same object, as in JavaScript. The variable holds
+    undefined, a null pointer, until the run-once function stores the table.
+  }];
+}
+
+def CTNative_InstanceType
+    : CTNative_WrapperType<"Instance", "instance", (ins StringRefParameter<>:$className)> {
+  let summary = "An instance of a JavaScript class a registry Map owns: `std::shared_ptr<C>`";
+  let description = [{
+    Only a class whose constructor carries `ctnative.instance_class`
+    (Analysis/Instances.h) has instances of this type: its constructor stores
+    `this` into a Map that is proved to own nothing but instances of the
+    class, with no path from an instance back to the Map or another
+    instance. Shared ownership is then plain RAII: the Map entry and every
+    local holding the instance are owners, and the last one to go destroys
+    it. `opt<instance>` is a null pointer for both null and undefined, so
+    native code refuses wherever a program tells the two apart on it.
+  }];
+}
+
 def CTNative_MethodTableType
     : CTNative_WrapperType<"MethodTable", "method_table", (ins StringRefParameter<>:$site)> {
   let summary = "An owning closed table of immutable stored callable fields";
@@ -444,6 +510,44 @@ def CTNative_ClosureType
     Capture types are inferred from the creation site and the lifted target's
     parameters. They are not recursively embedded in this nominal type, so a
     recursive call graph cannot grow the type lattice indefinitely.
+  }];
+}
+
+def CTNative_ClosureSetType : CTNative_Type<"ClosureSet", "closure_set"> {
+  let summary = "One of a finite, proved set of callables - a std::variant dispatched by std::visit";
+  let description = [{
+    Where two `closure` types meet, or a `closure` meets a `closure_set`: a
+    value that is one of several lifted callables, each bound to its own
+    captures, such as `c ? (x => x + k) : (x => x * 3)`. The targets are the
+    callables' nominal identities, sorted and distinct, so the meet of the
+    same targets in any order is one MLIR type.
+
+    IT IS CAPPED at `kMaxClosureSetTargets` (CTNativeLattice.h). A union of
+    more targets is `boxed`, in every bracketing, because the size of a union
+    of sets does not depend on the order it was formed in. The cap keeps the
+    lattice finite-height.
+
+    The closure-set lift (Lowering/ClosureLifting/ClosureSets.cpp) decides
+    which values may have this type; a call through one names every target
+    it may reach, and admission requires one signature for all of them.
+  }];
+  let parameters = (ins ArrayRefParameter<"::mlir::StringAttr">:$targets);
+  let assemblyFormat = "`<` $targets `>`";
+  let genVerifyDecl = 1;
+}
+
+def CTNative_ClassTagType
+    : CTNative_WrapperType<"ClassTag", "class_tag", (ins StringRefParameter<>:$className)> {
+  let summary = "A JavaScript class held as a field value, with no runtime data";
+  let description = [{
+    The value of a field that holds a class, such as each entry of the object
+    a library publishes as a global (`bootstrap.Alert`). It carries no
+    runtime data: every read of the field is resolved at compile time to the
+    class it names (ClosureLifting/ClassStatics.cpp), so the value is only
+    the field's content, an empty `struct <className>_class {}` in C++.
+
+    It meets only with itself; against anything else the meet is `boxed`,
+    because a class never merges with an ordinary value.
   }];
 }
 
@@ -493,6 +597,34 @@ def CTNative_WeakType : CTNative_WrapperType<"Weak", "weak", (ins "::mlir::Type"
     reference, so meeting it with either gives a `variant` and not a
     pointer. That is deliberately awkward, because silently unifying a
     strong and a weak reference is the miscompile above.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Promises (Runtime/Promise.hpp)
+//===----------------------------------------------------------------------===//
+
+def CTNative_PromiseType
+    : CTNative_WrapperType<"Promise", "promise", (ins "::mlir::Type":$elementType)> {
+  let summary = "`ctnative::js_promise<T>` - a Promise whose value is a `T`";
+  let description = [{
+    The element is the join of every value the promise can be fulfilled
+    with, so two promises meet elementwise, like `vec`. It is nominal
+    against everything else: a promise and its value are different things,
+    and meeting either with another kind gives a `variant`. Only a proved
+    element lowers; admission refuses the rest by name, an object among them
+    because it could carry a `then` key and so be adopted instead.
+  }];
+}
+
+def CTNative_PromiseResolveType
+    : CTNative_WrapperType<"PromiseResolve", "promise_resolve",
+                           (ins "::mlir::Type":$elementType)> {
+  let summary = "The resolve function of a `promise<T>`";
+  let description = [{
+    `ctnative::promise_resolve_function<T>`, the value `new Promise` hands
+    its executor. It meets elementwise with itself and is unordered against
+    `promise<T>` and every other type.
   }];
 }
 

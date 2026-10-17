@@ -9,12 +9,10 @@ natively with the same DOM writes. The bad programs must be refused and the
 malformed ones rejected by the verifier.
 """
 
-import subprocess
-
 from CTNative.Browser.dom import dom
 from CTNative.Browser.dom.boolean import cells
 from CTNative.Browser.class_dom.callbacks import ELEMENT
-from CTNative.harness import run
+from CTNative.harness import run, slotted_run
 
 # Owner snippets: call mark()/reset() on the cell, fetch setAttribute, and
 # test the element's `ready` attribute.
@@ -359,7 +357,7 @@ def main():
     }.items():
         path = args.work / f"verifier-{name}.mlir"
         path.write_text(text)
-        actual = subprocess.run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
+        actual = slotted_run([args.opt, str(path)], text=True, capture_output=True, timeout=30)
         assert actual.returncode == 1 and "error:" in actual.stderr, actual.stderr
         refusals += 1
     print(

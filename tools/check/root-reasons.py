@@ -36,7 +36,14 @@ import sys
 # The same IR patterns tools/check/named-callees.py matches.
 FUNC = re.compile(r"^  (emitc\.func|ctjs\.func) (?:private )?@([A-Za-z0-9_$]+)\(([^\n]*)")
 REASON = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
-DIRECT = re.compile(r"\b(?:ctjs\.call_direct|emitc\.call) @([A-Za-z0-9_$]+)")
+# A call closure lifting specialised for its callback (String.prototype.replace,
+# an Array method, addEventListener or setTimeout) names the callback by
+# attribute; the callback's parameters are typed from that call, so the
+# function holding it is the callback's caller.
+DIRECT = re.compile(
+    r"\b(?:ctjs\.call_direct|emitc\.call|ctnative\.(?:string|array|host)_callback =) "
+    r"@([A-Za-z0-9_$]+)"
+)
 CLOSURE = re.compile(r"ctjs\.create_closure %arg2\[(\d+)\]")
 CLOSURE_REASON = re.compile(r'ctnative\.closure_reason = "((?:[^"\\]|\\.)*)"')
 CLASS_REASON = re.compile(r'ctnative\.class_reason = "((?:[^"\\]|\\.)*)"')

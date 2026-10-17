@@ -41,6 +41,16 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/otheropen.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=OTHEROPEN
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/otherkey.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/otherkey.mlir
+// RUN: FileCheck %s --check-prefix=OTHERKEY --implicit-check-not=ctnative.not_native < %t/otherkey.mlir
+// RUN: ctjs-opt %t/otherkey.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/otherkey.cpp
+// RUN: %gxx -O2 %t/otherkey.cpp -o %t/otherkey-gcc
+// RUN: %t/otherkey-gcc | FileCheck %s --check-prefix=OTHERKEYRUN
+// RUN: %clangxx -O2 %t/otherkey.cpp -o %t/otherkey-clang
+// RUN: %t/otherkey-clang | FileCheck %s --check-prefix=OTHERKEYRUN
+// RUN: %native_reference %t/otherkey.js | FileCheck %s --check-prefix=OTHERKEYRUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/otherkey.js | FileCheck %s --check-prefix=OTHERKEYRUN
 // The census is a measurement the option reports, not a rule. It is asserted
 // so its numbers stay right: this program has one method-bearing literal and
 // one blocking use, and the label says which.
@@ -127,8 +137,15 @@
 // `this` does, and the correctness backstop is the call-site arm of admission,
 // which asks `isClosedObject` of every object operand again.
 //
+// `bad` is also kept in an array, so it is not a table either (Inference/
+// Dictionaries.cpp declines it, and with it `o`, which shares the parameter).
+// Written under a computed key and otherwise used only as a table, the pair
+// lowers to dictionaries instead (`otherkey`).
+//
 // OTHEROPEN: ctjs.func {{.*}}@otheropen$1
 // OTHEROPEN-SAME: ctnative.not_native = "an object literal that escapes - it is passed to a parameter whose other object literal is not itself a closed shape, so the two would not agree on one class"
+// OTHERKEY: emitc.func @otherkey
+// OTHERKEYRUN: r=35
 
 // --- The census, as a remark -------------------------------------------------
 //
@@ -189,11 +206,23 @@ var a = mixed();
 function otheropen() {
     var o = { x: 1 };
     var bad = { x: 2 };
+    var keep = [bad];
     var take = function (p) { return p.x; };
     var r = take(o) + take(bad);
-    return r + bad[String(1)];
+    return r + bad[String(1)] + keep.length;
 }
 var a = otheropen();
+
+//--- otherkey.js
+function otherkey(k) {
+    var o = { x: 1 };
+    var bad = { x: 2 };
+    var take = function (p) { return p.x; };
+    var r = take(o) + take(bad);
+    bad[k] = 5;
+    return r * 10 + bad.y;
+}
+var r = otherkey("y");
 
 //--- census.js
 function sink(p) { return p.x; }

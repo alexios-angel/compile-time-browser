@@ -8,7 +8,11 @@ skipped one would pass without testing it (test/cmake/Native.cmake does the
 same for the CMake-driven tests).
 """
 
+import contextlib
+import fcntl
+import os
 from pathlib import Path
+import random
 import re
 import shutil
 import subprocess
@@ -33,6 +37,46 @@ FLAGS = [
 ]
 
 
+# The drivers run their cases on os.cpu_count() threads, and lit runs one
+# driver per CPU too, so on its own a lit run on a 32-core box started about
+# 32 x 32 tools at once and compiles hit the 120 s timeout. A tool runs only
+# while it holds one of os.cpu_count() slot files here, locked with flock, so
+# the limit holds across every lit worker and driver on the machine, and a
+# killed process gives its slot back.
+#
+# The directory is /tmp itself, not tempfile.gettempdir(): lit points TMPDIR at
+# a directory of its own for each run, which would give every lit run (each
+# checkout, each agent) a separate set of slots.
+JOB_SLOTS = Path("/tmp/ctcompile-job-slots")
+
+
+@contextlib.contextmanager
+def job_slot():
+    """Hold one machine-wide tool slot (JOB_SLOTS) for the body: the first free
+    one from a random start, else wait for that start slot."""
+    slots = os.cpu_count() or 1
+    JOB_SLOTS.mkdir(exist_ok=True)
+    start = random.randrange(slots)
+    for attempt in range(slots + 1):
+        fd = os.open(JOB_SLOTS / str((start + attempt) % slots), os.O_RDWR | os.O_CREAT, 0o666)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if attempt == slots else fcntl.LOCK_NB))
+        except BlockingIOError:
+            os.close(fd)
+            continue
+        try:
+            yield
+        finally:
+            os.close(fd)
+        return
+
+
+def slotted_run(*args, **kwargs):
+    """subprocess.run inside a job_slot()."""
+    with job_slot():
+        return subprocess.run(*args, **kwargs)
+
+
 def find_compilers():
     """Return paths to a GCC and a Clang C++ compiler, or raise if either is missing."""
     found = []
@@ -46,7 +90,7 @@ def find_compilers():
 
 def run(command, *, failure_site=None):
     """Run and return stdout; with failure_site, require a failure naming that site."""
-    result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+    result = slotted_run(command, capture_output=True, text=True, timeout=120)
     diagnostic = result.stdout + result.stderr
     if failure_site is not None:
         if result.returncode == 0 or failure_site not in diagnostic:

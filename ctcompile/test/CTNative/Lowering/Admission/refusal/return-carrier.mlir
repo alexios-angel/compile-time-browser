@@ -34,13 +34,17 @@
 //
 // It has no parameters and a constant condition, so nothing is boxed and the
 // only refusal that can apply is the one for unstructured control flow.
-// The importer never emits this form once --ctjs-lift-to-scf has run.
+// The importer never emits this form once --ctjs-lift-to-scf has run. It is
+// function index 0, the script entry, so reachability keeps it as a root
+// instead of removing a refused function nothing calls.
 //
 // TWORETURNS: ctjs.func {{.*}}@two_returns
 // TWORETURNS-SAME: ctnative.not_native = "unstructured control flow - run --ctjs-lift-to-scf first"
 // TWORETURNS-NOT: on one path
 
 // --- an unreachable second return is unvisited, not admitted ----------------
+//
+// Function index 0 again, so reachability keeps it.
 //
 // UNVISITED: ctjs.func {{.*}}@unreachable_return
 // UNVISITED-SAME: ctnative.not_native = "a value of type <unvisited> from `ctjs.constant`"
@@ -61,7 +65,7 @@ function agreed(n) {
 var r = agreed(3);
 
 //--- two-returns.mlir
-ctjs.func @two_returns(%receiver: !ctjs.value, %new_target: !ctjs.value,
+ctjs.func @two_returns$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
                        %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %k = ctjs.constant #ctjs.boolean<true>
@@ -76,7 +80,7 @@ ctjs.func @two_returns(%receiver: !ctjs.value, %new_target: !ctjs.value,
 }
 
 //--- unreachable-return.mlir
-ctjs.func @unreachable_return(%receiver: !ctjs.value, %new_target: !ctjs.value,
+ctjs.func @unreachable_return$0(%receiver: !ctjs.value, %new_target: !ctjs.value,
                               %callee: !ctjs.value) -> !ctjs.value
     attributes {upvalue_count = 0 : i32} {
   %n = ctjs.constant #ctjs.number<4617315517961601024>  // 5.0

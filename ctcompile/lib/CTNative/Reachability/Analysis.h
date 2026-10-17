@@ -1,7 +1,8 @@
 //===- Analysis.h - Function reachability analysis --------------*- C++ -*-===//
 //
 // Finds the private ctjs functions that no root can reach, for
-// --ctnative-prune-unreachable to delete.
+// --ctnative-prune-unreachable to delete, and the refused functions the
+// native lowering removes after admission.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,9 +29,29 @@ struct result {
     unsigned retained = 0;
 };
 
+/// Which functions start the walk, besides the top-level script (function
+/// index 0), declarations without a body and anything a module attribute
+/// names.
+enum class roots {
+    /// Every function that is not private, since code outside the module
+    /// may name it. The default optimizations use this.
+    nonPrivate,
+    /// Only functions the embedder calls by name (`ctnative.string_entry`)
+    /// and functions admission accepted (no `ctnative.not_native`), when the
+    /// module holds a top-level script (function index 0): the importer
+    /// emits a whole script, whose only outside caller is its embedder, and
+    /// leaves a function public because a ctjs.create_closure makes it, so
+    /// it is reached only through that closure. A module with no top-level
+    /// script keeps every non-private function a root. The native lowering
+    /// uses this, after admission, to find refused functions nothing that
+    /// can run creates or calls; an admitted function is a root so that no
+    /// removal leaves native code naming an erased function.
+    entries,
+};
+
 /// Analyzes one flat ctjs module without changing it. Any unsupported
 /// reference or exhausted budget empties the deletion set. Existing
 /// annotations on the IR are never trusted as evidence.
-result analyze(mlir::ModuleOp module, unsigned maxSteps);
+result analyze(mlir::ModuleOp module, unsigned maxSteps, roots from = roots::nonPrivate);
 
 } // namespace ctcompile::ctnative::reachability

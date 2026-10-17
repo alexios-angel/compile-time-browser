@@ -57,6 +57,18 @@ if(CTCOMPILE_ENABLE_MLIR)
     # browser for the packaging round trip, and every native pipeline module
     # (Native.cmake's ctcompile_add_native_pipeline records its target).
     get_property(_native_pipelines GLOBAL PROPERTY CTCOMPILE_NATIVE_PIPELINES)
+
+    # Everything the CTNative/Fixtures tests read from the build tree rather
+    # than make themselves: every native pipeline module (%{obj}) and the
+    # interpreter-linked binary they run nm on. Building only ctjs-opt and
+    # ctjs-translate leaves those modules from an older compiler, so the target
+    # touches fixture-inputs.stamp once they are current, and lit.cfg.py points
+    # %{obj} at a missing directory named after this target while the stamp is
+    # missing or older than either tool.
+    add_custom_target(ctcompile-fixture-inputs ALL
+      COMMAND "${CMAKE_COMMAND}" -E touch "${CMAKE_CURRENT_BINARY_DIR}/fixture-inputs.stamp"
+      COMMENT "Native fixture inputs are current")
+    add_dependencies(ctcompile-fixture-inputs ${_native_pipelines} ctcompile-test-type-oracle)
     add_lit_testsuite(check-ctcompile "Running the ctcompile regression tests"
       "${CMAKE_CURRENT_BINARY_DIR}"
       DEPENDS ctjs-opt ctjs-translate ctcompile-tool ctcompile-test-native-reference
@@ -67,7 +79,7 @@ if(CTCOMPILE_ENABLE_MLIR)
               ctcompile-test-launcher-page-vm ctcompile-test-launcher-page-aot
               ctcompile-test-native-vm-linked ctcompile-test-native-values-vm-linked
               ctcompile-test-app_bundle ctbrowser-tool-ctrun ctbrowser-tool-ctbrowse
-              ${_native_pipelines}
+              ctcompile-fixture-inputs
               FileCheck count not)
 
     # Also run lit from ctest, so a green `ctest` means the IR tests ran.
