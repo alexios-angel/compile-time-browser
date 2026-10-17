@@ -30,6 +30,23 @@ function later(label, ms) {
 }
 later('m', 5);
 
+// Two handlers that write a binding of the frame that scheduled them: the
+// frame and both handlers share `ticks` through a cell, so each handler sees
+// the other's write and the frame's write after scheduling.
+function counter() {
+    var ticks = 0;
+    setTimeout(function () {
+        ticks = ticks + 1;
+        log = log + 't' + ticks;
+    }, 0);
+    setTimeout(function () {
+        ticks = ticks + 1;
+        log = log + 't' + ticks;
+    }, 5);
+    ticks = 10;
+}
+counter();
+
 // Handles kept and passed back: a timer cleared before it is due never runs,
 // clearing one that already ran does nothing, and an interval runs each time
 // its timeout passes until a later timer clears it.

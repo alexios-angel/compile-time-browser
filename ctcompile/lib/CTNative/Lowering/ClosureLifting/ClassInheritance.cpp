@@ -1148,8 +1148,13 @@ struct flattener {
                 }
             } else if (auto store = llvm::dyn_cast<ctjs::CellSetOp>(user);
                        store && use.getOperandNumber() == 1) {
+                // The binding may still be read where a child's heritage call
+                // was: a read nothing uses goes with the class.
                 for (mlir::Operation * reader : store.getCell().getUsers()) {
-                    if (!llvm::isa<ctjs::CellSetOp>(reader)) { return false; }
+                    if (llvm::isa<ctjs::CellSetOp>(reader)) { continue; }
+                    auto read = llvm::dyn_cast<ctjs::CellGetOp>(reader);
+                    if (!read || !read.getResult().use_empty()) { return false; }
+                    doomed.insert(reader);
                 }
                 doomed.insert(user);
             } else {

@@ -49,7 +49,10 @@ bool replaceHostCallback(lowering & lower, mlir::Operation * o) {
     if (flagged) { captures = captures.drop_back(); }
     if (!captures.empty()) {
         llvm::SmallVector<mlir::Value> captured{bound};
-        llvm::append_range(captured, captures);
+        // A shared cell is bound as its handle (rule 2b in ClosureLifter.h).
+        for (mlir::Value capture : captures) {
+            captured.push_back(loadedHandle(b, where, capture));
+        }
         bound = callValue(b, where, any, "std::bind_front", captured);
     }
     // A removal names the listener by its identity; an addition of a listener

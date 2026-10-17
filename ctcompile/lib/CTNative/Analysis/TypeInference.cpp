@@ -203,6 +203,12 @@ mlir::Type staticResultType(mlir::Operation * op) {
 
     if (op->getName().getStringRef() == "ub.poison") { return BottomType::get(c); }
 
+    // A class held as an object field: the static-member rewrite proved every
+    // read of the field, and the value is the class's tag.
+    if (auto tag = op->getAttrOfType<mlir::StringAttr>(kNativeClassTag);
+        tag && llvm::isa<ctjs::ConstantOp>(op)) {
+        return ClassTagType::get(c, tag.getValue());
+    }
     if (auto constant = llvm::dyn_cast<ctjs::ConstantOp>(op)) { return typeOfConstant(constant); }
 
     // Every comparison is a boolean, including the relational ones on BigInts:
@@ -658,6 +664,7 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
     if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
+    if (isPromiseCallbackParameter(value)) { return; }
     // A specialised replace callback's parameters come from its call.
     if (isStringCallbackParameter(value)) { return; }
     const bool domInput =
@@ -916,6 +923,7 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         if (const mlir::Type registered = hostCallbackType(op, operands)) {
             return answer(registered);
         }
+        if (const mlir::Type promised = promiseType(op, operands)) { return answer(promised); }
     }
     // String.prototype.toLowerCase, and replace with a specialised function.
     if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }

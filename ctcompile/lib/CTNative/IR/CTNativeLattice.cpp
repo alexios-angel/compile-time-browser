@@ -257,6 +257,10 @@ static Type mergeSameFamily(Type a, Type b) {
     }
     if (llvm::isa<SetType>(a)) { return mergeElements<SetType>(a, b); }
     if (llvm::isa<DictType>(a)) { return mergeElements<DictType>(a, b); }
+    // Promises and their resolve functions meet by value type
+    // (CTNativeTypes.td).
+    if (llvm::isa<PromiseType>(a)) { return mergeElements<PromiseType>(a, b); }
+    if (llvm::isa<PromiseResolveType>(a)) { return mergeElements<PromiseResolveType>(a, b); }
     if (auto mapA = llvm::dyn_cast<MapType>(a)) {
         auto mapB = llvm::dyn_cast<MapType>(b);
         if (!mapB) { return Type(); }
@@ -303,6 +307,10 @@ Type meet(Type a, Type b) {
     if (llvm::isa<BottomType>(a)) { return b; }
     if (llvm::isa<BottomType>(b)) { return a; }
     if (llvm::isa<BoxedType>(a) || llvm::isa<BoxedType>(b)) { return BoxedType::get(context); }
+    // A class tag never merges with a value, nor with another class.
+    if (llvm::isa<ClassTagType>(a) || llvm::isa<ClassTagType>(b)) {
+        return a == b ? a : BoxedType::get(context);
+    }
     if (llvm::isa<JsonType>(a) || llvm::isa<JsonType>(b)) { return JsonType::get(context); }
 
     if (Type merged = mergeSameFamily(a, b)) { return merged; }

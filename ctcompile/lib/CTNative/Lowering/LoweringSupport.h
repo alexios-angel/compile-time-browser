@@ -110,7 +110,16 @@ enum class carrier {
     timer,
     /// An instance of a class a registry Map owns, or null or undefined:
     /// `std::shared_ptr<C>`, spelled per class (EmitC/Instances.cpp).
-    instance
+    instance,
+    /// A class held as an object field: an empty struct named after the
+    /// class (classTagCarrierType), with no runtime data.
+    classTag,
+    /// A Promise of a Number, a Boolean, a String or undefined
+    /// (Runtime/Promise.hpp), spelled by promiseSpelling.
+    promise,
+    /// The resolve function `new Promise` hands its executor, spelled by
+    /// promiseSpelling.
+    promiseResolve
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -190,8 +199,11 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::nullableElement, kNullableElementType},
     {carrier::timer, kTimerType},
     {carrier::instance, ""},
+    {carrier::classTag, ""},
+    {carrier::promise, ""},
+    {carrier::promiseResolve, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::instance) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::promiseResolve) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -207,6 +219,10 @@ inline const carrierRow & carrierInfo(carrier which) {
 }
 /// Number, Boolean, or a nullable/Number|Boolean scalar.
 bool isScalarCarrier(carrier value);
+/// Whether a promise of a value with this carrier is native: a Number, a
+/// Boolean, a String, or an optional scalar such as the undefined a handler
+/// returns (Runtime/Promise.hpp).
+bool isScalarPromiseValue(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
 /// The carriers a stored callable's concrete signature may use.
@@ -284,6 +300,10 @@ bool isElementArray(mlir::Value v, mlir::Type type, bool pageViews);
 /// ctnative::js_element_t, or std::pair of two of those for a tuple. Empty for
 /// anything else.
 std::string elementSpelling(mlir::Type type);
+/// The C++ spelling of a `promise<T>` or `promise_resolve<T>` whose carrier is
+/// carrier::promise or carrier::promiseResolve: `ctnative::js_promise<T>` or
+/// `ctnative::promise_resolve_function<T, ctnative::no_rejection>`.
+std::string promiseSpelling(mlir::Type type);
 /// `std::vector<elementSpelling(element)>` for an element array's VecType.
 std::string elementArraySpelling(mlir::Type type);
 /// `std::span<const elementSpelling(element)>`: how a function borrows an
@@ -332,6 +352,10 @@ mlir::Type valueCarrierType(mlir::MLIRContext * context, mlir::Type type);
 /// Whether an emitted type is a table's std::shared_ptr.
 bool isDictionaryCarrier(mlir::Type type);
 mlir::Type closureCarrierType(ClosureType type);
+/// The C++ spelling of the class tag a field holding class `name` has:
+/// `<name>_class`, an empty struct the module declares once.
+std::string classTagSpelling(ClassTagType type);
+mlir::Type classTagCarrierType(ClassTagType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);
 /// `type` printed as text, or `<unvisited>` for a null type (a value the
