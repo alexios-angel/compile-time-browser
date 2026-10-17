@@ -285,6 +285,15 @@ void closureLifter::removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<u
     }
     c->eraseOperands(drop);
     target->setAttr("upvalue_count", builder.getI32IntegerAttr(static_cast<int>(kept)));
+    // An arrow's lexical `this` slot (ArrowThis.cpp) moves with its capture.
+    if (auto slot = target->getAttrOfType<mlir::IntegerAttr>(kNativeLexicalThis)) {
+        const auto at = static_cast<unsigned>(slot.getInt());
+        if (at < captures && renumbered[at] >= 0) {
+            target->setAttr(kNativeLexicalThis, builder.getI32IntegerAttr(renumbered[at]));
+        } else {
+            target->removeAttr(kNativeLexicalThis);
+        }
+    }
     const auto move = [&](std::int32_t index) -> std::int32_t {
         if (index < 0 || static_cast<unsigned>(index) >= captures ||
             renumbered[static_cast<unsigned>(index)] < 0) {
