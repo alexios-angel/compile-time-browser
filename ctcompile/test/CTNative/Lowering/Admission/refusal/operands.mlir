@@ -51,6 +51,16 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamickey.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DYNKEY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dyntable.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/dyntable.mlir
+// RUN: FileCheck %s --check-prefix=DYNTABLE --implicit-check-not=ctnative.not_native < %t/dyntable.mlir
+// RUN: ctjs-opt %t/dyntable.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/dyntable.cpp
+// RUN: %gxx -O2 %t/dyntable.cpp -o %t/dyntable-gcc
+// RUN: %t/dyntable-gcc | FileCheck %s --check-prefix=DYNTABLERUN
+// RUN: %clangxx -O2 %t/dyntable.cpp -o %t/dyntable-clang
+// RUN: %t/dyntable-clang | FileCheck %s --check-prefix=DYNTABLERUN
+// RUN: %native_reference %t/dyntable.js | FileCheck %s --check-prefix=DYNTABLERUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/dyntable.js | FileCheck %s --check-prefix=DYNTABLERUN
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/looparray.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc=optimize=false \
 // RUN:   | FileCheck %s --check-prefix=LOOPARRAY
@@ -115,8 +125,16 @@
 
 // --- whyOpen's dynamic-key route --------------------------------------------
 //
+// A literal written under a dynamic key that is also kept in an array is not a
+// table (Inference/Dictionaries.cpp declines it), so the record rules see the
+// dynamic key, its newest use, first.
 // DYNKEY: ctjs.func {{.*}}@dyn$1
 // DYNKEY-SAME: ctnative.not_native = "an object literal reached through a dynamic key"
+
+// The same literal used only as a table lowers to a dictionary: a write under
+// "x" replaces the field, one under "y" adds another.
+// DYNTABLE: emitc.func @dyn
+// DYNTABLERUN: r=21
 
 // --- whyNotDense's loop-carried route ---------------------------------------
 //
@@ -186,8 +204,12 @@ function ap(n) { var a = [1]; a.push(n); return a[0] + a.length; }
 var r = ap(2);
 
 //--- dynamickey.js
-function dyn(n) { var o = { x: 1 }; o[n] = 2; return o.x; }
+function dyn(n) { var o = { x: 1 }; var keep = [o]; o[n] = 2; return o.x + keep.length; }
 var r = dyn(1);
+
+//--- dyntable.js
+function dyn(n) { var o = { x: 1 }; o[n] = 2; return o.x; }
+var r = dyn("x") * 10 + dyn("y");
 
 //--- looparray.js
 function ab(n) { var a; if (n > 0) { a = [1, 2]; } else { a = [3]; } return a[0]; }

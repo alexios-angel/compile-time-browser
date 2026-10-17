@@ -1,9 +1,9 @@
 # Objects used as tables that stay refused, each with its exact reason
 # (Admission/Dictionaries.cpp). A read under a key the table may lack and
 # Object.prototype answers for would find a function or an object, which no
-# native table value holds: a key that is any String, and the literal
-# `toString`. A table that may hold undefined could not tell a stored
-# undefined from a missing key. A table that is also returned is not only a
+# native table value holds: a key read out of a split String, which may be
+# anything, and the literal `toString`. A table that may hold undefined could
+# not tell a stored undefined from a missing key. A table that is also returned is not only a
 # table. A table stored into itself would need a type that contains itself,
 # and a table that holds both tables and Numbers has no one value type. (A Symbol key is refused too, but an ordinary script cannot make a
 # native Symbol yet: `Symbol(...)` is refused first.)
@@ -13,7 +13,7 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/undefined.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=UNDEFINED
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/returned.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=RETURNED
 
-# ANY: ctnative.not_native = "a read of a table under a computed key that is not a Number and has no literal part with a character Object.prototype's names lack, so it could be `toString` or `__proto__`"
+# ANY: ctnative.not_native = "a read of a table under a computed key that is not a Number, a literal or a concatenation with a literal part holding a character Object.prototype's names lack, so it could be `toString` or `__proto__`"
 # INHERITED: ctnative.not_native = "field `toString` is read but never written, and Object.prototype answers that name - the interpreter finds a function where this would find undefined"
 # UNDEFINED: ctnative.not_native = "an object used as a table whose values are !ctnative.opt<{{.*}}>, not one of Number, String, Boolean, Number|String or a table"
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/cycle.js | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc | FileCheck %s --check-prefix=CYCLE
@@ -23,13 +23,14 @@
 # RETURNED: ctnative.not_native = "an object literal that escapes - it is returned"
 
 #--- any.js
-function read(key) {
+function read(text) {
     var table = {};
+    var key = '' + text.split(',')[0];
     table[key + '::1'] = 1;
     var got = table[key];
     return got === undefined ? 0 : got;
 }
-var r = read('a');
+var r = read('a,b');
 
 #--- inherited.js
 function read(key) {

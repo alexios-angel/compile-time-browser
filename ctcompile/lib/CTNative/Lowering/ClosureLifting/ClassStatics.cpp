@@ -25,9 +25,12 @@
 // one of them:
 //  1. every use is a static-member read this file rewrites, the receiver of a
 //     call through one, class setup, an argument of a direct call to a
-//     helper that reads neither new.target nor its own closure, a `new` (not
-//     of `this` or `this.constructor`, which the rewrite leaves without a
-//     value), a write of the binding or a capture of it; anything else could
+//     helper that reads neither new.target nor its own closure, a `new`, a
+//     write of the binding or a capture of it (the rewrite leaves a static
+//     member's `this` and `this.constructor` without a value, so `new this`
+//     in a static member becomes a construct of the class, marked
+//     kNativeClassConstruct for Constructors.cpp, and any other `new` of
+//     them is refused where it can run); anything else could
 //     reach a static member this file does not see;
 //  2. each static member's closure is used only by its definition and its
 //     `__home` edge; a static member that a read outside the static members
@@ -960,8 +963,25 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 break;
             }
         }
+        // `new this(...)` in a static member constructs the class itself: the
+        // checks above proved that member's `this` names the class at every
+        // call that reaches it. The rewrite marks it for the constructor lift
+        // (Constructors.cpp), which builds the instance there. A `new` of
+        // `this.constructor`, or of a `this` that is not the member's own,
+        // has no such proof.
+        llvm::SmallVector<ctjs::ConstructOp> classConstructs;
         for (mlir::Operation * made : selfConstructs) {
-            if (!staticTargets.contains(holderOf(made)) || reached.contains(holderOf(made))) {
+            auto built = llvm::cast<ctjs::ConstructOp>(made);
+            mlir::Operation * holder = holderOf(made);
+            if (staticTargets.contains(holder)) {
+                const mlir::Value self =
+                    llvm::cast<ctjs::FuncOp>(holder).getBody().front().getArgument(0);
+                if (built.getCallee() == self && built.getNewTarget() == self) {
+                    classConstructs.push_back(built);
+                    continue;
+                }
+            }
+            if (!staticTargets.contains(holder) || reached.contains(holder)) {
                 refuse("it constructs `new this` or `new this.constructor`" + where(made));
                 break;
             }
@@ -1009,6 +1029,15 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (mlir::Value read : exported) {
             if (mlir::Operation * made = read.getDefiningOp()) {
                 made->setAttr(kNativeExportClass, exportMark);
+            }
+        }
+        // A `new this` in a static member constructs the class.
+        if (ctjs::FuncOp constructor = targetOf(cls.constructor)) {
+            for (ctjs::ConstructOp built : classConstructs) {
+                // A name, not a symbol reference: a `new this` the constructor
+                // lift leaves in a refused member must not keep the
+                // constructor's function alive once the class lowers.
+                built->setAttr(kNativeClassConstruct, constructor.getSymNameAttr());
             }
         }
         for (staticCall & s : calls) {
