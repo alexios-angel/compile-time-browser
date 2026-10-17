@@ -89,6 +89,8 @@ inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_ca
 /// The String.prototype method a `ctjs.call` invokes on its receiver, written
 /// by TypeInference::markStringMethodCalls: "toLowerCase", "trim", or
 /// "replace" with a RegExp literal and a replacement that is not a function.
+/// "test" marks RegExp.prototype.test on a RegExp made from a constant source
+/// (`new RegExp("a|b").test(text)` or `/a|b/.test(text)`).
 inline constexpr llvm::StringLiteral kNativeStringMethod = "ctnative.string_method";
 
 /// One SSA value's inferred type, as a lattice element.
@@ -250,9 +252,10 @@ public:
                                              unsigned declared);
     /// Whether `op` is a replace call closure lifting specialised.
     static bool isStringCallbackCall(mlir::Operation * op);
-    /// Marks each `text.toLowerCase()`, `text.trim()` and
-    /// `text.replace(/re/, replacement)` call with kNativeStringMethod, while
-    /// its key is still a constant the lowering has not rewritten.
+    /// Marks each `text.toLowerCase()`, `text.trim()`,
+    /// `text.replace(/re/, replacement)` and `new RegExp("re").test(text)` call
+    /// with kNativeStringMethod, while its key is still a constant the lowering
+    /// has not rewritten.
     static void markStringMethodCalls(mlir::Operation * top);
     /// Whether `op` is a marked String method call, which the runtime spells
     /// `ctnative::String.prototype.<name>.call(text)` on a String.

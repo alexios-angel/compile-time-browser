@@ -46,6 +46,40 @@ std::optional<std::string> constantText(mlir::Value value) {
     return text.getValue().str();
 }
 
+/// The pattern and flags of the RegExp `value` makes when it is a literal or
+/// `new RegExp(source)` of the realm's RegExp with a constant String source
+/// (no flags), and when its only uses are the read of `test` and the call of
+/// it, `call`. None otherwise.
+std::optional<std::pair<std::string, std::string>> testedRegExp(mlir::Value value,
+                                                                ctjs::CallOp call) {
+    if (!llvm::all_of(value.getUsers(), [&](mlir::Operation * user) {
+            return user == call.getOperation() || user == call.getCallee().getDefiningOp();
+        })) {
+        return std::nullopt;
+    }
+    if (auto literal = TypeInference::regExpLiteral(value)) { return literal; }
+    auto made = value.getDefiningOp<ctjs::ConstructOp>();
+    if (!made || ctjs::calleeGlobalName(made) != "RegExp" || made.getArgs().size() != 1 ||
+        !TypeInference::isRealmGlobal(made.getCallee().getDefiningOp(), "RegExp")) {
+        return std::nullopt;
+    }
+    auto source = constantText(made.getArgs()[0]);
+    if (!source) { return std::nullopt; }
+    return std::pair{*source, std::string{}};
+}
+
+/// The marked `test` call that consumes the RegExp `value`, or null.
+ctjs::CallOp testCallOf(mlir::Value value) {
+    for (mlir::Operation * user : value.getUsers()) {
+        auto call = llvm::dyn_cast<ctjs::CallOp>(user);
+        if (call && call.getReceiver() == value && TypeInference::isStringMethodCall(call) &&
+            call->getAttrOfType<mlir::StringAttr>(kNativeStringMethod) == "test") {
+            return call;
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 std::optional<std::pair<std::string, std::string>> TypeInference::regExpLiteral(mlir::Value value) {
@@ -189,6 +223,18 @@ void TypeInference::markStringMethodCalls(mlir::Operation * top) {
                 call->setAttr("ctnative.replace_flags", mlir::StringAttr::get(c, literal->second));
             }
         }
+        // `new RegExp(source).test(text)` with a constant source, as Config's
+        // type check tests a type name against its table's pattern once the
+        // table loop is unrolled (Inference/TableLoops.cpp).
+        if (read && read.getObject() == call.getReceiver() && read.getResult().hasOneUse() &&
+            name == "test" && call.getArgs().size() == 1) {
+            if (const auto made = testedRegExp(call.getReceiver(), call)) {
+                mlir::MLIRContext * c = call.getContext();
+                call->setAttr(kNativeStringMethod, mlir::StringAttr::get(c, name));
+                call->setAttr("ctnative.replace_pattern", mlir::StringAttr::get(c, made->first));
+                call->setAttr("ctnative.replace_flags", mlir::StringAttr::get(c, made->second));
+            }
+        }
     });
 }
 
@@ -197,7 +243,19 @@ bool TypeInference::isStringMethodCall(mlir::Operation * op) {
 }
 
 bool TypeInference::consumedByStringCallback(mlir::Operation * op) {
-    if (!op || op->getNumResults() != 1 || !op->getResult(0).hasOneUse()) { return false; }
+    if (!op || op->getNumResults() != 1) { return false; }
+    // The RegExp a marked `test` call runs, and the RegExp global it is made
+    // from (the constructor's callee and new.target, or the literal factory).
+    if (testCallOf(op->getResult(0))) { return true; }
+    if (llvm::isa<ctjs::LoadGlobalOp>(op) && !op->getResult(0).use_empty() &&
+        llvm::all_of(op->getResult(0).getUses(), [](mlir::OpOperand & use) {
+            mlir::Operation * user = use.getOwner();
+            return (llvm::isa<ctjs::ConstructOp>(user) || use.getOperandNumber() == 0) &&
+                   user->getNumResults() == 1 && testCallOf(user->getResult(0));
+        })) {
+        return true;
+    }
+    if (!op->getResult(0).hasOneUse()) { return false; }
     mlir::OpOperand & use = *op->getResult(0).getUses().begin();
     mlir::Operation * user = use.getOwner();
     // The method read is operand 0 and the RegExp literal operand 2 of the

@@ -1,7 +1,8 @@
 //===- RegExp.hpp - RegExp literals and String.prototype.replace -*- C++ -*-===//
 //
-// The RegExp a generated program builds for `text.replace(/pattern/g, fn)`,
-// and String.prototype.replace with a function replacement. Only programs that
+// The RegExp a generated program builds for `text.replace(/pattern/g, fn)` or
+// `new RegExp(source)`, String.prototype.replace with a function replacement,
+// and RegExp.prototype.test. Only programs that
 // lower such a call include this header, so the others never parse <regex>.
 //
 // std::regex with the ECMAScript grammar runs the pattern. The compiler admits
@@ -17,7 +18,7 @@
 
 #pragma once
 
-#include "String.hpp"
+#include "ctcompile/CTNative/Runtime/ctnative.hpp"
 
 #include <concepts>
 #include <regex>
@@ -40,10 +41,26 @@ public:
     bool global() const { return global_flag; }
 };
 
+/// RegExp.prototype.test (ECMA-262 22.2.6.16) of a RegExp without `g`:
+/// whether the pattern matches anywhere in the text (RegExpBuiltinExec from
+/// lastIndex 0, which a non-global RegExp never moves).
+struct reg_exp_test_method {
+    js_boolean_t call(const reg_exp & self, const js_string & text) const {
+        return js_boolean_t{std::regex_search(text.value(), self.engine())};
+    }
+};
+
+/// The RegExp prototype's methods native code calls.
+struct reg_exp_prototype {
+    reg_exp_test_method test;
+};
+
 /// The RegExp constructor's call, as the literal `/source/flags` evaluates
-/// (ECMA-262 22.2.3.1 RegExpCreate).
+/// (ECMA-262 22.2.3.1 RegExpCreate), and `new RegExp(source)`, whose flags are
+/// empty.
 struct reg_exp_constructor {
-    reg_exp operator()(std::string_view source, std::string_view flags) const {
+    reg_exp_prototype prototype;
+    reg_exp operator()(std::string_view source, std::string_view flags = {}) const {
         return reg_exp{source, flags};
     }
 };

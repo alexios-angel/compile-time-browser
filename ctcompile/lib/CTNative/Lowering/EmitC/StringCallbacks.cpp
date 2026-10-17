@@ -17,6 +17,8 @@
 
 #include "Emitter.h"
 
+#include "llvm/ADT/SetVector.h"
+
 namespace ctcompile::ctnative::lowering_detail {
 
 namespace {
@@ -69,6 +71,27 @@ bool lowering::replaceStringCallback(mlir::Operation * o) {
         mlir::OpBuilder b(o);
         mlir::Operation * read = call.getCallee().getDefiningOp();
         const llvm::StringRef name = o->getAttrOfType<mlir::StringAttr>(kNativeStringMethod);
+        if (name == "test") {
+            // ctnative::RegExp.prototype.test.call(ctnative::RegExp(...), text);
+            // the RegExp the call consumed and its global go.
+            includeRegExpHeader(o->getParentOfType<mlir::ModuleOp>());
+            mlir::Operation * made = call.getReceiver().getDefiningOp();
+            o->getResult(0).replaceAllUsesWith(callValue(
+                b, o->getLoc(), o->getResult(0).getType(), "ctnative::RegExp.prototype.test.call",
+                mlir::ValueRange{regExp(b, o->getLoc(), o),
+                                 cellPlace(b, o->getLoc(), call.getArgs()[0])}));
+            eraseIfUnused(o);
+            eraseIfUnused(read);
+            llvm::SmallSetVector<mlir::Operation *, 2> globals;
+            for (mlir::Value operand : made->getOperands()) {
+                if (auto global = operand.getDefiningOp<ctjs::LoadGlobalOp>()) {
+                    globals.insert(global);
+                }
+            }
+            eraseIfUnused(made);
+            for (mlir::Operation * global : globals) { eraseIfUnused(global); }
+            return true;
+        }
         llvm::SmallVector<mlir::Value, 3> operands{cellPlace(b, o->getLoc(), call.getReceiver())};
         mlir::Operation * literal = nullptr;
         if (name == "replace") {

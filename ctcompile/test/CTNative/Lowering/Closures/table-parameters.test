@@ -20,12 +20,55 @@
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/differs.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 # RUN:   | FileCheck %s --check-prefix=DIFFERS
+#
+# Config's check tests each value's type name against its table's pattern,
+# `new RegExp(expected).test(type)`. With the loop written out the pattern is
+# a constant, and the call becomes ctnative::RegExp.prototype.test.call
+# (Runtime/RegExp.hpp).
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tested.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/tested.mlir
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/tested.mlir
+# RUN: ctjs-opt %t/tested.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/tested.cpp
+# RUN: FileCheck %s --check-prefix=TESTED-CPP < %t/tested.cpp
+# RUN: %gxx -O2 %t/tested.cpp -o %t/tested-gcc && %t/tested-gcc | FileCheck %s --check-prefix=TESTED
+# RUN: %clangxx -O2 %t/tested.cpp -o %t/tested-clang && %t/tested-clang | FileCheck %s --check-prefix=TESTED
+# RUN: %native_reference %t/tested.js | FileCheck %s --check-prefix=TESTED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/tested.js | FileCheck %s --check-prefix=TESTED-NODE
+#
+# The same through a loop over a run-once static's table, which
+# markStaticTables unrolls after closure lifting: the calls are marked after
+# that, so the patterns are constants there too.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/static.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/static.mlir
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/static.mlir
+# RUN: ctjs-opt %t/static.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/static.cpp
+# RUN: %gxx -O2 %t/static.cpp -o %t/static-gcc && %t/static-gcc | FileCheck %s --check-prefix=STATIC
+# RUN: %clangxx -O2 %t/static.cpp -o %t/static-clang && %t/static-clang | FileCheck %s --check-prefix=STATIC
+# RUN: %native_reference %t/static.js | FileCheck %s --check-prefix=STATIC
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/static.js | FileCheck %s --check-prefix=STATIC-NODE
+#
+# A pattern std::regex reads differently from JavaScript stays refused.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dotted.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=DOTTED
 
 # UNROLLED: emitc.func @main
 # UNROLLED-NOT: object_table
 # PASSED: r="interval%3Bpause%3Bwrap%3B%7Cinterval%3Bbad%20pause"
 # PASSED-NODE: r=interval;pause;wrap;|interval;bad pause
 # DIFFERS: it is passed to a parameter that reaches it through something other than a constant key
+# TESTED-CPP: ctnative::RegExp("number", "")
+# TESTED-CPP: ctnative::RegExp.prototype.test.call(
+# TESTED-CPP: ctnative::RegExp("(string|boolean)", "")
+# TESTED-CPP: ctnative::RegExp.prototype.test.call(
+# TESTED: r="interval%3Bpause%3Bwrap%3B%7Cinterval%3Bpause%3Bbad%20wrap"
+# TESTED-NODE: r=interval;pause;wrap;|interval;pause;bad wrap
+# DOTTED: RegExp.prototype.test with `.`
+# STATIC: r="alpha%3Dtrue%3Bgamma%3Dfalse%3B"
+# STATIC-NODE: r=alpha=true;gamma=false;
 
 #--- passed.js
 var r = (function () {
@@ -60,3 +103,49 @@ var r = (function () {
         check({interval: 5, pause: "hover"}, {pause: "string", interval: "number"});
 })();
 
+#--- tested.js
+var r = (function () {
+    var types = {interval: "number", pause: "(string|boolean)", wrap: "boolean"};
+    function check(config, configTypes) {
+        var out = "";
+        for (const [k, v] of Object.entries(configTypes)) {
+            if (!new RegExp(v).test(typeof config[k])) {
+                return out + "bad " + k;
+            }
+            out = out + k + ";";
+        }
+        return out;
+    }
+    return check({interval: 5, pause: "hover", wrap: false}, types) + "|" +
+        check({interval: 5, pause: true, wrap: "no"}, types);
+})();
+
+#--- dotted.js
+var r = (function () {
+    var types = {interval: "n.mber"};
+    function check(config, configTypes) {
+        for (const [k, v] of Object.entries(configTypes)) {
+            if (!new RegExp(v).test(typeof config[k])) {
+                return "bad " + k;
+            }
+        }
+        return "ok";
+    }
+    return check({interval: 5}, types);
+})();
+
+#--- static.js
+var r = (function () {
+    var patterns = {alpha: "(alpha|beta)", gamma: "delta"};
+    function make() {
+        return () => {
+            var out = "";
+            for (const [k, v] of Object.entries(patterns)) {
+                out = out + k + "=" + new RegExp(v).test(k) + ";";
+            }
+            return out;
+        };
+    }
+    const run = make();
+    return run();
+})();

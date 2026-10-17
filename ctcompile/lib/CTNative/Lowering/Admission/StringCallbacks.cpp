@@ -6,8 +6,9 @@
 // and the callback has to return a String or a Number, which the runtime
 // converts with ToString. The method read and the RegExp literal the call
 // consumes lower to nothing. `text.toLowerCase()` and `text.trim()` need a
-// String receiver, and `text.replace(/re/, s)` a String receiver, a pattern
-// as above and a String replacement.
+// String receiver, `text.replace(/re/, s)` a String receiver, a pattern as
+// above and a String replacement, and `new RegExp("re").test(text)` a String
+// argument and a pattern as above.
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,6 +22,19 @@ std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * 
         auto call = llvm::cast<ctjs::CallOp>(o);
         const mlir::Type receiver = self.typeOf(call.getReceiver());
         const llvm::StringRef name = o->getAttrOfType<mlir::StringAttr>(kNativeStringMethod);
+        if (name == "test") {
+            // RegExp.prototype.test of a String, with a pattern the runtime
+            // runs as JavaScript does.
+            const mlir::Type text = self.typeOf(call.getArgs()[0]);
+            if (carrierOf(text) != carrier::string) {
+                return self.refuse("the argument of RegExp.prototype.test is " + printed(text) +
+                                   ", not a String");
+            }
+            const std::string why = TypeInference::replacePatternProblem(
+                o->getAttrOfType<mlir::StringAttr>("ctnative.replace_pattern").getValue(),
+                o->getAttrOfType<mlir::StringAttr>("ctnative.replace_flags").getValue(), 0);
+            return why.empty() || self.refuse("RegExp.prototype.test " + why);
+        }
         if (carrierOf(receiver) != carrier::string) {
             return self.refuse(("the receiver of String.prototype." + name + " is ").str() +
                                printed(receiver) + ", not a String");

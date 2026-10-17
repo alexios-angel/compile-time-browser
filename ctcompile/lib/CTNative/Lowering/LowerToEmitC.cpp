@@ -606,8 +606,10 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                 : nullptr;
         // Data records returned by value join their callers' groups.
         TypeInference::markRecordReturns(module);
-        TypeInference::markStringMethodCalls(module);
+        // After the table loops are unrolled, so a pattern read from a
+        // constant table is a constant (`new RegExp(expected).test(type)`).
         markStaticTables(module);
+        TypeInference::markStringMethodCalls(module);
         receiverGroups groups = TypeInference::groupReceivers(module);
         if (ownedGlobals) {
             for (const auto & root : ownedGlobals->roots()) {

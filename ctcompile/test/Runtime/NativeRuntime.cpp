@@ -1283,6 +1283,20 @@ int main() {
               strings({"\xC3\xA9"}));
     }
 
+    // RegExp.prototype.test (RegExp.hpp), as Config's type check calls it on
+    // `new RegExp(expectedTypes)`.
+    {
+        using ctnative::js_string;
+        using ctnative::RegExp;
+        constexpr auto & test = RegExp.prototype.test;
+        CHECK(static_cast<bool>(test.call(RegExp("(string|element)"), js_string{"element"})));
+        CHECK(!static_cast<bool>(test.call(RegExp("(string|element)"), js_string{"number"})));
+        // The pattern is not anchored: it matches anywhere in the text.
+        CHECK(static_cast<bool>(test.call(RegExp("number"), js_string{"a number!"})));
+        CHECK(!static_cast<bool>(test.call(RegExp("boolean"), js_string{})));
+        CHECK(static_cast<bool>(test.call(RegExp("(null|element)", ""), js_string{"null"})));
+    }
+
     // String.prototype.replace with a RegExp and a function (RegExp.hpp).
     {
         using ctnative::js_string;
