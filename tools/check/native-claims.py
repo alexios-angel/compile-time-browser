@@ -213,6 +213,13 @@ def by_source(imported, refused, pruned, removed, copies, erased):
     return status, sum(len(names) for names in functions.values())
 
 
+def erased_rows(copies, erased):
+    """One removed row per erased source with no copy left, named like the
+    lowering's `removed: unreachable` rows, so every removed source is listed."""
+    kept = set(copies.values())
+    return [(name, "removed: erased with every copy") for name in sorted(erased - kept)]
+
+
 def self_test() -> None:
     """by_source on hand-made name sets; no build needed."""
     imported = ["a", "b", "p", "q", "r"]
@@ -236,6 +243,7 @@ def self_test() -> None:
     # is expected for it.
     status, after = by_source(imported, [], [], [], {}, {"a"})
     assert status["a"] == "removed" and after == 4, status
+    assert erased_rows({"p_C1": "p"}, {"a", "p"}) == [("a", "removed: erased with every copy")]
     for bad in (({"x_C": "x"}, set()), ({}, {"x"})):
         try:
             by_source(imported, [], [], [], *bad)
@@ -429,7 +437,7 @@ def run(argv: argparse.Namespace) -> dict:
             "erased": len(erased),
         },
         "pruned_names": pruned_names,
-        "removed_rows": [list(row) for row in removed_rows],
+        "removed_rows": [list(row) for row in [*removed_rows, *erased_rows(copies, erased)]],
         "optimization_defaults": not argv.no_default_optimizations,
         "claimed_percent": round(100.0 * sources["native"] / total, 2),
         "refusals": by_reason.most_common(),
