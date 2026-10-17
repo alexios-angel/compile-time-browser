@@ -49,6 +49,28 @@
 # RUN: %native_reference %t/static.js | FileCheck %s --check-prefix=STATIC
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/static.js | FileCheck %s --check-prefix=STATIC-NODE
 #
+# Config's whole check, as Bootstrap writes it: the table and the config are
+# parameters, each value's type name is toType's
+# (Scalars/object-to-string.test), it is tested against the table's pattern,
+# and a mismatch throws a TypeError (Exceptions/type-error.test). config.js
+# passes both checks; config-thrown.js expects a Number where the config holds
+# a Boolean. Both lower with no refusal; config.js prints the same `r` with
+# GCC and Clang (%compilation_unit against the interpreter) and Node, and
+# config-thrown.js's C++ compiles.
+#
+# RUN: for name in config config-thrown; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js -o %t/$name-input.mlir; \
+# RUN:   ctjs-opt %t/$name-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/$name.mlir; done
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/config.mlir
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/config-thrown.mlir
+# RUN: %compilation_unit --cxx g++ --module %t/config.mlir --js %t/config.js --work %t --name config_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/config.mlir --js %t/config.js --work %t --name config_clang --core-build %build
+# RUN: %native_reference %t/config.js | FileCheck %s --check-prefix=CONFIG
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/config.js | FileCheck %s --check-prefix=CONFIG-NODE
+# RUN: ctjs-translate --mlir-to-cpp %t/config-thrown.mlir > %t/config-thrown.cpp
+# RUN: FileCheck %s --check-prefix=CONFIG-CPP < %t/config-thrown.cpp
+# RUN: %cxx %t/config-thrown.cpp
+#
 # A pattern std::regex reads differently from JavaScript stays refused.
 #
 # RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dotted.js --mlir-print-debuginfo 2>/dev/null \
@@ -67,6 +89,11 @@
 # TESTED: r="interval%3Bpause%3Bwrap%3B%7Cinterval%3Bpause%3Bbad%20wrap"
 # TESTED-NODE: r=interval;pause;wrap;|interval;pause;bad wrap
 # DOTTED: RegExp.prototype.test with `.`
+# CONFIG: r="ok%7Cok"
+# CONFIG-NODE: r=ok|ok
+# CONFIG-CPP: ctnative::String.prototype.match.call(
+# CONFIG-CPP: ctnative::RegExp.prototype.test.call(
+# CONFIG-CPP: ctnative::throw_type_error(
 # STATIC: r="alpha%3Dtrue%3Bgamma%3Dfalse%3B"
 # STATIC-NODE: r=alpha=true;gamma=false;
 
@@ -148,4 +175,38 @@ var r = (function () {
     }
     const run = make();
     return run();
+})();
+
+#--- config.js
+var r = (function () {
+    var types = {interval: "(number|boolean)", pause: "(string|boolean)", wrap: "boolean"};
+    function check(config, configTypes) {
+        for (const [property, expectedTypes] of Object.entries(configTypes)) {
+            const value = config[property];
+            const valueType = Object.prototype.toString.call(value).match(/\s([a-z]+)/i)[1].toLowerCase();
+            if (!new RegExp(expectedTypes).test(valueType)) {
+                throw new TypeError(`CAROUSEL: Option "${property}" provided type "${valueType}" but expected type "${expectedTypes}".`);
+            }
+        }
+        return "ok";
+    }
+    return check({interval: 5, pause: "hover", wrap: false}, types) + "|" +
+        check({interval: 7, pause: "x", wrap: true}, types);
+})();
+
+#--- config-thrown.js
+var r = (function () {
+    var types = {interval: "(number|boolean)", pause: "(string|boolean)", wrap: "number"};
+    function check(config, configTypes) {
+        for (const [property, expectedTypes] of Object.entries(configTypes)) {
+            const value = config[property];
+            const valueType = Object.prototype.toString.call(value).match(/\s([a-z]+)/i)[1].toLowerCase();
+            if (!new RegExp(expectedTypes).test(valueType)) {
+                throw new TypeError(`CAROUSEL: Option "${property}" provided type "${valueType}" but expected type "${expectedTypes}".`);
+            }
+        }
+        return "ok";
+    }
+    return check({interval: 5, pause: "hover", wrap: false}, types) + "|" +
+        check({interval: 7, pause: "x", wrap: true}, types);
 })();
