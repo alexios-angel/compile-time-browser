@@ -122,6 +122,41 @@ void test_generated_table_operations() {
     CHECK(std::holds_alternative<js_string>(w) && std::get<js_string>(w).value() == "10px");
 }
 
+void test_tables_of_tables() {
+    using ctnative::js_num;
+    using ctnative::js_string;
+    using inner = std::shared_ptr<ctnative::dictionary<js_num>>;
+    // `E[e] = E[e] || {}; E[e][k] = 5`, and a read of a missing table.
+    const auto registry = ctnative::make_dictionary<inner>();
+    inner l = ctnative::dictionary_get(registry, js_num{1.0});
+    CHECK(l == nullptr);
+    ctnative::dictionary_set(registry, js_num{1.0}, ctnative::make_dictionary<js_num>());
+    l = ctnative::dictionary_get(registry, js_string{"1"});
+    ctnative::dictionary_set(l, js_string{"click"}, js_num{5.0});
+    CHECK(ctnative::dictionary_get(ctnative::dictionary_get(registry, js_num{1.0}),
+                                   js_string{"click"})
+              .value == 5.0);
+    // Every operation on undefined throws the interpreter's TypeError.
+    const inner missing = ctnative::dictionary_get(registry, js_num{2.0});
+    std::string message;
+    try {
+        (void)ctnative::dictionary_get(missing, js_string{"x"});
+    } catch (const ctnative::type_error & error) { message = error.what(); }
+    CHECK(message == "Cannot read properties of undefined (reading 'x')");
+    try {
+        ctnative::dictionary_set(missing, js_num{3.0}, js_num{1.0});
+    } catch (const ctnative::type_error & error) { message = error.what(); }
+    CHECK(message == "Cannot set properties of undefined (setting '3')");
+    try {
+        (void)ctnative::dictionary_has(missing, js_string{"x"});
+    } catch (const ctnative::type_error & error) { message = error.what(); }
+    CHECK(message == "Right-hand side of 'in' must be an object");
+    try {
+        (void)ctnative::dictionary_delete(missing, js_string{"x"});
+    } catch (const ctnative::type_error & error) { message = error.what(); }
+    CHECK(message == "Cannot convert undefined to object");
+}
+
 void test_copies_of_a_function_are_the_same_function() {
     const auto make = [] { return ctnative::identify([](double v) { return v + 1; }); };
     const auto first = make();
@@ -141,6 +176,7 @@ int main() {
     test_overwrite_keeps_position_and_delete_moves_it();
     test_a_nested_table_is_shared();
     test_generated_table_operations();
+    test_tables_of_tables();
     test_copies_of_a_function_are_the_same_function();
     REPORT("native_handlers");
 }

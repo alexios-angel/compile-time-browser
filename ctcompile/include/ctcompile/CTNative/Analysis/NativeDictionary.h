@@ -22,6 +22,9 @@ inline constexpr llvm::StringLiteral kNativeDictionarySite = "ctnative.dict_site
 /// "key" is ToPropertyKey of an `in` key, "has" is the `in` test itself, and
 /// "plumbing" is a read of one of the intrinsics those calls go through.
 inline constexpr llvm::StringLiteral kNativeDictionaryAction = "ctnative.dict_action";
+/// On a proved table's literals and operations: its family, the tables of
+/// one value type (an integer, the same for every member).
+inline constexpr llvm::StringLiteral kNativeDictionaryGroup = "ctnative.dict_group";
 /// On a `ctjs.create_object` with no initial fields that is not a dictionary
 /// although some use treats it as one: why.
 inline constexpr llvm::StringLiteral kNativeDictionaryReason = "ctnative.dict_reason";

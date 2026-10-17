@@ -13,7 +13,7 @@
 // with `bottom` as its identity and `boxed` absorbing), and those are
 // properties, not cases. So the table is checked, and then all four laws are
 // checked exhaustively over a sample of the type universe; associativity alone
-// is 33^3 = 35937 triples. The mutation counts below were measured on an
+// is 41^3 = 68921 triples. The mutation counts below were measured on an
 // earlier 21-type sample (9261 triples).
 //
 // The two halves catch different things, which was measured by removing three
@@ -368,6 +368,18 @@ const MeetRow kMeetTable[] = {
      "!ctnative.vec<!ctnative.bool>>",
      "a tuple and a vector are different containers"},
 
+    // --- class tags ----------------------------------------------------------
+    {"!ctnative.class_tag<\"Alert\">", "!ctnative.class_tag<\"Alert\">",
+     "!ctnative.class_tag<\"Alert\">", "idempotent"},
+    {"!ctnative.class_tag<\"Alert\">", "!ctnative.bottom", "!ctnative.class_tag<\"Alert\">",
+     "bottom is the identity for a class tag too"},
+    {"!ctnative.class_tag<\"Alert\">", "!ctnative.class_tag<\"Button\">", "!ctnative.boxed",
+     "two classes are two compile-time names, which no field can hold both of"},
+    {"!ctnative.class_tag<\"Alert\">", "!ctnative.num<f64>", "!ctnative.boxed",
+     "a class never merges with a value: no variant carries one"},
+    {"!ctnative.class_tag<\"Alert\">", "!ctnative.opt<!ctnative.bottom>", "!ctnative.boxed",
+     "nor with absence: a field that may not hold the class is not resolved"},
+
     // --- page objects ------------------------------------------------------
     {"!ctnative.dom_rect", "!ctnative.dom_rect", "!ctnative.dom_rect", "idempotent"},
     {"!ctnative.dom_rect", "!ctnative.opt<!ctnative.bottom>", "!ctnative.opt<!ctnative.dom_rect>",
@@ -394,6 +406,21 @@ const MeetRow kMeetTable[] = {
     {"!ctnative.timer", "!ctnative.num<f64>",
      "!ctnative.variant<!ctnative.num<f64>, !ctnative.timer>",
      "a handle is not a Number: the two stay alternatives"},
+
+    // --- promises ----------------------------------------------------------
+    {"!ctnative.promise<!ctnative.num<i32>>", "!ctnative.promise<!ctnative.num<f64>>",
+     "!ctnative.promise<!ctnative.num<f64>>", "a promise's value meets elementwise"},
+    {"!ctnative.promise<!ctnative.bool>", "!ctnative.bool",
+     "!ctnative.variant<!ctnative.bool, !ctnative.promise<!ctnative.bool>>",
+     "a promise is not its value, so the two stay alternatives"},
+    {"!ctnative.promise_resolve<!ctnative.num<i32>>",
+     "!ctnative.promise_resolve<!ctnative.num<f64>>",
+     "!ctnative.promise_resolve<!ctnative.num<f64>>",
+     "a resolve function meets by the value it takes"},
+    {"!ctnative.promise<!ctnative.bool>", "!ctnative.promise_resolve<!ctnative.bool>",
+     "!ctnative.variant<!ctnative.promise<!ctnative.bool>, "
+     "!ctnative.promise_resolve<!ctnative.bool>>",
+     "a promise and its resolve function are different values"},
 
     // --- the three pointers -------------------------------------------------
     {"!ctnative.owned<!ctnative.bool>", "!ctnative.shared<!ctnative.bool>",
@@ -454,8 +481,13 @@ const char * const kSampleTypes[] = {
     "!ctnative.opt<!ctnative.tuple<!ctnative.str<utf8>, !ctnative.num<f64>>>",
     "!ctnative.dom_rect",
     "!ctnative.computed_style",
+    "!ctnative.promise<!ctnative.bool>",
+    "!ctnative.promise<!ctnative.num<i32>>",
+    "!ctnative.promise_resolve<!ctnative.bool>",
     "!ctnative.event",
     "!ctnative.timer",
+    "!ctnative.class_tag<\"Alert\">",
+    "!ctnative.class_tag<\"Button\">",
 };
 
 //===--------------------------------------------------------------------===//
@@ -746,10 +778,10 @@ int main() {
     // exits 0 and looks exactly like a passing one. Update this number when a
     // case is added; it is exact rather than a lower bound because a lower
     // bound would not notice a case being deleted.
-    // 94 meet rows in both directions, 5 law checks, 3 variant-cap checks,
-    // 3 closure-set-cap checks,
+    // 103 meet rows in both directions (the five class-tag rows among them),
+    // 5 law checks, 3 variant-cap checks, 3 closure-set-cap checks,
     // 6 interpreter pins and 5 C++ carrier checks.
-    const int expectedChecks = 210;
+    const int expectedChecks = 228;
     if (checks != expectedChecks) {
         std::printf("FAILED  ran %d checks, expected %d - a case was added or lost\n", checks,
                     expectedChecks);

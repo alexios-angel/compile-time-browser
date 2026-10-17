@@ -19,6 +19,15 @@ function mixed() {
 }
 var a = mixed();
 
+//--- mixed-three.js
+function mixedThree(flag) {
+    var value = {text: "before"};
+    if (flag > 1) value.text = 9;
+    if (flag > 2) value.text = true;
+    return typeof value.text === "string" ? 1 : 2;
+}
+var a = mixedThree(0) * 10 + mixedThree(3);
+
 //--- absent.js
 function absent(flag) {
     var value = {};
