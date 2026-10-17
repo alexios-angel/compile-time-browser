@@ -17,7 +17,8 @@
 // The values that name the class are the constructor's closure, the binding
 // it is stored in (and the static variables it became, RunOnce.cpp), the
 // captures of that binding, a static member's `this`, `this.constructor` in
-// a method, and the parameter of a helper the class is passed to. A helper is
+// a method (or in an arrow made there, whose `this` is the method's), and the
+// parameter of a helper the class is passed to. A helper is
 // a function called directly; it is cloned for the class, together with the
 // functions it creates, the call goes to the clone, and the clone's parameter
 // names the class, so `helper(K)` with `k.s()` inside becomes a direct call
@@ -178,10 +179,64 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             }
         }
     }
-    // ponytail: `this.constructor` inside an arrow reads the arrow's lexical
-    // `this`, not its receiver, so it counts as a stray read here until the
-    // arrow-`this` lowering (ArrowThis.cpp) gives the arrow the method's
-    // receiver.
+    // An arrow's `this` is the `this` it was created with, which
+    // captureLexicalThis (ArrowThis.cpp) turned into a capture: the closure
+    // captures a cell that holds the creating frame's `this` and nothing
+    // writes, and the arrow reads that slot where it read its receiver. An
+    // arrow every closure of which captures the `this` of members of one
+    // class (or of arrows made there) has an instance of that class as its
+    // `this` too, wherever it is called from and with whatever receiver.
+    llvm::DenseMap<mlir::Value, mlir::Operation *> receiverOf;
+    for (auto & [fn, key] : memberOf) {
+        receiverOf[llvm::cast<ctjs::FuncOp>(fn).getBody().front().getArgument(ctjs::arg_receiver)] =
+            key;
+    }
+    // Each such arrow, with its class and the reads of its `this`.
+    struct arrowThis {
+        mlir::Operation * owner;
+        llvm::SmallVector<mlir::Value, 1> reads;
+    };
+    llvm::DenseMap<mlir::Operation *, arrowThis> arrowOf;
+    const auto lexicalSlot = [](ctjs::FuncOp fn) -> std::optional<unsigned> {
+        auto slot = fn ? fn->getAttrOfType<mlir::IntegerAttr>(kNativeLexicalThis) : nullptr;
+        if (!slot) { return std::nullopt; }
+        return static_cast<unsigned>(slot.getInt());
+    };
+    for (bool grew = true; grew;) {
+        grew = false;
+        llvm::DenseMap<mlir::Operation *, mlir::Operation *> owner;
+        llvm::DenseSet<mlir::Operation *> mixed;
+        module.walk([&](ctjs::CreateClosureOp made) {
+            ctjs::FuncOp target = targetOf(made);
+            const std::optional<unsigned> slot = lexicalSlot(target);
+            if (!slot || target.getBody().empty()) { return; }
+            auto cell = *slot < made.getUpvalues().size()
+                            ? made.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>()
+                            : ctjs::CreateCellOp{};
+            const bool constant =
+                cell && llvm::none_of(cell->getUsers(), [](mlir::Operation * user) {
+                    return llvm::isa<ctjs::CellSetOp>(user);
+                });
+            mlir::Operation * key = constant ? receiverOf.lookup(cell.getInitial()) : nullptr;
+            auto [at, fresh] = owner.try_emplace(target.getOperation(), key);
+            if (!key || (!fresh && at->second != key)) { mixed.insert(target.getOperation()); }
+        });
+        for (auto & [fn, key] : owner) {
+            if (mixed.contains(fn) || arrowOf.count(fn)) { continue; }
+            auto target = llvm::cast<ctjs::FuncOp>(fn);
+            arrowThis & entry = arrowOf[fn];
+            entry.owner = key;
+            target.walk([&](ctjs::LoadUpvalueOp read) {
+                if (read.getClosure() == target.getBody().front().getArgument(ctjs::arg_callee) &&
+                    static_cast<unsigned>(read.getIndex()) == *lexicalSlot(target)) {
+                    entry.reads.push_back(read.getResult());
+                    receiverOf[read.getResult()] = key;
+                    instanceThis.insert(read.getResult());
+                }
+            });
+            grew = true;
+        }
+    }
     // A read of `this` held in a cell (a derived constructor's this-binding,
     // which only its receiver or the bind-this helper's answer is written
     // to) names that member's class, or a class extending it; any other
@@ -322,8 +377,25 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                    "in a static member may not be one class");
             continue;
         }
-        if (const auto stray = llvm::find_if(
-                strayReads, [&](auto & read) { return !read.second || read.second == key; });
+        // A stray read matters only when its answer may reach a static
+        // member: a comparison, or a read of a property this class has no
+        // static member under, cannot.
+        const auto mayReadStatic = [&](mlir::Operation * read) {
+            return llvm::any_of(read->getResult(0).getUses(), [&](mlir::OpOperand & use) {
+                auto get = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
+                if (!get || get.getObject() != use.get()) {
+                    return !llvm::isa<ctjs::CompareOp>(use.getOwner());
+                }
+                const llvm::StringRef name = ctjs::constantKey(get.getKey());
+                return name.empty() || cls.statics.contains(name) ||
+                       cls.staticGetters.contains(name);
+            });
+        };
+        if (const auto stray = llvm::find_if(strayReads,
+                                             [&](auto & read) {
+                                                 return (!read.second || read.second == key) &&
+                                                        mayReadStatic(read.first);
+                                             });
             stray != strayReads.end()) {
             refuse("`x.constructor` is read" + where(stray->first) +
                    ", where `x` may be an instance of the class");
@@ -409,9 +481,20 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (const auto & entry : cls.methods) {
             instanceFunctions.push_back(targetOf(entry.getValue()));
         }
+        llvm::SmallVector<mlir::Value> instanceSelves;
         for (ctjs::FuncOp fn : instanceFunctions) {
-            if (!fn || fn.getBody().empty()) { continue; }
-            for (mlir::OpOperand & use : fn.getBody().front().getArgument(0).getUses()) {
+            if (fn && !fn.getBody().empty()) {
+                instanceSelves.push_back(fn.getBody().front().getArgument(ctjs::arg_receiver));
+            }
+        }
+        // And in an arrow whose `this` is an instance of the class.
+        for (auto & [fn, arrow] : arrowOf) {
+            if (arrow.owner != key) { continue; }
+            instanceFunctions.push_back(llvm::cast<ctjs::FuncOp>(fn));
+            llvm::append_range(instanceSelves, arrow.reads);
+        }
+        for (mlir::Value self : instanceSelves) {
+            for (mlir::OpOperand & use : self.getUses()) {
                 auto load = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
                 if (load && use.getOperandNumber() == 0 &&
                     ctjs::constantKey(load.getKey()) == "constructor") {
