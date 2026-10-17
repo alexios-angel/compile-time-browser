@@ -717,6 +717,11 @@ struct closureLifter {
     /// into direct calls when nothing else reads it (Singletons.cpp). Returns
     /// whether it changed the module.
     bool bindSingletonMethods(liftReport & out);
+    /// Marks the reads and writes of a static variable that holds one class
+    /// and is read only by `new`s that run after its last write
+    /// (kNativeStaticClass), or says on the variable why not
+    /// (kNativeStaticClassReason). Singletons.cpp.
+    void markStaticClassReads();
 
     /// What can start each function, and how many closures name it (see
     /// indexStarters() in Singletons.cpp).

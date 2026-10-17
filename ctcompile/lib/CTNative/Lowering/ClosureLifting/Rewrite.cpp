@@ -97,6 +97,9 @@ liftReport closureLifter::run() {
     // Static members of a class are called directly (ClassStatics.cpp), so
     // that the class census below can prove the class.
     bindClassStatics(out);
+    // A class held in a static variable is constructed by name where it is
+    // read (Singletons.cpp), for the constructor census below.
+    markStaticClassReads();
     // Unbox object literals that are proved uncaptured before the
     // argument/receiver census. A separate lifter does this because the
     // rewrite erases stores its census points at; the main census below then
@@ -519,6 +522,10 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         auto prototype = immutablePrototype(only);
         const auto captured = liftedCaptures(only);
         for (ctjs::ConstructOp built : constructsOfTarget[target.getOperation()]) {
+            // A read of the class's static variable (kNativeStaticClass) has
+            // no other use, and goes with the `new`.
+            mlir::Operation * staticRead = built.getCallee().getDefiningOp();
+            if (staticRead && !staticRead->hasAttr(kNativeStaticClass)) { staticRead = nullptr; }
             mlir::OpBuilder at(built);
             const mlir::Value undefined = undefinedAt(at, built.getLoc());
             // The instance starts as an empty literal: the constructor writes
@@ -558,8 +565,21 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             // object-like, so the answer is always `self`.
             built.getResult().replaceAllUsesWith(instance.getResult());
             built.erase();
+            if (staticRead) {
+                for (mlir::Operation * user : llvm::make_early_inc_range(staticRead->getUsers())) {
+                    if (llvm::isa<ctjs::RootOp>(user)) { user->erase(); }
+                }
+                if (staticRead->use_empty()) { staticRead->erase(); }
+            }
             ++out.calls;
             ++out.constructors;
+        }
+        // Every read of a static variable holding the class was such a `new`,
+        // so its writes go too.
+        for (mlir::Operation * user : llvm::make_early_inc_range(only->getUsers())) {
+            if (llvm::isa<ctjs::CellSetOp>(user) && user->hasAttr(kNativeStaticClass)) {
+                user->erase();
+            }
         }
         // A class's setup goes first: its edges name the prototype and the
         // constructor, and the class helper call names the constructor.

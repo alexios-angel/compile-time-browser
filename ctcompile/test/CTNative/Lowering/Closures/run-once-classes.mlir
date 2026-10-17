@@ -6,7 +6,7 @@
 // that binding, in its owner or through captures, is the callee of a `new`,
 // ClosureLifting/RunOnce.cpp keeps the binding a static variable even though
 // every closure over it would lift: a `new` in another function then names
-// the class through that variable (Constructors.cpp marks such reads), not
+// the class through that variable (Singletons.cpp marks such reads), not
 // through a capture of a boxed binding. A binding the program assigns again,
 // or reads other than to construct, stays a capture.
 //
