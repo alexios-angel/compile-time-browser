@@ -16,6 +16,7 @@
 #include "ctcompile/CTNative/Runtime/Array.hpp"
 #include "ctcompile/CTNative/Runtime/Browser.hpp"
 #include "ctcompile/CTNative/Runtime/Json.hpp"
+#include "ctcompile/CTNative/Runtime/Object.hpp"
 #include "ctcompile/CTNative/Runtime/RegExp.hpp"
 #include "ctcompile/CTNative/Runtime/StaticTable.hpp"
 #include "ctcompile/CTNative/Runtime/ctnative.hpp"
@@ -1281,6 +1282,75 @@ int main() {
         CHECK(ctnative::String.prototype.split.call(js_string{}, whitespace_run) == strings({""}));
         CHECK(ctnative::String.prototype.split.call(js_string{"\xC3\xA9"}, whitespace_run) ==
               strings({"\xC3\xA9"}));
+    }
+
+    // `throw new TypeError(message)` (Error.hpp) throws a type_error whose
+    // what() is the message.
+    {
+        bool caught = false;
+        try {
+            ctnative::throw_type_error(ctnative::js_string{"Option \"x\" is wrong."});
+        } catch (const ctnative::type_error & error) {
+            caught = std::string{error.what()} == "Option \"x\" is wrong.";
+        }
+        CHECK(caught);
+    }
+
+    // Object.prototype.toString of each primitive (Object.hpp), which
+    // Bootstrap's toType reads the type name from.
+    {
+        using ctnative::js_string;
+        constexpr auto & toString = ctnative::Object.prototype.toString;
+        CHECK(toString.call(5.0) == js_string{"[object Number]"});
+        CHECK(toString.call(js_string{"x"}) == js_string{"[object String]"});
+        CHECK(toString.call(ctnative::js_boolean_t{true}) == js_string{"[object Boolean]"});
+        CHECK(toString.call(ctnative::js_null_t{}) == js_string{"[object Null]"});
+        CHECK(toString.call(ctnative::undefined_t{}) == js_string{"[object Undefined]"});
+        CHECK(toString.call(ctnative::nullable_scalar{ctnative::js_null_t{}}) ==
+              js_string{"[object Null]"});
+        CHECK(toString.call(ctnative::nullable_scalar{2.5}) == js_string{"[object Number]"});
+        CHECK(toString.call(ctnative::nullable_string{std::string{"y"}}) ==
+              js_string{"[object String]"});
+        CHECK(toString.call(ctnative::nullable_string{}) == js_string{"[object Undefined]"});
+        // A union carrier answers the tag of the alternative it holds.
+        CHECK(toString.call(ctnative::number_string{js_string{"z"}}) ==
+              js_string{"[object String]"});
+        CHECK(toString.call(ctnative::nullable_boolean_string{ctnative::js_boolean_t{false}}) ==
+              js_string{"[object Boolean]"});
+        CHECK(toString.call(ctnative::nullable_number_string{ctnative::js_null_t{}}) ==
+              js_string{"[object Null]"});
+    }
+
+    // RegExp.prototype.test (RegExp.hpp), as Config's type check calls it on
+    // `new RegExp(expectedTypes)`.
+    {
+        using ctnative::js_string;
+        using ctnative::RegExp;
+        constexpr auto & test = RegExp.prototype.test;
+        CHECK(static_cast<bool>(test.call(RegExp("(string|element)"), js_string{"element"})));
+        CHECK(!static_cast<bool>(test.call(RegExp("(string|element)"), js_string{"number"})));
+        // The pattern is not anchored: it matches anywhere in the text.
+        CHECK(static_cast<bool>(test.call(RegExp("number"), js_string{"a number!"})));
+        CHECK(!static_cast<bool>(test.call(RegExp("boolean"), js_string{})));
+        CHECK(static_cast<bool>(test.call(RegExp("(null|element)", ""), js_string{"null"})));
+    }
+
+    // String.prototype.match without `g` (RegExp.hpp), as Bootstrap's toType
+    // reads `[1]` of it; reading a group of no match throws the TypeError.
+    {
+        using ctnative::js_string;
+        using ctnative::RegExp;
+        const auto & match = ctnative::String.prototype.match;
+        const auto tag = match.call(js_string{"[object Number]"}, RegExp("\\s([a-z]+)", "i"));
+        CHECK(tag.group(0) == js_string{" Number"});
+        CHECK(tag.group(1) == js_string{"Number"});
+        bool threw = false;
+        try {
+            (void)match.call(js_string{"none"}, RegExp("([0-9]+)")).group(1);
+        } catch (const ctnative::type_error & error) {
+            threw = std::string{error.what()} == "Cannot read properties of null (reading '1')";
+        }
+        CHECK(threw);
     }
 
     // String.prototype.replace with a RegExp and a function (RegExp.hpp).

@@ -89,7 +89,14 @@ inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_ca
 /// The String.prototype method a `ctjs.call` invokes on its receiver, written
 /// by TypeInference::markStringMethodCalls: "toLowerCase", "trim", or
 /// "replace" with a RegExp literal and a replacement that is not a function.
+/// "test" marks RegExp.prototype.test on a RegExp made from a constant source
+/// (`new RegExp("a|b").test(text)` or `/a|b/.test(text)`).
 inline constexpr llvm::StringLiteral kNativeStringMethod = "ctnative.string_method";
+/// On `m[k]` of `m = Object.prototype.toString.call(x).match(/re/flags)`
+/// (Bootstrap's toType), written by TypeInference::markStringMethodCalls: the
+/// group `k` read, a Number attribute. The pattern and flags are kept beside
+/// it as for replace.
+inline constexpr llvm::StringLiteral kNativeMatchGroup = "ctnative.match_group";
 
 /// One SSA value's inferred type, as a lattice element.
 ///
@@ -248,11 +255,17 @@ public:
     /// that declares `declared` parameters the way JavaScript does, or empty.
     static std::string replacePatternProblem(llvm::StringRef pattern, llvm::StringRef flags,
                                              unsigned declared);
+    /// Why group `group` of `pattern` with `flags`, run on the ASCII text
+    /// Object.prototype.toString answers, may not be the String JavaScript
+    /// reads whenever the pattern matches, or empty.
+    static std::string matchGroupProblem(llvm::StringRef pattern, llvm::StringRef flags,
+                                         unsigned group);
     /// Whether `op` is a replace call closure lifting specialised.
     static bool isStringCallbackCall(mlir::Operation * op);
-    /// Marks each `text.toLowerCase()`, `text.trim()` and
-    /// `text.replace(/re/, replacement)` call with kNativeStringMethod, while
-    /// its key is still a constant the lowering has not rewritten.
+    /// Marks each `text.toLowerCase()`, `text.trim()`,
+    /// `text.replace(/re/, replacement)` and `new RegExp("re").test(text)` call
+    /// with kNativeStringMethod, while its key is still a constant the lowering
+    /// has not rewritten.
     static void markStringMethodCalls(mlir::Operation * top);
     /// Whether `op` is a marked String method call, which the runtime spells
     /// `ctnative::String.prototype.<name>.call(text)` on a String.
@@ -328,6 +341,10 @@ public:
             /// What console.log prints (Runtime/Console.hpp): a String, a
             /// Number, a Boolean, null or undefined, or an optional of them.
             printable,
+            /// A printable value, or a union of a String with a Number or a
+            /// Boolean, optional or not (Runtime/ctnative.hpp's std::variant
+            /// carriers): what Object.prototype.toString takes.
+            primitive,
             /// A run-once static's constant table whose fields are all
             /// Strings, proved by Inference/StaticTables.cpp, which marks the
             /// call (kNativeStaticTableEnumeration).

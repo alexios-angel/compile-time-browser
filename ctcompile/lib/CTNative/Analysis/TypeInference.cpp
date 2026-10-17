@@ -925,8 +925,16 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         }
         if (const mlir::Type promised = promiseType(op, operands)) { return answer(promised); }
     }
-    // String.prototype.toLowerCase, and replace with a specialised function.
-    if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    // A group of toType's match: a String; admission checks the text.
+    if (op->hasAttr(kNativeMatchGroup)) { return answer(stringType(c)); }
+    // RegExp.prototype.test of a String: a Boolean (Inference/StringCallbacks.cpp).
+    if (isStringMethodCall(op) &&
+        op->getAttrOfType<mlir::StringAttr>(kNativeStringMethod) == "test") {
+        if (isProvedString(operands[2])) { return answer(BoolType::get(c)); }
+    } else if (isStringMethodCall(op) && isProvedString(operands[1])) {
+        // String.prototype.toLowerCase, and replace with a specialised function.
+        return answer(stringType(c));
+    }
     // `text[i]` with a Number index: a one-unit String, or undefined past the
     // end (ECMA-262 10.4.3.5).
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);

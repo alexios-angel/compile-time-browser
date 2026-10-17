@@ -25,13 +25,17 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTNative/Analysis/ClosedCallable.h"
+#include "ctcompile/CTNative/Analysis/TypeInference.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -337,7 +341,143 @@ void unroll(const tableLoop & match, llvm::StringRef method, llvm::ArrayRef<tabl
     loop.erase();
 }
 
+/// Replaces the length read of `match`'s enumeration by the key count and
+/// erases the enumeration and its method read once nothing reads them.
+void dropEnumeration(tableLoop match, std::size_t keys) {
+    mlir::OpBuilder builder{match.length};
+    match.length.getResult().replaceAllUsesWith(
+        ctjs::ConstantOp::create(builder, match.length.getLoc(), match.length.getResult().getType(),
+                                 ctjs::numberAttr(builder.getContext(), static_cast<double>(keys)))
+            .getResult());
+    match.length.erase();
+    ctjs::CallOp enumeration = match.enumeration;
+    if (!enumeration->use_empty()) { return; }
+    mlir::Operation * method = enumeration.getCallee().getDefiningOp();
+    enumeration.erase();
+    if (method && method->use_empty()) {
+        mlir::Operation * object = method->getOperand(0).getDefiningOp();
+        method->erase();
+        if (object && object->use_empty()) { object->erase(); }
+    }
+}
+
+/// The fields of `literal`, in property order, when it is a table of
+/// constants (finite numbers, booleans, strings, null) defined with distinct
+/// constant keys in `before`'s block before it, and every other use is an
+/// operand `passes` accepts.
+std::optional<llvm::SmallVector<tableField>> literalTable(
+    ctjs::CreateObjectOp literal, mlir::Operation * before,
+    llvm::function_ref<bool(mlir::OpOperand &)> passes) {
+    llvm::SmallVector<ctjs::SetPropertyOp> stores;
+    for (mlir::OpOperand & use : literal.getResult().getUses()) {
+        auto store = llvm::dyn_cast<ctjs::SetPropertyOp>(use.getOwner());
+        if (store && use.getOperandNumber() == 0) {
+            stores.push_back(store);
+        } else if (!passes(use)) {
+            return std::nullopt;
+        }
+    }
+    llvm::sort(stores,
+               [](ctjs::SetPropertyOp a, ctjs::SetPropertyOp b) { return a->isBeforeInBlock(b); });
+    llvm::SmallVector<tableField> fields;
+    llvm::StringSet<> seen;
+    for (ctjs::SetPropertyOp store : stores) {
+        const std::string key = tableKey(store.getKey());
+        const auto constant = ctjs::constantAttr<mlir::Attribute>(store.getValue());
+        const auto number = llvm::dyn_cast_or_null<ctjs::NumberAttr>(constant);
+        if (key.empty() || key == "__proto__" || !seen.insert(key).second ||
+            !store->hasAttr(ctjs::defineOwnMarker) || store->getBlock() != before->getBlock() ||
+            !store->isBeforeInBlock(before) ||
+            !llvm::isa_and_nonnull<ctjs::NumberAttr, ctjs::BooleanAttr, ctjs::StringAttr,
+                                   ctjs::NullAttr>(constant) ||
+            (number && !std::isfinite(number.getDouble()))) {
+            return std::nullopt;
+        }
+        fields.emplace_back(key, constant);
+    }
+    if (fields.empty()) { return std::nullopt; }
+    sortOwnKeyOrder(fields, [](const tableField & field) { return llvm::StringRef(field.first); });
+    return fields;
+}
+
+/// The constant table every caller passes as `parameter`, a parameter of a
+/// function whose callers are all known direct calls: each passes an object
+/// literal of constants, all with the same fields, that it uses for nothing
+/// but those calls. None otherwise.
+std::optional<llvm::SmallVector<tableField>> parameterTable(mlir::BlockArgument parameter) {
+    auto function = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+    if (!function || !parameter.getOwner()->isEntryBlock() ||
+        parameter.getArgNumber() < ctjs::implicit_arguments) {
+        return std::nullopt;
+    }
+    auto module = function->getParentOfType<mlir::ModuleOp>();
+    bool argumentsObject = false;
+    function.walk([&](ctjs::MakeArgumentsOp) { argumentsObject = true; });
+    const auto callers = directCallers(function, module);
+    if (argumentsObject || !callers || callers->empty() ||
+        !closedCallableProblem(function, module).empty() ||
+        hasAlternateCalleeCalls(function, module)) {
+        return std::nullopt;
+    }
+    const unsigned index = parameter.getArgNumber();
+    std::optional<llvm::SmallVector<tableField>> fields;
+    for (ctjs::CallDirectOp call : *callers) {
+        auto literal = call->getOperand(index).getDefiningOp<ctjs::CreateObjectOp>();
+        if (!literal) { return std::nullopt; }
+        // The literal may reach only this parameter, at any of the calls.
+        const auto table = literalTable(literal, call, [&](mlir::OpOperand & use) {
+            auto other = llvm::dyn_cast<ctjs::CallDirectOp>(use.getOwner());
+            return other && use.getOperandNumber() == index && llvm::is_contained(*callers, other);
+        });
+        if (!table || (fields && *fields != *table)) { return std::nullopt; }
+        fields = table;
+    }
+    return fields;
+}
+
 } // namespace
+
+void unrollParameterTableLoops(mlir::ModuleOp module) {
+    llvm::SmallVector<ctjs::CallOp> enumerations;
+    module.walk([&](ctjs::CallOp call) {
+        const auto * row = TypeInference::builtinStaticOf(call);
+        if (row && row->params[0] == TypeInference::BuiltinStatic::Param::staticTable &&
+            call.getArgs().size() == 1 && llvm::isa<mlir::BlockArgument>(call.getArgs()[0]) &&
+            call.getArgs()[0].hasOneUse()) {
+            enumerations.push_back(call);
+        }
+    });
+    for (ctjs::CallOp enumeration : enumerations) {
+        auto parameter = llvm::cast<mlir::BlockArgument>(enumeration.getArgs()[0]);
+        const auto fields = parameterTable(parameter);
+        auto match = matchLoop(enumeration);
+        if (!fields || !match || fields->size() > maxUnrolledKeys) { continue; }
+        auto function = llvm::cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+        unroll(*match, ctjs::methodKey(enumeration), *fields);
+        dropEnumeration(*match, fields->size());
+        // The parameter is read by nothing now: every caller passes undefined
+        // instead, and its literal, used for nothing else, goes.
+        for (ctjs::CallDirectOp call : *directCallers(function, module)) {
+            mlir::OpBuilder builder{call};
+            mlir::Value passed = call->getOperand(parameter.getArgNumber());
+            call->setOperand(parameter.getArgNumber(),
+                             ctjs::ConstantOp::create(builder, call.getLoc(), passed.getType(),
+                                                      ctjs::UndefinedAttr::get(module.getContext()))
+                                 .getResult());
+            auto literal = passed.getDefiningOp<ctjs::CreateObjectOp>();
+            if (!literal || !llvm::all_of(literal.getResult().getUsers(), [](mlir::Operation * u) {
+                    return llvm::isa<ctjs::SetPropertyOp>(u);
+                })) {
+                continue;
+            }
+            for (mlir::Operation * store :
+                 llvm::make_early_inc_range(literal.getResult().getUsers())) {
+                store->erase();
+            }
+            literal.erase();
+        }
+    }
+}
 
 void unrollTableLoops(mlir::ModuleOp module) {
     llvm::SmallVector<ctjs::CallOp> enumerations;
@@ -362,22 +502,7 @@ void unrollTableLoops(mlir::ModuleOp module) {
         unroll(*match, ctjs::stringAttrOf(enumeration, kNativeStaticTableMethod), *fields);
         // The length is the table's key count, and the enumeration itself is
         // no longer read.
-        mlir::OpBuilder builder{match->length};
-        match->length.getResult().replaceAllUsesWith(
-            ctjs::ConstantOp::create(
-                builder, match->length.getLoc(), match->length.getResult().getType(),
-                ctjs::numberAttr(module.getContext(), static_cast<double>(fields->size())))
-                .getResult());
-        match->length.erase();
-        if (enumeration->use_empty()) {
-            mlir::Operation * method = enumeration.getCallee().getDefiningOp();
-            enumeration.erase();
-            if (method && method->use_empty()) {
-                mlir::Operation * object = method->getOperand(0).getDefiningOp();
-                method->erase();
-                if (object && object->use_empty()) { object->erase(); }
-            }
-        }
+        dropEnumeration(*match, fields->size());
     }
 }
 

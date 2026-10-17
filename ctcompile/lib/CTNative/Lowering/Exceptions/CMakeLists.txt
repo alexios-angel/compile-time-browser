@@ -3,6 +3,8 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   DOM.cpp
   Emit.cpp
   Recovery.h
+  TypeErrors.cpp
+  TypeErrors.h
 )
 
 add_subdirectory(Recovery)
