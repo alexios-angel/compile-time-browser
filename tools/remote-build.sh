@@ -4,6 +4,8 @@
 #   ./remote-build.sh [ninja target ...]   default preset: configure + build
 #                                          + ctest (Ninja); with targets, build
 #                                          only those and run no tests
+#   ./remote-build.sh sync                 sync the tree and the box's
+#                                          project deps only; build nothing
 #   ./remote-build.sh windows              `windows` preset: cross-compile
 #                                          the examples, collect exes+SDL3.dll
 #                                          via windows-dist, rsync them back
@@ -144,7 +146,9 @@ fi
 cd "$HOME/$CT_REMOTE_DIR" && tools/fetch-angle.sh
 REMOTE
 
-if [ "${1:-}" = windows ]; then
+if [ "${1:-}" = sync ]; then
+  echo "synced $repo_root to $host:$remote_dir"
+elif [ "${1:-}" = windows ]; then
   # The cross build needs compiled libraries in the mingw sysroot that the box
   # does not ship (Boost.URL, Boost.ProgramOptions, zlib, libpng,
   # libjpeg-turbo, mimalloc, simdutf, cpptrace), so the two idempotent builder
