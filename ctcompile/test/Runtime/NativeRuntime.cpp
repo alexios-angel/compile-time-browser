@@ -1312,6 +1312,13 @@ int main() {
         CHECK(toString.call(ctnative::nullable_string{std::string{"y"}}) ==
               js_string{"[object String]"});
         CHECK(toString.call(ctnative::nullable_string{}) == js_string{"[object Undefined]"});
+        // A union carrier answers the tag of the alternative it holds.
+        CHECK(toString.call(ctnative::number_string{js_string{"z"}}) ==
+              js_string{"[object String]"});
+        CHECK(toString.call(ctnative::nullable_boolean_string{ctnative::js_boolean_t{false}}) ==
+              js_string{"[object Boolean]"});
+        CHECK(toString.call(ctnative::nullable_number_string{ctnative::js_null_t{}}) ==
+              js_string{"[object Null]"});
     }
 
     // RegExp.prototype.test (RegExp.hpp), as Config's type check calls it on

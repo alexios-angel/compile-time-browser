@@ -18,6 +18,7 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ctnative {
@@ -49,6 +50,13 @@ struct object_to_string_method {
         case nullable_scalar::kind::boolean: return call(js_boolean_t{});
         }
         std::terminate();
+    }
+    /// A union carrier (number_string, boolean_string and their nullable
+    /// forms): the tag of whichever alternative it holds.
+    template <class... Alternatives>
+    js_string call(const std::variant<Alternatives...> & value) const {
+        return std::visit([](const auto & held) { return object_to_string_method{}.call(held); },
+                          value);
     }
     js_string call(const nullable_string & value) const {
         switch (value.tag) {
