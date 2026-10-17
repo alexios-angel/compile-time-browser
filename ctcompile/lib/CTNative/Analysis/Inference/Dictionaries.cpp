@@ -11,6 +11,7 @@
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/TypeInference.h"
+#include "ctcompile/CTNative/IR/CTNativeAttrNames.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/DenseMap.h"
@@ -18,6 +19,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -132,6 +134,11 @@ std::string tableUses(mlir::Value object, llvm::SmallVectorImpl<tableUse> & uses
             }
             return "it is compared with something other than undefined";
         }
+        // Kept in a variable, returned or passed: the variable's reads, the
+        // calls' results and the parameter are tables too (growFamilies).
+        if (llvm::isa<ctjs::CellSetOp>(user) && use.getOperandNumber() == 1) { continue; }
+        if (llvm::isa<ctjs::ReturnOp>(user)) { continue; }
+        if (llvm::isa<ctjs::CallDirectOp>(user) && use.getOperandNumber() >= 3) { continue; }
         // `o || d` tests it; an `if` that yields it is the same table.
         if (llvm::isa<ctjs::TruthyOp>(user)) { continue; }
         if (llvm::isa<mlir::scf::YieldOp>(user) &&
@@ -196,11 +203,66 @@ private:
     llvm::SmallVector<mlir::Value> members_;
 };
 
+/// Where tables flow between functions and variables: each variable's
+/// cells (a run-once static's cells are one variable, ClosureLifting/
+/// RunOnce.cpp), and each function's direct calls.
+struct tableFlow {
+    llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> variable; // cell -> its group
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::CallDirectOp>> calls;
+
+    explicit tableFlow(mlir::ModuleOp module) {
+        llvm::StringMap<llvm::SmallVector<mlir::Value>> statics;
+        llvm::SmallVector<mlir::Value> cells;
+        module.walk([&](ctjs::CreateCellOp cell) {
+            cells.push_back(cell.getResult());
+            if (auto name = cell->getAttrOfType<mlir::StringAttr>(kNativeStaticCell)) {
+                statics[name.getValue()].push_back(cell.getResult());
+            }
+        });
+        for (mlir::Value cell : cells) {
+            auto name = cell.getDefiningOp()->getAttrOfType<mlir::StringAttr>(kNativeStaticCell);
+            variable[cell] = name ? statics[name.getValue()] : llvm::SmallVector<mlir::Value>{cell};
+        }
+        module.walk([&](ctjs::CallDirectOp call) {
+            if (auto target = call.getTarget()) { calls[target.getOperation()].push_back(call); }
+        });
+    }
+
+    /// The reads of the variable `cell` names.
+    llvm::SmallVector<mlir::Value> reads(mlir::Value cell) const {
+        llvm::SmallVector<mlir::Value> out;
+        for (mlir::Value each : variable.lookup(cell)) {
+            for (mlir::Operation * user : each.getUsers()) {
+                if (auto read = llvm::dyn_cast<ctjs::CellGetOp>(user);
+                    read && read.getCell() == each) {
+                    out.push_back(read.getResult());
+                }
+            }
+        }
+        return out;
+    }
+
+    /// The values stored into the variable `cell` names.
+    llvm::SmallVector<mlir::Value> writes(mlir::Value cell) const {
+        llvm::SmallVector<mlir::Value> out;
+        for (mlir::Value each : variable.lookup(cell)) {
+            for (mlir::Operation * user : each.getUsers()) {
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                    write && write.getCell() == each) {
+                    out.push_back(write.getValue());
+                }
+            }
+        }
+        return out;
+    }
+};
+
 /// Grows the families to a fixpoint: a table yielded by an `if` makes the
 /// `if`'s result one with it, and a family that holds a table holds tables
 /// only, so everything stored into it and read from it is one child family.
 /// Returns each family's child, by root.
-llvm::DenseMap<mlir::Value, mlir::Value> growFamilies(tableFamilies & tables) {
+llvm::DenseMap<mlir::Value, mlir::Value> growFamilies(tableFamilies & tables,
+                                                      const tableFlow & flow) {
     llvm::DenseMap<mlir::Value, mlir::Value> child;
     for (bool grew = true; grew;) {
         grew = false;
@@ -215,6 +277,25 @@ llvm::DenseMap<mlir::Value, mlir::Value> growFamilies(tableFamilies & tables) {
                                     : mlir::scf::IfOp{};
                 if (choice && use.getOperandNumber() < choice.getNumResults()) {
                     grew |= tables.unite(member, choice.getResult(use.getOperandNumber()));
+                }
+                mlir::Operation * user = use.getOwner();
+                if (auto write = llvm::dyn_cast<ctjs::CellSetOp>(user);
+                    write && use.getOperandNumber() == 1) {
+                    for (mlir::Value read : flow.reads(write.getCell())) {
+                        grew |= tables.unite(member, read);
+                    }
+                } else if (llvm::isa<ctjs::ReturnOp>(user)) {
+                    auto function = user->getParentOfType<ctjs::FuncOp>();
+                    for (ctjs::CallDirectOp call : flow.calls.lookup(function.getOperation())) {
+                        grew |= tables.unite(member, call->getResult(0));
+                    }
+                } else if (auto call = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                           call && use.getOperandNumber() >= 3 && call.getTarget() &&
+                           !call.getTarget().getBody().empty()) {
+                    mlir::Block & entry = call.getTarget().getBody().front();
+                    if (use.getOperandNumber() < entry.getNumArguments()) {
+                        grew |= tables.unite(member, entry.getArgument(use.getOperandNumber()));
+                    }
                 }
             }
         }
@@ -247,8 +328,13 @@ llvm::DenseMap<mlir::Value, mlir::Value> growFamilies(tableFamilies & tables) {
 /// yielding only tables, or a read of a table that holds tables. Empty when
 /// it is.
 std::string producerProblem(mlir::Value member, const tableFamilies & tables,
-                            const llvm::DenseSet<mlir::Value> & tableReads) {
+                            const llvm::DenseSet<mlir::Value> & tableReads,
+                            const tableFlow & flow) {
     if (member.getDefiningOp<ctjs::CreateObjectOp>() || tableReads.contains(member)) { return {}; }
+    const auto allTables = [&](llvm::ArrayRef<mlir::Value> values) {
+        return !values.empty() &&
+               llvm::all_of(values, [&](mlir::Value value) { return tables.contains(value); });
+    };
     if (auto choice = member.getDefiningOp<mlir::scf::IfOp>()) {
         const unsigned index = llvm::cast<mlir::OpResult>(member).getResultNumber();
         if (choice.elseBlock() && tables.contains(choice.thenYield().getOperand(index)) &&
@@ -256,6 +342,35 @@ std::string producerProblem(mlir::Value member, const tableFamilies & tables,
             return {};
         }
         return "an `if` chooses between a table and something else";
+    }
+    // A variable holds only tables (and undefined until the first store).
+    if (auto read = member.getDefiningOp<ctjs::CellGetOp>()) {
+        return allTables(flow.writes(read.getCell()))
+                   ? std::string{}
+                   : "a variable holds both a table and something else";
+    }
+    // Every return of the function returns a table.
+    if (auto call = member.getDefiningOp<ctjs::CallDirectOp>()) {
+        llvm::SmallVector<mlir::Value> returned;
+        if (auto target = call.getTarget()) {
+            target.walk([&](ctjs::ReturnOp ret) { returned.push_back(ret.getValue()); });
+        }
+        return allTables(returned) ? std::string{}
+                                   : "a function returns both a table and something else";
+    }
+    // Every direct call passes a table for the parameter.
+    if (auto parameter = llvm::dyn_cast<mlir::BlockArgument>(member)) {
+        auto function = llvm::dyn_cast<ctjs::FuncOp>(parameter.getOwner()->getParentOp());
+        if (function && parameter.getOwner()->isEntryBlock() && parameter.getArgNumber() >= 3) {
+            llvm::SmallVector<mlir::Value> passed;
+            for (ctjs::CallDirectOp call : flow.calls.lookup(function.getOperation())) {
+                if (parameter.getArgNumber() < call->getNumOperands()) {
+                    passed.push_back(call->getOperand(parameter.getArgNumber()));
+                }
+            }
+            if (allTables(passed)) { return {}; }
+        }
+        return "a parameter receives both a table and something else";
     }
     if (auto * op = member.getDefiningOp()) {
         return ("a table holds a value made by `" + op->getName().getStringRef() + "`").str();
@@ -282,7 +397,8 @@ void prepareNativeDictionaries(mlir::ModuleOp module) {
     });
     tableFamilies tables;
     module.walk([&](ctjs::CreateObjectOp made) { tables.add(made.getResult()); });
-    const llvm::DenseMap<mlir::Value, mlir::Value> child = growFamilies(tables);
+    const tableFlow flow(module);
+    const llvm::DenseMap<mlir::Value, mlir::Value> child = growFamilies(tables, flow);
     llvm::DenseSet<mlir::Value> tableReads;
     for (const mlir::Value member : tables.members()) {
         for (mlir::Operation * user : member.getUsers()) {
@@ -303,7 +419,7 @@ void prepareNativeDictionaries(mlir::ModuleOp module) {
     for (const mlir::Value member : tables.members()) {
         family & f = families[tables.find(member)];
         if (auto made = member.getDefiningOp<ctjs::CreateObjectOp>()) { f.sites.push_back(made); }
-        std::string why = producerProblem(member, tables, tableReads);
+        std::string why = producerProblem(member, tables, tableReads, flow);
         if (why.empty()) {
             why = tableUses(member, f.uses, f.computed,
                             [&](mlir::Value value) { return tables.contains(value); });
@@ -324,7 +440,9 @@ void prepareNativeDictionaries(mlir::ModuleOp module) {
     int64_t group = 0;
     for (auto & [treeTop, roots] : trees) {
         std::string problem;
-        bool computed = roots.size() > 1;
+        // Only a table operation makes a table: literals that merely hold one
+        // another under literal keys are records' to prove or refuse.
+        bool computed = false;
         for (const mlir::Value root : roots) {
             const family & f = families[root];
             if (problem.empty()) { problem = f.problem; }

@@ -1031,6 +1031,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 made->setAttr(kNativeExportClass, exportMark);
             }
         }
+        // A `new this` in a static member constructs the class.
         if (ctjs::FuncOp constructor = targetOf(cls.constructor)) {
             for (ctjs::ConstructOp built : classConstructs) {
                 // A name, not a symbol reference: a `new this` the constructor

@@ -40,8 +40,10 @@
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/statics.js | FileCheck %s --check-prefix=STATICS-RUN
 //
 // An arrow made after `super(...)` reads the importer's flag for `this` as
-// set, so the class is flattened; the arrow keeps no check of the flag (its
-// lexical `this` is the arrow rule's to lift).
+// set, so the class is flattened; the arrow keeps no check of the flag, and
+// no capture of it either, so the arrow rule lifts it with its lexical `this`
+// as an object argument and the arrow reads no upvalue. The flag's slot is
+// gone, so `this` is the arrow's only capture.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason
@@ -49,7 +51,8 @@
 // Classes of a factory function are stored in bindings, and a child's
 // `extends` reads its parent's binding. Once flattening drops the heritage
 // call, that read is unused, and the parents (never constructed) are erased
-// with their members like any unreachable parent.
+// with their members like any unreachable parent. Base's own copies of
+// Config's members go with Base, so ctnative.copies no longer lists them.
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/factory.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=FACTORY
@@ -72,8 +75,11 @@
 // CPP-DAG: Base_Toast_{{[0-9]+}}(Toast* const
 // OBSERVATION: r=109036004
 
+// FACTORY: ctnative.copies = {
+// FACTORY-NOT: _Base$
 // FACTORY: ctnative.inheritance_erased = [{{.*}}"Config$3"{{.*}}"Base$5"]
-// ARROW: ctjs.func @fn$4(
+// ARROW: ctjs.call_direct @fn$4({{.*}}ctnative.object_args
+// ARROW: ctjs.func private @fn$4({{.*}}ctnative.captures = 1 : i32, ctnative.lexical_this = 0 : i32
 // ARROW-NOT: ctjs.load_upvalue
 // ARROW-NOT: ReferenceError
 // ARROW: ctjs.return

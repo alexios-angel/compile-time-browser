@@ -473,3 +473,52 @@ function forwarded() {
     return forward({text: "owned"});
 }
 var a = forwarded();
+
+//--- borrowed-delete-kept.js
+function borrowed() {
+    var read = function (value) {
+        delete value.text;
+        return value.text === void 0 ? 1 : 2;
+    };
+    var value = {text: "owned"};
+    var keep = [value];
+    return read(value) + keep.length - 1;
+}
+var a = borrowed();
+
+//--- borrowed-alias-delete-kept.js
+function borrowed() {
+    var read = function (value, alias) {
+        delete alias.text;
+        return value.text === void 0 ? 1 : 2;
+    };
+    var value = {text: "owned"};
+    var keep = [value];
+    return read(value, value) + keep.length - 1;
+}
+var a = borrowed();
+
+//--- declared-alias-delete-kept.js
+function read(value, alias) {
+    delete alias.text;
+    return value.text === void 0 ? 1 : 2;
+}
+function declared() {
+    var value = {text: "owned"};
+    var keep = [value];
+    return read(value, value) + keep.length - 1;
+}
+var a = declared();
+
+//--- forwarded-alias-delete-kept.js
+function forwarded() {
+    var read = function (value, alias) {
+        delete alias.text;
+        return value.text === void 0 ? 1 : 2;
+    };
+    var forward = function (value) { return read(value, value); };
+    var value = {text: "owned"};
+    var keep = [value];
+    return forward(value) + keep.length - 1;
+}
+var a = forwarded();

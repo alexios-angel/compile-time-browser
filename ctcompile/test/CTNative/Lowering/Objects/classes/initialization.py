@@ -190,6 +190,18 @@ UNTRUSTED_NATIVE = {
     **dict.fromkeys(("static-dynamic",), (True,)),
 }
 
+# The unprepared lowering also completes these in both modes, each printing
+# Node's value: mutually recursive arrow helpers that a constructor calls,
+# and a holder whose arrow method is replaced, directly or through an alias,
+# before its one call. Preparation still refuses nested-helper-recursive
+# ("class local cell is observed before initialization").
+UNTRUSTED_NATIVE.update(
+    dict.fromkeys(
+        ("nested-helper-recursive", "local-holder-replaced", "local-holder-alias"),
+        (False, True),
+    )
+)
+
 # Inherited classes that ClosureLifting/ClassInheritance.cpp flattens per
 # concrete class now lower completely without preparation. Each prints Node's
 # value; override-ambient's uncalled Base.read goes with its class.

@@ -184,7 +184,10 @@ def by_source(imported, refused, pruned, removed, copies, erased):
     (`copies`: copy -> original) and may erase the original (`erased`). A source
     is refused when any of its functions is refused, pruned or removed when all
     of them are gone (removed if any was removed), and native otherwise: native
-    functions cannot be named here, since an emitc.func takes a C++ name.
+    functions cannot be named here, since an emitc.func takes a C++ name. An
+    erased source with no copy left (a parent's member copied only onto a
+    parent that was erased too, which drops those copies from `copies`) is
+    removed: none of its functions can run.
 
     Returns the per-source status, and the number of functions after copying,
     which conservation compares with claimed + refused + pruned + removed."""
@@ -196,19 +199,25 @@ def by_source(imported, refused, pruned, removed, copies, erased):
     for name in erased:
         if name not in functions:
             raise ValueError(f"erased {name} was not imported")
-    if any(not names for names in functions.values()):
-        empty = sorted(name for name, names in functions.items() if not names)
-        raise ValueError(f"erased with no copy: {', '.join(empty[:5])}")
     gone = set(pruned) | set(removed)
     status = {}
     for source, names in functions.items():
-        if names & set(refused):
+        if not names:
+            status[source] = "removed"
+        elif names & set(refused):
             status[source] = "refused"
         elif names <= gone:
             status[source] = "removed" if names & set(removed) else "pruned"
         else:
             status[source] = "native"
     return status, sum(len(names) for names in functions.values())
+
+
+def erased_rows(copies, erased):
+    """One removed row per erased source with no copy left, named like the
+    lowering's `removed: unreachable` rows, so every removed source is listed."""
+    kept = set(copies.values())
+    return [(name, "removed: erased with every copy") for name in sorted(erased - kept)]
 
 
 def self_test() -> None:
@@ -230,7 +239,12 @@ def self_test() -> None:
     # The original pruned and its only copy removed: gone, counted as removed.
     status, _ = by_source(imported, [], ["r"], ["r_C"], {"r_C": "r"}, set())
     assert status["r"] == "removed", status
-    for bad in (({"x_C": "x"}, set()), ({}, {"x"}), ({}, {"a"})):
+    # Erased with every copy: removed, never native by absence, and no function
+    # is expected for it.
+    status, after = by_source(imported, [], [], [], {}, {"a"})
+    assert status["a"] == "removed" and after == 4, status
+    assert erased_rows({"p_C1": "p"}, {"a", "p"}) == [("a", "removed: erased with every copy")]
+    for bad in (({"x_C": "x"}, set()), ({}, {"x"})):
         try:
             by_source(imported, [], [], [], *bad)
         except ValueError:
@@ -423,7 +437,7 @@ def run(argv: argparse.Namespace) -> dict:
             "erased": len(erased),
         },
         "pruned_names": pruned_names,
-        "removed_rows": [list(row) for row in removed_rows],
+        "removed_rows": [list(row) for row in [*removed_rows, *erased_rows(copies, erased)]],
         "optimization_defaults": not argv.no_default_optimizations,
         "claimed_percent": round(100.0 * sources["native"] / total, 2),
         "refusals": by_reason.most_common(),

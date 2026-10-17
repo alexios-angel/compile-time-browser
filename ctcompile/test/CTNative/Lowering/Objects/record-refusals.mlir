@@ -28,9 +28,19 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/joined.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=JOINED
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic-key.js 2>/dev/null \
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic-key-kept.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=DYNAMIC
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic-key.js --mlir-print-debuginfo 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/dynamic-key.mlir
+// RUN: FileCheck %s --check-prefix=DYNTABLE --implicit-check-not=ctnative.not_native < %t/dynamic-key.mlir
+// RUN: ctjs-opt %t/dynamic-key.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/dynamic-key.cpp
+// RUN: %gxx -O2 %t/dynamic-key.cpp -o %t/dynamic-key-gcc
+// RUN: %t/dynamic-key-gcc | FileCheck %s --check-prefix=DYNTABLERUN
+// RUN: %clangxx -O2 %t/dynamic-key.cpp -o %t/dynamic-key-clang
+// RUN: %t/dynamic-key-clang | FileCheck %s --check-prefix=DYNTABLERUN
+// RUN: %native_reference %t/dynamic-key.js | FileCheck %s --check-prefix=DYNTABLERUN
+// RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/dynamic-key.js | FileCheck %s --check-prefix=DYNTABLERUN
 
 // --- A global outlives the call; the copy would be a second object ---------
 // GLOBAL: ctnative.not_native = "an object literal that escapes - it is returned"
@@ -56,7 +66,14 @@
 // JOINED: ctnative.not_native = "an object literal that is loop-carried - more than one value reaches the variable that holds it (assigned again inside a loop, or on only one path before it)"
 
 // --- A dynamic key could name any field, or one nothing wrote --------------
+// A record read under a dynamic key is not a record. When the literal is also
+// kept in an array it is not a table either (Inference/Dictionaries.cpp
+// declines it), and the record rule refuses its return.
 // DYNAMIC: ctnative.not_native = "an object literal that escapes - it is returned"
+// Used only as a table, it lowers to a dictionary: every call passes the
+// literal key "v".
+// DYNTABLE: emitc.func @lookup
+// DYNTABLERUN: r=1
 
 //--- global.js
 function make() {
@@ -117,6 +134,20 @@ function pass() {
 }
 var answer = pass();
 
+//--- dynamic-key-kept.js
+function make() {
+    return {
+        v: 1
+    };
+}
+
+function lookup(k) {
+    var a = make();
+    var keep = [a];
+    return a[k] + keep.length;
+}
+var answer = lookup("v");
+
 //--- dynamic-key.js
 function make() {
     return {
@@ -128,7 +159,7 @@ function lookup(k) {
     var a = make();
     return a[k];
 }
-var answer = lookup("v");
+var r = lookup("v");
 
 //--- joined.js
 function pick(left) {
