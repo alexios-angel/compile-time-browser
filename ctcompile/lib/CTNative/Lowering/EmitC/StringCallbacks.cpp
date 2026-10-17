@@ -66,6 +66,34 @@ mlir::Value regExp(mlir::OpBuilder & b, mlir::Location where, mlir::Operation * 
 
 bool lowering::replaceStringCallback(mlir::Operation * o) {
     if (TypeInference::consumedByStringCallback(o)) { return true; }
+    if (auto group = o->getAttrOfType<ctjs::NumberAttr>(kNativeMatchGroup)) {
+        // ctnative::String.prototype.match.call(text, ctnative::RegExp(...)).group(k);
+        // the match, its method read, the literal and its global go.
+        includeRegExpHeader(o->getParentOfType<mlir::ModuleOp>());
+        auto match = llvm::cast<ctjs::GetPropertyOp>(o).getObject().getDefiningOp<ctjs::CallOp>();
+        mlir::OpBuilder b(o);
+        const mlir::Location where = o->getLoc();
+        const mlir::Value found = callValue(
+            b, where, ec::OpaqueType::get(context, "ctnative::match_result"),
+            "ctnative::String.prototype.match.call",
+            mlir::ValueRange{cellPlace(b, where, match.getReceiver()), regExp(b, where, o)});
+        const mlir::Value index =
+            ec::LiteralOp::create(b, where, ec::OpaqueType::get(context, "std::size_t"),
+                                  std::to_string(static_cast<unsigned>(group.getDouble())));
+        o->getResult(0).replaceAllUsesWith(
+            memberCall(b, where, o->getResult(0).getType(), found, "group", index));
+        mlir::Operation * read = match.getCallee().getDefiningOp();
+        mlir::Operation * literal = match.getArgs()[0].getDefiningOp();
+        o->erase();
+        eraseIfUnused(match);
+        if (read) { eraseIfUnused(read); }
+        if (literal) {
+            mlir::Operation * global = literal->getOperand(0).getDefiningOp();
+            eraseIfUnused(literal);
+            if (global) { eraseIfUnused(global); }
+        }
+        return true;
+    }
     if (TypeInference::isStringMethodCall(o)) {
         auto call = llvm::cast<ctjs::CallOp>(o);
         mlir::OpBuilder b(o);

@@ -92,6 +92,11 @@ inline constexpr llvm::StringLiteral kNativeStringCallback = "ctnative.string_ca
 /// "test" marks RegExp.prototype.test on a RegExp made from a constant source
 /// (`new RegExp("a|b").test(text)` or `/a|b/.test(text)`).
 inline constexpr llvm::StringLiteral kNativeStringMethod = "ctnative.string_method";
+/// On `m[k]` of `m = Object.prototype.toString.call(x).match(/re/flags)`
+/// (Bootstrap's toType), written by TypeInference::markStringMethodCalls: the
+/// group `k` read, a Number attribute. The pattern and flags are kept beside
+/// it as for replace.
+inline constexpr llvm::StringLiteral kNativeMatchGroup = "ctnative.match_group";
 
 /// One SSA value's inferred type, as a lattice element.
 ///
@@ -250,6 +255,11 @@ public:
     /// that declares `declared` parameters the way JavaScript does, or empty.
     static std::string replacePatternProblem(llvm::StringRef pattern, llvm::StringRef flags,
                                              unsigned declared);
+    /// Why group `group` of `pattern` with `flags`, run on the ASCII text
+    /// Object.prototype.toString answers, may not be the String JavaScript
+    /// reads whenever the pattern matches, or empty.
+    static std::string matchGroupProblem(llvm::StringRef pattern, llvm::StringRef flags,
+                                         unsigned group);
     /// Whether `op` is a replace call closure lifting specialised.
     static bool isStringCallbackCall(mlir::Operation * op);
     /// Marks each `text.toLowerCase()`, `text.trim()`,

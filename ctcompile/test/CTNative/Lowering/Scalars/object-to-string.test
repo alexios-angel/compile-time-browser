@@ -1,0 +1,72 @@
+# Object.prototype.toString.call(x) of a primitive is a built-in row
+# (Inference/BuiltinStatics.cpp) that lowers to
+# ctnative::Object.prototype.toString.call (Runtime/Object.hpp): Bootstrap's
+# toType reads a value's type name out of "[object Number]". Each kind the
+# row takes prints the same `r` with both compilers, the interpreter and
+# Node.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/tags.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/tags.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/tags.mlir
+# RUN: ctjs-opt %t/tags.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/tags.cpp
+# RUN: FileCheck %s --check-prefix=CPP < %t/tags.cpp
+# RUN: %gxx -O2 %t/tags.cpp -o %t/tags-gcc && %t/tags-gcc | FileCheck %s --check-prefix=TAGS
+# RUN: %clangxx -O2 %t/tags.cpp -o %t/tags-clang && %t/tags-clang | FileCheck %s --check-prefix=TAGS
+# RUN: %native_reference %t/tags.js | FileCheck %s --check-prefix=TAGS
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/tags.js | FileCheck %s --check-prefix=TAGS-NODE
+#
+# Bootstrap's toType reads the name out of that text:
+# `Object.prototype.toString.call(x).match(/\s([a-z]+)/i)[1].toLowerCase()`.
+# The text is ASCII, so std::regex reads `\s` and `i` as JavaScript does, and
+# the group takes part in every match; `[1]` lowers to
+# ctnative::String.prototype.match.call(text, re).group(1) (Runtime/RegExp.hpp).
+# A group that may not take part stays refused.
+#
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/totype.js -o %t/totype-input.mlir
+# RUN: ctjs-opt %t/totype-input.mlir --pass-pipeline="builtin.module(ctjs-resolve-globals,ctjs-lift-to-scf,ctnative-lower-to-emitc,emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))" -o %t/totype.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/totype.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/totype.mlir | FileCheck %s --check-prefix=TOTYPE-CPP
+# RUN: %compilation_unit --cxx g++ --module %t/totype.mlir --js %t/totype.js --work %t --name totype_gcc --core-build %build
+# RUN: %compilation_unit --cxx %dom_clang --module %t/totype.mlir --js %t/totype.js --work %t --name totype_clang --core-build %build
+# RUN: %native_reference %t/totype.js | FileCheck %s --check-prefix=TOTYPE
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/totype.js | FileCheck %s --check-prefix=TOTYPE-NODE
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/optional.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=OPTIONAL
+
+# NATIVE: emitc.func @main
+# CPP: #include "ctcompile/CTNative/Runtime/Object.hpp"
+# CPP: ctnative::Object.prototype.toString.call(
+# TAGS: r="%5Bobject%20Number%5D%7C%5Bobject%20String%5D%7C%5Bobject%20Boolean%5D%7C%5Bobject%20Null%5D%7C%5Bobject%20Undefined%5D"
+# TAGS-NODE: r=[object Number]|[object String]|[object Boolean]|[object Null]|[object Undefined]
+# TOTYPE-CPP: ctnative::String.prototype.match.call(
+# TOTYPE-CPP: .group(1)
+# TOTYPE: r="number%7Cstring%7Cboolean%7Cnull%7Cundefined"
+# TOTYPE-NODE: r=number|string|boolean|null|undefined
+# OPTIONAL: String.prototype.match with `?` - a group may not take part in a match
+
+#--- tags.js
+var r = (function () {
+    var none;
+    var empty = null;
+    return Object.prototype.toString.call(5) + "|" + Object.prototype.toString.call("x") + "|" +
+        Object.prototype.toString.call(true) + "|" + Object.prototype.toString.call(empty) + "|" +
+        Object.prototype.toString.call(none);
+})();
+
+#--- totype.js
+var r = (function () {
+    var none;
+    var empty = null;
+    return Object.prototype.toString.call(5).match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call("x").match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call(true).match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call(empty).match(/\s([a-z]+)/i)[1].toLowerCase() + "|" +
+        Object.prototype.toString.call(none).match(/\s([a-z]+)/i)[1].toLowerCase();
+})();
+
+#--- optional.js
+var r = (function () {
+    return Object.prototype.toString.call(5).match(/\s([a-z]+)?/i)[1];
+})();

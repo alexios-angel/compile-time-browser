@@ -911,6 +911,8 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
             return answer(registered);
         }
     }
+    // A group of toType's match: a String; admission checks the text.
+    if (op->hasAttr(kNativeMatchGroup)) { return answer(stringType(c)); }
     // RegExp.prototype.test of a String: a Boolean (Inference/StringCallbacks.cpp).
     if (isStringMethodCall(op) &&
         op->getAttrOfType<mlir::StringAttr>(kNativeStringMethod) == "test") {

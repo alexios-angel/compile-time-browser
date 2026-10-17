@@ -8,7 +8,8 @@
 // consumes lower to nothing. `text.toLowerCase()` and `text.trim()` need a
 // String receiver, `text.replace(/re/, s)` a String receiver, a pattern as
 // above and a String replacement, and `new RegExp("re").test(text)` a String
-// argument and a pattern as above.
+// argument and a pattern as above. `[k]` of Object.prototype.toString's
+// match needs a String text and a group that takes part in every match.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +19,20 @@ namespace ctcompile::ctnative::lowering_detail {
 
 std::optional<bool> stringCallbackOperation(admission & self, mlir::Operation * o) {
     if (TypeInference::consumedByStringCallback(o)) { return true; }
+    if (auto group = o->getAttrOfType<ctjs::NumberAttr>(kNativeMatchGroup)) {
+        // toType's group read: of Object.prototype.toString's answer, a String.
+        auto match = llvm::cast<ctjs::GetPropertyOp>(o).getObject().getDefiningOp<ctjs::CallOp>();
+        const mlir::Type text = self.typeOf(match.getReceiver());
+        if (carrierOf(text) != carrier::string) {
+            return self.refuse("the receiver of String.prototype.match is " + printed(text) +
+                               ", not a String");
+        }
+        const std::string why = TypeInference::matchGroupProblem(
+            o->getAttrOfType<mlir::StringAttr>("ctnative.replace_pattern").getValue(),
+            o->getAttrOfType<mlir::StringAttr>("ctnative.replace_flags").getValue(),
+            static_cast<unsigned>(group.getDouble()));
+        return why.empty() || self.refuse("String.prototype.match " + why);
+    }
     if (TypeInference::isStringMethodCall(o)) {
         auto call = llvm::cast<ctjs::CallOp>(o);
         const mlir::Type receiver = self.typeOf(call.getReceiver());

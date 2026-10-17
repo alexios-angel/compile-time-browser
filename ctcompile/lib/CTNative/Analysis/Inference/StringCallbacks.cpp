@@ -24,6 +24,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include <cctype>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <utility>
@@ -194,12 +195,77 @@ std::string TypeInference::replacePatternProblem(llvm::StringRef pattern, llvm::
     return {};
 }
 
+std::string TypeInference::matchGroupProblem(llvm::StringRef pattern, llvm::StringRef flags,
+                                             unsigned group) {
+    if (!flags.empty() && flags != "i") {
+        return "with the flags `" + flags.str() + "` - only `i` means the same to std::regex";
+    }
+    // The text is ASCII, so std::regex reads each class, escape and `i` as
+    // JavaScript does; what is left is whether the group takes part in every
+    // match, which an alternative or an optional quantifier breaks.
+    unsigned groups = 0;
+    bool inClass = false;
+    for (std::size_t i = 0; i < pattern.size(); ++i) {
+        const char ch = pattern[i];
+        if (static_cast<unsigned char>(ch) >= 0x80) {
+            return "with a non-ASCII pattern - std::regex reads it byte by byte";
+        }
+        if (ch == '\\') {
+            ++i;
+            continue;
+        }
+        if (inClass) {
+            inClass = ch != ']';
+            continue;
+        }
+        if (ch == '[') {
+            inClass = true;
+        } else if (ch == '(') {
+            if (i + 1 < pattern.size() && pattern[i + 1] == '?') {
+                return "with a lookaround or a group that does not capture";
+            }
+            ++groups;
+        } else if (ch == '|' || ch == '?' || ch == '*' || ch == '{') {
+            return std::string{"with `"} + ch + "` - a group may not take part in a match";
+        }
+    }
+    if (group < 1 || group > groups) {
+        return "reading group " + std::to_string(group) + " of a pattern with " +
+               std::to_string(groups);
+    }
+    return {};
+}
+
 bool TypeInference::isStringCallbackCall(mlir::Operation * op) {
     return llvm::isa_and_nonnull<ctjs::CallOp>(op) &&
            op->getAttrOfType<mlir::FlatSymbolRefAttr>(kNativeStringCallback);
 }
 
 void TypeInference::markStringMethodCalls(mlir::Operation * top) {
+    // `Object.prototype.toString.call(x).match(/re/flags)[k]`, Bootstrap's
+    // toType: the match and its RegExp literal are used for nothing else.
+    top->walk([](ctjs::GetPropertyOp group) {
+        auto index = ctjs::constantAttr<ctjs::NumberAttr>(group.getKey());
+        auto match = group.getObject().getDefiningOp<ctjs::CallOp>();
+        if (!index || !match || !match.getResult().hasOneUse() ||
+            ctjs::methodKey(match) != "match" || match.getArgs().size() != 1 ||
+            !match.getArgs()[0].hasOneUse()) {
+            return;
+        }
+        auto read = ctjs::receiverMethod(match);
+        const auto * row = builtinStaticOf(match.getReceiver().getDefiningOp());
+        const auto literal = regExpLiteral(match.getArgs()[0]);
+        const double k = index.getDouble();
+        if (!read || read.getObject() != match.getReceiver() || !read.getResult().hasOneUse() ||
+            !row || row->global != "Object" || row->member != "toString" || !literal ||
+            !(k >= 1 && k <= 9 && k == std::floor(k))) {
+            return;
+        }
+        mlir::MLIRContext * c = group.getContext();
+        group->setAttr(kNativeMatchGroup, index);
+        group->setAttr("ctnative.replace_pattern", mlir::StringAttr::get(c, literal->first));
+        group->setAttr("ctnative.replace_flags", mlir::StringAttr::get(c, literal->second));
+    });
     top->walk([](ctjs::CallOp call) {
         auto read = ctjs::receiverMethod(call);
         const llvm::StringRef name = ctjs::methodKey(call);
@@ -258,6 +324,14 @@ bool TypeInference::consumedByStringCallback(mlir::Operation * op) {
     if (!op->getResult(0).hasOneUse()) { return false; }
     mlir::OpOperand & use = *op->getResult(0).getUses().begin();
     mlir::Operation * user = use.getOwner();
+    // A match whose group read is marked, and the method read and RegExp
+    // literal it consumes; its receiver lowers on its own.
+    if (user->hasAttr(kNativeMatchGroup)) { return llvm::isa<ctjs::CallOp>(op); }
+    if (auto match = llvm::dyn_cast<ctjs::CallOp>(user);
+        match && match.getResult().hasOneUse() &&
+        match.getResult().getUsers().begin()->hasAttr(kNativeMatchGroup)) {
+        return use.getOperandNumber() == 0 || use.getOperandNumber() == 2;
+    }
     // The method read is operand 0 and the RegExp literal operand 2 of the
     // specialised call; the literal factory's global is operand 0 of the
     // literal.
