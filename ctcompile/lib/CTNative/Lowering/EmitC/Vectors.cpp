@@ -436,9 +436,12 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         // it, when nothing carries it out), filled by the appends below.
         auto literal = llvm::cast<ctjs::CreateArrayOp>(o);
         // An empty literal carried out of a branch takes its slot at the
-        // function's entry (TypeInference::elementVectorAliases).
+        // function's entry (TypeInference::elementVectorAliases). Never one
+        // inside a loop: each iteration makes a fresh array, and a slot at
+        // the entry would keep the previous iteration's elements.
         mlir::OpBuilder slot = b;
-        if (literal.getElements().empty()) {
+        if (literal.getElements().empty() && !o->getParentOfType<mlir::scf::WhileOp>() &&
+            !o->getParentOfType<mlir::scf::ForOp>()) {
             if (auto fn = o->getParentOfType<mlir::FunctionOpInterface>();
                 fn && o->getBlock() != &fn.getFunctionBody().front()) {
                 slot.setInsertionPointToStart(&fn.getFunctionBody().front());
