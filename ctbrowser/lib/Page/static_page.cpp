@@ -121,6 +121,7 @@ page_view static_page::view() {
     out.fragments = &fragments_;
     out.viewport_width = viewport_client_width();
     out.viewport_height = options_.height;
+    out.viewport_scroll = scroll_;
     return out;
 }
 

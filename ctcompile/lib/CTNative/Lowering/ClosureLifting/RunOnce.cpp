@@ -398,6 +398,49 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
             }
             return true;
         };
+        // A class binding (the importer writes the class's closure into it
+        // once or twice, always the same closure) read only as the class
+        // `new` constructs, in its owner or through capture slots: kept
+        // static so a `new` in another function names the class through the
+        // static variable rather than through a capture of a boxed binding.
+        const auto onlyConstructs = [](mlir::Value value) {
+            return llvm::all_of(value.getUses(), [](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::RootOp>(use.getOwner()) ||
+                       (llvm::isa<ctjs::ConstructOp>(use.getOwner()) &&
+                        use.getOperandNumber() <= 1);
+            });
+        };
+        const auto constructsOnly = [&](plan & p) {
+            auto owner = p.cell->getParentOfType<ctjs::FuncOp>();
+            ctjs::CreateClosureOp stored;
+            bool shaped = true;
+            for (mlir::OpOperand & use : p.cell.getResult().getUses()) {
+                const cellUse kind = classify(use);
+                if (kind == cellUse::write) {
+                    auto made = llvm::cast<ctjs::CellSetOp>(use.getOwner())
+                                    .getValue()
+                                    .getDefiningOp<ctjs::CreateClosureOp>();
+                    shaped = shaped && made && (!stored || stored == made) &&
+                             made->getParentOfType<ctjs::FuncOp>() == owner;
+                    stored = made;
+                } else if (kind == cellUse::read) {
+                    shaped = shaped && onlyConstructs(
+                                           llvm::cast<ctjs::CellGetOp>(use.getOwner()).getResult());
+                }
+            }
+            for (const auto & [made, slot] : p.slots) {
+                targetOf(made).getBody().walk([&](mlir::Operation * op) {
+                    auto read = llvm::dyn_cast<ctjs::LoadUpvalueOp>(op);
+                    auto write = llvm::dyn_cast<ctjs::StoreUpvalueOp>(op);
+                    if (read && read.getIndex() == slot) {
+                        shaped = shaped && onlyConstructs(read.getResult());
+                    } else if (write && write.getIndex() == slot) {
+                        shaped = false;
+                    }
+                });
+            }
+            return shaped && stored;
+        };
         llvm::DenseSet<mlir::Operation *> methodCaptures;
         llvm::SmallVector<ctjs::CreateObjectOp> literals;
         for (plan & p : plans) {
@@ -430,9 +473,11 @@ bool closureLifter::makeRunOnceCellsStatic(liftReport & out, bool functions) {
                     }
                 });
             }
-            if (!shaped || !literal) { continue; }
-            tables.insert(p.cell.getOperation());
-            literals.push_back(literal);
+            if (shaped && literal) {
+                tables.insert(p.cell.getOperation());
+                literals.push_back(literal);
+            }
+            if (constructsOnly(p)) { tables.insert(p.cell.getOperation()); }
         }
         // A table made static by an earlier call (the pass that keeps only
         // non-function bindings runs first) still needs its methods'

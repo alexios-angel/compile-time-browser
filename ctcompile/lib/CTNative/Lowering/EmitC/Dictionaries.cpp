@@ -9,6 +9,7 @@
 //   o[k] = v       ctnative::dictionary_set(o, k, v)
 //   delete o[k]    ctnative::dictionary_delete(o, k)
 //   k in o         ctnative::dictionary_has(o, k)
+//   t === undefined ctnative::dictionary_absent(t)
 //
 // Keys go to the helpers as their own carriers; the helpers apply
 // ToPropertyKey.
@@ -55,8 +56,7 @@ bool replaceDictionary(lowering & lower, mlir::Operation * o) {
     if (site) {
         includeDictionaryHeader(lower.module);
         auto table = llvm::cast<DictType>(lower.typeOf(o->getResult(0)));
-        const std::string value = carrierInfo(carrierOf(table.getElementType())).spelling.str();
-        swap(call("ctnative::make_dictionary<" + value + ">", {}));
+        swap(call("ctnative::make_dictionary<" + dictionaryValueSpelling(table) + ">", {}));
         return true;
     }
     if (action == "plumbing") {
@@ -78,6 +78,18 @@ bool replaceDictionary(lowering & lower, mlir::Operation * o) {
     }
     if (auto has = llvm::dyn_cast<ctjs::HasPropertyOp>(o)) {
         swap(call("ctnative::dictionary_has", {has.getObject(), has.getKey()}));
+        return true;
+    }
+    if (auto compare = llvm::dyn_cast<ctjs::CompareOp>(o)) {
+        // `t === undefined` or `t == undefined` of a table read.
+        // The operands are emitted values by now; the table is the one
+        // spelled as a table.
+        const auto isTable = [](mlir::Value value) {
+            auto type = llvm::dyn_cast<ec::OpaqueType>(value.getType());
+            return type && type.getValue().starts_with("std::shared_ptr<ctnative::dictionary<");
+        };
+        const mlir::Value table = isTable(compare.getLhs()) ? compare.getLhs() : compare.getRhs();
+        swap(call("ctnative::dictionary_absent", {table}));
         return true;
     }
     auto intrinsic = llvm::cast<ctjs::CallOp>(o);

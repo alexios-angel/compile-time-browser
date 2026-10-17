@@ -20,6 +20,32 @@ namespace ctcompile::ctnative::lowering_detail {
 /// uses is a fatal error: in a release build it would be a silent
 /// use-after-free, which once showed up only as an intermittent crash at
 /// context teardown.
+namespace {
+constexpr llvm::StringLiteral kSharedCellPrefix = "std::shared_ptr<ctnative::cell<";
+} // namespace
+
+std::string sharedCellSpelling(llvm::StringRef value) {
+    return (kSharedCellPrefix + value + ">>").str();
+}
+
+std::string sharedCellValue(mlir::Type type) {
+    if (auto variable = llvm::dyn_cast_or_null<ec::LValueType>(type)) {
+        type = variable.getValueType();
+    }
+    auto opaque = llvm::dyn_cast_or_null<ec::OpaqueType>(type);
+    if (!opaque) { return {}; }
+    llvm::StringRef spelled = opaque.getValue();
+    if (!spelled.consume_front(kSharedCellPrefix) || !spelled.consume_back(">>")) { return {}; }
+    return spelled.str();
+}
+
+mlir::Value loadedHandle(mlir::OpBuilder & builder, mlir::Location where, mlir::Value handle) {
+    if (auto variable = llvm::dyn_cast<ec::LValueType>(handle.getType())) {
+        return ec::LoadOp::create(builder, where, variable.getValueType(), handle);
+    }
+    return handle;
+}
+
 void lowering::eraseIfUnused(mlir::Operation * o) {
     if (!o->use_empty()) {
         llvm::report_fatal_error(llvm::Twine("ctnative lowering: erasing `") +
@@ -34,6 +60,16 @@ void lowering::eraseIfUnused(mlir::Operation * o) {
 /// `emitc.dereference` turns that into an lvalue, so reads and writes are
 /// emitted the same way on both sides of the call.
 mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir::Value cell) {
+    // A shared cell (rule 2b in ClosureLifter.h) is a handle, in this frame's
+    // variable or a parameter; ctnative::cell_place turns it into a pointer
+    // to the binding, and that pointer is dereferenced as below.
+    if (const std::string value = sharedCellValue(cell.getType()); !value.empty()) {
+        if (auto variable = llvm::dyn_cast<ec::LValueType>(cell.getType())) {
+            cell = ec::LoadOp::create(b, where, variable.getValueType(), cell);
+        }
+        const auto held = ec::OpaqueType::get(b.getContext(), value);
+        cell = callValue(b, where, ec::PointerType::get(held), "ctnative::cell_place", cell);
+    }
     if (auto pointer = llvm::dyn_cast<ec::PointerType>(cell.getType())) {
         return ec::DereferenceOp::create(b, where, ec::LValueType::get(pointer.getPointee()), cell);
     }
@@ -310,6 +346,26 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     // load and assign it. A hoisted `var` starts as tagged undefined, so a read
     // on a path with no `cell_set` yields what the interpreter yields, and no
     // dominance proof is needed.
+    if (auto cell = llvm::dyn_cast<CreateCellOp>(o);
+        cell && admission::isCarriedCell(o) && o->hasAttr(kNativeSharedCell)) {
+        // A binding a kept callback captures: the frame's variable holds a
+        // handle to a cell made here, holding the initial unless a write
+        // reaches every read first.
+        const auto handle = llvm::cast<ec::LValueType>(cell.getResult().getType()).getValueType();
+        const std::string value = sharedCellValue(handle);
+        mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
+                                                   ec::OpaqueAttr::get(context, ""));
+        llvm::SmallVector<mlir::Value, 1> initial;
+        if (!cell->hasAttr(kAssignedBeforeRead)) {
+            initial.push_back(
+                convertScalar(b, where, cell.getInitial(), ec::OpaqueType::get(context, value)));
+        }
+        ec::AssignOp::create(b, where, local,
+                             callValue(b, where, handle,
+                                       "std::make_shared<ctnative::cell<" + value + ">>", initial));
+        swap(local);
+        return;
+    }
     if (auto cell = llvm::dyn_cast<CreateCellOp>(o); cell && admission::isCarriedCell(o)) {
         mlir::Value local = ec::VariableOp::create(b, where, cell.getResult().getType(),
                                                    ec::OpaqueAttr::get(context, ""));
@@ -461,6 +517,13 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         return;
     }
     if (auto k = llvm::dyn_cast<ConstantOp>(o)) {
+        // A class tag: the empty struct, value-initialized.
+        if (auto tag = llvm::dyn_cast_or_null<ClassTagType>(typeOf(k.getResult()))) {
+            swap(
+                ec::ConstantOp::create(b, where, classTagCarrierType(tag),
+                                       ec::OpaqueAttr::get(context, classTagSpelling(tag) + "{}")));
+            return;
+        }
         if (auto n = llvm::dyn_cast<NumberAttr>(k.getValue())) {
             swap(numberConstant(b, where, n.getDouble()));
         } else if (auto bo = llvm::dyn_cast<BooleanAttr>(k.getValue())) {
@@ -637,6 +700,12 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // unchanged, which is how a binding several closures out reaches the
         // innermost one. Operands 0-2 are the implicit arguments dropped above.
         for (unsigned i = 3; i < operands.size(); ++i) {
+            // A shared cell's handle is passed by value (rule 2b in
+            // ClosureLifter.h): the callee holds the binding through it.
+            if (admission::isSharedCellArg(o, i)) {
+                args.push_back(loadedHandle(b, where, operands[i]));
+                continue;
+            }
             const bool byAddress = admission::isObjectArg(o, i) || admission::isCellArg(o, i);
             args.push_back(byAddress                      ? asPointer(operands[i])
                            : isInstanceValue(operands[i]) ? instanceArgument(b, where, call, i)
@@ -663,6 +732,20 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     }
     if (auto ret = llvm::dyn_cast<ReturnOp>(o)) {
         if (isEntry) {
+            // The end of the script is a microtask checkpoint, so the promise
+            // jobs it queued run before its globals are observed, as the
+            // VM's context::run drains them.
+            bool promises = false;
+            module.walk([&](mlir::Operation * op) {
+                auto opaque = llvm::dyn_cast<ec::CallOpaqueOp>(op);
+                promises |= op->hasAttr(kNativePromiseCallback) ||
+                            (opaque && opaque.getCallee().starts_with("ctnative::Promise."));
+            });
+            if (promises) {
+                callWithConstValueOperands(
+                    b, where, mlir::TypeRange{},
+                    b.getStringAttr("ctnative::microtasks::program().checkpoint"), {});
+            }
             printObservations(b, where);
             mlir::Value zero = ec::ConstantOp::create(b, where, mlir::IntegerType::get(context, 32),
                                                       b.getI32IntegerAttr(0));

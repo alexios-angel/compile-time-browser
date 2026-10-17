@@ -269,7 +269,12 @@ void closureLifter::classCensus() {
         }
     }
     for (auto & [key, cls] : jsClasses) {
-        (void)key;
+        // Why the static-member rewrite left this class's statics, even when
+        // another refusal of the census comes first in ctnative.class_reason.
+        if (const auto found = staticRefusals.find(key); found != staticRefusals.end()) {
+            cls.constructor->setAttr("ctnative.static_reason",
+                                     mlir::StringAttr::get(context, found->second));
+        }
         if (!cls.reason.empty()) {
             cls.constructor->setAttr(kNativeClassReason,
                                      mlir::StringAttr::get(context, cls.reason));
