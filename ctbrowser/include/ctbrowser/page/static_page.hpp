@@ -74,6 +74,13 @@ public:
     /// it changes, so a caller may keep an answer keyed on it.
     [[nodiscard]] std::uint64_t frames() const noexcept { return frames_; }
 
+    /// Scrolls the viewport to `at` (window.scrollTo), which moves every
+    /// client rect the queries report.
+    ///
+    /// ponytail: not clamped to the scrolling area; a host scrolls within
+    /// it. Clamp with layout::viewport_scrolling_area when one does not.
+    void scroll_to(point at) noexcept { scroll_ = at; }
+
     /// getBoundingClientRect (CSSOM View §7): the rectangle round \p id's
     /// border boxes, in viewport coordinates.
     [[nodiscard]] rect bounding_client_rect(node_id id);
@@ -102,6 +109,7 @@ private:
     std::string style_error_;
     float layout_width_ = 0;
     std::uint64_t frames_ = 0;
+    point scroll_{};
 };
 
 } // namespace ctbrowser::page
