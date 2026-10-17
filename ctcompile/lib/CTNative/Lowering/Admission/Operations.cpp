@@ -13,8 +13,8 @@
 #include "../ForOf.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
-#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -63,6 +63,26 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return isString(value);
     };
     if (isVectorCallPlumbing(o)) { return true; }
+    // The Array and String methods below are lowered as the built-ins, which
+    // the program must not be able to replace (ForOf.cpp).
+    if (auto call = llvm::dyn_cast<CallOp>(o)) {
+        const VectorCall kind = TypeInference::vectorCallOf(call);
+        const auto * row =
+            kind == VectorCall::builtinStatic ? TypeInference::builtinStaticOf(call) : nullptr;
+        const bool builtin =
+            (kind != VectorCall::none && kind != VectorCall::regexp &&
+             kind != VectorCall::builtinStatic) ||
+            (row && row->prototype && (row->global == "Array" || row->global == "String"));
+        auto module = call->getParentOfType<mlir::ModuleOp>();
+        auto why =
+            module ? module->getAttrOfType<mlir::StringAttr>(kRealmBuiltinsUnproved) : nullptr;
+        if (builtin && why) {
+            return self.refuse(
+                ("`" + ctjs::methodKey(call) +
+                 "` needs the realm's own Array and String built-ins: " + why.getValue())
+                    .str());
+        }
+    }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
         literal && TypeInference::isTupleLiteral(literal.getResult())) {
         // An element in a row is the runtime's view, which only an ordinary
@@ -239,10 +259,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             // A constant table only where its proof marked the call.
             const bool table =
                 held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
-            const bool fits = kind == Param::string        ? isString(argument)
-                              : kind == Param::number      ? held == carrier::number
-                              : kind == Param::element     ? held == carrier::domElement ||
-                                                             held == carrier::nullableElement
+            const bool fits = kind == Param::string   ? isString(argument)
+                              : kind == Param::number ? held == carrier::number
+                              : kind == Param::element
+                                  ? held == carrier::domElement || held == carrier::nullableElement
                               : kind == Param::staticTable ? table
                                                            : printable;
             if (!fits) {

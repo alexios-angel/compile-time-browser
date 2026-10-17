@@ -24,7 +24,7 @@ namespace ctcompile::ctnative::lowering_detail {
 void closureLifter::constructorCensus() {
     llvm::DenseSet<mlir::Operation *> constructed;
     for (ctjs::ConstructOp made : allConstructs) {
-        auto closure = made.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+        auto closure = constructedClosure(made);
         if (!closure) { continue; }
         constructed.insert(closure.getOperation());
         if (ctjs::FuncOp target = targetOf(closure)) {
@@ -83,6 +83,35 @@ std::optional<std::string> closureLifter::whyConstructorReturnsAnObject(ctjs::Fu
     return bad;
 }
 
+/// The constructor function a marked `new` names: a `new this` the static
+/// rewrite proved (kNativeClassConstruct, on the construct), or a `new` of a
+/// run-once static cell holding the class (kNativeStaticClass, on its read).
+static mlir::StringAttr markedConstructor(ctjs::ConstructOp made) {
+    if (auto name = made->getAttrOfType<mlir::StringAttr>(kNativeClassConstruct)) { return name; }
+    mlir::Operation * read = made.getCallee().getDefiningOp();
+    return read ? read->getAttrOfType<mlir::StringAttr>(kNativeStaticClass) : mlir::StringAttr{};
+}
+
+ctjs::CreateClosureOp closureLifter::constructedClosure(ctjs::ConstructOp made) {
+    if (mlir::StringAttr name = markedConstructor(made)) {
+        auto target = mlir::SymbolTable::lookupNearestSymbolFrom<ctjs::FuncOp>(made, name);
+        return target ? uniqueClosureByTarget.lookup(target.getOperation())
+                      : ctjs::CreateClosureOp{};
+    }
+    return made.getCallee().getDefiningOp<ctjs::CreateClosureOp>();
+}
+
+bool closureLifter::isClassConstruct(ctjs::ConstructOp made) {
+    return static_cast<bool>(markedConstructor(made));
+}
+
+bool closureLifter::constructsClosure(ctjs::ConstructOp made, ctjs::CreateClosureOp c) {
+    if (made.getCallee() == c.getResult()) { return true; }
+    mlir::StringAttr name = markedConstructor(made);
+    ctjs::FuncOp target = targetOf(c);
+    return name && target && name.getValue() == target.getSymName();
+}
+
 bool closureLifter::isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp c) {
     auto made = llvm::dyn_cast<ctjs::ConstructOp>(use.getOwner());
     return made && use.getOperandNumber() < 2 && made.getCallee() == c.getResult() &&
@@ -99,9 +128,20 @@ bool closureLifter::isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp
 std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     ctjs::CreateClosureOp c) {
     prototypeFields proof;
+    // The last write of a static variable holding the class, which every
+    // read through it follows (markStaticClassReads).
+    mlir::Operation * staticWrite = nullptr;
     for (mlir::OpOperand & use : c.getResult().getUses()) {
         // A proved class's setup lowers to nothing (Classes.cpp).
         if (use.getOwner()->hasAttr(kNativeClassSetup)) { continue; }
+        if (llvm::isa<ctjs::CellSetOp>(use.getOwner()) &&
+            use.getOwner()->hasAttr(kNativeStaticClass)) {
+            if (use.getOwner()->getBlock() != c->getBlock()) { return std::nullopt; }
+            if (!staticWrite || staticWrite->isBeforeInBlock(use.getOwner())) {
+                staticWrite = use.getOwner();
+            }
+            continue;
+        }
         if (llvm::isa<ctjs::ConstructOp>(use.getOwner())) {
             if (!isSelfConstruct(use, c)) { return std::nullopt; }
             continue;
@@ -133,6 +173,20 @@ std::optional<closureLifter::prototypeFields> closureLifter::immutablePrototype(
     const auto sites = constructsOfTarget.find(targetOf(c));
     if (sites == constructsOfTarget.end() || sites->second.empty()) { return std::nullopt; }
     for (ctjs::ConstructOp made : sites->second) {
+        // A marked `new this` runs in a static member, which only a call
+        // through the defined class reaches (ClassStatics.cpp's rule 3).
+        if (made->hasAttr(kNativeClassConstruct) && constructsClosure(made, c)) { continue; }
+        // A `new` through the static variable runs after its last write, so
+        // the prototype must be complete by then.
+        if (isClassConstruct(made) && constructsClosure(made, c)) {
+            if (!staticWrite || !proof.attachment->isBeforeInBlock(staticWrite) ||
+                !llvm::all_of(proof.fields, [&](ctjs::SetPropertyOp field) {
+                    return field->isBeforeInBlock(staticWrite);
+                })) {
+                return std::nullopt;
+            }
+            continue;
+        }
         if (made.getCallee() != c.getResult() || made->getBlock() != c->getBlock() ||
             !proof.attachment->isBeforeInBlock(made) ||
             !llvm::all_of(proof.fields, [&](ctjs::SetPropertyOp field) {
@@ -262,6 +316,9 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
         mlir::Operation * user = use.getOwner();
         if (prototype && user == prototype->attachment) { continue; }
         if (user->hasAttr(kNativeClassSetup)) { continue; }
+        // A write of the static variable whose every read is a marked `new`
+        // (markStaticClassReads); the lift erases it with those reads.
+        if (llvm::isa<ctjs::CellSetOp>(user) && user->hasAttr(kNativeStaticClass)) { continue; }
         if (!isSelfConstruct(use, c)) {
             return ("it is used as a constructor and also reaches `" +
                     user->getName().getStringRef() +
@@ -287,12 +344,48 @@ std::optional<std::string> closureLifter::whyConstructorSetupDoesNotLift(ctjs::C
         // target becomes one C++ function, so a `new` through some other
         // callee would be left dispatching through a closure that is about to
         // lower to nothing.
-        if (made.getCallee().getDefiningOp<ctjs::CreateClosureOp>() != c) {
+        if (made.getCallee().getDefiningOp<ctjs::CreateClosureOp>() != c &&
+            !(isClassConstruct(made) && constructsClosure(made, c))) {
             return "it is constructed at a site whose callee this pass cannot name";
+        }
+        // A marked `new` (a static member's `new this`, or a `new` through the
+        // class's run-once static binding) builds the instance outside the
+        // frame that made the constructor's closure, so nothing from that
+        // frame can reach it: no capture and no prototype field the rewrite
+        // copies onto the instance (only methods, which become direct calls).
+        if (isClassConstruct(made)) {
+            const std::string site =
+                std::string(made->hasAttr(kNativeClassConstruct)
+                                ? "it is constructed by `new this` in `"
+                                : "it is constructed through its static binding in `") +
+                made->getParentOfType<ctjs::FuncOp>().getSymName().str() +
+                "`, outside the frame that defines it, ";
+            if (!c.getUpvalues().empty()) {
+                return site + "and its constructor captures " +
+                       std::to_string(c.getUpvalues().size()) + " value(s) from that frame";
+            }
+            if (prototype) {
+                for (ctjs::SetPropertyOp field : prototype->fields) {
+                    if (!field.getValue().getDefiningOp<ctjs::CreateClosureOp>()) {
+                        return site + "and its prototype field `" +
+                               ctjs::constantKey(field.getKey()).str() +
+                               "` is a value from that frame";
+                    }
+                }
+            }
         }
         // The instance must have a closed shape under the same rule an object
         // literal uses, because the rewrite turns it into one.
-        if (!usesCloseTheShape(made.getResult())) {
+        // A `new this` in a static member may also return the instance: the
+        // record rule (Analysis/Inference/Records.cpp) then returns it by
+        // value as its class after the lift, and admission refuses the
+        // function where that rule does not hold.
+        const bool returned =
+            isClassConstruct(made) &&
+            llvm::all_of(made.getResult().getUses(), [&](mlir::OpOperand & use) {
+                return llvm::isa<ctjs::ReturnOp>(use.getOwner()) || isConstantKeyAccess(use);
+            });
+        if (!returned && !usesCloseTheShape(made.getResult())) {
             return "the instance `new` makes does not have a closed shape - every use of it "
                    "has to be a constant-key read or write, or a receiver this lift carries";
         }

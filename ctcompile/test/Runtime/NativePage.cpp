@@ -79,6 +79,15 @@ void test_element_members_match_the_vm() {
             CHECK_EQ(body[2].children().size(), std::size_t{1});
         }
     }
+    // The unbound view a dead loop slot holds names no element: it equals no
+    // bound view, and reading it throws rather than dereferencing.
+    const ctnative::js_element_t unbound{};
+    CHECK(!(unbound == *root));
+    bool threw = false;
+    try {
+        (void)unbound.value();
+    } catch (const std::exception &) { threw = true; }
+    CHECK(threw);
 }
 
 [[nodiscard]] std::string tag_of(const std::optional<ctnative::js_element_t> & element) {

@@ -528,6 +528,12 @@ struct closureLifter {
     /// once lift() has made its captures parameters, its call is rewritten by
     /// rewriteArrayCallback instead of lift()'s call-site loop.
     llvm::DenseMap<mlir::Operation *, ctjs::CallOp> arrayCallbacks;
+    /// Whether run() specialises Array-method and String.replace callbacks
+    /// for their call. A DOM class's preparation (HostContract/DOM/
+    /// Preparation.cpp) clears it: its source proof lowers those calls
+    /// itself, and a specialised callback would look to it like an unused
+    /// helper whose body it must prove.
+    bool specialiseCallbacks = true;
     void arrayCallbackCensus();
     std::optional<std::string> whyNotArrayCallback(ctjs::CreateClosureOp c);
     void rewriteArrayCallback(ctjs::CreateClosureOp c, ctjs::FuncOp target, liftReport & out);
@@ -717,6 +723,11 @@ struct closureLifter {
     /// into direct calls when nothing else reads it (Singletons.cpp). Returns
     /// whether it changed the module.
     bool bindSingletonMethods(liftReport & out);
+    /// Marks the reads and writes of a static variable that holds one class
+    /// and is read only by `new`s that run after its last write
+    /// (kNativeStaticClass), or says on the variable why not
+    /// (kNativeStaticClassReason). Singletons.cpp.
+    void markStaticClassReads();
 
     /// What can start each function, and how many closures name it (see
     /// indexStarters() in Singletons.cpp).
@@ -937,6 +948,17 @@ struct closureLifter {
     /// True when `use` is `new c(...)` naming `c` as both its callee and its
     /// new.target.
     static bool isSelfConstruct(mlir::OpOperand & use, ctjs::CreateClosureOp c);
+    /// Whether `made` constructs `c`'s function: `c` is its callee, or it is a
+    /// marked `new` of that function: a `new this` ClassStatics.cpp proved
+    /// (kNativeClassConstruct) or a `new` of a run-once static cell holding
+    /// the class (kNativeStaticClass on the read).
+    bool constructsClosure(ctjs::ConstructOp made, ctjs::CreateClosureOp c);
+    /// Whether `made` is such a marked `new`, which may sit outside the frame
+    /// that makes the class's closure.
+    static bool isClassConstruct(ctjs::ConstructOp made);
+    /// The closure `made` constructs: its callee's ctjs.create_closure, or for
+    /// a marked `new` the one closure of the marked function.
+    ctjs::CreateClosureOp constructedClosure(ctjs::ConstructOp made);
 
     std::optional<std::string> whyNotLiftableConstructor(ctjs::CreateClosureOp c);
     std::optional<std::string> whyConstructorSetupDoesNotLift(ctjs::CreateClosureOp c);
