@@ -14,9 +14,13 @@
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
 #include "ctcompile/CTNative/IR/CTNativeOps.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
+/// Admits an operation of an object used as a table (Dictionaries.cpp), or
+/// nullopt when `o` is not one.
+std::optional<bool> dictionaryOperation(admission & self, mlir::Operation * o);
 /// Admits a call specialised for its Array-method callback (ArrayCallbacks.cpp).
 bool arrayCallbackOperation(admission & self, ctjs::CallOp call);
 /// Admits an addEventListener call specialised for its listener
@@ -60,10 +64,18 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     if (isVectorCallPlumbing(o)) { return true; }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
         literal && TypeInference::isTupleLiteral(literal.getResult())) {
+        // An element in a row is the runtime's view, which only an ordinary
+        // script's elements are.
+        auto row = llvm::dyn_cast_or_null<TupleType>(self.typeOf(literal.getResult()));
+        if (row && !self.pageViews() && llvm::any_of(row.getElements(), [](mlir::Type part) {
+                return carrierOf(part) == carrier::domElement;
+            })) {
+            return self.refuse("a row holding a DOM element under a host contract");
+        }
         return carrierOf(self.typeOf(literal.getResult())) == carrier::tuple ||
                self.refuse("a two-element row whose positions are " +
                            printed(self.typeOf(literal.getResult())) +
-                           ", not Strings, Numbers or Number|String");
+                           ", not Strings, Numbers, Number|String or elements");
     }
     if (auto append = llvm::dyn_cast<AppendOp>(o);
         append && TypeInference::isTupleLiteral(append.getArray())) {
@@ -178,30 +190,67 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
     case VectorCall::builtinStatic: {
         const TypeInference::BuiltinStatic & row = *TypeInference::builtinStaticOf(call);
         const std::string name =
-            (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
+            row.member.empty()
+                ? row.global.str()
+                : (row.global + (row.prototype ? ".prototype." : ".") + row.member).str();
         using Param = TypeInference::BuiltinStatic::Param;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
             const Param kind = row.params[index];
             const carrier held = carrierOf(self.typeOf(argument));
-            // The carriers Runtime/Console.hpp's console_detail::append takes.
+            if (kind == Param::record) {
+                // A table serializes its own keys itself (Runtime/Json.hpp);
+                // its site's admission checked its values.
+                if (held == carrier::dictionary) { continue; }
+                if (!admission::isClosedObject(argument)) {
+                    return self.refuse(name +
+                                       " of a value that is not a closed-shape object literal");
+                }
+                if (const std::string why = TypeInference::stringifiedRecordProblem(argument, call);
+                    !why.empty()) {
+                    return self.refuse(name + " of an object literal: " + why);
+                }
+                for (mlir::Operation * user : argument.getUsers()) {
+                    auto write = llvm::dyn_cast<SetPropertyOp>(user);
+                    const carrier c =
+                        write ? carrierOf(self.typeOf(write.getValue())) : carrier::number;
+                    if (c != carrier::number && c != carrier::string && c != carrier::boolean) {
+                        return self.refuse(name + " of an object literal whose field `" +
+                                           ctjs::constantKey(write.getKey()).str() + "` is " +
+                                           printed(self.typeOf(write.getValue())) +
+                                           ", not a Number, String or Boolean");
+                    }
+                }
+                continue;
+            }
+            // An element that may be null is passed through present_element,
+            // which throws the VM's TypeError for null as the call would. A
+            // printable is a carrier Runtime/Console.hpp's console_detail::append
+            // takes.
             const bool printable = held == carrier::string || held == carrier::number ||
                                    held == carrier::boolean || held == carrier::nullable ||
                                    held == carrier::nullableString;
-            // An element that may be null is passed through present_element,
-            // which throws the VM's TypeError for null as the call would.
-            const bool nullable = kind == Param::element && held == carrier::nullableElement;
-            const bool fits = kind == Param::string    ? held == carrier::string
-                              : kind == Param::number  ? held == carrier::number
-                              : kind == Param::element ? held == carrier::domElement
-                                                       : printable;
-            if (!fits && !nullable) {
+            if (auto why = call->getAttrOfType<mlir::StringAttr>(kNativeStaticTableLoopRefusal)) {
+                return self.refuse(why.getValue().str());
+            }
+            // A constant table only where its proof marked the call.
+            const bool table =
+                held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
+            const bool fits = kind == Param::string        ? isString(argument)
+                              : kind == Param::number      ? held == carrier::number
+                              : kind == Param::element     ? held == carrier::domElement ||
+                                                             held == carrier::nullableElement
+                              : kind == Param::staticTable ? table
+                                                           : printable;
+            if (!fits) {
                 return self.refuse(name + "'s argument " + std::to_string(index) + " is " +
                                    printed(self.typeOf(argument)) + ", not " +
                                    (kind == Param::string    ? "a String"
                                     : kind == Param::number  ? "a Number"
                                     : kind == Param::element ? "an Element"
-                                                             : "a String, Number, Boolean, null "
-                                                               "or undefined"));
+                                    : kind == Param::staticTable
+                                        ? "a constant table of Strings"
+                                        : "a String, Number, Boolean, null "
+                                          "or undefined"));
             }
         }
         return true;
@@ -278,6 +327,13 @@ std::optional<bool> pageReadOperation(admission & self, mlir::Operation * o) {
                                .str());
     }
     if (isPageGlobal(read.getObject().getDefiningOp())) {
+        // The native read throws where the interpreter would read a property
+        // of a null root, so it needs that property's name.
+        if (key == "documentElement" &&
+            TypeInference::firstPropertyRead(read.getResult()).empty()) {
+            return self.refuse("document.documentElement with no property read of it found - "
+                               "a null root would not throw where the native read does");
+        }
         return result == (key == "documentElement" ? carrier::domElement : carrier::number) ||
                self.refuse(("`" + key + "` lost its page type").str());
     }
@@ -399,6 +455,7 @@ bool admission::op(mlir::Operation * o) {
     if (auto admitted = pageReadOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringCallbackOperation(*this, o)) { return *admitted; }
     if (auto admitted = stringArrayOperation(*this, o)) { return *admitted; }
+    if (auto admitted = dictionaryOperation(*this, o)) { return *admitted; }
     if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
         // The same carrier, or the String or Number alternative of one that
         // holds several kinds (Runtime/Narrowing.hpp spells the conversion).
@@ -531,6 +588,13 @@ bool admission::op(mlir::Operation * o) {
         if (carrierOf(typeOf(get.getObject())) == carrier::string &&
             ctjs::constantKey(get.getKey()) == "length") {
             return true;
+        }
+        // `text[i]`: ctnative::string_at takes a Number index.
+        if (carrierOf(typeOf(get.getObject())) == carrier::string &&
+            ctjs::constantKey(get.getKey()).empty()) {
+            return carrierOf(typeOf(get.getKey())) == carrier::number ||
+                   refuse("a String indexed by " + printed(typeOf(get.getKey())) +
+                          ", not a Number");
         }
         if (isVectorSite(get.getObject())) {
             // `length` is exactly `size()`, because the site proof is what
@@ -1151,6 +1215,8 @@ bool admission::directCall(ctjs::CallDirectOp call) {
         if (carrierOf(typeOf(operands[i])) != carrier::methodTable &&
             !(carrierOf(typeOf(operands[i])) == carrier::domElement && ownedGlobals &&
               ownedGlobals->proved() && !ownedGlobals->domInputs().empty()) &&
+            // An ordinary script's element is the runtime's view, passed by value.
+            !(carrierOf(typeOf(operands[i])) == carrier::domElement && pageViews()) &&
             !isObjectCarrier(carrierOf(typeOf(operands[i]))) &&
             carrierOf(typeOf(operands[i])) != carrier::closure &&
             carrierOf(typeOf(operands[i])) != carrier::boolean &&

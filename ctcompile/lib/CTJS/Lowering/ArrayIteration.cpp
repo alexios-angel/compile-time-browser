@@ -16,6 +16,7 @@
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
+#include "ctcompile/CTJS/Lowering/NativeRealm.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -54,6 +55,19 @@ bool neverStored(mlir::Operation * at, llvm::StringRef name) {
     return !stored.wasInterrupted();
 }
 
+/// True when --ctjs-resolve-globals found that the program never binds
+/// global `name`: its `ctjs.globals` row carries kGlobalsHostBinding.
+bool hostBinding(mlir::Operation * at, llvm::StringRef name) {
+    auto rows =
+        at->getParentOfType<mlir::ModuleOp>()->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
+    if (!rows) { return false; }
+    for (auto row : rows.getAsRange<mlir::DictionaryAttr>()) {
+        auto bound = row.getAs<mlir::StringAttr>("name");
+        if (bound && bound.getValue() == name) { return row.contains(kGlobalsHostBinding); }
+    }
+    return false;
+}
+
 /// True when the program writes no property of the global `Object` that
 /// could replace one of its statics: no write through a dynamic key, and none
 /// to `keys`, `values` or `entries`.
@@ -78,7 +92,8 @@ llvm::StringRef objectStatic(mlir::Value value) {
     GetPropertyOp read = call ? receiverMethod(call) : GetPropertyOp{};
     auto object = read ? read.getObject().getDefiningOp<LoadGlobalOp>() : LoadGlobalOp{};
     if (!object || object.getName() != "Object" || call.getReceiver() != read.getObject() ||
-        !neverStored(call, "Object") || !objectStaticsIntact(call)) {
+        !neverStored(call, "Object") || !hostBinding(call, "Object") ||
+        !objectStaticsIntact(call)) {
         return {};
     }
     // Any argument: the result is always a new Array, and a null or

@@ -52,6 +52,12 @@ bool borrowedCallbackOperation(admission & self, mlir::Operation * o) {
         return true;
     }
     auto call = llvm::cast<ctjs::CallOp>(o);
+    // A field of a set of closures that no write has filled yet is absent,
+    // and calling it would throw (ClosureSets.cpp); a typeof test narrows it.
+    if (llvm::isa_and_nonnull<OptType>(self.typeOf(call.getCallee()))) {
+        return self.refuse("it calls a field of a set of closures that may be absent - test it "
+                           "with `typeof f === \"function\"` first");
+    }
     const mlir::Type result = self.typeOf(call.getResult());
     if (!byValue(result, "result")) { return false; }
     for (auto [i, argument] : llvm::enumerate(call.getArgs())) {

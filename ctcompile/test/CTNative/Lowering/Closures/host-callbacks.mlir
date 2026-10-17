@@ -192,8 +192,11 @@ function capturesArray() {
     });
 }
 function capturesStyle() {
-    var style = getComputedStyle(document.documentElement);
-    document.documentElement.addEventListener('click', function () {
+    // The root is read (`addEventListener`) as well as passed, so it is the
+    // captured style that refuses, not a root with no property read.
+    var root = document.documentElement;
+    var style = getComputedStyle(root);
+    root.addEventListener('click', function () {
         seen = style.getPropertyValue('display');
     });
 }

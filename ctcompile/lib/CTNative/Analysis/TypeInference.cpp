@@ -472,8 +472,9 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         // An index proved in bounds reads the element; otherwise one past
         // the end, a fraction or a negative reads undefined.
         if (key.empty() && isProvedNumeric(operands[1])) {
-            return isBoundedIndexRead(op) ? vector.getElementType()
-                                          : meet(absentType(c), vector.getElementType());
+            const bool exists = isBoundedIndexRead(op) ||
+                                (llvm::isa<TupleType>(vector.getElementType()) && isRowRead(op));
+            return exists ? vector.getElementType() : meet(absentType(c), vector.getElementType());
         }
         return {};
     }
@@ -516,6 +517,17 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
         case BuiltinStatic::Result::undefined: return absentType(c);
         case BuiltinStatic::Result::number: return doubleType(c);
+        // Only a call the constant-table proof marked: every field a String.
+        case BuiltinStatic::Result::tableEntries:
+            return op->hasAttr(kNativeStaticTableEnumeration)
+                       ? VecType::get(
+                             c, TupleType::get(c, llvm::SmallVector<mlir::Type, 2>{stringType(c),
+                                                                                   stringType(c)}))
+                       : mlir::Type{};
+        case BuiltinStatic::Result::tableKeys:
+        case BuiltinStatic::Result::tableValues:
+            return op->hasAttr(kNativeStaticTableEnumeration) ? VecType::get(c, stringType(c))
+                                                              : mlir::Type{};
         }
         return {};
     }
@@ -844,6 +856,9 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return answer(doubleType(c));
     }
 
+    if (op->getNumResults() == 1) {
+        if (const mlir::Type table = dictionaryType(op, operands)) { return answer(table); }
+    }
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
         mapAnswer = mapTypeOf(op, made.getResult());
@@ -898,6 +913,13 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     }
     // String.prototype.toLowerCase, and replace with a specialised function.
     if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    // `text[i]` with a Number index: a one-unit String, or undefined past the
+    // end (ECMA-262 10.4.3.5).
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && ctjs::constantKey(read.getKey()).empty() && isProvedString(operands[0]) &&
+        llvm::isa_and_nonnull<NumType>(operands[1]->getValue().getType())) {
+        return answer(meet(absentType(c), stringType(c)));
+    }
     if (isStringCallbackCall(op)) {
         bool pending = false;
         const mlir::Type replaced = stringCallbackType(op, operands, pending);

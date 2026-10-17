@@ -9,8 +9,8 @@
 # RUN: FileCheck %s --input-file %t.native
 # RUN: %nm -C %{obj}/ctcompile-test-timers-native | not grep -E "ctbrowser::script::"
 # RUN: %nm -C %{obj}/ctcompile-test-timers-native-gcc | not grep -E "ctbrowser::script::"
-# CHECK: log= cleared=t{{$}}
-# CHECK-NEXT: +0: log=zn cleared=td{{$}}
-# CHECK-NEXT: +5: log=znm cleared=tdi{{$}}
-# CHECK-NEXT: +0: log=znmm2 cleared=tdi{{$}}
-# CHECK-NEXT: +5: log=znmm2a cleared=tdiix{{$}}
+# CHECK: log= cleared=t armed=SN{{$}}
+# CHECK-NEXT: +0: log=zn cleared=td armed=SN{{$}}
+# CHECK-NEXT: +5: log=znm cleared=tdi armed=SN{{$}}
+# CHECK-NEXT: +0: log=znmm2 cleared=tdi armed=SN{{$}}
+# CHECK-NEXT: +5: log=znmm2a cleared=tdiix armed=SN{{$}}

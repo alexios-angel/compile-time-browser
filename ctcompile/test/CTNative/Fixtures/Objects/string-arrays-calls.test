@@ -1,5 +1,6 @@
 # Differential test of string-arrays-calls.js: an array of Strings passed to
-# a function is a std::span<const ctnative::js_string>, a returned array is
+# a function is a std::span<const ctnative::js_string>, or a pointer to the
+# caller's vector when the callee pushes to it, a returned array is
 # moved out, and the caller's call result is a local vector it owns. The C++
 # is compiled against public Core, checked for interpreter symbols with nm,
 # run, and every global compared with the interpreter's (compilation-unit.py).
@@ -16,4 +17,5 @@
 # CHECK-DAG: #include <span>
 # CHECK-DAG: std::span<const ctnative::js_string>
 # CHECK-DAG: std::move(
+# CHECK-DAG: addTo{{[_0-9]*}}(std::vector<ctnative::js_string>*
 # NEGATIVE: global 'result' differs

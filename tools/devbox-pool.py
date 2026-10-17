@@ -20,7 +20,7 @@ In COMMAND, `{box}` is replaced by that alias, so a test step can say
 exits, and its exit status is returned.
 
 --box     only this box
---round   a validation round: may use a marked box, and marks the box it takes
+--round   a validation round: may use a marked box, and marks a one-slot box it takes
           until COMMAND exits, so ordinary jobs go elsewhere
 --wait    wait for a box instead of exiting 75 (EX_TEMPFAIL) when none is free
 
@@ -70,7 +70,16 @@ def try_lock(path):
 
 
 def is_running(box):
-    out = subprocess.run([box["server"], "status"], check=False, capture_output=True, text=True)
+    # A cloud CLI can stall (a slow `terraform output`, a token refresh); a
+    # status that does not answer in time counts as not running, so `run`
+    # asks the server to start it, which is harmless on a running box.
+    try:
+        out = subprocess.run(
+            [box["server"], "status"], check=False, capture_output=True, text=True, timeout=90
+        )
+    except subprocess.TimeoutExpired:
+        print(f"devbox-pool: {box['name']} status timed out", file=sys.stderr)
+        return False
     return out.returncode == 0 and re.search(box["running"], out.stdout) is not None
 
 
@@ -103,7 +112,10 @@ def run(settings, args):
     if not args.command:
         sys.exit("devbox-pool: run needs a command after --")
     box, lock = acquire(settings, args)
-    marker = Path(box["round_marker"]) if args.round else None
+    # A round marks only a one-slot box: on a box with several slots, each
+    # job already has its own slot and build_jobs share of the cores, so
+    # keeping authors off the whole box would only idle it.
+    marker = Path(box["round_marker"]) if args.round and box.get("slots", 1) == 1 else None
     try:
         if marker:
             marker.touch()

@@ -306,6 +306,9 @@ struct lowering {
     std::string closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets);
     std::string closureSetMemberSpelling(llvm::StringRef target);
     mlir::Type closureSetCarrierOf(mlir::Value v);
+    mlir::Type joinClosureSetCarriers(mlir::Type a, mlir::Type b);
+    mlir::Value convertClosureSet(mlir::OpBuilder & b, mlir::Location where, mlir::Value value,
+                                  mlir::Type target);
     void declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered);
     llvm::StringMap<std::string> closureSetMembers;
     /// Each closure-set member's target, mapped to its whole set's variant
@@ -396,6 +399,9 @@ struct lowering {
     void lower(ctjs::FuncOp fn);
 
     void declareGlobals();
+    /// Whether the lowered module uses an ordinary script's page views
+    /// (Runtime/Page.hpp).
+    bool usesPageViews();
     /// A verbatim C++ fragment at `b`, located at the module.
     void verbatim(mlir::OpBuilder & b, const llvm::Twine & text);
 };

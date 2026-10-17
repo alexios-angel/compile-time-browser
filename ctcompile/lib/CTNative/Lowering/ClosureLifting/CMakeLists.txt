@@ -20,6 +20,7 @@ target_sources(ctcompile-ctnative-lowering PRIVATE
   ReturnedClosures.cpp
   MethodTables.cpp
   RunOnce.cpp
+  SelfCalls.cpp
   Singletons.cpp
   StringCallbacks.cpp
   ClosureLifter.h

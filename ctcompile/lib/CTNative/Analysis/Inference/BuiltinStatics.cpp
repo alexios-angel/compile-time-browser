@@ -1,10 +1,11 @@
 //===- BuiltinStatics.cpp - Calls of built-in static methods --------------===//
 //
-// The table of static methods of the realm's built-in namespace objects
-// (`Number.parseInt`, `Number.parseFloat`, `Math.min`, `console.log`) that
-// native code calls through the runtime's built-in objects, such as
-// `ctnative::Number.parseInt(s, radix)` and `ctnative::Math.min(a, b)`, and the
-// recognition of a call of one.
+// The table of the realm's built-ins native code calls through the runtime's
+// built-in objects: statics of namespace objects (`Number.parseInt`,
+// `Number.parseFloat`, `Math.min`, `JSON.stringify`, `console.log`), globals
+// called themselves (`Number(s)`) and prototype methods called through `call`
+// (`String.prototype.toLowerCase.call(s)`), and the recognition of a call of
+// one. Each lowers to its runtime spelling, `ctnative::Number.parseInt(s, r)`.
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,8 +22,7 @@ namespace {
 using Param = TypeInference::BuiltinStatic::Param;
 using Result = TypeInference::BuiltinStatic::Result;
 
-/// The one place built-in statics and prototype methods called through `call`
-/// are recognised. Each row is a method whose runtime member
+/// The one place built-ins are recognised. Each row is a method whose runtime member
 /// (Runtime/Number.hpp, Runtime/Math.hpp, Runtime/String.hpp) implements the
 /// spec for the parameter types listed; a call with fewer than `required`
 /// arguments or more than `arity` (the receiver counted, for a prototype row)
@@ -71,6 +71,30 @@ constexpr TypeInference::BuiltinStatic builtinStatics[] = {
      2,
      Result::nullableElement,
      true},
+    // Number(value) (21.1.1.1) of a String: ToNumber. An empty member is a
+    // call of the global itself.
+    {"Number", "", "ctnative::Number", {Param::string}, 1, 1},
+    // JSON.stringify (25.5.2.1) of an object literal or a dictionary, with no
+    // replacer and no space: ctnative::JSON.stringify of the literal's
+    // ctnative::json_record, or of the table itself.
+    {"JSON", "stringify", "ctnative::JSON.stringify", {Param::record}, 1, 1, Result::string},
+    // Object.entries, Object.keys and Object.values (ECMA-262 20.1.2.5, .18,
+    // .22) of a constant table (Runtime/Object.hpp's object_table).
+    {"Object",
+     "entries",
+     "ctnative::Object.entries",
+     {Param::staticTable},
+     1,
+     1,
+     Result::tableEntries},
+    {"Object", "keys", "ctnative::Object.keys", {Param::staticTable}, 1, 1, Result::tableKeys},
+    {"Object",
+     "values",
+     "ctnative::Object.values",
+     {Param::staticTable},
+     1,
+     1,
+     Result::tableValues},
 };
 
 /// Whether --ctjs-resolve-globals found that this program never binds
@@ -94,6 +118,17 @@ bool realmBinding(mlir::Operation * op, llvm::StringRef name) {
 const TypeInference::BuiltinStatic * TypeInference::builtinStaticOf(mlir::Operation * op) {
     auto call = llvm::dyn_cast_or_null<ctjs::CallOp>(op);
     if (!call) { return nullptr; }
+    const std::size_t count = call.getArgs().size();
+    // A call of the global itself, `Number(s)`.
+    if (auto callee = call.getCallee().getDefiningOp<ctjs::LoadGlobalOp>()) {
+        for (const BuiltinStatic & row : builtinStatics) {
+            if (row.member.empty() && callee.getName() == row.global && count >= row.required &&
+                count <= row.arity) {
+                return realmBinding(call, row.global) ? &row : nullptr;
+            }
+        }
+        return nullptr;
+    }
     auto read = ctjs::receiverMethod(call);
     if (!read || read.getObject() != call.getReceiver() || !read.getResult().hasOneUse()) {
         return nullptr;
@@ -113,7 +148,6 @@ const TypeInference::BuiltinStatic * TypeInference::builtinStaticOf(mlir::Operat
     }
     auto global = object.getDefiningOp<ctjs::LoadGlobalOp>();
     if (!global) { return nullptr; }
-    const std::size_t count = call.getArgs().size();
     for (const BuiltinStatic & row : builtinStatics) {
         if (row.prototype == prototype && global.getName() == row.global && member == row.member &&
             count >= row.required && count <= row.arity) {

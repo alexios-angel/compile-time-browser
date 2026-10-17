@@ -12,6 +12,7 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
@@ -98,6 +99,9 @@ enum class carrier {
     /// A run-once static's constant table, or undefined before it is stored: a
     /// pointer to its namespace-scope struct (Runtime/StaticTable.hpp).
     staticTable,
+    /// An object used as a table, std::shared_ptr<ctnative::dictionary<V>>
+    /// (Runtime/Dictionary.hpp), spelled by dictionarySpelling.
+    dictionary,
     /// The Event a native listener receives (Runtime/Events.hpp).
     domEvent,
     /// An ordinary script's element or null (Runtime/Browser.hpp).
@@ -181,6 +185,7 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
     {carrier::staticTable, kStaticTableType},
+    {carrier::dictionary, ""},
     {carrier::domEvent, kEventType},
     {carrier::nullableElement, kNullableElementType},
     {carrier::timer, kTimerType},
@@ -252,10 +257,10 @@ bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
 /// The type a closed-shape field holds when its reads and writes join to an
-/// optional String or a union of String with Boolean or Number (and maybe
-/// absence), which a struct member stores as that union carrier; null for any
-/// other field. `accesses` are the field's reads and writes, `typeOf` the
-/// lattice type of a value (ObjectValues/VariantFields.cpp).
+/// optional String, a union of String with Boolean or Number (and maybe
+/// absence), or an element that may be null, which a struct member stores as
+/// that carrier; null for any other field. `accesses` are the field's reads and writes, `typeOf`
+/// the lattice type of a value (ObjectValues/VariantFields.cpp).
 mlir::Type variantFieldType(llvm::ArrayRef<mlir::Operation *> accesses,
                             llvm::function_ref<mlir::Type(mlir::Value)> typeOf);
 /// A definite Number, Boolean or String lattice type.
@@ -315,6 +320,9 @@ bool mapNeedsNullableString(MapType type);
 bool mapNeedsNullableStringKey(MapType type);
 bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
+/// The C++ type of a table with values of `type`'s element type:
+/// std::shared_ptr<ctnative::dictionary<V>>, V the value's carrier.
+std::string dictionarySpelling(DictType type);
 mlir::Type closureCarrierType(ClosureType type);
 mlir::Type methodTableCarrierType(MethodTableType type);
 mlir::Type carrierType(mlir::MLIRContext * context, carrier which);

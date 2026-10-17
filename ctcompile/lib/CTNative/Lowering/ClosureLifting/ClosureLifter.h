@@ -764,7 +764,10 @@ struct closureLifter {
     llvm::DenseMap<mlir::Operation *, ctjs::FuncOp> chainedThrough;
     std::optional<std::string> whyCapturesDoNotLift(ctjs::CreateClosureOp c);
 
-    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target);
+    /// With `selfCalls`, a call the target makes of itself through its own
+    /// closure is not an escape: liftSelfCalls (SelfCalls.cpp) makes it direct.
+    std::optional<std::string> whyOwnClosureEscapes(ctjs::FuncOp target, bool selfCalls = false);
+    void liftSelfCalls(ctjs::FuncOp target, unsigned captures, unsigned parameters);
 
     std::optional<std::string> whyUpvalueReadsDoNotLift(ctjs::CreateClosureOp c,
                                                         ctjs::FuncOp target);

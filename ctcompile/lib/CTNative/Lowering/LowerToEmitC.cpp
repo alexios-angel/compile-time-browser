@@ -30,6 +30,7 @@
 #include "Admission/Admission.h"
 #include "ClosureLifting/ClosureLifter.h"
 #include "EmitC/Emitter.h"
+#include "EmitC/Vectors.h"
 #include "Exceptions/Recovery.h"
 #include "ForOf.h"
 #include "Refinements.h"
@@ -530,6 +531,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         });
         if (!hostContract) {
             prepareNativeMaps(module);
+            prepareNativeDictionaries(module);
             prepareNativeObjectIdentities(module);
         }
         if (census) {
@@ -869,6 +871,7 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
                     if (auto load = llvm::dyn_cast<ctjs::LoadGlobalOp>(o)) {
                         if (admittedDOM && domBookkeeping(*admittedDOM, load)) { return; }
                         if (callsOnly(load) || isNativeMapBookkeeping(load)) { return; }
+                        if (nativeDictionaryAction(load) == "plumbing") { return; }
                         // The RegExp literal factory behind split(/\s+/) and a
                         // specialised replace lowers to nothing; it is not a
                         // program global.
@@ -950,6 +953,9 @@ struct CTNativeLowerToEmitCPass : impl::CTNativeLowerToEmitCBase<CTNativeLowerTo
         lower.censusMethodTables(accepted);
 
         removeUnreachableRefusals(functions, hostContract.has_value());
+        // Which element-array parameters borrow by address, read while every
+        // function is still ctjs.
+        markWrittenArrays(accepted);
         for (ctjs::FuncOp fn : accepted) { lower.lower(fn); }
         dropRefinements(module);
         if (!accepted.empty()) { lower.declareGlobals(); }
