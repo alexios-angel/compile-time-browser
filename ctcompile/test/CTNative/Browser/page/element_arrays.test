@@ -1,0 +1,14 @@
+# for-of and the Array callbacks over an array of elements answer natively what
+# they answer on the interpreter, with no VM linked into the native build.
+# RUN: %{obj}/ctcompile-test-element_arrays %S/element_arrays.html %S/element_arrays.js > %t.vm
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-element_arrays-native %S/element_arrays.html %S/element_arrays.js > %t.native
+# RUN: diff %t.vm %t.native
+# RUN: env CTBROWSER_TEST_ENGINE=native %{obj}/ctcompile-test-element_arrays-native-gcc %S/element_arrays.html %S/element_arrays.js > %t.gcc
+# RUN: diff %t.vm %t.gcc
+# RUN: FileCheck %s --input-file %t.native
+# RUN: FileCheck %s --check-prefix=SPELLING --input-file %{obj}/element_arrays.generated.cpp
+# RUN: %nm -C %{obj}/ctcompile-test-element_arrays-native | not grep -E "ctbrowser::script::"
+# RUN: %nm -C %{obj}/ctcompile-test-element_arrays-native-gcc | not grep -E "ctbrowser::script::"
+# CHECK: {{^}}a,c,d,tail,4|a,b2,c,d|3|some|every|a|4{{$}}
+# The for-of's element once the array is exhausted is the unbound view.
+# SPELLING: ctnative::js_element_t{}

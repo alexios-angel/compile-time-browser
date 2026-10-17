@@ -13,8 +13,8 @@
 #include "../ForOf.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
-#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -259,10 +259,10 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
             // A constant table only where its proof marked the call.
             const bool table =
                 held == carrier::staticTable && call->hasAttr(kNativeStaticTableEnumeration);
-            const bool fits = kind == Param::string        ? isString(argument)
-                              : kind == Param::number      ? held == carrier::number
-                              : kind == Param::element     ? held == carrier::domElement ||
-                                                             held == carrier::nullableElement
+            const bool fits = kind == Param::string   ? isString(argument)
+                              : kind == Param::number ? held == carrier::number
+                              : kind == Param::element
+                                  ? held == carrier::domElement || held == carrier::nullableElement
                               : kind == Param::staticTable ? table
                                                            : printable;
             if (!fits) {
