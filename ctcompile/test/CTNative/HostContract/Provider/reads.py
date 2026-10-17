@@ -44,12 +44,12 @@ def source(body="return resource.has(key);", *, middle="", before="", twice=Fals
     )
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)
     parser.add_argument("--work", type=Path, required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.work.mkdir(parents=True, exist_ok=True)
     sources = {
         "has": source(),
@@ -255,6 +255,10 @@ def main():
     print(
         "host provider reads: empty Map paths, per-invocation captures, live calls, runtime bodies and effect guards passed"
     )
+
+
+def test_reads(lit):
+    main(lit.args("--translate ctjs-translate --opt ctjs-opt --work %t"))
 
 
 if __name__ == "__main__":
