@@ -1283,6 +1283,18 @@ int main() {
               strings({"\xC3\xA9"}));
     }
 
+    // `throw new TypeError(message)` (Error.hpp) throws a type_error whose
+    // what() is the message.
+    {
+        bool caught = false;
+        try {
+            ctnative::throw_type_error(ctnative::js_string{"Option \"x\" is wrong."});
+        } catch (const ctnative::type_error & error) {
+            caught = std::string{error.what()} == "Option \"x\" is wrong.";
+        }
+        CHECK(caught);
+    }
+
     // RegExp.prototype.test (RegExp.hpp), as Config's type check calls it on
     // `new RegExp(expectedTypes)`.
     {

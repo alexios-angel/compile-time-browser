@@ -145,6 +145,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     if (replaceDOM(o)) { return; }
     if (replaceOwnedGlobal(o)) { return; }
     if (replaceException(o)) { return; }
+    if (replaceTypeError(o)) { return; }
     if (replaceMethodTable(o)) { return; }
     if (replaceEnvironment(o)) { return; }
     using namespace ctjs;

@@ -7,6 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../Exceptions/TypeErrors.h"
 #include "Admission.h"
 #include "ctcompile/CTNative/Analysis/StaticTables.h"
 #include "ctcompile/Support/CppLiterals.hpp"
@@ -407,6 +408,9 @@ bool admission::lowersToNothing(mlir::Value v) {
         return true;
     }
     if (o->getName().getStringRef() == "ub.poison") { return true; }
+    // The Error a `throw new TypeError(message)` makes, and its constructor:
+    // the throw spells them itself (Exceptions/TypeErrors.h).
+    if (consumedByTypeErrorThrow(o)) { return true; }
     // An array field of a run-once static's constant table is spelled in the
     // table's namespace-scope definition, not in this frame.
     if (llvm::isa<ctjs::CreateArrayOp>(o) && o->hasAttr(kNativeStaticTable)) { return true; }
