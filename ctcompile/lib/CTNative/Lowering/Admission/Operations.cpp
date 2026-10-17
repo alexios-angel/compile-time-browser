@@ -62,6 +62,26 @@ std::optional<bool> stringArrayOperation(admission & self, mlir::Operation * o) 
         return isString(value);
     };
     if (isVectorCallPlumbing(o)) { return true; }
+    // The Array and String methods below are lowered as the built-ins, which
+    // the program must not be able to replace (ForOf.cpp).
+    if (auto call = llvm::dyn_cast<CallOp>(o)) {
+        const VectorCall kind = TypeInference::vectorCallOf(call);
+        const auto * row =
+            kind == VectorCall::builtinStatic ? TypeInference::builtinStaticOf(call) : nullptr;
+        const bool builtin =
+            (kind != VectorCall::none && kind != VectorCall::regexp &&
+             kind != VectorCall::builtinStatic) ||
+            (row && row->prototype && (row->global == "Array" || row->global == "String"));
+        auto module = call->getParentOfType<mlir::ModuleOp>();
+        auto why =
+            module ? module->getAttrOfType<mlir::StringAttr>(kRealmBuiltinsUnproved) : nullptr;
+        if (builtin && why) {
+            return self.refuse(
+                ("`" + ctjs::methodKey(call) +
+                 "` needs the realm's own Array and String built-ins: " + why.getValue())
+                    .str());
+        }
+    }
     if (auto literal = llvm::dyn_cast<CreateArrayOp>(o);
         literal && TypeInference::isTupleLiteral(literal.getResult())) {
         // An element in a row is the runtime's view, which only an ordinary

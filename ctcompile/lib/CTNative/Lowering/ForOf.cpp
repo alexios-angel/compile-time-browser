@@ -14,7 +14,7 @@
 //
 // Both rely on the realm's Array iteration being the original: the
 // destructuring calls Array.prototype[Symbol.iterator] and its iterator's
-// `next`. arrayIterationUnproved proves the program cannot change them before
+// `next`. realmBuiltinsUnproved proves the program cannot change them before
 // either fold runs.
 //
 //===----------------------------------------------------------------------===//
@@ -197,10 +197,10 @@ bool readsGlobalMember(ctjs::GetPropertyOp read, llvm::StringRef global, llvm::S
 
 } // namespace
 
-std::optional<std::string> arrayIterationUnproved(mlir::ModuleOp module) {
+std::optional<std::string> realmBuiltinsUnproved(mlir::ModuleOp module) {
     auto rows = module->getAttrOfType<mlir::ArrayAttr>("ctjs.globals");
     const bool dynamicWrites = module->hasAttr("ctjs.global_escapes");
-    for (llvm::StringRef name : {"Array", "Symbol"}) {
+    for (llvm::StringRef name : {"Array", "String", "Symbol"}) {
         // A name the program mentions has a row; one it never mentions is
         // the realm's unless a dynamic global write could bind it.
         std::optional<bool> host;
@@ -225,12 +225,16 @@ std::optional<std::string> arrayIterationUnproved(mlir::ModuleOp module) {
                    key == "prototype" && owner &&
                    ctjs::constantKey(owner.getKey()) == "constructor") {
             why = "the program reads `constructor.prototype`, which can be Array.prototype";
-        } else if (readsGlobalMember(read, "Array", "prototype")) {
+        } else if (readsGlobalMember(read, "Array", "prototype") ||
+                   readsGlobalMember(read, "String", "prototype")) {
             for (mlir::OpOperand & use : read.getResult().getUses()) {
                 auto member = llvm::dyn_cast<ctjs::GetPropertyOp>(use.getOwner());
                 if (!member || use.getOperandNumber() != 0 ||
                     ctjs::constantKey(member.getKey()).empty()) {
-                    why = "the program uses Array.prototype other than to read a method";
+                    why = ("the program uses " +
+                           read.getObject().getDefiningOp<ctjs::LoadGlobalOp>().getName() +
+                           ".prototype other than to read a method")
+                              .str();
                 }
             }
         } else if (readsGlobalMember(read, "Symbol", "iterator")) {
@@ -247,7 +251,13 @@ std::optional<std::string> arrayIterationUnproved(mlir::ModuleOp module) {
 }
 
 ForOfOriginals foldArrayForOf(mlir::ModuleOp module) {
-    const std::optional<std::string> unproved = arrayIterationUnproved(module);
+    const std::optional<std::string> unproved = realmBuiltinsUnproved(module);
+    if (unproved) {
+        module->setAttr(kRealmBuiltinsUnproved,
+                        mlir::StringAttr::get(module.getContext(), *unproved));
+    } else {
+        module->removeAttr(kRealmBuiltinsUnproved);
+    }
     ForOfOriginals originals;
     module.walk([&](ctjs::FuncOp fn) {
         llvm::SmallVector<ctjs::CallOp> opens;
