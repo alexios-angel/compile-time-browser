@@ -19,10 +19,26 @@
 # RUN: %t/table-clang | FileCheck %s --check-prefix=OBSERVATION
 # RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=OBSERVATION
 # RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=OBSERVATION
-# RUN: for name in written dynamic argument stored nested; do \
+# RUN: for name in written kept argument stored nested; do \
 # RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
 # RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc; done \
 # RUN:   | FileCheck %s --check-prefix=REFUSED
+# `kept` keeps the literal in an array as well, so it is not a table either
+# (Inference/Dictionaries.cpp declines it) and the table proof meets its
+# computed read, the newest use, first. Without the array, a computed read
+# makes the literal a table instead:
+# `config[key]`, every call passing a constant key, lowers and prints what Node
+# and the interpreter print.
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/dynamic.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/dynamic.mlir
+# RUN: FileCheck %s --check-prefix=DYNAMIC --implicit-check-not=ctnative.not_native < %t/dynamic.mlir
+# RUN: ctjs-opt %t/dynamic.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/dynamic.cpp
+# RUN: %gxx -O2 %t/dynamic.cpp -o %t/dynamic-gcc
+# RUN: %t/dynamic-gcc | FileCheck %s --check-prefix=DYNAMICRUN
+# RUN: %clangxx -O2 %t/dynamic.cpp -o %t/dynamic-clang
+# RUN: %t/dynamic-clang | FileCheck %s --check-prefix=DYNAMICRUN
+# RUN: %native_reference %t/dynamic.js | FileCheck %s --check-prefix=DYNAMICRUN
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/dynamic.js | FileCheck %s --check-prefix=DYNAMICRUN
 
 # TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">
 # TABLE: emitc.global static @static_config : !emitc.opaque<"ctnative::static_table_ptr">
@@ -35,6 +51,8 @@
 # CPP: ctnative::table_field<&static_config_table_t::interval>(
 # CPP: ctnative::table_field<&static_config_table_t::field_74656d706c617465>(
 # OBSERVATION: r=5010
+# DYNAMIC: call_opaque "ctnative::make_dictionary<ctnative::number_string>"
+# DYNAMICRUN: r=5000
 
 # REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is written after it is made
 # REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is read with a key that is not a constant
@@ -68,6 +86,19 @@ var r = (function () {
     var config = {interval: 5000, pause: "hover"};
     function make() {
         return (key) => config[key];
+    }
+    const get = make();
+    return get("interval");
+})();
+
+#--- kept.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return (key) => {
+            const keep = [config];
+            return config[key] + keep.length;
+        };
     }
     const get = make();
     return get("interval");
