@@ -1,0 +1,254 @@
+# A static variable of a run-once function that holds an object literal of
+# constants, never written after it is made and read only through constant
+# keys or returned, becomes one namespace-scope `const` struct, and the
+# variable a pointer to it (Analysis/Inference/StaticTables.cpp).
+#
+# The positive lowers completely and prints the same `r` as Node and the
+# interpreter with both compilers. The negatives each break one condition and
+# name it at the reader.
+#
+# RUN: split-file %s %t
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/table.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/table.mlir
+# RUN: FileCheck %s --check-prefix=TABLE --implicit-check-not=ctnative.not_native < %t/table.mlir
+# RUN: ctjs-opt %t/table.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/table.cpp
+# RUN: FileCheck %s --check-prefix=CPP < %t/table.cpp
+# RUN: %gxx -O2 %t/table.cpp -o %t/table-gcc
+# RUN: %t/table-gcc | FileCheck %s --check-prefix=OBSERVATION
+# RUN: %clangxx -O2 %t/table.cpp -o %t/table-clang
+# RUN: %t/table-clang | FileCheck %s --check-prefix=OBSERVATION
+# RUN: %native_reference %t/table.js | FileCheck %s --check-prefix=OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/table.js | FileCheck %s --check-prefix=OBSERVATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/spread.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/spread.mlir
+# RUN: FileCheck %s --check-prefix=SPREAD --implicit-check-not=ctnative.not_native < %t/spread.mlir
+# RUN: ctjs-opt %t/spread.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/spread.cpp
+# RUN: %gxx -O2 %t/spread.cpp -o %t/spread-gcc
+# RUN: %t/spread-gcc | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: %clangxx -O2 %t/spread.cpp -o %t/spread-clang
+# RUN: %t/spread-clang | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: %native_reference %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/spread.js | FileCheck %s --check-prefix=SPREAD-OBSERVATION
+# RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/entries.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/entries.mlir
+# RUN: FileCheck %s --check-prefix=ENTRIES --implicit-check-not=ctnative.not_native < %t/entries.mlir
+# RUN: ctjs-opt %t/entries.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/entries.cpp
+# RUN: %gxx -O2 %t/entries.cpp -o %t/entries-gcc
+# RUN: %t/entries-gcc | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %clangxx -O2 %t/entries.cpp -o %t/entries-clang
+# RUN: %t/entries-clang | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %native_reference %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/entries.js | FileCheck %s --check-prefix=ENTRIES-OBSERVATION-NODE
+# RUN: for name in checked; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
+# RUN: FileCheck %s --check-prefix=UNROLLED --implicit-check-not=ctnative.not_native < %t/checked.mlir
+# RUN: %gxx -O2 %t/checked.cpp -o %t/checked-gcc && %t/checked-gcc | FileCheck %s --check-prefix=CHECKED
+# RUN: %clangxx -O2 %t/checked.cpp -o %t/checked-clang && %t/checked-clang | FileCheck %s --check-prefix=CHECKED
+# RUN: %native_reference %t/checked.js | FileCheck %s --check-prefix=CHECKED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/checked.js | FileCheck %s --check-prefix=CHECKED-NODE
+# RUN: for name in written dynamic argument stored nested spread-array spread-enumerated entries-mixed; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc; done \
+# RUN:   | FileCheck %s --check-prefix=REFUSED
+
+# TABLE: emitc.include <"ctcompile/CTNative/Runtime/StaticTable.hpp">
+# TABLE: emitc.global static @static_config : !emitc.opaque<"ctnative::static_table_ptr">
+# TABLE: literal "&static_config_table"
+# TABLE: call_opaque "ctnative::table_field<&static_config_table_t::interval>"
+# CPP: struct static_config_table_t : ctnative::static_table {
+# CPP: ctnative::js_string field_74656d706c617465;
+# CPP: inline const static_config_table_t static_config_table{
+# CPP: static ctnative::static_table_ptr static_config;
+# CPP: ctnative::table_field<&static_config_table_t::interval>(
+# CPP: ctnative::table_field<&static_config_table_t::field_74656d706c617465>(
+# OBSERVATION: r=5010
+
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is written after it is made
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is read with a key that is not a constant
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is passed as an argument
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that is stored into another object, array or variable
+# REFUSED: it reads `config`, a static variable of a function that runs once, holding an object literal that holds `allowList`, which is not a constant number, boolean, string, null or array of them
+
+# A spread of the table writes out one read per field. The first spread runs
+# before the run-once function stores the table, so it copies nothing and the
+# target's fields read as undefined; the second copies every field.
+# SPREAD: call_opaque "ctnative::table_field_or_undefined<&static_config_table_t::interval, ctnative::nullable_scalar>"
+# SPREAD: call_opaque "ctnative::table_field_or_undefined<&static_config_table_t::pause, ctnative::nullable_string>"
+# SPREAD-OBSERVATION: r=16112
+
+# A spread of a table with an array field is refused by name. So is a spread
+# whose target's keys are enumerated: the target is not a struct then, so a
+# field the table did not copy can never read as one that holds undefined.
+# REFUSED: holding an object literal that is spread while it holds the array field `offset`
+# REFUSED: an object literal that escapes - it is passed to a call
+# REFUSED: it reads `{{[a-z]+}}`, a static variable of a function that runs once, holding an object literal that is passed as an argument
+
+# A for-of over Object.entries of a table of Strings is written out once per
+# key (Inference/TableLoops.cpp), in property order: the array index 7 comes
+# first, then the other keys as the literal defines them. A table with a field
+# that is not a String keeps the refusal above (entries-mixed.js).
+# ENTRIES: emitc.func @main
+# ENTRIES-NOT: object_table
+
+# The shape of Config's type check: each key's read of the config is typed by
+# its own field. An early return on the second key and a check that fails on
+# it leave after that key, as in JavaScript (checked.js).
+# UNROLLED: emitc.func @main
+# UNROLLED-NOT: object_table
+# CHECKED: r="interval%3Bpause%3Bwrap%3B%7Cinterval%3Bearly%7Cinterval%3Bbad%20pause"
+# CHECKED-NODE: r=interval;pause;wrap;|interval;early|interval;bad pause
+# ENTRIES-OBSERVATION: r="7%3Dx%3Binterval%3Dnumber%3Bpause%3Dstring%3B"
+# ENTRIES-OBSERVATION-NODE: r=7=x;interval=number;pause=string;
+
+#--- table.js
+var r = (function () {
+    var config = {interval: 5000, keyboard: true, pause: "hover", parent: null, offset: [0, 2], names: ["a", "b"], template: "<b>"};
+    function make() {
+        return () => config;
+    }
+    const get = make();
+    return get().interval + get().pause.length + (get().keyboard ? 2 : 0) + get().template.length;
+})();
+
+#--- written.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => config.interval;
+    }
+    const get = make();
+    config = {interval: 1, pause: "none"};
+    return get();
+})();
+
+#--- dynamic.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return (key) => config[key];
+    }
+    const get = make();
+    return get("interval");
+})();
+
+#--- argument.js
+function use(o) {
+    return o.interval;
+}
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => use(config);
+    }
+    const get = make();
+    return get();
+})();
+
+#--- stored.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => ({inner: config});
+    }
+    const get = make();
+    return get().inner.interval;
+})();
+
+#--- nested.js
+var r = (function () {
+    var allow = {a: [1]};
+    var config = {allowList: allow, interval: 5000};
+    function make() {
+        return () => config;
+    }
+    const get = make();
+    return get().interval;
+})();
+
+#--- spread.js
+var r = (function () {
+    function make() {
+        return () => config;
+    }
+    const get = make();
+    var early = {...get(), extra: 1};
+    var config = {interval: 5000, wrap: true, parent: null, pause: "hover"};
+    var late = {...get(), extra: 2};
+    return (early.interval === undefined ? 1 : 0) + late.interval + (late.wrap ? 100 : 0) +
+        (late.parent === null ? 10 : 0) + early.extra + (late.pause === "hover" ? 1000 : 0) +
+        (early.pause === undefined ? 10000 : 0);
+})();
+
+#--- spread-array.js
+var r = (function () {
+    var config = {interval: 5000, offset: [0, 2]};
+    function make() {
+        return () => ({...config});
+    }
+    const get = make();
+    return get().interval;
+})();
+
+#--- spread-enumerated.js
+var r = (function () {
+    var config = {interval: 5000, pause: "hover"};
+    function make() {
+        return () => Object.keys({...config}).length;
+    }
+    const get = make();
+    return get();
+})();
+
+
+#--- entries.js
+var r = (function () {
+    var types = {interval: "number", pause: "string", 7: "x"};
+    function make() {
+        return () => types;
+    }
+    const get = make();
+    var out = "";
+    for (const [k, v] of Object.entries(get())) {
+        out = out + k + "=" + v + ";";
+    }
+    return out;
+})();
+
+#--- entries-mixed.js
+var r = (function () {
+    var types = {interval: 5, pause: "string"};
+    function make() {
+        return () => types;
+    }
+    const get = make();
+    var out = "";
+    for (const [k, v] of Object.entries(get())) {
+        out = out + k + ";";
+    }
+    return out.length;
+})();
+
+#--- checked.js
+var r = (function () {
+    var types = {interval: "number", pause: "string", wrap: "boolean"};
+    function make() {
+        return (mode) => {
+            var config = {interval: 5, pause: mode === 3 ? 7 : "hover", wrap: mode > 0};
+            var out = "";
+            for (const [k, v] of Object.entries(types)) {
+                if (mode === 2 && k === "pause") {
+                    return out + "early";
+                }
+                if (typeof config[k] !== v) {
+                    return out + "bad " + k;
+                }
+                out = out + k + ";";
+            }
+            return out;
+        };
+    }
+    const check = make();
+    return check(0) + "|" + check(2) + "|" + check(3);
+})();

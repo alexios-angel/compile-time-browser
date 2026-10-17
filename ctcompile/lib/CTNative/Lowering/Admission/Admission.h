@@ -109,6 +109,14 @@ struct admission {
     /// True for an entry-block argument that receives a shared cell by pointer.
     static bool isCellParameter(mlir::Value v);
 
+    /// True when argument `index` of `o` receives a shared cell's handle
+    /// rather than a pointer (`ctnative.shared_cell_args`, rule 2b in
+    /// ClosureLifter.h).
+    static bool isSharedCellArg(mlir::Operation * o, unsigned index);
+
+    /// True for an entry-block argument that receives a shared cell's handle.
+    static bool isSharedCellParameter(mlir::Value v);
+
     /// True when `v` is a shared binding: a carried cell or a cell parameter.
     static bool namesASharedCell(mlir::Value v);
 
@@ -161,8 +169,19 @@ struct admission {
     bool op(mlir::Operation * o);
     // op()'s larger arms, one member each.
     std::optional<bool> domOperation(mlir::Operation * o);
+    /// A run-once static's constant table: its literal, fields and reads, and a
+    /// read of a static whose literal is not one (Admission/StaticTables.cpp).
+    std::optional<bool> staticTableOperation(mlir::Operation * o);
+    /// An instance of a class a registry Map owns: its fields and its tests
+    /// against null or undefined (Admission/Instances.cpp).
+    std::optional<bool> instanceOperation(mlir::Operation * o);
     bool nativeMapCall(mlir::Operation * o, llvm::StringRef action);
     bool closedObject(ctjs::CreateObjectOp object);
+    /// One access `user` to field `key` of a closed object whose field
+    /// accesses are `accesses`, when the field is stored as a String union
+    /// carrier; nullopt for any other field (Admission/VariantFields.cpp).
+    std::optional<bool> variantField(llvm::StringRef key, mlir::Operation * user,
+                                     llvm::ArrayRef<mlir::Operation *> accesses);
     bool directCall(ctjs::CallDirectOp call);
     bool returned(ctjs::ReturnOp ret);
 

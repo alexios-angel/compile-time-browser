@@ -1,0 +1,21 @@
+# Differential test of refinements.js: values a typeof or truthiness branch
+# narrowed lower to ctnative.refine, spelled as the operand or as
+# ctnative::as_string / ctnative::as_number. The C++ is compiled against
+# public Core, checked for interpreter symbols with nm, run, and every global
+# compared with the interpreter's (compilation-unit.py). The negative
+# changes the global `o1` and requires the comparison to fail naming it.
+# compile-clean.py checks a warning-free build on both toolchains.
+# string-arrays-calls.py is the generic pipeline driver for a fixture that is
+# not registered in NativeFixtures.cmake.
+
+# RUN: python3 %S/string-arrays-calls.py --translate ctjs-translate --opt ctjs-opt --js %S/refinements.js --out %t/refinements.emitc.mlir
+# RUN: ctjs-translate --mlir-to-cpp %t/refinements.emitc.mlir | FileCheck %s
+# RUN: %compilation_unit --module %t/refinements.emitc.mlir --js %S/refinements.js --work %t --name refinements --core-build %build
+# RUN: not %compilation_unit --module %t/refinements.emitc.mlir --js %S/refinements.js --work %t --name refinements_negative --core-build %build --mutate o1 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# RUN: %compile_clean --module %t/refinements.emitc.mlir --work %t --name refinements
+
+# CHECK-DAG: ctnative::as_string(
+# CHECK-DAG: ctnative::as_number(
+# CHECK-DAG: ctnative::Number.parseInt(
+# CHECK-DAG: ctnative::Number.parseFloat(
+# NEGATIVE: global 'o1' differs

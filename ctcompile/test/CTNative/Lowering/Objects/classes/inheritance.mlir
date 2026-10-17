@@ -32,6 +32,21 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/statics.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=STATICS
+//
+// An arrow made after `super(...)` reads the importer's flag for `this` as
+// set, so the class is flattened; the arrow keeps no check of the flag (its
+// lexical `this` is the arrow rule's to lift).
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/arrow.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=ARROW --implicit-check-not=ctnative.inheritance_reason
+//
+// Classes of a factory function are stored in bindings, and a child's
+// `extends` reads its parent's binding. Once flattening drops the heritage
+// call, that read is unused, and the parents (never constructed) are erased
+// with their members like any unreachable parent.
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/factory.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=FACTORY
 
 // The module lists every copy with the source function it stands for (the
 // forwarding constructor Alert never wrote is erased and its copy stands for
@@ -51,6 +66,11 @@
 // CPP-DAG: Base_Toast_{{[0-9]+}}(Toast* const
 // OBSERVATION: r=109036004
 
+// FACTORY: ctnative.inheritance_erased = [{{.*}}"Config$3"{{.*}}"Base$5"]
+// ARROW: ctjs.func @fn$4(
+// ARROW-NOT: ctjs.load_upvalue
+// ARROW-NOT: ReferenceError
+// ARROW: ctjs.return
 // STATICS-NOT: ctnative.inheritance_reason
 // STATICS-DAG: ctjs.func @make_D$
 // STATICS-DAG: ctjs.func @name_D$
@@ -92,3 +112,22 @@ function run() {
     return D.make().name() + P.make().name();
 }
 var r = run();
+
+//--- arrow.js
+function run() {
+    class P { constructor(n) { this.n = n; } }
+    class D extends P {
+        constructor(n) { super(n); const f = () => this.n + 1; this.m = f(); }
+    }
+    return new D(4).m;
+}
+var r = run();
+
+//--- factory.js
+var r = (function () {
+    class Config { base() { return 2; } }
+    class Base extends Config { constructor(n) { super(); this.n = n; } get2() { return this.n * this.base(); } }
+    class Alert extends Base { close() { return this.get2() + 1; } }
+    function make(n) { return new Alert(n).close(); }
+    return make(5);
+})();

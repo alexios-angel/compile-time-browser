@@ -32,14 +32,14 @@
 // by its definition and its `__home` edge. Static members become direct
 // calls before this census runs (ClassStatics.cpp); a class whose static
 // members that rewrite left in place is refused with its reason. A class
-// that `extends` another class of the module is flattened before this census
-// (ClassInheritance.cpp), so it arrives extending nothing; one whose heritage
-// call remains is refused with the reason, and so is a class with a prototype
-// accessor. The class_defined call is the VM's engine-internal helper,
-// which no script can replace (ctbrowser keeps it apart from the globals
-// table; see ctcompile/CTJS/Import/EngineGlobals.h), so erasing it is exact.
-// A refusal's reason is recorded on the constructor's closure
-// (ctnative.class_reason).
+// that `extends` another class of the module has already been flattened into
+// one that extends nothing (ClassInheritance.cpp, which also lowers
+// `super`); one still extending another is refused with the reason that
+// rewrite recorded. A class with a prototype accessor is refused for now.
+// The class_defined call is the VM's engine-internal helper, which no script
+// can replace (ctbrowser keeps it apart from the globals table; see
+// ctcompile/CTJS/Import/EngineGlobals.h), so erasing it is exact. A refusal's
+// reason is recorded on the constructor's closure (ctnative.class_reason).
 //
 //===----------------------------------------------------------------------===//
 

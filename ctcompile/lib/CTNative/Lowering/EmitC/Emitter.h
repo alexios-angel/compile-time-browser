@@ -45,6 +45,14 @@ void sessionInvoke(llvm::raw_ostream & out, llvm::StringRef entry, size_t count,
 /// or condition's result, a yield's parent result or before argument. Null
 /// otherwise.
 mlir::Type edgeTarget(mlir::Operation * op, unsigned index);
+/// The C++ type of a shared cell's handle holding a value spelled `value`:
+/// `std::shared_ptr<ctnative::cell<value>>` (Runtime/Cell.hpp).
+std::string sharedCellSpelling(llvm::StringRef value);
+/// The spelling of the value a shared cell's handle type (or a variable of
+/// one) holds, or empty for any other type.
+std::string sharedCellValue(mlir::Type type);
+/// `handle` as a value: loaded when it is the frame's variable.
+mlir::Value loadedHandle(mlir::OpBuilder & builder, mlir::Location where, mlir::Value handle);
 /// The single result of callWithConstValueOperands.
 mlir::Value callValue(mlir::OpBuilder & builder, mlir::Location where, mlir::Type result,
                       const llvm::Twine & callee, mlir::ValueRange operands);
@@ -74,6 +82,47 @@ struct lowering {
     /// a lowered function names, with its C++ type, declared by
     /// declareGlobals() in name order.
     std::map<std::string, mlir::Type> statics;
+    /// Each run-once static's constant table, by the static's name: its
+    /// namespace-scope struct and value (EmitC/StaticTables.cpp), declared by
+    /// declareGlobals() when a lowered function names the static.
+    std::map<std::string, std::string> staticTables;
+    /// Each proved read of a table -> the field it reads, taken while its key
+    /// is still a ctjs.constant.
+    llvm::DenseMap<mlir::Operation *, std::string> staticTableReads;
+    void censusStaticTables(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    bool replaceStaticTable(mlir::Operation * o);
+    /// Instances of a class a registry Map owns, as `std::shared_ptr<C>`
+    /// (EmitC/Instances.cpp): whether `v` is one, the `std::make_shared`
+    /// results that stand for a `new`, and the lowering of the `new` and of
+    /// an exact test against null or undefined.
+    [[nodiscard]] bool isInstanceValue(mlir::Value v) const;
+    llvm::DenseSet<mlir::Value> madeInstances;
+    /// `std::shared_ptr<C>` for `instance<C>` or `opt<instance<C>>`; each
+    /// spelling handed out is remembered, so a value an operation has already
+    /// replaced is still known to be an instance by its C++ type.
+    mlir::Type instanceType(mlir::Type type);
+    llvm::StringSet<> instanceSpellings;
+    /// Adds every value of an identity class to the alias group of its
+    /// struct, so the shape census records the member of each field access
+    /// on a value read back from the Map (`groups` then points at
+    /// instanceGroups, a copy of the receiver groups with these added).
+    void joinInstanceValues(llvm::ArrayRef<ctjs::FuncOp> accepted);
+    receiverGroups instanceGroups;
+    bool replaceInstance(mlir::Operation * o);
+    /// The receiver operand of `call` when the receiver is an instance: the
+    /// owner itself for an identity class's constructor, else a `C *`
+    /// borrowed with `owner.get()`, which is safe because the caller keeps its
+    /// `std::shared_ptr` until the call returns.
+    mlir::Value receiverOperand(mlir::OpBuilder & b, mlir::Location where, ctjs::CallDirectOp call);
+    /// Whether `parameter`, an instance parameter of a ctjs.func, is only
+    /// read through: field accesses, tests and method calls, never kept or
+    /// passed on. It is then a `C *` borrowed from the caller's owner, which
+    /// outlives the call.
+    [[nodiscard]] bool borrowsInstance(mlir::Value parameter) const;
+    /// Operand `index` of `call`, an instance: `owner.get()` for a borrowing
+    /// parameter, the owner otherwise.
+    mlir::Value instanceArgument(mlir::OpBuilder & b, mlir::Location where, ctjs::CallDirectOp call,
+                                 unsigned index);
     /// The joined type of every source store to each global, computed before
     /// any value is retyped. Observation requests and host categories never
     /// choose a global's output type.
@@ -262,6 +311,21 @@ struct lowering {
     /// callback such a parameter holds, by the callback's symbol.
     llvm::DenseMap<mlir::Value, std::string> borrowedSignatures;
     llvm::StringMap<std::string> borrowedCallbackSignatures;
+    /// Closure sets (ClosureSets.cpp): a set's value and each closure making
+    /// one of its members is a std::variant of ctnative::bound members.
+    bool retypeClosureSet(mlir::Value v);
+    bool replaceClosureSetMember(mlir::Operation * op);
+    std::string closureSetSpelling(llvm::ArrayRef<llvm::StringRef> targets);
+    std::string closureSetMemberSpelling(llvm::StringRef target);
+    mlir::Type closureSetCarrierOf(mlir::Value v);
+    mlir::Type joinClosureSetCarriers(mlir::Type a, mlir::Type b);
+    mlir::Value convertClosureSet(mlir::OpBuilder & b, mlir::Location where, mlir::Value value,
+                                  mlir::Type target);
+    void declareClosureSetMembers(mlir::OpBuilder & b, llvm::ArrayRef<ec::FuncOp> lowered);
+    llvm::StringMap<std::string> closureSetMembers;
+    /// Each closure-set member's target, mapped to its whole set's variant
+    /// spelling, once computed.
+    std::optional<llvm::StringMap<std::string>> closureSetGroups;
     static std::string spelled(mlir::Type type);
 
     std::string spelling(const siteShape & site) const;
@@ -275,6 +339,9 @@ struct lowering {
     [[nodiscard]] const siteShape & shapeAt(mlir::Value object) const;
 
     llvm::SmallVector<std::pair<std::string, mlir::Type>> fieldsOf(mlir::Value object);
+    /// Gives each field of `object` stored as a String union carrier that
+    /// carrier in `stored` (EmitC/VariantFields.cpp).
+    void variantFields(mlir::Value object, llvm::StringMap<mlir::Type> & stored);
 
     void censusShapes(llvm::ArrayRef<ctjs::FuncOp> accepted);
     void censusScalars(llvm::ArrayRef<ctjs::FuncOp> accepted, const OwnedGlobalRoots * roots);
@@ -319,6 +386,9 @@ struct lowering {
                              mlir::Value exponent);
 
     void retype(ctjs::FuncOp fn);
+    /// Lowers a replace call with a specialised callback, and skips the plumbing
+    /// it consumes (EmitC/StringCallbacks.cpp). False for any other operation.
+    bool replaceStringCallback(mlir::Operation * o);
     /// Gives each data-record call (TypeInference::markRecordReturns) its
     /// class by value and moves the result into a local (EmitC/Records.cpp).
     void passRecords(ctjs::FuncOp fn);
@@ -341,6 +411,9 @@ struct lowering {
     void lower(ctjs::FuncOp fn);
 
     void declareGlobals();
+    /// Whether the lowered module uses an ordinary script's page views
+    /// (Runtime/Page.hpp).
+    bool usesPageViews();
     /// A verbatim C++ fragment at `b`, located at the module.
     void verbatim(mlir::OpBuilder & b, const llvm::Twine & text);
 };

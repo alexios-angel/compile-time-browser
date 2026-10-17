@@ -191,7 +191,8 @@ bool closureLifter::writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSet
                 // itself would refuse every recursive local function; the
                 // calls of `f` are reads of the cell and are checked above.
                 if (at == store.getOperation()) { continue; }
-                if (!reachesInFrame(store.getOperation(), at)) { return false; }
+                if (reachesInFrame(store.getOperation(), at)) { continue; }
+                if (!holderReadsFollow(store, at)) { return false; }
             }
             continue;
         }
@@ -200,6 +201,51 @@ bool closureLifter::writeReachesEveryRead(ctjs::CreateCellOp cell, ctjs::CellSet
         // than trusting that, because the rule must account for every way to
         // reach the storage.
         return false;
+    }
+    return true;
+}
+
+/// Whether a capturing closure's use `at`, which `store` does not reach, still
+/// cannot run the closure before `store`. That holds when `at` stores the
+/// closure into another binding of the same frame and every way to get the
+/// closure back out of that binding comes after `store`: each read of it is
+/// dominated by `store`, and each closure that captures it is itself used
+/// only after `store` (or again only stored into such a binding).
+///
+/// This is the case of hoisted function declarations: `function S() { N(); }
+/// function N() {}` stores S's closure, which captures N, into S's binding
+/// before N's binding is written, yet S can only run through a read of its
+/// binding, and those are in the body after every hoisted store.
+bool closureLifter::holderReadsFollow(ctjs::CellSetOp store, mlir::Operation * at) {
+    llvm::SmallPtrSet<mlir::Operation *, 8> seen;
+    llvm::SmallVector<mlir::Operation *> work{at};
+    auto owner = store->getParentOfType<ctjs::FuncOp>();
+    while (!work.empty()) {
+        mlir::Operation * use = work.pop_back_val();
+        if (!seen.insert(use).second) { continue; }
+        if (use == store.getOperation() || reachesInFrame(store.getOperation(), use)) { continue; }
+        // Only a store of the closure as the value of a binding of this frame
+        // can be followed; anything else may run it.
+        auto into = llvm::dyn_cast<ctjs::CellSetOp>(use);
+        if (!into) { return false; }
+        auto holder = into.getCell().getDefiningOp<ctjs::CreateCellOp>();
+        if (!holder || holder->getParentOfType<ctjs::FuncOp>() != owner) { return false; }
+        for (mlir::OpOperand & held : holder.getResult().getUses()) {
+            switch (classify(held)) {
+            case cellUse::write: continue;
+            case cellUse::read:
+                if (!dominance.properlyDominates(store.getOperation(), held.getOwner())) {
+                    return false;
+                }
+                continue;
+            case cellUse::capture:
+                for (mlir::Operation * next : held.getOwner()->getResult(0).getUsers()) {
+                    work.push_back(next);
+                }
+                continue;
+            default: return false;
+            }
+        }
     }
     return true;
 }
@@ -242,6 +288,38 @@ bool closureLifter::byValueMissesACall(ctjs::CreateCellOp cell) {
 /// keyed on the operation and several callers ask.
 bool closureLifter::isCarried(ctjs::CreateCellOp cell) const {
     return carriedCells.contains(cell.getOperation());
+}
+
+/// Finds the carried cells a kept callback captures directly (rule 2b in
+/// ClosureLifter.h). Runs after the host-callback and promise-callback
+/// censuses, which say which closures the runtime keeps, and before any
+/// rewrite, so every closure over such a cell is judged against the same
+/// verdict.
+void closureLifter::keptCellCensus() {
+    keptCells.clear();
+    for (ctjs::CreateClosureOp c : closures) {
+        if (!hostCallbacks.contains(c.getOperation()) &&
+            !promiseCallbacks.contains(c.getOperation())) {
+            continue;
+        }
+        for (mlir::Value captured : c.getUpvalues()) {
+            auto cell = captured.getDefiningOp<ctjs::CreateCellOp>();
+            if (cell && isCarried(cell)) { keptCells.insert(cell.getOperation()); }
+        }
+    }
+}
+
+/// Does capture slot i of this closure receive a shared cell's handle? The
+/// two shapes of slotIsCarried, asked of rule 2b's cells and handles.
+bool closureLifter::slotIsShared(ctjs::CreateClosureOp c, unsigned i) {
+    if (auto cell = c.getUpvalues()[i].getDefiningOp<ctjs::CreateCellOp>()) {
+        return keptCells.contains(cell.getOperation());
+    }
+    const std::int32_t k = enclosingIndex(c, i);
+    if (k < 0) { return false; }
+    auto enclosing = c->getParentOfType<ctjs::FuncOp>();
+    if (!enclosing) { return false; }
+    return listsSlot(enclosing, kNativeSharedCellArgs, captureArgument(static_cast<unsigned>(k)));
 }
 
 /// Is capture slot i of this closure carried by pointer? Two shapes, the two
@@ -316,6 +394,12 @@ std::optional<std::string> closureLifter::whyCarriedCellStaysABox(ctjs::CreateCe
         const cellUse kind = classify(use);
         if (kind == cellUse::read || kind == cellUse::write) { continue; }
         if (llvm::isa<ctjs::CallDirectOp>(user) && namesACellArgument(user, use)) { continue; }
+        // A kept callback's operation passes a shared cell's handle among its
+        // captures (rule 2b), which the runtime holds after this frame.
+        if (keptCells.contains(cell.getOperation()) &&
+            (user->hasAttr(kNativeHostCallback) || user->hasAttr(kNativePromiseCallback))) {
+            continue;
+        }
         if (kind == cellUse::capture) {
             if (user->hasAttr(kNativeLifted)) { continue; }
             auto reason = user->getAttrOfType<mlir::StringAttr>(kNativeClosureReason);
@@ -377,6 +461,9 @@ void closureLifter::unboxCells(liftReport & out, bool localObjectsOnly) {
                 continue;
             }
             cell->setAttr(kNativeCarried, mlir::UnitAttr::get(context));
+            if (keptCells.contains(cell.getOperation())) {
+                cell->setAttr(kNativeSharedCell, mlir::UnitAttr::get(context));
+            }
             // Record whether its hoisted initial can still be read (rule 3).
             // sharedCellCensus decided this before the lift erased the calls
             // it inspects; it is written here because

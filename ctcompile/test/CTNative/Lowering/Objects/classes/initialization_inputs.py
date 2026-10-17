@@ -12,11 +12,18 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    find_compilers,
+    run,
+    slotted_run,
+    threshold,
+    without_intrinsic,
+)
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
 # Fixture name -> expected `a=<value>` output as (under Node, under the
@@ -891,6 +898,9 @@ POSITIVES = GLOBAL_HOLDERS | {
     "class-map-inherited-base-overwrite",
     "class-map-inherited-base-delete",
     "class-map-inherited-base-constant-overwrite",
+    # `label` may be read before the leaf writes it, so it is a String or
+    # undefined: an optional String member (ObjectValues/VariantFields.cpp).
+    "class-map-inherited-base-string",
     "class-map-inherited-base-arithmetic",
     "class-map-inherited-base-numeric-arguments",
     "class-map-inherited-base-numeric-special",
@@ -1125,7 +1135,6 @@ POSITIVES = GLOBAL_HOLDERS | {
 }
 PREPARATION = "--ctnative-specialize-class-initialization="
 PREPARED_ONLY = {
-    "class-map-inherited-base-string",
     "class-map-optional-key-mixed-string",
     "class-map-optional-key-object",
     "inherited-own-fields-iterate-borrow-mixed-literal",
@@ -1202,15 +1211,22 @@ def inheritance_delta(text):
     return int(found.group(1)) - int(found.group(2)) if found else 0
 
 
+# A function the removal pass erased as unreachable, listed on the module in
+# ctnative.unreachable_refusals with its earlier refusal.
+UNREACHABLE_ROW = re.compile(r'\{function = "[^"]+", reason = "removed: unreachable')
+
+
 def check_refusal(name, text, functions):
-    """Assert that every one of `functions` in `text` is native or a named refusal.
+    """Assert that every one of `functions` in `text` is native, a named refusal
+    or removed as unreachable, counting flattening's copies and erasures.
 
     The script entry must stay refused and no emitc main may be emitted.
     """
     remaining = len(FUNCTION.findall(text))
     reasons = REFUSAL.findall(text)
     if (
-        remaining + len(NATIVE.findall(text)) != functions + inheritance_delta(text)
+        remaining + len(NATIVE.findall(text)) + len(UNREACHABLE_ROW.findall(text))
+        != functions + inheritance_delta(text)
         or len(reasons) != remaining
         or not all(reasons)
         or not re.search(r"ctjs.func @_script_\$0\(.*ctnative.not_native", text)
@@ -1494,7 +1510,7 @@ def check_proof_budget(args, source, manifest, prepared, name):
 
     def complete(limit):
         output = args.work / f"cutoff-{limit}.mlir"
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(source),

@@ -12,6 +12,7 @@
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
+#include "ctcompile/CTNative/Analysis/NativeDictionary.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
 #include "ctcompile/CTNative/Analysis/PrimitiveAlternatives.h"
@@ -74,6 +75,9 @@ enum class carrier {
     nullableNumberString,
     map,
     closure,
+    /// One of a proved set of callables (Analysis lattice `closure_set`), a
+    /// std::variant spelled per set by EmitC/ClosureSets.cpp.
+    closureSet,
     methodTable,
     objectIdentity,
     objectValue,
@@ -92,9 +96,30 @@ enum class carrier {
     domRect,
     /// An ordinary script's getComputedStyle answer (Runtime/Page.hpp).
     computedStyle,
+    /// A run-once static's constant table, or undefined before it is stored: a
+    /// pointer to its namespace-scope struct (Runtime/StaticTable.hpp).
+    staticTable,
+    /// An object used as a table, std::shared_ptr<ctnative::dictionary<V>>
+    /// (Runtime/Dictionary.hpp), spelled by dictionarySpelling.
+    dictionary,
+    /// The Event a native listener receives (Runtime/Events.hpp).
+    domEvent,
+    /// An ordinary script's element or null (Runtime/Browser.hpp).
+    nullableElement,
+    /// A timer's handle (Runtime/Timers.hpp).
+    timer,
+    /// An instance of a class a registry Map owns, or null or undefined:
+    /// `std::shared_ptr<C>`, spelled per class (EmitC/Instances.cpp).
+    instance,
     /// A class held as an object field: an empty struct named after the
     /// class (classTagCarrierType), with no runtime data.
-    classTag
+    classTag,
+    /// A Promise of a Number, a Boolean, a String or undefined
+    /// (Runtime/Promise.hpp), spelled by promiseSpelling.
+    promise,
+    /// The resolve function `new Promise` hands its executor, spelled by
+    /// promiseSpelling.
+    promiseResolve
 };
 inline constexpr llvm::StringLiteral kVectorType = "std::vector<double>";
 inline constexpr llvm::StringLiteral kStringVectorType = "std::vector<std::string>";
@@ -123,9 +148,14 @@ inline constexpr llvm::StringLiteral kDOMElementVectorType = "std::vector<ctbrow
 inline constexpr llvm::StringLiteral kPageElementType = "ctnative::js_element_t";
 inline constexpr llvm::StringLiteral kDOMRectType = "ctnative::js_dom_rect";
 inline constexpr llvm::StringLiteral kComputedStyleType = "ctnative::js_computed_style";
+inline constexpr llvm::StringLiteral kEventType = "ctnative::js_event";
+inline constexpr llvm::StringLiteral kNullableElementType = "std::optional<ctnative::js_element_t>";
+inline constexpr llvm::StringLiteral kTimerType = "ctnative::timer_id";
 /// The carrier for a JSON value in the type lattice: the owning tree built by
 /// ctbrowser's shared JSON parser.
 inline constexpr llvm::StringLiteral kDOMJSONType = "ctbrowser::json_value";
+/// A run-once static's constant table (Runtime/StaticTable.hpp).
+inline constexpr llvm::StringLiteral kStaticTableType = "ctnative::static_table_ptr";
 inline constexpr llvm::StringLiteral kObjectIdentityType =
     "std::shared_ptr<ctnative::identity_object>";
 /// One row per carrier, in enum order: its C++ spelling (empty when the
@@ -149,6 +179,7 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::nullableNumberString, kNullableNumberStringType, true},
     {carrier::map, ""},
     {carrier::closure, ""},
+    {carrier::closureSet, ""},
     {carrier::methodTable, ""},
     {carrier::objectIdentity, kObjectIdentityType},
     {carrier::objectValue, kObjectValueType},
@@ -162,9 +193,17 @@ inline constexpr carrierRow kCarriers[] = {
     {carrier::tupleVector, ""},
     {carrier::domRect, kDOMRectType},
     {carrier::computedStyle, kComputedStyleType},
+    {carrier::staticTable, kStaticTableType},
+    {carrier::dictionary, ""},
+    {carrier::domEvent, kEventType},
+    {carrier::nullableElement, kNullableElementType},
+    {carrier::timer, kTimerType},
+    {carrier::instance, ""},
     {carrier::classTag, ""},
+    {carrier::promise, ""},
+    {carrier::promiseResolve, ""},
 };
-static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::classTag) + 1,
+static_assert(std::size(kCarriers) == static_cast<size_t>(carrier::promiseResolve) + 1,
               "a carrier without a row");
 static_assert(
     [] {
@@ -180,6 +219,10 @@ inline const carrierRow & carrierInfo(carrier which) {
 }
 /// Number, Boolean, or a nullable/Number|Boolean scalar.
 bool isScalarCarrier(carrier value);
+/// Whether a promise of a value with this carrier is native: a Number, a
+/// Boolean, a String, or an optional scalar such as the undefined a handler
+/// returns (Runtime/Promise.hpp).
+bool isScalarPromiseValue(carrier value);
 bool isStringUnionCarrier(carrier value);
 bool isPrimitiveCarrier(carrier value);
 /// The carriers a stored callable's concrete signature may use.
@@ -229,6 +272,13 @@ inline bool isIdentityCarrier(mlir::Type type) {
 bool isObjectValueType(mlir::Type type);
 bool identityOrAbsent(mlir::Type type);
 bool onlyAbsent(mlir::Type type);
+/// The type a closed-shape field holds when its reads and writes join to an
+/// optional String, a union of String with Boolean or Number (and maybe
+/// absence), or an element that may be null, which a struct member stores as
+/// that carrier; null for any other field. `accesses` are the field's reads and writes, `typeOf`
+/// the lattice type of a value (ObjectValues/VariantFields.cpp).
+mlir::Type variantFieldType(llvm::ArrayRef<mlir::Operation *> accesses,
+                            llvm::function_ref<mlir::Type(mlir::Value)> typeOf);
 /// A definite Number, Boolean or String lattice type.
 inline bool isPrimitive(mlir::Type type) {
     return llvm::isa_and_nonnull<NumType, BoolType, StrType>(type);
@@ -250,6 +300,10 @@ bool isElementArray(mlir::Value v, mlir::Type type, bool pageViews);
 /// ctnative::js_element_t, or std::pair of two of those for a tuple. Empty for
 /// anything else.
 std::string elementSpelling(mlir::Type type);
+/// The C++ spelling of a `promise<T>` or `promise_resolve<T>` whose carrier is
+/// carrier::promise or carrier::promiseResolve: `ctnative::js_promise<T>` or
+/// `ctnative::promise_resolve_function<T, ctnative::no_rejection>`.
+std::string promiseSpelling(mlir::Type type);
 /// `std::vector<elementSpelling(element)>` for an element array's VecType.
 std::string elementArraySpelling(mlir::Type type);
 /// `std::span<const elementSpelling(element)>`: how a function borrows an
@@ -265,8 +319,9 @@ bool isVectorCallPlumbing(mlir::Operation * o);
 /// call, so the load lowers to nothing.
 bool isPageGlobal(mlir::Operation * o);
 /// Whether `o` reads a page method only to call it on the object it read it
-/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`). The call lowers to a
-/// runtime call, so the read lowers to nothing.
+/// from (`el.getBoundingClientRect()`, `style.getPropertyValue(name)`,
+/// `el.addEventListener(type, f)`). The call lowers to a runtime call, so the
+/// read lowers to nothing.
 bool isPageMethodRead(mlir::Operation * o);
 mlir::Type vectorCarrierType(mlir::MLIRContext * context, bool strings = false);
 llvm::StringRef mixedMapSpelling(mlir::Type type);
@@ -274,11 +329,23 @@ llvm::StringRef mixedMapKeySpelling(mlir::Type type);
 llvm::StringRef nullableMapSpelling(mlir::Type type);
 llvm::StringRef mapKeySpelling(mlir::Type type);
 std::string mapValueSpelling(mlir::Type type);
+/// The C++ name of an identity class's struct, as nameFamilies gives it.
+std::string instanceClassSpelling(llvm::StringRef className);
+/// The class C of `instance<C>` or `opt<instance<C>>`.
+llvm::StringRef instanceClassName(mlir::Type type);
+/// `std::shared_ptr<C>`, the carrier of `instance<C>` and `opt<instance<C>>`.
+mlir::Type instanceCarrierType(mlir::Type type);
 bool mapNeedsString(MapType type);
 bool mapNeedsNullableString(MapType type);
 bool mapNeedsNullableStringKey(MapType type);
 bool mapNeedsObjectValues(MapType type);
 mlir::Type mapCarrierType(MapType type);
+/// The C++ type of a table, or of a table that may be undefined (null):
+/// std::shared_ptr<ctnative::dictionary<V>>, V its values' spelling.
+std::string dictionarySpelling(mlir::Type type);
+/// The C++ type of the values of a table: a scalar carrier, or a table's
+/// spelling for a table of tables.
+std::string dictionaryValueSpelling(DictType type);
 mlir::Type closureCarrierType(ClosureType type);
 /// The C++ spelling of the class tag a field holding class `name` has:
 /// `<name>_class`, an empty struct the module declares once.

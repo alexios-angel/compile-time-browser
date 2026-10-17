@@ -17,6 +17,13 @@ from Target.Cpp.harness import function_body
 
 ORIGINAL_SHA256 = "ac17441800c02afebc9c0f2ca529984c3fd21653ba676eff991ade6028daf490"
 
+# The reason a negative must be refused with, where one is pinned: mixed.js's
+# join of a Number array and a String array.
+REFUSALS = {
+    "mixed": "an array whose elements are !ctnative.opt<!ctnative.variant<!ctnative.num<i32>, "
+    "!ctnative.str<utf8>>>, not numbers",
+}
+
 
 def main():
     args = native_args(__doc__, "original", "fixtures")
@@ -60,6 +67,58 @@ def main():
     compilers = find_compilers()
     checked = 0
     mutations = 0
+    # mixed.js with only `blocked(true)`: precomputation folds the flag, so
+    # `alias` is `a` and no borrow remains; the optimized program lowers and
+    # answers as Node and the interpreter do. Unoptimized, the join of a Number
+    # and a String array is still refused.
+    folded = args.work / "mixed-folded.js"
+    folded.write_text(
+        (args.fixtures / "mixed.js")
+        .read_text()
+        .replace("blocked(true) * 10 + blocked(false);", "blocked(true);")
+    )
+    node = node_globals(args.node, folded, ["observed"])
+    reference = run([args.reference, str(folded)])
+    if node.stdout != "observed=2\n" or node.stderr or reference.stdout != "observed=2\n":
+        raise RuntimeError("mixed-folded: Node/interpreter source observations changed")
+    raw = args.work / "mixed-folded.raw.mlir"
+    run([args.translate, "--ctbrowser-js-to-ctjs", str(folded), "-o", str(raw)])
+    native = args.work / "mixed-folded.native.mlir"
+    run(
+        [
+            args.opt,
+            str(raw),
+            "--ctjs-resolve-globals",
+            "--ctjs-lift-to-scf",
+            "--ctnative-lower-to-emitc=optimize=true",
+            "-o",
+            str(native),
+        ]
+    )
+    ir = native.read_text()
+    if (
+        "ctjs.func" in ir
+        or "ctnative.not_native" in ir
+        or '!emitc.ptr<!emitc.opaque<"std::vector' in ir
+    ):
+        raise RuntimeError(f"mixed-folded: expected a complete lowering with no borrow\n{ir}")
+    cleaned = args.work / "mixed-folded.cleaned.mlir"
+    run(
+        [
+            args.opt,
+            str(native),
+            "--pass-pipeline=builtin.module(" + CLEANUP + ")",
+            "-o",
+            str(cleaned),
+        ]
+    )
+    file = args.work / "mixed-folded.cpp"
+    file.write_text(run([args.translate, "--mlir-to-cpp", str(cleaned)]).stdout)
+    for index, compiler in enumerate(compilers):
+        binary = (args.work / f"mixed-folded.{index}").resolve()
+        if build_and_run(compiler, file, binary).stdout != "observed=2\n":
+            raise RuntimeError(f"mixed-folded: {compiler} disagrees with Node")
+        checked += 1
     for name, (source, function, observations) in positives.items():
         expected = "".join(f"{key}={value}\n" for key, value in sorted(observations.items()))
         node = node_globals(args.node, source, sorted(observations))
@@ -212,6 +271,9 @@ def main():
             )
             if "ctnative.not_native" not in result.stdout or "emitc.func" in result.stdout:
                 raise RuntimeError(f"{source.stem}: unproved borrow was admitted\n{result.stdout}")
+            reason = REFUSALS.get(source.stem)
+            if reason and f'ctnative.not_native = "{reason}"' not in result.stdout:
+                raise RuntimeError(f"{source.stem}: refused for another reason\n{result.stdout}")
             refusals += 1
     print(
         f"array borrows: {checked} native executions, {mutations} copy controls, {refusals} refusals"
