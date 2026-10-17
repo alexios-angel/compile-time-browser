@@ -151,7 +151,7 @@ def sync(settings, args):
     script = Path(root) / "tools" / "remote-build.sh"
     # An older checkout's remote-build.sh would read `sync` as a ninja target
     # and start a build.
-    if '= sync ]' not in script.read_text():
+    if not (script.with_name("remote_build.py").exists() or "= sync ]" in script.read_text()):
         sys.exit(f"devbox-pool: {script} has no sync mode; merge ctcompile-v1 into this worktree")
     failed = 0
     for box in settings["boxes"]:
