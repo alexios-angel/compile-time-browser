@@ -1,0 +1,113 @@
+# `throw new TypeError(message)` where the Error is used for nothing but the
+# throw, as Bootstrap's Config type check throws it, lowers to
+# ctnative::throw_type_error (Lowering/Exceptions/TypeErrors.cpp,
+# Runtime/Error.hpp). checked.js never throws: it prints the same `r` with
+# both compilers, the interpreter and Node. thrown.js throws on its second
+# check and nothing catches it: the native program and the interpreter print
+# the same stdout, exit with the same status and report the same first line
+# on stderr. A throw of an Error used for anything else, or in a program
+# with a catch, stays where the lift left it, and its function refused.
+#
+# RUN: split-file %s %t
+# RUN: for name in checked thrown; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc -o %t/$name.mlir; \
+# RUN:   ctjs-opt %t/$name.mlir '--pass-pipeline=builtin.module(emitc.func(canonicalize,convert-scf-to-emitc,convert-arith-to-emitc,canonicalize,ctnative-prune-dead-stores,canonicalize))' | ctjs-translate --mlir-to-cpp > %t/$name.cpp; done
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/checked.mlir
+# RUN: FileCheck %s --check-prefix=NATIVE --implicit-check-not=ctnative.not_native < %t/thrown.mlir
+# RUN: FileCheck %s --check-prefix=CPP < %t/thrown.cpp
+# RUN: %gxx -O2 %t/checked.cpp -o %t/checked-gcc && %t/checked-gcc | FileCheck %s --check-prefix=CHECKED
+# RUN: %clangxx -O2 %t/checked.cpp -o %t/checked-clang && %t/checked-clang | FileCheck %s --check-prefix=CHECKED
+# RUN: %native_reference %t/checked.js | FileCheck %s --check-prefix=CHECKED
+# RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/checked.js | FileCheck %s --check-prefix=CHECKED-NODE
+#
+# RUN: %native_reference %t/thrown.js > %t/vm.out 2> %t/vm.err; echo "status=$?" >> %t/vm.out
+# RUN: head -n 1 %t/vm.err | sed 's/^.* threw: /threw: /' > %t/vm.first
+# RUN: FileCheck %s --check-prefix=THROWN < %t/vm.first
+# RUN: FileCheck %s --check-prefix=STATUS < %t/vm.out
+# RUN: %gxx -O2 %t/thrown.cpp -o %t/thrown-gcc
+# RUN: %t/thrown-gcc > %t/gcc.out 2> %t/gcc.err; echo "status=$?" >> %t/gcc.out
+# RUN: head -n 1 %t/gcc.err | sed 's/^.* threw: /threw: /' > %t/gcc.first
+# RUN: diff %t/vm.out %t/gcc.out
+# RUN: diff %t/vm.first %t/gcc.first
+# RUN: %clangxx -O2 %t/thrown.cpp -o %t/thrown-clang
+# RUN: %t/thrown-clang > %t/clang.out 2> %t/clang.err; echo "status=$?" >> %t/clang.out
+# RUN: head -n 1 %t/clang.err | sed 's/^.* threw: /threw: /' > %t/clang.first
+# RUN: diff %t/vm.out %t/clang.out
+# RUN: diff %t/vm.first %t/clang.first
+#
+# RUN: for name in kept caught; do \
+# RUN:   ctjs-translate --ctbrowser-js-to-ctjs %t/$name.js --mlir-print-debuginfo 2>/dev/null \
+# RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+# RUN:   | FileCheck %s --check-prefix=REFUSED; done
+
+# NATIVE: emitc.func @main
+# CPP: ctnative::throw_type_error(
+# CHECKED: r="okok"
+# CHECKED-NODE: r=okok
+# THROWN: threw: uncaught TypeError: Option "pause" provided type "number" but expected type "string".
+# STATUS: status=1
+# REFUSED: ctjs.func {{.*}}@check${{[0-9]+}}({{.*}}not_native = "unstructured control flow - run --ctjs-lift-to-scf first"
+
+#--- checked.js
+var r = (function () {
+    var types = {interval: "number", pause: "string"};
+    function check(config, configTypes) {
+        for (const [k, v] of Object.entries(configTypes)) {
+            const type = typeof config[k];
+            if (type !== v) {
+                throw new TypeError("Option \"" + k + "\" provided type \"" + type +
+                    "\" but expected type \"" + v + "\".");
+            }
+        }
+        return "ok";
+    }
+    return check({interval: 5, pause: "hover"}, types) + check({interval: 7, pause: "x"}, types);
+})();
+
+#--- thrown.js
+var r = (function () {
+    var types = {interval: "number", pause: "string"};
+    function check(config, configTypes) {
+        for (const [k, v] of Object.entries(configTypes)) {
+            const type = typeof config[k];
+            if (type !== v) {
+                throw new TypeError("Option \"" + k + "\" provided type \"" + type +
+                    "\" but expected type \"" + v + "\".");
+            }
+        }
+        return "ok";
+    }
+    return check({interval: 5, pause: "hover"}, types) + check({interval: 5, pause: 7}, types);
+})();
+
+#--- kept.js
+var r = (function () {
+    function check(value) {
+        if (typeof value !== "number") {
+            const error = new TypeError("not a number");
+            error.code = 7;
+            throw error;
+        }
+        return value;
+    }
+    return check(1) + check(2);
+})();
+
+#--- caught.js
+function guarded(f) {
+    try {
+        return f();
+    } catch (e) {
+        return -1;
+    }
+}
+var r = (function () {
+    function check(value) {
+        if (typeof value !== "number") {
+            throw new TypeError("not a number");
+        }
+        return value;
+    }
+    return check(1) + check(2);
+})();

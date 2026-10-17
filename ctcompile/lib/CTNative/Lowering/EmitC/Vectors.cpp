@@ -280,6 +280,8 @@ llvm::DenseSet<mlir::Value> planStringArrays(lowering & lower, ctjs::FuncOp fn) 
                           : row.params[i] == Param::number    ? 'n'
                           : row.params[i] == Param::element   ? 'e'
                           : row.params[i] == Param::printable ? 'p'
+                          // A union is passed as it is; the runtime visits it.
+                          : row.params[i] == Param::primitive ? 'p'
                           // A constant table is passed as it is, as a printable is.
                           : row.params[i] == Param::staticTable ? 'p'
                           : table                               ? 'd'
@@ -653,6 +655,11 @@ bool replaceStringArray(lowering & lower, mlir::Operation * o) {
         // record is `ctnative::json_record("key", value, ...)` of its struct's
         // fields; a dictionary is passed as it is.
         const auto [kinds, callee] = kind.split(' ');
+        // Object's methods are declared only for the programs that call them.
+        if (callee.starts_with("ctnative::Object.")) {
+            includeHeader(o->getParentOfType<mlir::ModuleOp>(),
+                          "ctcompile/CTNative/Runtime/Object.hpp");
+        }
         llvm::SmallVector<mlir::Value, 2> operands;
         for (auto [index, argument] : llvm::enumerate(call.getArgs())) {
             if (kinds[index] == 'd') {

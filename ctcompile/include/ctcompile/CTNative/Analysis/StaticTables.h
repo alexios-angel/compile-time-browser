@@ -127,4 +127,15 @@ void markStaticTables(mlir::ModuleOp module);
 /// loop gets kNativeStaticTableLoopRefusal. Run by markStaticTables.
 void unrollTableLoops(mlir::ModuleOp module);
 
+/// Writes out, once per key in the same way, each for-of over Object.entries,
+/// keys or values of a parameter that every caller passes the same table of
+/// constants: an object literal of finite numbers, booleans, strings and null
+/// with constant keys, made in the caller's block and used for nothing but
+/// those calls, of a function whose callers are all known direct calls.
+/// Config's `_typeCheckConfig(config, configTypes)` takes its table that way.
+/// The callers then pass undefined to the parameter, which nothing reads, and
+/// the literal goes. Runs before closure lifting, whose object parameters
+/// need `config[key]` to have become a constant-key read.
+void unrollParameterTableLoops(mlir::ModuleOp module);
+
 } // namespace ctcompile::ctnative
