@@ -1,3 +1,4 @@
 add_subdirectory(ExceptionRecovery)
 add_subdirectory(HostContract)
 add_subdirectory(Specialization)
+add_subdirectory(Browser)
