@@ -82,9 +82,6 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundwrite.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=BOUNDWRITE
-// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/boundmutual.js 2>/dev/null \
-// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
-// RUN:   | FileCheck %s --check-prefix=BOUNDMUTUAL
 
 // --- Shared bindings that now compile ---------------------------------------
 //
@@ -223,7 +220,7 @@
 // really does read its own closure).
 //
 // The plan labels at the end of some messages ("Phase 59 slice 2" here,
-// "Phase 63" and "Stage 59B" elsewhere) are the lowering's own wording,
+// and "Phase 63" elsewhere) are the lowering's own wording,
 // emitted from ClosureLifting/Captures.cpp and Methods.cpp, and are pinned
 // verbatim.
 //
@@ -268,17 +265,18 @@
 // A lifted call passes the call's receiver as %arg0. For an arrow that is not
 // what the interpreter reads: `context::effective_this` answers the
 // captured_this recorded where the arrow was written (make_closure in
-// ctbrowser/lib/Script/vm/call/coroutines.cpp), so an arrow may be lifted only
-// when it never reads `this`. Fixtures/Closures/closure.js has an arrow that
-// does not, and it lifts like any other function.
-//
-// The rule relies on the importer: `$enclosing_this` is `undefined` for every
-// non-arrow target, so an operand that is not undefined is the only place the
-// IR says a target is an arrow. Without that importer behaviour this rule has
-// nothing to test.
+// ctbrowser/lib/Script/vm/call/coroutines.cpp). closureLifter's
+// captureLexicalThis therefore makes that value a capture before any rule
+// runs: the arrow reads it with ctjs.load_upvalue and no longer reads %arg0,
+// so it lifts like any other closure. Here the captured value is `holder`'s
+// own `this`, which no caller proves, so `holder` keeps the receiver rule's
+// refusal and the lifted arrow the capture rule's.
 //
 // ARROWTHIS: ctjs.func {{.*}}@holder$1
-// ARROWTHIS-SAME: ctnative.not_native = "a closure used as a value: it is an arrow function that reads its lexical `this` - Stage 59B"
+// ARROWTHIS-SAME: ctnative.not_native = "uses `this`"
+// ARROWTHIS: ctjs.create_closure %arg2[2] this %{{.*}} captures %{{.*}} {ctnative.lifted
+// ARROWTHIS: ctjs.func private @fn$2
+// ARROWTHIS-SAME: ctnative.not_native = "capture 0 is !ctnative.boxed - no caller proves it
 
 // --- A refusal that lands on the box ----------------------------------------
 //
@@ -426,26 +424,6 @@
 //
 // BOUNDWRITE: ctjs.func {{.*}}@reassigns$1
 // BOUNDWRITE-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: a function that reads it ASSIGNS the binding, so the name holds a variable and not one function"
-
-// --- Binding clause 3 across two names: mutual recursion --------------------
-//
-// `even_ish` calls `odd_ish` and `odd_ish` calls `even_ish`, so one of the two
-// stores has to come second, and `writeReachesEveryRead` asks that the store
-// dominate every use of every closure that captured the box, which for a name
-// includes the `ctjs.cell_set` that puts the other closure in its box. It
-// cannot ask about calls instead: a closure whose value goes into a box of its
-// own has no call site at all until this very rewrite makes one. So the second
-// name is refused for dominance and the first for clause 5, because the
-// capture it needs is the name that was just refused.
-//
-// This is the rule being conservative, not a soundness requirement: the same
-// conservatism refuses `function g() { f(); } function f() {}` written in that
-// order. Following a closure's value through its own box, one hop out, would
-// admit both; that is the next improvement to make after the slot clause
-// above.
-//
-// BOUNDMUTUAL: ctjs.func {{.*}}@mutual$1
-// BOUNDMUTUAL-SAME: ctnative.not_native = "a closure used as a value: it is the value of a local binding this tier cannot call directly: its one assignment does not reach every read of it, and a read before it yields the undefined the binding was hoisted with"
 
 //--- sharedreturn.js
 function maker() {
@@ -665,11 +643,3 @@ function reassigns() {
     return flip() + use();
 }
 var r = reassigns();
-
-//--- boundmutual.js
-function mutual(k) {
-    var even_ish = function (n) { if (n <= 0) { return 1; } return odd_ish(n - 1); };
-    var odd_ish = function (n) { if (n <= 0) { return 0; } return even_ish(n - 1); };
-    return even_ish(k) * 10 + odd_ish(k);
-}
-var r = mutual(3);

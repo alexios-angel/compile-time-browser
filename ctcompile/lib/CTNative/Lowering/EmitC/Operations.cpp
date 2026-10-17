@@ -7,8 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../Admission/Admission.h"
+#include "Dictionaries.h"
 #include "Emitter.h"
 #include "Vectors.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 #include "ctcompile/Support/CppLiterals.hpp"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
@@ -44,7 +46,10 @@ mlir::Value lowering::cellPlace(mlir::OpBuilder & b, mlir::Location where, mlir:
 /// copy with `emitc.member_of_ptr` (`self->x`).
 mlir::Value lowering::memberAccess(mlir::OpBuilder & b, mlir::Location where, mlir::Value object,
                                    llvm::StringRef member, mlir::Type type) {
-    if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType())) {
+    // An instance (EmitC/Instances.cpp) is a std::shared_ptr, read through
+    // `->` like a pointer.
+    if (!receiverArgs.contains(object) && !llvm::isa<ec::PointerType>(object.getType()) &&
+        !isInstanceValue(object)) {
         return ec::MemberOp::create(b, where, ec::LValueType::get(type), member, object);
     }
     // The receiver's local is created lazily, at the first field access, so a
@@ -135,6 +140,8 @@ void lowering::printObservations(mlir::OpBuilder & b, mlir::Location where) {
 }
 
 void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType) {
+    if (replaceStaticTable(o)) { return; }
+    if (replaceInstance(o)) { return; }
     if (replaceDOM(o)) { return; }
     if (replaceOwnedGlobal(o)) { return; }
     if (replaceException(o)) { return; }
@@ -155,9 +162,24 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
     };
 
     if (replaceMap(o)) { return; }
+    if (replaceDictionary(*this, o)) { return; }
     if (replaceIdentityField(o)) { return; }
+    if (replaceStringCallback(o)) { return; }
     if (replaceStringValue(o)) { return; }
     if (replaceStringArray(*this, o)) { return; }
+    if (auto refined = llvm::dyn_cast<RefineOp>(o)) {
+        // Admission allowed only the operand's own carrier or its String or
+        // Number alternative.
+        const mlir::Value value = refined.getValue();
+        const mlir::Type result = o->getResult(0).getType();
+        swap(value.getType() == result
+                 ? value
+                 : callValue(b, where, result,
+                             refined.getKind() == "number" ? "ctnative::as_number"
+                                                           : "ctnative::as_string",
+                             value));
+        return;
+    }
 
     // Frame bookkeeping lowers to nothing. frame_enter's result is used by
     // every frame_exit and root after it, and walk order visits it first, so
@@ -186,6 +208,7 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // inert value per destination instead of giving every use NaN.
         mlir::Value emptyString, emptyNullableString, emptyNullable, emptyBoolean, emptyObjectValue,
             emptyIdentity;
+        llvm::DenseMap<mlir::Type, mlir::Value> emptyPairs;
         // Each inert value is built once, at its first use.
         const auto once = [](mlir::Value & slot, auto make) {
             if (!slot) { slot = make(); }
@@ -243,10 +266,21 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                 }));
             } else if (isNullableCarrier(expected)) {
                 use.set(once(emptyNullable, [&] { return absentConstant(b, where); }));
+            } else if (expected == carrierType(context, carrier::nullableElement)) {
+                use.set(opaque(carrier::nullableElement, "std::nullopt"));
             } else if (expected == i1 || isBooleanCarrier(expected)) {
                 use.set(convertScalar(
                     b, where, once(emptyBoolean, [&] { return boolConstant(b, where, false); }),
                     expected));
+            } else if (auto pair = llvm::dyn_cast_or_null<ec::OpaqueType>(expected);
+                       pair && pair.getValue().starts_with("std::pair<")) {
+                // A row of a pair vector, such as a folded for-of's element.
+                use.set(once(emptyPairs[expected], [&] {
+                    return ec::ConstantOp::create(
+                               b, where, expected,
+                               ec::OpaqueAttr::get(context, (pair.getValue() + "{}").str()))
+                        .getResult();
+                }));
             }
         }
         swap(numberConstant(b, where, std::numeric_limits<double>::quiet_NaN()));
@@ -593,7 +627,10 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
                              v)
                              .getResult();
         };
-        if (o->hasAttr("ctnative.receiver")) { args.push_back(asPointer(call.getReceiver())); }
+        if (o->hasAttr("ctnative.receiver")) {
+            args.push_back(isInstanceValue(call.getReceiver()) ? receiverOperand(b, where, call)
+                                                               : asPointer(call.getReceiver()));
+        }
         // Object arguments and shared bindings (cells) are also passed by
         // pointer through asPointer, so all three cases take an address the same
         // way. A function that itself received a cell pointer forwards it
@@ -601,7 +638,9 @@ void lowering::replace(mlir::Operation * o, bool isEntry, mlir::Type returnType)
         // innermost one. Operands 0-2 are the implicit arguments dropped above.
         for (unsigned i = 3; i < operands.size(); ++i) {
             const bool byAddress = admission::isObjectArg(o, i) || admission::isCellArg(o, i);
-            args.push_back(byAddress ? asPointer(operands[i]) : operands[i]);
+            args.push_back(byAddress                      ? asPointer(operands[i])
+                           : isInstanceValue(operands[i]) ? instanceArgument(b, where, call, i)
+                                                          : operands[i]);
         }
         const auto named = names.find(call.getCallee());
         const std::string target =

@@ -2,13 +2,15 @@
 //
 // Instantiates the TableGen-generated ctnative types (storage, parsers,
 // printers), registers them with the dialect, and defines the two hand-written
-// type verifiers, TupleType::verify and VariantType::verify.
+// type verifiers, TupleType::verify, VariantType::verify and
+// ClosureSetType::verify.
 //
 //===----------------------------------------------------------------------===//
 
 #include "ctcompile/CTNative/IR/CTNativeTypes.h"
 
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
+#include "ctcompile/CTNative/IR/CTNativeLattice.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -75,7 +77,15 @@ void CTNativeDialect::registerTypes() {
                               "choice is the alternative itself";
     }
     ::llvm::SmallPtrSet<::mlir::Type, 4> seen;
+    bool callable = false;
     for (::mlir::Type alternative : alternatives) {
+        if (::llvm::isa<ClosureType, ClosureSetType>(alternative)) {
+            if (callable) {
+                return emitError() << "a variant may hold one callable alternative; two "
+                                      "callables meet as one `closure_set`";
+            }
+            callable = true;
+        }
         if (!alternative) { return emitError() << "a variant alternative may not be null"; }
         if (::llvm::isa<VariantType>(alternative)) {
             return emitError() << "a variant alternative may not itself be a variant; "
@@ -95,6 +105,27 @@ void CTNativeDialect::registerTypes() {
         }
         if (!seen.insert(alternative).second) {
             return emitError() << "a variant may not repeat an alternative: " << alternative;
+        }
+    }
+    return ::mlir::success();
+}
+
+/// A closure set names at least two targets, sorted and distinct, and no more
+/// than the lattice's cap: the form `meet` builds, so one set has one MLIR
+/// type.
+::mlir::LogicalResult ClosureSetType::verify(
+    ::llvm::function_ref<::mlir::InFlightDiagnostic()> emitError,
+    ::llvm::ArrayRef<::mlir::StringAttr> targets) {
+    if (targets.size() < 2) {
+        return emitError() << "a closure set needs at least two targets; one is a closure";
+    }
+    if (targets.size() > kMaxClosureSetTargets) {
+        return emitError() << "a closure set of " << targets.size()
+                           << " targets is past the cap; the meet answers boxed";
+    }
+    for (size_t i = 1; i < targets.size(); ++i) {
+        if (!(targets[i - 1].getValue() < targets[i].getValue())) {
+            return emitError() << "closure set targets must be sorted and distinct";
         }
     }
     return ::mlir::success();

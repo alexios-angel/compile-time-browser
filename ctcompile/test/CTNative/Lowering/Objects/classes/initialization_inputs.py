@@ -12,11 +12,18 @@ import argparse
 import json
 from pathlib import Path
 import re
-import subprocess
 
 from CTNative.Exports.boundary import FUNCTION, NATIVE, REFUSAL
 from CTNative.HostContract import contract as host
-from CTNative.harness import CLEANUP, FLAGS, find_compilers, run, threshold, without_intrinsic
+from CTNative.harness import (
+    CLEANUP,
+    FLAGS,
+    find_compilers,
+    run,
+    slotted_run,
+    threshold,
+    without_intrinsic,
+)
 from CTNative.Lowering.Objects.constructor_refusals import NODE, check_mutable_helper, check_native
 
 # Fixture name -> expected `a=<value>` output as (under Node, under the
@@ -1501,7 +1508,7 @@ def check_proof_budget(args, source, manifest, prepared, name):
 
     def complete(limit):
         output = args.work / f"cutoff-{limit}.mlir"
-        result = subprocess.run(
+        result = slotted_run(
             [
                 args.opt,
                 str(source),
@@ -1734,10 +1741,12 @@ def check_class_capture_inputs(args, source, manifest):
     return len(variants)
 
 
-def check_executable(args, name, native, expected):
+def check_executable(args, name, native, expected, reference=None):
     """Compile fully lowered `native` to C++ with every compiler and run it.
 
-    Both the explicit and the deduced-type layouts must print `a=<expected>`
+    Both the explicit and the deduced-type layouts must print what the
+    reference interpreter printed for the fixture (`reference`, its stdout),
+    or `a=<expected>` when there is no interpreter output to compare,
     and keep no ctbrowser runtime or prototype storage. Returns the number of
     binaries run.
     """
@@ -1780,7 +1789,7 @@ def check_executable(args, name, native, expected):
         for index, compiler in enumerate(find_compilers()):
             binary = file.with_suffix(f".{index}")
             run([compiler, *FLAGS, str(file), "-o", str(binary)])
-            if run([str(binary.resolve())]).stdout != f"a={expected}\n":
+            if run([str(binary.resolve())]).stdout != (reference or f"a={expected}\n"):
                 raise RuntimeError(f"{name}/{layout}: native class observations differ")
             checked += 1
     return checked

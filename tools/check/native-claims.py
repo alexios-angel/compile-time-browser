@@ -59,6 +59,7 @@ Five invariants are asserted, numbered as in the code below:
      silently shrinking the source denominator.
 
 Usage:
+  native-claims.py --self-test     # the source counting, no build
   native-claims.py --translate <ctjs-translate> --opt <ctjs-opt>
                    --corpus <program.js> --name <label>
                    [--json <out.json>] [--top <n>] [--min-claimed <n>]
@@ -113,6 +114,16 @@ _TYPE = re.compile(r"!ctnative\.\w+|!ctjs\.\w+")
 _REFUSAL = re.compile(r'ctnative\.not_native = "((?:[^"\\]|\\.)*)"')
 _CTJS_FUNC = re.compile(r"^\s*ctjs\.func\b", re.MULTILINE)
 _EMITC_FUNC = re.compile(r"^\s*emitc\.func\b", re.MULTILINE)
+# A ctjs.func's symbol, quoted or bare.
+_CTJS_NAME = re.compile(r'^\s*ctjs\.func (?:private )?@("(?:[^"\\]|\\.)*"|[^\s(]+)', re.MULTILINE)
+# `ctnative.copies = {"m$3_Child" = "m$3", ...}`: every function class
+# inheritance flattening copied, mapped to its original. It lists copies that
+# were later pruned or removed too.
+_COPIES = re.compile(r"ctnative\.copies = \{([^}]*)\}")
+_COPY_PAIR = re.compile(r'("(?:[^"\\]|\\.)*"|[\w.$-]+)\s*=\s*@?("(?:[^"\\]|\\.)*"|[\w.$-]+)')
+# `ctnative.inheritance_erased = ["m$3", ...]`: originals the flattening erased
+# once every child carried its copy.
+_ERASED = re.compile(r"ctnative\.inheritance_erased = \[([^\]]*)\]")
 # ctjs-translate: `function 685 is not compiled: <reason> (<where>)`
 _SKIPPED = re.compile(r"function (\d+) is not compiled: ([^(\n]*)")
 # --ctjs-resolve-globals=report=true, as a remark on the module. These are the
@@ -146,10 +157,13 @@ _UNREACHABLE = re.compile(
     r'\{function = "((?:[^"\\]|\\.)*)", reason = "(removed: unreachable (?:[^"\\]|\\.)*)"'
 )
 # `ctjs.globals = [{name = "x", reason = "...", resolved = ..., stores = N}]`,
-# the per-name verdict the pass writes on the module. Grouping the reasons
+# the per-name verdict the pass writes on the module; a host binding's row
+# starts with its unit `host_binding` field. Grouping the reasons
 # shows why globals failed to resolve, the same way `ctnative.not_native`
 # shows why functions were refused.
-_GLOBAL_REASON = re.compile(r'\{name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"')
+_GLOBAL_REASON = re.compile(
+    r'\{(?:host_binding, )?name = "(?:[^"\\]|\\.)*", reason = "((?:[^"\\]|\\.)*)"'
+)
 
 
 def shape_of(reason: str) -> str:
@@ -158,6 +172,71 @@ def shape_of(reason: str) -> str:
     shaped = _TYPE.sub("T", shaped)
     shaped = _NUMBER.sub("N", shaped)
     return shaped.strip()
+
+
+def unquote(name: str) -> str:
+    return name[1:-1] if name.startswith('"') else name
+
+
+def by_source(imported, refused, pruned, removed, copies, erased):
+    """Classify each imported (source) function from the names that survive
+    lowering. Flattening class inheritance copies a function per concrete class
+    (`copies`: copy -> original) and may erase the original (`erased`). A source
+    is refused when any of its functions is refused, pruned or removed when all
+    of them are gone (removed if any was removed), and native otherwise: native
+    functions cannot be named here, since an emitc.func takes a C++ name.
+
+    Returns the per-source status, and the number of functions after copying,
+    which conservation compares with claimed + refused + pruned + removed."""
+    functions = {name: set() if name in erased else {name} for name in imported}
+    for copy, original in copies.items():
+        if original not in functions:
+            raise ValueError(f"copy {copy} names {original}, which was not imported")
+        functions[original].add(copy)
+    for name in erased:
+        if name not in functions:
+            raise ValueError(f"erased {name} was not imported")
+    if any(not names for names in functions.values()):
+        empty = sorted(name for name, names in functions.items() if not names)
+        raise ValueError(f"erased with no copy: {', '.join(empty[:5])}")
+    gone = set(pruned) | set(removed)
+    status = {}
+    for source, names in functions.items():
+        if names & set(refused):
+            status[source] = "refused"
+        elif names <= gone:
+            status[source] = "removed" if names & set(removed) else "pruned"
+        else:
+            status[source] = "native"
+    return status, sum(len(names) for names in functions.values())
+
+
+def self_test() -> None:
+    """by_source on hand-made name sets; no build needed."""
+    imported = ["a", "b", "p", "q", "r"]
+    status, after = by_source(imported, [], [], [], {}, set())
+    assert set(status.values()) == {"native"} and after == 5, status
+    # One refused copy makes its source refused; the others stay native.
+    copies = {"p_C1": "p", "p_C2": "p", "q_C1": "q"}
+    status, after = by_source(imported, ["p_C2"], [], [], copies, {"p"})
+    assert status["p"] == "refused" and status["q"] == "native" and after == 7, status
+    # A source whose original was erased and whose copies were all removed is
+    # removed, never native by absence.
+    status, _ = by_source(imported, [], [], ["p_C1", "p_C2"], copies, {"p"})
+    assert status["p"] == "removed", status
+    # A kept original stays native while its copies are removed.
+    status, _ = by_source(imported, [], [], ["q_C1"], copies, set())
+    assert status["q"] == "native", status
+    # The original pruned and its only copy removed: gone, counted as removed.
+    status, _ = by_source(imported, [], ["r"], ["r_C"], {"r_C": "r"}, set())
+    assert status["r"] == "removed", status
+    for bad in (({"x_C": "x"}, set()), ({}, {"x"}), ({}, {"a"})):
+        try:
+            by_source(imported, [], [], [], *bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad}")
+    print("self-test passed")
 
 
 def run(argv: argparse.Namespace) -> dict:
@@ -251,10 +330,18 @@ def run(argv: argparse.Namespace) -> dict:
     pruned = int(reachability.group(1)) if reachability else 0
     if argv.mutate_pruned_count:
         pruned += 1
+    imported_names = [unquote(name) for name in _CTJS_NAME.findall(resolved_ir)]
     imported = len(_CTJS_FUNC.findall(resolved_ir))
     if argv.mutate_drop_one_reason:
         module = re.sub(r', ctnative\.not_native = "(?:[^"\\]|\\.)*"', "", module, count=1)
     claimed = len(_EMITC_FUNC.findall(module))
+    copies = _COPIES.search(module)
+    copies = {
+        unquote(copy): unquote(original)
+        for copy, original in (_COPY_PAIR.findall(copies.group(1)) if copies else [])
+    }
+    erased = _ERASED.search(module)
+    erased = set(_STRING.findall(erased.group(1))) if erased else set()
     pruned_names = _PRUNED_NAMES.search(module)
     pruned_names = _STRING.findall(pruned_names.group(1)) if pruned_names else []
     removed_rows = _UNREACHABLE.findall(module)
@@ -273,14 +360,28 @@ def run(argv: argparse.Namespace) -> dict:
             f"{len(reasons)} carry `ctnative.not_native`; {left - len(reasons)} were "
             "dropped silently, which part 24 SS2 forbids"
         )
-    # Invariant 5: every imported function is claimed, refused, pruned or
-    # removed.
-    if imported != claimed + left + pruned + removed:
+    # Invariant 5: every function, after class inheritance flattening copied
+    # some (ctnative.copies) and erased others (ctnative.inheritance_erased), is
+    # claimed, refused, pruned or removed; and every imported source function
+    # is native, refused, pruned or removed as a whole (by_source).
+    try:
+        status, after = by_source(
+            imported_names,
+            [unquote(name) for name in _CTJS_NAME.findall(module)],
+            pruned_names,
+            [name for name, _ in removed_rows],
+            copies,
+            erased,
+        )
+    except ValueError as error:
+        sys.exit(f"native-claims ({argv.name}): inheritance copies are inconsistent: {error}")
+    if len(imported_names) != imported or after != claimed + left + pruned + removed:
         sys.exit(
             f"native-claims ({argv.name}): source function conservation failed: "
-            f"{imported} imported, {claimed} claimed + {left} refused + {pruned} pruned + "
-            f"{removed} removed"
+            f"{imported} imported + {len(copies)} copies - {len(erased)} erased = {after}, "
+            f"but {claimed} claimed + {left} refused + {pruned} pruned + {removed} removed"
         )
+    sources = collections.Counter(status.values())
     total = imported + len(skipped)
     # Invariant 2: the run is not vacuous.
     if total == 0:
@@ -304,16 +405,27 @@ def run(argv: argparse.Namespace) -> dict:
     return {
         "name": argv.name,
         "corpus": argv.corpus,
+        # Counted by source function: a function copied per class counts once,
+        # native only when every copy is (by_source).
         "total": total,
-        "claimed": claimed,
-        "refused": left,
+        "claimed": sources["native"],
+        "refused": sources["refused"],
         "skipped": len(skipped),
-        "pruned": pruned,
-        "removed": removed,
+        "pruned": sources["pruned"],
+        "removed": sources["removed"],
+        # Counted by function, copies included.
+        "functions": {
+            "claimed": claimed,
+            "refused": left,
+            "pruned": pruned,
+            "removed": removed,
+            "copies": len(copies),
+            "erased": len(erased),
+        },
         "pruned_names": pruned_names,
         "removed_rows": [list(row) for row in removed_rows],
         "optimization_defaults": not argv.no_default_optimizations,
-        "claimed_percent": round(100.0 * claimed / total, 2),
+        "claimed_percent": round(100.0 * sources["native"] / total, 2),
         "refusals": by_reason.most_common(),
         "skips": by_skip.most_common(),
         # The closed world, which the five buckets above cannot see.
@@ -334,6 +446,12 @@ def report(result: dict, top: int) -> None:
         f"with a reason, {result['skipped']} never imported, {result['pruned']} pruned, "
         f"{result['removed']} removed as unreachable after admission"
     )
+    functions = result["functions"]
+    if functions["copies"] or functions["erased"]:
+        print(
+            f"    copies: {functions['copies']} per-class copies, {functions['erased']} originals "
+            f"erased; by function {functions['claimed']} claimed, {functions['refused']} refused"
+        )
     print(f"    optimization defaults: {'on' if result['optimization_defaults'] else 'off'}")
     print(
         f"    closed world: {result['globals_resolved']} of {result['globals']} global(s) "
@@ -356,6 +474,9 @@ def report(result: dict, top: int) -> None:
 
 
 def main() -> None:
+    if sys.argv[1:] == ["--self-test"]:
+        self_test()
+        return
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--translate", required=True)
     parser.add_argument("--opt", required=True)

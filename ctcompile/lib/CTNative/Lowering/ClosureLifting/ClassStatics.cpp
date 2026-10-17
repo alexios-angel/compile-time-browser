@@ -16,13 +16,19 @@
 //
 // The values that name the class are the constructor's closure, the binding
 // it is stored in (and the static variables it became, RunOnce.cpp), the
-// captures of that binding, a static member's `this`, and `this.constructor`
-// in a method. The rewrite needs, for every one of them:
+// captures of that binding, a static member's `this`, `this.constructor` in
+// a method, and the parameter of a helper the class is passed to. A helper is
+// a function called directly; it is cloned for the class, together with the
+// functions it creates, the call goes to the clone, and the clone's parameter
+// names the class, so `helper(K)` with `k.s()` inside becomes a direct call
+// of K's `s` in a copy of the helper made for K. The rewrite needs, for every
+// one of them:
 //  1. every use is a static-member read this file rewrites, the receiver of a
-//     call through one, class setup, a `new` (not of `this` or
-//     `this.constructor`, which the rewrite leaves without a value), a write
-//     of the binding or a capture of it; anything else could reach a static
-//     member this file does not see;
+//     call through one, class setup, an argument of a direct call to a
+//     helper that reads neither new.target nor its own closure, a `new` (not
+//     of `this` or `this.constructor`, which the rewrite leaves without a
+//     value), a write of the binding or a capture of it; anything else could
+//     reach a static member this file does not see;
 //  2. each static member's closure is used only by its definition and its
 //     `__home` edge; a static member that a read outside the static members
 //     reaches reads neither new.target nor its own closure (its `this` is
@@ -41,6 +47,9 @@
 #include "ClosureLifter.h"
 
 #include "llvm/ADT/SetVector.h"
+
+#include <functional>
+#include <variant>
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
@@ -68,6 +77,21 @@ void eraseWithFeeders(mlir::Operation * op) {
     }
 }
 
+/// Whether `fn` reads new.target, or its own closure for anything but making
+/// closures that relay none of its captures. A direct call passes neither.
+bool needsCallee(ctjs::FuncOp fn) {
+    mlir::Block & entry = fn.getBody().front();
+    if (!entry.getArgument(1).use_empty()) { return true; }
+    return llvm::any_of(entry.getArgument(2).getUses(), [](mlir::OpOperand & use) {
+        auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(use.getOwner());
+        if (!made || use.getOperandNumber() != 0) { return true; }
+        for (unsigned i = 0; i < made.getUpvalues().size(); ++i) {
+            if (closureLifter::enclosingIndex(made, i) >= 0) { return true; }
+        }
+        return false;
+    });
+}
+
 /// The function that `op` sits in, by name, for a refusal.
 std::string where(mlir::Operation * op) {
     auto fn = op->getParentOfType<ctjs::FuncOp>();
@@ -87,6 +111,32 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         if (ctjs::constantKey(set.getKey()) == "constructor" && !isHomeEdge(set) &&
             !set.getObject().getDefiningOp<ctjs::CreateObjectOp>()) {
             ownConstructor = true;
+        }
+    });
+    // Rule 1 for `x.constructor` outside a class's own methods: an instance
+    // of a class can be read that way wherever it flows, and such a read
+    // names a class this rewrite would not see.
+    llvm::DenseSet<mlir::Value> instanceThis;
+    for (auto & [key, cls] : jsClasses) {
+        llvm::SmallVector<ctjs::CreateClosureOp> members{cls.constructor};
+        for (const auto & entry : cls.methods) { members.push_back(entry.getValue()); }
+        for (const auto & entry : cls.getters) { members.push_back(entry.getValue()); }
+        for (ctjs::CreateClosureOp member : members) {
+            ctjs::FuncOp fn = targetOf(member);
+            if (fn && !fn.getBody().empty()) {
+                instanceThis.insert(fn.getBody().front().getArgument(ctjs::arg_receiver));
+            }
+        }
+    }
+    // ponytail: `this.constructor` inside an arrow reads the arrow's lexical
+    // `this`, not its receiver, so it counts as a stray read here until the
+    // arrow-`this` lowering (ArrowThis.cpp) gives the arrow the method's
+    // receiver.
+    mlir::Operation * strayConstructorRead = nullptr;
+    module.walk([&](ctjs::GetPropertyOp read) {
+        if (!strayConstructorRead && ctjs::constantKey(read.getKey()) == "constructor" &&
+            !instanceThis.contains(read.getObject())) {
+            strayConstructorRead = read;
         }
     });
     // Rule 4, from every heritage call in the module, including the ones
@@ -124,6 +174,38 @@ bool closureLifter::bindClassStatics(liftReport & out) {
     });
     indexStarters();
 
+    // A helper that a class is passed to is cloned for that class, with the
+    // functions it creates, under fresh function indices.
+    unsigned nextIndex = 0;
+    module.walk([&](ctjs::FuncOp fn) {
+        if (const std::optional<unsigned> index = ctjs::functionIndex(fn)) {
+            nextIndex = std::max(nextIndex, *index + 1);
+        }
+    });
+    llvm::DenseMap<mlir::Operation *, mlir::StringAttr> copiedFrom;
+    std::function<ctjs::FuncOp(ctjs::FuncOp, llvm::SmallVectorImpl<mlir::Operation *> &)>
+        cloneDeep = [&](ctjs::FuncOp fn, llvm::SmallVectorImpl<mlir::Operation *> & made) {
+            auto copy = llvm::cast<ctjs::FuncOp>(fn->clone());
+            const unsigned index = nextIndex++;
+            const llvm::StringRef name = fn.getSymName();
+            copy.setSymName((name.substr(0, name.rfind('$')) + "$" + llvm::Twine(index)).str());
+            mlir::SymbolTable::setSymbolVisibility(copy, mlir::SymbolTable::Visibility::Private);
+            module.getBody()->getOperations().insertAfter(fn->getIterator(), copy);
+            byIndex[index] = copy;
+            if (passesNewTarget.contains(fn.getOperation())) {
+                passesNewTarget.insert(copy.getOperation());
+            }
+            made.push_back(copy);
+            copiedFrom[copy.getOperation()] = fn.getSymNameAttr();
+            copy.walk([&](ctjs::CreateClosureOp c) {
+                if (ctjs::FuncOp target = targetOf(c)) {
+                    ctjs::FuncOp nested = cloneDeep(target, made);
+                    c.setFunction(*ctjs::functionIndex(nested));
+                }
+            });
+            return copy;
+        };
+
     bool changed = false;
     for (auto & [key, cls] : jsClasses) {
         if (cls.statics.empty() && cls.staticGetters.empty()) { continue; }
@@ -141,6 +223,11 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         if (unnamedHeritage) {
             refuse("a class in this module extends a value this rewrite cannot name, so `this` "
                    "in a static member may not be one class");
+            continue;
+        }
+        if (strayConstructorRead) {
+            refuse("`x.constructor` is read" + where(strayConstructorRead) +
+                   ", where `x` may be an instance of the class");
             continue;
         }
         if (ownConstructor) {
@@ -205,6 +292,18 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         for (auto & entry : statics) {
             names.insert(entry.getValue().target.getBody().front().getArgument(0));
             selves.insert(entry.getValue().target.getBody().front().getArgument(0));
+        }
+        // The constructor's own closure and new.target, which a `new` of the
+        // class passes it: the direct call that replaces that `new` passes
+        // neither, so they must be names the rewrite resolves.
+        mlir::Value constructorCallee;
+        if (ctjs::FuncOp constructor = targetOf(cls.constructor);
+            constructor && !constructor.getBody().empty()) {
+            constructorCallee = constructor.getBody().front().getArgument(ctjs::arg_callee);
+            for (unsigned implicit : {1u, 2u}) {
+                names.insert(constructor.getBody().front().getArgument(implicit));
+                selves.insert(constructor.getBody().front().getArgument(implicit));
+            }
         }
         // `this.constructor` in a method or the constructor.
         llvm::SmallVector<ctjs::FuncOp> instanceFunctions{targetOf(cls.constructor)};
@@ -287,7 +386,8 @@ bool closureLifter::bindClassStatics(liftReport & out) {
             for (ctjs::CreateCellOp box : group) {
                 if (!boxes.insert(box.getOperation())) { continue; }
                 if (!box->hasAttr(kNativeStaticReference) &&
-                    !ctjs::constantAttr<ctjs::UndefinedAttr>(box.getInitial())) {
+                    !ctjs::constantAttr<ctjs::UndefinedAttr>(box.getInitial()) &&
+                    !names.contains(box.getInitial())) {
                     refuse("the binding of `" + className + "` starts with another value");
                 }
                 for (mlir::OpOperand & use : box.getResult().getUses()) {
@@ -296,8 +396,8 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                         names.insert(llvm::cast<ctjs::CellGetOp>(use.getOwner()).getResult());
                         break;
                     case cellUse::write:
-                        if (llvm::cast<ctjs::CellSetOp>(use.getOwner()).getValue() !=
-                            cls.constructor.getResult()) {
+                        if (!names.contains(
+                                llvm::cast<ctjs::CellSetOp>(use.getOwner()).getValue())) {
                             refuse("the binding of `" + className +
                                    "` is also written with another value" + where(use.getOwner()));
                         }
@@ -316,6 +416,95 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                     }
                 }
             }
+        };
+        // Each call that passes the class to a helper, redirected to the
+        // helper's clone for this class, and the clones; undone if the class
+        // is refused.
+        struct specialization {
+            ctjs::CallDirectOp call;
+            mlir::FlatSymbolRefAttr callee;
+            mlir::Value calleeValue;
+            unsigned argument;
+            ctjs::FuncOp clone;
+        };
+        llvm::SmallVector<specialization> specialized;
+        llvm::SmallVector<mlir::Operation *> clones;
+        llvm::DenseMap<std::pair<mlir::Operation *, unsigned>, ctjs::FuncOp> cloneOf;
+        // The parameter of `call`'s helper that receives the class as its
+        // argument `i`, in the helper's clone for this class; a reason when
+        // the helper cannot be cloned.
+        const auto specialize = [&](ctjs::CallDirectOp call,
+                                    unsigned i) -> std::variant<mlir::Value, std::string> {
+            ctjs::FuncOp target = call.getTarget();
+            if (!target || target.getBody().empty()) {
+                return std::string("is passed to a function this rewrite cannot see");
+            }
+            mlir::Block & entry = target.getBody().front();
+            if (ctjs::implicit_arguments + i >= entry.getNumArguments() ||
+                ctjs::readsRawArguments(target)) {
+                return ("is passed to `" + target.getSymName() +
+                        "`, which reads it from its argument window")
+                    .str();
+            }
+            if (needsCallee(target)) {
+                return ("is passed to `" + target.getSymName() +
+                        "`, which reads new.target or its own closure")
+                    .str();
+            }
+            if (llvm::is_contained(clones, target.getOperation())) {
+                return entry.getArgument(ctjs::implicit_arguments + i);
+            }
+            ctjs::FuncOp & clone = cloneOf[{target.getOperation(), i}];
+            if (!clone) {
+                // The clones call each other, not the functions they copy.
+                const size_t first = clones.size();
+                clone = cloneDeep(target, clones);
+                llvm::SmallVector<std::pair<mlir::StringAttr, mlir::StringAttr>> renamed;
+                for (size_t k = first; k < clones.size(); ++k) {
+                    auto copy = llvm::cast<ctjs::FuncOp>(clones[k]);
+                    renamed.push_back(
+                        {copiedFrom.lookup(copy.getOperation()), copy.getSymNameAttr()});
+                }
+                for (size_t k = first; k < clones.size(); ++k) {
+                    for (auto & [from, to] : renamed) {
+                        if (mlir::failed(
+                                mlir::SymbolTable::replaceAllSymbolUses(from, to, clones[k]))) {
+                            return std::string("is passed to a function whose copy could not be "
+                                               "renamed");
+                        }
+                    }
+                }
+                indexStarters();
+            }
+            mlir::OpBuilder at(call);
+            specialized.push_back({call, call.getCalleeAttr(), call.getCalleeValue(), i, clone});
+            call.setCalleeAttr(mlir::FlatSymbolRefAttr::get(clone.getSymNameAttr()));
+            call.getCalleeValueMutable().assign(undefinedAt(at, call.getLoc()));
+            return clone.getBody().front().getArgument(ctjs::implicit_arguments + i);
+        };
+        const auto revert = [&] {
+            for (specialization & s : llvm::reverse(specialized)) {
+                mlir::Operation * placeholder = s.call.getCalleeValue().getDefiningOp();
+                s.call.setCalleeAttr(s.callee);
+                s.call.getCalleeValueMutable().assign(s.calleeValue);
+                if (placeholder && placeholder->use_empty()) { placeholder->erase(); }
+            }
+            for (mlir::Operation * fn : clones) {
+                if (const std::optional<unsigned> index =
+                        ctjs::functionIndex(llvm::cast<ctjs::FuncOp>(fn))) {
+                    byIndex.erase(*index);
+                }
+                passesNewTarget.erase(fn);
+                fn->erase();
+            }
+            if (!clones.empty()) { indexStarters(); }
+            specialized.clear();
+            clones.clear();
+        };
+        const auto failed = [&] {
+            if (!staticRefusals.contains(key)) { return false; }
+            revert();
+            return true;
         };
         // A use inside a static member is refused only if that member can
         // run (see `reached` below); until then it waits here.
@@ -343,6 +532,13 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                     cls.definitions.contains(user) || isHomeEdge(user)) {
                     continue;
                 }
+                // The constructor reaching its captures through its own
+                // closure, which the closure lift turns into parameters.
+                if (name == constructorCallee &&
+                    (llvm::isa<ctjs::LoadUpvalueOp, ctjs::StoreUpvalueOp>(user) ||
+                     (llvm::isa<ctjs::CreateClosureOp>(user) && use.getOperandNumber() == 0))) {
+                    continue;
+                }
                 if (llvm::isa<ctjs::ConstructOp>(user)) {
                     if (selves.contains(name)) { selfConstructs.push_back(user); }
                     continue;
@@ -357,6 +553,27 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 if (auto made = llvm::dyn_cast<ctjs::CreateClosureOp>(user);
                     made && use.getOperandNumber() >= kFirstCapture) {
                     captured(made, use.getOperandNumber() - kFirstCapture);
+                    continue;
+                }
+                // A binding (a captured parameter's box) that starts with it.
+                if (auto cell = llvm::dyn_cast<ctjs::CreateCellOp>(user)) {
+                    followBox(cell);
+                    continue;
+                }
+                // Passed to a helper: the helper's clone for this class takes
+                // it as a parameter, which then names the class.
+                if (auto direct = llvm::dyn_cast<ctjs::CallDirectOp>(user);
+                    direct && use.getOperandNumber() >= direct.getArgs().getBeginOperandIndex()) {
+                    auto param = specialize(direct, use.getOperandNumber() -
+                                                        direct.getArgs().getBeginOperandIndex());
+                    if (auto * value = std::get_if<mlir::Value>(&param)) {
+                        names.insert(*value);
+                        continue;
+                    }
+                    if (refuseAt(user, "`" + className + "` " + std::get<std::string>(param) +
+                                           where(user))) {
+                        break;
+                    }
                     continue;
                 }
                 if (llvm::isa<ctjs::CallOp>(user) && use.getOperandNumber() == 1) {
@@ -406,7 +623,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 }
             }
         }
-        if (staticRefusals.contains(key)) { continue; }
+        if (failed()) { continue; }
         // A call whose receiver names the class must be a static call whose
         // receiver also names it.
         for (mlir::Operation * call : receiving) {
@@ -452,9 +669,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         // One nothing reads stays uncalled, whatever its body reads.
         for (auto & entry : statics) {
             ctjs::FuncOp target = entry.getValue().target;
-            mlir::Block & body = target.getBody().front();
-            if (reached.contains(target.getOperation()) &&
-                (!body.getArgument(1).use_empty() || !body.getArgument(2).use_empty())) {
+            if (reached.contains(target.getOperation()) && needsCallee(target)) {
                 refuse("its static member `" + entry.getKey() +
                        "` reads new.target or its own closure");
                 break;
@@ -466,8 +681,10 @@ bool closureLifter::bindClassStatics(liftReport & out) {
                 break;
             }
         }
-        if (staticRefusals.contains(key)) { continue; }
+        if (failed()) { continue; }
 
+        // The calls just redirected to helper clones start those clones.
+        if (!specialized.empty()) { indexStarters(); }
         // Rule 3. A member of the class starts only through the class or an
         // instance of it, which exist once the class is defined.
         // ponytail: trusts `new K` to come after the definition; a `new` of a
@@ -488,6 +705,7 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         };
         if (llvm::any_of(calls, [&](staticCall s) { return early(s.call); }) ||
             llvm::any_of(getterReads, [&](auto & r) { return early(r.first); })) {
+            revert();
             continue;
         }
 
@@ -521,22 +739,26 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         }
         // Names nothing reads any more: `this.constructor`, reads of the
         // binding and of its captures. Later ones can feed earlier ones.
-        for (bool erased = true; erased;) {
-            erased = false;
-            for (mlir::Value name : names) {
-                mlir::Operation * made = name.getDefiningOp();
-                if (!llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::CellGetOp,
-                                           ctjs::LoadUpvalueOp>(made) ||
-                    !llvm::all_of(made->getUsers(),
-                                  [](mlir::Operation * u) { return llvm::isa<ctjs::RootOp>(u); })) {
-                    continue;
+        const auto eraseUnreadNames = [&] {
+            for (bool erased = true; erased;) {
+                erased = false;
+                for (mlir::Value name : names) {
+                    mlir::Operation * made = name.getDefiningOp();
+                    if (!llvm::isa_and_nonnull<ctjs::GetPropertyOp, ctjs::CellGetOp,
+                                               ctjs::LoadUpvalueOp>(made) ||
+                        !llvm::all_of(made->getUsers(), [](mlir::Operation * u) {
+                            return llvm::isa<ctjs::RootOp>(u);
+                        })) {
+                        continue;
+                    }
+                    names.remove(name);
+                    eraseWithFeeders(made);
+                    erased = true;
+                    break;
                 }
-                names.remove(name);
-                eraseWithFeeders(made);
-                erased = true;
-                break;
             }
-        }
+        };
+        eraseUnreadNames();
         // Capture slots that held the class and that nothing reads any more,
         // nested closures first, so that no slot is removed while a closure
         // inside its target is still filled from it.
@@ -567,36 +789,78 @@ bool closureLifter::bindClassStatics(liftReport & out) {
         // A local binding of the class that no closure captures any more
         // holds the constructor at every read a write dominates: forward it,
         // so that `new K` names the constructor's closure as it does for an
-        // uncaptured binding.
-        for (mlir::Operation * op : boxes) {
-            auto box = llvm::cast<ctjs::CreateCellOp>(op);
-            if (box->getAttr(kNativeStaticCell)) { continue; }
-            llvm::SmallVector<ctjs::CellSetOp> writes;
-            llvm::SmallVector<ctjs::CellGetOp> reads;
-            bool other = false;
-            for (mlir::OpOperand & use : box.getResult().getUses()) {
-                switch (classify(use)) {
-                case cellUse::read:
-                    reads.push_back(llvm::cast<ctjs::CellGetOp>(use.getOwner()));
-                    break;
-                case cellUse::write:
-                    writes.push_back(llvm::cast<ctjs::CellSetOp>(use.getOwner()));
-                    break;
-                default: other |= !llvm::isa<ctjs::RootOp>(use.getOwner()); break;
+        // uncaptured binding. One nothing uses any more (a helper's captured
+        // parameter) is erased.
+        const auto forwardBoxes = [&] {
+            for (mlir::Operation * op : boxes.takeVector()) {
+                auto box = llvm::cast<ctjs::CreateCellOp>(op);
+                if (box->getAttr(kNativeStaticCell)) { continue; }
+                if (llvm::all_of(box->getUsers(),
+                                 [](mlir::Operation * u) { return llvm::isa<ctjs::RootOp>(u); })) {
+                    eraseWithFeeders(box);
+                    continue;
                 }
+                llvm::SmallVector<ctjs::CellSetOp> writes;
+                llvm::SmallVector<ctjs::CellGetOp> reads;
+                bool other = false;
+                for (mlir::OpOperand & use : box.getResult().getUses()) {
+                    switch (classify(use)) {
+                    case cellUse::read:
+                        reads.push_back(llvm::cast<ctjs::CellGetOp>(use.getOwner()));
+                        break;
+                    case cellUse::write:
+                        writes.push_back(llvm::cast<ctjs::CellSetOp>(use.getOwner()));
+                        break;
+                    default: other |= !llvm::isa<ctjs::RootOp>(use.getOwner()); break;
+                    }
+                }
+                const auto written = [&](ctjs::CellGetOp read) {
+                    return llvm::any_of(writes, [&](ctjs::CellSetOp write) {
+                        return reachesInFrame(write.getOperation(), read.getOperation());
+                    });
+                };
+                if (other || writes.empty() || !llvm::all_of(reads, written)) {
+                    boxes.insert(op);
+                    continue;
+                }
+                for (ctjs::CellGetOp read : reads) {
+                    names.remove(read.getResult());
+                    read.getResult().replaceAllUsesWith(cls.constructor.getResult());
+                    eraseWithFeeders(read);
+                }
+                for (ctjs::CellSetOp write : writes) { write.erase(); }
+                eraseWithFeeders(box);
             }
-            const auto written = [&](ctjs::CellGetOp read) {
-                return llvm::any_of(writes, [&](ctjs::CellSetOp write) {
-                    return reachesInFrame(write.getOperation(), read.getOperation());
-                });
-            };
-            if (other || writes.empty() || !llvm::all_of(reads, written)) { continue; }
-            for (ctjs::CellGetOp read : reads) {
-                read.getResult().replaceAllUsesWith(cls.constructor.getResult());
-                eraseWithFeeders(read);
+        };
+        forwardBoxes();
+        // A helper's clone that no longer reads the class's parameter is
+        // passed undefined for it instead.
+        for (specialization & s : specialized) {
+            const unsigned slot =
+                static_cast<unsigned>(s.call.getArgs().getBeginOperandIndex()) + s.argument;
+            if (!s.clone.getBody()
+                     .front()
+                     .getArgument(ctjs::implicit_arguments + s.argument)
+                     .use_empty()) {
+                continue;
             }
-            for (ctjs::CellSetOp write : writes) { write.erase(); }
-            eraseWithFeeders(box);
+            mlir::OpBuilder at(s.call);
+            s.call->setOperand(slot, undefinedAt(at, s.call.getLoc()));
+        }
+        eraseUnreadNames();
+        forwardBoxes();
+        // A helper's closure that only those calls used goes with them.
+        llvm::SetVector<mlir::Operation *> helpers;
+        for (specialization & s : specialized) {
+            if (auto made = s.calleeValue.getDefiningOp<ctjs::CreateClosureOp>()) {
+                helpers.insert(made);
+            }
+        }
+        for (mlir::Operation * made : helpers) {
+            if (llvm::all_of(made->getUsers(),
+                             [](mlir::Operation * u) { return llvm::isa<ctjs::RootOp>(u); })) {
+                eraseWithFeeders(made);
+            }
         }
         // The definitions, their `__home` edges and the closures.
         for (auto & entry : statics) {

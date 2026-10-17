@@ -11,6 +11,7 @@
 #include "Admission.h"
 #include "ctcompile/CTJS/Import/EngineGlobals.h"
 #include "ctcompile/CTNative/Analysis/HostContract.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 namespace {
@@ -63,7 +64,9 @@ bool admission::function(ctjs::FuncOp fn) {
         // JsonType also describes widened lattice facts. Only the complete DOM
         // proof establishes a parsed tree with owning, identity-free contents.
         return storage == carrier::none ||
-               (storage == carrier::json && (!domEntry || domEntry->entry() != fn));
+               (storage == carrier::json && (!domEntry || domEntry->entry() != fn)) ||
+               // ClosureSets.cpp: only a set the lift made has a representation.
+               (storage == carrier::closureSet && !isProvedClosureSet(fn, typeOf(value)));
     };
     // The receiver is a parameter when the lift said so, and %arg0 is then
     // the one implicit argument that has a carrier: the generated class of
@@ -73,7 +76,9 @@ bool admission::function(ctjs::FuncOp fn) {
     // made before its own rewrite ran, and a later refusal (the callee of
     // a `this.other()` that was not lifted) can have opened it since.
     const bool carriesReceiver = fn->hasAttr(kNativeReceiver);
-    if (carriesReceiver && !isClosedObject(entry.getArgument(0))) {
+    // An identity class's constructor hands `this` to its registry Map, which
+    // the registry proof checked (Analysis/Instances.h).
+    if (carriesReceiver && !isClosedObject(entry.getArgument(0)) && !isIdentityClass(fn)) {
         return refuse("its `this` is no longer a closed-shape receiver - " +
                       whyOpenReceiver(entry.getArgument(0)));
     }
@@ -191,6 +196,7 @@ bool admission::function(ctjs::FuncOp fn) {
         // list, plus the bookkeeping, literal and owned-global rows here.
         // Map bookkeeping is asked of the operation, which may have no result.
         if (isNativeMapBookkeeping(o)) { return; }
+        if (nativeDictionaryAction(o) == "plumbing") { return; }
         if (domEntry && domBookkeeping(*domEntry, o)) { return; }
         if (o->getNumResults() == 1 && lowersToNothing(o->getResult(0))) { return; }
         // An object literal, or a record its callee returned, is its class.

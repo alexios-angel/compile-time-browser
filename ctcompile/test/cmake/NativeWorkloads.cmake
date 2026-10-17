@@ -16,6 +16,14 @@ ctcompile_unit_test(native-page LIBS ctbrowser::page)
 # is added by Runtime/CMakeLists.txt.
 ctcompile_unit_test(native-array-callbacks LIBS ctbrowser::core)
 
+# The native listener table (CTNative/Runtime/Events.hpp) over a static page;
+# its source is added by Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-events LIBS ctbrowser::page)
+
+# The native timer table (CTNative/Runtime/Timers.hpp); its source is added by
+# Runtime/CMakeLists.txt.
+ctcompile_unit_test(native-timers LIBS ctbrowser::core)
+
 set(_native_ctbrowser "${CTCOMPILE_MONOREPO_ROOT}/ctbrowser")
 set(_native_gate "${_native_ctbrowser}/cmake/run-without-vm.cmake")
 set(_native_gate_nm "${CMAKE_NM}")
@@ -66,13 +74,15 @@ set_tests_properties(css_syntax_native_gate_control PROPERTIES WILL_FAIL TRUE)
 
 # bootstrap_layout.native: unittests/unit/bootstrap_layout.cpp on a VM-free
 # page (ctbrowser::page::static_page), with tools/check/css-dump.js compiled by
-# the native pipeline into the C++ its engine calls. The rule is complete, but
-# the target is EXCLUDE_FROM_ALL and its test is not registered yet:
-# css-dump.js does not compile natively yet, so building it fails in
-# pipeline.cmake, and `all` must keep working. Build it by name to try
-# (ctbrowser-test-bootstrap_layout-native). Once css-dump.js compiles, drop
-# EXCLUDE_FROM_ALL and register `bootstrap_layout.native` through
-# ${_native_gate}, as css_syntax.native is.
+# the native pipeline into the C++ its engine calls. It is registered as
+# check-workload.py's native-run stage asks (`ctest -R
+# '^bootstrap_layout[.]native$'`), through ${_native_gate} as css_syntax.native
+# is, with the environment and working directory ctbrowser_test() gives
+# bootstrap_layout. CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE=OFF keeps the target out
+# of `all` and the test unregistered, for a tree whose compiler cannot lower
+# css-dump.js (pipeline.cmake then fails the build).
+option(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE
+       "Build and register bootstrap_layout.native (css-dump.js compiled natively)" ON)
 if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set(_css_dump "${CTCOMPILE_MONOREPO_ROOT}/tools/check/css-dump.js")
   set(_css_dump_emitc "${CMAKE_CURRENT_BINARY_DIR}/css-dump.emitc.mlir")
@@ -102,13 +112,25 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/bootstrap_layout_scripts.cpp"
                               PROPERTIES OBJECT_DEPENDS "${_css_dump_cpp}")
 
-  add_executable(ctbrowser-test-bootstrap_layout-native EXCLUDE_FROM_ALL
+  add_executable(ctbrowser-test-bootstrap_layout-native
     "${_native_ctbrowser}/unittests/unit/bootstrap_layout.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/bootstrap_layout_scripts.cpp")
   target_compile_definitions(ctbrowser-test-bootstrap_layout-native PRIVATE
     CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctbrowser-test-bootstrap_layout-native PRIVATE ctbrowser::page)
   ctcompile_target(ctbrowser-test-bootstrap_layout-native)
+  if(CTCOMPILE_BOOTSTRAP_LAYOUT_NATIVE)
+    add_test(NAME bootstrap_layout.native
+             COMMAND "${CMAKE_COMMAND}" "-DNM=${_native_gate_nm}"
+                     "-DEXE=$<TARGET_FILE:ctbrowser-test-bootstrap_layout-native>"
+                     -P "${_native_gate}"
+             WORKING_DIRECTORY "${_native_ctbrowser}")
+    set_tests_properties(bootstrap_layout.native PROPERTIES ENVIRONMENT
+      "CTBROWSER_TEST_ENGINE=native;CTBROWSER_FONT_PATH=${_native_ctbrowser}/resources/fonts")
+  else()
+    set_target_properties(ctbrowser-test-bootstrap_layout-native PROPERTIES
+                          EXCLUDE_FROM_ALL TRUE)
+  endif()
 
   # dom-reads.test: CTNative/Browser/page/dom-reads.js over the interpreter
   # and compiled natively, through the same engine seam and wrapper as
@@ -145,4 +167,92 @@ if(CTCOMPILE_ENABLE_MLIR AND TARGET ctjs-translate AND TARGET ctjs-opt)
   target_compile_definitions(ctcompile-test-dom-reads-native PRIVATE CTBROWSER_TEST_NATIVE=1)
   target_link_libraries(ctcompile-test-dom-reads-native PRIVATE ctbrowser::page)
   ctcompile_target(ctcompile-test-dom-reads-native)
+
+  # A page test built from CTNative/Browser/page/<name>.cpp: over the
+  # interpreter, and natively over <name>.js compiled through the native
+  # pipeline with `entry` as its string entry, by clang and by GCC.
+  # <name>.test diffs each native run against the interpreter's.
+  function(ctcompile_page_workload name entry)
+    set(emitc "${CMAKE_CURRENT_BINARY_DIR}/${name}.emitc.mlir")
+    set(cpp "${CMAKE_CURRENT_BINARY_DIR}/${name}.generated.cpp")
+    add_custom_command(
+      OUTPUT "${cpp}"
+      COMMAND "${CMAKE_COMMAND}" -DTRANSLATE=$<TARGET_FILE:ctjs-translate>
+              -DOPT=$<TARGET_FILE:ctjs-opt> -DSOURCE=${_dom_reads_dir}/${name}.js
+              -DSTRING_ENTRIES=${entry} -DOUTPUT=${emitc}
+              -P "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+      COMMAND $<TARGET_FILE:ctjs-translate> --mlir-to-cpp "${emitc}" -o "${cpp}"
+      DEPENDS "${_dom_reads_dir}/${name}.js" ctjs-translate ctjs-opt
+              "${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Checks/pipeline.cmake"
+      COMMENT "Compiling ${name}.js to C++ through the native pipeline"
+      VERBATIM)
+    set(CTCOMPILE_WORKLOAD_SCRIPT "${_dom_reads_dir}/${name}.js")
+    set(CTCOMPILE_WORKLOAD_ENTRY ${entry})
+    set(CTCOMPILE_WORKLOAD_GENERATED "${cpp}")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/CTNative/Workloads/native-scripts.cpp.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp" @ONLY)
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp"
+                                PROPERTIES OBJECT_DEPENDS "${cpp}")
+    add_executable(ctcompile-test-${name} "${_dom_reads_dir}/${name}.cpp")
+    target_link_libraries(ctcompile-test-${name} PRIVATE ctbrowser::ctbrowser)
+    ctcompile_target(ctcompile-test-${name})
+    add_executable(ctcompile-test-${name}-native "${_dom_reads_dir}/${name}.cpp"
+      "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp")
+    target_compile_definitions(ctcompile-test-${name}-native PRIVATE CTBROWSER_TEST_NATIVE=1)
+    target_link_libraries(ctcompile-test-${name}-native PRIVATE ctbrowser::page)
+    ctcompile_target(ctcompile-test-${name}-native)
+
+    # The same native test built by GCC, since native output must build and
+    # run under both compilers: its two sources compiled by g++ with the clang
+    # target's include directories and definitions and the project's warnings
+    # as errors, then linked against the same libraries (both compilers use
+    # GCC's libstdc++ here).
+    set(native ctcompile-test-${name}-native)
+    set(gcc_dir "${CMAKE_CURRENT_BINARY_DIR}/${name}-gcc")
+    file(MAKE_DIRECTORY "${gcc_dir}")
+    set(gcc_flags -std=c++23 -O2 -Wall -Wextra -Wconversion -pedantic -Werror
+        "-I$<JOIN:$<TARGET_PROPERTY:${native},INCLUDE_DIRECTORIES>,$<SEMICOLON>-I>"
+        "-D$<JOIN:$<TARGET_PROPERTY:${native},COMPILE_DEFINITIONS>,$<SEMICOLON>-D>")
+    # The rest of the clang target's compile options are only warnings and
+    # the same -O2; check-gcc-options.cmake fails the build when that stops
+    # being so.
+    set(checked "${gcc_dir}/options.checked")
+    add_custom_command(
+      OUTPUT "${checked}"
+      COMMAND "${CMAKE_COMMAND}" -DTARGET=${native}
+              "-DOPTIONS=$<JOIN:$<TARGET_PROPERTY:${native},COMPILE_OPTIONS>,|>"
+              -DSTAMP=${checked} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gcc-options.cmake"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-gcc-options.cmake"
+      COMMENT "Checking that ${native}-gcc copies every option of ${native}"
+      VERBATIM)
+    set(objects)
+    foreach(source "${_dom_reads_dir}/${name}.cpp" "${CMAKE_CURRENT_BINARY_DIR}/${name}_scripts.cpp")
+      get_filename_component(stem "${source}" NAME_WE)
+      set(object "${gcc_dir}/${stem}.o")
+      add_custom_command(
+        OUTPUT "${object}"
+        COMMAND "${CTCOMPILE_CLEAN_GXX}" ${gcc_flags} -MD -MF "${object}.d" -c "${source}"
+                -o "${object}"
+        DEPENDS "${source}" "${cpp}" "${checked}"
+        DEPFILE "${object}.d"
+        COMMENT "Compiling ${stem}.cpp with GCC"
+        COMMAND_EXPAND_LISTS
+        VERBATIM)
+      list(APPEND objects "${object}")
+    endforeach()
+    set_source_files_properties(${objects} PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+    add_executable(${native}-gcc ${objects})
+    set_target_properties(${native}-gcc PROPERTIES LINKER_LANGUAGE CXX)
+    target_link_libraries(${native}-gcc PRIVATE ctbrowser::page)
+  endfunction()
+  # Listeners run when the test clicks the page: dispatched by the browser,
+  # and by the native listener table (Runtime/Events.hpp).
+  ctcompile_page_workload(events events_report)
+  # Timers run when the test moves the clock: by the browser's tick, and by
+  # the native timer table (Runtime/Timers.hpp).
+  ctcompile_page_workload(timers timers_report)
+  # The element calls of Bootstrap's SelectorEngine and Manipulator.
+  ctcompile_page_workload(selectors selectors_report)
+  # A Config-like struct field that holds an element or null.
+  ctcompile_page_workload(element_fields element_fields_report)
 endif()

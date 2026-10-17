@@ -38,10 +38,12 @@
 #include "ctcompile/CTNative/Analysis/NativeClosure.h"
 #include "ctcompile/CTNative/Analysis/NativeMap.h"
 #include "ctcompile/CTNative/Analysis/NativeObjectIdentity.h"
+#include "ctcompile/CTNative/Analysis/StaticTables.h"
 
 #include "ctcompile/CTJS/IR/CTJSDialect.h"
 #include "ctcompile/CTJS/IR/CTJSOps.h"
 #include "ctcompile/CTNative/IR/CTNativeDialect.h"
+#include "ctcompile/CTNative/IR/CTNativeOps.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -165,10 +167,7 @@ bool noneAreBigInt(llvm::ArrayRef<const TypeLattice *> operands) {
 /// it an int32 loses an observable difference. tools/check/type-oracle.py
 /// counts NUM_NEGATIVE_ZERO as not-an-i32 for the same reason, and the two
 /// must agree.
-mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
-    mlir::MLIRContext * c = constant.getContext();
-    mlir::Attribute value = constant.getValue();
-
+mlir::Type typeOfConstant(mlir::MLIRContext * c, mlir::Attribute value) {
     if (llvm::isa<ctjs::UndefinedAttr, ctjs::NullAttr>(value)) { return absentType(c); }
     if (llvm::isa<ctjs::BooleanAttr>(value)) { return boolType(c); }
     if (llvm::isa<ctjs::StringAttr>(value)) { return stringType(c); }
@@ -181,6 +180,10 @@ mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
     }
     // A BigInt literal. CTNative has no type for one, so no type is claimed.
     return {};
+}
+
+mlir::Type typeOfConstant(ctjs::ConstantOp constant) {
+    return typeOfConstant(constant.getContext(), constant.getValue());
 }
 
 } // namespace
@@ -404,6 +407,7 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
     // `pending` set while every stored value is still unvisited.
     const auto element = [&](llvm::ArrayRef<mlir::Value> members) -> mlir::Type {
         mlir::Type joined = joinLattices(op, elementVectorStores(members), mlir::Type{});
+        joined = presentElements(op, members, joined);
         if (splitsAString(members)) { joined = meet(joined, stringType(c)); }
         return joined;
     };
@@ -457,7 +461,9 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
                        : mlir::Type{};
         }
         auto vector = llvm::dyn_cast_or_null<VecType>(typeOf(operands[0]));
-        if (!vector || !lowered(vector.getElementType()) ||
+        if (!vector ||
+            (!lowered(vector.getElementType()) && !(llvm::isa<NumType>(vector.getElementType()) &&
+                                                    isNumberElementVector(read.getObject()))) ||
             elementVectorAliases(read.getObject()).empty()) {
             return {};
         }
@@ -466,8 +472,9 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         // An index proved in bounds reads the element; otherwise one past
         // the end, a fraction or a negative reads undefined.
         if (key.empty() && isProvedNumeric(operands[1])) {
-            return isBoundedIndexRead(op) ? vector.getElementType()
-                                          : meet(absentType(c), vector.getElementType());
+            const bool exists = isBoundedIndexRead(op) ||
+                                (llvm::isa<TupleType>(vector.getElementType()) && isRowRead(op));
+            return exists ? vector.getElementType() : meet(absentType(c), vector.getElementType());
         }
         return {};
     }
@@ -494,6 +501,38 @@ mlir::Type TypeInference::elementVectorType(mlir::Operation * op,
         const mlir::Type stored = element(members);
         return VecType::get(c, stored ? stored : stringType(c));
     }
+    case VectorCall::builtinStatic: {
+        // The row's result once each String parameter is given a String;
+        // admission checks the others.
+        const BuiltinStatic & row = *builtinStaticOf(op);
+        for (std::size_t i = 2; i < operands.size(); ++i) {
+            if (row.params[i - 2] == BuiltinStatic::Param::string &&
+                !llvm::isa_and_nonnull<StrType>(typeOf(operands[i]))) {
+                return {};
+            }
+        }
+        switch (row.result) {
+        case BuiltinStatic::Result::string: return stringType(c);
+        case BuiltinStatic::Result::elementVector: return VecType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::nullableElement: return OptType::get(c, DOMElementType::get(c));
+        case BuiltinStatic::Result::undefined: return absentType(c);
+        case BuiltinStatic::Result::number: return doubleType(c);
+        // Only a call the constant-table proof marked: every field a String.
+        case BuiltinStatic::Result::tableEntries:
+            return op->hasAttr(kNativeStaticTableEnumeration)
+                       ? VecType::get(
+                             c, TupleType::get(c, llvm::SmallVector<mlir::Type, 2>{stringType(c),
+                                                                                   stringType(c)}))
+                       : mlir::Type{};
+        case BuiltinStatic::Result::tableKeys:
+        case BuiltinStatic::Result::tableValues:
+            return op->hasAttr(kNativeStaticTableEnumeration) ? VecType::get(c, stringType(c))
+                                                              : mlir::Type{};
+        }
+        return {};
+    }
+    case VectorCall::includes: return ofStrings(operands[1]) ? boolType(c) : mlir::Type{};
+    case VectorCall::callback: return arrayCallbackType(op, operands, pending);
     case VectorCall::regexp:
     case VectorCall::none: return {};
     }
@@ -617,6 +656,9 @@ mlir::Type TypeInference::mapTypeOf(mlir::Operation * op, mlir::Value map) {
 
 void TypeInference::setToEntryState(TypeLattice * lattice) {
     auto value = lattice->getAnchor();
+    if (isArrayCallbackParameter(value) || isHostCallbackParameter(value)) { return; }
+    // A specialised replace callback's parameters come from its call.
+    if (isStringCallbackParameter(value)) { return; }
     const bool domInput =
         ownedRoots_ && ownedRoots_->proved() && llvm::is_contained(ownedRoots_->domInputs(), value);
     mlir::Type type = domInput || (domEntry_ && domEntry_->isElement(value))
@@ -670,7 +712,27 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
         return mlir::success();
     };
 
+    if (auto refine = llvm::dyn_cast<RefineOp>(op)) {
+        const TypeValue & from = operands[0]->getValue();
+        if (from.isUninitialized() && refine.getKind() == "truthy") { return mlir::success(); }
+        return answer(refinedType(c, refine.getKind(), from.getType()));
+    }
+
     if (auto visited = visitBorrowedCallback(op, operands, results)) { return *visited; }
+    // A run-once static's constant table (Inference/StaticTables.cpp): the
+    // literal is the table, and a proved read is the constant in its field.
+    if (auto name = op->getAttrOfType<mlir::StringAttr>(kNativeStaticTable)) {
+        if (llvm::isa<ctjs::CreateObjectOp>(op)) {
+            return answer(StaticTableType::get(c, name.getValue()));
+        }
+        if (auto field = op->getAttr(kNativeStaticTableField)) {
+            // A spread's read of a table that may still be undefined.
+            const auto type = typeOfConstant(c, field);
+            return answer(op->hasAttr(kNativeStaticTableSpread)
+                              ? TypeValue::join(TypeValue{type}, TypeValue{absentType(c)}).getType()
+                              : type);
+        }
+    }
 
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && domEntry_ && domEntry_->isSymbolDescription(read)) {
@@ -785,11 +847,18 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     for (const TypeLattice * operand : operands) {
         if (operand->getValue().isUninitialized()) { return mlir::success(); }
     }
+    // Instances a registry Map owns (Inference/Instances.cpp).
+    if (const auto instance = instanceTypeOf(op, operands)) {
+        return *instance ? answer(*instance) : mlir::success();
+    }
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && isProvedString(operands[0]) && constantKey(read.getKey()) == "length") {
         return answer(doubleType(c));
     }
 
+    if (op->getNumResults() == 1) {
+        if (const mlir::Type table = dictionaryType(op, operands)) { return answer(table); }
+    }
     mlir::Type mapAnswer;
     if (auto made = llvm::dyn_cast<ctjs::ConstructOp>(op); made && made->hasAttr(kNativeMapSite)) {
         mapAnswer = mapTypeOf(op, made.getResult());
@@ -836,7 +905,26 @@ mlir::LogicalResult TypeInference::visitOperation(mlir::Operation * op,
     // element, an element's text members and children, the root's client
     // size and the window's device pixel ratio (Runtime/Browser.hpp, Page.hpp).
     if (!ownedRoots_ && !domEntry_) {
+        if (const mlir::Type member = elementMemberType(op, operands)) { return answer(member); }
         if (const mlir::Type read = domReadType(op, operands)) { return answer(read); }
+        if (const mlir::Type registered = hostCallbackType(op, operands)) {
+            return answer(registered);
+        }
+    }
+    // String.prototype.toLowerCase, and replace with a specialised function.
+    if (isStringMethodCall(op) && isProvedString(operands[1])) { return answer(stringType(c)); }
+    // `text[i]` with a Number index: a one-unit String, or undefined past the
+    // end (ECMA-262 10.4.3.5).
+    if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
+        read && ctjs::constantKey(read.getKey()).empty() && isProvedString(operands[0]) &&
+        llvm::isa_and_nonnull<NumType>(operands[1]->getValue().getType())) {
+        return answer(meet(absentType(c), stringType(c)));
+    }
+    if (isStringCallbackCall(op)) {
+        bool pending = false;
+        const mlir::Type replaced = stringCallbackType(op, operands, pending);
+        if (pending) { return mlir::success(); }
+        if (replaced) { return answer(replaced); }
     }
 
     // Vectors of one proved element type, and split on a String.

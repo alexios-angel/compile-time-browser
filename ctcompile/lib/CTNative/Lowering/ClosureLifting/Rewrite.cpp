@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "ClassInheritance.h"
 #include "ClosureLifter.h"
+#include "ctcompile/CTNative/Analysis/Instances.h"
 
 namespace ctcompile::ctnative::lowering_detail {
 
@@ -27,8 +28,17 @@ liftReport closureLifter::run() {
         op->removeAttr(kNativeStoredRead);
         op->removeAttr(kNativeMethodTable);
         op->removeAttr(kNativeTableField);
+        op->removeAttr(kNativeArrayCallback);
         op->removeAttr(kNativeBorrowedCallback);
+        op->removeAttr(kNativeClosureSet); // ClosureSets.cpp
         op->removeAttr(kNativeBorrowedCall);
+        op->removeAttr(kNativeHostCallback);
+        op->removeAttr(kNativeHostTimer);
+        op->removeAttr(kNativeHostTarget);
+        op->removeAttr(kNativeHostCapture);
+        op->removeAttr(kNativeHostIdentity);
+        op->removeAttr(kNativeHostIdentified);
+        op->removeAttr(kNativeHostRemove);
     });
     // Bind local functions directly (specializeCallbacks, bindLocalFunctions)
     // before any census. These rewrites erase boxes, stores, reads and calls,
@@ -36,6 +46,7 @@ liftReport closureLifter::run() {
     // before them would describe operations that no longer exist.
     // indexAndNewTargets() supplies the two census walks they need.
     indexAndNewTargets();
+    captureLexicalThis(); // ArrowThis.cpp: an arrow's `this` becomes a capture.
     // Bindings of functions that run once, which a closure the lift would
     // refuse captures, become static variables first (RunOnce.cpp), so those
     // closures no longer capture them. Boxes holding a function wait for a
@@ -95,6 +106,10 @@ liftReport closureLifter::run() {
         locals.census();
         locals.unboxCells(out, true);
     }
+    // A registry Map's class: its `dispose` loop over its own property
+    // names becomes one store per field (Analysis/Instances.h), before the
+    // census below indexes the calls that loop makes.
+    rewriteInstanceRegistries(module);
     census();
     // Run the argument census before the method census, because methodCensus
     // reads closedAfterLift, which reads the argument slots. All censuses run
@@ -106,6 +121,9 @@ liftReport closureLifter::run() {
     constructorCensus();
     argumentCensus();
     methodCensus();
+    arrayCallbackCensus();
+    stringCallbackCensus();
+    hostCallbackCensus();
     llvm::DenseMap<mlir::Operation *, std::string> reasonOf; // Closure -> its own reason.
     // The closure that names each function, for the chained reason below: a
     // capture filled from the enclosing closure is refused with that
@@ -146,6 +164,7 @@ liftReport closureLifter::run() {
         returnedClosureCensus();
         returnedMethodTableCensus();
         borrowedCallbackCensus();
+        closureSetCensus(); // ClosureSets.cpp
         // Per target: the closures that name it, and the first reason any
         // of them could not be lifted. A target's signature changes for the
         // whole program, so one unliftable creation site blocks every other.
@@ -170,7 +189,11 @@ liftReport closureLifter::run() {
                 returnedClosures.contains(c.getOperation())      ? whyNotReturnedClosure(c)
                 : constructorClosures.contains(c.getOperation()) ? whyNotLiftableConstructor(c)
                 : methodClosures.contains(c.getOperation())      ? whyNotLiftableMethod(c)
+                : arrayCallbacks.contains(c.getOperation())      ? whyNotArrayCallback(c)
                 : borrowedCallbacks.contains(c.getOperation())   ? whyNotBorrowedCallback(c)
+                : stringCallbacks.contains(c.getOperation())     ? whyNotStringCallback(c)
+                : hostCallbacks.contains(c.getOperation())       ? whyNotHostCallback(c)
+                : closureSets.contains(c.getOperation())         ? whyNotInClosureSet(c)
                                                                  : whyNotLiftable(c);
             if (why) {
                 reasonOf[c.getOperation()] = *why;
@@ -264,6 +287,7 @@ liftReport closureLifter::run() {
             op->setAttr(kNativeMethodRefusal, mlir::UnitAttr::get(context));
         }
     }
+    releaseLexicalThisCells(); // ArrowThis.cpp: before unboxCells sees the cells.
     unboxCells(out);
     return out;
 }
@@ -293,6 +317,9 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
             objectArgs.push_back(static_cast<int32_t>(captureArgument(captures) + j));
         }
     }
+    // An arrow's lexical `this` capture may be an object pointer too (ArrowThis.cpp).
+    const llvm::SmallVector<int32_t> lexicalThis = lexicalThisObjectArgs(made);
+    objectArgs.insert(objectArgs.begin(), lexicalThis.begin(), lexicalThis.end());
 
     // Which captures are passed as a pointer to the owning frame's variable
     // rather than by value. Read before the capture parameters are inserted
@@ -392,6 +419,7 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
         }
         out.objects += static_cast<unsigned>(objectArgs.size());
     }
+    liftSelfCalls(target, captures, parameters);
     // Making the function private is required, not cosmetic. MLIR's
     // DeadCodeAnalysis gives a public symbol unknown predecessors, so
     // TypeInference falls back to setToEntryState and every parameter,
@@ -403,8 +431,23 @@ void closureLifter::lift(ctjs::FuncOp target, llvm::ArrayRef<ctjs::CreateClosure
     mlir::SymbolTable::setSymbolVisibility(target, mlir::SymbolTable::Visibility::Private);
     ++out.functions;
 
+    if (arrayCallbacks.contains(made.front())) {
+        rewriteArrayCallback(made.front(), target, out);
+        return;
+    }
     if (borrowedCallbacks.contains(made.front())) {
         rewriteBorrowedCallback(made.front(), target, out);
+        return;
+    }
+    if (stringCallbacks.contains(made.front())) {
+        return rewriteStringCallback(made.front(), target, out);
+    }
+    if (hostCallbacks.contains(made.front())) {
+        rewriteHostCallback(made.front(), target, out);
+        return;
+    }
+    if (closureSets.contains(made.front())) { // ClosureSets.cpp
+        rewriteClosureSetMember(made.front(), target, out);
         return;
     }
 

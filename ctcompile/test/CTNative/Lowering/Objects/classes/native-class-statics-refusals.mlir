@@ -24,14 +24,20 @@
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/relay.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=RELAY
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/constructor-read.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=CONSTRUCTORREAD --implicit-check-not=unreachable_refusals
+// RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/init-fields.js 2>/dev/null \
+// RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
+// RUN:   | FileCheck %s --check-prefix=INITFIELDS --implicit-check-not=unreachable_refusals
 // RUN: ctjs-translate --ctbrowser-js-to-ctjs %t/get-or-create.js 2>/dev/null \
 // RUN:   | ctjs-opt --ctjs-resolve-globals --ctjs-lift-to-scf --ctnative-lower-to-emitc \
 // RUN:   | FileCheck %s --check-prefix=GETORCREATE
 // RUN: %native_reference %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 // RUN: %node -e 'const fs = require("fs"), vm = require("vm"), scope = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), scope); console.log("r=" + scope.r);' %t/get-or-create.js | FileCheck %s --check-prefix=GETORCREATE-RUN
 
-// The class is passed to a function, which could read any static member.
-// ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.call{{(_direct)?}}` in `run${{[0-9]+}}`"
+// The class is passed to a function that returns it, so it leaves as a value.
+// ESCAPE: ctnative.class_reason = "it has static getter `size`; `Box` is used as a value by `ctjs.return` in `show${{[0-9]+}}`"
 //
 // `early` reads a static member and is called before the class statement
 // runs, when the binding is still uninitialized (JavaScript throws there).
@@ -51,6 +57,16 @@
 // nested function through its own closure: the direct call passes no closure.
 // RELAY: ctnative.class_reason = "it has static method `make`; its static member `make` reads new.target or its own closure"
 //
+// A static getter read through an instance's `constructor` outside the class
+// (`read(item)`): the rewrite cannot see that read, so it keeps every static
+// member, and no getter is removed as unreachable while it can still run.
+// CONSTRUCTORREAD: ctnative.class_reason = "it has static getter `VALUE`; `x.constructor` is read in `read${{[0-9]+}}`, where `x` may be an instance of the class"
+//
+// A field initializer: the constructor passes its own closure to the VM's
+// __ctbrowser_init_fields, which reads the initializer off it, so the
+// constructor's closure is a use of the class the rewrite cannot resolve.
+// INITFIELDS: ctnative.class_reason = "it has static getter `SIDES`; `Shape` is used as a value by `ctjs.call` in `Shape${{[0-9]+}}`"
+//
 // Bootstrap's BaseComponent.getOrCreateInstance on two subclasses that
 // override a static getter: `new this(e)` constructs the subclass that the
 // call names. Flattening (ClassInheritance.cpp) gives X and Y their own
@@ -64,10 +80,10 @@
 // GETORCREATE-RUN: r=34
 
 //--- escape.js
-function show(k) { return k.size; }
+function show(k) { return k; }
 function run() {
     class Box { constructor(v) { this.v = v; } static get size() { return 4; } }
-    return new Box(2).v + show(Box);
+    return new Box(2).v + show(Box).size;
 }
 var r = run();
 
@@ -123,5 +139,21 @@ function run() {
     class Y extends Base { static get NAME() { return "yy"; } size() { return 20; } }
     const a = X.getOrCreateInstance(1), b = Y.getOrCreateInstance(2);
     return a.size() + b.size() + X.NAME.length + Y.NAME.length + (X.getOrCreateInstance(1) === a ? 1 : 0);
+}
+var r = run();
+
+//--- constructor-read.js
+function read(saved) { return saved.constructor.VALUE; }
+function run() {
+    class Item { constructor(n) { this.n = n; } static get VALUE() { return 7; } }
+    const item = new Item(3);
+    return item.n + Item.VALUE + read(item);
+}
+var r = run();
+
+//--- init-fields.js
+function run() {
+    class Shape { n = 7; static get SIDES() { return 4; } }
+    return new Shape().n + Shape.SIDES;
 }
 var r = run();
