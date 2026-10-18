@@ -35,8 +35,8 @@ namespace ctcompile::ctnative {
 /// How many alternatives a `!ctnative.variant` may carry before the lattice
 /// gives up and answers `!ctnative.json`.
 ///
-/// Four is a policy, not a measurement. A wider std::variant makes generated
-/// code no one would write by hand, and an uncapped union makes the lattice
+/// Four is a policy, not a measurement. A wider union makes generated code no
+/// one would write by hand, and an uncapped union makes the lattice
 /// infinitely tall, so the type-inference dataflow would have no termination
 /// guarantee. The cap makes the lattice finite-height.
 ///
@@ -51,8 +51,9 @@ inline constexpr unsigned kMaxVariantAlternatives = 4;
 ///
 /// Sixteen is a policy with a measured floor: Popper's modifier engine, the
 /// largest closed callable set in the workloads, calls through a field that
-/// holds one of ten functions. Each target is one `std::visit` arm in the
-/// emitted C++, so a much larger set is generated code no one would write.
+/// holds one of ten functions. Each target is one case of the set's `switch`
+/// in the emitted C++, so a much larger set is generated code no one would
+/// write.
 /// Like the variant cap it bounds the lattice's height, which the
 /// type-inference dataflow needs to terminate. Past the cap the answer is
 /// `boxed` rather than `json`: `json` describes data, and no data value can
