@@ -5244,7 +5244,7 @@ var savedThrow, savedExhausted;
                                     first_selector[:guard_position].rpartition("=")[0].split()[-1]
                                 )
                                 cast_position = first_selector.index(
-                                    f"= (bool) {guard_value};", guard_position
+                                    f"= static_cast<bool>({guard_value});", guard_position
                                 )
                                 cast_value = first_selector[:cast_position].split()[-1]
                                 nested_scope = first_selector.index(

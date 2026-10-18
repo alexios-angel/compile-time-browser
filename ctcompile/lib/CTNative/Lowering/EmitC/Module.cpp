@@ -187,11 +187,12 @@ bool lowering::usesPageViews() {
 void lowering::declareGlobals() {
     // Presentation policies for the C++ printer only: keep typed constants
     // through every optimization and let the printer choose their literal
-    // spelling, declare bindings const where the operands allow it, and spell
-    // double as js_num.
+    // spelling, declare bindings const where the operands allow it, spell
+    // double as js_num, and spell every cast static_cast.
     module->setAttr("ctnative.readable_literals", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.const_bindings", mlir::UnitAttr::get(context));
     module->setAttr("ctnative.numeric_alias", mlir::UnitAttr::get(context));
+    module->setAttr("ctnative.named_casts", mlir::UnitAttr::get(context));
     needsObjectIdentity |= needsObjectValue;
     // Snapshot projections remain ordered even after their producer has
     // been deforested. The choice only becomes more conservative here.

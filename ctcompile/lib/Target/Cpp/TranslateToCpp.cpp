@@ -172,6 +172,7 @@ struct CppEmitter {
       : CppEmitter(os, parent.declareVariablesAtTop, parent.fileId) {
     readableLiterals = parent.readableLiterals;
     numericAlias = parent.numericAlias;
+    namedCasts = parent.namedCasts;
     valueBase = valueCount = parent.valueCount;
   }
 
@@ -329,6 +330,10 @@ struct CppEmitter {
   /// be declared at the beginning of a function.
   bool shouldDeclareVariablesAtTop() { return declareVariablesAtTop; };
 
+  /// ctcompile: whether a cast prints as `static_cast<T>(x)` rather than C's
+  /// `(T) x`: the current op's module has `ctnative.named_casts`.
+  bool printsNamedCasts() const { return namedCasts; }
+
   /// Returns whether this file op should be emitted
   bool shouldEmitFile(FileOp file) {
     return !fileId.empty() && file.getId() == fileId;
@@ -380,10 +385,11 @@ private:
 
   /// Spelling options read from the current op's module for each
   /// emitOperation: readableLiterals prints floats in their shortest exact form
-  /// (ReadableFloat.cpp), and numericAlias prints f64 as `js_num` instead of
-  /// `double`.
+  /// (ReadableFloat.cpp), numericAlias prints f64 as `js_num` instead of
+  /// `double`, and namedCasts prints a cast as `static_cast`.
   bool readableLiterals = false;
   bool numericAlias = false;
+  bool namedCasts = false;
 
   ctcompile::cpp::ConstBindings constBindings;
 
@@ -1129,6 +1135,18 @@ static LogicalResult printOperation(CppEmitter &emitter, emitc::CastOp castOp) {
 
   if (failed(emitter.emitAssignPrefix(op)))
     return failure();
+  // ctcompile: `static_cast<T>(x)` in a module that asks for named casts, so
+  // generated native code has no C-style cast.
+  if (emitter.printsNamedCasts()) {
+    os << "static_cast<";
+    if (failed(emitter.emitType(op.getLoc(), op.getResult(0).getType())))
+      return failure();
+    os << ">(";
+    if (failed(emitter.emitOperand(castOp.getOperand())))
+      return failure();
+    os << ")";
+    return success();
+  }
   os << "(";
   if (failed(emitter.emitType(op.getLoc(), op.getResult(0).getType())))
     return failure();
@@ -2052,6 +2070,9 @@ LogicalResult CppEmitter::emitOperation(Operation &op, bool trailingSemicolon) {
   llvm::SaveAndRestore aliasScope(
       numericAlias,
       module && module->hasAttrOfType<UnitAttr>(ctn::kNativeNumericAlias));
+  llvm::SaveAndRestore castScope(
+      namedCasts,
+      module && module->hasAttrOfType<UnitAttr>(ctn::kNativeNamedCasts));
 
   // ctcompile: print the op's `ctnative.provenance` text as a comment above
   // the definition, so a C++ compiler diagnostic in generated code points the
