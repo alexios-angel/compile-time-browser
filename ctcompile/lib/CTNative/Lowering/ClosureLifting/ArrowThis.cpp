@@ -212,6 +212,40 @@ bool closureLifter::passesLexicalThis(mlir::OpOperand & use) {
     });
 }
 
+/// The value a read of an arrow's lexical `this` stands for: what the cell
+/// captureLexicalThis made for the arrow's one closure was made from. That is
+/// the receiver of the function making the closure, or, when that function is
+/// an arrow too, its own read of this kind. Null for any other value, and for
+/// a read rewritten since (a lifted arrow reads a capture parameter instead).
+mlir::Value closureLifter::lexicalThisMaker(mlir::Value value) {
+    auto read = value.getDefiningOp<ctjs::LoadUpvalueOp>();
+    auto arrow = read ? read->getParentOfType<ctjs::FuncOp>() : ctjs::FuncOp{};
+    const std::optional<unsigned> slot = lexicalThisSlot(arrow);
+    if (!slot || static_cast<unsigned>(read.getIndex()) != *slot ||
+        read.getClosure() != arrow.getBody().front().getArgument(ctjs::arg_callee)) {
+        return {};
+    }
+    ctjs::CreateClosureOp c = uniqueClosureByTarget.lookup(arrow);
+    auto cell = c && *slot < c.getUpvalues().size()
+                    ? c.getUpvalues()[*slot].getDefiningOp<ctjs::CreateCellOp>()
+                    : ctjs::CreateCellOp{};
+    if (!cell || !cell->hasAttr(kLexicalThis)) { return {}; }
+    return cell.getInitial();
+}
+
+/// The first use of `arrow`'s one closure that is not a call of it (callSiteOf),
+/// or null. With none, the arrow runs only during calls its maker makes, so
+/// the maker's receiver outlives every one of them; stored or passed on, it
+/// can run after the maker returns, when nothing holds that receiver.
+mlir::OpOperand * closureLifter::useOutlivingMaker(ctjs::FuncOp arrow) {
+    ctjs::CreateClosureOp c = uniqueClosureByTarget.lookup(arrow);
+    if (!c) { return nullptr; }
+    for (mlir::OpOperand & use : c.getResult().getUses()) {
+        if (!callSiteOf(use, arrow)) { return &use; }
+    }
+    return nullptr;
+}
+
 /// Erases each cell captureLexicalThis made whose every capturing closure is
 /// an arrow lifted with its `this` as an object argument. Those closures
 /// lower to nothing and their targets read the capture from the call's
