@@ -42,6 +42,8 @@ import pytest
 
 HERE = Path(__file__).resolve().parent
 TIMEOUT = 3600  # lit.cfg.py's maxIndividualTestTime
+TRANSLATORS = ("ctjs-opt", "ctjs-translate")
+STALE_OBJ = "stale-inputs-build-target-ctcompile-fixture-inputs"  # lit.cfg.py's
 
 # Drivers import each other as packages rooted here (`from CTNative.harness
 # import run`), in this process and in the Python subprocesses they start.
@@ -156,6 +158,13 @@ def read_site(path):
     return config
 
 
+def mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
 def first_found(*candidates):
     return next((shutil.which(c) for c in candidates if shutil.which(c)), candidates[-1])
 
@@ -165,6 +174,13 @@ def lit_site(pytestconfig):
     """lit.cfg.py's substitutions and tool paths for the configured build tree."""
     c = read_site(pytestconfig.getoption("ctcompile_build") / "ctcompile/test/lit.site.cfg.py")
     exec_root = os.path.join(c.ctcompile_obj_root, "test")
+    # %{obj} as lit.cfg.py sets it: the native fixture modules' directory, or,
+    # while fixture-inputs.stamp is missing or older than ctjs-opt or
+    # ctjs-translate, a missing directory named for the target to build.
+    stamp = mtime(os.path.join(exec_root, "fixture-inputs.stamp"))
+    built = [mtime(os.path.join(d, t)) for d in c.ctcompile_tools_dirs for t in TRANSLATORS]
+    current = stamp is not None and all(b is None or b <= stamp for b in built)
+    obj = exec_root if current else os.path.join(exec_root, STALE_OBJ)
     checks = HERE / "CTNative" / "Checks"
     runtime = f"-I {c.ctcompile_src_root}/include -I {c.ctbrowser_include}"
     strict = "-Wall -Wextra -Werror -Wconversion -pedantic"
@@ -184,7 +200,7 @@ def lit_site(pytestconfig):
         "%clangxx": f"{first_found('clang++-18', 'clang++')} -std=c++23 {runtime} {strict}",
         "%node": c.node or shutil.which("node") or "node",
         "%native_reference": c.native_reference,
-        "%{obj}": exec_root,
+        "%{obj}": obj,
         "%{monorepo}": c.monorepo_root,
         "%host_cxx": c.host_cxx,
         "%nm": c.nm,
