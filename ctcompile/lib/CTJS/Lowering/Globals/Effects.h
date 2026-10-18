@@ -42,26 +42,49 @@ bool prototype_replaced(mlir::ModuleOp module);
 bool hands_back_the_global_object(llvm::StringRef key);
 /// Whether reading \p key off `Function` can yield it (or a caller of it).
 bool hands_back_the_compiler(llvm::StringRef key);
-/// What decides whether `Function` can have a property the program named:
-/// whether the program may write through Object.prototype or
-/// Function.prototype, which `Function` inherits from, and which keys it may
-/// write onto an object it did not create. Read once per module.
-struct compiler_keys {
-    /// Why a prototype table `Function` inherits from may be written; empty
-    /// when no constant-key path reaches one other than to read it.
+/// What decides whether an object the realm made (`Function`, the global
+/// object) can have a property the program named: whether the program may
+/// write through a prototype table the realm made, which such an object
+/// inherits from, and which keys it may write onto an object it did not
+/// create. Read once per module.
+struct prototype_writes {
+    /// Why a realm prototype table may be written; empty when no constant-key
+    /// path reaches one other than to read it.
     std::string prototypes;
     /// Why any key at all may be written onto such an object; empty if none.
     std::string any_key;
     /// The keys the program may write onto an object it did not create.
     llvm::StringSet<> written;
+    /// Every constant key the program writes onto any object, and every key
+    /// string it uses as a value: the properties an object can have that
+    /// the realm did not give it.
+    llvm::StringSet<> defined;
 };
-/// Reads \p module's compiler_keys.
-compiler_keys read_compiler_keys(mlir::ModuleOp module);
+/// Reads \p module's prototype_writes.
+prototype_writes read_prototype_writes(mlir::ModuleOp module);
 /// Whether reading \p key off `Function`, or off any other function the
 /// realm or the program has, answers undefined however the program runs:
 /// \p key is no property the realm gives functions, Function.prototype or
 /// Object.prototype, and \p keys show the program cannot add it to them.
-bool compiler_lacks(const compiler_keys & keys, llvm::StringRef key);
+bool compiler_lacks(const prototype_writes & writes, llvm::StringRef key);
+/// Whether calling the method \p key off the global object runs no code but
+/// the realm's, unless the program binds a global of that name (which the
+/// walk checks against every binding once it ends): \p key is no property
+/// the realm gives the window, its prototypes or Object.prototype, so the read
+/// answers undefined or a named element, neither of them callable, or it is
+/// Object.prototype's `toString`, which answers a string; and \p writes show
+/// the program cannot add it to a prototype table.
+bool global_object_lacks(const prototype_writes & writes, llvm::StringRef key);
+/// Whether passing a value that may be the global object as an argument of
+/// the method \p key, read off any object, runs no code but the realm's: no
+/// object has a property \p key the program gave it, so the read answers a
+/// realm function or nothing callable, and \p key names a DOM method that
+/// only compares its argument or converts it to a string (Node's `contains`
+/// and `isSameNode`, DOMTokenList's `contains`). The conversion runs no
+/// program code while `toString` and `valueOf` are the realm's, which \p
+/// writes show for prototype tables and the walk checks against the
+/// bindings once it ends.
+bool argument_inert_native(const prototype_writes & writes, llvm::StringRef key);
 /// What the importer's ctjs.skipped rows say about the bodies it refused.
 struct skipped_summary {
     /// Set when some refused body may store any global; the reason text.

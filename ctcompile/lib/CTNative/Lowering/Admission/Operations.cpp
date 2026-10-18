@@ -868,6 +868,12 @@ bool admission::op(mlir::Operation * o) {
         return refuse("an unknown comparison");
     }
     if (auto t = llvm::dyn_cast<TruthyOp>(o)) {
+        // A field that owns an instance, tested for truth: whether it holds
+        // the instance (kOwnedHeld, Runtime/Owned.hpp's held()).
+        mlir::Operation * tested = t.getValue().getDefiningOp();
+        const auto owned =
+            tested ? tested->getAttrOfType<mlir::StringAttr>(kNativeOwnedInstance) : nullptr;
+        if (owned && owned.getValue() == kOwnedHeld) { return true; }
         const carrier c = carrierOf(typeOf(t.getValue()));
         if (c == carrier::none) { return refuse("truthiness of " + printed(typeOf(t.getValue()))); }
         return true;
@@ -1164,6 +1170,18 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
                            "would find undefined")
                               .str());
         }
+        // A field that owns a class instance by value (ClosureLifting's
+        // ownsByValue) is a ctnative::owned member: its stores are the
+        // instance, which must have a closed shape, and null.
+        if (user->hasAttr(kNativeOwnedInstance)) {
+            auto set = llvm::dyn_cast<SetPropertyOp>(user);
+            if (set && !ctjs::constantAttr<ctjs::NullAttr>(set.getValue()) &&
+                !TypeInference::hasClosedShape(set.getValue())) {
+                return refuse(
+                    ("field `" + key + "` owns an instance whose shape is not closed").str());
+            }
+            continue;
+        }
         // A field joining String with absence, Boolean or Number is a union
         // member (Admission/VariantFields.cpp).
         if (auto admitted = variantField(key, user, accesses)) {
@@ -1192,12 +1210,6 @@ bool admission::closedObject(ctjs::CreateObjectOp object) {
             if ((c == carrier::closureSet && isProvedClosureSet(set, typeOf(set.getValue()))) ||
                 (c == carrier::closure && set.getValue().getDefiningOp() &&
                  set.getValue().getDefiningOp()->hasAttr(kNativeClosureSet))) {
-                continue;
-            }
-            // A class instance the field owns by value: a member of the
-            // instance's class (ClosureLifting's ownsByValue).
-            if (set->hasAttr(kNativeOwnedInstance) &&
-                TypeInference::hasClosedShape(set.getValue())) {
                 continue;
             }
             // A class held as a field: every read of it was resolved to the

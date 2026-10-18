@@ -12,7 +12,8 @@ The `lit` fixture expands those arguments the way lit.cfg.py does, from the
 same generated lit.site.cfg.py the build writes, so both runners use the same
 tools, compilers, Node and interpreter reference. The build tree is
 `--ctcompile-build` or $CTCOMPILE_BUILD, by default `build/` at the repository
-root.
+root, and temporary files go in its `pytest-tmp/` unless `--basetemp` names
+another directory.
 
 Selection matches lit's names. A test's lit name is its driver's folder plus
 its case with `_` read as `-` (lit case names use hyphens, modules
@@ -61,12 +62,24 @@ def pytest_addoption(parser):
     group.addoption("--lit-filter", help="keep tests whose lit name matches this regex (re.search)")
 
 
+# tryfirst: the basetemp default must be set before pytest's tmp_path plugin
+# reads it in its own pytest_configure.
+@pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     if not config.pluginmanager.hasplugin("timeout"):
         raise pytest.UsageError(
             "the ctcompile drivers need pytest-timeout for their one-hour limit "
             "(uv run --with pytest --with pytest-timeout pytest ...)"
         )
+    # Temporary files go in this checkout's build tree rather than
+    # /tmp/pytest-of-<user>, which every checkout on a machine shares and
+    # fills. pytest empties a --basetemp directory at the start of each run,
+    # so a second run at once in the same checkout needs its own --basetemp.
+    # pytest-xdist hands each worker a directory inside it. Without a build
+    # tree pytest keeps its default, and the lit fixture says what is missing.
+    build = Path(config.getoption("ctcompile_build"))
+    if config.option.basetemp is None and build.is_dir():
+        config.option.basetemp = build / "pytest-tmp"
 
 
 class Driver(pytest.Module):

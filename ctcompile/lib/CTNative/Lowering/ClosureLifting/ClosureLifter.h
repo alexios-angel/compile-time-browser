@@ -132,6 +132,11 @@ struct closureLifter {
     llvm::DenseMap<mlir::Operation *, llvm::SmallVector<boundCaptureCall>> boundCaptureCalls;
     llvm::DenseSet<mlir::Operation *> siblingBindingTargets;
     bool allowSiblingCaptures = false;
+    /// The sibling binding targets, by name, that an earlier trial of this
+    /// run could not lift with all their capture holders. bindLocalFunctions
+    /// holds their bindings to the stricter rule, so the other bindings can
+    /// still take sibling captures (Rewrite.cpp's trials).
+    llvm::StringSet<> siblingDenied;
 
     // --- Rule 1: a binding with one dominating write ---------------------------
     //
@@ -352,12 +357,14 @@ struct closureLifter {
     //     another function has nowhere to prepend the captures (the METHODCAP
     //     case, one binding along), so a binding read from a nested function
     //     may only hold a closure whose every capture is itself a binding this
-    //     rule erases, or the identical cell already captured by its sibling
-    //     caller. The latter is passed through the caller's ordinary lifted
-    //     capture parameter. This condition matters in practice: a bundle's
-    //     helpers close over each other, and the recursive
-    //     `var f = function () { ... f(); }` is exactly the case where the one
-    //     capture is the binding being defined.
+    //     rule erases, or a cell of its frame that each caller holds: a caller
+    //     made in that frame captures it (canAddSiblingCapture), and one made
+    //     a frame further in takes it relayed from the closure it is made in
+    //     (canRelaySiblingCapture). The cell is passed through the caller's
+    //     ordinary lifted capture parameter. This condition matters in
+    //     practice: a bundle's helpers close over each other, and the
+    //     recursive `var f = function () { ... f(); }` is exactly the case
+    //     where the one capture is the binding being defined.
     //
     // Recursion is admitted, and the rule is built around it. `f` names
     // itself, so the closure captures the very box it is written into;
@@ -650,8 +657,19 @@ struct closureLifter {
 
     void makeBoundCallDirect(ctjs::CallOp call, ctjs::FuncOp target, ctjs::CreateClosureOp holder);
 
-    static std::optional<unsigned> siblingCaptureSlot(ctjs::CreateClosureOp closure, unsigned index,
-                                                      ctjs::CreateClosureOp holder);
+    std::optional<unsigned> siblingCaptureSlot(ctjs::CreateClosureOp closure, unsigned index,
+                                               ctjs::CreateClosureOp holder);
+    /// The one ctjs.create_closure of the function `made` sits in, whose slots
+    /// fill `made`'s relayed captures; null when that function has none or
+    /// several.
+    ctjs::CreateClosureOp enclosingClosureOf(ctjs::CreateClosureOp made);
+    /// Each function's ctjs.create_closure, or null for a function with
+    /// several.
+    llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp> oneClosurePerFunction();
+    /// oneClosurePerFunction() while bindLocalFunctions runs, which makes and
+    /// erases no closure, so its fixpoint asks enclosingClosureOf without a
+    /// module walk per question.
+    std::optional<llvm::DenseMap<mlir::Operation *, ctjs::CreateClosureOp>> closureOfFunction;
 
     mlir::Value siblingCapturedValue(ctjs::CreateClosureOp closure, unsigned index,
                                      ctjs::CreateClosureOp holder);
@@ -664,6 +682,21 @@ struct closureLifter {
     /// Appends `cell` to `holder`'s captures, with its `enclosing_indices`
     /// entry and its target's `upvalue_count`.
     void addCaptureSlot(ctjs::CreateClosureOp holder, mlir::Value cell);
+    /// Answers `typeof` and truthiness of a closure, folds what the answers
+    /// meet (a compare with a constant, a negation), and replaces an scf.if
+    /// they decide by the branch it takes when the branch it drops only
+    /// computes values (ConstantTests.cpp).
+    void foldConstantTests();
+    /// Whether `holder`, made one frame further in than `closure`, can take
+    /// the cell in slot `index` of `closure` relayed from its enclosing
+    /// closure, which is made in `closure`'s frame and captures the cell or
+    /// can (canAddSiblingCapture).
+    bool canRelaySiblingCapture(ctjs::CreateClosureOp closure, unsigned index,
+                                ctjs::CreateClosureOp holder);
+    /// Appends to `holder`'s captures a slot filled from slot `outer` of its
+    /// enclosing closure, whose operand is the importer's undefined
+    /// placeholder.
+    void addRelayedCaptureSlot(ctjs::CreateClosureOp holder, unsigned outer);
 
     void removeCaptureSlots(ctjs::CreateClosureOp c, llvm::ArrayRef<unsigned> slots);
 
@@ -744,9 +777,10 @@ struct closureLifter {
 
     bool bindLocalFunctions(liftReport & out, bool probeSiblings = false);
 
-    /// Turns calls of methods of an object literal held in a static variable
-    /// into direct calls when nothing else reads it (Singletons.cpp). Returns
-    /// whether it changed the module.
+    /// Turns calls of methods of an object literal held in a static variable,
+    /// and calls through a static variable holding one function, into direct
+    /// calls when nothing else reads it (Singletons.cpp). Returns whether it
+    /// changed the module.
     bool bindSingletonMethods(liftReport & out);
     /// Marks the reads and writes of a static variable that holds one class
     /// and is read only by `new`s that run after its last write
@@ -877,16 +911,16 @@ struct closureLifter {
     /// Otherwise the reason goes into `why` when given.
     bool returnsAnInstance(ctjs::ReturnOp ret, std::string * why = nullptr);
     /// Whether `set` stores a `new`'s instance into a field of `this` that owns
-    /// it by value: the instance has no other use, `set` is the only store of
-    /// its key in the module and runs unconditionally in a class constructor
-    /// before anything but other keys' reads and writes uses `this`, and every
-    /// read of that key is of `this` in that constructor or a method of its
-    /// prototype, used only through constant keys or as a method call's
-    /// receiver. So the instance is never shared, aliased or published, and no
-    /// read can run before the store. The reads go into `reads` when given;
-    /// otherwise the reason goes into `why` when given.
+    /// it (a ctnative::owned or ctnative::replaceable member, Runtime/Owned.hpp):
+    /// the instance has no other use, `set` is in the constructor or a method
+    /// of a proved class, the only other stores of its key store null through
+    /// the `this` of that constructor or a method of its prototype, and every
+    /// read of the key is of that `this`, used only through constant keys or
+    /// as a method call's receiver, or only tested for truth. So the instance
+    /// is never shared, aliased or published. The reads and the null stores go
+    /// into `uses` when given; otherwise the reason goes into `why` when given.
     bool ownsByValue(ctjs::SetPropertyOp set,
-                     llvm::SmallVectorImpl<ctjs::GetPropertyOp> * reads = nullptr,
+                     llvm::SmallVectorImpl<mlir::Operation *> * uses = nullptr,
                      std::string * why = nullptr);
     /// Why `object`'s uses do not close its shape: the first store of it into
     /// a field, or return of it, that ownsByValue or returnsAnInstance refuses,
@@ -898,8 +932,12 @@ struct closureLifter {
     /// the reason the unrewritten IR gave.
     llvm::DenseMap<mlir::Operation *, std::string> refusedInstanceUses;
     /// The stores ownsByValue proved during methodCensus, before any rewrite
-    /// turned a method call through a read into a direct call, with the reads.
-    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<ctjs::GetPropertyOp>> ownedStores;
+    /// turned a method call through a read into a direct call, with the reads
+    /// and the null stores of their keys.
+    llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Operation *>> ownedStores;
+    /// The proved stores a method of the class makes rather than its
+    /// constructor: their field is a ctnative::replaceable (Runtime/Owned.hpp).
+    llvm::DenseSet<mlir::Operation *> replaceableStores;
 
     bool retainedByLocalMap(mlir::OpOperand & use,
                             llvm::DenseMap<mlir::Value, mlir::Value> * reads = nullptr);

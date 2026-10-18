@@ -147,6 +147,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 
 #include <cassert>
@@ -824,6 +825,17 @@ std::string name_of(watched kind) {
     return "a value that may be the run-time compiler";
 }
 
+/// How a literal or array made here that may hold a watched value of kind
+/// \p kind is described in a refusal reason.
+std::string holder_name(watched kind) {
+    return "an object that may hold " + name_of(kind);
+}
+
+/// Whether \p key names an array element: a canonical non-negative integer.
+bool array_index(llvm::StringRef key) {
+    return !key.empty() && llvm::all_of(key, llvm::isDigit) && (key.size() == 1 || key[0] != '0');
+}
+
 /// A named write through a watched value: where it is, and through which kind.
 struct bound_write {
     std::string at;
@@ -860,13 +872,42 @@ std::optional<std::string> dynamic_global_writes(
     // may_be_function() is asked once per `.constructor` read.
     const bool super_is_open = prototype_replaced(module);
     // Asked once per call of a method read off a value that may be the
-    // compiler (`this.constructor.eventName(t)`).
-    const compiler_keys compiler = read_compiler_keys(module);
+    // compiler (`this.constructor.eventName(t)`) or the global object.
+    const prototype_writes writes = read_prototype_writes(module);
     llvm::DenseMap<mlir::Value, watched> marked;
     llvm::SmallVector<mlir::Value> work;
     llvm::DenseMap<mlir::Operation *, bool> raw_arguments;
     const auto mark = [&](mlir::Value value, watched kind) {
         if (marked.try_emplace(value, kind).second) { work.push_back(value); }
+    };
+    // A literal or array made here that a watched value was stored into, at
+    // any depth, and every value that may be it (through branches, bindings,
+    // calls, returns and reads out of another such object): not the watched
+    // value, so writing into it writes no global, but a read out of it may be
+    // that value. `any_key` is set when the value went in under a computed key;
+    // otherwise only a key the program writes, or an element index, can hold it.
+    struct holding {
+        watched kind;
+        bool any_key;
+    };
+    llvm::DenseMap<mlir::Value, holding> held;
+    llvm::SmallVector<mlir::Value> held_work;
+    const auto hold = [&](mlir::Value value, watched kind, bool any_key) {
+        auto [row, added] = held.try_emplace(value, holding{kind, any_key});
+        if (added) {
+            held_work.push_back(value);
+        } else if (any_key && !row->second.any_key) {
+            row->second.any_key = true;
+            held_work.push_back(value);
+        }
+    };
+    // The literal or array made here that `object` always is, or null.
+    const auto made_here = [](mlir::Value object) {
+        const mlir::Value origin = registerFlowOrigin(object);
+        return origin &&
+                       mlir::isa_and_nonnull<CreateObjectOp, CreateArrayOp>(origin.getDefiningOp())
+                   ? origin
+                   : mlir::Value{};
     };
     const auto reads_arguments = [&](FuncOp target) {
         const auto row = raw_arguments.try_emplace(target.getOperation(), false);
@@ -969,27 +1010,35 @@ std::optional<std::string> dynamic_global_writes(
     // Enters a known callee at one argument position, or returns why not. The
     // position is already in the callee's entry-block order: receiver,
     // new.target, callee, then the declared parameters.
+    // With `facts`, the value entered is an object that may hold one (see
+    // `held`), and the parameter is followed as one.
     const auto enter = [&](FuncOp target, std::size_t supplied, unsigned parameter,
-                           mlir::Operation * at, watched kind) -> std::optional<std::string> {
+                           mlir::Operation * at, watched kind,
+                           const holding * facts = nullptr) -> std::optional<std::string> {
+        const std::string what = facts ? holder_name(kind) : name_of(kind);
         if (!target || !implicitEntry(target)) {
-            return name_of(kind) + " escapes into a call whose callee this module does not name (" +
+            return what + " escapes into a call whose callee this module does not name (" +
                    describe(at) + ")";
         }
         mlir::Block & entry = target.getBody().front();
         const unsigned parameters = parameterCount(entry);
         if (supplied > parameters) {
-            return name_of(kind) + " is passed to " + target.getSymName().str() + " beyond its " +
+            return what + " is passed to " + target.getSymName().str() + " beyond its " +
                    std::to_string(parameters) +
                    " parameter(s), where the surplus keeps frame semantics (" + describe(at) + ")";
         }
         if (reads_arguments(target)) {
-            return name_of(kind) + " is passed to " + target.getSymName().str() +
+            return what + " is passed to " + target.getSymName().str() +
                    ", which reads its raw argument window (" + describe(at) + ")";
         }
         // In range by the arity check above: a receiver is 0, a callee value
         // is 2, and argument i of at most `parameters` is 3 + i.
         assert(parameter < entry.getNumArguments() && "a call operand with no block argument");
-        mark(entry.getArgument(parameter), kind);
+        if (facts) {
+            hold(entry.getArgument(parameter), kind, facts->any_key);
+        } else {
+            mark(entry.getArgument(parameter), kind);
+        }
         return std::nullopt;
     };
 
@@ -998,15 +1047,201 @@ std::optional<std::string> dynamic_global_writes(
     // verdict. A value that escapes is not followed further.
     const auto escape = [&](std::string why) { every.push_back(std::move(why)); };
     llvm::SmallVector<std::pair<mlir::StringAttr, mlir::Operation *>> inert;
+    // Calls that may convert the global object to a string, as an argument
+    // of a method argument_inert_native admits.
+    llvm::SmallVector<mlir::Operation *> converted;
     binding_names names(module, world);
+
+    // Follows one object that may hold a watched value (see `held`). Writing
+    // into it, comparing it strictly and testing it are harmless; a read out
+    // of it may be the value, or another such object; storing it into a
+    // literal or array made here makes that one a holder too; and a call this
+    // module can name is entered. Converting it to a primitive runs its own
+    // toString or valueOf with it as `this`, so that is harmless only while
+    // no object has one the program gave it. Anything else is an escape.
+    const auto follow_holder = [&](mlir::Value value) {
+        const holding facts = held.find(value)->second;
+        const std::string what = holder_name(facts.kind);
+        const bool converts_safely =
+            !writes.defined.contains("toString") && !writes.defined.contains("valueOf");
+        const auto conversion = [&](mlir::Operation * op) {
+            if (!converts_safely) {
+                escape(what + " is converted by " + describe(op) +
+                       ", which may run a toString or valueOf the program gave it");
+            }
+        };
+        for (mlir::OpOperand & use : value.getUses()) {
+            mlir::Operation * op = use.getOwner();
+            const unsigned at = use.getOperandNumber();
+            if (auto branch = mlir::dyn_cast<mlir::BranchOpInterface>(op)) {
+                if (const std::optional<mlir::BlockArgument> argument =
+                        branch.getSuccessorBlockArgument(at)) {
+                    hold(*argument, facts.kind, facts.any_key);
+                }
+                continue;
+            }
+            if (mlir::isa<TruthyOp, InstanceOfOp, HasPropertyOp, RootOp, GetProtoOp,
+                          DeletePropertyOp, DeleteNamedOp>(op)) {
+                continue;
+            }
+            if (auto compare = mlir::dyn_cast<CompareOp>(op)) {
+                if (compare.getKind() != CompareKind::StrictEq) { conversion(op); }
+                continue;
+            }
+            if (auto unary = mlir::dyn_cast<UnaryOp>(op)) {
+                if (unary.getKind() != UnaryKind::Not && unary.getKind() != UnaryKind::TypeOf &&
+                    unary.getKind() != UnaryKind::Void) {
+                    conversion(op);
+                }
+                continue;
+            }
+            if (mlir::isa<BinaryOp, BinaryStaticOp>(op)) {
+                conversion(op);
+                continue;
+            }
+            if (auto convert = mlir::dyn_cast<ConvertOp>(op)) {
+                if (convert.getKind() == ConvertKind::ToObject) {
+                    hold(convert.getResult(), facts.kind, facts.any_key);
+                } else if (convert.getKind() != ConvertKind::ToBoolean) {
+                    conversion(op);
+                }
+                continue;
+            }
+            if (auto get = mlir::dyn_cast<GetPropertyOp>(op)) {
+                if (at == 1) {
+                    conversion(op);
+                    continue;
+                }
+                // Only a key some store wrote, an element, or any key after a
+                // computed store can hold the value or another holder.
+                const llvm::StringRef key = constantKey(get.getKey());
+                if (facts.any_key || key.empty() || array_index(key) ||
+                    writes.defined.contains(key)) {
+                    mark(get.getResult(), facts.kind);
+                    hold(get.getResult(), facts.kind, true);
+                }
+                continue;
+            }
+            if (auto set = mlir::dyn_cast<SetPropertyOp>(op)) {
+                if (at == 0) { continue; }
+                if (at == 1) {
+                    conversion(op);
+                    continue;
+                }
+                if (const mlir::Value literal = made_here(set.getObject())) {
+                    hold(literal, facts.kind, constantKey(set.getKey()).empty());
+                    continue;
+                }
+                escape(what + " escapes into " + describe(op));
+                continue;
+            }
+            if (auto append = mlir::dyn_cast<AppendOp>(op)) {
+                if (at == 0) { continue; }
+                if (const mlir::Value array = made_here(append.getArray())) {
+                    hold(array, facts.kind, false);
+                    continue;
+                }
+                escape(what + " escapes into " + describe(op));
+                continue;
+            }
+            if (auto array = mlir::dyn_cast<CreateArrayOp>(op)) {
+                hold(array.getResult(), facts.kind, false);
+                continue;
+            }
+            if (auto copy = mlir::dyn_cast<CopyPropsOp>(op)) {
+                if (at == 0) { continue; }
+                if (const mlir::Value literal = made_here(copy.getTarget())) {
+                    hold(literal, facts.kind, true);
+                    continue;
+                }
+                escape(what + " escapes into " + describe(op));
+                continue;
+            }
+            if (mlir::isa<IterableOp>(op)) {
+                hold(op->getResult(0), facts.kind, facts.any_key);
+                continue;
+            }
+            if (auto made = mlir::dyn_cast<CreateClosureOp>(op); made && at == 1) {
+                FuncOp arrow =
+                    world.by_index.lookup(static_cast<std::uint32_t>(made.getFunction()));
+                if (!arrow || !implicitEntry(arrow)) {
+                    escape(what + " is captured by an arrow whose body was not imported (" +
+                           describe(op) + ")");
+                    continue;
+                }
+                hold(arrow.getBody().front().getArgument(0), facts.kind, facts.any_key);
+                continue;
+            }
+            if (auto call = mlir::dyn_cast<CallOp>(op)) {
+                if (at == 0) {
+                    escape(what + " escapes into " + describe(op));
+                    continue;
+                }
+                const unsigned parameter = at == 1 ? 0u : at + 1u;
+                FuncOp target = known_callee(world, call.getCallee());
+                if (!target) { target = names.callee(call.getCallee()); }
+                if (const std::optional<std::string> refusal =
+                        enter(target, call.getArgs().size(), parameter, op, facts.kind, &facts)) {
+                    escape(*refusal);
+                }
+                continue;
+            }
+            if (auto direct = mlir::dyn_cast<CallDirectOp>(op)) {
+                if (const std::optional<std::string> refusal =
+                        enter(mlir::SymbolTable::lookupNearestSymbolFrom<FuncOp>(
+                                  direct, direct.getCalleeAttr()),
+                              direct.getArgs().size(), at, op, facts.kind, &facts)) {
+                    escape(*refusal);
+                }
+                continue;
+            }
+            CreateCellOp cell;
+            if (mlir::isa<CreateCellOp>(op)) {
+                cell = mlir::cast<CreateCellOp>(op);
+            } else if (auto write = mlir::dyn_cast<CellSetOp>(op); write && at == 1) {
+                cell = originOp<CreateCellOp>(write.getCell());
+            } else if (auto write = mlir::dyn_cast<StoreUpvalueOp>(op); write && at == 1) {
+                auto function = op->getParentOfType<FuncOp>();
+                cell = function ? names.slotCell(function, write.getIndex()) : CreateCellOp{};
+            }
+            if (cell || mlir::isa<CreateCellOp, CellSetOp, StoreUpvalueOp>(op)) {
+                llvm::SmallVector<mlir::Value> stored;
+                const auto reads = cell ? names.access(cell, stored) : std::nullopt;
+                if (!reads) {
+                    escape(what + " escapes into " + describe(op) +
+                           " - a binding this walk cannot follow");
+                    continue;
+                }
+                for (mlir::Value read : *reads) { hold(read, facts.kind, facts.any_key); }
+                continue;
+            }
+            if (mlir::isa<ReturnOp>(op)) {
+                FuncOp function = op->getParentOfType<FuncOp>();
+                llvm::SmallVector<mlir::Value> results;
+                if (const auto why = function ? names.callResults(function, results)
+                                              : std::optional<std::string>{"no function"}) {
+                    escape(what + " escapes into " + describe(op) + " - " + *why);
+                    continue;
+                }
+                for (mlir::Value result : results) { hold(result, facts.kind, facts.any_key); }
+                continue;
+            }
+            escape(what + " escapes into " + describe(op));
+        }
+    };
 
     // Forward SSA reachability from the watched values. A read through one
     // may yield another value that may be it (`window.window`), so reads
     // propagate; predicates and arithmetic answer primitives and stop; a
     // branch forwards into the successor's block argument; a call this module
     // can name forwards into the callee's parameter; a named write through it
-    // binds that one name; and anything else is the answer.
-    while (!work.empty()) {
+    // binds that one name; storing it into a literal or array made here
+    // follows that object (follow_holder); and anything else is the answer.
+    while (!work.empty() || !held_work.empty()) {
+        if (!held_work.empty()) {
+            follow_holder(held_work.pop_back_val());
+            continue;
+        }
         const mlir::Value value = work.pop_back_val();
         const watched kind = marked.find(value)->second;
         for (mlir::OpOperand & use : value.getUses()) {
@@ -1044,9 +1279,15 @@ std::optional<std::string> dynamic_global_writes(
                 continue;
             }
             if (auto set = mlir::dyn_cast<SetPropertyOp>(op)) {
-                // As the key or the value it is not being written through: it
-                // is being converted to a string, or stored into somebody
-                // else's object, and either way it leaves this walk's sight.
+                // As the value stored into a literal made here, it is followed
+                // through that literal. As the key, or the value stored into
+                // somebody else's object, it is not being written through: it
+                // is converted to a string, or it leaves this walk's sight.
+                if (const mlir::Value literal = made_here(set.getObject());
+                    literal && use.getOperandNumber() == 2) {
+                    hold(literal, kind, constantKey(set.getKey()).empty());
+                    continue;
+                }
                 if (use.getOperandNumber() != 0) {
                     escape(name_of(kind) + " escapes into " + describe(op));
                     continue;
@@ -1063,6 +1304,17 @@ std::optional<std::string> dynamic_global_writes(
             if (mlir::isa<DeletePropertyOp, DeleteNamedOp, DefineAccessorOp, SetProtoOp,
                           CopyPropsOp>(op)) {
                 escape(name_of(kind) + " is written through (" + describe(op) + ")");
+                continue;
+            }
+            // An element of an array made here, followed through that array.
+            if (auto append = mlir::dyn_cast<AppendOp>(op); append && use.getOperandNumber() == 1) {
+                if (const mlir::Value array = made_here(append.getArray())) {
+                    hold(array, kind, false);
+                    continue;
+                }
+            }
+            if (auto array = mlir::dyn_cast<CreateArrayOp>(op)) {
+                hold(array.getResult(), kind, false);
                 continue;
             }
             // An arrow's lexical `this`. The VM reads $enclosing_this only for
@@ -1093,8 +1345,11 @@ std::optional<std::string> dynamic_global_writes(
                 // (`window.getComputedStyle(el)`): the global object, or
                 // something that is not it, in which case `this` is not the
                 // global object either. A method on the inert list leaves the
-                // globals table alone, unless the program has rebound that
-                // name (checked once the walk ends, against every binding).
+                // globals table alone, and so does one the window does not
+                // have (`node.getBoundingClientRect()` on a node that may be
+                // the window), whose read answers nothing callable, unless the
+                // program has rebound that name (checked once the walk ends,
+                // against every binding).
                 if (use.getOperandNumber() == 1) {
                     auto read = originOp<GetPropertyOp>(call.getCallee());
                     const llvm::StringRef key = read ? constantKey(read.getKey()) : "";
@@ -1103,7 +1358,7 @@ std::optional<std::string> dynamic_global_writes(
                         read && (read.getObject() == call.getReceiver() ||
                                  (receiver && registerFlowOrigin(read.getObject()) == receiver));
                     if (kind != watched::compiler && readOffReceiver &&
-                        nativeHostMethodKeepsGlobals(key)) {
+                        (nativeHostMethodKeepsGlobals(key) || global_object_lacks(writes, key))) {
                         inert.push_back({mlir::StringAttr::get(module.getContext(), key), op});
                         continue;
                     }
@@ -1114,7 +1369,20 @@ std::optional<std::string> dynamic_global_writes(
                     // code; if it is not, it is not the compiler. Either way it
                     // reaches no code as the compiler.
                     if (kind == watched::compiler && readOffReceiver &&
-                        compiler_lacks(compiler, key)) {
+                        compiler_lacks(writes, key)) {
+                        continue;
+                    }
+                }
+                // An argument of a DOM method that only compares it or converts
+                // it to a string (`parent.contains(child)` with `child` maybe
+                // the window): argument_inert_native shows the method is the
+                // realm's or nothing callable. The conversion uses the realm's
+                // `toString` and `valueOf` unless the program binds a global of
+                // either name (checked once the walk ends).
+                if (use.getOperandNumber() >= 2 && kind != watched::compiler) {
+                    auto read = originOp<GetPropertyOp>(call.getCallee());
+                    if (read && argument_inert_native(writes, constantKey(read.getKey()))) {
+                        converted.push_back(op);
                         continue;
                     }
                 }
@@ -1195,6 +1463,18 @@ std::optional<std::string> dynamic_global_writes(
             (row != world.bindings.end() && !row->second.stores.empty())) {
             escape("the global object is the receiver of `" + key.str() +
                    "`, which this program rebinds (" + describe(at) + ")");
+        }
+    }
+    for (mlir::Operation * at : converted) {
+        for (llvm::StringRef name : {"toString", "valueOf"}) {
+            const auto key = mlir::StringAttr::get(module.getContext(), name);
+            const auto row = world.bindings.find(key);
+            if (bound_through.contains(key) ||
+                (row != world.bindings.end() && !row->second.stores.empty())) {
+                escape("the global object may be converted to a string (" + describe(at) +
+                       "), and this program binds `" + name.str() + "`");
+                break;
+            }
         }
     }
     if (every.empty()) { return std::nullopt; }
@@ -1347,9 +1627,26 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
         // not only `typeof`. The holder must be the global object itself (a
         // load of `window`, `self` or `globalThis` the program never binds),
         // and a name that the global object inherits from Object.prototype is
-        // never absent.
+        // never absent. The fold also takes the page to have no element named
+        // like the property: HTML's named access on the Window object (7.3.3),
+        // which the shell's window implements, makes `window.jQuery` an
+        // element whose id or name is "jQuery".
+        //
+        // When clause 5 refused the module, each such read is marked
+        // kAbsentGlobalProperty instead, for the native lowering to fold. That
+        // needs the walk that collects the writes through the global object to
+        // have run to the end: a load of `Function` or `eval`, a dynamic import
+        // or a refused body that may store any global stops it first, and a
+        // name written through the global object would then look unbound.
+        // A mark already on the input is no verdict of this run.
         llvm::MapVector<mlir::StringAttr, std::size_t> folded_through;
-        if (!dynamic) {
+        bool walked = !world.opaque_skip;
+        module.walk([&](mlir::Operation * op) {
+            op->removeAttr(kAbsentGlobalProperty);
+            auto load = mlir::dyn_cast<LoadGlobalOp>(op);
+            walked &= !(load && names_eval(load.getName())) && !mlir::isa<DynamicImportOp>(op);
+        });
+        if (!dynamic || walked) {
             const auto bound = [&](mlir::StringAttr name) {
                 const auto facts = world.bindings.find(name);
                 return (facts != world.bindings.end() && !facts->second.stores.empty()) ||
@@ -1368,6 +1665,10 @@ struct CTJSResolveGlobalsPass : impl::CTJSResolveGlobalsBase<CTJSResolveGlobalsP
                 reads.push_back(get);
             });
             for (GetPropertyOp get : reads) {
+                if (dynamic) {
+                    get->setAttr(kAbsentGlobalProperty, builder.getUnitAttr());
+                    continue;
+                }
                 mlir::OpBuilder at(get);
                 auto undefined = ConstantOp::create(at, get.getLoc(), get.getType(),
                                                     UndefinedAttr::get(context));

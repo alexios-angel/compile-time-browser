@@ -1,4 +1,4 @@
-# RUN: python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$2' --expect-unreachable 'fn$463' | FileCheck %s --check-prefix=BOOTSTRAP
+# RUN: python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$2' --require-entry-callee 'fn$1' --require-entry-callee 'bi$88' --require-entry-callee 'fn$125' --require-entry-callee 'fn$126' --require-entry-callee 'fn$136' --expect-unreachable 'fn$178' --expect-unreachable 'fn$463' | FileCheck %s --check-prefix=BOOTSTRAP
 # RUN: not python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../../../../ctbrowser/vendor/bootstrap/bootstrap.bundle.js --require-entry-callee 'fn$463' 2>&1 | FileCheck %s --check-prefix=UNREACHABLE
 # RUN: python3 %S/../../../../../../tools/check/named-callees.py --translate ctjs-translate --opt ctjs-opt --corpus %S/../../../Fixtures/Closures/callback.js --require-entry-callee 'bootstrapFactory$9' | FileCheck %s --check-prefix=NATIVE
 
@@ -17,13 +17,32 @@
 # 63 more calls.
 # Flattening copies each component's inherited methods and statics onto it
 # and erases the parents nothing reaches, and the static-member rewrite calls
-# static members directly; on its own branch that gave 100 targets over 502
-# calls. The combined count below is still the integration side's and is
-# re-pinned once measured.
-# BOOTSTRAP: post-native graph: 100 distinct targets over 431 ctjs.call_direct and 0 emitc.call site(s)
+# static members directly.
+# The counts pinned before, 100 targets over 431 calls with 8 functions on
+# the startup path, were measured on lane branches and never held on the
+# integration branch: the first queue commit that carried them measured 127
+# targets over 661 calls with 17 functions. Measured at each queue merge
+# since, the counts moved by lane:
+# - inheritance flattening: copies 4 more calls, arrow-this constructors 26
+#   more, erasing child-only parents 19 fewer;
+# - run-once singletons: statics read through a constructor 16 fewer targets
+#   and calls, constructor narrowing 13 more targets and 14 more calls, and
+#   static getters kept native for refused callers 11 fewer of each;
+# - handlers: sibling trials and relayed captures 1 more target, 2 more calls;
+# - static roots: binding a static that holds one function 1 more of each;
+# - run-once singletons again: folding window reads and registries 69 more
+#   targets, 87 more calls and the first 22 calls between native functions.
+# BOOTSTRAP: post-native graph: 184 distinct targets over 749 ctjs.call_direct and 22 emitc.call site(s)
 # The factory itself calls EventHandler's `on` (fn$136), now a direct call.
-# One of those arrows, fn$126, is called from the startup path itself.
-# BOOTSTRAP: entry _script_$0: 8 function(s) on static direct-call paths
-# BOOTSTRAP: reachable: _script_$0, bi$88, fn$1, fn$125, fn$126, fn$136, fn$178, fn$2
+# One of those arrows, fn$126, is called from the startup path itself. Seven
+# of the eight functions the old pin listed are still on the path, which the
+# --require-entry-callee options above check whatever the full list becomes.
+# The eighth, fn$178, left it with the window fold: nothing calls it directly
+# any more, and it is only passed as a value, which --expect-unreachable
+# pins. The integration adds D$8, L$5, N$17, S$7, fn$9, fn$11, fn$13, k$4 and
+# x$3, and the window fold fn$447 and fifteen functions numbered fn$810 to
+# fn$854.
+# BOOTSTRAP: entry _script_$0: 32 function(s) on static direct-call paths
+# BOOTSTRAP: reachable: D$8, L$5, N$17, S$7, _script_$0, bi$88, fn$1, fn$11, fn$125, fn$126, fn$13, fn$136, fn$2, fn$447, fn$810, fn$813, fn$815, fn$818, fn$821, fn$829, fn$832, fn$834, fn$837, fn$839, fn$842, fn$845, fn$848, fn$851, fn$854, fn$9, k$4, x$3
 # UNREACHABLE: named-callees: fn$463 is not reachable by direct calls from _script_$0
 # NATIVE: entry main:
