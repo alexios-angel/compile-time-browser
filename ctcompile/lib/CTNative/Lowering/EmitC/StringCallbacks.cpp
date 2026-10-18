@@ -8,7 +8,7 @@
 //                                           std::bind_front(callback, c))
 //
 // `text.toLowerCase()`, `text.toUpperCase()` and `text.trim()` on a String
-// become `ctnative::String.prototype.toLowerCase.call(text)` and the like.
+// stay `text.toLowerCase()` and the like: js_string's members of those names.
 //
 // The method read and the RegExp literal the call consumed lower to nothing:
 // replace() skips them, and they are erased here once the call is rewritten.
@@ -129,9 +129,14 @@ bool lowering::replaceStringCallback(mlir::Operation * o) {
             operands.push_back(cellPlace(b, o->getLoc(), call.getArgs()[1]));
             literal = call.getArgs()[0].getDefiningOp();
         }
+        // Every method but replace, which needs RegExp.hpp, is a js_string
+        // member of the same name.
         o->getResult(0).replaceAllUsesWith(
-            callValue(b, o->getLoc(), o->getResult(0).getType(),
-                      ("ctnative::String.prototype." + name + ".call").str(), operands));
+            name == "replace"
+                ? callValue(b, o->getLoc(), o->getResult(0).getType(),
+                            "ctnative::String.prototype.replace.call", operands)
+                : methodCall(b, o->getLoc(), o->getResult(0).getType(), operands.front(), name,
+                             mlir::ValueRange(operands).drop_front()));
         eraseIfUnused(o);
         eraseIfUnused(read);
         if (literal) {

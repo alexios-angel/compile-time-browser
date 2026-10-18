@@ -102,7 +102,7 @@
 // A String's length has a definite native type, so this lowers and runs.
 // CONSTANT: emitc.func @main()
 // CONSTANT: emitc.func @s_1
-// CONSTANT: call_opaque "ctnative::string_length"
+// CONSTANT: member_call_opaque {{.*}} "length"() : !emitc.opaque<"ctnative::js_string">, () -> !emitc.opaque<"ctnative::js_num">
 // OBSERVATION: r=2
 
 //--- this.js

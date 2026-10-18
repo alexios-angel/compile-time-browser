@@ -34,14 +34,11 @@ bool lowering::replaceStringValue(mlir::Operation * op) {
     if (auto read = llvm::dyn_cast<ctjs::GetPropertyOp>(op);
         read && read.getObject().getType() == string) {
         // Admission proved the key is `length` before key constants were
-        // lowered. `length` counts UTF-16 code units over the stored WTF-8
-        // bytes, not bytes (divergence ND-1 in ctcompile/docs/native-divergences.md).
-        auto size = callValue(b, where, ec::OpaqueType::get(context, "std::size_t"),
-                              "ctnative::string_length",
-                              convertScalar(b, where, read.getObject(),
-                                            ec::OpaqueType::get(context, kRawStringType)));
-        auto count = ec::CastOp::create(b, where, b.getF64Type(), size);
-        swap(convertScalar(b, where, count, carrierType(context, carrier::number)));
+        // lowered. js_string's length() counts UTF-16 code units over the
+        // stored WTF-8 bytes, not bytes (divergence ND-1 in
+        // ctcompile/docs/native-divergences.md).
+        swap(methodCall(b, where, carrierType(context, carrier::number),
+                        convertScalar(b, where, read.getObject(), string), "length"));
         return true;
     }
     if (auto binary = llvm::dyn_cast<ctjs::BinaryOp>(op);

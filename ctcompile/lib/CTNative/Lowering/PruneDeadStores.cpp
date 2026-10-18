@@ -32,6 +32,8 @@
 
 #include "llvm/ADT/DenseSet.h"
 
+#include <type_traits>
+
 namespace ctcompile::ctnative {
 
 #define GEN_PASS_DEF_CTNATIVEPRUNEDEADSTORES
@@ -47,8 +49,9 @@ namespace ec = mlir::emitc;
 /// anything. Refusing an operation that already carries the attribute is the
 /// termination condition: the rewrite neither replaces nor erases its root, so
 /// without that check the greedy driver would re-enqueue the operation it just
-/// modified and match it forever. `emitc.call` and `emitc.call_opaque` both
-/// declare variadic results, hence the explicit result count.
+/// modified and match it forever. `emitc.call`, `emitc.call_opaque` and
+/// `emitc.member_call_opaque` declare variadic results, hence the explicit
+/// result count.
 template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<Call> {
     using mlir::OpRewritePattern<Call>::OpRewritePattern;
 
@@ -58,6 +61,14 @@ template <typename Call> struct UnreadCallIsAStatement : mlir::OpRewritePattern<
         if (o->getNumResults() != 1 || !o->getResult(0).use_empty() ||
             o->hasAttr("ctnative.statement")) {
             return mlir::failure();
+        }
+        // An expression is a call only when a member call is its root: the
+        // lowering wraps `variable.method()` in one so it names the variable
+        // rather than a copy. Any other unread expression stays as it was.
+        if constexpr (std::is_same_v<Call, ec::ExpressionOp>) {
+            if (!llvm::isa_and_nonnull<ec::MemberCallOpaqueOp>(call.getRootOp())) {
+                return mlir::failure();
+            }
         }
         // Go through the rewriter rather than a bare setAttr: the driver
         // cannot schedule around an in-place modification it is not told
@@ -190,8 +201,9 @@ struct CTNativePruneDeadStoresPass
 
         driver_erasures erased;
         mlir::RewritePatternSet patterns(&getContext());
-        patterns.add<UnreadCallIsAStatement<ec::CallOp>, UnreadCallIsAStatement<ec::CallOpaqueOp>>(
-            &getContext());
+        patterns.add<UnreadCallIsAStatement<ec::CallOp>, UnreadCallIsAStatement<ec::CallOpaqueOp>,
+                     UnreadCallIsAStatement<ec::MemberCallOpaqueOp>,
+                     UnreadCallIsAStatement<ec::ExpressionOp>>(&getContext());
         mlir::GreedyRewriteConfig config;
         config.setRegionSimplificationLevel(mlir::GreedySimplifyRegionLevel::Disabled)
             .enableFolding(false)
